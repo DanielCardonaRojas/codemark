@@ -101,7 +101,8 @@ codemark list --tag auth --lang swift          # filtered
 codemark list --author agent                   # only agent-created bookmarks
 codemark search "authentication"               # full-text search in notes/context
 codemark show a1b2                             # full details + resolution history
-codemark preview a1b2                          # syntax-highlighted code with context
+codemark preview a1b2                          # fast: uses cached resolution
+codemark preview a1b2 --resolve                # slow: fresh tree-sitter resolution
 codemark preview a1b2 --show-query             # also show the tree-sitter query
 ```
 
@@ -190,10 +191,17 @@ codemark completions fish > ~/.config/fish/completions/codemark.fish
 
 ```bash
 # Install the channel
-cp extras/tv-channel-bookmarks.toml ~/.config/television/cable/bookmarks.toml
+cp extras/codemark.toml ~/.config/television/cable/codemark.toml
 
 # Use it
-tv bookmarks
+tv codemark
+
+# Features:
+# - Ctrl+S: cycle between all/stale/active bookmarks
+# - Enter: resolve and open selected bookmark in $EDITOR
+# - Ctrl+R: re-resolve bookmark (updates cache)
+# - Ctrl+D: show full details
+# - Preview panel shows full file with bookmark highlighted (uses cached resolution, fast)
 ```
 
 ### Claude Code
