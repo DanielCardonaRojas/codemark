@@ -4,12 +4,13 @@ description = "Codemark structural bookmarks"
 requirements = ["codemark"]
 
 [source]
-command = "codemark list --format line"
-display = "{split:\\t:1}  {split:\\t:3}  {split:\\t:4}"
+command = "codemark list --format tv --db .codemark/codemark.db"
+display = "{split:\\t:1}  {split:\\t:4}  {split:\\t:5}"
 output = "{split:\\t:0}"
 
 [preview]
 command = "codemark preview {split:\\t:0}"
+offset = "{split:\\t:2}"
 
 [ui.preview_panel]
 size = 55
