@@ -246,4 +246,4 @@ src/
 
 ## License
 
-MIT
+[MIT](LICENSE)
