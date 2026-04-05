@@ -1,0 +1,13 @@
+# Codemark configuration
+# Place this file at .codemark/config.toml in your repository root.
+
+[storage]
+# Maximum resolution history entries to keep per bookmark.
+# Older entries are pruned automatically after each new resolution.
+# Default: 20
+max_resolutions_per_bookmark = 20
+
+[health]
+# Days before stale bookmarks are auto-archived by `codemark validate --auto-archive`.
+# Default: 7
+auto_archive_after_days = 7
