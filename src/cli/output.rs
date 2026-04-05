@@ -11,6 +11,7 @@ use crate::engine::bookmark::Bookmark;
 pub enum OutputMode {
     Table,
     Line,
+    Tv,  // Television format: includes line numbers for preview.offset
     Json,
     Custom(String),
 }
@@ -26,6 +27,7 @@ impl OutputMode {
         match format_flag {
             Some("table") => OutputMode::Table,
             Some("line") => OutputMode::Line,
+            Some("tv") => OutputMode::Tv,
             Some("json") => OutputMode::Json,
             Some(template) => OutputMode::Custom(template.to_string()),
             None => {
@@ -100,7 +102,22 @@ pub fn write_bookmarks(mode: &OutputMode, bookmarks: &[Bookmark]) -> io::Result<
         OutputMode::Json => write_json_success(&bookmarks),
         OutputMode::Table => write_bookmarks_table(bookmarks),
         OutputMode::Line => write_bookmarks_line(bookmarks),
+        OutputMode::Tv => {
+            fn no_line(_: &str) -> Option<usize> { None }
+            write_bookmarks_tv(bookmarks, &no_line)
+        }
         OutputMode::Custom(template) => write_bookmarks_custom(bookmarks, template),
+    }
+}
+
+/// Write bookmarks in television format with line numbers.
+pub fn write_bookmarks_with_line<F>(mode: &OutputMode, bookmarks: &[Bookmark], get_line_fn: F) -> io::Result<()>
+where
+    F: Fn(&str) -> Option<usize>,
+{
+    match mode {
+        OutputMode::Tv => write_bookmarks_tv(bookmarks, &get_line_fn),
+        _ => write_bookmarks(mode, bookmarks),
     }
 }
 
@@ -147,6 +164,31 @@ fn write_bookmarks_line(bookmarks: &[Bookmark]) -> io::Result<()> {
             "{}\t{}\t{}\t{}\t{}",
             short_id(&bm.id),
             bm.file_path,
+            bm.status,
+            tags,
+            note
+        )?;
+    }
+    Ok(())
+}
+
+/// Write bookmarks in television format with line numbers.
+/// Format: <id>\t<file>\t<line>\t<status>\t<tags>\t<note>
+/// This requires database access to fetch line numbers from resolutions.
+pub fn write_bookmarks_tv(bookmarks: &[Bookmark], get_line: impl Fn(&str) -> Option<usize>) -> io::Result<()> {
+    let mut stdout = io::stdout().lock();
+    for bm in bookmarks {
+        let tags = bm.tags.join(",");
+        let note = bm.notes.as_deref().unwrap_or("");
+        let short = short_id(&bm.id);
+        let line = get_line(short).unwrap_or(0);
+
+        writeln!(
+            stdout,
+            "{}\t{}\t{}\t{}\t{}\t{}",
+            short,
+            bm.file_path,
+            line,
             bm.status,
             tags,
             note
@@ -231,6 +273,29 @@ pub fn write_annotated_bookmarks(
                 writeln!(
                     stdout,
                     "{}\t{}\t{}\t{}\t{}\t{}",
+                    ab.source,
+                    short_id(&bm.id),
+                    bm.file_path,
+                    bm.status,
+                    tags,
+                    note
+                )?;
+            }
+            Ok(())
+        }
+        OutputMode::Tv => {
+            // For multi-db, fall back to line format without line numbers
+            // (line numbers would require db access per bookmark)
+            let mut stdout = io::stdout().lock();
+            for ab in bookmarks {
+                let bm = ab.bookmark;
+                let tags = bm.tags.join(",");
+                let note = bm.notes.as_deref().unwrap_or("");
+                // Format: source\tid\tfile\tline\tstatus\ttags\tnote
+                // Use 0 for line number (no scroll) in multi-db case
+                writeln!(
+                    stdout,
+                    "{}\t{}\t{}\t0\t{}\t{}\t{}",
                     ab.source,
                     short_id(&bm.id),
                     bm.file_path,

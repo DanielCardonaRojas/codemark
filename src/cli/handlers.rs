@@ -5,7 +5,7 @@ use clap::CommandFactory;
 use clap_complete::generate;
 
 use crate::cli::output::{
-    self, write_bookmarks, write_json_success, write_not_implemented, write_success, OutputMode,
+    self, short_id, write_bookmarks, write_json_success, write_not_implemented, write_success, OutputMode,
 };
 use crate::cli::*;
 use crate::engine::bookmark::{
@@ -293,6 +293,29 @@ fn resolve_file_path(file: &std::path::Path) -> Result<(PathBuf, String)> {
 fn extract_id(id_or_line: &str) -> &str {
     // If it looks like a line-format string (contains tabs), extract the first field
     id_or_line.split('\t').next().unwrap_or(id_or_line)
+}
+
+/// Get the start line number from a bookmark's latest resolution.
+/// Returns the line number (1-indexed) or None if no resolution exists.
+/// Note: bookmark_id should be the full ID, not a short prefix.
+fn get_bookmark_line(db: &Database, bookmark_id: &str, file_path: &str) -> Option<usize> {
+    // Get the latest resolution (limit 1)
+    let resolutions = db.list_resolutions(bookmark_id, 1).ok()?;
+    let res = resolutions.first()?;
+
+    // Parse the byte_range "start:end"
+    let byte_range = res.byte_range.as_ref()?;
+    let parts: Vec<&str> = byte_range.split(':').collect();
+    if parts.len() != 2 {
+        return None;
+    }
+
+    let start_byte: usize = parts[0].parse().ok()?;
+
+    // Read the file and convert byte offset to line number
+    let source = std::fs::read_to_string(file_path).ok()?;
+    let line = source[..start_byte.min(source.len())].lines().count() + 1;
+    Some(line)
 }
 
 fn find_bookmark(db: &Database, id: &str) -> Result<Bookmark> {
@@ -880,7 +903,21 @@ fn handle_list(cli: &Cli, mode: &OutputMode, args: &ListArgs) -> Result<()> {
 
     if dbs.len() == 1 {
         let bookmarks = dbs[0].1.list_bookmarks(&filter)?;
-        write_bookmarks(mode, &bookmarks)?;
+        // For Tv mode, provide a closure to fetch line numbers
+        if matches!(mode, OutputMode::Tv) {
+            let db = &dbs[0].1;
+            // Capture both full IDs and file paths
+            let bookmark_data: std::collections::HashMap<String, (String, String)> = bookmarks
+                .iter()
+                .map(|bm| (short_id(&bm.id).to_string(), (bm.id.clone(), bm.file_path.clone())))
+                .collect();
+            output::write_bookmarks_with_line(mode, &bookmarks, |short_id| {
+                let (full_id, file_path) = bookmark_data.get(short_id)?;
+                get_bookmark_line(db, full_id, file_path)
+            })?;
+        } else {
+            write_bookmarks(mode, &bookmarks)?;
+        }
     } else {
         let mut all = Vec::new();
         for (label, db) in &dbs {
@@ -1182,7 +1219,19 @@ fn handle_search(cli: &Cli, mode: &OutputMode, args: &SearchArgs) -> Result<()> 
             args.author.as_deref(),
             args.collection.as_deref(),
         )?;
-        write_bookmarks(mode, &bookmarks)?;
+        if matches!(mode, OutputMode::Tv) {
+            let db = &dbs[0].1;
+            let bookmark_data: std::collections::HashMap<String, (String, String)> = bookmarks
+                .iter()
+                .map(|bm| (short_id(&bm.id).to_string(), (bm.id.clone(), bm.file_path.clone())))
+                .collect();
+            output::write_bookmarks_with_line(mode, &bookmarks, |short_id| {
+                let (full_id, file_path) = bookmark_data.get(short_id)?;
+                get_bookmark_line(db, full_id, file_path)
+            })?;
+        } else {
+            write_bookmarks(mode, &bookmarks)?;
+        }
     } else {
         let mut all = Vec::new();
         for (label, db) in &dbs {
@@ -1535,7 +1584,18 @@ fn handle_collection_show(cli: &Cli, mode: &OutputMode, args: &CollectionShowArg
         ..Default::default()
     };
     let bookmarks = db.list_bookmarks(&filter)?;
-    write_bookmarks(mode, &bookmarks)?;
+    if matches!(mode, OutputMode::Tv) {
+        let bookmark_data: std::collections::HashMap<String, (String, String)> = bookmarks
+            .iter()
+            .map(|bm| (short_id(&bm.id).to_string(), (bm.id.clone(), bm.file_path.clone())))
+            .collect();
+        output::write_bookmarks_with_line(mode, &bookmarks, |short_id| {
+            let (full_id, file_path) = bookmark_data.get(short_id)?;
+            get_bookmark_line(&db, full_id, file_path)
+        })?;
+    } else {
+        write_bookmarks(mode, &bookmarks)?;
+    }
     Ok(())
 }
 
