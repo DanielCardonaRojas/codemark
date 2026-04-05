@@ -271,16 +271,20 @@ pub struct PreviewArgs {
     #[arg(long)]
     pub show_query: bool,
 
+    /// Re-resolve the bookmark against the current file (slower, uses tree-sitter)
+    #[arg(long, conflicts_with_all = ["at_commit", "at_creation", "resolution"])]
+    pub resolve: bool,
+
     /// Preview the file at a specific git commit instead of the working copy
-    #[arg(long, conflicts_with_all = ["at_creation", "resolution"])]
+    #[arg(long, conflicts_with_all = ["resolve", "at_creation", "resolution"])]
     pub at_commit: Option<String>,
 
     /// Preview the file as it was when the bookmark was created
-    #[arg(long, conflicts_with_all = ["at_commit", "resolution"])]
+    #[arg(long, conflicts_with_all = ["resolve", "at_commit", "resolution"])]
     pub at_creation: bool,
 
     /// Preview the file as it was at a specific resolution (use resolution ID from `codemark show`)
-    #[arg(long, conflicts_with_all = ["at_commit", "at_creation"])]
+    #[arg(long, conflicts_with_all = ["resolve", "at_commit", "at_creation"])]
     pub resolution: Option<String>,
 }
 

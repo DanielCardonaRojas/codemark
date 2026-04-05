@@ -396,6 +396,53 @@ fn preview_shows_code() {
 }
 
 #[test]
+fn preview_uses_cached_resolution_by_default() {
+    let cm = Codemark::new();
+
+    // Add a bookmark - this creates an initial resolution
+    let json = cm.run_json(&[
+        "add", "--file", &cm.fixture("rust/auth_service.rs"),
+        "--range", "108", "--note", "cached test",
+    ]);
+    let id = json["data"]["id"].as_str().unwrap().to_string();
+
+    // Preview without --resolve should use cached resolution (fast path)
+    let result = cm.run(&["preview", &id[..8], "--no-color"]);
+    assert_eq!(result.status, 0);
+    // Should indicate it's using cached resolution
+    assert!(result.stdout.contains("cached"));
+    // Should show the function
+    assert!(result.stdout.contains("create_default_auth_service"));
+}
+
+#[test]
+fn preview_with_resolve_flag_does_fresh_resolution() {
+    let cm = Codemark::new();
+
+    let json = cm.run_json(&[
+        "add", "--file", &cm.fixture("rust/auth_service.rs"),
+        "--range", "108", "--note", "fresh resolve test",
+    ]);
+    let id = json["data"]["id"].as_str().unwrap().to_string();
+
+    // Preview with --resolve should do fresh tree-sitter resolution
+    let result = cm.run(&["preview", &id[..8], "--resolve", "--no-color"]);
+    assert_eq!(result.status, 0);
+    // Should show the function (exact method, not cached)
+    assert!(result.stdout.contains("create_default_auth_service"));
+    // The metadata line should show the resolution method (exact/relaxed/etc)
+    // The resolution line should NOT say "cached" since we used --resolve
+    // It should say something like "Resolution: exact" instead
+    assert!(result.stdout.contains("Resolution:"));
+    // Check that "cached" doesn't appear in the Resolution: line
+    for line in result.stdout.lines() {
+        if line.contains("Resolution:") {
+            assert!(!line.contains("cached"), "Resolution line should not contain 'cached': {line}");
+        }
+    }
+}
+
+#[test]
 fn diff_runs_without_error() {
     let cm = Codemark::new();
 

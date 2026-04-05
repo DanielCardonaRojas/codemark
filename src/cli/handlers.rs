@@ -901,15 +901,14 @@ fn handle_list(cli: &Cli, mode: &OutputMode, args: &ListArgs) -> Result<()> {
 fn handle_preview(cli: &Cli, args: &PreviewArgs) -> Result<()> {
     let dbs = open_all_dbs(cli)?;
     let id = extract_id(&args.id);
-    let (bm, _db) = find_bookmark_across(&dbs, id)?;
+    let (bm, db) = find_bookmark_across(&dbs, id)?;
 
     let lang: Language = bm.language.parse()?;
     let ts_lang = lang.tree_sitter_language();
     let cwd = std::env::current_dir()?;
 
-    // Preview at a specific resolution
+    // Preview at a specific resolution (by ID)
     if let Some(ref res_id) = args.resolution {
-        let db = open_db(cli)?;
         let res = db
             .get_resolution(res_id)?
             .ok_or_else(|| Error::Input(format!("resolution not found: {res_id}")))?;
@@ -938,39 +937,98 @@ fn handle_preview(cli: &Cli, args: &PreviewArgs) -> Result<()> {
         return preview_from_source(args, &bm, &source, &ts_lang, Some(commit));
     }
 
-    // Try to resolve against the current working copy
-    let mut cache = ParseCache::new(lang)?;
-    let result = resolution::resolve(&bm, &mut cache, &ts_lang)?;
+    // --resolve flag: fresh resolution against current working copy
+    if args.resolve {
+        let mut cache = ParseCache::new(lang)?;
+        let result = resolution::resolve(&bm, &mut cache, &ts_lang)?;
 
-    if result.method == ResolutionMethod::Failed {
-        // Fallback: try the creation commit if available
-        if let Some(ref commit) = bm.commit_hash {
-            eprintln!(
-                "codemark: bookmark {} could not be resolved in working copy, falling back to commit {}",
-                output::short_id(&bm.id),
-                &commit[..commit.len().min(8)]
-            );
-            match git_context::read_file_at_commit(&cwd, commit, &bm.file_path) {
-                Ok(source) => {
-                    return preview_from_source(args, &bm, &source, &ts_lang, Some(commit));
-                }
-                Err(e) => {
-                    eprintln!("codemark: git fallback failed: {e}");
-                    return Err(Error::Resolution("bookmark could not be resolved".into()));
+        if result.method == ResolutionMethod::Failed {
+            // Fallback: try the creation commit if available
+            if let Some(ref commit) = bm.commit_hash {
+                eprintln!(
+                    "codemark: bookmark {} could not be resolved in working copy, falling back to commit {}",
+                    output::short_id(&bm.id),
+                    &commit[..commit.len().min(8)]
+                );
+                match git_context::read_file_at_commit(&cwd, commit, &bm.file_path) {
+                    Ok(source) => {
+                        return preview_from_source(args, &bm, &source, &ts_lang, Some(commit));
+                    }
+                    Err(e) => {
+                        eprintln!("codemark: git fallback failed: {e}");
+                        return Err(Error::Resolution("bookmark could not be resolved".into()));
+                    }
                 }
             }
+            return Err(Error::Resolution("bookmark could not be resolved".into()));
         }
-        return Err(Error::Resolution("bookmark could not be resolved".into()));
+
+        // Normal preview from current file
+        let start_line = result.start_line + 1;
+        let end_line = result.end_line + 1;
+
+        print_metadata(args, &bm, start_line, &result.method.to_string(), None);
+
+        // Shell out to bat if available - show full file with highlighted lines
+        let file_path = &result.file_path;
+        let color = if args.no_color { "--color=never" } else { "--color=always" };
+
+        let bat_result = std::process::Command::new("bat")
+            .args(["--style=numbers", color, "--highlight-line", &format!("{start_line}:{end_line}"), file_path])
+            .status();
+
+        if !matches!(bat_result, Ok(s) if s.success()) {
+            // Fallback to plain text - show context around the bookmark
+            let context = args.context as usize;
+            let range_start = start_line.saturating_sub(context);
+            let range_end = end_line + context;
+            let source = std::fs::read_to_string(file_path)
+                .map_err(|e| Error::Input(format!("cannot read {file_path}: {e}")))?;
+            print_source_range(&source, range_start, range_end, start_line, end_line);
+        }
+
+        return Ok(());
     }
 
-    // Normal preview from current file
-    let start_line = result.start_line + 1;
-    let end_line = result.end_line + 1;
+    // Default: use the most recent cached resolution (fast path)
+    let resolutions = db.list_resolutions(&bm.id, 1)?;
+    let res = match resolutions.first() {
+        Some(r) => r,
+        None => {
+            return Err(Error::Input(format!(
+                "bookmark {} has no resolution history; run `codemark resolve {}` first",
+                output::short_id(&bm.id),
+                output::short_id(&bm.id)
+            )));
+        }
+    };
 
-    print_metadata(args, &bm, start_line, &result.method.to_string(), None);
+    // Extract file path and byte range from cached resolution
+    let file_path = res.file_path.as_ref().unwrap_or(&bm.file_path);
+    let byte_range = res.byte_range.as_ref().ok_or_else(|| {
+        Error::Resolution(format!("resolution {} has no byte range", res.id))
+    })?;
+
+    // Parse byte range "start:end" and convert to line numbers
+    let parts: Vec<&str> = byte_range.split(':').collect();
+    if parts.len() != 2 {
+        return Err(Error::Resolution(format!("invalid byte range: {byte_range}")));
+    }
+    let start_byte: usize = parts[0].parse()
+        .map_err(|_| Error::Resolution(format!("invalid byte range start: {byte_range}")))?;
+    let end_byte: usize = parts[1].parse()
+        .map_err(|_| Error::Resolution(format!("invalid byte range end: {byte_range}")))?;
+
+    // Read the file and convert byte offsets to line numbers
+    let source = std::fs::read_to_string(file_path)
+        .map_err(|e| Error::Input(format!("cannot read {file_path}: {e}")))?;
+
+    let start_line = source[..start_byte.min(source.len())].lines().count() + 1;
+    let end_line = source[..end_byte.min(source.len())].lines().count();
+
+    print_metadata(args, &bm, start_line, &format!("cached ({})", res.method), None);
 
     // Shell out to bat if available - show full file with highlighted lines
-    let file_path = &result.file_path;
     let color = if args.no_color { "--color=never" } else { "--color=always" };
 
     let bat_result = std::process::Command::new("bat")
@@ -982,8 +1040,6 @@ fn handle_preview(cli: &Cli, args: &PreviewArgs) -> Result<()> {
         let context = args.context as usize;
         let range_start = start_line.saturating_sub(context);
         let range_end = end_line + context;
-        let source = std::fs::read_to_string(file_path)
-            .map_err(|e| Error::Input(format!("cannot read {file_path}: {e}")))?;
         print_source_range(&source, range_start, range_end, start_line, end_line);
     }
 
