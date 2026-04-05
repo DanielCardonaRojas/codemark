@@ -1,0 +1,8 @@
+{
+  "name": "codemark",
+  "description": "Structural code bookmarking with tree-sitter queries — persistent, self-healing code references across sessions",
+  "version": "0.1.0",
+  "skills": [
+    "skills/codemark.md"
+  ]
+}
