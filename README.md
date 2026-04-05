@@ -13,6 +13,15 @@ AI coding agents and developers revisit the same code across sessions. Line-numb
 
 ## Install
 
+**Homebrew (recommended):**
+
+```bash
+brew tap DanielCardonaRojas/codemark
+brew install codemark
+```
+
+**Cargo:**
+
 ```bash
 cargo install --path .
 ```
