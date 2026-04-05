@@ -255,7 +255,7 @@ pub struct PreviewArgs {
     /// Bookmark ID or line-format string (extracts ID from first tab-separated field)
     pub id: String,
 
-    /// Lines of context above/below the bookmarked node
+    /// Lines of context for plain text fallback (bat always shows full file)
     #[arg(long, default_value = "10")]
     pub context: u32,
 

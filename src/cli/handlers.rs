@@ -966,23 +966,22 @@ fn handle_preview(cli: &Cli, args: &PreviewArgs) -> Result<()> {
     // Normal preview from current file
     let start_line = result.start_line + 1;
     let end_line = result.end_line + 1;
-    let context = args.context as usize;
-    let range_start = start_line.saturating_sub(context);
-    let range_end = end_line + context;
 
     print_metadata(args, &bm, start_line, &result.method.to_string(), None);
 
-    // Shell out to bat if available
+    // Shell out to bat if available - show full file with highlighted lines
     let file_path = &result.file_path;
-    let range_str = format!("{range_start}:{range_end}");
     let color = if args.no_color { "--color=never" } else { "--color=always" };
 
     let bat_result = std::process::Command::new("bat")
-        .args(["--style=numbers", color, "--line-range", &range_str, file_path])
-        .args(["--highlight-line", &format!("{start_line}:{end_line}")])
+        .args(["--style=numbers", color, "--highlight-line", &format!("{start_line}:{end_line}"), file_path])
         .status();
 
     if !matches!(bat_result, Ok(s) if s.success()) {
+        // Fallback to plain text - show context around the bookmark
+        let context = args.context as usize;
+        let range_start = start_line.saturating_sub(context);
+        let range_end = end_line + context;
         let source = std::fs::read_to_string(file_path)
             .map_err(|e| Error::Input(format!("cannot read {file_path}: {e}")))?;
         print_source_range(&source, range_start, range_end, start_line, end_line);
@@ -1021,24 +1020,20 @@ fn preview_from_source(
     let m = &matches[0];
     let start_line = m.start_point.0 + 1;
     let end_line = m.end_point.0 + 1;
-    let context = args.context as usize;
-    let range_start = start_line.saturating_sub(context);
-    let range_end = end_line + context;
 
     let commit_label = commit.map(|c| &c[..c.len().min(8)]);
     print_metadata(args, bm, start_line, "historical", commit_label);
 
     // Try bat via temp file (preserving extension for syntax highlighting)
+    // Show full file with highlighted lines (no line-range restriction)
     if !args.no_color {
         if let Some(ext) = std::path::Path::new(&bm.file_path).extension() {
             let tmp_path = std::env::temp_dir().join(format!("codemark_preview.{}", ext.to_string_lossy()));
             if std::fs::write(&tmp_path, source).is_ok() {
-                let range_str = format!("{range_start}:{range_end}");
                 let bat_ok = std::process::Command::new("bat")
                     .args([
                         "--style=numbers",
                         "--color=always",
-                        "--line-range", &range_str,
                         "--highlight-line", &format!("{start_line}:{end_line}"),
                     ])
                     .arg(&tmp_path)
@@ -1052,7 +1047,10 @@ fn preview_from_source(
         }
     }
 
-    // Fallback to plain text
+    // Fallback to plain text - show context around the bookmark
+    let context = args.context as usize;
+    let range_start = start_line.saturating_sub(context);
+    let range_end = end_line + context;
     print_source_range(source, range_start, range_end, start_line, end_line);
 
     Ok(())
