@@ -1,0 +1,36 @@
+[metadata]
+name = "bookmarks"
+description = "Codemark structural bookmarks"
+requirements = ["codemark"]
+
+[source]
+command = "codemark list --format line"
+display = "{split:\\t:1}  {split:\\t:3}  {split:\\t:4}"
+output = "{split:\\t:0}"
+
+[preview]
+command = "codemark preview {split:\\t:0}"
+
+[ui.preview_panel]
+size = 55
+
+[keybindings]
+shortcut = "F5"
+ctrl-e = "actions:edit"
+ctrl-r = "actions:resolve"
+ctrl-d = "actions:details"
+
+[actions.edit]
+description = "Open in $EDITOR"
+command = "codemark resolve {split:\\t:0} --format '{file}:{line}' | xargs $EDITOR"
+mode = "fork"
+
+[actions.resolve]
+description = "Re-resolve bookmark"
+command = "codemark resolve {split:\\t:0}"
+mode = "execute"
+
+[actions.details]
+description = "Show full details"
+command = "codemark show {split:\\t:0}"
+mode = "execute"
