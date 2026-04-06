@@ -314,24 +314,19 @@ fn extract_id(id_or_line: &str) -> &str {
 /// Get the start line number from a bookmark's latest resolution.
 /// Returns the line number (1-indexed) or None if no resolution exists.
 /// Note: bookmark_id should be the full ID, not a short prefix.
-fn get_bookmark_line(db: &Database, bookmark_id: &str, file_path: &str) -> Option<usize> {
+fn get_bookmark_line(db: &Database, bookmark_id: &str, _file_path: &str) -> Option<usize> {
     // Get the latest resolution (limit 1)
     let resolutions = db.list_resolutions(bookmark_id, 1).ok()?;
     let res = resolutions.first()?;
 
-    // Parse the byte_range "start:end"
-    let byte_range = res.byte_range.as_ref()?;
-    let parts: Vec<&str> = byte_range.split(':').collect();
+    // Parse the line_range "start:end" (1-indexed, inclusive)
+    let line_range = res.line_range.as_ref()?;
+    let parts: Vec<&str> = line_range.split(':').collect();
     if parts.len() != 2 {
         return None;
     }
 
-    let start_byte: usize = parts[0].parse().ok()?;
-
-    // Read the file and convert byte offset to line number
-    let source = std::fs::read_to_string(file_path).ok()?;
-    let line = source[..start_byte.min(source.len())].lines().count() + 1;
-    Some(line)
+    parts[0].parse().ok()
 }
 
 fn find_bookmark(db: &Database, id: &str) -> Result<Bookmark> {
@@ -441,6 +436,7 @@ fn handle_add(cli: &Cli, mode: &OutputMode, args: &AddArgs) -> Result<()> {
         match_count: Some(match_count as i32),
         file_path: Some(bookmark.file_path.clone()),
         byte_range: Some(format!("{}:{}", generated.byte_range.0, generated.byte_range.1)),
+        line_range: Some(format!("{}:{}", target_start_line, target_end_line)),
         content_hash: Some(content_hash.clone()),
     };
     db.insert_resolution_if_changed(&initial_res, config.storage.max_resolutions_per_bookmark)?;
@@ -541,6 +537,7 @@ fn handle_add_from_snippet(cli: &Cli, mode: &OutputMode, args: &AddFromSnippetAr
         match_count: Some(match_count as i32),
         file_path: Some(bookmark.file_path.clone()),
         byte_range: Some(format!("{}:{}", generated.byte_range.0, generated.byte_range.1)),
+        line_range: Some(format!("{}:{}", target_start_line, target_end_line)),
         content_hash: Some(content_hash.clone()),
     };
     db.insert_resolution_if_changed(&initial_res, config.storage.max_resolutions_per_bookmark)?;
@@ -653,6 +650,7 @@ fn handle_resolve(cli: &Cli, mode: &OutputMode, args: &ResolveArgs) -> Result<()
             match_count: Some(1),
             file_path: Some(result.file_path.clone()),
             byte_range: Some(format!("{}:{}", result.byte_range.0, result.byte_range.1)),
+            line_range: Some(format!("{}:{}", result.start_line + 1, result.end_line + 1)),
             content_hash: Some(result.content_hash.clone()),
         };
         let config = load_config(cli);
@@ -1056,28 +1054,21 @@ fn handle_preview(cli: &Cli, args: &PreviewArgs) -> Result<()> {
         }
     };
 
-    // Extract file path and byte range from cached resolution
+    // Extract file path and line range from cached resolution
     let file_path = res.file_path.as_ref().unwrap_or(&bm.file_path);
-    let byte_range = res.byte_range.as_ref().ok_or_else(|| {
-        Error::Resolution(format!("resolution {} has no byte range", res.id))
+    let line_range = res.line_range.as_ref().ok_or_else(|| {
+        Error::Resolution(format!("resolution {} has no line range (re-run resolve to populate)", res.id))
     })?;
 
-    // Parse byte range "start:end" and convert to line numbers
-    let parts: Vec<&str> = byte_range.split(':').collect();
+    // Parse line range "start:end" (1-indexed, inclusive)
+    let parts: Vec<&str> = line_range.split(':').collect();
     if parts.len() != 2 {
-        return Err(Error::Resolution(format!("invalid byte range: {byte_range}")));
+        return Err(Error::Resolution(format!("invalid line range: {line_range}")));
     }
-    let start_byte: usize = parts[0].parse()
-        .map_err(|_| Error::Resolution(format!("invalid byte range start: {byte_range}")))?;
-    let end_byte: usize = parts[1].parse()
-        .map_err(|_| Error::Resolution(format!("invalid byte range end: {byte_range}")))?;
-
-    // Read the file and convert byte offsets to line numbers
-    let source = std::fs::read_to_string(file_path)
-        .map_err(|e| Error::Input(format!("cannot read {file_path}: {e}")))?;
-
-    let start_line = source[..start_byte.min(source.len())].lines().count() + 1;
-    let end_line = source[..end_byte.min(source.len())].lines().count();
+    let start_line: usize = parts[0].parse()
+        .map_err(|_| Error::Resolution(format!("invalid line range start: {line_range}")))?;
+    let end_line: usize = parts[1].parse()
+        .map_err(|_| Error::Resolution(format!("invalid line range end: {line_range}")))?;
 
     print_metadata(args, &bm, start_line, &format!("cached ({})", res.method), None);
 
@@ -1093,6 +1084,9 @@ fn handle_preview(cli: &Cli, args: &PreviewArgs) -> Result<()> {
         let context = args.context as usize;
         let range_start = start_line.saturating_sub(context);
         let range_end = end_line + context;
+        // Only read the file if bat fails
+        let source = std::fs::read_to_string(file_path)
+            .map_err(|e| Error::Input(format!("cannot read {file_path}: {e}")))?;
         print_source_range(&source, range_start, range_end, start_line, end_line);
     }
 
@@ -1676,6 +1670,7 @@ fn resolve_batch(
             match_count: Some(1),
             file_path: Some(result.file_path.clone()),
             byte_range: Some(format!("{}:{}", result.byte_range.0, result.byte_range.1)),
+            line_range: Some(format!("{}:{}", result.start_line + 1, result.end_line + 1)),
             content_hash: Some(result.content_hash.clone()),
         };
         let _ = db.insert_resolution_if_changed(&res, config.storage.max_resolutions_per_bookmark);

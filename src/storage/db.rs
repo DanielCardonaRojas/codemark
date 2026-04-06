@@ -7,6 +7,7 @@ use crate::error::Result;
 const MIGRATION_001: &str = include_str!("../../migrations/001_initial.sql");
 const MIGRATION_002: &str = include_str!("../../migrations/002_add_fts.sql");
 const MIGRATION_003: &str = include_str!("../../migrations/003_collection_ordering.sql");
+const MIGRATION_004: &str = include_str!("../../migrations/004_add_line_range.sql");
 
 /// SQLite database wrapper with automatic migrations.
 pub struct Database {
@@ -66,6 +67,11 @@ impl Database {
             self.set_schema_version(3)?;
         }
 
+        if current_version < 4 {
+            self.conn.execute_batch(MIGRATION_004)?;
+            self.set_schema_version(4)?;
+        }
+
         Ok(())
     }
 
@@ -98,14 +104,14 @@ mod tests {
     fn open_in_memory_succeeds() {
         let db = Database::open_in_memory().unwrap();
         let version = db.schema_version();
-        assert_eq!(version, 3);
+        assert_eq!(version, 4);
     }
 
     #[test]
     fn migration_is_idempotent() {
         let db = Database::open_in_memory().unwrap();
         db.run_migrations().unwrap();
-        assert_eq!(db.schema_version(), 3);
+        assert_eq!(db.schema_version(), 4);
     }
 
     #[test]

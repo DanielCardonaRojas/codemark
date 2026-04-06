@@ -104,6 +104,7 @@ pub struct Resolution {
     pub match_count: Option<i32>,
     pub file_path: Option<String>,
     pub byte_range: Option<String>,
+    pub line_range: Option<String>,
     pub content_hash: Option<String>,
 }
 
