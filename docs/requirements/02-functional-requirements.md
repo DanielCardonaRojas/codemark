@@ -117,7 +117,18 @@ Every bookmark stores:
 **Behavior**: Search across `notes` and `context` fields using SQLite FTS or LIKE matching.
 **Output**: Matching bookmarks with relevance-ranked results.
 
-### FR-4.4: Cross-repository search
+### FR-4.4: Semantic search (Phase 2a)
+**Input**: Natural language query string.
+**Behavior**: Generate embedding for the query, perform vector similarity search against bookmark metadata embeddings using `sqlite-vec`. Results are ranked by cosine similarity.
+**Output**: Matching bookmarks ranked by semantic relevance.
+
+**CLI**: `codemark search "how are tokens validated" --semantic`
+
+See [Semantic Search](./10-semantic-search.md) for complete specification.
+
+### FR-4.5: Cross-repository search
+
+### FR-4.6: Cross-repository search
 **Input**: Multiple `--db` paths pointing to databases from different repositories.
 **Behavior**: Open each database, run the query against all of them, merge results. Each result is annotated with a `source` label derived from the database path (typically the repo directory name).
 **Output**: Unified result set with a `source` column, sorted by relevance or creation date.

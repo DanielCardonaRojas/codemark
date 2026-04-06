@@ -101,6 +101,18 @@ CREATE TABLE collection_bookmarks (
 CREATE INDEX idx_cb_bookmark ON collection_bookmarks(bookmark_id);
 ```
 
+### Bookmark Embeddings Table (Phase 2a)
+
+```sql
+-- Virtual table for vector similarity search using sqlite-vec
+CREATE VIRTUAL TABLE bookmark_embeddings USING vec0(
+    bookmark_id TEXT PRIMARY KEY,  -- References bookmarks(id)
+    embedding FLOAT[384]            -- Size depends on model (all-MiniLM-L6-v2 = 384)
+);
+```
+
+The `bookmark_embeddings` table stores vector representations of bookmark metadata for semantic search. Embeddings are generated from concatenated tags, notes, and context fields. This table is created in a migration when semantic search is first used.
+
 **Cascade semantics**:
 - Deleting a **collection** removes the membership rows in `collection_bookmarks`, but **never** the bookmarks themselves.
 - Deleting a **bookmark** removes its membership rows across all collections.
@@ -240,6 +252,7 @@ migrations/
 ## Future Considerations
 
 - **FTS5**: Add a full-text search virtual table over `notes` and `context` for efficient text search at scale.
+- **Semantic Search (Phase 2a)**: ✅ Vector embeddings via `sqlite-vec` for natural language queries. See [Semantic Search](./10-semantic-search.md).
 - **Collections**: ✅ Promoted to core schema — see `collections` and `collection_bookmarks` tables above.
 - **Cross-repo queries**: The `--db` flag accepts multiple paths. Read commands open each database, query them independently, and merge results. Each result is annotated with a `source` label derived from the database path (the parent directory name, e.g., `service-auth`). The schema is unchanged — cross-repo is a query-time concern, not a storage concern. No data is written to secondary databases.
 - **Cross-repo bookmark relationships** (Phase 4): "See also" links between bookmarks, including cross-repo references via `source:id` notation (e.g., `service-auth:a1b2c3d4`).

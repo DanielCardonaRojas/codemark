@@ -295,7 +295,18 @@ Full-text search across notes and context.
 codemark search --note "auth"
 codemark search --context "refactoring"
 codemark search "auth"    # searches both note and context
+codemark search "how are tokens validated" --semantic    # natural language search
+codemark search "network error handling" --semantic --limit 5
+codemark search "database" --semantic --provider openai    # requires OPENAI_API_KEY
 ```
+
+| Flag        | Required | Description                                |
+|-------------|----------|--------------------------------------------|
+| `--semantic`| No       | Enable semantic search using embeddings    |
+| `--provider`| No       | Embedding provider: `local` (default) or `openai` |
+| `--limit`   | No       | Maximum results to return (default: 10)    |
+
+**Semantic search** (Phase 2a) requires embeddings to be generated via `codemark reindex`. See [Semantic Search](./10-semantic-search.md) for details.
 
 ---
 
@@ -417,6 +428,32 @@ Defaults to changes since the last recorded validation commit.
 
 ---
 
+### `codemark reindex`
+
+Generate embeddings for semantic search.
+
+```
+codemark reindex [--force] [--batch-size <n>]
+```
+
+| Flag         | Required | Default | Description                                   |
+|--------------|----------|---------|-----------------------------------------------|
+| `--force`    | No       | false   | Regenerate all embeddings (not just missing)  |
+| `--batch-size`| No      | 32      | Number of embeddings to generate per batch    |
+
+**Example**:
+```bash
+# Generate embeddings for bookmarks that don't have them
+codemark reindex
+
+# Regenerate all embeddings (e.g., after changing model)
+codemark reindex --force
+```
+
+**Exit codes**: 0 = success, 1 = embedding model not found, 2 = database error.
+
+---
+
 ### `codemark gc`
 
 Remove old archived bookmarks.
@@ -473,11 +510,18 @@ codemark search "auth" | fzf --preview 'codemark preview {1}' | cut -f2 | xargs 
 
 # Multi-select bookmarks to resolve
 codemark list --tag api | fzf -m --preview 'codemark preview {1}' | cut -f1 | xargs codemark resolve
+
+# Semantic search via fzf prompt (Phase 2a)
+QUERY=$(fzf --prompt="Search by meaning> " --print-query | head -1)
+codemark search --semantic "$QUERY" --format line | fzf --preview 'codemark preview {1}'
 ```
 
 ### Television
 
-Codemark ships a television channel file at `extras/tv-channel-bookmarks.toml`:
+Codemark ships a television channel file at `extras/tv-channel-bookmarks.toml`. The channel supports two search modes:
+
+**Default mode**: Fuzzy filter over full bookmark list (instant, in-memory)
+**Semantic mode** (Phase 2a): Press `Ctrl-/` to open natural language search prompt
 
 ```toml
 [metadata]

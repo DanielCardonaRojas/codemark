@@ -111,6 +111,52 @@
 
 ---
 
+## Phase 2a: Semantic Search Foundation
+
+**Goal**: Add natural language search capabilities using vector embeddings.
+
+### Deliverables
+1. **sqlite-vec integration**: Load the vector search extension via rusqlite.
+2. **Embedding storage**: `bookmark_embeddings` virtual table with vector column.
+3. **Local embedding model**: Bundle `all-MiniLM-L6-v2` via `candle` or ONNX Runtime.
+4. **Semantic search flag**: `codemark search "..." --semantic` for natural language queries.
+5. **Reindex command**: `codemark reindex` to generate embeddings for existing bookmarks.
+6. **Model configuration**: `.codemark/config.toml` settings for model selection and API keys.
+
+### Acceptance Criteria
+- `codemark search "login flow" --semantic` returns relevant bookmarks even without exact keyword matches.
+- `codemark reindex` generates embeddings for all bookmarks without them.
+- Embeddings are auto-generated on bookmark creation/update.
+- Feature works offline with local model (no network required).
+
+### Estimated Scope
+~1,000–1,500 additional lines.
+
+See [docs/requirements/10-semantic-search.md](./10-semantic-search.md) for complete specification.
+
+---
+
+## Phase 2b: Enhanced Semantic Features
+
+**Goal**: Improve semantic search quality and add hybrid capabilities.
+
+### Deliverables
+1. **OpenAI provider**: Optional `--provider openai` for cloud embeddings.
+2. **Hybrid search**: Combine semantic and keyword scores for better results.
+3. **Similarity display**: Show relevance scores in verbose output.
+4. **Performance optimizations**: Batch embedding, vector caching.
+5. **Per-collection semantic search**: Scope semantic queries to collections.
+
+### Acceptance Criteria
+- `codemark search "..." --semantic --provider openai` works with `OPENAI_API_KEY`.
+- Hybrid search outperforms pure semantic or keyword on common queries.
+- Batch reindex of 1K bookmarks completes in < 30 seconds.
+
+### Estimated Scope
+~500–800 additional lines.
+
+---
+
 ## Phase 3: Hook Integration
 
 **Goal**: Automatic bookmark creation through Claude Code hooks. The note-taking sub-agent.
@@ -194,8 +240,10 @@
 |-----------|-------|------------|----------------------------------------|
 | v0.1.0    | 1     | Phase 1    | Core engine, Swift support, basic CLI  |
 | v0.2.0    | 2     | Phase 2    | Multi-language, search, diff, cross-repo queries |
-| v0.3.0    | 3     | Phase 3    | Hook integration, auto-bookmarking, agent skill |
-| v0.4.0    | 4     | Phase 4    | Cross-file, collections, performance   |
+| v0.2.5    | 2a    | Phase 2a   | Semantic search with local embeddings  |
+| v0.3.0    | 2b    | Phase 2b   | Enhanced semantic features, hybrid search |
+| v0.4.0    | 3     | Phase 3    | Hook integration, auto-bookmarking, agent skill |
+| v0.5.0    | 4     | Phase 4    | Cross-file, collections, performance   |
 | v1.0.0    | —     | Post-Phase 4 | Stable API, documented, battle-tested |
 
 ## Non-Goals (Explicitly Out of Scope)

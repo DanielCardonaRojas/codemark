@@ -19,6 +19,7 @@ Codemark is a **Unix-philosophy CLI tool**: it produces line-oriented, pipe-frie
 5. **Git-native**: Bookmarks capture HEAD context at creation, track across commits, and can report which bookmarks a diff affected. Blame is queried on demand, not cached.
 6. **Collections**: Group related bookmarks into named sets — one per bugfix, feature, or investigation — that can be loaded, resolved, and browsed as a unit.
 7. **Cross-repository queries**: Each repo maintains its own database, but read commands accept multiple `--db` paths to search across repos — enabling developers and agents to draw connections across service boundaries.
+8. **Semantic search** (Phase 2a): Natural language queries like "where's the login logic?" return relevant bookmarks even without exact keyword matches, using vector embeddings stored locally in SQLite.
 
 ## Target Users
 
