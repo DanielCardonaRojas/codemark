@@ -21,6 +21,16 @@ impl OutputMode {
     ///
     /// Priority: --json > --format > auto-detect (TTY=table, pipe=line).
     pub fn resolve(json_flag: bool, format_flag: Option<&str>) -> Self {
+        Self::resolve_with_default(json_flag, format_flag, false)
+    }
+
+    /// Determine the output mode with an option to default to JSON.
+    ///
+    /// When default_json is true and no flags are provided, JSON is used
+    /// instead of TTY-based auto-detection.
+    ///
+    /// Priority: --json > --format > default_json (if true) > auto-detect (TTY=table, pipe=line).
+    pub fn resolve_with_default(json_flag: bool, format_flag: Option<&str>, default_json: bool) -> Self {
         if json_flag {
             return OutputMode::Json;
         }
@@ -31,7 +41,9 @@ impl OutputMode {
             Some("json") => OutputMode::Json,
             Some(template) => OutputMode::Custom(template.to_string()),
             None => {
-                if io::stdout().is_terminal() {
+                if default_json {
+                    OutputMode::Json
+                } else if io::stdout().is_terminal() {
                     OutputMode::Table
                 } else {
                     OutputMode::Line
