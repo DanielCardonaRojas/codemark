@@ -60,7 +60,7 @@ pub enum Command {
     /// List bookmarks with optional filters
     List(ListArgs),
 
-    /// Show a syntax-highlighted preview of a bookmark's resolved code
+    /// Show the current location of a bookmark (file, line, byte range)
     Preview(PreviewArgs),
 
     /// Full-text search across notes and context
@@ -252,40 +252,20 @@ pub struct ListArgs {
 
 #[derive(Debug, clap::Args)]
 pub struct PreviewArgs {
-    /// Bookmark ID or line-format string (extracts ID from first tab-separated field)
+    /// Bookmark ID (full UUID or unambiguous prefix)
     pub id: String,
 
-    /// Lines of context for plain text fallback (bat always shows full file)
-    #[arg(long, default_value = "10")]
-    pub context: u32,
-
-    /// Disable syntax highlighting
-    #[arg(long)]
-    pub no_color: bool,
-
-    /// Omit the metadata header
-    #[arg(long)]
-    pub no_metadata: bool,
-
-    /// Show the stored tree-sitter query alongside the code
-    #[arg(long)]
-    pub show_query: bool,
-
-    /// Re-resolve the bookmark against the current file (slower, uses tree-sitter)
-    #[arg(long, conflicts_with_all = ["at_commit", "at_creation", "resolution"])]
-    pub resolve: bool,
-
-    /// Preview the file at a specific git commit instead of the working copy
-    #[arg(long, conflicts_with_all = ["resolve", "at_creation", "resolution"])]
-    pub at_commit: Option<String>,
-
     /// Preview the file as it was when the bookmark was created
-    #[arg(long, conflicts_with_all = ["resolve", "at_commit", "resolution"])]
-    pub at_creation: bool,
+    #[arg(long)]
+    at_creation: bool,
 
-    /// Preview the file as it was at a specific resolution (use resolution ID from `codemark show`)
-    #[arg(long, conflicts_with_all = ["resolve", "at_commit", "at_creation"])]
-    pub resolution: Option<String>,
+    /// Preview the file at a specific git commit
+    #[arg(long)]
+    at_commit: Option<String>,
+
+    /// Use a specific resolution (by ID) instead of the latest
+    #[arg(long)]
+    resolution_id: Option<String>,
 }
 
 #[derive(Debug, clap::Args)]

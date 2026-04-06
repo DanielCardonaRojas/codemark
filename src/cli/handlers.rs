@@ -954,267 +954,57 @@ fn handle_preview(cli: &Cli, args: &PreviewArgs) -> Result<()> {
     let id = extract_id(&args.id);
     let (bm, db) = find_bookmark_across(&dbs, id)?;
 
-    let lang: Language = bm.language.parse()?;
-    let ts_lang = lang.tree_sitter_language();
-    let cwd = std::env::current_dir()?;
-
-    // Preview at a specific resolution (by ID)
-    if let Some(ref res_id) = args.resolution {
-        let res = db
-            .get_resolution(res_id)?
-            .ok_or_else(|| Error::Input(format!("resolution not found: {res_id}")))?;
-        let commit = res
-            .commit_hash
-            .as_deref()
-            .ok_or_else(|| Error::Resolution("resolution has no commit hash".into()))?;
-        let file_path = res
-            .file_path
-            .as_deref()
-            .unwrap_or(&bm.file_path);
-        let source = git_context::read_file_at_commit(&cwd, commit, file_path)?;
-        return preview_from_source(args, &bm, &source, &ts_lang, Some(commit));
-    }
-
-    // Determine which commit to view the file at
-    let target_commit = if args.at_creation {
-        bm.commit_hash.clone()
+    // Determine which resolution to use
+    let resolution = if let Some(ref res_id) = args.resolution_id {
+        // Use specific resolution by ID
+        db.get_resolution(res_id)?
+            .ok_or_else(|| Error::Input(format!("resolution not found: {res_id}")))?
+    } else if args.at_creation {
+        // Find resolution at creation time
+        let all = db.list_resolutions(&bm.id, 100)?;
+        all.into_iter()
+            .rev()
+            .find(|r| r.commit_hash.as_deref() == bm.commit_hash.as_deref())
+            .ok_or_else(|| Error::Resolution("no resolution found at creation time".into()))?
+    } else if args.at_commit.is_some() {
+        // Find resolution at specific commit
+        let commit = args.at_commit.as_deref().unwrap();
+        let all = db.list_resolutions(&bm.id, 100)?;
+        all.into_iter()
+            .rev()
+            .find(|r| r.commit_hash.as_deref().map(|c| c.starts_with(commit)).unwrap_or(false))
+            .ok_or_else(|| Error::Resolution(format!("no resolution found at commit {commit}")))?
     } else {
-        args.at_commit.clone()
-    };
-
-    // If viewing a historical version, read from git and resolve against that
-    if let Some(ref commit) = target_commit {
-        let source = git_context::read_file_at_commit(&cwd, commit, &bm.file_path)?;
-        return preview_from_source(args, &bm, &source, &ts_lang, Some(commit));
-    }
-
-    // --resolve flag: fresh resolution against current working copy
-    if args.resolve {
-        let mut cache = ParseCache::new(lang)?;
-        let result = resolution::resolve(&bm, &mut cache, &ts_lang)?;
-
-        if result.method == ResolutionMethod::Failed {
-            // Fallback: try the creation commit if available
-            if let Some(ref commit) = bm.commit_hash {
-                eprintln!(
-                    "codemark: bookmark {} could not be resolved in working copy, falling back to commit {}",
+        // Default: most recent resolution
+        let resolutions = db.list_resolutions(&bm.id, 1)?;
+        match resolutions.first() {
+            Some(r) => r.clone(),
+            None => {
+                return Err(Error::Input(format!(
+                    "bookmark {} has no resolution history; run `codemark resolve {}` first",
                     output::short_id(&bm.id),
-                    &commit[..commit.len().min(8)]
-                );
-                match git_context::read_file_at_commit(&cwd, commit, &bm.file_path) {
-                    Ok(source) => {
-                        return preview_from_source(args, &bm, &source, &ts_lang, Some(commit));
-                    }
-                    Err(e) => {
-                        eprintln!("codemark: git fallback failed: {e}");
-                        return Err(Error::Resolution("bookmark could not be resolved".into()));
-                    }
-                }
+                    output::short_id(&bm.id)
+                )));
             }
-            return Err(Error::Resolution("bookmark could not be resolved".into()));
-        }
-
-        // Normal preview from current file
-        let start_line = result.start_line + 1;
-        let end_line = result.end_line + 1;
-
-        print_metadata(args, &bm, start_line, &result.method.to_string(), None);
-
-        // Shell out to bat if available - show full file with highlighted lines
-        let file_path = &result.file_path;
-        let color = if args.no_color { "--color=never" } else { "--color=always" };
-
-        let bat_result = std::process::Command::new("bat")
-            .args(["--style=numbers", color, "--highlight-line", &format!("{start_line}:{end_line}"), file_path])
-            .status();
-
-        if !matches!(bat_result, Ok(s) if s.success()) {
-            // Fallback to plain text - show context around the bookmark
-            let context = args.context as usize;
-            let range_start = start_line.saturating_sub(context);
-            let range_end = end_line + context;
-            let source = std::fs::read_to_string(file_path)
-                .map_err(|e| Error::Input(format!("cannot read {file_path}: {e}")))?;
-            print_source_range(&source, range_start, range_end, start_line, end_line);
-        }
-
-        return Ok(());
-    }
-
-    // Default: use the most recent cached resolution (fast path)
-    let resolutions = db.list_resolutions(&bm.id, 1)?;
-    let res = match resolutions.first() {
-        Some(r) => r,
-        None => {
-            return Err(Error::Input(format!(
-                "bookmark {} has no resolution history; run `codemark resolve {}` first",
-                output::short_id(&bm.id),
-                output::short_id(&bm.id)
-            )));
         }
     };
 
-    // Extract file path and line range from cached resolution
-    let file_path = res.file_path.as_ref().unwrap_or(&bm.file_path);
-    let line_range = res.line_range.as_ref().ok_or_else(|| {
-        Error::Resolution(format!("resolution {} has no line range (re-run resolve to populate)", res.id))
-    })?;
+    // Output JSON with resolution data (using standard envelope)
+    let data = serde_json::json!({
+        "bookmark_id": bm.id,
+        "file_path": resolution.file_path.as_ref().unwrap_or(&bm.file_path),
+        "line_range": resolution.line_range,
+        "byte_range": resolution.byte_range,
+        "status": bm.status,
+        "resolution_method": resolution.method,
+        "resolved_at": resolution.resolved_at,
+        "commit_hash": resolution.commit_hash,
+        "content_hash": resolution.content_hash,
+        "drifted": bm.status == BookmarkStatus::Drifted || bm.status == BookmarkStatus::Stale,
+    });
 
-    // Parse line range "start:end" (1-indexed, inclusive)
-    let parts: Vec<&str> = line_range.split(':').collect();
-    if parts.len() != 2 {
-        return Err(Error::Resolution(format!("invalid line range: {line_range}")));
-    }
-    let start_line: usize = parts[0].parse()
-        .map_err(|_| Error::Resolution(format!("invalid line range start: {line_range}")))?;
-    let end_line: usize = parts[1].parse()
-        .map_err(|_| Error::Resolution(format!("invalid line range end: {line_range}")))?;
-
-    print_metadata(args, &bm, start_line, &format!("cached ({})", res.method), None);
-
-    // Shell out to bat if available - show full file with highlighted lines
-    let color = if args.no_color { "--color=never" } else { "--color=always" };
-
-    let bat_result = std::process::Command::new("bat")
-        .args(["--style=numbers", color, "--highlight-line", &format!("{start_line}:{end_line}"), file_path])
-        .status();
-
-    if !matches!(bat_result, Ok(s) if s.success()) {
-        // Fallback to plain text - show context around the bookmark
-        let context = args.context as usize;
-        let range_start = start_line.saturating_sub(context);
-        let range_end = end_line + context;
-        // Only read the file if bat fails
-        let source = std::fs::read_to_string(file_path)
-            .map_err(|e| Error::Input(format!("cannot read {file_path}: {e}")))?;
-        print_source_range(&source, range_start, range_end, start_line, end_line);
-    }
-
+    write_json_success(&data)?;
     Ok(())
-}
-
-/// Preview a bookmark by resolving the query against a source string (e.g., from git history).
-fn preview_from_source(
-    args: &PreviewArgs,
-    bm: &Bookmark,
-    source: &str,
-    ts_lang: &tree_sitter::Language,
-    commit: Option<&str>,
-) -> Result<()> {
-    // Parse the historical source and run the query
-    let mut parser = tree_sitter::Parser::new();
-    parser
-        .set_language(ts_lang)
-        .map_err(|e| Error::TreeSitter(format!("set language: {e}")))?;
-    let tree = parser
-        .parse(source.as_bytes(), None)
-        .ok_or_else(|| Error::TreeSitter("failed to parse historical source".into()))?;
-
-    let matches = crate::query::matcher::run_query(&bm.query, &tree, source.as_bytes(), ts_lang)?;
-
-    if matches.is_empty() {
-        return Err(Error::Resolution(format!(
-            "query did not match in {} at commit {}",
-            bm.file_path,
-            commit.unwrap_or("?")
-        )));
-    }
-
-    let m = &matches[0];
-    let start_line = m.start_point.0 + 1;
-    let end_line = m.end_point.0 + 1;
-
-    let commit_label = commit.map(|c| &c[..c.len().min(8)]);
-    print_metadata(args, bm, start_line, "historical", commit_label);
-
-    // Try bat via temp file (preserving extension for syntax highlighting)
-    // Show full file with highlighted lines (no line-range restriction)
-    if !args.no_color {
-        if let Some(ext) = std::path::Path::new(&bm.file_path).extension() {
-            let tmp_path = std::env::temp_dir().join(format!("codemark_preview.{}", ext.to_string_lossy()));
-            if std::fs::write(&tmp_path, source).is_ok() {
-                let bat_ok = std::process::Command::new("bat")
-                    .args([
-                        "--style=numbers",
-                        "--color=always",
-                        "--highlight-line", &format!("{start_line}:{end_line}"),
-                    ])
-                    .arg(&tmp_path)
-                    .status()
-                    .is_ok_and(|s| s.success());
-                let _ = std::fs::remove_file(&tmp_path);
-                if bat_ok {
-                    return Ok(());
-                }
-            }
-        }
-    }
-
-    // Fallback to plain text - show context around the bookmark
-    let context = args.context as usize;
-    let range_start = start_line.saturating_sub(context);
-    let range_end = end_line + context;
-    print_source_range(source, range_start, range_end, start_line, end_line);
-
-    Ok(())
-}
-
-fn print_metadata(
-    args: &PreviewArgs,
-    bm: &Bookmark,
-    start_line: usize,
-    method: &str,
-    commit: Option<&str>,
-) {
-    if args.no_metadata {
-        return;
-    }
-    let commit_str = commit
-        .map(|c| format!(" @ {c}"))
-        .unwrap_or_default();
-    println!(
-        "--- {} --- {}:{} --- {}{} ---",
-        output::short_id(&bm.id),
-        bm.file_path,
-        start_line,
-        bm.status,
-        commit_str,
-    );
-    if !bm.tags.is_empty() {
-        println!("Tags: {}", bm.tags.join(", "));
-    }
-    if let Some(ref note) = bm.notes {
-        println!("Note: {note}");
-    }
-    println!("Resolution: {method}");
-    println!("{}", "-".repeat(60));
-
-    if args.show_query {
-        println!("Query:");
-        println!("{}", bm.query);
-        println!("{}", "-".repeat(60));
-    }
-}
-
-fn print_source_range(
-    source: &str,
-    range_start: usize,
-    range_end: usize,
-    highlight_start: usize,
-    highlight_end: usize,
-) {
-    let lines: Vec<&str> = source.lines().collect();
-    for (i, line) in lines.iter().enumerate() {
-        let line_num = i + 1;
-        if line_num >= range_start && line_num <= range_end {
-            let marker = if line_num >= highlight_start && line_num <= highlight_end {
-                ">"
-            } else {
-                " "
-            };
-            println!("{marker} {:>4} | {line}", line_num);
-        }
-    }
 }
 
 fn handle_search(cli: &Cli, mode: &OutputMode, args: &SearchArgs) -> Result<()> {

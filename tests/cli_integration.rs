@@ -388,11 +388,12 @@ fn preview_shows_code() {
     ]);
     let id = json["data"]["id"].as_str().unwrap().to_string();
 
-    let result = cm.run(&["preview", &id[..8], "--no-color"]);
-    assert_eq!(result.status, 0);
-    // Should contain the function name and metadata
-    assert!(result.stdout.contains("create_default_auth_service"));
-    assert!(result.stdout.contains("preview test"));
+    // Preview now outputs JSON with resolution data
+    let result = cm.run_json(&["preview", &id[..8]]);
+    assert_eq!(result["success"], true);
+    // Should contain the file path and line range
+    assert!(result["data"]["file_path"].as_str().unwrap().contains("auth_service.rs"));
+    assert!(result["data"]["line_range"].is_string());
 }
 
 #[test]
@@ -406,40 +407,27 @@ fn preview_uses_cached_resolution_by_default() {
     ]);
     let id = json["data"]["id"].as_str().unwrap().to_string();
 
-    // Preview without --resolve should use cached resolution (fast path)
-    let result = cm.run(&["preview", &id[..8], "--no-color"]);
-    assert_eq!(result.status, 0);
-    // Should indicate it's using cached resolution
-    assert!(result.stdout.contains("cached"));
-    // Should show the function
-    assert!(result.stdout.contains("create_default_auth_service"));
+    // Preview should use cached resolution
+    let result = cm.run_json(&["preview", &id[..8]]);
+    assert_eq!(result["success"], true);
+    // Should have line_range from the cached resolution
+    assert!(result["data"]["line_range"].is_string());
 }
 
 #[test]
-fn preview_with_resolve_flag_does_fresh_resolution() {
+fn preview_shows_drifted_status() {
     let cm = Codemark::new();
 
     let json = cm.run_json(&[
         "add", "--file", &cm.fixture("rust/auth_service.rs"),
-        "--range", "108", "--note", "fresh resolve test",
+        "--range", "108", "--note", "status test",
     ]);
     let id = json["data"]["id"].as_str().unwrap().to_string();
 
-    // Preview with --resolve should do fresh tree-sitter resolution
-    let result = cm.run(&["preview", &id[..8], "--resolve", "--no-color"]);
-    assert_eq!(result.status, 0);
-    // Should show the function (exact method, not cached)
-    assert!(result.stdout.contains("create_default_auth_service"));
-    // The metadata line should show the resolution method (exact/relaxed/etc)
-    // The resolution line should NOT say "cached" since we used --resolve
-    // It should say something like "Resolution: exact" instead
-    assert!(result.stdout.contains("Resolution:"));
-    // Check that "cached" doesn't appear in the Resolution: line
-    for line in result.stdout.lines() {
-        if line.contains("Resolution:") {
-            assert!(!line.contains("cached"), "Resolution line should not contain 'cached': {line}");
-        }
-    }
+    let result = cm.run_json(&["preview", &id[..8]]);
+    assert_eq!(result["success"], true);
+    // Should show the bookmark status
+    assert!(result["data"]["status"].is_string());
 }
 
 #[test]
