@@ -14,8 +14,8 @@
    - `add`, `add-from-snippet`, `resolve`, `show`, `list`, `status`, `validate`, `preview`
    - `search`, `diff`, `gc`, `export`, `import`
    - `collection` subcommand tree: `create`, `delete`, `add`, `remove`, `list`, `show`, `resolve`
-   - Global options: `--db`, `--json`, `--format`, `--verbose`
-3. **Output framework**: TTY vs pipe auto-detection, `--json` envelope (`{success, data, errors, metadata}`), `--format line` tab-separated output, table formatting.
+   - Global options: `--db`, `--format`, `--verbose`
+3. **Output framework**: JSON output by default (`{success, data, errors, metadata}`), `--format line` tab-separated output, `--format table` for human readability.
 4. **Shell completions**: Generated via `clap_complete` for bash, zsh, fish.
 5. **Error types**: Unified error type via `thiserror`, mapping to exit codes (0/1/2/3).
 6. **Stub handlers**: Every command parses args, prints `--help` correctly, and returns a structured "not implemented" response with the correct output format.
@@ -23,9 +23,9 @@
 
 #### Acceptance Criteria
 - `codemark --help` and `codemark <subcommand> --help` render correct documentation for every command.
-- `codemark add --file foo --range 0:10 --lang swift --json` returns `{"success": false, "error": "not implemented"}` with exit code 1.
+- `codemark add --file foo --range 0:10 --lang swift` returns `{"success": false, "error": "not implemented"}` with exit code 1.
 - `codemark collection --help` shows all collection subcommands.
-- `codemark list` detects TTY vs pipe and selects the correct output format.
+- `codemark list` outputs JSON by default, `--format table` produces human-readable output, `--format line` produces tab-separated output.
 - Shell completions generate without errors.
 - `cargo clippy` and `cargo test` pass.
 
@@ -69,9 +69,9 @@
 - End-to-end: `add` → modify file → `resolve` returns the correct location.
 - Round-trip: `add` → `resolve` returns the same location (without modifications).
 - `validate` correctly transitions bookmarks through active → drifted → stale.
-- `codemark list | fzf --preview 'codemark preview {1}'` provides a working interactive browsing experience.
+- `codemark list --format line | fzf --preview 'codemark preview {1}'` provides a working interactive browsing experience.
 - `codemark preview --show-query <id>` displays the tree-sitter query alongside its resolved code.
-- Piped output auto-detects non-TTY and produces line format suitable for fzf/tv/grep.
+- `--format line` produces tab-separated output suitable for fzf/tv/grep.
 - Collections: create a collection, add bookmarks, resolve the collection as a unit, delete the collection without affecting bookmarks.
 - Benchmark: single-bookmark resolution < 50ms on a 5K-line file.
 

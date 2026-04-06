@@ -22,41 +22,25 @@ use crate::storage::db::Database;
 
 /// Dispatch a parsed CLI command to its handler.
 pub fn dispatch(cli: &Cli) -> Result<()> {
+    // JSON is the default output format for all commands
+    let mode = OutputMode::resolve_with_default(false, cli.format.as_deref(), true);
     match &cli.command {
-        Command::Show(args) => {
-            let mode = OutputMode::resolve_with_default(cli.json, cli.format.as_deref(), true);
-            handle_show(cli, &mode, args)
-        }
-        Command::Collection(args) => {
-            let mode = match &args.command {
-                CollectionCommand::List(_) | CollectionCommand::Show(_) => {
-                    OutputMode::resolve_with_default(cli.json, cli.format.as_deref(), true)
-                }
-                _ => OutputMode::resolve(cli.json, cli.format.as_deref()),
-            };
-            dispatch_collection(cli, &mode, args)
-        }
-        _ => {
-            let mode = OutputMode::resolve(cli.json, cli.format.as_deref());
-            match &cli.command {
-                Command::Add(args) => handle_add(cli, &mode, args),
-                Command::AddFromSnippet(args) => handle_add_from_snippet(cli, &mode, args),
-                Command::Resolve(args) => handle_resolve(cli, &mode, args),
-                Command::Show(args) => handle_show(cli, &mode, args), // unreachable, handled above
-                Command::Remove(args) => handle_remove(cli, &mode, args),
-                Command::Validate(args) => handle_validate(cli, &mode, args),
-                Command::Status => handle_status(cli, &mode),
-                Command::List(args) => handle_list(cli, &mode, args),
-                Command::Preview(args) => handle_preview(cli, args),
-                Command::Search(args) => handle_search(cli, &mode, args),
-                Command::Collection(args) => dispatch_collection(cli, &mode, args), // unreachable, handled above
-                Command::Diff(args) => handle_diff(cli, &mode, args),
-                Command::Gc(args) => handle_gc(cli, &mode, args),
-                Command::Export(args) => handle_export(cli, args),
-                Command::Import(args) => handle_import(cli, &mode, args),
-                Command::Completions(args) => handle_completions(args),
-            }
-        }
+        Command::Add(args) => handle_add(cli, &mode, args),
+        Command::AddFromSnippet(args) => handle_add_from_snippet(cli, &mode, args),
+        Command::Resolve(args) => handle_resolve(cli, &mode, args),
+        Command::Show(args) => handle_show(cli, &mode, args),
+        Command::Remove(args) => handle_remove(cli, &mode, args),
+        Command::Validate(args) => handle_validate(cli, &mode, args),
+        Command::Status => handle_status(cli, &mode),
+        Command::List(args) => handle_list(cli, &mode, args),
+        Command::Preview(args) => handle_preview(cli, args),
+        Command::Search(args) => handle_search(cli, &mode, args),
+        Command::Collection(args) => dispatch_collection(cli, &mode, args),
+        Command::Diff(args) => handle_diff(cli, &mode, args),
+        Command::Gc(args) => handle_gc(cli, &mode, args),
+        Command::Export(args) => handle_export(cli, args),
+        Command::Import(args) => handle_import(cli, &mode, args),
+        Command::Completions(args) => handle_completions(args),
     }
 }
 

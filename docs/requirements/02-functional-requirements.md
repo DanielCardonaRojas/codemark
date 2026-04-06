@@ -186,10 +186,19 @@ Blame data (per-line author, commit, message) is **not stored** in the bookmark.
 
 All listing commands support multiple output modes to serve both human and machine consumers:
 
-### FR-7.1: Table output (default for TTY)
-Human-readable table with columns. Automatically selected when stdout is a terminal.
+### FR-7.1: JSON output (default)
+Machine-readable JSON. Primary interface for agent consumption.
 
-### FR-7.2: Line output (`--format line`)
+JSON output includes:
+- `success`: boolean
+- `data`: command-specific payload
+- `errors`: array of error objects (if any)
+- `metadata`: timing, bookmark counts, resolution statistics
+
+### FR-7.2: Table output (`--format table`)
+Human-readable table with columns.
+
+### FR-7.3: Line output (`--format line`)
 One bookmark per line, tab-separated fields. Designed for piping into fzf, television, grep, awk, and shell scripts. This is the **primary integration surface** for interactive tooling.
 
 **Format**: `<id>\t<file>:<line>\t<status>\t<tags>\t<note_truncated>`
@@ -200,15 +209,6 @@ a1b2c3d4	src/auth/middleware.swift:42	active	auth,middleware	JWT validation entr
 f5e6d7c8	src/api/router.swift:118	drifted	api,routing	Main request dispatcher
 ```
 
-### FR-7.3: JSON output (`--json`)
-Machine-readable JSON. Primary interface for agent consumption.
-
-JSON output includes:
-- `success`: boolean
-- `data`: command-specific payload
-- `errors`: array of error objects (if any)
-- `metadata`: timing, bookmark counts, resolution statistics
-
 ### FR-7.4: Custom format (`--format <template>`)
 User-defined output template using field placeholders: `{id}`, `{file}`, `{line}`, `{col}`, `{status}`, `{tags}`, `{note}`, `{query}`, `{node_type}`.
 
@@ -217,8 +217,8 @@ Example:
 codemark list --format '{file}:{line}  # {note}'
 ```
 
-### FR-7.5: Auto-detection
-When stdout is a TTY, use table output. When piped, use line output. `--json` and `--format` override auto-detection.
+### FR-7.5: Format selection
+JSON is the default output format. Use `--format table` for human-readable tables or `--format line` for tool integration (fzf, television, grep).
 
 ---
 

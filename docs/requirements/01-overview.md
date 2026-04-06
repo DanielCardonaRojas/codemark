@@ -101,6 +101,6 @@ Next session:
 2. Resolution completes in < 50ms for a single bookmark on a medium-sized codebase.
 3. The CLI is a single static binary with no runtime dependencies beyond the SQLite file.
 4. A developer can fuzzy-search bookmarks and preview resolved code in < 1 second via fzf or television.
-5. An agent can query "what do I know about auth?" and get back current file locations with semantic context.
+5. An agent can query "what do I know about auth?" and get back current file locations with semantic context (JSON output by default).
 6. Stale bookmarks are surfaced, not silently wrong.
-7. All list/search output is pipe-friendly by default — one entry per line, parseable by standard Unix tools.
+7. All commands output JSON by default for agent consumption, with `--format line` and `--format table` for human use.

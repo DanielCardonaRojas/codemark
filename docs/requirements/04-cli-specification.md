@@ -3,11 +3,10 @@
 ## Global Options
 
 ```
-codemark [--db <path>]... [--json] [--format <fmt>] [--verbose] <subcommand>
+codemark [--db <path>]... [--format <fmt>] [--verbose] <subcommand>
 
 --db <path>       Database location (default: .codemark/codemark.db); repeatable for cross-repo queries
---json            Output machine-readable JSON (shorthand for --format json)
---format <fmt>    Output format: table (default for TTY), line (default for pipe), json, or a custom template
+--format <fmt>    Output format: json (default), table, or line
 --verbose         Enable debug-level logging to stderr
 --help            Show help
 --version         Show version
@@ -210,23 +209,25 @@ codemark list [--tag <tag>] [--status <status>] [--file <path>] [--limit <n>]
 | `--limit`   | No       | Maximum results to return                  |
 | `--format`  | No       | Output format (see Global Options)         |
 
-**TTY output** (default): Table with columns: ID (8-char prefix), File, Status, Tags, Note (truncated), Last Resolved.
+**JSON output** (default): Array of bookmark objects with all fields.
 
-**Pipe output** (default when piped): Line format, one bookmark per line, tab-separated:
+**Table output**: Human-readable table with columns: ID (8-char prefix), File, Status, Tags, Note (truncated), Last Resolved.
+
+**Line output**: Tab-separated format, one bookmark per line:
 ```
 <id>\t<file>:<line>\t<status>\t<tags>\t<note>
 ```
 
 **Integration examples**:
 ```bash
-# fzf with live preview
-codemark list | fzf --preview 'codemark preview {1}'
+# fzf with live preview (use --format line for compatibility)
+codemark list --format line | fzf --preview 'codemark preview {1}'
 
 # television ad-hoc
-tv --source-command 'codemark list' --preview-command 'codemark preview {1}'
+tv --source-command 'codemark list --format line' --preview-command 'codemark preview {1}'
 
-# filter with grep, then resolve
-codemark list | grep auth | cut -f1 | xargs -I{} codemark resolve {}
+# jq processing
+codemark list | jq '.[] | select(.tags[]? == "auth")'
 
 # custom format for editor integration
 codemark list --format '{file}:{line}:{col}' | head -5
@@ -377,9 +378,11 @@ codemark collection list [--bookmark <id>]
 
 List all collections (or collections containing a specific bookmark).
 
-**TTY output**: Table with columns: Name, Description, Bookmark Count, Created.
+**JSON output** (default): Array of collection objects.
 
-**Pipe output**: `<name>\t<count>\t<description>`
+**Table output**: Columns: Name, Description, Bookmark Count, Created.
+
+**Line output**: Tab-separated format `<name>\t<count>\t<description>`
 
 ---
 
@@ -389,7 +392,7 @@ List all collections (or collections containing a specific bookmark).
 codemark collection show <name> [--format <fmt>]
 ```
 
-List bookmarks in a collection. Supports all output modes from `codemark list`.
+List bookmarks in a collection. Supports all output formats from `codemark list`.
 
 ---
 
@@ -570,10 +573,10 @@ Then: `tv bookmarks`
 
 ```bash
 # Quick bookmark browser
-alias cb='codemark list | fzf --preview "codemark preview {1}" --preview-window=right:60%'
+alias cb='codemark list --format line | fzf --preview "codemark preview {1}" --preview-window=right:60%'
 
 # Open bookmarked code in editor
-alias cbo='codemark list | fzf --preview "codemark preview {1}" | cut -f2 | xargs $EDITOR'
+alias cbo='codemark list --format line | fzf --preview "codemark preview {1}" | cut -f1 | xargs -I{} codemark resolve {} --format "{file}:{line}" | xargs $EDITOR'
 ```
 
 ## Environment Variables
