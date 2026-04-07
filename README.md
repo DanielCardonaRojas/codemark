@@ -1,5 +1,8 @@
 # Codemark
 
+[![crates.io](https://img.shields.io/crates/v/codemark)](https://crates.io/crates/codemark)
+[![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
+
 A structural bookmarking system for code. Instead of fragile file:line references, Codemark stores **tree-sitter queries** that identify code by its AST shape. Bookmarks survive renames, refactors, and reformatting through layered resolution.
 
 ## Why
@@ -46,8 +49,8 @@ codemark resolve a1b2
 # List all bookmarks
 codemark list
 
-# Browse interactively with fzf
-codemark list | fzf --preview 'codemark preview {1}'
+# Preview with bat (syntax highlighted)
+codemark preview a1b2 | jq -r '"bat --highlight-line \(.data.line_range) \(.data.file_path)"' | sh
 ```
 
 ## Supported languages
@@ -61,6 +64,7 @@ codemark list | fzf --preview 'codemark preview {1}'
 | Go | `.go` |
 | Java | `.java` |
 | C# | `.cs` |
+| Dart | `.dart` |
 
 Language is auto-detected from file extension. Use `--lang` to override.
 
@@ -80,7 +84,7 @@ codemark add --file src/auth.rs --range b1024:1280
 codemark add --file src/auth.rs --hunk "@@ -42,7 +42,9 @@"
 
 # From a code snippet on stdin
-echo 'func validateToken' | codemark add-from-snippet --file src/auth.swift
+echo 'func validateToken' | codemark add-from-snippet --file src/auth.rs
 ```
 
 Options: `--tag <tag>` (repeatable), `--note "why this matters"`, `--created-by agent`, `--dry-run`
@@ -93,6 +97,32 @@ codemark resolve --tag auth                    # batch by tag
 codemark resolve --lang rust --status active   # batch by language + status
 ```
 
+### Previewing bookmarks
+
+```bash
+codemark preview a1b2                          # JSON: file path, line range, byte range, status
+codemark preview a1b2 --at-commit abc123       # preview as it was at a specific commit
+codemark preview a1b2 --at-creation            # preview as it was when created
+codemark preview a1b2 --resolution-id <id>     # preview at a specific resolution
+```
+
+Preview outputs JSON for easy piping to your editor or viewer:
+
+```bash
+# View with bat (syntax highlighted, with extension detection)
+codemark preview a1b2 | jq -r '"\(.data.file_path)\n\(.data.line_range)"' | xargs -n2 sh -c 'bat --highlight-line "$2" -l "${1##*.}" "$1"' _
+
+# Or simpler (no syntax highlighting):
+codemark preview a1b2 | jq -r '"--highlight-line \(.data.line_range) \(.data.file_path)"' | xargs bat
+
+# Open in vim/nvim at the bookmarked line
+codemark preview a1b2 | jq -r '"\(.data.file_path) +\(.data.line_range | split(":")[0])"' | xargs nvim
+
+# Open in other editors (file:line format)
+codemark preview a1b2 | jq -r '"\(.data.file_path):\(.data.line_range | split(":")[0])"' | xargs code
+codemark preview a1b2 | jq -r '"\(.data.file_path):\(.data.line_range | split(":")[0])"' | xargs hx
+```
+
 ### Browsing and searching
 
 ```bash
@@ -101,9 +131,6 @@ codemark list --tag auth --lang swift          # filtered
 codemark list --author agent                   # only agent-created bookmarks
 codemark search "authentication"               # full-text search in notes/context
 codemark show a1b2                             # full details + resolution history
-codemark preview a1b2                          # fast: uses cached resolution
-codemark preview a1b2 --resolve                # slow: fresh tree-sitter resolution
-codemark preview a1b2 --show-query             # also show the tree-sitter query
 ```
 
 ### Health management
@@ -149,12 +176,24 @@ codemark import bookmarks.json                 # skips duplicates
 
 ## Output modes
 
-| Mode | When | Format |
-|------|------|--------|
-| Table | TTY (default) | Human-readable columns |
-| Line | Piped (default) | `id\tfile\tstatus\ttags\tnote` — for fzf/grep/awk |
-| JSON | `--json` | `{success, data, error}` envelope |
-| Custom | `--format '{file}:{line}'` | Template with `{id}`, `{file}`, `{status}`, `{tags}`, `{note}`, `{query}` |
+All commands output **JSON by default** (optimized for AI agents and scripting).
+
+```bash
+codemark list                    # JSON array of bookmarks
+codemark list --format table     # Human-readable table
+codemark list --format line      # Tab-separated (for fzf, tv, grep)
+codemark list --format tv        # TV format with line numbers
+```
+
+| Command | Default | Available formats |
+|---------|---------|-------------------|
+| `list` | JSON | table, line, tv, custom template |
+| `show` | JSON | table |
+| `resolve` | JSON | table, line |
+| `status` | JSON | table |
+| `collection list` | JSON | table, line |
+| `collection show` | JSON | table, line, tv |
+| `preview` | JSON | JSON only |
 
 ## Integration
 
@@ -162,22 +201,24 @@ codemark import bookmarks.json                 # skips duplicates
 
 ```bash
 # Browse with live preview
-codemark list | fzf --preview 'codemark preview {1}' --preview-window=right:60%
+codemark list --format tv | fzf --preview 'bat --highlight-line {3} $(codemark preview {1} | jq -r .data.file_path)'
 
-# Open in editor
-codemark list | fzf --preview 'codemark preview {1}' | cut -f2 | xargs $EDITOR
+# Or view the JSON preview data
+codemark list --format tv | fzf --preview 'codemark preview {1} | jq'
+
+# Open selected bookmark in nvim
+codemark list --format tv | fzf | cut -f1 | while read id; do
+  codemark preview "$id" | jq -r '"\(.data.file_path) +\(.data.line_range | split(":")[0])"' | xargs nvim
+done
 ```
 
 ### Shell completions
 
 ```bash
 # Zsh — write to any directory in your fpath, then restart shell
-# Check your fpath with: echo $fpath
 mkdir -p ~/.zsh/completions
 codemark completions zsh > ~/.zsh/completions/_codemark
-# Ensure this is in your .zshrc (before compinit):
-#   fpath=(~/.zsh/completions $fpath)
-#   autoload -Uz compinit && compinit
+# Add to .zshrc: fpath=(~/.zsh/completions $fpath)
 
 # Bash
 mkdir -p ~/.local/share/bash-completion/completions
@@ -197,11 +238,10 @@ cp extras/codemark.toml ~/.config/television/cable/codemark.toml
 tv codemark
 
 # Features:
-# - Ctrl+S: cycle between all/stale/active bookmarks
-# - Enter: resolve and open selected bookmark in $EDITOR
-# - Ctrl+R: re-resolve bookmark (updates cache)
+# - Preview: shows file with bat at bookmarked line range
+# - Ctrl+E: open in $EDITOR
+# - Ctrl+R: re-resolve bookmark
 # - Ctrl+D: show full details
-# - Preview panel shows full file with bookmark highlighted (uses cached resolution, fast)
 ```
 
 ### Claude Code
