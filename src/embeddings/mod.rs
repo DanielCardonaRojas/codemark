@@ -11,4 +11,4 @@ pub mod vec_store;
 pub use config::EmbeddingConfig;
 pub use local::LocalEmbeddingProvider;
 pub use provider::{EmbeddingProvider, EmbeddingResult};
-pub use vec_store::{VecStore, VecStoreEntry};
+pub use vec_store::{SearchResult, VecStore, VecStoreEntry};

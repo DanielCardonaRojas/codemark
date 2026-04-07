@@ -1,10 +1,10 @@
-//! Vector storage for embeddings.
+//! Vector storage for embeddings using sqlite-vec.
 //!
-//! This module provides storage for vector embeddings. The full implementation
-//! will use sqlite-vec for efficient similarity search. For now, we provide
-//! the abstraction layer.
+//! This module provides storage for vector embeddings with efficient
+//! similarity search using the sqlite-vec extension.
 
 use rusqlite::{Connection, Result as SqliteResult};
+use zerocopy::IntoBytes;
 
 /// Entry in the vector store.
 #[derive(Debug, Clone)]
@@ -13,42 +13,53 @@ pub struct VecStoreEntry {
     pub embedding: Vec<f32>,
 }
 
-/// Vector store for embeddings.
+/// Result from a similarity search.
+#[derive(Debug, Clone)]
+pub struct SearchResult {
+    pub bookmark_id: String,
+    pub distance: f64,
+}
+
+/// Vector store for embeddings using sqlite-vec.
 ///
-/// TODO: Integrate sqlite-vec extension for efficient similarity search.
-/// Currently provides a placeholder implementation.
+/// Uses the sqlite-vec extension for efficient vector similarity search.
 pub struct VecStore {
-    /// Whether the vec0 extension is loaded.
-    extension_loaded: bool,
+    /// Dimensions of the embedding vectors.
+    dimensions: usize,
 }
 
 impl VecStore {
-    /// Create a new VecStore.
-    pub fn new() -> Self {
-        VecStore {
-            extension_loaded: false,
+    /// Initialize the sqlite-vec extension.
+    ///
+    /// This must be called once before creating any connections that will
+    /// use vec0 virtual tables. Uses sqlite3_auto_extension to automatically
+    /// load the extension for all future connections.
+    pub fn init_extension() {
+        use rusqlite::ffi::sqlite3_auto_extension;
+        use sqlite_vec::sqlite3_vec_init;
+
+        unsafe {
+            sqlite3_auto_extension(Some(std::mem::transmute(
+                sqlite3_vec_init as *const (),
+            )));
         }
     }
 
-    /// Load the sqlite-vec extension.
+    /// Create a new VecStore.
     ///
-    /// Returns true if successful, false otherwise.
-    pub fn load_extension(&mut self, _conn: &mut Connection) -> SqliteResult<bool> {
-        // TODO: Implement sqlite-vec loading
-        // For now, return false to indicate extension not available
-        Ok(false)
+    /// Panics if init_extension() was not called first.
+    pub fn new(dimensions: usize) -> Self {
+        VecStore { dimensions }
     }
 
-    /// Create the bookmark_embeddings table.
-    pub fn create_table(&self, conn: &mut Connection, dimensions: usize) -> SqliteResult<()> {
-        // Fallback: create a regular table without vec0
-        // This will be replaced with vec0 virtual table once extension is loaded
+    /// Create the bookmark_embeddings table as a vec0 virtual table.
+    pub fn create_table(&self, conn: &mut Connection) -> SqliteResult<()> {
+        let dim = self.dimensions;
         conn.execute(
             &format!(
-                "CREATE TABLE IF NOT EXISTS bookmark_embeddings (
+                "CREATE VIRTUAL TABLE IF NOT EXISTS bookmark_embeddings USING vec0(
                     bookmark_id TEXT PRIMARY KEY,
-                    embedding BLOB NOT NULL,
-                    dimensions INTEGER NOT NULL DEFAULT {dimensions}
+                    embedding float[{dim}]
                 )"
             ),
             [],
@@ -57,42 +68,57 @@ impl VecStore {
     }
 
     /// Insert an embedding for a bookmark.
-    pub fn insert(&self, conn: &mut Connection, entry: &VecStoreEntry) -> SqliteResult<()> {
-        // Convert f32 vector to bytes
-        let bytes: Vec<u8> = entry
-            .embedding
-            .iter()
-            .flat_map(|&v| v.to_le_bytes())
-            .collect();
+    pub fn insert(&self, conn: &Connection, entry: &VecStoreEntry) -> SqliteResult<()> {
+        let expected_dim = self.dimensions;
+        let actual_dim = entry.embedding.len();
+
+        if actual_dim != expected_dim {
+            return Err(rusqlite::Error::InvalidParameterName(format!(
+                "Embedding dimension mismatch: expected {expected_dim}, got {actual_dim}"
+            )));
+        }
 
         conn.execute(
-            "INSERT OR REPLACE INTO bookmark_embeddings (bookmark_id, embedding, dimensions)
-             VALUES (?1, ?2, ?3)",
-            (
-                &entry.bookmark_id,
-                &bytes,
-                entry.embedding.len() as i32,
-            ),
+            "INSERT OR REPLACE INTO bookmark_embeddings (bookmark_id, embedding)
+             VALUES (?1, ?2)",
+            (&entry.bookmark_id, entry.embedding.as_bytes()),
         )?;
         Ok(())
     }
 
     /// Insert embeddings in batch.
     pub fn insert_batch(&self, conn: &mut Connection, entries: &[VecStoreEntry]) -> SqliteResult<()> {
-        let mut tx = conn.unchecked_transaction()?;
+        let tx = conn.unchecked_transaction()?;
         for entry in entries {
-            self.insert(&mut tx, entry)?;
+            // Inline insert logic for transaction
+            let expected_dim = self.dimensions;
+            let actual_dim = entry.embedding.len();
+
+            if actual_dim != expected_dim {
+                return Err(rusqlite::Error::InvalidParameterName(format!(
+                    "Embedding dimension mismatch: expected {expected_dim}, got {actual_dim}"
+                )));
+            }
+
+            tx.execute(
+                "INSERT OR REPLACE INTO bookmark_embeddings (bookmark_id, embedding)
+                 VALUES (?1, ?2)",
+                (&entry.bookmark_id, entry.embedding.as_bytes()),
+            )?;
         }
         tx.commit()?;
         Ok(())
     }
 
     /// Get an embedding for a bookmark.
+    ///
+    /// Note: This retrieves the raw vector. For similarity search, use search().
     pub fn get(&self, conn: &Connection, bookmark_id: &str) -> SqliteResult<Option<Vec<f32>>> {
         let mut stmt = conn.prepare(
             "SELECT embedding FROM bookmark_embeddings WHERE bookmark_id = ?1",
         )?;
 
+        // Get the blob and convert to f32
         let result = stmt.query_row([bookmark_id], |row| {
             let blob: Vec<u8> = row.get(0)?;
 
@@ -123,25 +149,42 @@ impl VecStore {
 
     /// Find similar bookmarks by vector similarity.
     ///
-    /// TODO: Implement proper similarity search with sqlite-vec.
-    /// Currently returns all bookmarks without ranking.
+    /// Returns bookmark IDs ordered by distance (closest first).
+    /// Uses KNN search with the vec0 MATCH operator.
     pub fn search(
         &self,
         conn: &Connection,
-        _query_embedding: &[f32],
+        query_embedding: &[f32],
         limit: usize,
-    ) -> SqliteResult<Vec<String>> {
-        let mut stmt = conn.prepare(
-            &format!(
-                "SELECT bookmark_id FROM bookmark_embeddings LIMIT {limit}"
-            ),
-        )?;
+    ) -> SqliteResult<Vec<SearchResult>> {
+        if query_embedding.len() != self.dimensions {
+            return Err(rusqlite::Error::InvalidParameterName(format!(
+                "Query embedding dimension mismatch: expected {}, got {}",
+                self.dimensions,
+                query_embedding.len()
+            )));
+        }
 
-        let bookmark_ids = stmt
-            .query_map([], |row| row.get::<_, String>(0))?
+        let sql = format!(
+            "SELECT bookmark_id, distance
+             FROM bookmark_embeddings
+             WHERE embedding MATCH ?1
+             ORDER BY distance
+             LIMIT {limit}"
+        );
+
+        let mut stmt = conn.prepare(&sql)?;
+
+        let results = stmt
+            .query_map([query_embedding.as_bytes()], |row| {
+                Ok(SearchResult {
+                    bookmark_id: row.get(0)?,
+                    distance: row.get(1)?,
+                })
+            })?
             .collect::<Result<Vec<_>, _>>()?;
 
-        Ok(bookmark_ids)
+        Ok(results)
     }
 
     /// Count embeddings in the store.
@@ -167,15 +210,9 @@ impl VecStore {
         Ok(ids)
     }
 
-    /// Check if the extension is loaded.
-    pub fn is_extension_loaded(&self) -> bool {
-        self.extension_loaded
-    }
-}
-
-impl Default for VecStore {
-    fn default() -> Self {
-        Self::new()
+    /// Returns the dimensionality of embeddings in this store.
+    pub fn dimensions(&self) -> usize {
+        self.dimensions
     }
 }
 
@@ -185,7 +222,100 @@ mod tests {
 
     #[test]
     fn test_vec_store_creation() {
-        let store = VecStore::new();
-        assert!(!store.is_extension_loaded());
+        let store = VecStore::new(384);
+        assert_eq!(store.dimensions(), 384);
+    }
+
+    mod integration_tests {
+        use super::super::*;
+        use rusqlite::Connection;
+
+        #[test]
+        fn test_vec_store_integration() {
+            // Initialize the extension once
+            VecStore::init_extension();
+
+            let mut conn = Connection::open_in_memory().unwrap();
+            let store = VecStore::new(4);
+
+            // Create table
+            store.create_table(&mut conn).unwrap();
+
+            // Insert embeddings
+            let entries = vec![
+                VecStoreEntry {
+                    bookmark_id: "bookmark1".to_string(),
+                    embedding: vec![0.1, 0.1, 0.1, 0.1],
+                },
+                VecStoreEntry {
+                    bookmark_id: "bookmark2".to_string(),
+                    embedding: vec![0.2, 0.2, 0.2, 0.2],
+                },
+                VecStoreEntry {
+                    bookmark_id: "bookmark3".to_string(),
+                    embedding: vec![0.9, 0.9, 0.9, 0.9],
+                },
+            ];
+
+            store.insert_batch(&mut conn, &entries).unwrap();
+
+            // Test count
+            assert_eq!(store.count(&conn).unwrap(), 3);
+
+            // Test search - query close to bookmark2
+            let query = vec![0.3, 0.3, 0.3, 0.3];
+            let results = store.search(&conn, &query, 3).unwrap();
+
+            assert_eq!(results.len(), 3);
+            // bookmark2 should be closest (smallest distance)
+            assert_eq!(results[0].bookmark_id, "bookmark2");
+            // bookmark3 should be farthest
+            assert_eq!(results[2].bookmark_id, "bookmark3");
+
+            // Verify distances are in ascending order
+            assert!(results[0].distance < results[1].distance);
+            assert!(results[1].distance < results[2].distance);
+        }
+
+        #[test]
+        fn test_vec_store_get() {
+            VecStore::init_extension();
+
+            let mut conn = Connection::open_in_memory().unwrap();
+            let store = VecStore::new(3);
+
+            store.create_table(&mut conn).unwrap();
+
+            let entry = VecStoreEntry {
+                bookmark_id: "test".to_string(),
+                embedding: vec![1.0, 2.0, 3.0],
+            };
+
+            store.insert(&conn, &entry).unwrap();
+
+            let retrieved = store.get(&conn, "test").unwrap().unwrap();
+            assert_eq!(retrieved, vec![1.0, 2.0, 3.0]);
+        }
+
+        #[test]
+        fn test_vec_store_delete() {
+            VecStore::init_extension();
+
+            let mut conn = Connection::open_in_memory().unwrap();
+            let store = VecStore::new(2);
+
+            store.create_table(&mut conn).unwrap();
+
+            let entry = VecStoreEntry {
+                bookmark_id: "to_delete".to_string(),
+                embedding: vec![1.0, 2.0],
+            };
+
+            store.insert(&conn, &entry).unwrap();
+            assert_eq!(store.count(&conn).unwrap(), 1);
+
+            store.delete(&mut conn, "to_delete").unwrap();
+            assert_eq!(store.count(&conn).unwrap(), 0);
+        }
     }
 }
