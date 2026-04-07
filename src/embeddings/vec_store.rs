@@ -88,7 +88,7 @@ impl VecStore {
         }
 
         conn.execute(
-            "INSERT OR REPLACE INTO bookmark_embeddings (bookmark_id, embedding)
+            "INSERT OR IGNORE INTO bookmark_embeddings (bookmark_id, embedding)
              VALUES (?1, ?2)",
             (&entry.bookmark_id, entry.embedding.as_bytes()),
         )?;
@@ -110,7 +110,7 @@ impl VecStore {
             }
 
             tx.execute(
-                "INSERT OR REPLACE INTO bookmark_embeddings (bookmark_id, embedding)
+                "INSERT OR IGNORE INTO bookmark_embeddings (bookmark_id, embedding)
                  VALUES (?1, ?2)",
                 (&entry.bookmark_id, entry.embedding.as_bytes()),
             )?;

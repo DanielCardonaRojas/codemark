@@ -1166,7 +1166,7 @@ fn handle_semantic_search(cli: &Cli, mode: &OutputMode, query: &str, args: &Sear
                 })
             })
             .collect();
-        output::write_json(&data)?;
+        output::write_json_success(&data)?;
     } else {
         // Table output
         use comfy_table::Table;
