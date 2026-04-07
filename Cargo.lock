@@ -383,6 +383,7 @@ dependencies = [
  "sqlite-vec",
  "thiserror 2.0.18",
  "tokenizers",
+ "tokio",
  "toml",
  "tree-sitter",
  "tree-sitter-c-sharp",

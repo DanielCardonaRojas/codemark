@@ -62,6 +62,9 @@ pub enum Command {
     /// Full-text search across notes and context
     Search(SearchArgs),
 
+    /// Rebuild semantic search embeddings for all bookmarks
+    Reindex(ReindexArgs),
+
     /// Manage named groups of bookmarks
     Collection(CollectionArgs),
 
@@ -277,6 +280,14 @@ pub struct SearchArgs {
     #[arg(long)]
     pub context: Option<String>,
 
+    /// Use semantic search (vector embeddings)
+    #[arg(long)]
+    pub semantic: bool,
+
+    /// Maximum results to return (default: 20)
+    #[arg(long, default_value = "20")]
+    pub limit: usize,
+
     /// Filter by language (swift, rust, typescript, python)
     #[arg(long)]
     pub lang: Option<String>,
@@ -288,6 +299,21 @@ pub struct SearchArgs {
     /// Filter by collection
     #[arg(long)]
     pub collection: Option<String>,
+}
+
+#[derive(Debug, clap::Args)]
+pub struct ReindexArgs {
+    /// Only reindex bookmarks for this language
+    #[arg(long)]
+    pub lang: Option<String>,
+
+    /// Only reindex this collection
+    #[arg(long)]
+    pub collection: Option<String>,
+
+    /// Show progress while reindexing
+    #[arg(long, short = 'v')]
+    pub verbose: bool,
 }
 
 #[derive(Debug, clap::Args)]

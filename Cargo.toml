@@ -9,6 +9,7 @@ license = "MIT"
 async-trait = "0.1"
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4", features = ["derive", "env"] }
+tokio = { version = "1", features = ["rt"] }
 clap_complete = "4"
 comfy-table = "7"
 candle-core = "0.8"

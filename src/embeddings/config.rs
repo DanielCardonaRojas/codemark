@@ -1,6 +1,7 @@
 //! Configuration for embedding models.
 
 use serde::{Deserialize, Serialize};
+use std::str::FromStr;
 
 /// Available embedding models.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -35,6 +36,18 @@ impl EmbeddingModel {
 impl Default for EmbeddingModel {
     fn default() -> Self {
         EmbeddingModel::AllMiniLmL6V2
+    }
+}
+
+impl FromStr for EmbeddingModel {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "all-minilm-l6-v2" | "all_minilm_l6_v2" => Ok(EmbeddingModel::AllMiniLmL6V2),
+            "bge-small-en-v1.5" | "bge_small_en_v1_5" => Ok(EmbeddingModel::BgeSmallEnV1_5),
+            _ => Err(format!("Unknown embedding model: {}", s)),
+        }
     }
 }
 

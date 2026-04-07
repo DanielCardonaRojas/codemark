@@ -1,0 +1,12 @@
+-- Migration 005: Add semantic search embeddings table
+-- This creates the vec0 virtual table for vector similarity search.
+
+-- The vec0 table will be created by the application code using VecStore::create_table()
+-- since it requires the sqlite-vec extension to be loaded first and needs dynamic
+-- dimension configuration. This migration just sets up the schema version.
+--
+-- The actual table is created with:
+-- CREATE VIRTUAL TABLE IF NOT EXISTS bookmark_embeddings USING vec0(
+--     bookmark_id TEXT PRIMARY KEY,
+--     embedding float[384]
+-- )

@@ -76,6 +76,14 @@ pub fn write_json_success<T: Serialize>(data: &T) -> io::Result<()> {
     Ok(())
 }
 
+/// Write raw JSON to stdout (not wrapped in envelope).
+pub fn write_json<T: Serialize>(data: &T) -> io::Result<()> {
+    let mut stdout = io::stdout().lock();
+    serde_json::to_writer_pretty(&mut stdout, data)?;
+    writeln!(stdout)?;
+    Ok(())
+}
+
 /// Write a JSON error response to stdout.
 pub fn write_json_error(message: &str) -> io::Result<()> {
     let envelope: JsonEnvelope<()> = JsonEnvelope {
