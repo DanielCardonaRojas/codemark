@@ -18,7 +18,8 @@ use crate::git::context as git_context;
 use crate::parser::languages::{Language, ParseCache};
 use crate::query::generator as qgen;
 use crate::config::Config;
-use crate::storage::db::Database;
+use crate::embeddings::config::EmbeddingModel;
+use crate::storage::{SemanticRepo, db::Database};
 
 /// Dispatch a parsed CLI command to its handler.
 pub fn dispatch(cli: &Cli) -> Result<()> {
@@ -35,6 +36,7 @@ pub fn dispatch(cli: &Cli) -> Result<()> {
         Command::List(args) => handle_list(cli, &mode, args),
         Command::Preview(args) => handle_preview(cli, args),
         Command::Search(args) => handle_search(cli, &mode, args),
+        Command::Reindex(args) => handle_reindex(cli, &mode, args),
         Command::Collection(args) => dispatch_collection(cli, &mode, args),
         Command::Diff(args) => handle_diff(cli, &mode, args),
         Command::Gc(args) => handle_gc(cli, &mode, args),
@@ -78,6 +80,47 @@ fn open_db(cli: &Cli) -> Result<Database> {
     // Fallback: current directory
     let db_path = cwd.join(".codemark").join("codemark.db");
     Database::open(&db_path)
+}
+
+/// Generate embedding for a bookmark if semantic search is enabled.
+/// Returns Ok(()) even if semantic search is disabled or fails.
+fn generate_embedding_for_bookmark(
+    cli: &Cli,
+    config: &Config,
+    bookmark: &Bookmark,
+) -> Result<()> {
+    if !config.semantic.enabled {
+        return Ok(());
+    }
+
+    // Get cache directory for model storage
+    let cache_dir = if let Some(db_path) = cli.db.first() {
+        db_path.parent().map(|p| p.to_path_buf())
+    } else {
+        let cwd = std::env::current_dir()?;
+        if let Some(ctx) = git_context::detect_context(&cwd) {
+            Some(ctx.repo_root.join(".codemark").join("models"))
+        } else {
+            None
+        }
+    };
+
+    // Parse model from config
+    let model = config.semantic.model.as_deref()
+        .and_then(|m| m.parse::<EmbeddingModel>().ok())
+        .unwrap_or(EmbeddingModel::AllMiniLmL6V2);
+
+    let semantic_repo = SemanticRepo::new(cache_dir, model);
+
+    // Open database for storing embedding
+    let mut db = open_db(cli)?;
+
+    // Generate and store the embedding
+    let conn = db.conn_mut();
+    // Ignore errors - embedding generation failure shouldn't block bookmark creation
+    let _ = semantic_repo.store_embeddings(conn, &[bookmark.clone()]);
+
+    Ok(())
 }
 
 /// Load the config from the .codemark directory (same location as the primary DB).
@@ -409,8 +452,12 @@ fn handle_add(cli: &Cli, mode: &OutputMode, args: &AddArgs) -> Result<()> {
 
     db.insert_bookmark(&bookmark)?;
 
-    // Record initial resolution as baseline
+    // Generate embedding for semantic search
     let config = load_config(cli);
+    // Ignore embedding errors - shouldn't block bookmark creation
+    let _ = generate_embedding_for_bookmark(cli, &config, &bookmark);
+
+    // Record initial resolution as baseline
     let initial_res = Resolution {
         id: uuid::Uuid::new_v4().to_string(),
         bookmark_id: bookmark.id.clone(),
@@ -510,8 +557,12 @@ fn handle_add_from_snippet(cli: &Cli, mode: &OutputMode, args: &AddFromSnippetAr
 
     db.insert_bookmark(&bookmark)?;
 
-    // Record initial resolution as baseline
+    // Generate embedding for semantic search
     let config = load_config(cli);
+    // Ignore embedding errors - shouldn't block bookmark creation
+    let _ = generate_embedding_for_bookmark(cli, &config, &bookmark);
+
+    // Record initial resolution as baseline
     let initial_res = Resolution {
         id: uuid::Uuid::new_v4().to_string(),
         bookmark_id: bookmark.id.clone(),
@@ -992,6 +1043,22 @@ fn handle_preview(cli: &Cli, args: &PreviewArgs) -> Result<()> {
 }
 
 fn handle_search(cli: &Cli, mode: &OutputMode, args: &SearchArgs) -> Result<()> {
+    let config = load_config(cli);
+
+    // Semantic search requires a query
+    if args.semantic {
+        if !config.semantic.enabled {
+            return Err(Error::Input("Semantic search is not enabled in config".to_string()));
+        }
+        let query = args.query.as_ref()
+            .or(args.note.as_ref())
+            .or(args.context.as_ref())
+            .ok_or_else(|| Error::Input("Semantic search requires a query".to_string()))?;
+
+        return handle_semantic_search(cli, mode, query, args);
+    }
+
+    // Regular FTS search
     let dbs = open_all_dbs(cli)?;
 
     if dbs.len() == 1 {
@@ -1037,6 +1104,161 @@ fn handle_search(cli: &Cli, mode: &OutputMode, args: &SearchArgs) -> Result<()> 
             .collect();
         output::write_annotated_bookmarks(mode, &annotated)?;
     }
+    Ok(())
+}
+
+/// Handle semantic search using vector embeddings.
+fn handle_semantic_search(cli: &Cli, mode: &OutputMode, query: &str, args: &SearchArgs) -> Result<()> {
+    use crate::embeddings::config::EmbeddingModel;
+    use crate::storage::SemanticRepo;
+
+    let db = open_db(cli)?;
+    let config = load_config(cli);
+
+    // Parse model from config
+    let model = config.semantic.model.as_deref()
+        .and_then(|m| m.parse::<EmbeddingModel>().ok())
+        .unwrap_or(EmbeddingModel::AllMiniLmL6V2);
+
+    // Cache directory
+    let cache_dir = if let Some(db_path) = cli.db.first() {
+        db_path.parent().map(|p| p.to_path_buf())
+    } else {
+        let cwd = std::env::current_dir()?;
+        if let Some(ctx) = git_context::detect_context(&cwd) {
+            Some(ctx.repo_root.join(".codemark").join("models"))
+        } else {
+            None
+        }
+    };
+
+    let semantic_repo = SemanticRepo::new(cache_dir, model);
+
+    // Perform semantic search
+    let results = semantic_repo.search(db.conn(), query, args.limit)?;
+
+    // Fetch full bookmark details for results
+    let mut bookmarks = Vec::new();
+    for result in results {
+        if let Ok(Some(bm)) = db.get_bookmark(&result.bookmark_id) {
+            bookmarks.push((result.distance, bm));
+        }
+    }
+
+    // Output results
+    if matches!(mode, OutputMode::Json) {
+        let data: Vec<serde_json::Value> = bookmarks
+            .into_iter()
+            .map(|(distance, bm)| {
+                serde_json::json!({
+                    "id": bm.id,
+                    "short_id": short_id(&bm.id),
+                    "query": bm.query,
+                    "language": bm.language,
+                    "file_path": bm.file_path,
+                    "status": bm.status,
+                    "tags": bm.tags,
+                    "notes": bm.notes,
+                    "context": bm.context,
+                    "created_at": bm.created_at,
+                    "created_by": bm.created_by,
+                    "distance": distance,
+                })
+            })
+            .collect();
+        output::write_json_success(&data)?;
+    } else {
+        // Table output
+        use comfy_table::Table;
+        use comfy_table::presets::UTF8_FULL;
+
+        let mut table = Table::new();
+        table.load_preset(UTF8_FULL);
+        table.set_header(vec!["ID", "Distance", "Language", "Tags", "Notes", "File"]);
+
+        for (distance, bm) in bookmarks {
+            let tags_str = bm.tags.join(", ");
+            let notes = bm.notes.as_deref().unwrap_or("").to_string();
+            let notes_trunc = if notes.len() > 30 {
+                format!("{}...", &notes[..27])
+            } else {
+                notes
+            };
+
+            table.add_row(vec![
+                short_id(&bm.id).to_string(),
+                format!("{:.4}", distance),
+                bm.language,
+                tags_str,
+                notes_trunc,
+                bm.file_path,
+            ]);
+        }
+
+        println!("{table}");
+    }
+
+    Ok(())
+}
+
+/// Handle reindex command to rebuild embeddings.
+fn handle_reindex(cli: &Cli, mode: &OutputMode, args: &ReindexArgs) -> Result<()> {
+    use crate::embeddings::config::EmbeddingModel;
+    use crate::storage::SemanticRepo;
+
+    let config = load_config(cli);
+    if !config.semantic.enabled {
+        return Err(Error::Input("Semantic search is not enabled in config".to_string()));
+    }
+
+    let mut db = open_db(cli)?;
+
+    // Parse model from config
+    let model = config.semantic.model.as_deref()
+        .and_then(|m| m.parse::<EmbeddingModel>().ok())
+        .unwrap_or(EmbeddingModel::AllMiniLmL6V2);
+
+    // Cache directory
+    let cache_dir = if let Some(db_path) = cli.db.first() {
+        db_path.parent().map(|p| p.to_path_buf())
+    } else {
+        let cwd = std::env::current_dir()?;
+        if let Some(ctx) = git_context::detect_context(&cwd) {
+            Some(ctx.repo_root.join(".codemark").join("models"))
+        } else {
+            None
+        }
+    };
+
+    let semantic_repo = SemanticRepo::new(cache_dir, model);
+
+    // Get bookmarks to reindex
+    let filter = BookmarkFilter {
+        language: args.lang.as_deref().map(|l| l.to_string()),
+        collection: args.collection.as_deref().map(|c| c.to_string()),
+        ..Default::default()
+    };
+
+    let bookmarks = db.list_bookmarks(&filter)?;
+
+    if bookmarks.is_empty() {
+        write_success(mode, "No bookmarks to reindex")?;
+        return Ok(());
+    }
+
+    if args.verbose {
+        eprintln!("Reindexing {} bookmarks...", bookmarks.len());
+    }
+
+    // Store embeddings
+    let count = {
+        let conn = db.conn_mut();
+        semantic_repo.store_embeddings(conn, &bookmarks)
+    }?;
+
+    let message = format!("Generated embeddings for {count} bookmarks");
+    write_success(mode, &message)?;
+
     Ok(())
 }
 
@@ -1192,19 +1414,44 @@ fn handle_export(cli: &Cli, args: &ExportArgs) -> Result<()> {
 }
 
 fn handle_import(cli: &Cli, mode: &OutputMode, args: &ImportArgs) -> Result<()> {
-    let db = open_db(cli)?;
+    let mut db = open_db(cli)?;
     let content = std::fs::read_to_string(&args.file)
         .map_err(|e| Error::Input(format!("cannot read {}: {e}", args.file.display())))?;
     let bookmarks: Vec<Bookmark> = serde_json::from_str(&content)?;
 
     let mut imported = 0;
     let mut skipped = 0;
+    let mut imported_bookmarks = Vec::new();
     for bm in &bookmarks {
         if db.get_bookmark(&bm.id)?.is_some() {
             skipped += 1;
         } else {
             db.insert_bookmark(bm)?;
+            imported_bookmarks.push(bm.clone());
             imported += 1;
+        }
+    }
+
+    // Generate embeddings for imported bookmarks (if semantic search is enabled)
+    if !imported_bookmarks.is_empty() {
+        let config = load_config(cli);
+        if config.semantic.enabled {
+            let cache_dir = cli.db.first()
+                .and_then(|p| p.parent().map(|pb| pb.to_path_buf()))
+                .or_else(|| {
+                    let cwd = std::env::current_dir().ok()?;
+                    git_context::detect_context(&cwd)
+                        .map(|ctx| ctx.repo_root.join(".codemark").join("models"))
+                });
+
+            let model = config.semantic.model.as_deref()
+                .and_then(|m| m.parse::<EmbeddingModel>().ok())
+                .unwrap_or(EmbeddingModel::AllMiniLmL6V2);
+
+            let semantic_repo = SemanticRepo::new(cache_dir, model);
+            let conn = db.conn_mut();
+            // Ignore errors - embedding generation failure shouldn't block import
+            let _ = semantic_repo.store_embeddings(conn, &imported_bookmarks);
         }
     }
 

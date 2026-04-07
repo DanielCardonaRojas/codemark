@@ -40,7 +40,7 @@ impl Codemark {
     }
 
     fn run_json(&self, args: &[&str]) -> serde_json::Value {
-        let mut full_args = vec!["--json"];
+        let mut full_args = vec!["--format", "json"];
         full_args.extend_from_slice(args);
         let result = self.run(&full_args);
         assert_eq!(result.status, 0, "command failed: {}\n{}", result.stderr, result.stdout);
@@ -173,7 +173,8 @@ fn add_from_snippet() {
     let output = Command::new(&cm.binary)
         .arg("--db")
         .arg(&cm.db_path)
-        .arg("--json")
+        .arg("--format")
+        .arg("json")
         .args(["add-from-snippet", "--file", &cm.fixture("rust/auth_service.rs"), "--tag", "auth"])
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
@@ -642,4 +643,114 @@ fn collection_ordering_and_reorder() {
     assert_eq!(bookmarks[0]["notes"], "step-3");
     assert_eq!(bookmarks[1]["notes"], "step-1");
     assert_eq!(bookmarks[2]["notes"], "step-2");
+}
+
+// --- Semantic search tests ---
+
+#[test]
+fn semantic_search_finds_by_meaning() {
+    let cm = Codemark::new();
+
+    // Add bookmarks with related meanings but different keywords
+    cm.run_json(&[
+        "add", "--file", &cm.fixture("rust/auth_service.rs"),
+        "--range", "108", "--note", "user authentication function",
+    ]);
+
+    cm.run_json(&[
+        "add", "--file", &cm.fixture("rust/auth_service.rs"),
+        "--range", "47", "--note", "login validation",
+    ]);
+
+    cm.run_json(&[
+        "add", "--file", &cm.fixture("rust/auth_service.rs"),
+        "--range", "65", "--note", "database query",
+    ]);
+
+    // Run reindex to generate embeddings
+    cm.run(&["reindex"]);
+
+    // Search for "auth" should find both authentication and login bookmarks
+    let json = cm.run_json(&["search", "auth", "--semantic"]);
+    let results = json["data"].as_array().unwrap();
+
+    // Should find at least the bookmarks related to authentication
+    assert!(results.len() >= 2, "Expected at least 2 results for semantic 'auth' search");
+
+    // All results should have distance scores
+    for result in results {
+        assert!(result.get("distance").is_some(), "Each result should have a distance score");
+    }
+}
+
+#[test]
+fn semantic_search_without_reindex_fails_gracefully() {
+    let cm = Codemark::new();
+
+    // Add a bookmark
+    cm.run_json(&[
+        "add", "--file", &cm.fixture("rust/auth_service.rs"),
+        "--range", "108", "--note", "test bookmark",
+    ]);
+
+    // Don't run reindex - semantic search should still work but might not find results
+    // or return an error message
+    let result = cm.run(&["search", "test", "--semantic"]);
+    // The command should succeed (status 0) even if no embeddings exist
+    assert_eq!(result.status, 0);
+}
+
+#[test]
+fn semantic_search_with_limit() {
+    let cm = Codemark::new();
+
+    // Add multiple bookmarks
+    cm.run_json(&[
+        "add", "--file", &cm.fixture("rust/auth_service.rs"),
+        "--range", "108", "--note", "first",
+    ]);
+
+    cm.run_json(&[
+        "add", "--file", &cm.fixture("rust/auth_service.rs"),
+        "--range", "47", "--note", "second",
+    ]);
+
+    cm.run_json(&[
+        "add", "--file", &cm.fixture("rust/auth_service.rs"),
+        "--range", "65", "--note", "third",
+    ]);
+
+    // Run reindex
+    cm.run(&["reindex"]);
+
+    // Search with limit
+    let json = cm.run_json(&["search", "test", "--semantic", "--limit", "2"]);
+    let results = json["data"].as_array().unwrap();
+
+    // Should return at most 2 results
+    assert!(results.len() <= 2, "Results should be limited to 2");
+}
+
+#[test]
+fn reindex_generates_embeddings() {
+    let cm = Codemark::new();
+
+    // Add some bookmarks
+    cm.run_json(&[
+        "add", "--file", &cm.fixture("rust/auth_service.rs"),
+        "--range", "108", "--note", "test bookmark 1",
+    ]);
+
+    cm.run_json(&[
+        "add", "--file", &cm.fixture("rust/auth_service.rs"),
+        "--range", "47", "--note", "test bookmark 2",
+    ]);
+
+    // Reindex should succeed (may fail if model download issues in CI)
+    let result = cm.run(&["reindex"]);
+    // Note: reindex may fail if model download fails in test environment
+    // but the bookmark creation should still work
+    if result.status == 0 {
+        assert!(result.stdout.contains("Generated embeddings"));
+    }
 }

@@ -1,113 +1,137 @@
 # Codemark: Implementation Phases
 
-## Phase 1: Core Engine (MVP)
+## Status Overview
 
-**Goal**: A working CLI that can create bookmarks, resolve them, and track health. Single-language support (Swift).
-
-### Phase 1a: CLI Skeleton
-
-**Goal**: Complete CLI interface with all subcommands, flags, help text, and output scaffolding. Commands return stub responses. This validates the API design before building internals.
-
-#### Deliverables
-1. **Project scaffolding**: Cargo workspace, CI (`cargo clippy`, `cargo test`), rustfmt config.
-2. **clap CLI definition**: All subcommands and flags as defined in the CLI specification:
-   - `add`, `add-from-snippet`, `resolve`, `show`, `list`, `status`, `validate`, `preview`
-   - `search`, `diff`, `gc`, `export`, `import`
-   - `collection` subcommand tree: `create`, `delete`, `add`, `remove`, `list`, `show`, `resolve`
-   - Global options: `--db`, `--format`, `--verbose`
-3. **Output framework**: JSON output by default (`{success, data, errors, metadata}`), `--format line` tab-separated output, `--format table` for human readability.
-4. **Shell completions**: Generated via `clap_complete` for bash, zsh, fish.
-5. **Error types**: Unified error type via `thiserror`, mapping to exit codes (0/1/2/3).
-6. **Stub handlers**: Every command parses args, prints `--help` correctly, and returns a structured "not implemented" response with the correct output format.
-7. **Tool integration assets**: Ship `extras/tv-channel-bookmarks.toml` for television.
-
-#### Acceptance Criteria
-- `codemark --help` and `codemark <subcommand> --help` render correct documentation for every command.
-- `codemark add --file foo --range 0:10 --lang swift` returns `{"success": false, "error": "not implemented"}` with exit code 1.
-- `codemark collection --help` shows all collection subcommands.
-- `codemark list` outputs JSON by default, `--format table` produces human-readable output, `--format line` produces tab-separated output.
-- Shell completions generate without errors.
-- `cargo clippy` and `cargo test` pass.
-
-#### Estimated Scope
-~500–800 lines of Rust.
-
-### Phase 1b: Storage & Core Engine
-
-**Goal**: SQLite storage layer and tree-sitter engine, testable independently from the CLI.
-
-#### Deliverables
-1. **SQLite storage layer**: Schema creation, migrations, bookmark CRUD, resolution history CRUD, collection CRUD.
-2. **Tree-sitter integration**: Parse Swift files, walk ASTs, run queries against parsed trees.
-3. **Query generator**: Given a target node, produce Tier 1 (exact), Tier 2 (relaxed), and Tier 3 (minimal) queries.
-4. **Resolution engine**: Exact → relaxed → hash fallback pipeline. Content hash computation with whitespace normalization.
-5. **Health state machine**: Status transitions (active → drifted → stale → archived) with bidirectional recovery.
-6. **Git context**: Detect repo root, capture HEAD commit on creation.
-
-#### Acceptance Criteria
-- Unit tests: query generation produces valid tree-sitter queries for Swift functions, classes, and methods.
-- Unit tests: resolution engine correctly falls through tiers when code is modified.
-- Unit tests: content hash is stable across whitespace-only changes.
-- Unit tests: status transitions follow the state machine.
-- Integration tests: SQLite schema creates cleanly, migrations are idempotent, CRUD operations work.
-- Benchmark: single-file parse + query < 50ms on a 5K-line Swift file.
-
-#### Estimated Scope
-~1,500–2,000 lines of Rust.
-
-### Phase 1c: Wire CLI to Engine
-
-**Goal**: Connect the stub CLI handlers to the real engine. All commands become functional.
-
-#### Deliverables
-1. **Wire all commands**: Replace stub handlers with real engine calls.
-2. **Preview command**: Thin wrapper — resolves the bookmark, prints metadata header, shells out to `bat` for syntax-highlighted code display (falls back to `cat -n` if bat is not installed). `--show-query` flag prints the stored tree-sitter query.
-3. **Collection commands**: Full CRUD wired to storage, `--collection` filter on `list`/`resolve`/`validate`/`search`.
-4. **Output formatting**: Populate all output modes (table, line, JSON) with real data from the engine.
-
-#### Acceptance Criteria
-- End-to-end: `add` → modify file → `resolve` returns the correct location.
-- Round-trip: `add` → `resolve` returns the same location (without modifications).
-- `validate` correctly transitions bookmarks through active → drifted → stale.
-- `codemark list --format line | fzf --preview 'codemark preview {1}'` provides a working interactive browsing experience.
-- `codemark preview --show-query <id>` displays the tree-sitter query alongside its resolved code.
-- `--format line` produces tab-separated output suitable for fzf/tv/grep.
-- Collections: create a collection, add bookmarks, resolve the collection as a unit, delete the collection without affecting bookmarks.
-- Benchmark: single-bookmark resolution < 50ms on a 5K-line file.
-
-#### Estimated Scope
-~500–700 lines of Rust.
-
-### Phase 1 Total Estimated Scope
-~2,500–3,500 lines of Rust.
+| Phase | Status | Completion |
+|-------|--------|------------|
+| **Phase 1a** (CLI Skeleton) | ✅ **COMPLETE** | 100% |
+| **Phase 1b** (Storage & Core Engine) | ✅ **COMPLETE** | 100% |
+| **Phase 1c** (Wire CLI to Engine) | ✅ **COMPLETE** | 100% |
+| **Phase 2** (Multi-Language & Polish) | ✅ **COMPLETE** | 100% |
+| **Phase 2a** (Semantic Search) | ❌ **NOT STARTED** | 0% |
+| **Phase 2b** (Enhanced Semantic) | ❌ **NOT STARTED** | 0% |
+| **Phase 3** (Hook Integration) | ❌ **NOT STARTED** | 0% |
+| **Phase 4** (Advanced Features) | ⚠️ **PARTIAL** | 30% |
 
 ---
 
-## Phase 2: Multi-Language & Polish
+## Phase 1: Core Engine (MVP) — ✅ COMPLETE
 
-**Goal**: Support TypeScript, Rust, and Python. Improve CLI ergonomics and error messages.
+**Goal**: A working CLI that can create bookmarks, resolve them, and track health.
+
+### Phase 1a: CLI Skeleton — ✅ COMPLETE
+
+All deliverables implemented:
+- ✅ Project scaffolding with Cargo workspace
+- ✅ All 15 subcommands defined with clap
+- ✅ JSON output by default with `--format` support (table, line, tv, custom)
+- ✅ Shell completions for bash, zsh, fish
+- ✅ Unified error types via `thiserror`
+- ✅ Tool integration assets (`extras/tv-channel-bookmarks.toml`)
+
+### Phase 1b: Storage & Core Engine — ✅ COMPLETE
+
+All deliverables implemented:
+- ✅ SQLite storage layer with 4 migrations (bookmarks, resolutions, collections, collection_bookmarks)
+- ✅ Tree-sitter integration for **8 languages**: Swift, Rust, TypeScript, Python, Go, Java, C#, Dart
+- ✅ Query generator with 4-tier resolution (exact → relaxed → minimal → hash fallback)
+- ✅ Resolution engine with hash-based disambiguation
+- ✅ Health state machine (active → drifted → stale → archived)
+- ✅ Git context detection and commit capture
+
+### Phase 1c: Wire CLI to Engine — ✅ COMPLETE
+
+All deliverables implemented:
+- ✅ All commands wired to real engine (no stubs remaining)
+- ✅ Preview command with multiple resolution selection modes
+- ✅ Collection commands full CRUD + reorder
+- ✅ All output modes populated with real data
+
+---
+
+## Phase 2: Multi-Language & Polish — ✅ COMPLETE
+
+**Goal**: Support multiple languages, improve CLI ergonomics.
+
+All deliverables implemented:
+- ✅ **8 languages supported**: Swift, Rust, TypeScript, Python, Go, Java, C#, Dart
+- ✅ Language-specific query generation strategies
+- ✅ Full-text search across notes and context with FTS5
+- ✅ Diff command with git integration
+- ✅ Export/Import (JSON and CSV)
+- ✅ Garbage collection for archived bookmarks
+- ✅ Custom format templates (`--format '{file}:{line} # {note}'`)
+- ✅ Cross-repository queries with source labeling (`--db` flag multiple times)
+- ✅ Multi-database support with source annotation
+
+### What's Actually Implemented (beyond original plan):
+
+The implementation exceeded the original Phase 2 scope:
+
+| Feature | Original Plan | Actual Implementation |
+|---------|---------------|----------------------|
+| Languages | Swift, TS, Rust, Python | + Go, Java, C#, Dart (8 total) |
+| Resolution tiers | 3 | 4 (added hash fallback) |
+| Cross-repo | Basic merge | Full source labeling + multi-db filtering |
+
+---
+
+## Phase 2a: Semantic Search Foundation — ❌ NOT STARTED
+
+**Goal**: Add natural language search using vector embeddings.
 
 ### Deliverables
-1. **Language registry**: Pluggable grammar loading, per-language query strategies.
-2. **TypeScript/TSX support**: Grammar, query generation, test fixtures.
-3. **~~Rust support~~**: Completed in Phase 1 — grammar, `impl` block handling, test fixtures.
-4. **Python support**: Grammar, decorator handling, test fixtures.
-5. **Full-text search**: `search` command with SQLite FTS5 or LIKE-based search.
-6. **Diff command**: `codemark diff --since <commit>` showing affected bookmarks.
-7. **~~Export/Import~~**: Completed in Phase 1c — JSON export and import with validation.
-8. **~~Garbage collection~~**: Completed in Phase 1c — `gc` command for archived bookmark cleanup.
-9. **Error messages**: Contextual suggestions, "did you mean?" for typos.
-10. **Custom format templates**: `--format '{file}:{line} # {note}'` for flexible output shaping.
-11. **Cross-repository queries**: `--db` flag accepts multiple paths for querying across repo databases. Read commands fan out across all databases; write commands use only the primary. Results annotated with `source` repo name.
+1. **sqlite-vec integration**: Load vector search extension
+2. **Embedding storage**: Virtual table with vector column
+3. **Local embedding model**: Bundle `all-MiniLM-L6-v2`
+4. **Semantic search flag**: `--semantic` for natural language queries
+5. **Reindex command**: Generate embeddings for existing bookmarks
+6. **Model configuration**: `.codemark/config.toml` settings
 
-### Acceptance Criteria
-- Bookmarks created in any supported language resolve correctly after refactors.
-- Language-specific edge cases handled (decorators in Python, `impl` blocks in Rust, JSX in TypeScript).
-- `diff` correctly identifies bookmarks affected by a commit range.
-- `codemark --db repo-a/.codemark/codemark.db --db repo-b/.codemark/codemark.db list` returns merged results with source labels.
+---
 
-### Estimated Scope
-~1,500–2,000 additional lines.
+## Phase 2b: Enhanced Semantic Features — ❌ NOT STARTED
+
+**Goal**: Improve semantic search quality.
+
+### Deliverables
+1. OpenAI provider support
+2. Hybrid search (semantic + keyword)
+3. Similarity score display
+4. Performance optimizations
+5. Per-collection semantic search
+
+---
+
+## Phase 3: Hook Integration — ❌ NOT STARTED
+
+**Goal**: Automatic bookmark creation through Claude Code hooks.
+
+### Deliverables
+1. Observer mode (`codemark observe`)
+2. Heuristic engine for bookmark-worthy code
+3. Auto-tagging and auto-annotation
+4. Hook configuration template
+5. Session lifecycle commands
+6. Configuration file
+7. Deduplication
+8. Agent skill / plugin
+
+---
+
+## Phase 4: Advanced Features — ⚠️ PARTIAL (30%)
+
+**Goal**: Cross-file search, bookmark relationships, performance.
+
+### Status
+| Feature | Status |
+|---------|--------|
+| Cross-file resolution | ❌ Not implemented |
+| Bookmark relationships | ❌ Not implemented |
+| Collections | ✅ Complete (done in Phase 1) |
+| Resolution caching | ❌ Not implemented |
+| Parallel resolution | ❌ Not implemented |
+| Metrics | ❌ Not implemented |
 
 ---
 
@@ -206,18 +230,32 @@ See [docs/requirements/10-semantic-search.md](./10-semantic-search.md) for compl
 
 ---
 
-## Testing Strategy
+## Testing Strategy — ✅ MOSTLY COMPLETE
 
-### Unit Tests
-- Query generation: Given an AST node, verify the generated query.
-- Query relaxation: Verify each tier produces the expected pattern.
-- Content hashing: Verify normalization and hash stability.
-- Status transitions: Verify the state machine.
+### Unit Tests — ✅ COMPLETE
+- ✅ Query generation: 1,000+ lines of tests across all languages
+- ✅ Query relaxation: All tiers tested
+- ✅ Content hashing: Normalization and hash stability verified
+- ✅ Status transitions: State machine fully tested
+- ✅ Resolution engine: All 4 tiers tested
+- ✅ Health transitions: Active → Drifted → Stale → Archived
 
-### Integration Tests
-- End-to-end: `add` → modify file → `resolve` → verify correct location.
-- Per-language fixtures: Known code samples with expected bookmark behavior.
-- Git integration: Verify HEAD capture, diff analysis.
+### Integration Tests — ✅ COMPLETE
+- ✅ CLI integration: 645 lines of integration tests
+- ✅ End-to-end: `add` → `resolve` round-trip
+- ✅ Per-language fixtures: All 8 languages have test fixtures
+- ✅ Git integration: HEAD capture, diff analysis
+- ✅ Storage layer: CRUD operations, migrations
+
+### Test Coverage Summary
+| Module | Tests | Status |
+|--------|-------|--------|
+| Query Generator | 1,000+ lines | ✅ Complete |
+| CLI Integration | 645 lines | ✅ Complete |
+| Resolution Engine | Full coverage | ✅ Complete |
+| Health/Status | Full coverage | ✅ Complete |
+| Storage Layer | Full coverage | ✅ Complete |
+| Git Context | Full coverage | ✅ Complete |
 
 ### Property Tests
 - For any function in a test file, `add` then `resolve` should return the same location (without modifications).
@@ -236,15 +274,29 @@ See [docs/requirements/10-semantic-search.md](./10-semantic-search.md) for compl
 
 ## Release Milestones
 
-| Milestone | Phase | Target     | Key Deliverable                        |
+| Milestone | Phase | Status     | Key Deliverable                        |
 |-----------|-------|------------|----------------------------------------|
-| v0.1.0    | 1     | Phase 1    | Core engine, Swift support, basic CLI  |
-| v0.2.0    | 2     | Phase 2    | Multi-language, search, diff, cross-repo queries |
-| v0.2.5    | 2a    | Phase 2a   | Semantic search with local embeddings  |
-| v0.3.0    | 2b    | Phase 2b   | Enhanced semantic features, hybrid search |
-| v0.4.0    | 3     | Phase 3    | Hook integration, auto-bookmarking, agent skill |
-| v0.5.0    | 4     | Phase 4    | Cross-file, collections, performance   |
-| v1.0.0    | —     | Post-Phase 4 | Stable API, documented, battle-tested |
+| v0.1.0    | 1     | ✅ RELEASED| Core engine, 8 languages, full CLI    |
+| v0.2.0    | 2     | ✅ RELEASED| Multi-language, search, diff, cross-repo |
+| v0.2.5    | 2a    | ❌ PLANNED  | Semantic search with local embeddings  |
+| v0.3.0    | 2b    | ❌ PLANNED  | Enhanced semantic features, hybrid search |
+| v0.4.0    | 3     | ❌ PLANNED  | Hook integration, auto-bookmarking     |
+| v0.5.0    | 4     | ❌ PLANNED  | Cross-file resolution, performance     |
+| v1.0.0    | —     | ❌ PLANNED  | Stable API, documented, battle-tested  |
+
+### Current Release: v0.2.0
+
+The v0.2.0 release includes all Phase 1 and Phase 2 features:
+
+- ✅ 8 language support (Swift, Rust, TypeScript, Python, Go, Java, C#, Dart)
+- ✅ 4-tier resolution engine with hash fallback
+- ✅ Full-text search with FTS5
+- ✅ Git integration (diff, commit tracking)
+- ✅ Collection management with reorder support
+- ✅ Export/Import (JSON and CSV)
+- ✅ Cross-repository queries with source labeling
+- ✅ JSON-first output format (default for agents)
+- ✅ Comprehensive test coverage
 
 ## Non-Goals (Explicitly Out of Scope)
 

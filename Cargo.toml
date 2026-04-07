@@ -6,10 +6,15 @@ description = "A structural bookmarking system for code using tree-sitter querie
 license = "MIT"
 
 [dependencies]
+async-trait = "0.1"
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4", features = ["derive", "env"] }
+tokio = { version = "1", features = ["rt"] }
 clap_complete = "4"
 comfy-table = "7"
+candle-core = "0.8"
+candle-transformers = "0.8"
+candle-nn = "0.8"
 git2 = "0.19"
 is-terminal = "0.4"
 regex = "1"
@@ -18,6 +23,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
 thiserror = "2"
+tokenizers = "0.21"
 toml = "0.8"
 tree-sitter = "0.25"
 tree-sitter-c-sharp = "0.23"
@@ -29,6 +35,9 @@ tree-sitter-rust = "0.23"
 tree-sitter-swift = "0.7"
 tree-sitter-typescript = "0.23"
 uuid = { version = "1", features = ["v4"] }
+hf-hub = "0.4"
+sqlite-vec = "0.1.9"
+zerocopy = "0.8"
 
 [profile.release]
 strip = true

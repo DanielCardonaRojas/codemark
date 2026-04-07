@@ -6,7 +6,7 @@
 codemark [--db <path>]... [--format <fmt>] [--verbose] <subcommand>
 
 --db <path>       Database location (default: .codemark/codemark.db); repeatable for cross-repo queries
---format <fmt>    Output format: json (default), table, or line
+--format <fmt>    Output format: json (default), table, line, or tv
 --verbose         Enable debug-level logging to stderr
 --help            Show help
 --version         Show version

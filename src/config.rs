@@ -8,6 +8,28 @@ use serde::Deserialize;
 pub struct Config {
     pub storage: StorageConfig,
     pub health: HealthConfig,
+    pub semantic: SemanticConfig,
+}
+
+/// Semantic search configuration wrapper.
+#[derive(Debug, Deserialize)]
+#[serde(default)]
+pub struct SemanticConfig {
+    pub enabled: bool,
+    pub model: Option<String>,
+    pub cache_dir: Option<String>,
+    pub batch_size: Option<usize>,
+}
+
+impl Default for SemanticConfig {
+    fn default() -> Self {
+        SemanticConfig {
+            enabled: true,
+            model: None,
+            cache_dir: None,
+            batch_size: None,
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -30,6 +52,7 @@ impl Default for Config {
         Config {
             storage: StorageConfig::default(),
             health: HealthConfig::default(),
+            semantic: SemanticConfig::default(),
         }
     }
 }
@@ -76,6 +99,7 @@ mod tests {
         let config = Config::default();
         assert_eq!(config.storage.max_resolutions_per_bookmark, 20);
         assert_eq!(config.health.auto_archive_after_days, 7);
+        assert_eq!(config.semantic.enabled, true);
     }
 
     #[test]
