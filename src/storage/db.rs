@@ -114,12 +114,13 @@ impl Database {
     fn ensure_embeddings_table(&mut self) -> Result<()> {
         use crate::embeddings::VecStore;
 
-        // Check if table exists
-        let exists: bool = self.conn.query_row(
-            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='bookmark_embeddings'",
+        // Check if table exists by trying to query it
+        // vec0 virtual tables don't show up in sqlite_master like regular tables
+        let exists = self.conn.query_row(
+            "SELECT COUNT(*) FROM bookmark_embeddings LIMIT 1",
             [],
-            |row| row.get(0),
-        ).unwrap_or(false);
+            |row| row.get::<_, i64>(0),
+        ).is_ok();
 
         if !exists {
             // Initialize the sqlite-vec extension once
