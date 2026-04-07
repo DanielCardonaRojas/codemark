@@ -9,9 +9,45 @@ pub struct GitContext {
 }
 
 /// Detect git repo root and HEAD commit. Returns None if not in a git repo.
+///
+/// Uses `git rev-parse --git-common-dir` to find the repo root, which correctly
+/// handles git worktrees (all worktrees share a common .git directory).
 pub fn detect_context(from_path: &Path) -> Option<GitContext> {
+    // Use git rev-parse to get the common git dir
+    let output = std::process::Command::new("git")
+        .arg("rev-parse")
+        .arg("--git-common-dir")
+        .current_dir(from_path)
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        return None;
+    }
+
+    let git_common_dir = String::from_utf8(output.stdout).ok()?;
+    let git_common_dir = git_common_dir.trim();
+    if git_common_dir.is_empty() {
+        return None;
+    }
+
+    // Resolve the git common dir relative to the working directory
+    // --git-common-dir may return a relative path like ".git" or an absolute path
+    let git_path = if PathBuf::from(git_common_dir).is_absolute() {
+        PathBuf::from(git_common_dir)
+    } else {
+        // Resolve relative path from the current directory
+        let cwd = std::env::current_dir().ok()?;
+        cwd.join(git_common_dir)
+    };
+
+    // The parent of the git common dir is the repo root
+    // For a normal repo: .git -> parent is the repo root
+    // For a worktree, this points to the main repo's .git, whose parent is the main repo root
+    let repo_root = git_path.parent()?.to_path_buf();
+
+    // Get HEAD commit using git2 (still reliable for this purpose)
     let repo = git2::Repository::discover(from_path).ok()?;
-    let repo_root = repo.workdir()?.to_path_buf();
     let head_commit = repo
         .head()
         .ok()
