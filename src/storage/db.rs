@@ -9,6 +9,7 @@ const MIGRATION_002: &str = include_str!("../../migrations/002_add_fts.sql");
 const MIGRATION_003: &str = include_str!("../../migrations/003_collection_ordering.sql");
 const MIGRATION_004: &str = include_str!("../../migrations/004_add_line_range.sql");
 const MIGRATION_005: &str = include_str!("../../migrations/005_add_embeddings.sql");
+const MIGRATION_006: &str = include_str!("../../migrations/006_add_fts_path_tags.sql");
 
 /// SQLite database wrapper with automatic migrations.
 pub struct Database {
@@ -89,6 +90,11 @@ impl Database {
             self.ensure_embeddings_table()?;
         }
 
+        if current_version < 6 {
+            self.conn.execute_batch(MIGRATION_006)?;
+            self.set_schema_version(6)?;
+        }
+
         Ok(())
     }
 
@@ -165,14 +171,14 @@ mod tests {
     fn open_in_memory_succeeds() {
         let db = Database::open_in_memory().unwrap();
         let version = db.schema_version();
-        assert_eq!(version, 5);
+        assert_eq!(version, 6);
     }
 
     #[test]
     fn migration_is_idempotent() {
         let mut db = Database::open_in_memory().unwrap();
         db.run_migrations().unwrap();
-        assert_eq!(db.schema_version(), 5);
+        assert_eq!(db.schema_version(), 6);
     }
 
     #[test]
