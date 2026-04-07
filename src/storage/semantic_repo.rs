@@ -63,6 +63,9 @@ impl SemanticRepo {
             return Ok(0);
         }
 
+        // Ensure sqlite-vec extension is loaded
+        crate::embeddings::VecStore::ensure_extension_loaded();
+
         let provider = self.provider()?;
         let rt = tokio::runtime::Runtime::new()
             .map_err(|e| crate::error::Error::Operation(format!("Failed to create runtime: {}", e)))?;
@@ -101,6 +104,9 @@ impl SemanticRepo {
         query: &str,
         limit: usize,
     ) -> Result<Vec<SearchResult>> {
+        // Ensure sqlite-vec extension is loaded
+        crate::embeddings::VecStore::ensure_extension_loaded();
+
         let provider = self.provider()?;
         let rt = tokio::runtime::Runtime::new()
             .map_err(|e| crate::error::Error::Operation(format!("Failed to create runtime: {}", e)))?;

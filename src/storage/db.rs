@@ -84,6 +84,9 @@ impl Database {
             self.set_schema_version(5)?;
             // Initialize sqlite-vec extension and create embeddings table
             self.init_embeddings_table()?;
+        } else if current_version >= 5 {
+            // Ensure embeddings table exists even if migration was already run
+            self.ensure_embeddings_table()?;
         }
 
         Ok(())
@@ -102,6 +105,32 @@ impl Database {
         store.create_table(&mut self.conn).map_err(|e| {
             crate::error::Error::Operation(format!("Failed to create embeddings table: {}", e))
         })?;
+
+        Ok(())
+    }
+
+    /// Ensure the embeddings table exists, create it if it doesn't.
+    /// This handles the case where the schema version is 5 but the table wasn't created.
+    fn ensure_embeddings_table(&mut self) -> Result<()> {
+        use crate::embeddings::VecStore;
+
+        // Check if table exists
+        let exists: bool = self.conn.query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='bookmark_embeddings'",
+            [],
+            |row| row.get(0),
+        ).unwrap_or(false);
+
+        if !exists {
+            // Initialize the sqlite-vec extension once
+            VecStore::init_extension();
+
+            // Create the vec0 virtual table with 384 dimensions (all-MiniLM-L6-v2)
+            let store = VecStore::new(384);
+            store.create_table(&mut self.conn).map_err(|e| {
+                crate::error::Error::Operation(format!("Failed to create embeddings table: {}", e))
+            })?;
+        }
 
         Ok(())
     }

@@ -14,6 +14,10 @@ use cli::Cli;
 use error::exit_with_error;
 
 fn main() {
+    // Initialize sqlite-vec extension early, before any connections are opened.
+    // This must happen before Database::open() is called anywhere.
+    embeddings::VecStore::init_extension();
+
     let cli = Cli::parse();
 
     if let Err(err) = cli::handlers::dispatch(&cli) {

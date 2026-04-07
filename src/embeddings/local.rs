@@ -15,33 +15,44 @@ struct MeanPooling;
 impl MeanPooling {
     fn apply(&self, hidden_states: &Tensor, attention_mask: &Tensor) -> CandleResult<Tensor> {
         // hidden_states: [batch, seq_len, hidden_dim]
-        // attention_mask: [batch, seq_len]
+        // attention_mask: [batch, seq_len] (f32)
 
-        let (_batch_size, _seq_len, _hidden_dim) = hidden_states.dims3()?;
+        let (batch_size, seq_len, hidden_dim) = hidden_states.dims3()?;
 
         // Expand attention mask to [batch, seq_len, 1] for broadcasting
         let mask_3d = attention_mask.unsqueeze(2)?;
 
+        // Broadcast mask to match hidden_states shape for multiplication
+        let mask_broadcasted = mask_3d.broadcast_as((batch_size, seq_len, hidden_dim))?;
+
         // Multiply hidden states by mask (zeros out padding tokens)
-        let masked = hidden_states.mul(&mask_3d)?;
+        let masked = hidden_states.mul(&mask_broadcasted)?;
 
         // Sum over sequence length: [batch, hidden_dim]
         let sum = masked.sum(1)?;
 
-        // Count non-padding tokens: [batch, 1]
+        // Sum mask over sequence to get valid token counts: [batch, 1]
         let mask_sum = mask_3d.sum(1)?;
 
-        // Add epsilon to avoid division by zero, then reshape for broadcasting
+        // Add epsilon to avoid division by zero
         let epsilon = 1e-9_f32;
-        let mask_sum_safe = mask_sum.add(&Tensor::new(&[epsilon], mask_sum.device())?)?;
+        let epsilon_tensor = Tensor::new(&[epsilon], sum.device())?.reshape((1, 1))?;
+        let mask_sum_safe = mask_sum.add(&epsilon_tensor)?;
 
-        // Reshape mask_sum_safe to [batch, 1] for proper broadcasting
-        let batch_size = mask_sum.dims()[0];
-        let mask_sum_2d = mask_sum_safe.reshape((batch_size, 1))?;
+        // Create normalized sum by dividing each row by its count
+        // Since Candle's broadcasting is tricky, we'll do it manually
+        let mut result = Vec::with_capacity(batch_size * hidden_dim);
+        let sum_vals = sum.to_vec2::<f32>()?;
+        let count_vals = mask_sum_safe.to_vec2::<f32>()?;
 
-        // Mean pooling: divide sum by count
-        let pooled = sum.div(&mask_sum_2d.broadcast_as(sum.shape())?)?;
-        Ok(pooled)
+        for b in 0..batch_size {
+            let count = count_vals[b][0];
+            for h in 0..hidden_dim {
+                result.push(sum_vals[b][h] / count);
+            }
+        }
+
+        Tensor::from_vec(result.clone(), (batch_size, hidden_dim), sum.device())
     }
 }
 
@@ -101,6 +112,9 @@ impl BertSentenceEmbedder {
             let attention_mask_tensor = Tensor::new(attention_mask.as_slice(), &self.device)?.reshape((1, seq_len))?;
             let token_type_ids_tensor = Tensor::new(token_type_ids.as_slice(), &self.device)?.reshape((1, seq_len))?;
 
+            // Convert attention mask to f32 for pooling operations
+            let attention_mask_f32 = attention_mask_tensor.to_dtype(DType::F32)?;
+
             // Forward through BERT
             let hidden_states = self.model.forward(
                 &input_ids_tensor,
@@ -108,14 +122,39 @@ impl BertSentenceEmbedder {
                 Some(&attention_mask_tensor),
             )?;
 
-            // Apply mean pooling
-            let pooled = self.pooling.apply(&hidden_states, &attention_mask_tensor)?;
+            // Apply mean pooling with f32 mask
+            let pooled = self.pooling.apply(&hidden_states, &attention_mask_f32)?;
 
             // Normalize the embedding (L2 normalization)
-            let norm = (pooled.sqr()?.sum_keepdim(1)? + 1e-9)?.sqrt()?;
-            let normalized = (pooled / norm)?.to_dtype(DType::F32)?;
+            let pooled_squared = pooled.sqr()?;
+            let pooled_sum = pooled_squared.sum_keepdim(1)?;
+            let norm = (pooled_sum + 1e-9)?.sqrt()?;
 
-            let embedding = normalized.to_vec1()?;
+            // Manual division to avoid broadcasting issues
+            let pooled_vals = pooled.to_vec2::<f32>()?;
+            let norm_vals = norm.to_vec2::<f32>()?;
+            let mut normalized_vals = Vec::with_capacity(pooled_vals.len());
+
+            for b in 0..pooled_vals.len() {
+                let n = norm_vals[b][0];
+                for &val in &pooled_vals[b] {
+                    normalized_vals.push(val / n);
+                }
+            }
+
+            let normalized = Tensor::from_vec(normalized_vals.clone(), pooled.shape(), pooled.device())?.to_dtype(DType::F32)?;
+
+            // Squeeze or flatten to get 1D vector
+            let embedding = if normalized.dims().len() == 2 {
+                let (b, h) = normalized.dims2()?;
+                if b == 1 {
+                    normalized.reshape((h,))?.to_vec1()?
+                } else {
+                    return Err(candle_core::Error::Msg("Unexpected batch size".to_string()));
+                }
+            } else {
+                normalized.to_vec1()?
+            };
             embeddings.push(embedding);
         }
 

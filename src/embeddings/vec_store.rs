@@ -34,15 +34,24 @@ impl VecStore {
     /// This must be called once before creating any connections that will
     /// use vec0 virtual tables. Uses sqlite3_auto_extension to automatically
     /// load the extension for all future connections.
+    ///
+    /// This is safe to call multiple times - subsequent calls will be no-ops.
     pub fn init_extension() {
+        use std::sync::Once;
         use rusqlite::ffi::sqlite3_auto_extension;
         use sqlite_vec::sqlite3_vec_init;
 
-        unsafe {
+        static INIT: Once = Once::new();
+        INIT.call_once(|| unsafe {
             sqlite3_auto_extension(Some(std::mem::transmute(
                 sqlite3_vec_init as *const (),
             )));
-        }
+        });
+    }
+
+    /// Ensure the extension is loaded. Call this before any vec0 operations.
+    pub fn ensure_extension_loaded() {
+        Self::init_extension();
     }
 
     /// Create a new VecStore.
