@@ -291,6 +291,48 @@ fn search_finds_by_note() {
 }
 
 #[test]
+fn search_finds_by_file_path() {
+    let cm = Codemark::new();
+
+    cm.run_json(&[
+        "add", "--file", &cm.fixture("rust/auth_service.rs"),
+        "--range", "108", "--note", "test 1",
+    ]);
+    cm.run_json(&[
+        "add", "--file", &cm.fixture("rust/api_client.rs"),
+        "--range", "1", "--note", "test 2",
+    ]);
+
+    // Search by file path component - should find api_client bookmark
+    let json = cm.run_json(&["search", "api_client"]);
+    let bookmarks = json["data"].as_array().unwrap();
+    assert_eq!(bookmarks.len(), 1);
+    assert!(bookmarks[0]["file_path"].as_str().unwrap().contains("api_client"));
+}
+
+#[test]
+fn search_finds_by_tag() {
+    let cm = Codemark::new();
+
+    cm.run_json(&[
+        "add", "--file", &cm.fixture("rust/auth_service.rs"),
+        "--range", "108", "--tag", "unique-tag-xyz", "--note", "test 1",
+    ]);
+    cm.run_json(&[
+        "add", "--file", &cm.fixture("rust/auth_service.rs"),
+        "--range", "47", "--tag", "other", "--note", "test 2",
+    ]);
+
+    // Search by tag - should find the bookmark with unique-tag-xyz
+    let json = cm.run_json(&["search", "unique-tag"]);
+    let bookmarks = json["data"].as_array().unwrap();
+    assert_eq!(bookmarks.len(), 1);
+    // tags is serialized as a JSON array
+    let tags = bookmarks[0]["tags"].as_array().unwrap();
+    assert!(tags.iter().any(|t| t.as_str().unwrap().contains("unique-tag-xyz")));
+}
+
+#[test]
 fn collections_crud() {
     let cm = Codemark::new();
 
