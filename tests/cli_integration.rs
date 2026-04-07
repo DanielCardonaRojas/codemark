@@ -40,7 +40,7 @@ impl Codemark {
     }
 
     fn run_json(&self, args: &[&str]) -> serde_json::Value {
-        let mut full_args = vec!["--json"];
+        let mut full_args = vec!["--format", "json"];
         full_args.extend_from_slice(args);
         let result = self.run(&full_args);
         assert_eq!(result.status, 0, "command failed: {}\n{}", result.stderr, result.stdout);
@@ -173,7 +173,8 @@ fn add_from_snippet() {
     let output = Command::new(&cm.binary)
         .arg("--db")
         .arg(&cm.db_path)
-        .arg("--json")
+        .arg("--format")
+        .arg("json")
         .args(["add-from-snippet", "--file", &cm.fixture("rust/auth_service.rs"), "--tag", "auth"])
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
