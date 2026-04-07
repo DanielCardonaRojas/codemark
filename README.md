@@ -130,6 +130,7 @@ codemark list                                  # table (TTY) or line format (pip
 codemark list --tag auth --lang swift          # filtered
 codemark list --author agent                   # only agent-created bookmarks
 codemark search "authentication"               # full-text search in notes/context
+codemark search --semantic "auth functions"    # semantic search (vector embeddings)
 codemark show a1b2                             # full details + resolution history
 ```
 
@@ -252,6 +253,33 @@ ln -s /path/to/codemark/extras/claude-code-plugin ~/.claude/plugins/codemark
 ```
 
 This gives agents the `/codemark` skill for proactive bookmarking during exploration.
+
+## Semantic search
+
+Codemark supports semantic search using vector embeddings. Bookmarks are automatically embedded when created, and you can search by meaning rather than exact keywords.
+
+```bash
+# Enable semantic search (creates embeddings for all bookmarks)
+codemark reindex
+
+# Search by meaning
+codemark search --semantic "database connection initialization"
+codemark search --semantic "error handling" --limit 10
+```
+
+Embeddings are stored using the `sqlite-vec` extension. For manual database inspection with the sqlite3 CLI, you need a version with loadable extension support:
+
+```bash
+# Install sqlite3 with extension support via Homebrew
+brew install sqlite3
+
+# Load the vec0 extension (download from https://github.com/asg017/sqlite-vec/releases)
+/opt/homebrew/opt/sqlite/bin/sqlite3 .codemark/codemark.db
+sqlite> .load ./vec0
+sqlite> SELECT bookmark_id FROM bookmark_embeddings;
+```
+
+The first run of `codemark reindex` will download the ML model (all-MiniLM-L6-v2, ~100MB) to `~/.cache/codemark/`.
 
 ## Configuration
 
