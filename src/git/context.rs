@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::error::{Error, Result};
+use git2::Repository;
 
 /// Git repository context captured at a point in time.
 pub struct GitContext {
@@ -150,6 +151,33 @@ pub fn read_file_at_commit(from_path: &Path, commit_sha: &str, file_path: &str) 
         .map_err(|_| Error::Git("file is not valid UTF-8".into()))
 }
 
+/// Check if `ancestor_commit` is an ancestor of `descendant_commit`.
+///
+/// Returns Ok(true) if `ancestor_commit` is an ancestor of `descendant_commit`.
+/// Returns Ok(false) if not (including unrelated branches).
+/// Returns Err if repo/commits can't be accessed (graceful degradation).
+pub fn is_ancestor(
+    repo_path: &Path,
+    ancestor_commit: &str,
+    descendant_commit: &str,
+) -> Result<bool> {
+    let repo = Repository::discover(repo_path)
+        .map_err(|e| Error::Git(format!("cannot open repo: {e}")))?;
+    let ancestor = repo
+        .revparse_single(ancestor_commit)
+        .and_then(|obj: git2::Object| obj.peel_to_commit())
+        .map_err(|e| Error::Git(format!("cannot resolve '{ancestor_commit}': {e}")))?;
+    let descendant = repo
+        .revparse_single(descendant_commit)
+        .and_then(|obj: git2::Object| obj.peel_to_commit())
+        .map_err(|e| Error::Git(format!("cannot resolve '{descendant_commit}': {e}")))?;
+
+    // graph_descendant_of returns true if descendant is a descendant of ancestor
+    // (i.e., if ancestor is an ancestor of descendant)
+    repo.graph_descendant_of(descendant.id(), ancestor.id())
+        .map_err(|e| Error::Git(format!("graph check failed: {e}")))
+}
+
 /// Try to canonicalize; fall back to the original path if it doesn't exist yet.
 fn canonicalize_best_effort(path: &Path) -> PathBuf {
     std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
@@ -200,5 +228,126 @@ mod tests {
         // The important thing is graceful behavior
         drop(ctx);
         let _ = fs::remove_dir(&tmp);
+    }
+
+    #[test]
+    fn is_ancestor_true() {
+        // HEAD~1 should be an ancestor of HEAD in a repo with commits
+        let ctx = detect_context(Path::new(".")).unwrap();
+        let head = ctx.head_commit.unwrap();
+
+        // Create a temp repo with known ancestry
+        let tmp = std::env::temp_dir().join("codemark_test_ancestor_true");
+        let _ = fs::create_dir_all(&tmp);
+
+        let repo = Repository::init(&tmp).unwrap();
+        let mut index = repo.index().unwrap();
+
+        // Create first commit
+        let path = tmp.join("test.txt");
+        fs::write(&path, "initial").unwrap();
+        index.add_path(Path::new("test.txt")).unwrap();
+        let tree_id = index.write_tree().unwrap();
+        let tree = repo.find_tree(tree_id).unwrap();
+        let sig = repo.signature().unwrap();
+        let parent_commit_oid = repo
+            .commit(Some("HEAD"), &sig, &sig, "initial", &tree, &[])
+            .unwrap();
+        let parent_commit = repo.find_commit(parent_commit_oid).unwrap();
+
+        // Create second commit
+        fs::write(&path, "modified").unwrap();
+        let mut index = repo.index().unwrap();
+        index.update_all(vec![Path::new("test.txt")], None).unwrap();
+        let tree_id = index.write_tree().unwrap();
+        let tree = repo.find_tree(tree_id).unwrap();
+        let child_commit_oid = repo
+            .commit(
+                Some("HEAD"),
+                &sig,
+                &sig,
+                "modified",
+                &tree,
+                &[&parent_commit],
+            )
+            .unwrap();
+
+        let parent_oid = parent_commit_oid.to_string();
+        let child_oid = child_commit_oid.to_string();
+
+        // Test that parent is ancestor of child
+        let result = is_ancestor(&tmp, &parent_oid, &child_oid);
+        assert!(result.is_ok());
+        assert!(result.unwrap(), "parent should be ancestor of child");
+
+        // Cleanup
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn is_ancestor_false_unrelated() {
+        // Create a temp repo with unrelated branches
+        let tmp = std::env::temp_dir().join("codemark_test_ancestor_unrelated");
+        let _ = fs::create_dir_all(&tmp);
+
+        let repo = Repository::init(&tmp).unwrap();
+        let mut index = repo.index().unwrap();
+
+        // Create first commit on main
+        let path = tmp.join("test.txt");
+        fs::write(&path, "initial").unwrap();
+        index.add_path(Path::new("test.txt")).unwrap();
+        let tree_id = index.write_tree().unwrap();
+        let tree = repo.find_tree(tree_id).unwrap();
+        let sig = repo.signature().unwrap();
+        let commit1_oid = repo
+            .commit(Some("HEAD"), &sig, &sig, "initial", &tree, &[])
+            .unwrap();
+
+        // Create an orphan branch
+        let mut index = repo.index().unwrap();
+        fs::write(&path, "orphan").unwrap();
+        index.add_path(Path::new("test.txt")).unwrap();
+        let tree_id = index.write_tree().unwrap();
+        let tree = repo.find_tree(tree_id).unwrap();
+
+        // Create a commit without parent (orphan branch)
+        let orphan_oid = repo
+            .commit(
+                Some("refs/heads/orphan"),
+                &sig,
+                &sig,
+                "orphan",
+                &tree,
+                &[],
+            )
+            .unwrap();
+
+        let commit1_oid_str = commit1_oid.to_string();
+        let orphan_oid_str = orphan_oid.to_string();
+
+        // Test that unrelated commits return false
+        let result = is_ancestor(&tmp, &commit1_oid_str, &orphan_oid_str);
+        assert!(result.is_ok());
+        assert!(!result.unwrap(), "unrelated commits should return false");
+
+        // Cleanup
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn is_ancestor_missing_commit_graceful() {
+        // Missing commits should return Err, not panic
+        let tmp = std::env::temp_dir().join("codemark_test_ancestor_missing");
+        let _ = fs::create_dir_all(&tmp);
+
+        let _repo = Repository::init(&tmp).unwrap();
+        // Empty repo, no commits
+
+        let result = is_ancestor(&tmp, "nonexistent", "alsofake");
+        assert!(result.is_err(), "missing commits should return Err");
+
+        // Cleanup
+        let _ = fs::remove_dir_all(&tmp);
     }
 }
