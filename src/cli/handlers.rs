@@ -31,7 +31,7 @@ pub fn dispatch(cli: &Cli) -> Result<()> {
         Command::Resolve(args) => handle_resolve(cli, &mode, args),
         Command::Show(args) => handle_show(cli, &mode, args),
         Command::Remove(args) => handle_remove(cli, &mode, args),
-        Command::Validate(args) => handle_validate(cli, &mode, args),
+        Command::Heal(args) => handle_heal(cli, &mode, args),
         Command::Status => handle_status(cli, &mode),
         Command::List(args) => handle_list(cli, &mode, args),
         Command::Preview(args) => handle_preview(cli, args),
@@ -797,7 +797,7 @@ fn handle_remove(cli: &Cli, mode: &OutputMode, args: &RemoveArgs) -> Result<()> 
     Ok(())
 }
 
-fn handle_validate(cli: &Cli, mode: &OutputMode, args: &ValidateArgs) -> Result<()> {
+fn handle_heal(cli: &Cli, mode: &OutputMode, args: &HealArgs) -> Result<()> {
     let db = open_db(cli)?;
     let filter = BookmarkFilter {
         file_path: args.file.as_ref().map(|p| p.to_string_lossy().to_string()),
@@ -811,6 +811,7 @@ fn handle_validate(cli: &Cli, mode: &OutputMode, args: &ValidateArgs) -> Result<
         ..Default::default()
     };
     let bookmarks = db.list_bookmarks(&filter)?;
+    let config = load_config(cli);
 
     let mut active = 0u32;
     let mut drifted = 0u32;
@@ -857,6 +858,24 @@ fn handle_validate(cli: &Cli, mode: &OutputMode, args: &ValidateArgs) -> Result<
             db.update_bookmark_query(&bm.id, new_query, &result.file_path, &result.content_hash)?;
         }
 
+        // Record resolution history unless --validate-only is set
+        if !args.validate_only {
+            let res = Resolution {
+                id: uuid::Uuid::new_v4().to_string(),
+                bookmark_id: bm.id.clone(),
+                resolved_at: now_iso(),
+                commit_hash: git_context::detect_context(&std::env::current_dir()?)
+                    .and_then(|ctx| ctx.head_commit),
+                method: result.method,
+                match_count: Some(1),
+                file_path: Some(result.file_path.clone()),
+                byte_range: Some(format!("{}:{}", result.byte_range.0, result.byte_range.1)),
+                line_range: Some(format!("{}:{}", result.start_line + 1, result.end_line + 1)),
+                content_hash: Some(result.content_hash.clone()),
+            };
+            let _ = db.insert_resolution_if_changed(&res, config.storage.max_resolutions_per_bookmark);
+        }
+
         match final_status {
             BookmarkStatus::Active => active += 1,
             BookmarkStatus::Drifted => drifted += 1,
@@ -873,11 +892,14 @@ fn handle_validate(cli: &Cli, mode: &OutputMode, args: &ValidateArgs) -> Result<
                 "stale": stale,
                 "archived": archived,
                 "total": bookmarks.len(),
+                "validate_only": args.validate_only,
             }))?;
         }
         _ => {
+            let action = if args.validate_only { "Validated" } else { "Healed" };
             println!(
-                "Validated {} bookmarks: {} active, {} drifted, {} stale, {} archived",
+                "{} {} bookmarks: {} active, {} drifted, {} stale, {} archived",
+                action,
                 bookmarks.len(),
                 active,
                 drifted,

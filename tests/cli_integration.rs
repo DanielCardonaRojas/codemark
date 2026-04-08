@@ -240,7 +240,7 @@ fn show_includes_resolution_history() {
 }
 
 #[test]
-fn validate_updates_statuses() {
+fn heal_updates_statuses() {
     let cm = Codemark::new();
 
     cm.run_json(&[
@@ -252,10 +252,25 @@ fn validate_updates_statuses() {
         "--range", "108", "--note", "test",
     ]);
 
-    let json = cm.run_json(&["validate"]);
+    let json = cm.run_json(&["heal"]);
     assert_eq!(json["data"]["active"], 2);
     assert_eq!(json["data"]["drifted"], 0);
     assert_eq!(json["data"]["stale"], 0);
+    assert_eq!(json["data"]["validate_only"], false);
+}
+
+#[test]
+fn heal_validate_only_skips_recording() {
+    let cm = Codemark::new();
+
+    cm.run_json(&[
+        "add", "--file", &cm.fixture("swift/auth_service.swift"),
+        "--range", "39", "--note", "test",
+    ]);
+
+    let json = cm.run_json(&["heal", "--validate-only"]);
+    assert_eq!(json["data"]["active"], 1);
+    assert_eq!(json["data"]["validate_only"], true);
 }
 
 #[test]

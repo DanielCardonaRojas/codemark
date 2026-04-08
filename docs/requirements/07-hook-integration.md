@@ -26,7 +26,7 @@ In `.claude/hooks.json` (or the project's Claude Code settings):
     "session_end": [
       {
         "type": "command",
-        "command": "codemark validate --auto-archive",
+        "command": "codemark heal --auto-archive",
         "timeout_ms": 30000
       }
     ]
@@ -81,7 +81,7 @@ codemark list --tag auth --json
   ```
 
 ### Session End
-- `codemark validate --auto-archive` runs, updating health statuses.
+- `codemark heal --auto-archive` runs, updating health statuses.
 - Stale bookmarks past the grace period are archived.
 
 ## Sub-Agent Architecture
@@ -147,7 +147,7 @@ Session 1: Agent refactors auth module
 ├── Agent creates src/auth/jwt_validator.swift
 │   └── Observer: bookmark top-level declarations, tag:auth
 └── Session ends
-    └── codemark validate: 3 active bookmarks created
+    └── codemark heal: 3 active bookmarks created
 
 Session 2: Agent fixes a bug in auth
 ├── Agent starts, loads context:
@@ -159,7 +159,7 @@ Session 2: Agent fixes a bug in auth
 ├── Agent edits validateToken()
 │   └── Observer: updates existing bookmark
 └── Session ends
-    └── codemark validate: 3 active (1 updated)
+    └── codemark heal: 3 active (1 updated)
 
 Between sessions: another developer renames middleware.swift → auth_handler.swift
 

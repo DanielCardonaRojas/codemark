@@ -26,7 +26,7 @@ codemark --db ~/projects/*/.codemark/codemark.db search "auth"
 
 **Read commands** support multiple databases: `list`, `search`, `resolve`, `show`, `status`, `export`, `collection list`, `collection show`.
 
-**Write commands** use only the first `--db` path (or the auto-detected repo): `add`, `add-from-snippet`, `validate`, `gc`, `import`, `collection create/delete/add/remove`.
+**Write commands** use only the first `--db` path (or the auto-detected repo): `add`, `add-from-snippet`, `heal`, `gc`, `import`, `collection create/delete/add/remove`.
 
 When querying multiple databases, results include a `source` field identifying which database (repo) each bookmark came from. In line output this is prepended as the first tab-separated field. In JSON output it appears as `"source": "<repo-name>"` on each item.
 
@@ -160,19 +160,41 @@ Accepts full UUID or unambiguous prefix. Displays all fields including resolutio
 
 ---
 
-### `codemark validate`
+### `codemark heal`
 
-Run resolution on all (or filtered) bookmarks and update statuses.
+Heal bookmarks by resolving and updating their status.
 
 ```
-codemark validate [--file <path>] [--auto-archive] [--archive-after <days>]
+codemark heal [--file <path>] [--auto-archive] [--archive-after <days>] [--validate-only]
 ```
 
-| Flag               | Required | Default | Description                           |
-|--------------------|----------|---------|---------------------------------------|
-| `--file`           | No       | all     | Validate only bookmarks for this file |
-| `--auto-archive`   | No       | false   | Archive bookmarks stale beyond grace  |
-| `--archive-after`  | No       | 7       | Days before stale → archived          |
+| Flag               | Required | Default | Description                                |
+|--------------------|----------|---------|--------------------------------------------|
+| `--file`           | No       | all     | Heal only bookmarks for this file          |
+| `--auto-archive`   | No       | false   | Archive bookmarks stale beyond grace       |
+| `--archive-after`  | No       | 7       | Days before stale → archived               |
+| `--validate-only`  | No       | false   | Skip recording resolution history          |
+
+**Behavior**:
+- Runs tiered resolution (exact → relaxed → minimal → hash fallback) on all bookmarks
+- Updates bookmark status based on resolution results
+- Records resolution history (unless `--validate-only` is set)
+- Optionally auto-archives stale bookmarks older than `--archive-after` days
+
+**JSON output**:
+```json
+{
+  "status": "success",
+  "data": {
+    "active": 42,
+    "drifted": 3,
+    "stale": 1,
+    "archived": 12,
+    "total": 58,
+    "validate_only": false
+  }
+}
+```
 
 ---
 
@@ -413,7 +435,7 @@ The following commands accept `--collection <name>` to scope to a collection's b
 ```bash
 codemark list --collection bugfix-auth
 codemark resolve --collection bugfix-auth
-codemark validate --collection bugfix-auth
+codemark heal --collection bugfix-auth
 codemark search "auth" --collection bugfix-auth
 ```
 

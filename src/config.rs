@@ -43,7 +43,7 @@ pub struct StorageConfig {
 #[derive(Debug, Deserialize)]
 #[serde(default)]
 pub struct HealthConfig {
-    /// Days before stale bookmarks are auto-archived (used by `validate --auto-archive`).
+    /// Days before stale bookmarks are auto-archived (used by `heal --auto-archive`).
     pub auto_archive_after_days: u32,
 }
 

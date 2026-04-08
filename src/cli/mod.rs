@@ -47,8 +47,8 @@ pub enum Command {
     /// Remove bookmarks by ID
     Remove(RemoveArgs),
 
-    /// Run resolution on bookmarks and update statuses
-    Validate(ValidateArgs),
+    /// Heal bookmarks by resolving and updating their status
+    Heal(HealArgs),
 
     /// Print a summary of bookmark health
     Status,
@@ -196,8 +196,8 @@ pub struct RemoveArgs {
 }
 
 #[derive(Debug, clap::Args)]
-pub struct ValidateArgs {
-    /// Validate only bookmarks for this file
+pub struct HealArgs {
+    /// Heal only bookmarks for this file
     #[arg(long)]
     pub file: Option<PathBuf>,
 
@@ -216,6 +216,10 @@ pub struct ValidateArgs {
     /// Filter by collection
     #[arg(long)]
     pub collection: Option<String>,
+
+    /// Skip recording resolution history (only update status)
+    #[arg(long)]
+    pub validate_only: bool,
 }
 
 #[derive(Debug, clap::Args)]
