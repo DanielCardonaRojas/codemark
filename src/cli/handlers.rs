@@ -1075,16 +1075,39 @@ fn handle_preview(cli: &Cli, args: &PreviewArgs) -> Result<()> {
             .find(|r| r.commit_hash.as_deref().map(|c| c.starts_with(commit)).unwrap_or(false))
             .ok_or_else(|| Error::Resolution(format!("no resolution found at commit {commit}")))?
     } else {
-        // Default: most recent resolution
-        let resolutions = db.list_resolutions(&bm.id, 1)?;
-        match resolutions.first() {
-            Some(r) => r.clone(),
+        // Default: use resolution from nearest ancestor commit
+        // This allows preview to work correctly when checking out old commits
+        let cwd = std::env::current_dir()?;
+        let all_resolutions = db.list_resolutions(&bm.id, 100)?;
+
+        // Extract commit hashes from all resolutions
+        let commit_hashes: Vec<String> = all_resolutions
+            .iter()
+            .filter_map(|r| r.commit_hash.clone())
+            .collect();
+
+        // Find the nearest ancestor commit
+        match git_context::find_nearest_ancestor(&cwd, &commit_hashes)? {
+            Some(nearest_commit) => {
+                // Find the resolution with this commit hash
+                all_resolutions
+                    .into_iter()
+                    .find(|r| r.commit_hash.as_deref() == Some(&nearest_commit))
+                    .ok_or_else(|| Error::Resolution(format!("resolution for commit {nearest_commit} not found")))?
+            }
             None => {
-                return Err(Error::Input(format!(
-                    "bookmark {} has no resolution history; run `codemark resolve {}` first",
-                    output::short_id(&bm.id),
-                    output::short_id(&bm.id)
-                )));
+                // No ancestor found, fall back to most recent resolution
+                let resolutions = db.list_resolutions(&bm.id, 1)?;
+                match resolutions.first() {
+                    Some(r) => r.clone(),
+                    None => {
+                        return Err(Error::Input(format!(
+                            "bookmark {} has no resolution history; run `codemark resolve {}` first",
+                            output::short_id(&bm.id),
+                            output::short_id(&bm.id)
+                        )));
+                    }
+                }
             }
         }
     };
