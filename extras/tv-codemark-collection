@@ -1,0 +1,15 @@
+#!/bin/bash
+# Wrapper script to open codemark channel filtered by collection
+# Usage: tv-codemark-collection <collection-name>
+
+COLLECTION="$1"
+if [ -z "$COLLECTION" ]; then
+    echo "Usage: $0 <collection-name>" >&2
+    exit 1
+fi
+
+# Build the source command with the collection filter
+SOURCE_CMD="codemark list --format tv --collection $COLLECTION --db .codemark/codemark.db"
+
+# Execute television with the custom source command
+exec tv --source-command="$SOURCE_CMD" codemark

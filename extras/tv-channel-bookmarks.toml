@@ -1,5 +1,5 @@
 [metadata]
-name = "bookmarks"
+name = "codemark"
 description = "Codemark structural bookmarks"
 requirements = ["codemark"]
 
@@ -9,7 +9,7 @@ display = "{split:\\t:1}  {split:\\t:4}  {split:\\t:5}"
 output = "{split:\\t:0}"
 
 [preview]
-command = "codemark preview {split:\\t:0}"
+command = "codemark preview {split:\\t:0} | jq -r '\"\\(.data.file_path) --highlight-line \\(.data.line_range)\"' | xargs bat --color=always"
 offset = "{split:\\t:2}"
 
 [ui.preview_panel]
