@@ -4,12 +4,12 @@ description = "Codemark collections picker - select a collection to view its boo
 requirements = ["codemark"]
 
 [source]
-command = "codemark collection list --format tv --db .codemark/codemark.db"
+command = "cd \"$(dirname $(git rev-parse --path-format=absolute --git-common-dir))\" && codemark collection list --format tv --db .codemark/codemark.db"
 display = "{split:\t:0}  ({split:\t:1} bookmarks)  {split:\t:2}"
 output = "{split:\t:0}"
 
 [preview]
-command = "codemark collection show {split:\t:0} --format table --db .codemark/codemark.db"
+command = "cd \"$(dirname $(git rev-parse --path-format=absolute --git-common-dir))\" && codemark collection show {split:\t:0} --format table --db .codemark/codemark.db"
 offset = "0"
 
 [ui.preview_panel]
@@ -21,5 +21,5 @@ enter = "actions:show"
 
 [actions.show]
 description = "Show bookmarks in this collection (opens television with codemark channel)"
-command = "sh -c 'tv --source-command=\"codemark list --format tv --collection $1 --db .codemark/codemark.db\" codemark' placeholder {split:\t:0}"
+command = "sh -c 'cd \"$(dirname $(git rev-parse --path-format=absolute --git-common-dir))\" && tv --source-command=\"codemark list --format tv --collection $1 --db .codemark/codemark.db\" codemark' placeholder {split:\t:0}"
 mode = "execute"

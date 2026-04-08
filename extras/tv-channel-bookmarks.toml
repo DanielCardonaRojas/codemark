@@ -4,12 +4,12 @@ description = "Codemark structural bookmarks"
 requirements = ["codemark"]
 
 [source]
-command = "codemark list --format tv --db .codemark/codemark.db"
+command = "cd \"$(dirname $(git rev-parse --path-format=absolute --git-common-dir))\" && codemark list --format tv"
 display = "{split:\\t:1}  {split:\\t:4}  {split:\\t:5}"
 output = "{split:\\t:0}"
 
 [preview]
-command = "codemark preview {split:\\t:0} | jq -r '\"\\(.data.file_path) --highlight-line \\(.data.line_range)\"' | xargs bat --color=always"
+command = "cd \"$(dirname $(git rev-parse --path-format=absolute --git-common-dir))\" && codemark preview {split:\\t:0} | jq -r '\"\\(.data.file_path) --highlight-line \\(.data.line_range)\"' | xargs bat --color=always"
 offset = "{split:\\t:2}"
 
 [ui.preview_panel]
@@ -23,7 +23,7 @@ ctrl-d = "actions:details"
 
 [actions.edit]
 description = "Open in $EDITOR"
-command = "codemark resolve {split:\\t:0} --format '{file}:{line}' | xargs $EDITOR"
+command = "cd \"$(dirname $(git rev-parse --path-format=absolute --git-common-dir))\" && codemark resolve {split:\\t:0} --format '{file}:{line}' | xargs $EDITOR"
 mode = "fork"
 
 [actions.resolve]
