@@ -1,6 +1,6 @@
 [package]
 name = "codemark"
-version = "0.3.1"
+version = "0.3.3"
 edition = "2024"
 description = "A structural bookmarking system for code using tree-sitter queries"
 license = "MIT"
