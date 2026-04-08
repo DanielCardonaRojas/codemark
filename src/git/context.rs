@@ -178,6 +178,90 @@ pub fn is_ancestor(
         .map_err(|e| Error::Git(format!("graph check failed: {e}")))
 }
 
+/// Find the nearest ancestor commit from a list of candidate commit hashes.
+///
+/// Given the current HEAD and a list of candidate commits, returns the commit hash
+/// from the list that is an ancestor of HEAD and is "nearest" to HEAD (i.e., has
+/// the fewest commits between it and HEAD).
+///
+/// Returns Ok(Some(commit_hash)) if a valid ancestor is found.
+/// Returns Ok(None) if no candidate is an ancestor (or list is empty).
+/// Returns Err if repo/HEAD can't be accessed.
+pub fn find_nearest_ancestor(repo_path: &Path, candidate_hashes: &[String]) -> Result<Option<String>> {
+    if candidate_hashes.is_empty() {
+        return Ok(None);
+    }
+
+    let repo = Repository::discover(repo_path)
+        .map_err(|e| Error::Git(format!("cannot open repo: {e}")))?;
+
+    let head = repo.head()
+        .map_err(|e| Error::Git(format!("cannot get HEAD: {e}")))?;
+    let head_commit = head.peel_to_commit()
+        .map_err(|e| Error::Git(format!("HEAD is not a commit: {e}")))?;
+    let head_id = head_commit.id();
+
+    // Filter to ancestors of HEAD, then find the one with the shortest merge base distance
+    let mut nearest: Option<(git2::Oid, usize)> = None;
+
+    for candidate_hash in candidate_hashes {
+        let obj = match repo.revparse_single(candidate_hash) {
+            Ok(o) => o,
+            Err(_) => continue, // Skip commits that don't exist
+        };
+
+        let commit = match obj.peel_to_commit() {
+            Ok(c) => c,
+            Err(_) => continue, // Skip non-commits
+        };
+
+        let candidate_id = commit.id();
+
+        // Check if this candidate is an ancestor of HEAD
+        if !repo.graph_descendant_of(head_id, candidate_id).unwrap_or(false) {
+            continue;
+        }
+
+        // Find merge base to determine distance
+        let merge_base = repo.merge_base(head_id, candidate_id);
+        let distance = match merge_base {
+            Ok(base_id) if base_id == candidate_id => {
+                // Direct ancestry - count commits from candidate to HEAD
+                count_commits_between(&repo, candidate_id, head_id).unwrap_or(usize::MAX)
+            }
+            Ok(_) => {
+                // Not a direct ancestor - use a large distance to deprioritize
+                usize::MAX
+            }
+            Err(_) => continue,
+        };
+
+        // Update nearest if this is closer
+        match nearest {
+            None => nearest = Some((candidate_id, distance)),
+            Some((_, current_distance)) if distance < current_distance => {
+                nearest = Some((candidate_id, distance));
+            }
+            Some(_) => {}
+        }
+    }
+
+    Ok(nearest.map(|(oid, _)| oid.to_string()))
+}
+
+/// Count the number of commits from `start` (exclusive) to `end` (inclusive).
+/// Used to determine how "close" an ancestor commit is to HEAD.
+fn count_commits_between(repo: &Repository, start: git2::Oid, end: git2::Oid) -> Result<usize> {
+    let mut revwalk = repo.revwalk()
+        .map_err(|e| Error::Git(format!("revwalk failed: {e}")))?;
+    revwalk.push(end)
+        .map_err(|e| Error::Git(format!("push failed: {e}")))?;
+    revwalk.hide(start)
+        .map_err(|e| Error::Git(format!("hide failed: {e}")))?;
+
+    Ok(revwalk.count())
+}
+
 /// Try to canonicalize; fall back to the original path if it doesn't exist yet.
 fn canonicalize_best_effort(path: &Path) -> PathBuf {
     std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
@@ -348,6 +432,113 @@ mod tests {
         assert!(result.is_err(), "missing commits should return Err");
 
         // Cleanup
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn find_nearest_ancestor_selects_closest() {
+        // Create a repo with a chain of commits: A -> B -> C (HEAD)
+        let tmp = std::env::temp_dir().join("codemark_test_nearest_ancestor");
+        let _ = fs::create_dir_all(&tmp);
+
+        let repo = Repository::init(&tmp).unwrap();
+        let mut index = repo.index().unwrap();
+        let sig = repo.signature().unwrap();
+
+        // Commit A
+        let path = tmp.join("test.txt");
+        fs::write(&path, "A").unwrap();
+        index.add_path(Path::new("test.txt")).unwrap();
+        let tree_id = index.write_tree().unwrap();
+        let tree = repo.find_tree(tree_id).unwrap();
+        let commit_a_oid = repo.commit(Some("HEAD"), &sig, &sig, "A", &tree, &[]).unwrap();
+
+        // Commit B
+        fs::write(&path, "B").unwrap();
+        let mut index = repo.index().unwrap();
+        index.update_all(vec![Path::new("test.txt")], None).unwrap();
+        let tree_id = index.write_tree().unwrap();
+        let tree = repo.find_tree(tree_id).unwrap();
+        let commit_b_oid = repo.commit(Some("HEAD"), &sig, &sig, "B", &tree, &[&repo.find_commit(commit_a_oid).unwrap()]).unwrap();
+
+        // Commit C (HEAD)
+        fs::write(&path, "C").unwrap();
+        let mut index = repo.index().unwrap();
+        index.update_all(vec![Path::new("test.txt")], None).unwrap();
+        let tree_id = index.write_tree().unwrap();
+        let tree = repo.find_tree(tree_id).unwrap();
+        let _commit_c_oid = repo.commit(Some("HEAD"), &sig, &sig, "C", &tree, &[&repo.find_commit(commit_b_oid).unwrap()]).unwrap();
+
+        let commit_a = commit_a_oid.to_string();
+        let commit_b = commit_b_oid.to_string();
+
+        // Test: from B and A, should select B (closer to HEAD)
+        let candidates = vec![commit_a.clone(), commit_b.clone()];
+        let result = find_nearest_ancestor(&tmp, &candidates);
+        assert!(result.is_ok());
+        let found = result.unwrap();
+        assert_eq!(found, Some(commit_b), "should select the closer ancestor (B)");
+
+        // Cleanup
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn find_nearest_ancestor_empty_list() {
+        let tmp = std::env::temp_dir().join("codemark_test_nearest_empty");
+        let _ = fs::create_dir_all(&tmp);
+
+        let result = find_nearest_ancestor(&tmp, &[]);
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), None, "empty list should return None");
+
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn find_nearest_ancestor_filters_non_ancestors() {
+        // Create a repo where only one candidate is an ancestor
+        let tmp = std::env::temp_dir().join("codemark_test_nearest_filter");
+        let _ = fs::create_dir_all(&tmp);
+
+        let repo = Repository::init(&tmp).unwrap();
+        let mut index = repo.index().unwrap();
+        let sig = repo.signature().unwrap();
+
+        // Commit A (ancestor)
+        let path = tmp.join("test.txt");
+        fs::write(&path, "A").unwrap();
+        index.add_path(Path::new("test.txt")).unwrap();
+        let tree_id = index.write_tree().unwrap();
+        let tree = repo.find_tree(tree_id).unwrap();
+        let commit_a_oid = repo.commit(Some("HEAD"), &sig, &sig, "A", &tree, &[]).unwrap();
+
+        // Commit B (HEAD)
+        fs::write(&path, "B").unwrap();
+        let mut index = repo.index().unwrap();
+        index.update_all(vec![Path::new("test.txt")], None).unwrap();
+        let tree_id = index.write_tree().unwrap();
+        let tree = repo.find_tree(tree_id).unwrap();
+        repo.commit(Some("HEAD"), &sig, &sig, "B", &tree, &[&repo.find_commit(commit_a_oid).unwrap()]).unwrap();
+
+        // Create an orphan branch (not an ancestor of HEAD)
+        fs::write(&path, "orphan").unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(Path::new("test.txt")).unwrap();
+        let tree_id = index.write_tree().unwrap();
+        let tree = repo.find_tree(tree_id).unwrap();
+        let orphan_oid = repo.commit(Some("refs/heads/orphan"), &sig, &sig, "orphan", &tree, &[]).unwrap();
+
+        let commit_a = commit_a_oid.to_string();
+        let orphan = orphan_oid.to_string();
+
+        // Only A should be found (orphan is not an ancestor)
+        let candidates = vec![commit_a.clone(), orphan.clone()];
+        let result = find_nearest_ancestor(&tmp, &candidates);
+        assert!(result.is_ok());
+        let found = result.unwrap();
+        assert_eq!(found, Some(commit_a), "should filter out non-ancestors");
+
         let _ = fs::remove_dir_all(&tmp);
     }
 }
