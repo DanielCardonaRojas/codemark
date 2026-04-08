@@ -1562,6 +1562,18 @@ fn handle_collection_list(cli: &Cli, mode: &OutputMode, args: &CollectionListArg
                 }
                 println!("{table}");
             }
+            OutputMode::Tv => {
+                // TV format: name\tdescription
+                let mut stdout = io::stdout().lock();
+                for c in &collections {
+                    writeln!(
+                        stdout,
+                        "{}\t{}",
+                        c.name,
+                        c.description.as_deref().unwrap_or("")
+                    )?;
+                }
+            }
             _ => {
                 let mut stdout = io::stdout().lock();
                 for c in &collections {
@@ -1590,6 +1602,19 @@ fn handle_collection_list(cli: &Cli, mode: &OutputMode, args: &CollectionListArg
                     ]);
                 }
                 println!("{table}");
+            }
+            OutputMode::Tv => {
+                // TV format: name\tcount\tdescription (for preview display)
+                let mut stdout = io::stdout().lock();
+                for (c, count) in &collections {
+                    writeln!(
+                        stdout,
+                        "{}\t{}\t{}",
+                        c.name,
+                        count,
+                        c.description.as_deref().unwrap_or("")
+                    )?;
+                }
             }
             _ => {
                 let mut stdout = io::stdout().lock();
