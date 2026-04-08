@@ -813,12 +813,48 @@ fn handle_heal(cli: &Cli, mode: &OutputMode, args: &HealArgs) -> Result<()> {
     let bookmarks = db.list_bookmarks(&filter)?;
     let config = load_config(cli);
 
+    // Get current HEAD once for all bookmarks
+    let cwd = std::env::current_dir()?;
+    let current_head = git_context::detect_context(&cwd).and_then(|ctx| ctx.head_commit);
+
     let mut active = 0u32;
     let mut drifted = 0u32;
     let mut stale = 0u32;
     let mut archived = 0u32;
+    let mut skipped = 0u32;
 
     for bm in &bookmarks {
+        // Skip heal if HEAD is before latest resolution (unless --force is set)
+        if !args.force {
+            if let Some(ref head) = current_head {
+                if let Ok(latest) = db.list_resolutions(&bm.id, 1) {
+                    if let Some(res) = latest.first() {
+                        if let Some(ref res_commit) = res.commit_hash {
+                            match git_context::is_ancestor(&cwd, head, res_commit) {
+                                Ok(true) => {
+                                    // HEAD is ancestor of resolution (resolution is ahead)
+                                    skipped += 1;
+                                    eprintln!(
+                                        "codemark: skipping {} (resolution at {} is ahead of HEAD {})",
+                                        short_id(&bm.id),
+                                        &res_commit[..8.min(res_commit.len())],
+                                        &head[..8.min(head.len())]
+                                    );
+                                    continue;
+                                }
+                                Ok(false) => {
+                                    // HEAD is ahead or unrelated, proceed with heal
+                                }
+                                Err(_) => {
+                                    // git error, proceed with heal (graceful degradation)
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         let Ok(lang) = bm.language.parse::<Language>() else {
             continue;
         };
@@ -891,20 +927,27 @@ fn handle_heal(cli: &Cli, mode: &OutputMode, args: &HealArgs) -> Result<()> {
                 "drifted": drifted,
                 "stale": stale,
                 "archived": archived,
+                "skipped": skipped,
                 "total": bookmarks.len(),
                 "validate_only": args.validate_only,
             }))?;
         }
         _ => {
             let action = if args.validate_only { "Validated" } else { "Healed" };
+            let skipped_msg = if skipped > 0 {
+                format!(" ({} skipped - resolutions ahead of HEAD)", skipped)
+            } else {
+                String::new()
+            };
             println!(
-                "{} {} bookmarks: {} active, {} drifted, {} stale, {} archived",
+                "{} {} bookmarks: {} active, {} drifted, {} stale, {} archived{}",
                 action,
                 bookmarks.len(),
                 active,
                 drifted,
                 stale,
-                archived
+                archived,
+                skipped_msg
             );
         }
     }

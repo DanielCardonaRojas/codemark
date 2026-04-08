@@ -220,6 +220,10 @@ pub struct HealArgs {
     /// Skip recording resolution history (only update status)
     #[arg(long)]
     pub validate_only: bool,
+
+    /// Bypass commit ancestry check (allow healing backward in history)
+    #[arg(long)]
+    pub force: bool,
 }
 
 #[derive(Debug, clap::Args)]

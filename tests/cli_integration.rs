@@ -811,3 +811,45 @@ fn reindex_generates_embeddings() {
         assert!(result.stdout.contains("Generated embeddings"));
     }
 }
+
+// --- Heal protection tests (backward healing prevention) ---
+
+#[test]
+fn heal_validates_without_resolution() {
+    // Test that heal works normally when there's no prior resolution
+    let cm = Codemark::new();
+
+    cm.run_json(&[
+        "add", "--file", &cm.fixture("rust/auth_service.rs"),
+        "--range", "108", "--note", "no resolution test",
+    ]);
+
+    // Heal should work normally (no resolution to check against)
+    let json = cm.run_json(&["heal"]);
+    assert_eq!(json["data"]["active"], 1);
+    assert_eq!(json["data"]["skipped"], 0);
+}
+
+#[test]
+fn heal_force_flag_exists() {
+    // Test that --force flag is accepted (doesn't error)
+    let cm = Codemark::new();
+
+    cm.run_json(&[
+        "add", "--file", &cm.fixture("rust/auth_service.rs"),
+        "--range", "108", "--note", "force flag test",
+    ]);
+
+    // Should accept --force without error
+    let json = cm.run_json(&["heal", "--force"]);
+    assert_eq!(json["success"], true);
+    assert_eq!(json["data"]["active"], 1);
+    assert_eq!(json["data"]["skipped"], 0);
+}
+
+// Note: Testing actual backward healing prevention requires setting up
+// a git repository with multiple commits and checking out old commits,
+// which is complex for integration tests. The unit tests in src/git/context.rs
+// verify the is_ancestor function works correctly, and the integration
+// tests verify the --force flag is accepted and heal works normally.
+
