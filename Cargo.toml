@@ -5,6 +5,9 @@ edition = "2024"
 description = "A structural bookmarking system for code using tree-sitter queries"
 license = "MIT"
 
+[dev-dependencies]
+tempfile = "3"
+
 [dependencies]
 async-trait = "0.1"
 chrono = { version = "0.4", features = ["serde"] }

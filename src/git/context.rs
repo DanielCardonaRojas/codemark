@@ -217,6 +217,27 @@ pub fn find_nearest_ancestor(repo_path: &Path, candidate_hashes: &[String]) -> R
 
         let candidate_id = commit.id();
 
+        // Special case: if candidate IS HEAD, it's always the nearest (distance 0)
+        if candidate_id == head_id {
+            return Ok(Some(candidate_hash.to_string()));
+        }
+
+        // Check if this candidate is an ancestor of HEAD
+        if !repo.graph_descendant_of(head_id, candidate_id).unwrap_or(false) {
+            continue;
+        }
+        let obj = match repo.revparse_single(candidate_hash) {
+            Ok(o) => o,
+            Err(_) => continue, // Skip commits that don't exist
+        };
+
+        let commit = match obj.peel_to_commit() {
+            Ok(c) => c,
+            Err(_) => continue, // Skip non-commits
+        };
+
+        let candidate_id = commit.id();
+
         // Check if this candidate is an ancestor of HEAD
         if !repo.graph_descendant_of(head_id, candidate_id).unwrap_or(false) {
             continue;
@@ -252,6 +273,11 @@ pub fn find_nearest_ancestor(repo_path: &Path, candidate_hashes: &[String]) -> R
 /// Count the number of commits from `start` (exclusive) to `end` (inclusive).
 /// Used to determine how "close" an ancestor commit is to HEAD.
 fn count_commits_between(repo: &Repository, start: git2::Oid, end: git2::Oid) -> Result<usize> {
+    // Special case: if start == end, there are 0 commits between
+    if start == end {
+        return Ok(0);
+    }
+
     let mut revwalk = repo.revwalk()
         .map_err(|e| Error::Git(format!("revwalk failed: {e}")))?;
     revwalk.push(end)
