@@ -1501,3 +1501,116 @@ fn git_repo_commit_creates_real_history() {
     assert_eq!(cm.read_file_at_head("test.txt"), "content A");
 }
 
+#[test]
+fn resolve_dry_run_shows_result_without_storing() {
+    let cm = Codemark::with_git_repo();
+
+    // Create a file with a function
+    cm.commit("test.rs", "fn my_function() {}\n", "Initial");
+
+    // Create a bookmark
+    let json = cm.run_json(&[
+        "add", "--file", &cm.file_path("test.rs"), "--range", "1",
+    ]);
+    let id = json["data"]["id"].as_str().unwrap();
+
+    // Get initial resolution count
+    let show_json = cm.run_json(&["show", &id[..8]]);
+    let initial_resolution_count = show_json["data"]["resolutions"].as_array().unwrap().len();
+
+    // Run resolve with --dry-run
+    let dry_run_json = cm.run_json(&["resolve", &id[..8], "--dry-run"]);
+    assert!(dry_run_json["success"] == true);
+    assert!(dry_run_json["data"]["file"].is_string());
+
+    // Verify no new resolution was stored
+    let show_json_after = cm.run_json(&["show", &id[..8]]);
+    let after_resolution_count = show_json_after["data"]["resolutions"].as_array().unwrap().len();
+    assert_eq!(initial_resolution_count, after_resolution_count);
+}
+
+#[test]
+fn resolve_batch_dry_run_shows_results_without_storing() {
+    let cm = Codemark::with_git_repo();
+
+    // Create files and bookmarks
+    cm.commit("test1.rs", "fn function_one() {}\n", "Initial 1");
+    cm.commit("test2.rs", "fn function_two() {}\n", "Initial 2");
+
+    let json1 = cm.run_json(&[
+        "add", "--file", &cm.file_path("test1.rs"), "--range", "1",
+    ]);
+    let id1 = json1["data"]["id"].as_str().unwrap();
+
+    let json2 = cm.run_json(&[
+        "add", "--file", &cm.file_path("test2.rs"), "--range", "1",
+    ]);
+    let id2 = json2["data"]["id"].as_str().unwrap();
+
+    // Get initial resolution counts
+    let show_json1 = cm.run_json(&["show", &id1[..8]]);
+    let initial_resolutions1 = show_json1["data"]["resolutions"].as_array().unwrap().len();
+
+    let show_json2 = cm.run_json(&["show", &id2[..8]]);
+    let initial_resolutions2 = show_json2["data"]["resolutions"].as_array().unwrap().len();
+
+    // Run batch resolve with --dry-run
+    cm.run(&["resolve", "--dry-run"]);
+
+    // Verify no new resolutions were stored
+    let show_json1_after = cm.run_json(&["show", &id1[..8]]);
+    let after_resolutions1 = show_json1_after["data"]["resolutions"].as_array().unwrap().len();
+    assert_eq!(initial_resolutions1, after_resolutions1);
+
+    let show_json2_after = cm.run_json(&["show", &id2[..8]]);
+    let after_resolutions2 = show_json2_after["data"]["resolutions"].as_array().unwrap().len();
+    assert_eq!(initial_resolutions2, after_resolutions2);
+}
+
+#[test]
+fn resolve_dry_run_after_code_change() {
+    let cm = Codemark::with_git_repo();
+
+    // Create initial code
+    cm.commit("test.rs", "fn my_function() { let x = 1; }", "Initial");
+
+    // Create bookmark
+    let json = cm.run_json(&[
+        "add", "--file", &cm.file_path("test.rs"), "--range", "1",
+    ]);
+    let id = json["data"]["id"].as_str().unwrap().to_string();
+
+    // Initial heal to create a baseline resolution
+    cm.run_json(&["heal"]);
+
+    // Get initial status - bookmark should be Active
+    let show_json = cm.run_json(&["show", &id[..8]]);
+    assert_eq!(show_json["data"]["bookmark"]["status"], "active");
+    let initial_resolutions = show_json["data"]["resolutions"].as_array().unwrap().len();
+
+    // Change the code
+    cm.commit("test.rs", "fn my_function() { let x = 2; }", "Change content");
+
+    // Run resolve with --dry-run - should succeed and show resolution info
+    let dry_run_json = cm.run_json(&["resolve", &id[..8], "--dry-run"]);
+    assert!(dry_run_json["success"] == true);
+    // The dry-run should show the resolution result (with file and method)
+    assert!(dry_run_json["data"]["file"].is_string());
+    assert!(dry_run_json["data"]["method"].is_string());
+
+    // Verify status hasn't changed (still active) and no new resolution was stored
+    let show_json_after = cm.run_json(&["show", &id[..8]]);
+    assert_eq!(show_json_after["data"]["bookmark"]["status"], "active");
+    let after_resolutions = show_json_after["data"]["resolutions"].as_array().unwrap().len();
+    assert_eq!(initial_resolutions, after_resolutions, "dry-run should not store new resolution");
+
+    // Now run real resolve and verify it updates
+    let resolve_json = cm.run_json(&["resolve", &id[..8]]);
+    assert!(resolve_json["success"] == true);
+
+    // Verify a new resolution was stored
+    let show_json_final = cm.run_json(&["show", &id[..8]]);
+    let final_resolutions = show_json_final["data"]["resolutions"].as_array().unwrap().len();
+    assert!(final_resolutions > after_resolutions, "real resolve should store new resolution");
+}
+

@@ -180,6 +180,10 @@ pub struct ResolveArgs {
     /// Filter by collection
     #[arg(long)]
     pub collection: Option<String>,
+
+    /// Preview what would be resolved without storing anything
+    #[arg(long)]
+    pub dry_run: bool,
 }
 
 #[derive(Debug, clap::Args)]

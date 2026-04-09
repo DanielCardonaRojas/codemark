@@ -654,6 +654,12 @@ fn handle_resolve(cli: &Cli, mode: &OutputMode, args: &ResolveArgs) -> Result<()
         let ts_lang = lang.tree_sitter_language();
 
         let result = resolution::resolve(&bm, &mut cache, &ts_lang)?;
+
+        // In dry-run mode, skip database updates and just show the result
+        if args.dry_run {
+            return write_resolution_output(mode, &bm, &result);
+        }
+
         let new_status = health::transition(bm.status, result.method, result.hash_matches);
 
         let stale_since = if new_status == BookmarkStatus::Stale {
@@ -706,7 +712,7 @@ fn handle_resolve(cli: &Cli, mode: &OutputMode, args: &ResolveArgs) -> Result<()
         let config = load_config(cli);
         for (_label, db) in &dbs {
             let bookmarks = db.list_bookmarks(&filter)?;
-            resolve_batch(mode, db, &bookmarks, &config)?;
+            resolve_batch(mode, db, &bookmarks, &config, args.dry_run)?;
         }
     }
     Ok(())
@@ -1752,7 +1758,7 @@ fn handle_collection_resolve(cli: &Cli, mode: &OutputMode, args: &CollectionReso
     };
     let bookmarks = db.list_bookmarks(&filter)?;
     let config = load_config(cli);
-    resolve_batch(mode, &db, &bookmarks, &config)?;
+    resolve_batch(mode, &db, &bookmarks, &config, false)?;
     Ok(())
 }
 
@@ -1763,6 +1769,7 @@ fn resolve_batch(
     db: &Database,
     bookmarks: &[Bookmark],
     config: &Config,
+    dry_run: bool,
 ) -> Result<()> {
     let mut results = Vec::new();
 
@@ -1774,6 +1781,12 @@ fn resolve_batch(
         let ts_lang = lang.tree_sitter_language();
         let result = resolution::resolve(bm, &mut cache, &ts_lang)?;
         let new_status = health::transition(bm.status, result.method, result.hash_matches);
+
+        // In dry-run mode, skip database updates
+        if dry_run {
+            write_resolution_output(mode, bm, &result)?;
+            continue;
+        }
 
         let stale_since = if new_status == BookmarkStatus::Stale {
             bm.stale_since.clone().or_else(|| Some(now_iso()))
