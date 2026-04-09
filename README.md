@@ -316,6 +316,8 @@ See `extras/config.example.toml` for all options.
 
 SQLite at `.codemark/codemark.db` relative to the git repo root. Auto-created on first use. Add `.codemark/` to `.gitignore` — each developer/agent maintains their own bookmarks.
 
+See [database-schema.md](docs/database-schema.md) for the complete schema diagram and table documentation.
+
 ## Project structure
 
 ```
