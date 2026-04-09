@@ -31,6 +31,46 @@ codemark add --file src/auth.rs --range 42 \
   --created-by agent
 ```
 
+## Creating Bookmarks with Raw Queries
+
+### 1. Use dry-run to verify query uniqueness
+```bash
+codemark add-from-query \
+  --file src/auth.swift \
+  --query '(function_declaration name: (simple_identifier) @name (#eq? @name "validateToken")) @target' \
+  --dry-run
+```
+
+### 2. Create bookmark with context
+```bash
+codemark add-from-query \
+  --file src/auth.swift \
+  --query '(function_declaration name: (simple_identifier) @name (#eq? @name "validateToken")) @target' \
+  --note "Validates JWT tokens. checks expiry and cache." \
+  --context "Called by API middleware on all authenticated endpoints" \
+  --tag feature:auth --tag role:validation \
+  --created-by agent
+```
+
+### 3. Cross-language query examples
+```bash
+# Swift
+codemark add-from-query --file AuthService.swift \
+  --query '(function_declaration name: (simple_identifier) @name (#eq? @name "validateToken")) @target'
+
+# Rust
+codemark add-from-query --file auth.rs \
+  --query '(function_item name: (identifier) @name (#eq? @name "validate_token")) @target'
+
+# TypeScript
+codemark add-from-query --file AuthService.ts \
+  --query '(method_definition name: (property_identifier) @name (#eq? @name "validateToken")) @target'
+
+# Python
+codemark add-from-query --file auth.py \
+  --query '(function_definition name: (identifier) @name (#eq? @name "validate_token")) @target'
+```
+
 ## Organizing an Ordered Collection
 
 For complex call chains, use ordered collections.
@@ -54,4 +94,38 @@ codemark list --tag feature:auth --tag role:entrypoint
 
 # Search for bookmarks involving "JWT"
 codemark search "JWT"
+
+# List bookmarks created by agents
+codemark list --author agent
+```
+
+## Checking Impact After Changes
+
+```bash
+# See what's affected by recent commits
+codemark diff --since HEAD~3
+
+# Validate all bookmarks are still healthy
+codemark heal
+```
+
+## Session Workflow Example
+
+```bash
+# 1. Load existing bookmarks at session start
+codemark resolve --status active
+
+# 2. During exploration, bookmark critical findings
+codemark add-from-query \
+  --file src/api/middleware.go \
+  --query '(function_declaration name: (identifier) @name (#eq? @name "AuthMiddleware")) @target' \
+  --note "Middleware that validates JWT tokens on all protected routes" \
+  --tag feature:auth --tag role:middleware \
+  --created-by agent
+
+# 3. At session end, validate bookmarks
+codemark heal --auto-archive
+
+# 4. Check overall health
+codemark status
 ```
