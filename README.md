@@ -3,7 +3,7 @@
 [![crates.io](https://img.shields.io/crates/v/codemark)](https://crates.io/crates/codemark)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
-A structural bookmarking system for code. Instead of fragile file:line references, Codemark stores **tree-sitter queries** that identify code by its AST shape. Bookmarks survive renames, refactors, and reformatting through layered resolution.
+A structural bookmarking system for code. Instead of fragile file:line references, Codemark stores **[tree-sitter](https://tree-sitter.github.io/tree-sitter/)** queries that identify code by its AST shape. Bookmarks survive renames, refactors, and reformatting through layered resolution.
 
 ## Why
 
@@ -109,7 +109,7 @@ codemark preview a1b2 --resolution-id <id>     # preview at a specific resolutio
 Preview outputs JSON for easy piping to your editor or viewer:
 
 ```bash
-# View with bat (syntax highlighted, with extension detection)
+# View with [bat](https://github.com/sharkdp/bat) (syntax highlighted, with extension detection)
 codemark preview a1b2 | jq -r '"\(.data.file_path)\n\(.data.line_range)"' | xargs -n2 sh -c 'bat --highlight-line "$2" -l "${1##*.}" "$1"' _
 
 # Or simpler (no syntax highlighting):
@@ -198,7 +198,7 @@ codemark list --format tv        # TV format with line numbers
 
 ## Integration
 
-### fzf
+### [fzf](https://github.com/junegunn/fzf)
 
 ```bash
 # Browse with live preview
@@ -229,7 +229,7 @@ codemark completions bash > ~/.local/share/bash-completion/completions/codemark
 codemark completions fish > ~/.config/fish/completions/codemark.fish
 ```
 
-### Television
+### [television](https://github.com/alexpasmant/television)
 
 ```bash
 # Install the channel
@@ -256,7 +256,7 @@ This gives agents the `/codemark` skill for proactive bookmarking during explora
 
 ## Semantic search
 
-Codemark supports semantic search using vector embeddings. Bookmarks are automatically embedded when created, and you can search by meaning rather than exact keywords.
+Codemark supports semantic search using vector embeddings (powered by [sqlite-vec](https://github.com/asg017/sqlite-vec)). Bookmarks are automatically embedded when created, and you can search by meaning rather than exact keywords.
 
 ```bash
 # Enable semantic search (creates embeddings for all bookmarks)
@@ -267,7 +267,7 @@ codemark search --semantic "database connection initialization"
 codemark search --semantic "error handling" --limit 10
 ```
 
-Embeddings are stored using the `sqlite-vec` extension. For manual database inspection with the sqlite3 CLI, you need a version with loadable extension support:
+Embeddings are stored using the [sqlite-vec](https://github.com/asg017/sqlite-vec) extension. For manual database inspection with the sqlite3 CLI, you need a version with loadable extension support:
 
 ```bash
 # Install sqlite3 with extension support via Homebrew
@@ -279,7 +279,7 @@ sqlite> .load ./vec0
 sqlite> SELECT bookmark_id FROM bookmark_embeddings;
 ```
 
-The first run of `codemark reindex` will download the ML model (all-MiniLM-L6-v2, ~100MB) to `~/.cache/codemark/`.
+The first run of `codemark reindex` will download the ML model ([all-MiniLM-L6-v2](https://huggingface.co/sentence-transformers/all-MiniLM-L6-v2), ~100MB) to `~/.cache/codemark/`.
 
 ## Configuration
 
@@ -297,7 +297,7 @@ See `extras/config.example.toml` for all options.
 
 ## How it works
 
-1. **Parse** the file with tree-sitter to build an AST
+1. **Parse** the file with [tree-sitter](https://tree-sitter.github.io/tree-sitter/) to build an AST
 2. **Find** the target node (smallest declaration covering the line/byte range)
 3. **Generate** an S-expression query that uniquely identifies the node:
    ```scheme
@@ -330,6 +330,15 @@ src/
 ├── query/         # query generation, relaxation, matching
 └── storage/       # SQLite database, migrations, CRUD repos
 ```
+
+## Related projects
+
+- [tree-sitter](https://tree-sitter.github.io/tree-sitter/) — Parsing library for code
+- [sqlite-vec](https://github.com/asg017/sqlite-vec) — Vector search extension for SQLite
+- [fzf](https://github.com/junegunn/fzf) — Command-line fuzzy finder
+- [television](https://github.com/alexpasmant/television) — Modern, fuzzy selector
+- [bat](https://github.com/sharkdp/bat) — Cat clone with syntax highlighting
+- [git2](https://github.com/rust-lang/git2-rs) — Rust bindings to libgit2
 
 ## License
 
