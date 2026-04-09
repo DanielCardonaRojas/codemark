@@ -1608,9 +1608,14 @@ fn resolve_dry_run_after_code_change() {
     let resolve_json = cm.run_json(&["resolve", &id[..8]]);
     assert!(resolve_json["success"] == true);
 
-    // Verify a new resolution was stored
+    // Verify the resolution was updated (same count, but commit_hash changed)
     let show_json_final = cm.run_json(&["show", &id[..8]]);
     let final_resolutions = show_json_final["data"]["resolutions"].as_array().unwrap().len();
-    assert!(final_resolutions > after_resolutions, "real resolve should store new resolution");
+    assert_eq!(final_resolutions, after_resolutions, "should update existing resolution, not create new one");
+
+    // Verify the commit_hash was updated to the latest commit
+    let latest_commit = cm.head_hash();
+    let stored_commit = show_json_final["data"]["resolutions"][0]["commit_hash"].as_str().unwrap();
+    assert!(stored_commit.starts_with(&latest_commit[..8]), "commit_hash should be updated to latest commit");
 }
 
