@@ -5,7 +5,7 @@ use clap::CommandFactory;
 use clap_complete::generate;
 
 use crate::cli::output::{
-    self, short_id, write_bookmarks, write_json_success, write_not_implemented, write_success, OutputMode,
+    self, short_id, write_bookmarks, write_bookmark_markdown, write_json_success, write_not_implemented, write_success, OutputMode,
 };
 use crate::cli::*;
 use crate::engine::bookmark::{
@@ -893,6 +893,9 @@ fn handle_show(cli: &Cli, mode: &OutputMode, args: &ShowArgs) -> Result<()> {
                 "bookmark": bm,
                 "resolutions": resolutions,
             }))?;
+        }
+        OutputMode::Markdown => {
+            write_bookmark_markdown(&bm, &resolutions)?;
         }
         _ => {
             println!("ID:          {}", bm.id);

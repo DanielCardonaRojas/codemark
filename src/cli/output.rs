@@ -4,7 +4,7 @@ use comfy_table::{Cell, Table};
 use is_terminal::IsTerminal;
 use serde::Serialize;
 
-use crate::engine::bookmark::Bookmark;
+use crate::engine::bookmark::{Bookmark, Resolution};
 
 /// Resolved output mode for a command invocation.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -13,6 +13,7 @@ pub enum OutputMode {
     Line,
     Tv,  // Television format: includes line numbers for preview.offset
     Json,
+    Markdown,
     Custom(String),
 }
 
@@ -39,6 +40,7 @@ impl OutputMode {
             Some("line") => OutputMode::Line,
             Some("tv") => OutputMode::Tv,
             Some("json") => OutputMode::Json,
+            Some("markdown") => OutputMode::Markdown,
             Some(template) => OutputMode::Custom(template.to_string()),
             None => {
                 if default_json {
@@ -126,6 +128,7 @@ pub fn write_bookmarks(mode: &OutputMode, bookmarks: &[Bookmark]) -> io::Result<
             fn no_line(_: &str) -> Option<usize> { None }
             write_bookmarks_tv(bookmarks, &no_line)
         }
+        OutputMode::Markdown => write_bookmarks_table(bookmarks),
         OutputMode::Custom(template) => write_bookmarks_custom(bookmarks, template),
     }
 }
@@ -342,6 +345,28 @@ pub fn write_annotated_bookmarks(
             }
             Ok(())
         }
+        OutputMode::Markdown => {
+            // For multi-db markdown output, fall back to table format
+            let mut table = Table::new();
+            table.set_header(vec![
+                "Source", "ID", "File", "Status", "Tags", "Note",
+            ]);
+            for ab in bookmarks {
+                let bm = ab.bookmark;
+                let tags = bm.tags.join(", ");
+                let note = bm.notes.as_deref().unwrap_or("").chars().take(35).collect::<String>();
+                table.add_row(vec![
+                    Cell::new(ab.source),
+                    Cell::new(short_id(&bm.id)),
+                    Cell::new(&bm.file_path),
+                    Cell::new(bm.status.to_string()),
+                    Cell::new(tags),
+                    Cell::new(note),
+                ]);
+            }
+            println!("{table}");
+            Ok(())
+        }
     }
 }
 
@@ -351,9 +376,143 @@ pub fn write_success(mode: &OutputMode, message: &str) -> io::Result<()> {
         OutputMode::Json => {
             write_json_success(&serde_json::json!({ "message": message }))
         }
+        OutputMode::Markdown => {
+            println!("{message}");
+            Ok(())
+        }
         _ => {
             println!("{message}");
             Ok(())
         }
     }
+}
+
+// --- Markdown output for show command ---
+
+/// Write a bookmark with its resolutions in markdown format.
+pub fn write_bookmark_markdown(bm: &Bookmark, resolutions: &[Resolution]) -> io::Result<()> {
+    let mut stdout = io::stdout().lock();
+
+    // Title
+    writeln!(stdout, "# Bookmark: {}", short_id(&bm.id))?;
+    writeln!(stdout)?;
+
+    // Metadata section
+    writeln!(stdout, "## Metadata")?;
+    writeln!(stdout)?;
+    writeln!(stdout, "| Property | Value |")?;
+    writeln!(stdout, "|----------|-------|")?;
+    writeln!(stdout, "| **File** | {} |", escape_markdown(&bm.file_path))?;
+    writeln!(stdout, "| **Language** | {} |", bm.language)?;
+    writeln!(stdout, "| **Status** | {} |", bm.status)?;
+    writeln!(stdout, "| **Created** | {} |", bm.created_at)?;
+    if let Some(ref created_by) = bm.created_by {
+        writeln!(stdout, "| **Author** | {} |", escape_markdown(created_by))?;
+    }
+    if let Some(ref resolved) = bm.last_resolved_at {
+        writeln!(stdout, "| **Last Resolved** | {} |", resolved)?;
+    }
+    if let Some(ref method) = bm.resolution_method {
+        writeln!(stdout, "| **Resolution Method** | {} |", method)?;
+    }
+    if let Some(ref commit) = bm.commit_hash {
+        writeln!(stdout, "| **Commit** | `{}` |", &commit[..commit.len().min(8)])?;
+    }
+    if let Some(ref stale_since) = bm.stale_since {
+        writeln!(stdout, "| **Stale Since** | {} |", stale_since)?;
+    }
+    writeln!(stdout)?;
+
+    // Query section
+    writeln!(stdout, "## Tree-sitter Query")?;
+    writeln!(stdout)?;
+    writeln!(stdout, "```scheme")?;
+    for line in bm.query.lines() {
+        writeln!(stdout, "{}", line)?;
+    }
+    writeln!(stdout, "```")?;
+    writeln!(stdout)?;
+
+    // Tags section
+    if !bm.tags.is_empty() {
+        writeln!(stdout, "## Tags")?;
+        writeln!(stdout)?;
+        for tag in &bm.tags {
+            writeln!(stdout, "- `{}`", escape_markdown(tag))?;
+        }
+        writeln!(stdout)?;
+    }
+
+    // Notes section
+    if let Some(ref notes) = bm.notes {
+        writeln!(stdout, "## Notes")?;
+        writeln!(stdout)?;
+        writeln!(stdout, "{}", escape_markdown(notes))?;
+        writeln!(stdout)?;
+    }
+
+    // Context section
+    if let Some(ref context) = bm.context {
+        writeln!(stdout, "## Context")?;
+        writeln!(stdout)?;
+        writeln!(stdout, "{}", escape_markdown(context))?;
+        writeln!(stdout)?;
+    }
+
+    // Resolution history section
+    if !resolutions.is_empty() {
+        writeln!(stdout, "## Resolution History")?;
+        writeln!(stdout)?;
+        writeln!(stdout, "| Time | Method | File | Lines | Matches | Commit |")?;
+        writeln!(stdout, "|------|--------|------|-------|---------|--------|")?;
+        for r in resolutions {
+            let file = r.file_path.as_deref().unwrap_or("-");
+            let line_range = r.line_range.as_deref().unwrap_or("-");
+            let match_count = r.match_count.map_or("-".to_string(), |c| c.to_string());
+            let commit = r.commit_hash
+                .as_deref()
+                .map(|c| format!("`{}`", &c[..c.len().min(8)]))
+                .unwrap_or_else(|| "-".to_string());
+            writeln!(
+                stdout,
+                "| {} | {} | {} | {} | {} | {} |",
+                r.resolved_at, r.method, file, line_range, match_count, commit
+            )?;
+        }
+        writeln!(stdout)?;
+    }
+
+    Ok(())
+}
+
+/// Escape special markdown characters in text.
+fn escape_markdown(text: &str) -> String {
+    // Escape characters that have special meaning in markdown:
+    // \ ` * _ { } [ ] ( ) # + - . ! | < >
+    // But be careful not to escape within code blocks
+    let mut result = String::with_capacity(text.len());
+    for c in text.chars() {
+        match c {
+            '\\' => result.push_str("\\\\"),
+            '`' => result.push_str("\\`"),
+            '*' => result.push_str("\\*"),
+            '_' => result.push_str("\\_"),
+            '{' => result.push_str("\\{"),
+            '}' => result.push_str("\\}"),
+            '[' => result.push_str("\\["),
+            ']' => result.push_str("\\]"),
+            '(' => result.push_str("\\("),
+            ')' => result.push_str("\\)"),
+            '#' => result.push_str("\\#"),
+            '+' => result.push_str("\\+"),
+            '-' => result.push_str("\\-"),
+            '.' => result.push_str("\\."),
+            '!' => result.push_str("\\!"),
+            '|' => result.push_str("\\|"),
+            '<' => result.push_str("\\<"),
+            '>' => result.push_str("\\>"),
+            _ => result.push(c),
+        }
+    }
+    result
 }
