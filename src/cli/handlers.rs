@@ -473,17 +473,30 @@ fn handle_add(cli: &Cli, mode: &OutputMode, args: &AddArgs) -> Result<()> {
     };
     db.insert_resolution_if_changed(&initial_res, config.storage.max_resolutions_per_bookmark)?;
 
+    // Add to collection if specified
+    let collection_name = if let Some(ref coll_name) = args.collection {
+        add_bookmark_to_collection(&db, &bookmark.id, coll_name)?
+    } else {
+        None
+    };
+
     match mode {
-        OutputMode::Json => write_json_success(&serde_json::json!({
-            "id": bookmark.id,
-            "query": generated.query,
-            "node_type": generated.target_node_type,
-            "name": generated.target_name,
-            "lines": format!("{target_start_line}-{target_end_line}"),
-            "content_hash": content_hash,
-            "unique": match_count == 1,
-            "created_by": bookmark.created_by,
-        }))?,
+        OutputMode::Json => {
+            let mut json_data = serde_json::json!({
+                "id": bookmark.id,
+                "query": generated.query,
+                "node_type": generated.target_node_type,
+                "name": generated.target_name,
+                "lines": format!("{target_start_line}-{target_end_line}"),
+                "content_hash": content_hash,
+                "unique": match_count == 1,
+                "created_by": bookmark.created_by,
+            });
+            if let Some(ref coll) = collection_name {
+                json_data["collection"] = serde_json::json!(coll);
+            }
+            write_json_success(&json_data)?;
+        }
         _ => {
             println!("Bookmark created: {}", output::short_id(&bookmark.id));
             println!("  Node type: {}", generated.target_node_type);
@@ -491,6 +504,9 @@ fn handle_add(cli: &Cli, mode: &OutputMode, args: &AddArgs) -> Result<()> {
                 println!("  Target: {name}");
             }
             println!("  Lines: {target_start_line}-{target_end_line}");
+            if let Some(ref coll) = collection_name {
+                println!("  Collection: {coll}");
+            }
         }
     }
     Ok(())
@@ -578,19 +594,35 @@ fn handle_add_from_snippet(cli: &Cli, mode: &OutputMode, args: &AddFromSnippetAr
     };
     db.insert_resolution_if_changed(&initial_res, config.storage.max_resolutions_per_bookmark)?;
 
+    // Add to collection if specified
+    let collection_name = if let Some(ref coll_name) = args.collection {
+        add_bookmark_to_collection(&db, &bookmark.id, coll_name)?
+    } else {
+        None
+    };
+
     match mode {
-        OutputMode::Json => write_json_success(&serde_json::json!({
-            "id": bookmark.id,
-            "query": generated.query,
-            "node_type": generated.target_node_type,
-            "name": generated.target_name,
-            "content_hash": content_hash,
-            "created_by": bookmark.created_by,
-        }))?,
+        OutputMode::Json => {
+            let mut json_data = serde_json::json!({
+                "id": bookmark.id,
+                "query": generated.query,
+                "node_type": generated.target_node_type,
+                "name": generated.target_name,
+                "content_hash": content_hash,
+                "created_by": bookmark.created_by,
+            });
+            if let Some(ref coll) = collection_name {
+                json_data["collection"] = serde_json::json!(coll);
+            }
+            write_json_success(&json_data)?;
+        }
         _ => {
             println!("Bookmark created: {}", output::short_id(&bookmark.id));
             if let Some(ref name) = generated.target_name {
                 println!("  Target: {name}");
+            }
+            if let Some(ref coll) = collection_name {
+                println!("  Collection: {coll}");
             }
         }
     }
@@ -693,19 +725,35 @@ fn handle_add_from_query(cli: &Cli, mode: &OutputMode, args: &AddFromQueryArgs) 
     };
     db.insert_resolution_if_changed(&initial_res, config.storage.max_resolutions_per_bookmark)?;
 
+    // Add to collection if specified
+    let collection_name = if let Some(ref coll_name) = args.collection {
+        add_bookmark_to_collection(&db, &bookmark.id, coll_name)?
+    } else {
+        None
+    };
+
     match mode {
-        OutputMode::Json => write_json_success(&serde_json::json!({
-            "id": bookmark.id,
-            "query": args.query,
-            "node_type": node_type,
-            "content_hash": content_hash,
-            "created_by": bookmark.created_by,
-        }))?,
+        OutputMode::Json => {
+            let mut json_data = serde_json::json!({
+                "id": bookmark.id,
+                "query": args.query,
+                "node_type": node_type,
+                "content_hash": content_hash,
+                "created_by": bookmark.created_by,
+            });
+            if let Some(ref coll) = collection_name {
+                json_data["collection"] = serde_json::json!(coll);
+            }
+            write_json_success(&json_data)?;
+        }
         _ => {
             println!("Bookmark created: {}", output::short_id(&bookmark.id));
             println!("  Node type: {node_type}");
             if matches.len() > 1 {
                 println!("  Warning: query matches {} nodes", matches.len());
+            }
+            if let Some(ref coll) = collection_name {
+                println!("  Collection: {coll}");
             }
         }
     }
@@ -1876,6 +1924,34 @@ fn handle_collection_resolve(cli: &Cli, mode: &OutputMode, args: &CollectionReso
     let config = load_config(cli);
     resolve_batch(mode, &db, &bookmarks, &config, false)?;
     Ok(())
+}
+
+// --- Shared helpers ---
+
+/// Add a bookmark to a collection, auto-creating the collection if it doesn't exist.
+/// Returns the collection name if the bookmark was added, None otherwise.
+fn add_bookmark_to_collection(
+    db: &Database,
+    bookmark_id: &str,
+    collection_name: &str,
+) -> Result<Option<String>> {
+    // Auto-create collection if it doesn't exist (same logic as handle_collection_add)
+    let collection = match db.get_collection_by_name(collection_name)? {
+        Some(c) => c,
+        None => {
+            let c = Collection {
+                id: uuid::Uuid::new_v4().to_string(),
+                name: collection_name.to_string(),
+                description: None,
+                created_at: now_iso(),
+                created_by: None,
+            };
+            db.insert_collection(&c)?;
+            c
+        }
+    };
+    db.add_to_collection(&collection.id, &[bookmark_id.to_string()])?;
+    Ok(Some(collection_name.to_string()))
 }
 
 // --- Shared helpers ---

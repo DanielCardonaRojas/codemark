@@ -1619,3 +1619,140 @@ fn resolve_dry_run_after_code_change() {
     assert!(stored_commit.starts_with(&latest_commit[..8]), "commit_hash should be updated to latest commit");
 }
 
+#[test]
+fn add_with_collection_flag_creates_collection_and_adds_bookmark() {
+    let cm = Codemark::with_git_repo();
+
+    // Create initial code
+    cm.commit("test.rs", "fn my_function() { let x = 1; }", "Initial");
+
+    // Create bookmark with --collection flag
+    let json = cm.run_json(&[
+        "add", "--file", &cm.file_path("test.rs"), "--range", "1",
+        "--collection", "my-collection",
+    ]);
+
+    assert!(json["success"] == true);
+    assert_eq!(json["data"]["collection"], "my-collection");
+
+    let id = json["data"]["id"].as_str().unwrap();
+
+    // Verify bookmark was created
+    let _show_json = cm.run_json(&["show", &id[..8]]);
+
+    // Verify collection was created and bookmark is in it
+    let collection_json = cm.run_json(&["collection", "show", "my-collection"]);
+    let bookmarks = collection_json["data"].as_array().unwrap();
+    assert_eq!(bookmarks.len(), 1);
+    assert_eq!(bookmarks[0]["id"], id);
+}
+
+#[test]
+fn add_from_query_with_collection_flag() {
+    let cm = Codemark::with_git_repo();
+
+    // Create initial code
+    cm.commit("test.rs", "fn my_function() { let x = 1; }", "Initial");
+
+    // Create bookmark with --collection flag using raw query
+    // Use the correct Rust tree-sitter node type with @target capture
+    let json = cm.run_json(&[
+        "add-from-query",
+        "--file", &cm.file_path("test.rs"),
+        "--query", "(function_item name: (identifier) @name) @target",
+        "--collection", "query-collection",
+    ]);
+
+    assert!(json["success"] == true);
+    assert_eq!(json["data"]["collection"], "query-collection");
+
+    let id = json["data"]["id"].as_str().unwrap();
+
+    // Verify collection contains the bookmark
+    let collection_json = cm.run_json(&["collection", "show", "query-collection"]);
+    let bookmarks = collection_json["data"].as_array().unwrap();
+    assert_eq!(bookmarks.len(), 1);
+    assert_eq!(bookmarks[0]["id"], id);
+}
+
+#[test]
+fn add_from_snippet_with_collection_flag() {
+    let cm = Codemark::with_git_repo();
+
+    // Create initial code
+    cm.commit("test.rs", "fn my_function() { let x = 1; }", "Initial");
+
+    // Create bookmark with --collection flag using snippet
+    let output = std::process::Command::new(&cm.binary)
+        .arg("--db")
+        .arg(&cm.db_path)
+        .arg("--format")
+        .arg("json")
+        .args([
+            "add-from-snippet",
+            "--file", &cm.file_path("test.rs"),
+            "--collection", "snippet-collection",
+        ])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .current_dir(&cm.work_dir)
+        .spawn()
+        .and_then(|mut child| {
+            use std::io::Write;
+            child.stdin.take().unwrap().write_all(b"fn my_function()").unwrap();
+            child.wait_with_output()
+        })
+        .unwrap();
+
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert!(json["success"] == true);
+    assert_eq!(json["data"]["collection"], "snippet-collection");
+
+    let id = json["data"]["id"].as_str().unwrap();
+
+    // Verify collection contains the bookmark
+    let collection_json = cm.run_json(&["collection", "show", "snippet-collection"]);
+    let bookmarks = collection_json["data"].as_array().unwrap();
+    assert_eq!(bookmarks.len(), 1);
+    assert_eq!(bookmarks[0]["id"], id);
+}
+
+#[test]
+fn multiple_bookmarks_added_to_same_collection_maintain_order() {
+    let cm = Codemark::with_git_repo();
+
+    // Create initial code with multiple functions
+    cm.commit(
+        "test.rs",
+        "fn first() { }\nfn second() { }\nfn third() { }",
+        "Initial",
+    );
+
+    // Add three bookmarks to the same collection
+    let json1 = cm.run_json(&[
+        "add", "--file", &cm.file_path("test.rs"), "--range", "1",
+        "--collection", "ordered-collection",
+    ]);
+    let id1 = json1["data"]["id"].as_str().unwrap();
+
+    let json2 = cm.run_json(&[
+        "add", "--file", &cm.file_path("test.rs"), "--range", "2",
+        "--collection", "ordered-collection",
+    ]);
+    let id2 = json2["data"]["id"].as_str().unwrap();
+
+    let json3 = cm.run_json(&[
+        "add", "--file", &cm.file_path("test.rs"), "--range", "3",
+        "--collection", "ordered-collection",
+    ]);
+    let id3 = json3["data"]["id"].as_str().unwrap();
+
+    // Verify all three bookmarks are in the collection in order
+    let collection_json = cm.run_json(&["collection", "show", "ordered-collection"]);
+    let bookmarks = collection_json["data"].as_array().unwrap();
+    assert_eq!(bookmarks.len(), 3);
+    assert_eq!(bookmarks[0]["id"], id1);
+    assert_eq!(bookmarks[1]["id"], id2);
+    assert_eq!(bookmarks[2]["id"], id3);
+}
+

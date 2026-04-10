@@ -73,16 +73,39 @@ codemark add-from-query --file auth.py \
 
 ## Organizing an Ordered Collection
 
-For complex call chains, use ordered collections.
+For complex call chains, use ordered collections. **Recommended: Use `--collection` when creating bookmarks** — collections are auto-created and bookmarks are added in order.
 
 ```bash
-# 1. Create collection
+# Add bookmarks directly to a collection (collection is auto-created)
+codemark add --file src/handler.rs --range 10 \
+  --note "HTTP request handler" \
+  --collection login-flow
+
+codemark add-from-query \
+  --file src/middleware.rs \
+  --query '(function_item name: (identifier) @name (#eq? @name "validate")) @target' \
+  --note "JWT validation middleware" \
+  --collection login-flow
+
+codemark add-from-query \
+  --file src/db.rs \
+  --query '(function_item name: (identifier) @name (#eq? @name "lookup_user")) @target' \
+  --note "Database query for user lookup" \
+  --collection login-flow
+
+# Verify order
+codemark collection show login-flow
+```
+
+**Alternative: Create collection first, then add existing bookmarks**
+```bash
+# Create collection
 codemark collection create login-flow --description "Step-by-step login execution path"
 
-# 2. Add bookmarks in execution order
+# Add existing bookmarks by ID (useful when reorganizing)
 codemark collection add login-flow <id_handler> <id_middleware> <id_db_query>
 
-# 3. Verify order
+# Verify order
 codemark collection show login-flow
 ```
 
@@ -115,17 +138,29 @@ codemark heal
 # 1. Load existing bookmarks at session start
 codemark resolve --status active
 
-# 2. During exploration, bookmark critical findings
+# 2. During exploration, bookmark critical findings directly to a collection
 codemark add-from-query \
   --file src/api/middleware.go \
   --query '(function_declaration name: (identifier) @name (#eq? @name "AuthMiddleware")) @target' \
   --note "Middleware that validates JWT tokens on all protected routes" \
   --tag feature:auth --tag role:middleware \
-  --created-by agent
+  --created-by agent \
+  --collection auth-investigation
+
+codemark add-from-query \
+  --file src/api/handler.go \
+  --query '(function_declaration name: (identifier) @name (#eq? @name "LoginHandler")) @target' \
+  --note "HTTP handler for login endpoint" \
+  --tag feature:auth --tag role:handler \
+  --created-by agent \
+  --collection auth-investigation
 
 # 3. At session end, validate bookmarks
 codemark heal --auto-archive
 
 # 4. Check overall health
 codemark status
+
+# 5. Review what you've bookmarked in this session
+codemark collection show auth-investigation
 ```

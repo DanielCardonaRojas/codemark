@@ -45,7 +45,29 @@ If the user invoked you with arguments (e.g. `/codemark something`), use `$ARGUM
 
 ## Quick Start
 
-### Method 1: Range-based bookmarking (recommended for humans)
+### Creating a collection of bookmarks (recommended for agents)
+Use `--collection` when creating bookmarks to add them directly to a collection:
+```bash
+# Create multiple bookmarks in a single collection
+codemark add \
+  --file src/auth.rs --range 42 \
+  --note "Core auth entry point: Handles all JWT verification" \
+  --tag feature:auth --tag role:entrypoint \
+  --created-by agent \
+  --collection login-flow
+
+codemark add-from-query \
+  --file src/auth.swift \
+  --query '(function_declaration name: (simple_identifier) @name (#eq? @name "validateToken")) @target' \
+  --note "Validates JWT tokens" \
+  --created-by agent \
+  --collection login-flow
+
+# View the collection
+codemark collection show login-flow
+```
+
+### Method 1: Range-based bookmarking
 When you know the file and line numbers:
 ```bash
 codemark add \
@@ -79,7 +101,7 @@ For common query patterns across languages, see `queries.md`.
 ## Best Practices
 
 - Use `--created-by agent` to distinguish your bookmarks from the user's.
-- Use **ordered collections** for execution paths: `codemark collection create <name>`.
+- Use `--collection <name>` when creating bookmarks to add them directly to a collection (collections are auto-created if they don't exist).
 - For detailed note guidelines, see `templates.md`.
 - For usage examples, see `examples.md`.
 - For tree-sitter query patterns, see `queries.md`.
@@ -88,14 +110,14 @@ For common query patterns across languages, see `queries.md`.
 
 ### Creating bookmarks
 ```bash
-# By range (line or byte)
-codemark add --file src/auth.rs --range 42:67
+# By range (line or byte) — optionally add to collection
+codemark add --file src/auth.rs --range 42:67 --collection my-work
 
-# By code snippet (searches for snippet in file)
-codemark add-from-snippet --file src/auth.rs
+# By code snippet (searches for snippet in file) — optionally add to collection
+codemark add-from-snippet --file src/auth.rs --collection my-work
 
-# By raw tree-sitter query (most precise)
-codemark add-from-query --file src/auth.rs --query '(function_declaration) @target'
+# By raw tree-sitter query (most precise) — optionally add to collection
+codemark add-from-query --file src/auth.rs --query '(function_declaration) @target' --collection my-work
 
 # Preview what would be bookmarked (dry-run)
 codemark add --file src/auth.rs --range 42 --dry-run
@@ -110,9 +132,14 @@ codemark search "authentication"
 
 ### Organize with collections
 ```bash
+# Collections are auto-created when using --collection, or create explicitly:
 codemark collection create login-flow --description "Step-by-step login execution path"
-codemark collection add login-flow <id1> <id2>
+
+# Show bookmarks in a collection
 codemark collection show login-flow
+
+# List all collections
+codemark collection list
 ```
 
 ### Check impact

@@ -127,6 +127,10 @@ pub struct AddArgs {
     /// Preview what would be bookmarked without saving
     #[arg(long)]
     pub dry_run: bool,
+
+    /// Add bookmark to this collection (auto-creates if it doesn't exist)
+    #[arg(long)]
+    pub collection: Option<String>,
 }
 
 #[derive(Debug, clap::Args)]
@@ -158,6 +162,10 @@ pub struct AddFromSnippetArgs {
     /// Preview what would be bookmarked without saving
     #[arg(long)]
     pub dry_run: bool,
+
+    /// Add bookmark to this collection (auto-creates if it doesn't exist)
+    #[arg(long)]
+    pub collection: Option<String>,
 }
 
 #[derive(Debug, clap::Args)]
@@ -193,6 +201,10 @@ pub struct AddFromQueryArgs {
     /// Preview what would be bookmarked without saving
     #[arg(long)]
     pub dry_run: bool,
+
+    /// Add bookmark to this collection (auto-creates if it doesn't exist)
+    #[arg(long)]
+    pub collection: Option<String>,
 }
 
 #[derive(Debug, clap::Args)]
