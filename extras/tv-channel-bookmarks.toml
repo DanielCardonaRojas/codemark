@@ -9,7 +9,10 @@ display = "{split:\\t:1}  {split:\\t:4}  {split:\\t:5}"
 output = "{split:\\t:0}"
 
 [preview]
-command = "cd \"$(dirname $(git rev-parse --path-format=absolute --git-common-dir))\" && codemark preview {split:\\t:0} | jq -r '\"\\(.data.file_path) --highlight-line \\(.data.line_range)\"' | xargs bat --color=always"
+command = [
+  "cd \"$(dirname $(git rev-parse --path-format=absolute --git-common-dir))\" && codemark preview {split:\\t:0} | jq -r '\"\\(.data.file_path) --highlight-line \\(.data.line_range)\"' | xargs bat --color=always",
+  "cd \"$(dirname $(git rev-parse --path-format=absolute --git-common-dir))\" && codemark show {split:\\t:0} --format markdown | glow",
+]
 offset = "{split:\\t:2}"
 
 [ui.preview_panel]
