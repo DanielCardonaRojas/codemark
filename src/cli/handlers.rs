@@ -28,6 +28,7 @@ pub fn dispatch(cli: &Cli) -> Result<()> {
     match &cli.command {
         Command::Add(args) => handle_add(cli, &mode, args),
         Command::AddFromSnippet(args) => handle_add_from_snippet(cli, &mode, args),
+        Command::AddFromQuery(args) => handle_add_from_query(cli, &mode, args),
         Command::Resolve(args) => handle_resolve(cli, &mode, args),
         Command::Show(args) => handle_show(cli, &mode, args),
         Command::Remove(args) => handle_remove(cli, &mode, args),
@@ -590,6 +591,121 @@ fn handle_add_from_snippet(cli: &Cli, mode: &OutputMode, args: &AddFromSnippetAr
             println!("Bookmark created: {}", output::short_id(&bookmark.id));
             if let Some(ref name) = generated.target_name {
                 println!("  Target: {name}");
+            }
+        }
+    }
+    Ok(())
+}
+
+fn handle_add_from_query(cli: &Cli, mode: &OutputMode, args: &AddFromQueryArgs) -> Result<()> {
+    let lang = resolve_language(args.lang.as_deref(), &args.file)?;
+    let (abs_path, rel_path) = resolve_file_path(&args.file)?;
+
+    let mut parser = crate::parser::languages::Parser::new(lang)?;
+    let (tree, source) = parser.parse_file(&abs_path)?;
+    let ts_lang = lang.tree_sitter_language();
+
+    // Validate the query by running it
+    let matches = crate::query::matcher::run_query(
+        &args.query, &tree, source.as_bytes(), &ts_lang,
+    )
+    .map_err(|e| Error::Input(format!("invalid tree-sitter query: {e}")))?;
+
+    if matches.is_empty() {
+        return Err(Error::Input("query does not match any nodes in the file".into()));
+    }
+
+    // Use the first match's content for hashing
+    let first_match = &matches[0];
+    let content_hash = hash::content_hash(&first_match.node_text);
+
+    // Get the match info for output
+    let target_start_line = first_match.start_point.0 + 1;
+    let target_end_line = first_match.end_point.0 + 1;
+    let byte_range = first_match.byte_range;
+
+    // Extract node type from the query (first identifier after opening paren)
+    let node_type = args.query
+        .trim()
+        .strip_prefix('(')
+        .and_then(|s| s.split_whitespace().next())
+        .unwrap_or("unknown")
+        .to_string();
+
+    if args.dry_run {
+        return write_dry_run(
+            mode,
+            &crate::query::generator::GeneratedQuery {
+                query: args.query.clone(),
+                byte_range,
+                target_node_type: node_type.clone(),
+                target_name: None,
+            },
+            &content_hash,
+            &rel_path,
+            target_start_line,
+            target_end_line,
+            matches.len(),
+        );
+    }
+
+    let db = open_db(cli)?;
+    let cwd = std::env::current_dir()?;
+    let commit_hash = git_context::detect_context(&cwd).and_then(|ctx| ctx.head_commit);
+
+    let bookmark = Bookmark {
+        id: uuid::Uuid::new_v4().to_string(),
+        query: args.query.clone(),
+        language: lang.to_string(),
+        file_path: rel_path,
+        content_hash: Some(content_hash.clone()),
+        commit_hash,
+        status: BookmarkStatus::Active,
+        resolution_method: Some(ResolutionMethod::Exact),
+        last_resolved_at: Some(now_iso()),
+        stale_since: None,
+        created_at: now_iso(),
+        created_by: Some(args.created_by.clone()),
+        tags: args.tag.clone(),
+        notes: args.note.clone(),
+        context: args.context.clone(),
+    };
+
+    db.insert_bookmark(&bookmark)?;
+
+    // Generate embedding for semantic search
+    let config = load_config(cli);
+    // Ignore embedding errors - shouldn't block bookmark creation
+    let _ = generate_embedding_for_bookmark(cli, &config, &bookmark);
+
+    // Record initial resolution as baseline
+    let initial_res = Resolution {
+        id: uuid::Uuid::new_v4().to_string(),
+        bookmark_id: bookmark.id.clone(),
+        resolved_at: now_iso(),
+        commit_hash: bookmark.commit_hash.clone(),
+        method: ResolutionMethod::Exact,
+        match_count: Some(matches.len() as i32),
+        file_path: Some(bookmark.file_path.clone()),
+        byte_range: Some(format!("{}:{}", byte_range.0, byte_range.1)),
+        line_range: Some(format!("{}:{}", target_start_line, target_end_line)),
+        content_hash: Some(content_hash.clone()),
+    };
+    db.insert_resolution_if_changed(&initial_res, config.storage.max_resolutions_per_bookmark)?;
+
+    match mode {
+        OutputMode::Json => write_json_success(&serde_json::json!({
+            "id": bookmark.id,
+            "query": args.query,
+            "node_type": node_type,
+            "content_hash": content_hash,
+            "created_by": bookmark.created_by,
+        }))?,
+        _ => {
+            println!("Bookmark created: {}", output::short_id(&bookmark.id));
+            println!("  Node type: {node_type}");
+            if matches.len() > 1 {
+                println!("  Warning: query matches {} nodes", matches.len());
             }
         }
     }

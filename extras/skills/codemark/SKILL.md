@@ -45,16 +45,36 @@ If the user invoked you with arguments (e.g. `/codemark something`), use `$ARGUM
 
 ## Quick Start
 
-1. **Load bookmarks**: `codemark resolve --status active`
-2. **Bookmark with metadata**:
-   Use the `codemark add` command directly. Do NOT include redundant structural information like `[Source_file: ...]` in the notes, as this is already part of the bookmark metadata.
-   ```bash
-   codemark add \
-     --file src/auth.rs --range 42 \
-     --note "Core auth entry point: Handles all JWT verification" \
-     --tag feature:auth --tag role:entrypoint \
-     --created-by agent
-   ```
+### Method 1: Range-based bookmarking (recommended for humans)
+When you know the file and line numbers:
+```bash
+codemark add \
+  --file src/auth.rs --range 42 \
+  --note "Core auth entry point: Handles all JWT verification" \
+  --tag feature:auth --tag role:entrypoint \
+  --created-by agent
+```
+
+### Method 2: Snippet-based bookmarking
+When you have the code snippet but need to find it in a file:
+```bash
+echo "func validateToken(_ token: String) -> Claims" | \
+  codemark add-from-snippet --file src/auth.swift \
+  --note "Validates JWT tokens" \
+  --created-by agent
+```
+
+### Method 3: Raw tree-sitter query (recommended for agents)
+When you want precise control over what gets bookmarked:
+```bash
+codemark add-from-query \
+  --file src/auth.swift \
+  --query '(function_declaration name: (simple_identifier) @name (#eq? @name "validateToken")) @target' \
+  --note "Validates JWT tokens" \
+  --created-by agent
+```
+
+For common query patterns across languages, see `queries.md`.
 
 ## Best Practices
 
@@ -62,8 +82,24 @@ If the user invoked you with arguments (e.g. `/codemark something`), use `$ARGUM
 - Use **ordered collections** for execution paths: `codemark collection create <name>`.
 - For detailed note guidelines, see `templates.md`.
 - For usage examples, see `examples.md`.
+- For tree-sitter query patterns, see `queries.md`.
 
 ## Commands Reference
+
+### Creating bookmarks
+```bash
+# By range (line or byte)
+codemark add --file src/auth.rs --range 42:67
+
+# By code snippet (searches for snippet in file)
+codemark add-from-snippet --file src/auth.rs
+
+# By raw tree-sitter query (most precise)
+codemark add-from-query --file src/auth.rs --query '(function_declaration) @target'
+
+# Preview what would be bookmarked (dry-run)
+codemark add --file src/auth.rs --range 42 --dry-run
+```
 
 ### Load context
 ```bash
@@ -86,7 +122,7 @@ codemark diff --since HEAD~3
 
 ### Maintenance
 ```bash
-codemark validate
+codemark heal --auto-archive
 codemark status
 ```
 

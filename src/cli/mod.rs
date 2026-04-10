@@ -38,6 +38,10 @@ pub enum Command {
     #[command(name = "add-from-snippet")]
     AddFromSnippet(AddFromSnippetArgs),
 
+    /// Create a bookmark from a file and a raw tree-sitter query
+    #[command(name = "add-from-query")]
+    AddFromQuery(AddFromQueryArgs),
+
     /// Resolve a bookmark to its current file location
     Resolve(ResolveArgs),
 
@@ -144,6 +148,41 @@ pub struct AddFromSnippetArgs {
     pub note: Option<String>,
 
     /// Agent context
+    #[arg(long)]
+    pub context: Option<String>,
+
+    /// Who created this bookmark (defaults to "user")
+    #[arg(long, default_value = "user")]
+    pub created_by: String,
+
+    /// Preview what would be bookmarked without saving
+    #[arg(long)]
+    pub dry_run: bool,
+}
+
+#[derive(Debug, clap::Args)]
+pub struct AddFromQueryArgs {
+    /// Path to the file (relative or absolute)
+    #[arg(long)]
+    pub file: PathBuf,
+
+    /// Raw tree-sitter S-expression query
+    #[arg(long)]
+    pub query: String,
+
+    /// Language identifier; auto-detected from file extension if omitted
+    #[arg(long)]
+    pub lang: Option<String>,
+
+    /// Tag label; repeatable for multiple tags
+    #[arg(long)]
+    pub tag: Vec<String>,
+
+    /// Semantic annotation
+    #[arg(long)]
+    pub note: Option<String>,
+
+    /// Agent context at time of bookmarking
     #[arg(long)]
     pub context: Option<String>,
 
