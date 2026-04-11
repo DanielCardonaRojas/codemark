@@ -132,6 +132,7 @@ codemark list --author agent                   # only agent-created bookmarks
 codemark search "authentication"               # full-text search in notes/context
 codemark search --semantic "auth functions"    # semantic search (vector embeddings)
 codemark show a1b2                             # full details + resolution history
+codemark show a1b2 --format markdown           # rich markdown output (great with glow)
 ```
 
 ### Health management
@@ -189,7 +190,7 @@ codemark list --format tv        # TV format with line numbers
 | Command | Default | Available formats |
 |---------|---------|-------------------|
 | `list` | JSON | table, line, tv, custom template |
-| `show` | JSON | table |
+| `show` | JSON | table, **markdown** |
 | `resolve` | JSON | table, line |
 | `status` | JSON | table |
 | `collection list` | JSON | table, line |
@@ -197,6 +198,20 @@ codemark list --format tv        # TV format with line numbers
 | `preview` | JSON | JSON only |
 
 ## Integration
+
+### [glow](https://github.com/charmbracelet/glow)
+
+Render markdown bookmarks in the terminal with syntax highlighting:
+
+```bash
+# View a bookmark with formatted markdown
+codemark show a1b2 --format markdown | glow -
+
+# Or with pagination
+codemark show a1b2 --format markdown | glow -p -
+```
+
+The markdown format includes all bookmark metadata: file path, language, status, tags, notes, context, tree-sitter query, and resolution history.
 
 ### [fzf](https://github.com/junegunn/fzf)
 
@@ -233,13 +248,14 @@ codemark completions fish > ~/.config/fish/completions/codemark.fish
 
 ```bash
 # Install the channel
-cp extras/codemark.toml ~/.config/television/cable/codemark.toml
+cp extras/tv-channel-bookmarks.toml ~/.config/television/channels/codemark.toml
 
 # Use it
 tv codemark
 
 # Features:
-# - Preview: shows file with bat at bookmarked line range
+# - Preview: shows file with bat at bookmarked line range (default)
+# - Preview: cycle to see full markdown details with glow (Ctrl-V)
 # - Ctrl+E: open in $EDITOR
 # - Ctrl+R: re-resolve bookmark
 # - Ctrl+D: show full details

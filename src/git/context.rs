@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::error::{Error, Result};
-use git2::Repository;
+use git2::{Repository, Signature};
 
 /// Git repository context captured at a point in time.
 pub struct GitContext {
@@ -359,7 +359,7 @@ mod tests {
         index.add_path(Path::new("test.txt")).unwrap();
         let tree_id = index.write_tree().unwrap();
         let tree = repo.find_tree(tree_id).unwrap();
-        let sig = repo.signature().unwrap();
+        let sig = Signature::now("Test User", "test@example.com").unwrap();
         let parent_commit_oid = repo
             .commit(Some("HEAD"), &sig, &sig, "initial", &tree, &[])
             .unwrap();
@@ -409,7 +409,7 @@ mod tests {
         index.add_path(Path::new("test.txt")).unwrap();
         let tree_id = index.write_tree().unwrap();
         let tree = repo.find_tree(tree_id).unwrap();
-        let sig = repo.signature().unwrap();
+        let sig = Signature::now("Test User", "test@example.com").unwrap();
         let commit1_oid = repo
             .commit(Some("HEAD"), &sig, &sig, "initial", &tree, &[])
             .unwrap();
@@ -469,7 +469,7 @@ mod tests {
 
         let repo = Repository::init(&tmp).unwrap();
         let mut index = repo.index().unwrap();
-        let sig = repo.signature().unwrap();
+        let sig = Signature::now("Test User", "test@example.com").unwrap();
 
         // Commit A
         let path = tmp.join("test.txt");
@@ -529,7 +529,7 @@ mod tests {
 
         let repo = Repository::init(&tmp).unwrap();
         let mut index = repo.index().unwrap();
-        let sig = repo.signature().unwrap();
+        let sig = Signature::now("Test User", "test@example.com").unwrap();
 
         // Commit A (ancestor)
         let path = tmp.join("test.txt");
