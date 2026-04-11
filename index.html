@@ -1,191 +1,376 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" class="scroll-smooth">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Codemark | Structural Code Bookmarks</title>
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+    
+    <!-- Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Fira+Code:wght@400;500&display=swap" rel="stylesheet">
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                        mono: ['Fira Code', 'monospace'],
+                    },
+                    colors: {
+                        primary: {
+                            400: '#fb923c', // Orange-400
+                            500: '#f97316', // Orange-500
+                            600: '#ea580c', // Orange-600
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+
+    <!-- Prism CSS for syntax highlighting -->
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css" rel="stylesheet" />
+    
     <style>
-        :root {
-            --pico-font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-            --pico-primary: #ff5d01;
+        body {
+            background-color: #0f172a; /* slate-900 */
+            color: #f8fafc; /* slate-50 */
         }
-        header {
-            padding: 2rem 0;
-            text-align: center;
+        
+        .glass-panel {
+            background: rgba(30, 41, 59, 0.7); /* slate-800 with opacity */
+            backdrop-filter: blur(12px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
         }
-        .hero {
-            padding: 4rem 0;
-            background: var(--pico-secondary-background);
-            border-radius: var(--pico-border-radius);
-            margin-bottom: 3rem;
-            text-align: center;
+        
+        .text-gradient {
+            background: linear-gradient(to right, #fb923c, #f43f5e);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
         }
-        .hero h1 {
-            font-size: 3.5rem;
-            margin-bottom: 1rem;
+
+        .terminal-header {
+            background: #1e293b;
+            border-bottom: 1px solid #334155;
         }
-        .hero p {
-            font-size: 1.5rem;
-            color: var(--pico-secondary);
-        }
-        pre {
-            background: #1e1e1e;
-            color: #d4d4d4;
-            padding: 1rem;
-            border-radius: 8px;
-            overflow-x: auto;
-        }
-        code {
-            font-family: "Fira Code", monospace;
-        }
-        .grid-features {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-            gap: 2rem;
-            margin-bottom: 3rem;
-        }
-        .feature-card {
+        
+        pre[class*="language-"] {
+            margin: 0;
+            background: transparent;
+            border-radius: 0;
             padding: 1.5rem;
-            border: 1px solid var(--pico-border-color);
-            border-radius: var(--pico-border-radius);
-            height: 100%;
+            font-size: 0.9rem;
         }
-        footer {
-            padding: 3rem 0;
-            border-top: 1px solid var(--pico-border-color);
-            text-align: center;
+        
+        /* Custom scrollbar */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
         }
-        .badge-list {
-            display: flex;
-            gap: 10px;
-            justify-content: center;
-            margin-bottom: 2rem;
+        ::-webkit-scrollbar-track {
+            background: #0f172a;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #334155;
+            border-radius: 4px;
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: #475569;
         }
     </style>
 </head>
-<body>
-    <nav class="container">
-        <ul>
-            <li><strong>Codemark</strong></li>
-        </ul>
-        <ul>
-            <li><a href="#features">Features</a></li>
-            <li><a href="#install">Install</a></li>
-            <li><a href="#quickstart">Quick Start</a></li>
-            <li><a href="https://github.com/DanielCardonaRojas/codemark">GitHub</a></li>
-        </ul>
+<body class="antialiased selection:bg-primary-500 selection:text-white">
+
+    <!-- Navigation -->
+    <nav class="fixed w-full z-50 glass-panel border-b-0">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="flex items-center justify-between h-16">
+                <div class="flex items-center space-x-3">
+                    <svg class="w-8 h-8 text-primary-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z" />
+                    </svg>
+                    <span class="font-bold text-xl tracking-tight">Codemark</span>
+                </div>
+                <div class="hidden md:block">
+                    <div class="ml-10 flex items-baseline space-x-8">
+                        <a href="#features" class="text-slate-300 hover:text-white transition-colors px-3 py-2 rounded-md text-sm font-medium">Features</a>
+                        <a href="#install" class="text-slate-300 hover:text-white transition-colors px-3 py-2 rounded-md text-sm font-medium">Install</a>
+                        <a href="#quickstart" class="text-slate-300 hover:text-white transition-colors px-3 py-2 rounded-md text-sm font-medium">Quick Start</a>
+                        <a href="https://github.com/DanielCardonaRojas/codemark" target="_blank" class="text-slate-300 hover:text-white transition-colors px-3 py-2 rounded-md text-sm font-medium flex items-center gap-2">
+                            <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                                <path fill-rule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z" clip-rule="evenodd" />
+                            </svg>
+                            GitHub
+                        </a>
+                    </div>
+                </div>
+            </div>
+        </div>
     </nav>
 
-    <main class="container">
-        <section class="hero">
-            <h1>Codemark</h1>
-            <p>A structural bookmarking system for code.</p>
-            <div class="badge-list">
-                <img src="https://img.shields.io/crates/v/codemark" alt="crates.io">
-                <img src="https://img.shields.io/badge/license-MIT-blue" alt="license">
+    <!-- Hero Section -->
+    <main class="pt-32 pb-16 sm:pt-40 sm:pb-24 lg:pb-32 overflow-hidden relative">
+        <!-- Background decorative blobs -->
+        <div class="absolute top-0 left-1/2 -translate-x-1/2 w-[1000px] h-[500px] opacity-20 pointer-events-none blur-[100px] rounded-full bg-gradient-to-tr from-primary-600 to-rose-600 z-0"></div>
+        
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 relative z-10 text-center">
+            <h1 class="text-5xl md:text-7xl font-extrabold tracking-tight mb-6">
+                Bookmarks that <br class="hidden md:block"/>
+                <span class="text-gradient">survive refactors.</span>
+            </h1>
+            <p class="mt-4 max-w-2xl mx-auto text-xl text-slate-400 mb-10">
+                Stop using fragile line numbers. Codemark stores <strong>tree-sitter</strong> queries to identify code by its AST shape. Persistent memory for developers and AI agents.
+            </p>
+            
+            <div class="flex flex-wrap justify-center gap-4 mb-12">
+                <a href="#quickstart" class="bg-primary-500 hover:bg-primary-600 text-white font-medium px-8 py-3 rounded-lg transition-all shadow-[0_0_20px_rgba(249,115,22,0.3)] hover:shadow-[0_0_25px_rgba(249,115,22,0.5)] flex items-center gap-2">
+                    <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
+                    </svg>
+                    Quick Start
+                </a>
+                <a href="#install" class="glass-panel hover:bg-slate-800 text-white font-medium px-8 py-3 rounded-lg transition-colors flex items-center gap-2">
+                    <svg class="w-5 h-5 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
+                    </svg>
+                    Installation
+                </a>
             </div>
-            <div style="margin-top: 1rem;">
-                <a href="#install" role="button">Get Started</a>
-                <a href="https://github.com/DanielCardonaRojas/codemark" role="button" class="secondary">View Source</a>
+
+            <div class="flex justify-center gap-4 mb-16 opacity-80 hover:opacity-100 transition-opacity">
+                <a href="https://crates.io/crates/codemark" target="_blank">
+                    <img src="https://img.shields.io/crates/v/codemark?color=fb923c&style=for-the-badge" alt="crates.io">
+                </a>
+                <a href="https://github.com/DanielCardonaRojas/codemark/blob/main/LICENSE" target="_blank">
+                    <img src="https://img.shields.io/badge/license-MIT-blue?style=for-the-badge" alt="license">
+                </a>
             </div>
-        </section>
 
-        <section id="features">
-            <h2>Why Codemark?</h2>
-            <p>Line-number bookmarks break on any edit. Codemark bookmarks self-heal because they store <strong>tree-sitter</strong> queries that identify code by its AST shape.</p>
-            <div class="grid-features">
-                <div class="feature-card">
-                    <h3>Durable References</h3>
-                    <p>Identify code structurally (AST queries), not positionally (file:line). A renamed function is still found even if it moved across the file.</p>
+            <!-- Terminal Mockup -->
+            <div class="max-w-4xl mx-auto text-left rounded-xl overflow-hidden shadow-2xl border border-slate-700 bg-[#0d1117]">
+                <div class="terminal-header px-4 py-3 flex items-center gap-2">
+                    <div class="w-3 h-3 rounded-full bg-red-500"></div>
+                    <div class="w-3 h-3 rounded-full bg-yellow-500"></div>
+                    <div class="w-3 h-3 rounded-full bg-green-500"></div>
+                    <div class="ml-4 text-xs font-mono text-slate-400">~/project/codemark</div>
                 </div>
-                <div class="feature-card">
-                    <h3>Self-Healing</h3>
-                    <p>Layered resolution (exact match → relaxed query → content hash fallback) means bookmarks degrade gracefully rather than breaking silently.</p>
-                </div>
-                <div class="feature-card">
-                    <h3>Unix Philosophy</h3>
-                    <p>Produces line-oriented, pipe-friendly JSON output. Integrates naturally with fzf, television, and custom shell scripts.</p>
-                </div>
-                <div class="feature-card">
-                    <h3>Semantic Search</h3>
-                    <p>Natural language queries like "where's the login logic?" return relevant bookmarks using local vector embeddings in SQLite.</p>
+                <div class="p-4 overflow-x-auto">
+<pre class="!bg-transparent !m-0 !p-0"><code class="language-bash"># Bookmark a function securely
+$ codemark add --file src/auth.rs --range 42 --tag auth --note "Token validation"
+<span class="text-green-400">✔ Added bookmark 'a1b2c3d' for validate_token in src/auth.rs</span>
+
+# Refactor happens... lines shift... function is renamed...
+
+# Resolve — finds where the code is *now*
+$ codemark resolve a1b2
+<span class="text-blue-400">src/auth.rs:89:15</span> (Match: Relaxed)
+
+# Search semantically using local embeddings
+$ codemark search --semantic "database connection initialization"
+<span class="text-slate-300">b8x9z2 | src/db.rs:12 | init_pool | score: 0.89</span></code></pre>
                 </div>
             </div>
-        </section>
-
-        <hr>
-
-        <section id="install">
-            <h2>Installation</h2>
-            <p>Codemark is a self-contained binary written in Rust. Requires Rust 1.75+.</p>
-            <h3>Homebrew (macOS/Linux)</h3>
-            <pre><code>brew tap DanielCardonaRojas/codemark
-brew install codemark</code></pre>
-            <h3>Cargo</h3>
-            <pre><code>cargo install --path .</code></pre>
-        </section>
-
-        <hr>
-
-        <section id="quickstart">
-            <h2>Quick Start</h2>
-            <p>Easily bookmark and resolve code references from your terminal.</p>
-            <pre><code># Bookmark a function by line number
-codemark add --file src/auth.rs --range 42 --tag auth --note "Token validation entry point"
-
-# Resolve — find where the code is now
-codemark resolve a1b2
-
-# Search by meaning (semantic search)
-codemark search --semantic "database connection initialization"
-
-# Preview with bat (syntax highlighted)
-codemark preview a1b2 | jq -r '"bat --highlight-line \(.data.line_range) \(.data.file_path)"' | sh</code></pre>
-        </section>
-
-        <hr>
-
-        <section id="languages">
-            <h2>Supported Languages</h2>
-            <p>Codemark uses Tree-sitter to parse source files. Language is auto-detected from file extension.</p>
-            <div class="grid">
-                <ul>
-                    <li><strong>Rust</strong> (.rs)</li>
-                    <li><strong>Swift</strong> (.swift)</li>
-                    <li><strong>TypeScript</strong> (.ts, .tsx)</li>
-                    <li><strong>Python</strong> (.py)</li>
-                </ul>
-                <ul>
-                    <li><strong>Go</strong> (.go)</li>
-                    <li><strong>Java</strong> (.java)</li>
-                    <li><strong>C#</strong> (.cs)</li>
-                    <li><strong>Dart</strong> (.dart)</li>
-                </ul>
-            </div>
-        </section>
-
-        <hr>
-
-        <section id="how-it-works">
-            <h2>How it works</h2>
-            <ol>
-                <li><strong>Parse</strong> the file with <strong>tree-sitter</strong> to build an Abstract Syntax Tree (AST).</li>
-                <li><strong>Find</strong> the target node covering the provided line or byte range.</li>
-                <li><strong>Generate</strong> a unique S-expression query for that node.</li>
-                <li><strong>Store</strong> the query, content hash, and semantic metadata in a local SQLite database.</li>
-                <li><strong>Resolve</strong> later by running the query against the current file state.</li>
-            </ol>
-        </section>
+        </div>
     </main>
 
-    <footer class="container">
-        <small>
-            Released under the <a href="https://github.com/DanielCardonaRojas/codemark/blob/main/LICENSE">MIT License</a>.
-            Built with Rust and Tree-sitter.
-            <br>
-            © 2026 Codemark Project
-        </small>
+    <!-- Features Section -->
+    <section id="features" class="py-24 bg-slate-800/50 border-y border-slate-800">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="text-center mb-16">
+                <h2 class="text-3xl md:text-4xl font-bold mb-4">Why use Codemark?</h2>
+                <p class="text-slate-400 text-lg max-w-2xl mx-auto">Traditional bookmarks are brittle. Codemark uses abstract syntax trees to understand your code the way a compiler does.</p>
+            </div>
+
+            <div class="grid md:grid-cols-2 lg:grid-cols-3 gap-8">
+                <!-- Feature 1 -->
+                <div class="glass-panel p-8 rounded-2xl transition-transform hover:-translate-y-1">
+                    <div class="w-12 h-12 bg-primary-500/20 text-primary-400 rounded-lg flex items-center justify-center mb-6">
+                        <svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" />
+                        </svg>
+                    </div>
+                    <h3 class="text-xl font-bold mb-3">Durable References</h3>
+                    <p class="text-slate-400 leading-relaxed">Bookmarks identify code structurally. A renamed function is still found even if it moved across the file.</p>
+                </div>
+
+                <!-- Feature 2 -->
+                <div class="glass-panel p-8 rounded-2xl transition-transform hover:-translate-y-1">
+                    <div class="w-12 h-12 bg-blue-500/20 text-blue-400 rounded-lg flex items-center justify-center mb-6">
+                        <svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
+                        </svg>
+                    </div>
+                    <h3 class="text-xl font-bold mb-3">Self-Healing</h3>
+                    <p class="text-slate-400 leading-relaxed">Layered resolution (exact match → relaxed query → content hash fallback) degrades gracefully rather than breaking silently.</p>
+                </div>
+
+                <!-- Feature 3 -->
+                <div class="glass-panel p-8 rounded-2xl transition-transform hover:-translate-y-1">
+                    <div class="w-12 h-12 bg-emerald-500/20 text-emerald-400 rounded-lg flex items-center justify-center mb-6">
+                        <svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                        </svg>
+                    </div>
+                    <h3 class="text-xl font-bold mb-3">Unix Philosophy</h3>
+                    <p class="text-slate-400 leading-relaxed">Produces line-oriented, pipe-friendly JSON output. Integrates naturally with <code class="bg-slate-800 px-1 rounded">fzf</code>, <code class="bg-slate-800 px-1 rounded">bat</code>, and shell scripts.</p>
+                </div>
+
+                <!-- Feature 4 -->
+                <div class="glass-panel p-8 rounded-2xl transition-transform hover:-translate-y-1">
+                    <div class="w-12 h-12 bg-purple-500/20 text-purple-400 rounded-lg flex items-center justify-center mb-6">
+                        <svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                        </svg>
+                    </div>
+                    <h3 class="text-xl font-bold mb-3">Semantic Search</h3>
+                    <p class="text-slate-400 leading-relaxed">Query "where's the auth logic?" using local vector embeddings (powered by sqlite-vec). No external API calls needed.</p>
+                </div>
+
+                <!-- Feature 5 -->
+                <div class="glass-panel p-8 rounded-2xl transition-transform hover:-translate-y-1">
+                    <div class="w-12 h-12 bg-pink-500/20 text-pink-400 rounded-lg flex items-center justify-center mb-6">
+                        <svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+                        </svg>
+                    </div>
+                    <h3 class="text-xl font-bold mb-3">Collections</h3>
+                    <p class="text-slate-400 leading-relaxed">Group related bookmarks into named sets for bugfixes or feature investigations, ready to load across sessions.</p>
+                </div>
+
+                <!-- Feature 6 -->
+                <div class="glass-panel p-8 rounded-2xl transition-transform hover:-translate-y-1">
+                    <div class="w-12 h-12 bg-yellow-500/20 text-yellow-400 rounded-lg flex items-center justify-center mb-6">
+                        <svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
+                        </svg>
+                    </div>
+                    <h3 class="text-xl font-bold mb-3">Multi-Language</h3>
+                    <p class="text-slate-400 leading-relaxed">Auto-detects and parses Rust, Swift, TypeScript, Python, Go, Java, C#, and Dart files seamlessly.</p>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Installation Section -->
+    <section id="install" class="py-24 relative">
+        <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
+            <h2 class="text-3xl md:text-4xl font-bold mb-8 text-center">Installation</h2>
+            <p class="text-center text-slate-400 mb-12">Codemark is a self-contained Rust binary with no runtime dependencies. Requires Rust 1.75+.</p>
+
+            <div class="grid md:grid-cols-2 gap-8">
+                <!-- Homebrew -->
+                <div class="glass-panel rounded-xl overflow-hidden border border-slate-700">
+                    <div class="bg-slate-800/80 px-4 py-3 border-b border-slate-700 flex items-center gap-2">
+                        <svg class="w-5 h-5 text-slate-400" viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M12 0C5.373 0 0 5.373 0 12c0 5.302 3.438 9.8 8.207 11.387.6.11.793-.26.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576C20.566 21.797 24 17.3 24 12c0-6.627-5.373-12-12-12z"/>
+                        </svg>
+                        <span class="font-semibold">macOS / Linux (Homebrew)</span>
+                    </div>
+                    <div class="p-4 bg-[#0d1117]">
+                        <pre class="!bg-transparent !m-0 !p-0"><code class="language-bash">brew tap DanielCardonaRojas/codemark
+brew install codemark</code></pre>
+                    </div>
+                </div>
+
+                <!-- Cargo -->
+                <div class="glass-panel rounded-xl overflow-hidden border border-slate-700">
+                    <div class="bg-slate-800/80 px-4 py-3 border-b border-slate-700 flex items-center gap-2">
+                        <span class="font-bold text-slate-300 px-1 border border-slate-600 rounded">rs</span>
+                        <span class="font-semibold">Rust (Cargo)</span>
+                    </div>
+                    <div class="p-4 bg-[#0d1117]">
+                        <pre class="!bg-transparent !m-0 !p-0"><code class="language-bash">cargo install --path .</code></pre>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Quick Start Section -->
+    <section id="quickstart" class="py-24 bg-slate-800/30 border-t border-slate-800">
+        <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
+            <h2 class="text-3xl md:text-4xl font-bold mb-12 text-center">Common Workflows</h2>
+
+            <div class="space-y-8">
+                <!-- Add -->
+                <div class="glass-panel rounded-xl overflow-hidden shadow-lg border border-slate-700">
+                    <div class="bg-slate-800 px-4 py-2 border-b border-slate-700 font-semibold text-slate-300">1. Adding a bookmark</div>
+                    <div class="p-6 bg-[#0d1117]">
+                        <pre class="!bg-transparent !m-0 !p-0"><code class="language-bash"># By line range (most common)
+codemark add --file src/auth.rs --range 42
+codemark add --file src/auth.rs --range 42:67
+
+# Preview what would be bookmarked (dry run)
+codemark add --file src/auth.rs --range 42:67 --dry-run</code></pre>
+                    </div>
+                </div>
+
+                <!-- Previewing -->
+                <div class="glass-panel rounded-xl overflow-hidden shadow-lg border border-slate-700">
+                    <div class="bg-slate-800 px-4 py-2 border-b border-slate-700 font-semibold text-slate-300">2. Browsing and Previewing (Piping Output)</div>
+                    <div class="p-6 bg-[#0d1117]">
+                        <pre class="!bg-transparent !m-0 !p-0"><code class="language-bash"># List all bookmarks
+codemark list
+
+# Preview outputs JSON for easy piping to your editor or viewer:
+codemark preview a1b2 | jq -r '"bat --highlight-line \(.data.line_range) \(.data.file_path)"' | sh
+
+# Open in vim/nvim at the bookmarked line
+codemark preview a1b2 | jq -r '"\(.data.file_path) +\(.data.line_range | split(":")[0])"' | xargs nvim</code></pre>
+                    </div>
+                </div>
+
+                <!-- Health -->
+                <div class="glass-panel rounded-xl overflow-hidden shadow-lg border border-slate-700">
+                    <div class="bg-slate-800 px-4 py-2 border-b border-slate-700 font-semibold text-slate-300">3. Health Management</div>
+                    <div class="p-6 bg-[#0d1117]">
+                        <pre class="!bg-transparent !m-0 !p-0"><code class="language-bash"># See the health of your codebase memory
+codemark status
+# 42 active | 3 drifted | 1 stale | 0 archived
+
+# Re-resolve all and update statuses
+codemark validate</code></pre>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Footer -->
+    <footer class="border-t border-slate-800 bg-slate-900 pt-16 pb-8">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="md:flex md:items-center md:justify-between text-center md:text-left">
+                <div class="flex justify-center md:justify-start items-center space-x-3 mb-6 md:mb-0">
+                    <svg class="w-6 h-6 text-primary-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z" />
+                    </svg>
+                    <span class="font-bold text-lg">Codemark</span>
+                </div>
+                
+                <p class="text-slate-500 text-sm">
+                    Released under the <a href="https://github.com/DanielCardonaRojas/codemark/blob/main/LICENSE" class="text-slate-300 hover:text-white transition-colors">MIT License</a>. <br class="md:hidden">
+                    Built with Rust and Tree-sitter. © 2026
+                </p>
+                
+                <div class="flex justify-center md:justify-end space-x-6 mt-6 md:mt-0">
+                    <a href="https://github.com/DanielCardonaRojas/codemark" class="text-slate-500 hover:text-slate-300">
+                        <span class="sr-only">GitHub</span>
+                        <svg class="h-6 w-6" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                            <path fill-rule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z" clip-rule="evenodd" />
+                        </svg>
+                    </a>
+                </div>
+            </div>
+        </div>
     </footer>
+
+    <!-- Prism JS -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-bash.min.js"></script>
 </body>
 </html>
