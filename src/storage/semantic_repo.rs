@@ -4,10 +4,10 @@ use std::path::PathBuf;
 
 use rusqlite::Connection;
 
+use crate::embeddings::config::EmbeddingModel;
 use crate::embeddings::{
     EmbeddingProvider, LocalEmbeddingProvider, SearchResult, VecStore, VecStoreEntry,
 };
-use crate::embeddings::config::EmbeddingModel;
 use crate::engine::bookmark::Bookmark;
 use crate::error::Result;
 
@@ -27,8 +27,9 @@ impl SemanticRepo {
 
     /// Get or create the embedding provider.
     fn provider(&self) -> Result<LocalEmbeddingProvider> {
-        LocalEmbeddingProvider::new(self.model.clone(), self.cache_dir.clone())
-            .map_err(|e| crate::error::Error::Operation(format!("Failed to create embedding provider: {}", e)))
+        LocalEmbeddingProvider::new(self.model.clone(), self.cache_dir.clone()).map_err(|e| {
+            crate::error::Error::Operation(format!("Failed to create embedding provider: {}", e))
+        })
     }
 
     /// Generate an embedding for a bookmark's searchable text.
@@ -37,11 +38,13 @@ impl SemanticRepo {
         let provider = self.provider()?;
 
         // Use tokio runtime for async embedding
-        let rt = tokio::runtime::Runtime::new()
-            .map_err(|e| crate::error::Error::Operation(format!("Failed to create runtime: {}", e)))?;
+        let rt = tokio::runtime::Runtime::new().map_err(|e| {
+            crate::error::Error::Operation(format!("Failed to create runtime: {}", e))
+        })?;
 
-        let embedding = rt.block_on(provider.embed(&text))
-            .map_err(|e| crate::error::Error::Operation(format!("Failed to generate embedding: {}", e)))?;
+        let embedding = rt.block_on(provider.embed(&text)).map_err(|e| {
+            crate::error::Error::Operation(format!("Failed to generate embedding: {}", e))
+        })?;
 
         Ok(embedding)
     }
@@ -50,15 +53,15 @@ impl SemanticRepo {
     fn prepare_bookmark_text(&self, bookmark: &Bookmark) -> String {
         use crate::embeddings::provider::prepare_embedding_text;
 
-        prepare_embedding_text(&bookmark.tags, bookmark.notes.as_deref(), bookmark.context.as_deref())
+        prepare_embedding_text(
+            &bookmark.tags,
+            bookmark.notes.as_deref(),
+            bookmark.context.as_deref(),
+        )
     }
 
     /// Store embeddings for multiple bookmarks.
-    pub fn store_embeddings(
-        &self,
-        conn: &mut Connection,
-        bookmarks: &[Bookmark],
-    ) -> Result<usize> {
+    pub fn store_embeddings(&self, conn: &mut Connection, bookmarks: &[Bookmark]) -> Result<usize> {
         if bookmarks.is_empty() {
             return Ok(0);
         }
@@ -67,18 +70,17 @@ impl SemanticRepo {
         crate::embeddings::VecStore::ensure_extension_loaded();
 
         let provider = self.provider()?;
-        let rt = tokio::runtime::Runtime::new()
-            .map_err(|e| crate::error::Error::Operation(format!("Failed to create runtime: {}", e)))?;
+        let rt = tokio::runtime::Runtime::new().map_err(|e| {
+            crate::error::Error::Operation(format!("Failed to create runtime: {}", e))
+        })?;
 
         // Prepare texts for batch embedding
-        let texts: Vec<String> = bookmarks
-            .iter()
-            .map(|b| self.prepare_bookmark_text(b))
-            .collect();
+        let texts: Vec<String> = bookmarks.iter().map(|b| self.prepare_bookmark_text(b)).collect();
 
         // Generate embeddings in batch
-        let embeddings = rt.block_on(provider.embed_batch(&texts))
-            .map_err(|e| crate::error::Error::Operation(format!("Failed to generate embeddings: {}", e)))?;
+        let embeddings = rt.block_on(provider.embed_batch(&texts)).map_err(|e| {
+            crate::error::Error::Operation(format!("Failed to generate embeddings: {}", e))
+        })?;
 
         // Create vec_store entries and insert
         let store = VecStore::new(provider.dimensions());
@@ -91,8 +93,9 @@ impl SemanticRepo {
             })
             .collect();
 
-        store.insert_batch(conn, &entries)
-            .map_err(|e| crate::error::Error::Operation(format!("Failed to store embeddings: {}", e)))?;
+        store.insert_batch(conn, &entries).map_err(|e| {
+            crate::error::Error::Operation(format!("Failed to store embeddings: {}", e))
+        })?;
 
         Ok(entries.len())
     }
@@ -108,15 +111,18 @@ impl SemanticRepo {
         crate::embeddings::VecStore::ensure_extension_loaded();
 
         let provider = self.provider()?;
-        let rt = tokio::runtime::Runtime::new()
-            .map_err(|e| crate::error::Error::Operation(format!("Failed to create runtime: {}", e)))?;
+        let rt = tokio::runtime::Runtime::new().map_err(|e| {
+            crate::error::Error::Operation(format!("Failed to create runtime: {}", e))
+        })?;
 
-        let query_embedding = rt.block_on(provider.embed(query))
-            .map_err(|e| crate::error::Error::Operation(format!("Failed to generate query embedding: {}", e)))?;
+        let query_embedding = rt.block_on(provider.embed(query)).map_err(|e| {
+            crate::error::Error::Operation(format!("Failed to generate query embedding: {}", e))
+        })?;
 
         let store = VecStore::new(provider.dimensions());
-        let results = store.search(conn, &query_embedding, limit)
-            .map_err(|e| crate::error::Error::Operation(format!("Semantic search failed: {}", e)))?;
+        let results = store.search(conn, &query_embedding, limit).map_err(|e| {
+            crate::error::Error::Operation(format!("Semantic search failed: {}", e))
+        })?;
 
         Ok(results)
     }
@@ -124,22 +130,28 @@ impl SemanticRepo {
     /// Find bookmarks that don't have embeddings yet.
     pub fn find_without_embeddings(&self, conn: &Connection) -> Result<Vec<String>> {
         let store = VecStore::new(self.model.dimensions());
-        store.find_without_embeddings(conn)
-            .map_err(|e| crate::error::Error::Operation(format!("Failed to find bookmarks without embeddings: {}", e)))
+        store.find_without_embeddings(conn).map_err(|e| {
+            crate::error::Error::Operation(format!(
+                "Failed to find bookmarks without embeddings: {}",
+                e
+            ))
+        })
     }
 
     /// Delete an embedding for a bookmark.
     pub fn delete_embedding(&self, conn: &mut Connection, bookmark_id: &str) -> Result<()> {
         let store = VecStore::new(self.model.dimensions());
-        store.delete(conn, bookmark_id)
-            .map_err(|e| crate::error::Error::Operation(format!("Failed to delete embedding: {}", e)))
+        store.delete(conn, bookmark_id).map_err(|e| {
+            crate::error::Error::Operation(format!("Failed to delete embedding: {}", e))
+        })
     }
 
     /// Count total embeddings in the store.
     pub fn count_embeddings(&self, conn: &Connection) -> Result<usize> {
         let store = VecStore::new(self.model.dimensions());
-        store.count(conn)
-            .map_err(|e| crate::error::Error::Operation(format!("Failed to count embeddings: {}", e)))
+        store.count(conn).map_err(|e| {
+            crate::error::Error::Operation(format!("Failed to count embeddings: {}", e))
+        })
     }
 }
 

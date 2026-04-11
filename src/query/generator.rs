@@ -55,9 +55,7 @@ pub fn generate_query_for_node(
 ) -> Result<GeneratedQuery> {
     let target = walk_to_named_declaration(node);
     let path = build_structural_path(target, source);
-    let target_name = path
-        .last()
-        .and_then(|e| e.name_info.as_ref().map(|info| info.text.clone()));
+    let target_name = path.last().and_then(|e| e.name_info.as_ref().map(|info| info.text.clone()));
 
     let query = build_tier1_query(&path);
 
@@ -132,11 +130,7 @@ fn find_target_node(tree: &Tree, byte_range: (usize, usize)) -> Result<Node<'_>>
 fn find_declaration_within(node: Node, byte_range: (usize, usize)) -> Option<Node> {
     let mut best: Option<Node> = None;
 
-    fn search<'a>(
-        node: Node<'a>,
-        byte_range: (usize, usize),
-        best: &mut Option<Node<'a>>,
-    ) {
+    fn search<'a>(node: Node<'a>, byte_range: (usize, usize), best: &mut Option<Node<'a>>) {
         // Skip nodes entirely outside the range
         if node.end_byte() <= byte_range.0 || node.start_byte() >= byte_range.1 {
             return;
@@ -366,9 +360,7 @@ fn extract_name_info(node: Node, source: &[u8]) -> Option<NameInfo> {
 }
 
 fn node_text(node: Node, source: &[u8]) -> String {
-    std::str::from_utf8(&source[node.byte_range()])
-        .unwrap_or("")
-        .to_string()
+    std::str::from_utf8(&source[node.byte_range()]).unwrap_or("").to_string()
 }
 
 fn is_body_node(kind: &str) -> bool {
@@ -458,10 +450,8 @@ fn build_tier1_query(path: &[PathEntry]) -> String {
                     info.field, info.direct_type
                 ));
             }
-            predicate = format!(
-                "\n{pad}  (#eq? @{capture_name} \"{}\")",
-                escape_query_text(&info.text)
-            );
+            predicate =
+                format!("\n{pad}  (#eq? @{capture_name} \"{}\")", escape_query_text(&info.text));
         }
 
         if is_target {
@@ -640,8 +630,16 @@ mod tests {
         let lang = CodemarkLang::Swift.tree_sitter_language();
 
         // For each function in the fixture, generate a query and verify it matches
-        let functions = ["validateToken", "refreshToken", "decode", "encode",
-            "checkPermission", "invalidateCache", "cacheSize", "createDefaultAuthService"];
+        let functions = [
+            "validateToken",
+            "refreshToken",
+            "decode",
+            "encode",
+            "checkPermission",
+            "invalidateCache",
+            "cacheSize",
+            "createDefaultAuthService",
+        ];
 
         for func_name in functions {
             let range = find_function_byte_range(&tree, &source, func_name);
@@ -753,8 +751,12 @@ mod tests {
         let lang = CodemarkLang::Rust.tree_sitter_language();
 
         let functions = [
-            "new", "decode", "encode", "check_permission",
-            "create_default_auth_service", "validate_and_check",
+            "new",
+            "decode",
+            "encode",
+            "check_permission",
+            "create_default_auth_service",
+            "validate_and_check",
         ];
 
         for func_name in functions {
@@ -945,7 +947,9 @@ mod tests {
             }
             let mut cursor = node.walk();
             for child in node.named_children(&mut cursor) {
-                if let Some(r) = search(child, source, name) { return Some(r); }
+                if let Some(r) = search(child, source, name) {
+                    return Some(r);
+                }
             }
             None
         }
@@ -1005,7 +1009,9 @@ mod tests {
             }
             let mut cursor = node.walk();
             for child in node.named_children(&mut cursor) {
-                if let Some(r) = search(child, source, name) { return Some(r); }
+                if let Some(r) = search(child, source, name) {
+                    return Some(r);
+                }
             }
             None
         }
@@ -1066,7 +1072,9 @@ mod tests {
             }
             let mut cursor = node.walk();
             for child in node.named_children(&mut cursor) {
-                if let Some(r) = search(child, source, name) { return Some(r); }
+                if let Some(r) = search(child, source, name) {
+                    return Some(r);
+                }
             }
             None
         }
@@ -1254,7 +1262,8 @@ mod tests {
         let line_50_start = source.lines().take(49).map(|l| l.len() + 1).sum::<usize>();
         let line_50_end = line_50_start + source.lines().nth(49).unwrap_or("").len();
 
-        let result = generate_query(&tree, source.as_bytes(), (line_50_start, line_50_end), &lang).unwrap();
+        let result =
+            generate_query(&tree, source.as_bytes(), (line_50_start, line_50_end), &lang).unwrap();
         assert_eq!(
             result.target_node_type, "function_item",
             "single line inside method should target function_item, not impl_item or struct_item"

@@ -69,19 +69,14 @@ impl Database {
             )
             .unwrap_or(0);
 
-        self.conn()
-            .execute("DELETE FROM collections WHERE name = ?1", [name])?;
+        self.conn().execute("DELETE FROM collections WHERE name = ?1", [name])?;
 
         Ok(count)
     }
 
     /// Add bookmarks to a collection, appending at the end (or at a specific position).
     /// Returns the number actually added (skips duplicates).
-    pub fn add_to_collection(
-        &self,
-        collection_id: &str,
-        bookmark_ids: &[String],
-    ) -> Result<usize> {
+    pub fn add_to_collection(&self, collection_id: &str, bookmark_ids: &[String]) -> Result<usize> {
         self.add_to_collection_at(collection_id, bookmark_ids, None)
     }
 
@@ -132,11 +127,7 @@ impl Database {
 
     /// Reorder bookmarks in a collection. The `ordered_ids` list defines the new order.
     /// Bookmarks not in the list keep their relative order after the listed ones.
-    pub fn reorder_collection(
-        &self,
-        collection_id: &str,
-        ordered_ids: &[String],
-    ) -> Result<()> {
+    pub fn reorder_collection(&self, collection_id: &str, ordered_ids: &[String]) -> Result<()> {
         for (i, bm_id) in ordered_ids.iter().enumerate() {
             self.conn().execute(
                 "UPDATE collection_bookmarks SET position = ?1
@@ -243,9 +234,8 @@ mod tests {
         let col = test_collection("sprint-1");
         db.insert_collection(&col).unwrap();
 
-        let added = db
-            .add_to_collection("col-sprint-1", &["bm-0001".into(), "bm-0002".into()])
-            .unwrap();
+        let added =
+            db.add_to_collection("col-sprint-1", &["bm-0001".into(), "bm-0002".into()]).unwrap();
         assert_eq!(added, 2);
 
         // Duplicate add is silently skipped
@@ -294,9 +284,7 @@ mod tests {
         db.insert_collection(&test_collection("sprint-1")).unwrap();
         db.add_to_collection("col-sprint-1", &["bm-0001".into()]).unwrap();
 
-        let removed = db
-            .remove_from_collection("col-sprint-1", &["bm-0001".into()])
-            .unwrap();
+        let removed = db.remove_from_collection("col-sprint-1", &["bm-0001".into()]).unwrap();
         assert_eq!(removed, 1);
 
         let collections = db.list_collections_for_bookmark("bm-0001").unwrap();
@@ -324,7 +312,11 @@ mod tests {
         db.insert_bookmark(&test_bookmark("bm-0003")).unwrap();
         db.insert_collection(&test_collection("ordered")).unwrap();
 
-        db.add_to_collection("col-ordered", &["bm-0001".into(), "bm-0002".into(), "bm-0003".into()]).unwrap();
+        db.add_to_collection(
+            "col-ordered",
+            &["bm-0001".into(), "bm-0002".into(), "bm-0003".into()],
+        )
+        .unwrap();
 
         let filter = crate::engine::bookmark::BookmarkFilter {
             collection: Some("ordered".to_string()),
@@ -345,10 +337,18 @@ mod tests {
         db.insert_bookmark(&test_bookmark("bm-0003")).unwrap();
         db.insert_collection(&test_collection("reorder")).unwrap();
 
-        db.add_to_collection("col-reorder", &["bm-0001".into(), "bm-0002".into(), "bm-0003".into()]).unwrap();
+        db.add_to_collection(
+            "col-reorder",
+            &["bm-0001".into(), "bm-0002".into(), "bm-0003".into()],
+        )
+        .unwrap();
 
         // Reorder: 3, 1, 2
-        db.reorder_collection("col-reorder", &["bm-0003".into(), "bm-0001".into(), "bm-0002".into()]).unwrap();
+        db.reorder_collection(
+            "col-reorder",
+            &["bm-0003".into(), "bm-0001".into(), "bm-0002".into()],
+        )
+        .unwrap();
 
         let filter = crate::engine::bookmark::BookmarkFilter {
             collection: Some("reorder".to_string()),

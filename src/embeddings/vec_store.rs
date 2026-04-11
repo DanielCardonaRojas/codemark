@@ -37,15 +37,13 @@ impl VecStore {
     ///
     /// This is safe to call multiple times - subsequent calls will be no-ops.
     pub fn init_extension() {
-        use std::sync::Once;
         use rusqlite::ffi::sqlite3_auto_extension;
         use sqlite_vec::sqlite3_vec_init;
+        use std::sync::Once;
 
         static INIT: Once = Once::new();
         INIT.call_once(|| unsafe {
-            sqlite3_auto_extension(Some(std::mem::transmute(
-                sqlite3_vec_init as *const (),
-            )));
+            sqlite3_auto_extension(Some(std::mem::transmute(sqlite3_vec_init as *const ())));
         });
     }
 
@@ -96,7 +94,11 @@ impl VecStore {
     }
 
     /// Insert embeddings in batch.
-    pub fn insert_batch(&self, conn: &mut Connection, entries: &[VecStoreEntry]) -> SqliteResult<()> {
+    pub fn insert_batch(
+        &self,
+        conn: &mut Connection,
+        entries: &[VecStoreEntry],
+    ) -> SqliteResult<()> {
         let tx = conn.unchecked_transaction()?;
         for entry in entries {
             // Inline insert logic for transaction
@@ -123,9 +125,8 @@ impl VecStore {
     ///
     /// Note: This retrieves the raw vector. For similarity search, use search().
     pub fn get(&self, conn: &Connection, bookmark_id: &str) -> SqliteResult<Option<Vec<f32>>> {
-        let mut stmt = conn.prepare(
-            "SELECT embedding FROM bookmark_embeddings WHERE bookmark_id = ?1",
-        )?;
+        let mut stmt =
+            conn.prepare("SELECT embedding FROM bookmark_embeddings WHERE bookmark_id = ?1")?;
 
         // Get the blob and convert to f32
         let result = stmt.query_row([bookmark_id], |row| {
@@ -149,10 +150,7 @@ impl VecStore {
 
     /// Delete an embedding.
     pub fn delete(&self, conn: &mut Connection, bookmark_id: &str) -> SqliteResult<()> {
-        conn.execute(
-            "DELETE FROM bookmark_embeddings WHERE bookmark_id = ?1",
-            [bookmark_id],
-        )?;
+        conn.execute("DELETE FROM bookmark_embeddings WHERE bookmark_id = ?1", [bookmark_id])?;
         Ok(())
     }
 
@@ -186,10 +184,7 @@ impl VecStore {
 
         let results = stmt
             .query_map([query_embedding.as_bytes()], |row| {
-                Ok(SearchResult {
-                    bookmark_id: row.get(0)?,
-                    distance: row.get(1)?,
-                })
+                Ok(SearchResult { bookmark_id: row.get(0)?, distance: row.get(1)? })
             })?
             .collect::<Result<Vec<_>, _>>()?;
 
@@ -198,11 +193,7 @@ impl VecStore {
 
     /// Count embeddings in the store.
     pub fn count(&self, conn: &Connection) -> SqliteResult<usize> {
-        conn.query_row(
-            "SELECT COUNT(*) FROM bookmark_embeddings",
-            [],
-            |row| row.get(0),
-        )
+        conn.query_row("SELECT COUNT(*) FROM bookmark_embeddings", [], |row| row.get(0))
     }
 
     /// Find bookmarks without embeddings.
@@ -212,9 +203,8 @@ impl VecStore {
              WHERE id NOT IN (SELECT bookmark_id FROM bookmark_embeddings)",
         )?;
 
-        let ids = stmt
-            .query_map([], |row| row.get::<_, String>(0))?
-            .collect::<Result<Vec<_>, _>>()?;
+        let ids =
+            stmt.query_map([], |row| row.get::<_, String>(0))?.collect::<Result<Vec<_>, _>>()?;
 
         Ok(ids)
     }
@@ -295,10 +285,8 @@ mod tests {
 
             store.create_table(&mut conn).unwrap();
 
-            let entry = VecStoreEntry {
-                bookmark_id: "test".to_string(),
-                embedding: vec![1.0, 2.0, 3.0],
-            };
+            let entry =
+                VecStoreEntry { bookmark_id: "test".to_string(), embedding: vec![1.0, 2.0, 3.0] };
 
             store.insert(&conn, &entry).unwrap();
 
@@ -315,10 +303,8 @@ mod tests {
 
             store.create_table(&mut conn).unwrap();
 
-            let entry = VecStoreEntry {
-                bookmark_id: "to_delete".to_string(),
-                embedding: vec![1.0, 2.0],
-            };
+            let entry =
+                VecStoreEntry { bookmark_id: "to_delete".to_string(), embedding: vec![1.0, 2.0] };
 
             store.insert(&conn, &entry).unwrap();
             assert_eq!(store.count(&conn).unwrap(), 1);

@@ -11,7 +11,7 @@ use crate::engine::bookmark::{Bookmark, Resolution};
 pub enum OutputMode {
     Table,
     Line,
-    Tv,  // Television format: includes line numbers for preview.offset
+    Tv, // Television format: includes line numbers for preview.offset
     Json,
     Markdown,
     Custom(String),
@@ -31,7 +31,11 @@ impl OutputMode {
     /// instead of TTY-based auto-detection.
     ///
     /// Priority: --json > --format > default_json (if true) > auto-detect (TTY=table, pipe=line).
-    pub fn resolve_with_default(json_flag: bool, format_flag: Option<&str>, default_json: bool) -> Self {
+    pub fn resolve_with_default(
+        json_flag: bool,
+        format_flag: Option<&str>,
+        default_json: bool,
+    ) -> Self {
         if json_flag {
             return OutputMode::Json;
         }
@@ -67,11 +71,7 @@ pub struct JsonEnvelope<T: Serialize> {
 
 /// Write a JSON success response to stdout.
 pub fn write_json_success<T: Serialize>(data: &T) -> io::Result<()> {
-    let envelope = JsonEnvelope {
-        success: true,
-        data: Some(data),
-        error: None,
-    };
+    let envelope = JsonEnvelope { success: true, data: Some(data), error: None };
     let mut stdout = io::stdout().lock();
     serde_json::to_writer_pretty(&mut stdout, &envelope)?;
     writeln!(stdout)?;
@@ -88,11 +88,8 @@ pub fn write_json<T: Serialize>(data: &T) -> io::Result<()> {
 
 /// Write a JSON error response to stdout.
 pub fn write_json_error(message: &str) -> io::Result<()> {
-    let envelope: JsonEnvelope<()> = JsonEnvelope {
-        success: false,
-        data: None,
-        error: Some(message.to_string()),
-    };
+    let envelope: JsonEnvelope<()> =
+        JsonEnvelope { success: false, data: None, error: Some(message.to_string()) };
     let mut stdout = io::stdout().lock();
     serde_json::to_writer_pretty(&mut stdout, &envelope)?;
     writeln!(stdout)?;
@@ -125,7 +122,9 @@ pub fn write_bookmarks(mode: &OutputMode, bookmarks: &[Bookmark]) -> io::Result<
         OutputMode::Table => write_bookmarks_table(bookmarks),
         OutputMode::Line => write_bookmarks_line(bookmarks),
         OutputMode::Tv => {
-            fn no_line(_: &str) -> Option<usize> { None }
+            fn no_line(_: &str) -> Option<usize> {
+                None
+            }
             write_bookmarks_tv(bookmarks, &no_line)
         }
         OutputMode::Markdown => write_bookmarks_table(bookmarks),
@@ -134,7 +133,11 @@ pub fn write_bookmarks(mode: &OutputMode, bookmarks: &[Bookmark]) -> io::Result<
 }
 
 /// Write bookmarks in television format with line numbers.
-pub fn write_bookmarks_with_line<F>(mode: &OutputMode, bookmarks: &[Bookmark], get_line_fn: F) -> io::Result<()>
+pub fn write_bookmarks_with_line<F>(
+    mode: &OutputMode,
+    bookmarks: &[Bookmark],
+    get_line_fn: F,
+) -> io::Result<()>
 where
     F: Fn(&str) -> Option<usize>,
 {
@@ -154,13 +157,7 @@ fn write_bookmarks_table(bookmarks: &[Bookmark]) -> io::Result<()> {
 
     for bm in bookmarks {
         let tags = bm.tags.join(", ");
-        let note = bm
-            .notes
-            .as_deref()
-            .unwrap_or("")
-            .chars()
-            .take(40)
-            .collect::<String>();
+        let note = bm.notes.as_deref().unwrap_or("").chars().take(40).collect::<String>();
         let resolved = bm.last_resolved_at.as_deref().unwrap_or("-");
         table.add_row(vec![
             Cell::new(short_id(&bm.id)),
@@ -198,7 +195,10 @@ fn write_bookmarks_line(bookmarks: &[Bookmark]) -> io::Result<()> {
 /// Write bookmarks in television format with line numbers.
 /// Format: <id>\t<file>\t<line>\t<status>\t<tags>\t<note>
 /// This requires database access to fetch line numbers from resolutions.
-pub fn write_bookmarks_tv(bookmarks: &[Bookmark], get_line: impl Fn(&str) -> Option<usize>) -> io::Result<()> {
+pub fn write_bookmarks_tv(
+    bookmarks: &[Bookmark],
+    get_line: impl Fn(&str) -> Option<usize>,
+) -> io::Result<()> {
     let mut stdout = io::stdout().lock();
     for bm in bookmarks {
         let tags = bm.tags.join(",");
@@ -209,12 +209,7 @@ pub fn write_bookmarks_tv(bookmarks: &[Bookmark], get_line: impl Fn(&str) -> Opt
         writeln!(
             stdout,
             "{}\t{}\t{}\t{}\t{}\t{}",
-            short,
-            bm.file_path,
-            line,
-            bm.status,
-            tags,
-            note
+            short, bm.file_path, line, bm.status, tags, note
         )?;
     }
     Ok(())
@@ -268,9 +263,7 @@ pub fn write_annotated_bookmarks(
                 return Ok(());
             }
             let mut table = Table::new();
-            table.set_header(vec![
-                "Source", "ID", "File", "Status", "Tags", "Note",
-            ]);
+            table.set_header(vec!["Source", "ID", "File", "Status", "Tags", "Note"]);
             for ab in bookmarks {
                 let bm = ab.bookmark;
                 let tags = bm.tags.join(", ");
@@ -348,9 +341,7 @@ pub fn write_annotated_bookmarks(
         OutputMode::Markdown => {
             // For multi-db markdown output, fall back to table format
             let mut table = Table::new();
-            table.set_header(vec![
-                "Source", "ID", "File", "Status", "Tags", "Note",
-            ]);
+            table.set_header(vec!["Source", "ID", "File", "Status", "Tags", "Note"]);
             for ab in bookmarks {
                 let bm = ab.bookmark;
                 let tags = bm.tags.join(", ");
@@ -373,9 +364,7 @@ pub fn write_annotated_bookmarks(
 /// Write a single-line success message.
 pub fn write_success(mode: &OutputMode, message: &str) -> io::Result<()> {
     match mode {
-        OutputMode::Json => {
-            write_json_success(&serde_json::json!({ "message": message }))
-        }
+        OutputMode::Json => write_json_success(&serde_json::json!({ "message": message })),
         OutputMode::Markdown => {
             println!("{message}");
             Ok(())
@@ -469,7 +458,8 @@ pub fn write_bookmark_markdown(bm: &Bookmark, resolutions: &[Resolution]) -> io:
             let file = r.file_path.as_deref().unwrap_or("-");
             let line_range = r.line_range.as_deref().unwrap_or("-");
             let match_count = r.match_count.map_or("-".to_string(), |c| c.to_string());
-            let commit = r.commit_hash
+            let commit = r
+                .commit_hash
                 .as_deref()
                 .map(|c| format!("`{}`", &c[..c.len().min(8)]))
                 .unwrap_or_else(|| "-".to_string());

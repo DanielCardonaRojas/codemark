@@ -134,10 +134,7 @@ pub struct ParseCache {
 
 impl ParseCache {
     pub fn new(language: Language) -> Result<Self> {
-        Ok(ParseCache {
-            trees: HashMap::new(),
-            parser: Parser::new(language)?,
-        })
+        Ok(ParseCache { trees: HashMap::new(), parser: Parser::new(language)? })
     }
 
     /// Get the parsed tree and source for a file, parsing it if not already cached.
@@ -223,8 +220,8 @@ mod tests {
 
     #[test]
     fn parse_swift_fixture() {
-        let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/swift/auth_service.swift");
+        let fixture =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/swift/auth_service.swift");
         if !fixture.exists() {
             return;
         }
@@ -237,8 +234,8 @@ mod tests {
 
     #[test]
     fn parse_cache_reuses_tree() {
-        let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/swift/auth_service.swift");
+        let fixture =
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/swift/auth_service.swift");
         if !fixture.exists() {
             return;
         }

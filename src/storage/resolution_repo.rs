@@ -45,32 +45,31 @@ impl Database {
     ) -> Result<bool> {
         // Check if the latest resolution has the same byte_range, line_range, and method
         // We intentionally don't compare commit_hash — unrelated commits shouldn't create duplicates
-        let (existing_id, _existing_commit_hash): (Option<String>, Option<String>) = self.conn().query_row(
-            "SELECT id, commit_hash FROM resolutions
+        let (existing_id, _existing_commit_hash): (Option<String>, Option<String>) = self
+            .conn()
+            .query_row(
+                "SELECT id, commit_hash FROM resolutions
              WHERE bookmark_id = ?1
                AND COALESCE(byte_range, '') = COALESCE(?2, '')
                AND COALESCE(line_range, '') = COALESCE(?3, '')
                AND method = ?4
              ORDER BY resolved_at DESC
              LIMIT 1",
-            rusqlite::params![
-                resolution.bookmark_id,
-                resolution.byte_range.as_deref().unwrap_or(""),
-                resolution.line_range.as_deref().unwrap_or(""),
-                resolution.method.to_string(),
-            ],
-            |row| Ok((Some(row.get(0)?), row.get(1)?)),
-        ).unwrap_or((None, None));
+                rusqlite::params![
+                    resolution.bookmark_id,
+                    resolution.byte_range.as_deref().unwrap_or(""),
+                    resolution.line_range.as_deref().unwrap_or(""),
+                    resolution.method.to_string(),
+                ],
+                |row| Ok((Some(row.get(0)?), row.get(1)?)),
+            )
+            .unwrap_or((None, None));
 
         if let Some(id) = existing_id {
             // Duplicate detected — update the existing resolution with new commit_hash and resolved_at
             self.conn().execute(
                 "UPDATE resolutions SET commit_hash = ?1, resolved_at = ?2 WHERE id = ?3",
-                rusqlite::params![
-                    resolution.commit_hash,
-                    resolution.resolved_at,
-                    id,
-                ],
+                rusqlite::params![resolution.commit_hash, resolution.resolved_at, id,],
             )?;
             return Ok(false); // false = no new resolution created
         }
@@ -151,9 +150,7 @@ impl Database {
         match results.len() {
             0 => Ok(None),
             1 => Ok(Some(results.into_iter().next().unwrap())),
-            _ => Err(crate::error::Error::Input(format!(
-                "ambiguous resolution ID prefix '{id}'"
-            ))),
+            _ => Err(crate::error::Error::Input(format!("ambiguous resolution ID prefix '{id}'"))),
         }
     }
 }

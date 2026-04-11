@@ -50,7 +50,11 @@ pub trait EmbeddingProvider: Send + Sync {
 }
 
 /// Simple text preparation for embedding.
-pub fn prepare_embedding_text(tags: &[String], notes: Option<&str>, context: Option<&str>) -> String {
+pub fn prepare_embedding_text(
+    tags: &[String],
+    notes: Option<&str>,
+    context: Option<&str>,
+) -> String {
     let mut parts = Vec::new();
 
     if !tags.is_empty() {

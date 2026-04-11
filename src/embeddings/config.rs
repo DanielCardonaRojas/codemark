@@ -66,10 +66,6 @@ pub struct EmbeddingConfig {
 
 impl Default for EmbeddingConfig {
     fn default() -> Self {
-        EmbeddingConfig {
-            enabled: true,
-            model: EmbeddingModel::default(),
-            batch_size: 32,
-        }
+        EmbeddingConfig { enabled: true, model: EmbeddingModel::default(), batch_size: 32 }
     }
 }

@@ -49,11 +49,8 @@ pub fn detect_context(from_path: &Path) -> Option<GitContext> {
 
     // Get HEAD commit using git2 (still reliable for this purpose)
     let repo = git2::Repository::discover(from_path).ok()?;
-    let head_commit = repo
-        .head()
-        .ok()
-        .and_then(|r| r.peel_to_commit().ok())
-        .map(|c| c.id().to_string());
+    let head_commit =
+        repo.head().ok().and_then(|r| r.peel_to_commit().ok()).map(|c| c.id().to_string());
 
     Some(GitContext { repo_root, head_commit })
 }
@@ -69,15 +66,16 @@ pub fn relative_to_root(repo_root: &Path, file_path: &Path) -> Result<String> {
     let abs_file = canonicalize_best_effort(&abs_file);
     let abs_root = canonicalize_best_effort(repo_root);
 
-    let rel = abs_file
-        .strip_prefix(&abs_root)
-        .map_err(|_| Error::Input(format!("file {} is not under repo root {}", abs_file.display(), abs_root.display())))?;
+    let rel = abs_file.strip_prefix(&abs_root).map_err(|_| {
+        Error::Input(format!(
+            "file {} is not under repo root {}",
+            abs_file.display(),
+            abs_root.display()
+        ))
+    })?;
 
-    let normalized = rel
-        .components()
-        .map(|c| c.as_os_str().to_string_lossy())
-        .collect::<Vec<_>>()
-        .join("/");
+    let normalized =
+        rel.components().map(|c| c.as_os_str().to_string_lossy()).collect::<Vec<_>>().join("/");
 
     Ok(normalized)
 }
@@ -94,15 +92,15 @@ pub fn changed_files_since(from_path: &Path, since_commit: &str) -> Result<Vec<S
     let since_commit = since_obj
         .peel_to_commit()
         .map_err(|e| Error::Git(format!("'{since_commit}' is not a commit: {e}")))?;
-    let since_tree = since_commit.tree()
-        .map_err(|e| Error::Git(format!("cannot get tree: {e}")))?;
+    let since_tree =
+        since_commit.tree().map_err(|e| Error::Git(format!("cannot get tree: {e}")))?;
 
-    let head = repo.head()
+    let head = repo
+        .head()
         .map_err(|e| Error::Git(format!("cannot get HEAD: {e}")))?
         .peel_to_commit()
         .map_err(|e| Error::Git(format!("HEAD is not a commit: {e}")))?;
-    let head_tree = head.tree()
-        .map_err(|e| Error::Git(format!("cannot get HEAD tree: {e}")))?;
+    let head_tree = head.tree().map_err(|e| Error::Git(format!("cannot get HEAD tree: {e}")))?;
 
     let diff = repo
         .diff_tree_to_tree(Some(&since_tree), Some(&head_tree), None)
@@ -132,20 +130,15 @@ pub fn read_file_at_commit(from_path: &Path, commit_sha: &str, file_path: &str) 
     let commit = obj
         .peel_to_commit()
         .map_err(|e| Error::Git(format!("'{commit_sha}' is not a commit: {e}")))?;
-    let tree = commit
-        .tree()
-        .map_err(|e| Error::Git(format!("cannot get tree: {e}")))?;
+    let tree = commit.tree().map_err(|e| Error::Git(format!("cannot get tree: {e}")))?;
 
     let entry = tree
         .get_path(Path::new(file_path))
         .map_err(|_| Error::Git(format!("file '{file_path}' not found at commit {commit_sha}")))?;
 
-    let blob = entry
-        .to_object(&repo)
-        .map_err(|e| Error::Git(format!("cannot read object: {e}")))?;
-    let blob = blob
-        .as_blob()
-        .ok_or_else(|| Error::Git("object is not a blob".into()))?;
+    let blob =
+        entry.to_object(&repo).map_err(|e| Error::Git(format!("cannot read object: {e}")))?;
+    let blob = blob.as_blob().ok_or_else(|| Error::Git("object is not a blob".into()))?;
 
     String::from_utf8(blob.content().to_vec())
         .map_err(|_| Error::Git("file is not valid UTF-8".into()))
@@ -187,7 +180,10 @@ pub fn is_ancestor(
 /// Returns Ok(Some(commit_hash)) if a valid ancestor is found.
 /// Returns Ok(None) if no candidate is an ancestor (or list is empty).
 /// Returns Err if repo/HEAD can't be accessed.
-pub fn find_nearest_ancestor(repo_path: &Path, candidate_hashes: &[String]) -> Result<Option<String>> {
+pub fn find_nearest_ancestor(
+    repo_path: &Path,
+    candidate_hashes: &[String],
+) -> Result<Option<String>> {
     if candidate_hashes.is_empty() {
         return Ok(None);
     }
@@ -195,10 +191,9 @@ pub fn find_nearest_ancestor(repo_path: &Path, candidate_hashes: &[String]) -> R
     let repo = Repository::discover(repo_path)
         .map_err(|e| Error::Git(format!("cannot open repo: {e}")))?;
 
-    let head = repo.head()
-        .map_err(|e| Error::Git(format!("cannot get HEAD: {e}")))?;
-    let head_commit = head.peel_to_commit()
-        .map_err(|e| Error::Git(format!("HEAD is not a commit: {e}")))?;
+    let head = repo.head().map_err(|e| Error::Git(format!("cannot get HEAD: {e}")))?;
+    let head_commit =
+        head.peel_to_commit().map_err(|e| Error::Git(format!("HEAD is not a commit: {e}")))?;
     let head_id = head_commit.id();
 
     // Filter to ancestors of HEAD, then find the one with the shortest merge base distance
@@ -278,12 +273,9 @@ fn count_commits_between(repo: &Repository, start: git2::Oid, end: git2::Oid) ->
         return Ok(0);
     }
 
-    let mut revwalk = repo.revwalk()
-        .map_err(|e| Error::Git(format!("revwalk failed: {e}")))?;
-    revwalk.push(end)
-        .map_err(|e| Error::Git(format!("push failed: {e}")))?;
-    revwalk.hide(start)
-        .map_err(|e| Error::Git(format!("hide failed: {e}")))?;
+    let mut revwalk = repo.revwalk().map_err(|e| Error::Git(format!("revwalk failed: {e}")))?;
+    revwalk.push(end).map_err(|e| Error::Git(format!("push failed: {e}")))?;
+    revwalk.hide(start).map_err(|e| Error::Git(format!("hide failed: {e}")))?;
 
     Ok(revwalk.count())
 }
@@ -360,9 +352,8 @@ mod tests {
         let tree_id = index.write_tree().unwrap();
         let tree = repo.find_tree(tree_id).unwrap();
         let sig = Signature::now("Test User", "test@example.com").unwrap();
-        let parent_commit_oid = repo
-            .commit(Some("HEAD"), &sig, &sig, "initial", &tree, &[])
-            .unwrap();
+        let parent_commit_oid =
+            repo.commit(Some("HEAD"), &sig, &sig, "initial", &tree, &[]).unwrap();
         let parent_commit = repo.find_commit(parent_commit_oid).unwrap();
 
         // Create second commit
@@ -371,16 +362,8 @@ mod tests {
         index.update_all(vec![Path::new("test.txt")], None).unwrap();
         let tree_id = index.write_tree().unwrap();
         let tree = repo.find_tree(tree_id).unwrap();
-        let child_commit_oid = repo
-            .commit(
-                Some("HEAD"),
-                &sig,
-                &sig,
-                "modified",
-                &tree,
-                &[&parent_commit],
-            )
-            .unwrap();
+        let child_commit_oid =
+            repo.commit(Some("HEAD"), &sig, &sig, "modified", &tree, &[&parent_commit]).unwrap();
 
         let parent_oid = parent_commit_oid.to_string();
         let child_oid = child_commit_oid.to_string();
@@ -410,9 +393,7 @@ mod tests {
         let tree_id = index.write_tree().unwrap();
         let tree = repo.find_tree(tree_id).unwrap();
         let sig = Signature::now("Test User", "test@example.com").unwrap();
-        let commit1_oid = repo
-            .commit(Some("HEAD"), &sig, &sig, "initial", &tree, &[])
-            .unwrap();
+        let commit1_oid = repo.commit(Some("HEAD"), &sig, &sig, "initial", &tree, &[]).unwrap();
 
         // Create an orphan branch
         let mut index = repo.index().unwrap();
@@ -422,16 +403,8 @@ mod tests {
         let tree = repo.find_tree(tree_id).unwrap();
 
         // Create a commit without parent (orphan branch)
-        let orphan_oid = repo
-            .commit(
-                Some("refs/heads/orphan"),
-                &sig,
-                &sig,
-                "orphan",
-                &tree,
-                &[],
-            )
-            .unwrap();
+        let orphan_oid =
+            repo.commit(Some("refs/heads/orphan"), &sig, &sig, "orphan", &tree, &[]).unwrap();
 
         let commit1_oid_str = commit1_oid.to_string();
         let orphan_oid_str = orphan_oid.to_string();
@@ -485,7 +458,16 @@ mod tests {
         index.update_all(vec![Path::new("test.txt")], None).unwrap();
         let tree_id = index.write_tree().unwrap();
         let tree = repo.find_tree(tree_id).unwrap();
-        let commit_b_oid = repo.commit(Some("HEAD"), &sig, &sig, "B", &tree, &[&repo.find_commit(commit_a_oid).unwrap()]).unwrap();
+        let commit_b_oid = repo
+            .commit(
+                Some("HEAD"),
+                &sig,
+                &sig,
+                "B",
+                &tree,
+                &[&repo.find_commit(commit_a_oid).unwrap()],
+            )
+            .unwrap();
 
         // Commit C (HEAD)
         fs::write(&path, "C").unwrap();
@@ -493,7 +475,16 @@ mod tests {
         index.update_all(vec![Path::new("test.txt")], None).unwrap();
         let tree_id = index.write_tree().unwrap();
         let tree = repo.find_tree(tree_id).unwrap();
-        let _commit_c_oid = repo.commit(Some("HEAD"), &sig, &sig, "C", &tree, &[&repo.find_commit(commit_b_oid).unwrap()]).unwrap();
+        let _commit_c_oid = repo
+            .commit(
+                Some("HEAD"),
+                &sig,
+                &sig,
+                "C",
+                &tree,
+                &[&repo.find_commit(commit_b_oid).unwrap()],
+            )
+            .unwrap();
 
         let commit_a = commit_a_oid.to_string();
         let commit_b = commit_b_oid.to_string();
@@ -545,7 +536,15 @@ mod tests {
         index.update_all(vec![Path::new("test.txt")], None).unwrap();
         let tree_id = index.write_tree().unwrap();
         let tree = repo.find_tree(tree_id).unwrap();
-        repo.commit(Some("HEAD"), &sig, &sig, "B", &tree, &[&repo.find_commit(commit_a_oid).unwrap()]).unwrap();
+        repo.commit(
+            Some("HEAD"),
+            &sig,
+            &sig,
+            "B",
+            &tree,
+            &[&repo.find_commit(commit_a_oid).unwrap()],
+        )
+        .unwrap();
 
         // Create an orphan branch (not an ancestor of HEAD)
         fs::write(&path, "orphan").unwrap();
@@ -553,7 +552,8 @@ mod tests {
         index.add_path(Path::new("test.txt")).unwrap();
         let tree_id = index.write_tree().unwrap();
         let tree = repo.find_tree(tree_id).unwrap();
-        let orphan_oid = repo.commit(Some("refs/heads/orphan"), &sig, &sig, "orphan", &tree, &[]).unwrap();
+        let orphan_oid =
+            repo.commit(Some("refs/heads/orphan"), &sig, &sig, "orphan", &tree, &[]).unwrap();
 
         let commit_a = commit_a_oid.to_string();
         let orphan = orphan_oid.to_string();

@@ -122,11 +122,12 @@ impl Database {
 
         // Check if table exists by trying to query it
         // vec0 virtual tables don't show up in sqlite_master like regular tables
-        let exists = self.conn.query_row(
-            "SELECT COUNT(*) FROM bookmark_embeddings LIMIT 1",
-            [],
-            |row| row.get::<_, i64>(0),
-        ).is_ok();
+        let exists = self
+            .conn
+            .query_row("SELECT COUNT(*) FROM bookmark_embeddings LIMIT 1", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .is_ok();
 
         if !exists {
             // Initialize the sqlite-vec extension once
@@ -202,10 +203,7 @@ mod tests {
     #[test]
     fn foreign_keys_enabled() {
         let db = Database::open_in_memory().unwrap();
-        let fk: i64 = db
-            .conn()
-            .query_row("PRAGMA foreign_keys", [], |row| row.get(0))
-            .unwrap();
+        let fk: i64 = db.conn().query_row("PRAGMA foreign_keys", [], |row| row.get(0)).unwrap();
         assert_eq!(fk, 1);
     }
 }

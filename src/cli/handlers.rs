@@ -5,9 +5,12 @@ use clap::CommandFactory;
 use clap_complete::generate;
 
 use crate::cli::output::{
-    self, short_id, write_bookmarks, write_bookmark_markdown, write_json_success, write_not_implemented, write_success, OutputMode,
+    self, OutputMode, short_id, write_bookmark_markdown, write_bookmarks, write_json_success,
+    write_not_implemented, write_success,
 };
 use crate::cli::*;
+use crate::config::Config;
+use crate::embeddings::config::EmbeddingModel;
 use crate::engine::bookmark::{
     Bookmark, BookmarkFilter, BookmarkStatus, Collection, Resolution, ResolutionMethod,
     tags_to_json,
@@ -17,8 +20,6 @@ use crate::error::{Error, Result};
 use crate::git::context as git_context;
 use crate::parser::languages::{Language, ParseCache};
 use crate::query::generator as qgen;
-use crate::config::Config;
-use crate::embeddings::config::EmbeddingModel;
 use crate::storage::{SemanticRepo, db::Database};
 
 /// Dispatch a parsed CLI command to its handler.
@@ -85,11 +86,7 @@ fn open_db(cli: &Cli) -> Result<Database> {
 
 /// Generate embedding for a bookmark if semantic search is enabled.
 /// Returns Ok(()) even if semantic search is disabled or fails.
-fn generate_embedding_for_bookmark(
-    cli: &Cli,
-    config: &Config,
-    bookmark: &Bookmark,
-) -> Result<()> {
+fn generate_embedding_for_bookmark(cli: &Cli, config: &Config, bookmark: &Bookmark) -> Result<()> {
     if !config.semantic.enabled {
         return Ok(());
     }
@@ -107,7 +104,10 @@ fn generate_embedding_for_bookmark(
     };
 
     // Parse model from config
-    let model = config.semantic.model.as_deref()
+    let model = config
+        .semantic
+        .model
+        .as_deref()
         .and_then(|m| m.parse::<EmbeddingModel>().ok())
         .unwrap_or(EmbeddingModel::AllMiniLmL6V2);
 
@@ -228,12 +228,9 @@ fn parse_byte_range(s: &str) -> Result<(usize, usize)> {
     if parts.len() != 2 {
         return Err(Error::Input("byte range must be start:end".into()));
     }
-    let start: usize = parts[0]
-        .parse()
-        .map_err(|_| Error::Input("invalid byte range start".into()))?;
-    let end: usize = parts[1]
-        .parse()
-        .map_err(|_| Error::Input("invalid byte range end".into()))?;
+    let start: usize =
+        parts[0].parse().map_err(|_| Error::Input("invalid byte range start".into()))?;
+    let end: usize = parts[1].parse().map_err(|_| Error::Input("invalid byte range end".into()))?;
     Ok((start, end))
 }
 
@@ -275,16 +272,10 @@ fn line_range_to_bytes(source: &str, start_line: usize, end_line: usize) -> Resu
 /// Format: @@ -old_start[,old_count] +new_start[,new_count] @@ [context]
 fn parse_hunk(hunk: &str) -> Result<(usize, usize)> {
     let re = regex::Regex::new(r"\+(\d+)(?:,(\d+))?").unwrap();
-    let caps = re
-        .captures(hunk)
-        .ok_or_else(|| Error::Input(format!("invalid hunk format: {hunk}")))?;
-    let start: usize = caps[1]
-        .parse()
-        .map_err(|_| Error::Input("invalid hunk start".into()))?;
-    let count: usize = caps
-        .get(2)
-        .map(|m| m.as_str().parse().unwrap_or(1))
-        .unwrap_or(1);
+    let caps =
+        re.captures(hunk).ok_or_else(|| Error::Input(format!("invalid hunk format: {hunk}")))?;
+    let start: usize = caps[1].parse().map_err(|_| Error::Input("invalid hunk start".into()))?;
+    let count: usize = caps.get(2).map(|m| m.as_str().parse().unwrap_or(1)).unwrap_or(1);
     let end = start + count.saturating_sub(1);
     Ok((start, end.max(start)))
 }
@@ -294,13 +285,12 @@ fn resolve_language(lang_flag: Option<&str>, file: &std::path::Path) -> Result<L
     if let Some(lang) = lang_flag {
         return lang.parse();
     }
-    let ext = file
-        .extension()
-        .and_then(|e| e.to_str())
-        .ok_or_else(|| Error::Input(format!(
+    let ext = file.extension().and_then(|e| e.to_str()).ok_or_else(|| {
+        Error::Input(format!(
             "cannot infer language from '{}'; use --lang to specify",
             file.display()
-        )))?;
+        ))
+    })?;
     Language::from_extension(ext).ok_or_else(|| {
         Error::Input(format!(
             "cannot infer language from extension '.{ext}'; use --lang to specify"
@@ -309,19 +299,12 @@ fn resolve_language(lang_flag: Option<&str>, file: &std::path::Path) -> Result<L
 }
 
 fn parse_status_filter(status: Option<&str>) -> Option<Vec<BookmarkStatus>> {
-    status.map(|s| {
-        s.split(',')
-            .filter_map(|part| part.trim().parse().ok())
-            .collect()
-    })
+    status.map(|s| s.split(',').filter_map(|part| part.trim().parse().ok()).collect())
 }
 
 fn resolve_file_path(file: &std::path::Path) -> Result<(PathBuf, String)> {
-    let abs = if file.is_absolute() {
-        file.to_path_buf()
-    } else {
-        std::env::current_dir()?.join(file)
-    };
+    let abs =
+        if file.is_absolute() { file.to_path_buf() } else { std::env::current_dir()?.join(file) };
     if !abs.exists() {
         return Err(Error::Input(format!("file not found: {}", file.display())));
     }
@@ -363,8 +346,7 @@ fn find_bookmark(db: &Database, id: &str) -> Result<Bookmark> {
     if let Some(bm) = db.get_bookmark(id)? {
         return Ok(bm);
     }
-    db.get_bookmark_by_prefix(id)?
-        .ok_or_else(|| Error::Input(format!("bookmark not found: {id}")))
+    db.get_bookmark_by_prefix(id)?.ok_or_else(|| Error::Input(format!("bookmark not found: {id}")))
 }
 
 /// Search for a bookmark across multiple databases. Returns the bookmark and a reference to the DB.
@@ -411,22 +393,28 @@ fn handle_add(cli: &Cli, mode: &OutputMode, args: &AddArgs) -> Result<()> {
     };
 
     let generated = qgen::generate_query(&tree, source.as_bytes(), byte_range, &ts_lang)?;
-    let content_hash =
-        hash::content_hash(&source[generated.byte_range.0..generated.byte_range.1]);
+    let content_hash = hash::content_hash(&source[generated.byte_range.0..generated.byte_range.1]);
 
     // Count matches for uniqueness info
-    let match_count = crate::query::matcher::run_query(
-        &generated.query, &tree, source.as_bytes(), &ts_lang,
-    )
-    .map(|m| m.len())
-    .unwrap_or(0);
+    let match_count =
+        crate::query::matcher::run_query(&generated.query, &tree, source.as_bytes(), &ts_lang)
+            .map(|m| m.len())
+            .unwrap_or(0);
 
     // Compute the line range of the target for display
     let target_start_line = source[..generated.byte_range.0].lines().count() + 1;
     let target_end_line = source[..generated.byte_range.1].lines().count();
 
     if args.dry_run {
-        return write_dry_run(mode, &generated, &content_hash, &rel_path, target_start_line, target_end_line, match_count);
+        return write_dry_run(
+            mode,
+            &generated,
+            &content_hash,
+            &rel_path,
+            target_start_line,
+            target_end_line,
+            match_count,
+        );
     }
 
     let db = open_db(cli)?;
@@ -528,26 +516,31 @@ fn handle_add_from_snippet(cli: &Cli, mode: &OutputMode, args: &AddFromSnippetAr
     let (tree, source) = parser.parse_file(&abs_path)?;
     let ts_lang = lang.tree_sitter_language();
 
-    let offset = source
-        .find(snippet)
-        .ok_or_else(|| Error::Input("snippet not found in file".into()))?;
+    let offset =
+        source.find(snippet).ok_or_else(|| Error::Input("snippet not found in file".into()))?;
     let byte_range = (offset, offset + snippet.len());
 
     let generated = qgen::generate_query(&tree, source.as_bytes(), byte_range, &ts_lang)?;
-    let content_hash =
-        hash::content_hash(&source[generated.byte_range.0..generated.byte_range.1]);
+    let content_hash = hash::content_hash(&source[generated.byte_range.0..generated.byte_range.1]);
 
-    let match_count = crate::query::matcher::run_query(
-        &generated.query, &tree, source.as_bytes(), &ts_lang,
-    )
-    .map(|m| m.len())
-    .unwrap_or(0);
+    let match_count =
+        crate::query::matcher::run_query(&generated.query, &tree, source.as_bytes(), &ts_lang)
+            .map(|m| m.len())
+            .unwrap_or(0);
 
     let target_start_line = source[..generated.byte_range.0].lines().count() + 1;
     let target_end_line = source[..generated.byte_range.1].lines().count();
 
     if args.dry_run {
-        return write_dry_run(mode, &generated, &content_hash, &rel_path, target_start_line, target_end_line, match_count);
+        return write_dry_run(
+            mode,
+            &generated,
+            &content_hash,
+            &rel_path,
+            target_start_line,
+            target_end_line,
+            match_count,
+        );
     }
 
     let db = open_db(cli)?;
@@ -638,10 +631,8 @@ fn handle_add_from_query(cli: &Cli, mode: &OutputMode, args: &AddFromQueryArgs) 
     let ts_lang = lang.tree_sitter_language();
 
     // Validate the query by running it
-    let matches = crate::query::matcher::run_query(
-        &args.query, &tree, source.as_bytes(), &ts_lang,
-    )
-    .map_err(|e| Error::Input(format!("invalid tree-sitter query: {e}")))?;
+    let matches = crate::query::matcher::run_query(&args.query, &tree, source.as_bytes(), &ts_lang)
+        .map_err(|e| Error::Input(format!("invalid tree-sitter query: {e}")))?;
 
     if matches.is_empty() {
         return Err(Error::Input("query does not match any nodes in the file".into()));
@@ -657,7 +648,8 @@ fn handle_add_from_query(cli: &Cli, mode: &OutputMode, args: &AddFromQueryArgs) 
     let byte_range = first_match.byte_range;
 
     // Extract node type from the query (first identifier after opening paren)
-    let node_type = args.query
+    let node_type = args
+        .query
         .trim()
         .strip_prefix('(')
         .and_then(|s| s.split_whitespace().next())
@@ -975,11 +967,7 @@ fn handle_heal(cli: &Cli, mode: &OutputMode, args: &HealArgs) -> Result<()> {
     let filter = BookmarkFilter {
         file_path: args.file.as_ref().map(|p| p.to_string_lossy().to_string()),
         language: args.lang.clone(),
-        status: Some(vec![
-            BookmarkStatus::Active,
-            BookmarkStatus::Drifted,
-            BookmarkStatus::Stale,
-        ]),
+        status: Some(vec![BookmarkStatus::Active, BookmarkStatus::Drifted, BookmarkStatus::Stale]),
         collection: args.collection.clone(),
         ..Default::default()
     };
@@ -1082,7 +1070,8 @@ fn handle_heal(cli: &Cli, mode: &OutputMode, args: &HealArgs) -> Result<()> {
                 line_range: Some(format!("{}:{}", result.start_line + 1, result.end_line + 1)),
                 content_hash: Some(result.content_hash.clone()),
             };
-            let _ = db.insert_resolution_if_changed(&res, config.storage.max_resolutions_per_bookmark);
+            let _ =
+                db.insert_resolution_if_changed(&res, config.storage.max_resolutions_per_bookmark);
         }
 
         match final_status {
@@ -1146,7 +1135,9 @@ fn handle_status(cli: &Cli, mode: &OutputMode) -> Result<()> {
         if multi {
             match mode {
                 OutputMode::Json => {}
-                _ => println!("[{label}] {a} active  |  {d} drifted  |  {s} stale  |  {r} archived"),
+                _ => {
+                    println!("[{label}] {a} active  |  {d} drifted  |  {s} stale  |  {r} archived")
+                }
             }
         }
 
@@ -1169,7 +1160,9 @@ fn handle_status(cli: &Cli, mode: &OutputMode) -> Result<()> {
             if multi {
                 println!("---");
             }
-            println!("{total_active} active  |  {total_drifted} drifted  |  {total_stale} stale  |  {total_archived} archived");
+            println!(
+                "{total_active} active  |  {total_drifted} drifted  |  {total_stale} stale  |  {total_archived} archived"
+            );
         }
     }
     Ok(())
@@ -1254,10 +1247,8 @@ fn handle_preview(cli: &Cli, args: &PreviewArgs) -> Result<()> {
         let all_resolutions = db.list_resolutions(&bm.id, 100)?;
 
         // Extract commit hashes from all resolutions
-        let commit_hashes: Vec<String> = all_resolutions
-            .iter()
-            .filter_map(|r| r.commit_hash.clone())
-            .collect();
+        let commit_hashes: Vec<String> =
+            all_resolutions.iter().filter_map(|r| r.commit_hash.clone()).collect();
 
         // Find the nearest ancestor commit
         match git_context::find_nearest_ancestor(&cwd, &commit_hashes)? {
@@ -1266,7 +1257,11 @@ fn handle_preview(cli: &Cli, args: &PreviewArgs) -> Result<()> {
                 all_resolutions
                     .into_iter()
                     .find(|r| r.commit_hash.as_deref() == Some(&nearest_commit))
-                    .ok_or_else(|| Error::Resolution(format!("resolution for commit {nearest_commit} not found")))?
+                    .ok_or_else(|| {
+                        Error::Resolution(format!(
+                            "resolution for commit {nearest_commit} not found"
+                        ))
+                    })?
             }
             None => {
                 // No ancestor found, fall back to most recent resolution
@@ -1311,7 +1306,9 @@ fn handle_search(cli: &Cli, mode: &OutputMode, args: &SearchArgs) -> Result<()> 
         if !config.semantic.enabled {
             return Err(Error::Input("Semantic search is not enabled in config".to_string()));
         }
-        let query = args.query.as_ref()
+        let query = args
+            .query
+            .as_ref()
             .or(args.note.as_ref())
             .or(args.context.as_ref())
             .ok_or_else(|| Error::Input("Semantic search requires a query".to_string()))?;
@@ -1369,7 +1366,12 @@ fn handle_search(cli: &Cli, mode: &OutputMode, args: &SearchArgs) -> Result<()> 
 }
 
 /// Handle semantic search using vector embeddings.
-fn handle_semantic_search(cli: &Cli, mode: &OutputMode, query: &str, args: &SearchArgs) -> Result<()> {
+fn handle_semantic_search(
+    cli: &Cli,
+    mode: &OutputMode,
+    query: &str,
+    args: &SearchArgs,
+) -> Result<()> {
     use crate::embeddings::config::EmbeddingModel;
     use crate::storage::SemanticRepo;
 
@@ -1377,7 +1379,10 @@ fn handle_semantic_search(cli: &Cli, mode: &OutputMode, query: &str, args: &Sear
     let config = load_config(cli);
 
     // Parse model from config
-    let model = config.semantic.model.as_deref()
+    let model = config
+        .semantic
+        .model
+        .as_deref()
         .and_then(|m| m.parse::<EmbeddingModel>().ok())
         .unwrap_or(EmbeddingModel::AllMiniLmL6V2);
 
@@ -1440,11 +1445,7 @@ fn handle_semantic_search(cli: &Cli, mode: &OutputMode, query: &str, args: &Sear
         for (distance, bm) in bookmarks {
             let tags_str = bm.tags.join(", ");
             let notes = bm.notes.as_deref().unwrap_or("").to_string();
-            let notes_trunc = if notes.len() > 30 {
-                format!("{}...", &notes[..27])
-            } else {
-                notes
-            };
+            let notes_trunc = if notes.len() > 30 { format!("{}...", &notes[..27]) } else { notes };
 
             table.add_row(vec![
                 short_id(&bm.id).to_string(),
@@ -1475,7 +1476,10 @@ fn handle_reindex(cli: &Cli, mode: &OutputMode, args: &ReindexArgs) -> Result<()
     let mut db = open_db(cli)?;
 
     // Parse model from config
-    let model = config.semantic.model.as_deref()
+    let model = config
+        .semantic
+        .model
+        .as_deref()
         .and_then(|m| m.parse::<EmbeddingModel>().ok())
         .unwrap_or(EmbeddingModel::AllMiniLmL6V2);
 
@@ -1527,10 +1531,7 @@ fn handle_diff(cli: &Cli, mode: &OutputMode, args: &DiffArgs) -> Result<()> {
     let db = open_db(cli)?;
     let cwd = std::env::current_dir()?;
 
-    let since = args
-        .since
-        .as_deref()
-        .unwrap_or("HEAD~1");
+    let since = args.since.as_deref().unwrap_or("HEAD~1");
 
     let changed_files = git_context::changed_files_since(&cwd, since)?;
     if changed_files.is_empty() {
@@ -1550,10 +1551,10 @@ fn handle_diff(cli: &Cli, mode: &OutputMode, args: &DiffArgs) -> Result<()> {
         .collect();
 
     if affected.is_empty() {
-        write_success(mode, &format!(
-            "{} files changed since {since}, no bookmarks affected.",
-            changed_files.len()
-        ))?;
+        write_success(
+            mode,
+            &format!("{} files changed since {since}, no bookmarks affected.", changed_files.len()),
+        )?;
         return Ok(());
     }
 
@@ -1619,19 +1620,11 @@ fn handle_gc(cli: &Cli, mode: &OutputMode, args: &GcArgs) -> Result<()> {
     let cutoff_str = cutoff.format("%Y-%m-%dT%H:%M:%SZ").to_string();
 
     if args.dry_run {
-        let filter = BookmarkFilter {
-            status: Some(vec![BookmarkStatus::Archived]),
-            ..Default::default()
-        };
+        let filter =
+            BookmarkFilter { status: Some(vec![BookmarkStatus::Archived]), ..Default::default() };
         let bookmarks = db.list_bookmarks(&filter)?;
-        let would_remove: Vec<_> = bookmarks
-            .iter()
-            .filter(|b| b.created_at < cutoff_str)
-            .collect();
-        write_success(
-            mode,
-            &format!("Would remove {} archived bookmarks", would_remove.len()),
-        )?;
+        let would_remove: Vec<_> = bookmarks.iter().filter(|b| b.created_at < cutoff_str).collect();
+        write_success(mode, &format!("Would remove {} archived bookmarks", would_remove.len()))?;
     } else {
         let count = db.delete_archived_before(&cutoff_str)?;
         write_success(mode, &format!("Removed {count} archived bookmarks"))?;
@@ -1697,15 +1690,17 @@ fn handle_import(cli: &Cli, mode: &OutputMode, args: &ImportArgs) -> Result<()> 
     if !imported_bookmarks.is_empty() {
         let config = load_config(cli);
         if config.semantic.enabled {
-            let cache_dir = cli.db.first()
-                .and_then(|p| p.parent().map(|pb| pb.to_path_buf()))
-                .or_else(|| {
+            let cache_dir =
+                cli.db.first().and_then(|p| p.parent().map(|pb| pb.to_path_buf())).or_else(|| {
                     let cwd = std::env::current_dir().ok()?;
                     git_context::detect_context(&cwd)
                         .map(|ctx| ctx.repo_root.join(".codemark").join("models"))
                 });
 
-            let model = config.semantic.model.as_deref()
+            let model = config
+                .semantic
+                .model
+                .as_deref()
                 .and_then(|m| m.parse::<EmbeddingModel>().ok())
                 .unwrap_or(EmbeddingModel::AllMiniLmL6V2);
 
@@ -1716,10 +1711,7 @@ fn handle_import(cli: &Cli, mode: &OutputMode, args: &ImportArgs) -> Result<()> 
         }
     }
 
-    write_success(
-        mode,
-        &format!("Imported {imported} bookmarks ({skipped} duplicates skipped)"),
-    )?;
+    write_success(mode, &format!("Imported {imported} bookmarks ({skipped} duplicates skipped)"))?;
     Ok(())
 }
 
@@ -1731,7 +1723,11 @@ fn handle_completions(args: &CompletionsArgs) -> Result<()> {
 
 // --- Collection handlers ---
 
-fn handle_collection_create(cli: &Cli, mode: &OutputMode, args: &CollectionCreateArgs) -> Result<()> {
+fn handle_collection_create(
+    cli: &Cli,
+    mode: &OutputMode,
+    args: &CollectionCreateArgs,
+) -> Result<()> {
     let db = open_db(cli)?;
     let collection = Collection {
         id: uuid::Uuid::new_v4().to_string(),
@@ -1745,7 +1741,11 @@ fn handle_collection_create(cli: &Cli, mode: &OutputMode, args: &CollectionCreat
     Ok(())
 }
 
-fn handle_collection_delete(cli: &Cli, mode: &OutputMode, args: &CollectionDeleteArgs) -> Result<()> {
+fn handle_collection_delete(
+    cli: &Cli,
+    mode: &OutputMode,
+    args: &CollectionDeleteArgs,
+) -> Result<()> {
     let db = open_db(cli)?;
     let count = db.delete_collection(&args.name)?;
     write_success(
@@ -1777,7 +1777,11 @@ fn handle_collection_add(cli: &Cli, mode: &OutputMode, args: &CollectionAddArgs)
     Ok(())
 }
 
-fn handle_collection_reorder(cli: &Cli, mode: &OutputMode, args: &CollectionReorderArgs) -> Result<()> {
+fn handle_collection_reorder(
+    cli: &Cli,
+    mode: &OutputMode,
+    args: &CollectionReorderArgs,
+) -> Result<()> {
     let db = open_db(cli)?;
     let collection = db
         .get_collection_by_name(&args.name)?
@@ -1790,16 +1794,17 @@ fn handle_collection_reorder(cli: &Cli, mode: &OutputMode, args: &CollectionReor
     Ok(())
 }
 
-fn handle_collection_remove(cli: &Cli, mode: &OutputMode, args: &CollectionRemoveArgs) -> Result<()> {
+fn handle_collection_remove(
+    cli: &Cli,
+    mode: &OutputMode,
+    args: &CollectionRemoveArgs,
+) -> Result<()> {
     let db = open_db(cli)?;
     let collection = db
         .get_collection_by_name(&args.name)?
         .ok_or_else(|| Error::Input(format!("collection '{}' not found", args.name)))?;
     let removed = db.remove_from_collection(&collection.id, &args.bookmark_ids)?;
-    write_success(
-        mode,
-        &format!("Removed {removed} bookmarks from '{}'", args.name),
-    )?;
+    write_success(mode, &format!("Removed {removed} bookmarks from '{}'", args.name))?;
     Ok(())
 }
 
@@ -1827,23 +1832,13 @@ fn handle_collection_list(cli: &Cli, mode: &OutputMode, args: &CollectionListArg
                 // TV format: name\tdescription
                 let mut stdout = io::stdout().lock();
                 for c in &collections {
-                    writeln!(
-                        stdout,
-                        "{}\t{}",
-                        c.name,
-                        c.description.as_deref().unwrap_or("")
-                    )?;
+                    writeln!(stdout, "{}\t{}", c.name, c.description.as_deref().unwrap_or(""))?;
                 }
             }
             _ => {
                 let mut stdout = io::stdout().lock();
                 for c in &collections {
-                    writeln!(
-                        stdout,
-                        "{}\t{}",
-                        c.name,
-                        c.description.as_deref().unwrap_or("")
-                    )?;
+                    writeln!(stdout, "{}\t{}", c.name, c.description.as_deref().unwrap_or(""))?;
                 }
             }
         }
@@ -1896,10 +1891,7 @@ fn handle_collection_list(cli: &Cli, mode: &OutputMode, args: &CollectionListArg
 
 fn handle_collection_show(cli: &Cli, mode: &OutputMode, args: &CollectionShowArgs) -> Result<()> {
     let db = open_db(cli)?;
-    let filter = BookmarkFilter {
-        collection: Some(args.name.clone()),
-        ..Default::default()
-    };
+    let filter = BookmarkFilter { collection: Some(args.name.clone()), ..Default::default() };
     let bookmarks = db.list_bookmarks(&filter)?;
     if matches!(mode, OutputMode::Tv) {
         let bookmark_data: std::collections::HashMap<String, (String, String)> = bookmarks
@@ -1916,7 +1908,11 @@ fn handle_collection_show(cli: &Cli, mode: &OutputMode, args: &CollectionShowArg
     Ok(())
 }
 
-fn handle_collection_resolve(cli: &Cli, mode: &OutputMode, args: &CollectionResolveArgs) -> Result<()> {
+fn handle_collection_resolve(
+    cli: &Cli,
+    mode: &OutputMode,
+    args: &CollectionResolveArgs,
+) -> Result<()> {
     let db = open_db(cli)?;
     let filter = BookmarkFilter {
         collection: Some(args.name.clone()),

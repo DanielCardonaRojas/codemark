@@ -59,9 +59,8 @@ impl Database {
              created_by, tags, notes, context
              FROM bookmarks WHERE id LIKE ?1",
         )?;
-        let results: Vec<Bookmark> = stmt.query_map([&pattern], row_to_bookmark)?
-            .filter_map(|r| r.ok())
-            .collect();
+        let results: Vec<Bookmark> =
+            stmt.query_map([&pattern], row_to_bookmark)?.filter_map(|r| r.ok()).collect();
 
         match results.len() {
             0 => Ok(None),
@@ -91,8 +90,7 @@ impl Database {
         }
 
         if let Some(ref tag) = filter.tag {
-            conditions
-                .push("EXISTS (SELECT 1 FROM json_each(b.tags) WHERE value = ?)".to_string());
+            conditions.push("EXISTS (SELECT 1 FROM json_each(b.tags) WHERE value = ?)".to_string());
             params.push(Box::new(tag.clone()));
         }
 
@@ -140,7 +138,8 @@ impl Database {
             sql.push_str(&format!(" LIMIT {limit}"));
         }
 
-        let param_refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+        let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+            params.iter().map(|p| p.as_ref()).collect();
         let mut stmt = self.conn().prepare(&sql)?;
         let rows = stmt.query_map(param_refs.as_slice(), row_to_bookmark)?;
         let results: Vec<Bookmark> = rows.filter_map(|r| r.ok()).collect();
@@ -189,9 +188,8 @@ impl Database {
     }
 
     pub fn count_by_status(&self) -> Result<HashMap<BookmarkStatus, usize>> {
-        let mut stmt = self
-            .conn()
-            .prepare("SELECT status, COUNT(*) FROM bookmarks GROUP BY status")?;
+        let mut stmt =
+            self.conn().prepare("SELECT status, COUNT(*) FROM bookmarks GROUP BY status")?;
         let rows = stmt.query_map([], |row| {
             let status: String = row.get(0)?;
             let count: usize = row.get(1)?;
@@ -330,8 +328,8 @@ fn row_to_bookmark(row: &rusqlite::Row) -> rusqlite::Result<Bookmark> {
 #[cfg(test)]
 mod tests {
     use crate::engine::bookmark::BookmarkFilter;
-    use crate::storage::db::Database;
     use crate::engine::bookmark::{Bookmark, BookmarkStatus, ResolutionMethod};
+    use crate::storage::db::Database;
 
     fn test_bookmark(id: &str) -> Bookmark {
         Bookmark {
@@ -421,10 +419,8 @@ mod tests {
         db.insert_bookmark(&bm1).unwrap();
         db.insert_bookmark(&bm2).unwrap();
 
-        let filter = BookmarkFilter {
-            status: Some(vec![BookmarkStatus::Stale]),
-            ..Default::default()
-        };
+        let filter =
+            BookmarkFilter { status: Some(vec![BookmarkStatus::Stale]), ..Default::default() };
         let results = db.list_bookmarks(&filter).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].id, "aaaa-0000-0000-0002");

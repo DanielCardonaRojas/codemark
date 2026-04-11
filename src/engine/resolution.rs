@@ -57,9 +57,7 @@ pub fn resolve(
     // Tier 2: Relaxed query
     if let Ok(relaxed) = relaxer::relax_query(&bookmark.query) {
         if let Ok(matches) = matcher::run_query(&relaxed, tree, source_bytes, language) {
-            if let Some(result) =
-                pick_match(&matches, bookmark, ResolutionMethod::Relaxed)
-            {
+            if let Some(result) = pick_match(&matches, bookmark, ResolutionMethod::Relaxed) {
                 return Ok(result);
             }
         }
@@ -68,9 +66,7 @@ pub fn resolve(
     // Tier 3: Minimal query
     if let Ok(minimal) = relaxer::minimize_query(&bookmark.query) {
         if let Ok(matches) = matcher::run_query(&minimal, tree, source_bytes, language) {
-            if let Some(result) =
-                pick_match(&matches, bookmark, ResolutionMethod::Relaxed)
-            {
+            if let Some(result) = pick_match(&matches, bookmark, ResolutionMethod::Relaxed) {
                 return Ok(result);
             }
         }
@@ -162,9 +158,8 @@ fn hash_fallback_walk(
         let ch = hash::content_hash(text);
         if ch == stored_hash {
             // Regenerate query for this new location
-            let new_query = generator::generate_query_for_node(node, source, language)
-                .ok()
-                .map(|gq| gq.query);
+            let new_query =
+                generator::generate_query_for_node(node, source, language).ok().map(|gq| gq.query);
 
             return Some(ResolutionResult {
                 method: ResolutionMethod::HashFallback,
@@ -203,10 +198,7 @@ mod tests {
             .join(format!("tests/fixtures/swift/{name}"))
     }
 
-    fn create_bookmark_for_function(
-        file: &str,
-        func_name: &str,
-    ) -> (Bookmark, ParseCache) {
+    fn create_bookmark_for_function(file: &str, func_name: &str) -> (Bookmark, ParseCache) {
         let path = fixture_path(file);
         let mut cache = ParseCache::new(CodemarkLang::Swift).unwrap();
         let lang = CodemarkLang::Swift.tree_sitter_language();
@@ -214,9 +206,7 @@ mod tests {
         let (tree, source) = cache.get_or_parse(&path).unwrap();
         let range = find_function_range(tree, source, func_name);
         let generated = qgen::generate_query(tree, source.as_bytes(), range, &lang).unwrap();
-        let ch = hash::content_hash(
-            &source[range.0..range.1],
-        );
+        let ch = hash::content_hash(&source[range.0..range.1]);
 
         let bm = Bookmark {
             id: "test-bm".to_string(),
@@ -239,11 +229,7 @@ mod tests {
         (bm, cache)
     }
 
-    fn find_function_range(
-        tree: &tree_sitter::Tree,
-        source: &str,
-        name: &str,
-    ) -> (usize, usize) {
+    fn find_function_range(tree: &tree_sitter::Tree, source: &str, name: &str) -> (usize, usize) {
         fn search(node: tree_sitter::Node, source: &str, name: &str) -> Option<(usize, usize)> {
             if node.kind() == "function_declaration" {
                 if let Some(name_node) = node.child_by_field_name("name") {
@@ -295,7 +281,8 @@ mod tests {
         // can still match via hash disambiguation
         bm.query = r#"(function_declaration
   name: (simple_identifier) @fn_name
-  (#eq? @fn_name "nonexistentFunction")) @target"#.to_string();
+  (#eq? @fn_name "nonexistentFunction")) @target"#
+            .to_string();
         let lang = CodemarkLang::Swift.tree_sitter_language();
 
         let result = resolve(&bm, &mut cache, &lang).unwrap();
@@ -316,7 +303,8 @@ mod tests {
             create_bookmark_for_function("auth_service.swift", "validateToken");
         bm.query = r#"(function_declaration
   name: (simple_identifier) @fn_name
-  (#eq? @fn_name "totallyGone")) @target"#.to_string();
+  (#eq? @fn_name "totallyGone")) @target"#
+            .to_string();
         bm.content_hash = Some("sha256:0000000000000000".to_string());
         let lang = CodemarkLang::Swift.tree_sitter_language();
 

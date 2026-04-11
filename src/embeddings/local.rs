@@ -1,11 +1,14 @@
 //! Local embedding model support using Candle.
 
-use super::{config::EmbeddingModel, provider::{EmbeddingError, EmbeddingProvider, EmbeddingResult}};
+use super::{
+    config::EmbeddingModel,
+    provider::{EmbeddingError, EmbeddingProvider, EmbeddingResult},
+};
 use async_trait::async_trait;
-use candle_core::{Device, Result as CandleResult, Tensor, DType};
+use candle_core::{DType, Device, Result as CandleResult, Tensor};
 use candle_nn::VarBuilder;
 use candle_transformers::models::bert::{BertModel, Config as BertConfig};
-use hf_hub::{api::sync::Api, Repo, RepoType};
+use hf_hub::{Repo, RepoType, api::sync::Api};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
@@ -74,20 +77,12 @@ impl BertSentenceEmbedder {
             .map_err(|e| candle_core::Error::Msg(format!("Failed to parse config: {}", e)))?;
 
         let vb = unsafe {
-            VarBuilder::from_mmaped_safetensors(
-                &[weights_path.clone()],
-                DType::F32,
-                device,
-            )?
+            VarBuilder::from_mmaped_safetensors(&[weights_path.clone()], DType::F32, device)?
         };
 
         let model = BertModel::load(vb, &config)?;
 
-        Ok(BertSentenceEmbedder {
-            model,
-            device: device.clone(),
-            pooling: MeanPooling,
-        })
+        Ok(BertSentenceEmbedder { model, device: device.clone(), pooling: MeanPooling })
     }
 
     /// Encode texts to embeddings.
@@ -99,18 +94,22 @@ impl BertSentenceEmbedder {
         let mut embeddings = Vec::new();
 
         for &text in texts {
-            let tokens = tokenizer
-                .encode(text, true)
-                .map_err(|e| candle_core::Error::Msg(e.to_string()))?;
+            let tokens =
+                tokenizer.encode(text, true).map_err(|e| candle_core::Error::Msg(e.to_string()))?;
 
             let input_ids: Vec<u32> = tokens.get_ids().iter().map(|&id| id as u32).collect();
-            let attention_mask: Vec<u32> = tokens.get_attention_mask().iter().map(|&id| id as u32).collect();
-            let token_type_ids: Vec<u32> = tokens.get_type_ids().iter().map(|&id| id as u32).collect();
+            let attention_mask: Vec<u32> =
+                tokens.get_attention_mask().iter().map(|&id| id as u32).collect();
+            let token_type_ids: Vec<u32> =
+                tokens.get_type_ids().iter().map(|&id| id as u32).collect();
 
             let seq_len = input_ids.len();
-            let input_ids_tensor = Tensor::new(input_ids.as_slice(), &self.device)?.reshape((1, seq_len))?;
-            let attention_mask_tensor = Tensor::new(attention_mask.as_slice(), &self.device)?.reshape((1, seq_len))?;
-            let token_type_ids_tensor = Tensor::new(token_type_ids.as_slice(), &self.device)?.reshape((1, seq_len))?;
+            let input_ids_tensor =
+                Tensor::new(input_ids.as_slice(), &self.device)?.reshape((1, seq_len))?;
+            let attention_mask_tensor =
+                Tensor::new(attention_mask.as_slice(), &self.device)?.reshape((1, seq_len))?;
+            let token_type_ids_tensor =
+                Tensor::new(token_type_ids.as_slice(), &self.device)?.reshape((1, seq_len))?;
 
             // Convert attention mask to f32 for pooling operations
             let attention_mask_f32 = attention_mask_tensor.to_dtype(DType::F32)?;
@@ -142,7 +141,9 @@ impl BertSentenceEmbedder {
                 }
             }
 
-            let normalized = Tensor::from_vec(normalized_vals.clone(), pooled.shape(), pooled.device())?.to_dtype(DType::F32)?;
+            let normalized =
+                Tensor::from_vec(normalized_vals.clone(), pooled.shape(), pooled.device())?
+                    .to_dtype(DType::F32)?;
 
             // Squeeze or flatten to get 1D vector
             let embedding = if normalized.dims().len() == 2 {
@@ -195,9 +196,10 @@ impl LocalEmbeddingProvider {
 
     /// Ensure model and tokenizer are loaded.
     fn ensure_loaded(&self) -> CandleResult<()> {
-        let mut model_guard = self.model.lock().map_err(|_| {
-            candle_core::Error::Msg("Poison error getting model lock".to_string())
-        })?;
+        let mut model_guard = self
+            .model
+            .lock()
+            .map_err(|_| candle_core::Error::Msg("Poison error getting model lock".to_string()))?;
 
         if model_guard.is_none() {
             let (model_path, tokenizer_path) = self.download_if_needed()?;
@@ -231,13 +233,11 @@ impl LocalEmbeddingProvider {
         let api = Api::new().map_err(|e| candle_core::Error::Msg(e.to_string()))?;
 
         let repo = match self.model_name {
-            EmbeddingModel::AllMiniLmL6V2 => {
-                Repo::with_revision(
-                    "sentence-transformers/all-MiniLM-L6-v2".to_string(),
-                    RepoType::Model,
-                    "refs/pr/21".to_string()
-                )
-            }
+            EmbeddingModel::AllMiniLmL6V2 => Repo::with_revision(
+                "sentence-transformers/all-MiniLM-L6-v2".to_string(),
+                RepoType::Model,
+                "refs/pr/21".to_string(),
+            ),
             EmbeddingModel::BgeSmallEnV1_5 => {
                 Repo::new("BAAI/bge-small-en-v1.5".to_string(), RepoType::Model)
             }
@@ -245,15 +245,15 @@ impl LocalEmbeddingProvider {
 
         let api_repo = api.repo(repo);
 
-        let config = api_repo.get("config.json").map_err(|e| {
-            candle_core::Error::Msg(format!("Failed to download config: {}", e))
-        })?;
-        let tokenizer = api_repo.get("tokenizer.json").map_err(|e| {
-            candle_core::Error::Msg(format!("Failed to download tokenizer: {}", e))
-        })?;
-        let weights = api_repo.get("model.safetensors").map_err(|e| {
-            candle_core::Error::Msg(format!("Failed to download weights: {}", e))
-        })?;
+        let config = api_repo
+            .get("config.json")
+            .map_err(|e| candle_core::Error::Msg(format!("Failed to download config: {}", e)))?;
+        let tokenizer = api_repo
+            .get("tokenizer.json")
+            .map_err(|e| candle_core::Error::Msg(format!("Failed to download tokenizer: {}", e)))?;
+        let weights = api_repo
+            .get("model.safetensors")
+            .map_err(|e| candle_core::Error::Msg(format!("Failed to download weights: {}", e)))?;
 
         // Copy to cache location
         if let Some(parent) = config_path.parent() {
@@ -270,42 +270,40 @@ impl LocalEmbeddingProvider {
 #[async_trait]
 impl EmbeddingProvider for LocalEmbeddingProvider {
     async fn embed(&self, text: &str) -> EmbeddingResult<Vec<f32>> {
-        self.ensure_loaded()
-            .map_err(|e| EmbeddingError::ModelLoad(e.to_string()))?;
+        self.ensure_loaded().map_err(|e| EmbeddingError::ModelLoad(e.to_string()))?;
 
-        let model_guard = self.model.lock().map_err(|_| {
-            EmbeddingError::ModelLoad("Poison error".to_string())
-        })?;
-        let tokenizer_guard = self.tokenizer.lock().map_err(|_| {
-            EmbeddingError::ModelLoad("Poison error".to_string())
-        })?;
+        let model_guard =
+            self.model.lock().map_err(|_| EmbeddingError::ModelLoad("Poison error".to_string()))?;
+        let tokenizer_guard = self
+            .tokenizer
+            .lock()
+            .map_err(|_| EmbeddingError::ModelLoad("Poison error".to_string()))?;
 
         let model = model_guard.as_ref().expect("Model not loaded");
         let tokenizer = tokenizer_guard.as_ref().expect("Tokenizer not loaded");
 
-        let results = model.encode(&[text], tokenizer)
+        let results = model
+            .encode(&[text], tokenizer)
             .map_err(|e| EmbeddingError::Generation(e.to_string()))?;
 
         Ok(results.into_iter().next().unwrap_or_default())
     }
 
     async fn embed_batch(&self, texts: &[String]) -> EmbeddingResult<Vec<Vec<f32>>> {
-        self.ensure_loaded()
-            .map_err(|e| EmbeddingError::ModelLoad(e.to_string()))?;
+        self.ensure_loaded().map_err(|e| EmbeddingError::ModelLoad(e.to_string()))?;
 
-        let model_guard = self.model.lock().map_err(|_| {
-            EmbeddingError::ModelLoad("Poison error".to_string())
-        })?;
-        let tokenizer_guard = self.tokenizer.lock().map_err(|_| {
-            EmbeddingError::ModelLoad("Poison error".to_string())
-        })?;
+        let model_guard =
+            self.model.lock().map_err(|_| EmbeddingError::ModelLoad("Poison error".to_string()))?;
+        let tokenizer_guard = self
+            .tokenizer
+            .lock()
+            .map_err(|_| EmbeddingError::ModelLoad("Poison error".to_string()))?;
 
         let model = model_guard.as_ref().expect("Model not loaded");
         let tokenizer = tokenizer_guard.as_ref().expect("Tokenizer not loaded");
 
         let text_refs: Vec<&str> = texts.iter().map(|s| s.as_str()).collect();
-        model.encode(&text_refs, tokenizer)
-            .map_err(|e| EmbeddingError::Generation(e.to_string()))
+        model.encode(&text_refs, tokenizer).map_err(|e| EmbeddingError::Generation(e.to_string()))
     }
 
     fn dimensions(&self) -> usize {

@@ -57,11 +57,7 @@ pub fn minimize_query(query: &str) -> Result<String> {
 
 /// Clean up excess whitespace in a query string.
 fn clean_whitespace(query: &str) -> String {
-    let lines: Vec<&str> = query
-        .lines()
-        .map(|l| l.trim_end())
-        .filter(|l| !l.is_empty())
-        .collect();
+    let lines: Vec<&str> = query.lines().map(|l| l.trim_end()).filter(|l| !l.is_empty()).collect();
     lines.join("\n")
 }
 

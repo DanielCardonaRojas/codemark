@@ -53,12 +53,7 @@ impl Codemark {
 
         let binary = PathBuf::from(env!("CARGO_BIN_EXE_codemark"));
 
-        Codemark {
-            db_path,
-            binary,
-            temp_dir: Some(temp),
-            work_dir: repo_path,
-        }
+        Codemark { db_path, binary, temp_dir: Some(temp), work_dir: repo_path }
     }
 
     /// Create a commit with the given file content.
@@ -100,23 +95,9 @@ impl Codemark {
         // Create commit - build parent references differently based on whether we have parents
         let oid = if let Some(parent_oid) = head_oid {
             let parent_commit = repo.find_commit(parent_oid).unwrap();
-            repo.commit(
-                Some("HEAD"),
-                &sig,
-                &sig,
-                message,
-                &tree,
-                &[&parent_commit],
-            ).unwrap()
+            repo.commit(Some("HEAD"), &sig, &sig, message, &tree, &[&parent_commit]).unwrap()
         } else {
-            repo.commit(
-                Some("HEAD"),
-                &sig,
-                &sig,
-                message,
-                &tree,
-                &[],
-            ).unwrap()
+            repo.commit(Some("HEAD"), &sig, &sig, message, &tree, &[]).unwrap()
         };
 
         oid.to_string()
@@ -129,7 +110,8 @@ impl Codemark {
         let tree = obj.peel_to_tree().unwrap();
 
         // Checkout the tree with force
-        repo.checkout_tree(&tree.as_object(), Some(git2::build::CheckoutBuilder::new().force())).unwrap();
+        repo.checkout_tree(&tree.as_object(), Some(git2::build::CheckoutBuilder::new().force()))
+            .unwrap();
 
         // Update HEAD to point to the commit (detached HEAD state)
         repo.set_head_detached(obj.id()).unwrap();
@@ -236,10 +218,14 @@ fn add_and_resolve_round_trip() {
     // Add a bookmark
     let json = cm.run_json(&[
         "add",
-        "--file", &cm.fixture("swift/auth_service.swift"),
-        "--range", "39",
-        "--tag", "auth",
-        "--note", "JWT validation",
+        "--file",
+        &cm.fixture("swift/auth_service.swift"),
+        "--range",
+        "39",
+        "--tag",
+        "auth",
+        "--note",
+        "JWT validation",
     ]);
     assert_eq!(json["success"], true);
     let id = json["data"]["id"].as_str().unwrap().to_string();
@@ -259,8 +245,10 @@ fn add_dry_run_does_not_persist() {
     // Dry run
     let json = cm.run_json(&[
         "add",
-        "--file", &cm.fixture("rust/auth_service.rs"),
-        "--range", "108",
+        "--file",
+        &cm.fixture("rust/auth_service.rs"),
+        "--range",
+        "108",
         "--dry-run",
     ]);
     assert_eq!(json["data"]["dry_run"], true);
@@ -279,9 +267,12 @@ fn add_auto_detects_language() {
     // No --lang flag — should auto-detect from .rs extension
     let json = cm.run_json(&[
         "add",
-        "--file", &cm.fixture("rust/auth_service.rs"),
-        "--range", "108",
-        "--note", "auto-detect test",
+        "--file",
+        &cm.fixture("rust/auth_service.rs"),
+        "--range",
+        "108",
+        "--note",
+        "auto-detect test",
     ]);
     assert_eq!(json["success"], true);
 }
@@ -292,17 +283,25 @@ fn add_with_created_by() {
 
     cm.run_json(&[
         "add",
-        "--file", &cm.fixture("rust/auth_service.rs"),
-        "--range", "108",
-        "--created-by", "agent",
-        "--note", "agent bookmark",
+        "--file",
+        &cm.fixture("rust/auth_service.rs"),
+        "--range",
+        "108",
+        "--created-by",
+        "agent",
+        "--note",
+        "agent bookmark",
     ]);
     cm.run_json(&[
         "add",
-        "--file", &cm.fixture("rust/auth_service.rs"),
-        "--range", "47",
-        "--created-by", "user",
-        "--note", "user bookmark",
+        "--file",
+        &cm.fixture("rust/auth_service.rs"),
+        "--range",
+        "47",
+        "--created-by",
+        "user",
+        "--note",
+        "user bookmark",
     ]);
 
     // Filter by author
@@ -348,12 +347,26 @@ fn list_with_filters() {
 
     // Add bookmarks in different languages with different tags
     cm.run_json(&[
-        "add", "--file", &cm.fixture("swift/auth_service.swift"),
-        "--range", "39", "--tag", "auth", "--note", "swift auth",
+        "add",
+        "--file",
+        &cm.fixture("swift/auth_service.swift"),
+        "--range",
+        "39",
+        "--tag",
+        "auth",
+        "--note",
+        "swift auth",
     ]);
     cm.run_json(&[
-        "add", "--file", &cm.fixture("rust/auth_service.rs"),
-        "--range", "108", "--tag", "factory", "--note", "rust factory",
+        "add",
+        "--file",
+        &cm.fixture("rust/auth_service.rs"),
+        "--range",
+        "108",
+        "--tag",
+        "factory",
+        "--note",
+        "rust factory",
     ]);
 
     // List all
@@ -376,8 +389,13 @@ fn show_includes_resolution_history() {
     let cm = Codemark::new();
 
     let json = cm.run_json(&[
-        "add", "--file", &cm.fixture("rust/auth_service.rs"),
-        "--range", "108", "--note", "test",
+        "add",
+        "--file",
+        &cm.fixture("rust/auth_service.rs"),
+        "--range",
+        "108",
+        "--note",
+        "test",
     ]);
     let id = json["data"]["id"].as_str().unwrap().to_string();
 
@@ -395,12 +413,22 @@ fn heal_updates_statuses() {
     let cm = Codemark::new();
 
     cm.run_json(&[
-        "add", "--file", &cm.fixture("swift/auth_service.swift"),
-        "--range", "39", "--note", "test",
+        "add",
+        "--file",
+        &cm.fixture("swift/auth_service.swift"),
+        "--range",
+        "39",
+        "--note",
+        "test",
     ]);
     cm.run_json(&[
-        "add", "--file", &cm.fixture("rust/auth_service.rs"),
-        "--range", "108", "--note", "test",
+        "add",
+        "--file",
+        &cm.fixture("rust/auth_service.rs"),
+        "--range",
+        "108",
+        "--note",
+        "test",
     ]);
 
     let json = cm.run_json(&["heal"]);
@@ -415,8 +443,13 @@ fn heal_validate_only_skips_recording() {
     let cm = Codemark::new();
 
     cm.run_json(&[
-        "add", "--file", &cm.fixture("swift/auth_service.swift"),
-        "--range", "39", "--note", "test",
+        "add",
+        "--file",
+        &cm.fixture("swift/auth_service.swift"),
+        "--range",
+        "39",
+        "--note",
+        "test",
     ]);
 
     let json = cm.run_json(&["heal", "--validate-only"]);
@@ -429,8 +462,13 @@ fn status_shows_counts() {
     let cm = Codemark::new();
 
     cm.run_json(&[
-        "add", "--file", &cm.fixture("rust/auth_service.rs"),
-        "--range", "108", "--note", "test",
+        "add",
+        "--file",
+        &cm.fixture("rust/auth_service.rs"),
+        "--range",
+        "108",
+        "--note",
+        "test",
     ]);
 
     let json = cm.run_json(&["status"]);
@@ -442,12 +480,22 @@ fn search_finds_by_note() {
     let cm = Codemark::new();
 
     cm.run_json(&[
-        "add", "--file", &cm.fixture("rust/auth_service.rs"),
-        "--range", "108", "--note", "unique-search-term-xyz",
+        "add",
+        "--file",
+        &cm.fixture("rust/auth_service.rs"),
+        "--range",
+        "108",
+        "--note",
+        "unique-search-term-xyz",
     ]);
     cm.run_json(&[
-        "add", "--file", &cm.fixture("rust/auth_service.rs"),
-        "--range", "47", "--note", "something else",
+        "add",
+        "--file",
+        &cm.fixture("rust/auth_service.rs"),
+        "--range",
+        "47",
+        "--note",
+        "something else",
     ]);
 
     let json = cm.run_json(&["search", "unique-search-term"]);
@@ -461,12 +509,22 @@ fn search_finds_by_file_path() {
     let cm = Codemark::new();
 
     cm.run_json(&[
-        "add", "--file", &cm.fixture("rust/auth_service.rs"),
-        "--range", "108", "--note", "test 1",
+        "add",
+        "--file",
+        &cm.fixture("rust/auth_service.rs"),
+        "--range",
+        "108",
+        "--note",
+        "test 1",
     ]);
     cm.run_json(&[
-        "add", "--file", &cm.fixture("rust/api_client.rs"),
-        "--range", "1", "--note", "test 2",
+        "add",
+        "--file",
+        &cm.fixture("rust/api_client.rs"),
+        "--range",
+        "1",
+        "--note",
+        "test 2",
     ]);
 
     // Search by file path component - should find api_client bookmark
@@ -481,12 +539,26 @@ fn search_finds_by_tag() {
     let cm = Codemark::new();
 
     cm.run_json(&[
-        "add", "--file", &cm.fixture("rust/auth_service.rs"),
-        "--range", "108", "--tag", "unique-tag-xyz", "--note", "test 1",
+        "add",
+        "--file",
+        &cm.fixture("rust/auth_service.rs"),
+        "--range",
+        "108",
+        "--tag",
+        "unique-tag-xyz",
+        "--note",
+        "test 1",
     ]);
     cm.run_json(&[
-        "add", "--file", &cm.fixture("rust/auth_service.rs"),
-        "--range", "47", "--tag", "other", "--note", "test 2",
+        "add",
+        "--file",
+        &cm.fixture("rust/auth_service.rs"),
+        "--range",
+        "47",
+        "--tag",
+        "other",
+        "--note",
+        "test 2",
     ]);
 
     // Search by tag - should find the bookmark with unique-tag-xyz
@@ -504,8 +576,13 @@ fn collections_crud() {
 
     // Add a bookmark
     let json = cm.run_json(&[
-        "add", "--file", &cm.fixture("rust/auth_service.rs"),
-        "--range", "108", "--note", "test",
+        "add",
+        "--file",
+        &cm.fixture("rust/auth_service.rs"),
+        "--range",
+        "108",
+        "--note",
+        "test",
     ]);
     let bm_id = json["data"]["id"].as_str().unwrap().to_string();
 
@@ -545,8 +622,13 @@ fn export_and_import() {
     let cm = Codemark::new();
 
     cm.run_json(&[
-        "add", "--file", &cm.fixture("rust/auth_service.rs"),
-        "--range", "108", "--note", "export test",
+        "add",
+        "--file",
+        &cm.fixture("rust/auth_service.rs"),
+        "--range",
+        "108",
+        "--note",
+        "export test",
     ]);
 
     // Export
@@ -576,8 +658,13 @@ fn gc_removes_archived() {
     let cm = Codemark::new();
 
     let json = cm.run_json(&[
-        "add", "--file", &cm.fixture("rust/auth_service.rs"),
-        "--range", "108", "--note", "gc test",
+        "add",
+        "--file",
+        &cm.fixture("rust/auth_service.rs"),
+        "--range",
+        "108",
+        "--note",
+        "gc test",
     ]);
     assert_eq!(json["success"], true);
 
@@ -592,8 +679,13 @@ fn preview_shows_code() {
     let cm = Codemark::new();
 
     let json = cm.run_json(&[
-        "add", "--file", &cm.fixture("rust/auth_service.rs"),
-        "--range", "108", "--note", "preview test",
+        "add",
+        "--file",
+        &cm.fixture("rust/auth_service.rs"),
+        "--range",
+        "108",
+        "--note",
+        "preview test",
     ]);
     let id = json["data"]["id"].as_str().unwrap().to_string();
 
@@ -611,8 +703,13 @@ fn preview_uses_cached_resolution_by_default() {
 
     // Add a bookmark - this creates an initial resolution
     let json = cm.run_json(&[
-        "add", "--file", &cm.fixture("rust/auth_service.rs"),
-        "--range", "108", "--note", "cached test",
+        "add",
+        "--file",
+        &cm.fixture("rust/auth_service.rs"),
+        "--range",
+        "108",
+        "--note",
+        "cached test",
     ]);
     let id = json["data"]["id"].as_str().unwrap().to_string();
 
@@ -628,8 +725,13 @@ fn preview_shows_drifted_status() {
     let cm = Codemark::new();
 
     let json = cm.run_json(&[
-        "add", "--file", &cm.fixture("rust/auth_service.rs"),
-        "--range", "108", "--note", "status test",
+        "add",
+        "--file",
+        &cm.fixture("rust/auth_service.rs"),
+        "--range",
+        "108",
+        "--note",
+        "status test",
     ]);
     let id = json["data"]["id"].as_str().unwrap().to_string();
 
@@ -644,8 +746,13 @@ fn diff_runs_without_error() {
     let cm = Codemark::new();
 
     cm.run_json(&[
-        "add", "--file", &cm.fixture("rust/auth_service.rs"),
-        "--range", "108", "--note", "diff test",
+        "add",
+        "--file",
+        &cm.fixture("rust/auth_service.rs"),
+        "--range",
+        "108",
+        "--note",
+        "diff test",
     ]);
 
     // diff should succeed (may find 0 affected since fixtures aren't in recent commits)
@@ -658,8 +765,15 @@ fn line_output_is_tab_separated() {
     let cm = Codemark::new();
 
     cm.run_json(&[
-        "add", "--file", &cm.fixture("rust/auth_service.rs"),
-        "--range", "108", "--tag", "auth", "--note", "line format test",
+        "add",
+        "--file",
+        &cm.fixture("rust/auth_service.rs"),
+        "--range",
+        "108",
+        "--tag",
+        "auth",
+        "--note",
+        "line format test",
     ]);
 
     let result = cm.run(&["list", "--format", "line"]);
@@ -680,8 +794,10 @@ fn hunk_range_parsing() {
     // Line 109 is inside create_default_auth_service (single line hunk)
     let json = cm.run_json(&[
         "add",
-        "--file", &cm.fixture("rust/auth_service.rs"),
-        "--hunk", "@@ -109,1 +109,1 @@",
+        "--file",
+        &cm.fixture("rust/auth_service.rs"),
+        "--hunk",
+        "@@ -109,1 +109,1 @@",
         "--dry-run",
     ]);
     assert_eq!(json["data"]["dry_run"], true);
@@ -694,8 +810,10 @@ fn byte_range_backwards_compat() {
 
     let json = cm.run_json(&[
         "add",
-        "--file", &cm.fixture("swift/auth_service.swift"),
-        "--range", "b811:1302",
+        "--file",
+        &cm.fixture("swift/auth_service.swift"),
+        "--range",
+        "b811:1302",
         "--dry-run",
     ]);
     assert_eq!(json["data"]["dry_run"], true);
@@ -718,18 +836,10 @@ fn multi_language_support() {
     ];
 
     for (fixture, line) in languages {
-        let json = cm.run_json(&[
-            "add", "--file", &cm.fixture(fixture), "--range", line, "--dry-run",
-        ]);
-        assert_eq!(
-            json["success"], true,
-            "failed for {fixture}: {}",
-            json
-        );
-        assert_eq!(
-            json["data"]["dry_run"], true,
-            "failed for {fixture}"
-        );
+        let json =
+            cm.run_json(&["add", "--file", &cm.fixture(fixture), "--range", line, "--dry-run"]);
+        assert_eq!(json["success"], true, "failed for {fixture}: {}", json);
+        assert_eq!(json["data"]["dry_run"], true, "failed for {fixture}");
     }
 }
 
@@ -755,14 +865,24 @@ fn remove_bookmark() {
 
     // Add two bookmarks
     let json1 = cm.run_json(&[
-        "add", "--file", &cm.fixture("rust/auth_service.rs"),
-        "--range", "108", "--note", "first",
+        "add",
+        "--file",
+        &cm.fixture("rust/auth_service.rs"),
+        "--range",
+        "108",
+        "--note",
+        "first",
     ]);
     let id1 = json1["data"]["id"].as_str().unwrap().to_string();
 
     let json2 = cm.run_json(&[
-        "add", "--file", &cm.fixture("rust/auth_service.rs"),
-        "--range", "47", "--note", "second",
+        "add",
+        "--file",
+        &cm.fixture("rust/auth_service.rs"),
+        "--range",
+        "47",
+        "--note",
+        "second",
     ]);
     let id2 = json2["data"]["id"].as_str().unwrap().to_string();
 
@@ -783,14 +903,24 @@ fn remove_multiple_bookmarks() {
     let cm = Codemark::new();
 
     let json1 = cm.run_json(&[
-        "add", "--file", &cm.fixture("rust/auth_service.rs"),
-        "--range", "108", "--note", "a",
+        "add",
+        "--file",
+        &cm.fixture("rust/auth_service.rs"),
+        "--range",
+        "108",
+        "--note",
+        "a",
     ]);
     let id1 = json1["data"]["id"].as_str().unwrap().to_string();
 
     let json2 = cm.run_json(&[
-        "add", "--file", &cm.fixture("rust/auth_service.rs"),
-        "--range", "47", "--note", "b",
+        "add",
+        "--file",
+        &cm.fixture("rust/auth_service.rs"),
+        "--range",
+        "47",
+        "--note",
+        "b",
     ]);
     let id2 = json2["data"]["id"].as_str().unwrap().to_string();
 
@@ -818,17 +948,35 @@ fn collection_ordering_and_reorder() {
 
     // Add 3 bookmarks
     let j1 = cm.run_json(&[
-        "add", "--file", &cm.fixture("rust/auth_service.rs"), "--range", "108", "--note", "step-1",
+        "add",
+        "--file",
+        &cm.fixture("rust/auth_service.rs"),
+        "--range",
+        "108",
+        "--note",
+        "step-1",
     ]);
     let id1 = j1["data"]["id"].as_str().unwrap().to_string();
 
     let j2 = cm.run_json(&[
-        "add", "--file", &cm.fixture("rust/auth_service.rs"), "--range", "47", "--note", "step-2",
+        "add",
+        "--file",
+        &cm.fixture("rust/auth_service.rs"),
+        "--range",
+        "47",
+        "--note",
+        "step-2",
     ]);
     let id2 = j2["data"]["id"].as_str().unwrap().to_string();
 
     let j3 = cm.run_json(&[
-        "add", "--file", &cm.fixture("rust/auth_service.rs"), "--range", "65", "--note", "step-3",
+        "add",
+        "--file",
+        &cm.fixture("rust/auth_service.rs"),
+        "--range",
+        "65",
+        "--note",
+        "step-3",
     ]);
     let id3 = j3["data"]["id"].as_str().unwrap().to_string();
 
@@ -861,18 +1009,33 @@ fn semantic_search_finds_by_meaning() {
 
     // Add bookmarks with related meanings but different keywords
     cm.run_json(&[
-        "add", "--file", &cm.fixture("rust/auth_service.rs"),
-        "--range", "108", "--note", "user authentication function",
+        "add",
+        "--file",
+        &cm.fixture("rust/auth_service.rs"),
+        "--range",
+        "108",
+        "--note",
+        "user authentication function",
     ]);
 
     cm.run_json(&[
-        "add", "--file", &cm.fixture("rust/auth_service.rs"),
-        "--range", "47", "--note", "login validation",
+        "add",
+        "--file",
+        &cm.fixture("rust/auth_service.rs"),
+        "--range",
+        "47",
+        "--note",
+        "login validation",
     ]);
 
     cm.run_json(&[
-        "add", "--file", &cm.fixture("rust/auth_service.rs"),
-        "--range", "65", "--note", "database query",
+        "add",
+        "--file",
+        &cm.fixture("rust/auth_service.rs"),
+        "--range",
+        "65",
+        "--note",
+        "database query",
     ]);
 
     // Run reindex to generate embeddings
@@ -897,8 +1060,13 @@ fn semantic_search_without_reindex_fails_gracefully() {
 
     // Add a bookmark
     cm.run_json(&[
-        "add", "--file", &cm.fixture("rust/auth_service.rs"),
-        "--range", "108", "--note", "test bookmark",
+        "add",
+        "--file",
+        &cm.fixture("rust/auth_service.rs"),
+        "--range",
+        "108",
+        "--note",
+        "test bookmark",
     ]);
 
     // Don't run reindex - semantic search should still work but might not find results
@@ -914,18 +1082,33 @@ fn semantic_search_with_limit() {
 
     // Add multiple bookmarks
     cm.run_json(&[
-        "add", "--file", &cm.fixture("rust/auth_service.rs"),
-        "--range", "108", "--note", "first",
+        "add",
+        "--file",
+        &cm.fixture("rust/auth_service.rs"),
+        "--range",
+        "108",
+        "--note",
+        "first",
     ]);
 
     cm.run_json(&[
-        "add", "--file", &cm.fixture("rust/auth_service.rs"),
-        "--range", "47", "--note", "second",
+        "add",
+        "--file",
+        &cm.fixture("rust/auth_service.rs"),
+        "--range",
+        "47",
+        "--note",
+        "second",
     ]);
 
     cm.run_json(&[
-        "add", "--file", &cm.fixture("rust/auth_service.rs"),
-        "--range", "65", "--note", "third",
+        "add",
+        "--file",
+        &cm.fixture("rust/auth_service.rs"),
+        "--range",
+        "65",
+        "--note",
+        "third",
     ]);
 
     // Run reindex
@@ -945,13 +1128,23 @@ fn reindex_generates_embeddings() {
 
     // Add some bookmarks
     cm.run_json(&[
-        "add", "--file", &cm.fixture("rust/auth_service.rs"),
-        "--range", "108", "--note", "test bookmark 1",
+        "add",
+        "--file",
+        &cm.fixture("rust/auth_service.rs"),
+        "--range",
+        "108",
+        "--note",
+        "test bookmark 1",
     ]);
 
     cm.run_json(&[
-        "add", "--file", &cm.fixture("rust/auth_service.rs"),
-        "--range", "47", "--note", "test bookmark 2",
+        "add",
+        "--file",
+        &cm.fixture("rust/auth_service.rs"),
+        "--range",
+        "47",
+        "--note",
+        "test bookmark 2",
     ]);
 
     // Reindex should succeed (may fail if model download issues in CI)
@@ -971,8 +1164,13 @@ fn heal_validates_without_resolution() {
     let cm = Codemark::new();
 
     cm.run_json(&[
-        "add", "--file", &cm.fixture("rust/auth_service.rs"),
-        "--range", "108", "--note", "no resolution test",
+        "add",
+        "--file",
+        &cm.fixture("rust/auth_service.rs"),
+        "--range",
+        "108",
+        "--note",
+        "no resolution test",
     ]);
 
     // Heal should work normally (no resolution to check against)
@@ -987,8 +1185,13 @@ fn heal_force_flag_exists() {
     let cm = Codemark::new();
 
     cm.run_json(&[
-        "add", "--file", &cm.fixture("rust/auth_service.rs"),
-        "--range", "108", "--note", "force flag test",
+        "add",
+        "--file",
+        &cm.fixture("rust/auth_service.rs"),
+        "--range",
+        "108",
+        "--note",
+        "force flag test",
     ]);
 
     // Should accept --force without error
@@ -1015,8 +1218,13 @@ fn preview_uses_nearest_ancestor_resolution() {
 
     // Add a bookmark - this creates an initial resolution at current HEAD
     let json = cm.run_json(&[
-        "add", "--file", &cm.fixture("rust/auth_service.rs"),
-        "--range", "108", "--note", "nearest ancestor test",
+        "add",
+        "--file",
+        &cm.fixture("rust/auth_service.rs"),
+        "--range",
+        "108",
+        "--note",
+        "nearest ancestor test",
     ]);
     let id = json["data"]["id"].as_str().unwrap().to_string();
 
@@ -1075,7 +1283,13 @@ fn git_repo_heal_skips_when_head_is_before_resolution() {
 
     // Create bookmark at commit A
     let json = cm.run_json(&[
-        "add", "--file", &cm.file_path("test.rs"), "--range", "1", "--note", "test bookmark",
+        "add",
+        "--file",
+        &cm.file_path("test.rs"),
+        "--range",
+        "1",
+        "--note",
+        "test bookmark",
     ]);
     let id = json["data"]["id"].as_str().unwrap().to_string();
 
@@ -1161,9 +1375,7 @@ fn git_repo_heal_force_bypasses_ancestry_check() {
 
     // Create initial file and bookmark
     let commit_a = cm.commit("test.rs", "fn original() {}", "Commit A");
-    let json = cm.run_json(&[
-        "add", "--file", &cm.file_path("test.rs"), "--range", "1",
-    ]);
+    let json = cm.run_json(&["add", "--file", &cm.file_path("test.rs"), "--range", "1"]);
     let id = json["data"]["id"].as_str().unwrap().to_string();
     cm.run_json(&["heal"]);
 
@@ -1192,9 +1404,8 @@ fn git_repo_preview_uses_nearest_ancestor_resolution() {
     let commit_a = cm.commit("test.rs", "fn original() {}", "Commit A");
 
     // Create bookmark and heal at commit A
-    let json = cm.run_json(&[
-        "add", "--file", &cm.file_path("test.rs"), "--range", "1", "--note", "test",
-    ]);
+    let json =
+        cm.run_json(&["add", "--file", &cm.file_path("test.rs"), "--range", "1", "--note", "test"]);
     let id = json["data"]["id"].as_str().unwrap().to_string();
     cm.run_json(&["heal"]);
 
@@ -1221,9 +1432,16 @@ fn git_repo_preview_uses_nearest_ancestor_resolution() {
     // Preview at commit C should show resolution from C
     let json = cm.run_json(&["preview", &id[..8]]);
     let preview_commit = json["data"]["commit_hash"].as_str().unwrap();
-    eprintln!("DEBUG: preview_commit = {} (first 8: {})", preview_commit, &preview_commit[..8.min(preview_commit.len())]);
-    assert!(preview_commit.starts_with(&commit_c[..8]),
-        "preview at C should show resolution from C, got {}", preview_commit);
+    eprintln!(
+        "DEBUG: preview_commit = {} (first 8: {})",
+        preview_commit,
+        &preview_commit[..8.min(preview_commit.len())]
+    );
+    assert!(
+        preview_commit.starts_with(&commit_c[..8]),
+        "preview at C should show resolution from C, got {}",
+        preview_commit
+    );
 
     // Go to commit B and preview - should show resolution from B
     cm.checkout(&commit_b);
@@ -1231,8 +1449,10 @@ fn git_repo_preview_uses_nearest_ancestor_resolution() {
     let json = cm.run_json(&["preview", &id[..8]]);
     let preview_commit = json["data"]["commit_hash"].as_str().unwrap();
     eprintln!("DEBUG: commit_b = {}, preview_commit = {}", &commit_b[..16], preview_commit);
-    assert!(preview_commit.starts_with(&commit_b[..8]),
-        "preview at B should show resolution from B");
+    assert!(
+        preview_commit.starts_with(&commit_b[..8]),
+        "preview at B should show resolution from B"
+    );
 
     // Go to commit A and preview - should show resolution from A
     cm.checkout(&commit_a);
@@ -1240,8 +1460,10 @@ fn git_repo_preview_uses_nearest_ancestor_resolution() {
     let json = cm.run_json(&["preview", &id[..8]]);
     let preview_commit = json["data"]["commit_hash"].as_str().unwrap();
     eprintln!("DEBUG: commit_a = {}, preview_commit = {}", &commit_a[..16], preview_commit);
-    assert!(preview_commit.starts_with(&commit_a[..8]),
-        "preview at A should show resolution from A");
+    assert!(
+        preview_commit.starts_with(&commit_a[..8]),
+        "preview at A should show resolution from A"
+    );
 }
 
 #[test]
@@ -1254,8 +1476,13 @@ fn git_repo_move_method_then_heal_gets_new_resolution() {
 
     // Create bookmark targeting the function
     let json = cm.run_json(&[
-        "add", "--file", &cm.file_path("test.rs"), "--range", "1",
-        "--note", "bookmark on my_function",
+        "add",
+        "--file",
+        &cm.file_path("test.rs"),
+        "--range",
+        "1",
+        "--note",
+        "bookmark on my_function",
     ]);
     let id = json["data"]["id"].as_str().unwrap().to_string();
 
@@ -1265,14 +1492,20 @@ fn git_repo_move_method_then_heal_gets_new_resolution() {
     let resolutions_a = show_json["data"]["resolutions"].as_array().unwrap();
     assert_eq!(resolutions_a.len(), 1, "should have 1 resolution after initial heal");
     let line_range_a = resolutions_a[0]["line_range"].as_str().unwrap();
-    assert!(line_range_a == "1:2" || line_range_a == "1:1", "initial resolution should target line 1");
+    assert!(
+        line_range_a == "1:2" || line_range_a == "1:1",
+        "initial resolution should target line 1"
+    );
 
     // Move the function (add blank line above it)
     let commit_b = cm.commit("test.rs", "\nfn my_function() {}\nfn other() {}", "Commit B");
 
     // Heal should detect the change and record a new resolution
     let heal_json = cm.run_json(&["heal"]);
-    assert_eq!(heal_json["data"]["active"], 1, "bookmark should still be active after move and heal");
+    assert_eq!(
+        heal_json["data"]["active"], 1,
+        "bookmark should still be active after move and heal"
+    );
 
     // Verify we have a new resolution at commit B
     let show_json = cm.run_json(&["show", &id[..8]]);
@@ -1280,20 +1513,26 @@ fn git_repo_move_method_then_heal_gets_new_resolution() {
     assert!(resolutions_b.len() >= 2, "should have at least 2 resolutions after heal at B");
 
     // Find the resolution at commit B
-    let _commit_b_res = resolutions_b.iter()
+    let _commit_b_res = resolutions_b
+        .iter()
         .find(|r| r["commit_hash"].as_str().unwrap_or("").starts_with(&commit_b[..8]))
         .expect("should have a resolution at commit B");
 
     // Preview should show the new location
     let preview_json = cm.run_json(&["preview", &id[..8]]);
     let preview_commit = preview_json["data"]["commit_hash"].as_str().unwrap();
-    assert!(preview_commit.starts_with(&commit_b[..8]),
-        "preview should use resolution from commit B");
+    assert!(
+        preview_commit.starts_with(&commit_b[..8]),
+        "preview should use resolution from commit B"
+    );
 
     let line_range_b = preview_json["data"]["line_range"].as_str().unwrap();
     // After adding a blank line, the function is now at line 2
-    assert!(line_range_b == "2:3" || line_range_b == "2:2",
-        "preview should show updated line range after move: got {}", line_range_b);
+    assert!(
+        line_range_b == "2:3" || line_range_b == "2:2",
+        "preview should show updated line range after move: got {}",
+        line_range_b
+    );
 
     // Verify the bookmark still works by resolving it
     let resolve_json = cm.run_json(&["resolve", &id[..8]]);
@@ -1312,8 +1551,13 @@ fn git_repo_resolve_fails_when_function_deleted() {
 
     // Create bookmark targeting the function
     let json = cm.run_json(&[
-        "add", "--file", &cm.file_path("test.rs"), "--range", "1",
-        "--note", "bookmark on my_function",
+        "add",
+        "--file",
+        &cm.file_path("test.rs"),
+        "--range",
+        "1",
+        "--note",
+        "bookmark on my_function",
     ]);
     let id = json["data"]["id"].as_str().unwrap().to_string();
 
@@ -1336,23 +1580,30 @@ fn git_repo_resolve_fails_when_function_deleted() {
         assert_ne!(method, "exact", "should not be exact match after function deletion");
     } else {
         // Resolve failed - this is expected when code is completely gone
-        assert!(resolve_json["error"].is_string() || resolve_json["data"]["error"].is_string(),
-            "should have an error message");
+        assert!(
+            resolve_json["error"].is_string() || resolve_json["data"]["error"].is_string(),
+            "should have an error message"
+        );
     }
 
     // Heal should mark the bookmark as drifted or stale
     let heal_json = cm.run_json(&["heal"]);
 
     // The bookmark should not be active after the function is deleted
-    assert_ne!(heal_json["data"]["active"], 1,
-        "bookmark should not be active after function is deleted");
+    assert_ne!(
+        heal_json["data"]["active"], 1,
+        "bookmark should not be active after function is deleted"
+    );
 
     // Show should indicate the problem status
     let show_json = cm.run_json(&["show", &id[..8]]);
     let bookmark = &show_json["data"]["bookmark"];
     let status = bookmark["status"].as_str().unwrap();
-    assert!(status == "drifted" || status == "stale",
-        "bookmark should be drifted or stale after heal: got {}", status);
+    assert!(
+        status == "drifted" || status == "stale",
+        "bookmark should be drifted or stale after heal: got {}",
+        status
+    );
 }
 
 #[test]
@@ -1365,8 +1616,13 @@ fn git_repo_bookmark_goes_stale_when_code_completely_changed() {
 
     // Create bookmark targeting the function
     let json = cm.run_json(&[
-        "add", "--file", &cm.file_path("test.rs"), "--range", "1",
-        "--note", "bookmark on original_function",
+        "add",
+        "--file",
+        &cm.file_path("test.rs"),
+        "--range",
+        "1",
+        "--note",
+        "bookmark on original_function",
     ]);
     let id = json["data"]["id"].as_str().unwrap().to_string();
 
@@ -1382,13 +1638,14 @@ fn git_repo_bookmark_goes_stale_when_code_completely_changed() {
     let heal_json = cm.run_json(&["heal"]);
 
     // The bookmark should be marked as stale (not drifted, not active)
-    assert_eq!(heal_json["data"]["stale"], 1,
-        "bookmark should be stale when file is empty");
+    assert_eq!(heal_json["data"]["stale"], 1, "bookmark should be stale when file is empty");
 
     // Resolve should use 'failed' method
     let resolve_json = cm.run_json(&["resolve", &id[..8]]);
-    assert_eq!(resolve_json["data"]["method"], "failed",
-        "resolve method should be 'failed' when file is empty");
+    assert_eq!(
+        resolve_json["data"]["method"], "failed",
+        "resolve method should be 'failed' when file is empty"
+    );
 
     // Verify the status in show command
     let show_json = cm.run_json(&["show", &id[..8]]);
@@ -1406,8 +1663,13 @@ fn git_repo_resolve_fails_when_file_deleted() {
 
     // Create bookmark targeting the function
     let json = cm.run_json(&[
-        "add", "--file", &cm.file_path("test.rs"), "--range", "1",
-        "--note", "bookmark on my_function",
+        "add",
+        "--file",
+        &cm.file_path("test.rs"),
+        "--range",
+        "1",
+        "--note",
+        "bookmark on my_function",
     ]);
     let id = json["data"]["id"].as_str().unwrap().to_string();
 
@@ -1426,16 +1688,21 @@ fn git_repo_resolve_fails_when_file_deleted() {
     if resolve_json["success"] == true {
         let method = resolve_json["data"]["method"].as_str().unwrap();
         // With an empty file, we expect failed or minimal method
-        assert!(method == "failed" || method == "minimal",
-            "should indicate failure when file is empty: got {}", method);
+        assert!(
+            method == "failed" || method == "minimal",
+            "should indicate failure when file is empty: got {}",
+            method
+        );
     }
 
     // Heal should mark the bookmark as stale (file doesn't exist or is empty)
     let heal_json = cm.run_json(&["heal"]);
 
     // The bookmark should be marked as stale
-    assert_eq!(heal_json["data"]["stale"], 1,
-        "bookmark should be stale when file is empty/deleted");
+    assert_eq!(
+        heal_json["data"]["stale"], 1,
+        "bookmark should be stale when file is empty/deleted"
+    );
 
     // Show should indicate the problem status
     let show_json = cm.run_json(&["show", &id[..8]]);
@@ -1454,8 +1721,13 @@ fn git_repo_function_renamed_resolve_uses_fallback() {
 
     // Create bookmark targeting the function
     let json = cm.run_json(&[
-        "add", "--file", &cm.file_path("test.rs"), "--range", "1",
-        "--note", "bookmark on my_function",
+        "add",
+        "--file",
+        &cm.file_path("test.rs"),
+        "--range",
+        "1",
+        "--note",
+        "bookmark on my_function",
     ]);
     let id = json["data"]["id"].as_str().unwrap().to_string();
 
@@ -1469,8 +1741,11 @@ fn git_repo_function_renamed_resolve_uses_fallback() {
     if resolve_json["success"] == true {
         let method = resolve_json["data"]["method"].as_str().unwrap();
         // Should use relaxed or minimal, not exact
-        assert!(method == "relaxed" || method == "minimal",
-            "should use fallback method when function is renamed: got {}", method);
+        assert!(
+            method == "relaxed" || method == "minimal",
+            "should use fallback method when function is renamed: got {}",
+            method
+        );
     }
 }
 
@@ -1509,9 +1784,7 @@ fn resolve_dry_run_shows_result_without_storing() {
     cm.commit("test.rs", "fn my_function() {}\n", "Initial");
 
     // Create a bookmark
-    let json = cm.run_json(&[
-        "add", "--file", &cm.file_path("test.rs"), "--range", "1",
-    ]);
+    let json = cm.run_json(&["add", "--file", &cm.file_path("test.rs"), "--range", "1"]);
     let id = json["data"]["id"].as_str().unwrap();
 
     // Get initial resolution count
@@ -1537,14 +1810,10 @@ fn resolve_batch_dry_run_shows_results_without_storing() {
     cm.commit("test1.rs", "fn function_one() {}\n", "Initial 1");
     cm.commit("test2.rs", "fn function_two() {}\n", "Initial 2");
 
-    let json1 = cm.run_json(&[
-        "add", "--file", &cm.file_path("test1.rs"), "--range", "1",
-    ]);
+    let json1 = cm.run_json(&["add", "--file", &cm.file_path("test1.rs"), "--range", "1"]);
     let id1 = json1["data"]["id"].as_str().unwrap();
 
-    let json2 = cm.run_json(&[
-        "add", "--file", &cm.file_path("test2.rs"), "--range", "1",
-    ]);
+    let json2 = cm.run_json(&["add", "--file", &cm.file_path("test2.rs"), "--range", "1"]);
     let id2 = json2["data"]["id"].as_str().unwrap();
 
     // Get initial resolution counts
@@ -1575,9 +1844,7 @@ fn resolve_dry_run_after_code_change() {
     cm.commit("test.rs", "fn my_function() { let x = 1; }", "Initial");
 
     // Create bookmark
-    let json = cm.run_json(&[
-        "add", "--file", &cm.file_path("test.rs"), "--range", "1",
-    ]);
+    let json = cm.run_json(&["add", "--file", &cm.file_path("test.rs"), "--range", "1"]);
     let id = json["data"]["id"].as_str().unwrap().to_string();
 
     // Initial heal to create a baseline resolution
@@ -1611,12 +1878,18 @@ fn resolve_dry_run_after_code_change() {
     // Verify the resolution was updated (same count, but commit_hash changed)
     let show_json_final = cm.run_json(&["show", &id[..8]]);
     let final_resolutions = show_json_final["data"]["resolutions"].as_array().unwrap().len();
-    assert_eq!(final_resolutions, after_resolutions, "should update existing resolution, not create new one");
+    assert_eq!(
+        final_resolutions, after_resolutions,
+        "should update existing resolution, not create new one"
+    );
 
     // Verify the commit_hash was updated to the latest commit
     let latest_commit = cm.head_hash();
     let stored_commit = show_json_final["data"]["resolutions"][0]["commit_hash"].as_str().unwrap();
-    assert!(stored_commit.starts_with(&latest_commit[..8]), "commit_hash should be updated to latest commit");
+    assert!(
+        stored_commit.starts_with(&latest_commit[..8]),
+        "commit_hash should be updated to latest commit"
+    );
 }
 
 #[test]
@@ -1628,8 +1901,13 @@ fn add_with_collection_flag_creates_collection_and_adds_bookmark() {
 
     // Create bookmark with --collection flag
     let json = cm.run_json(&[
-        "add", "--file", &cm.file_path("test.rs"), "--range", "1",
-        "--collection", "my-collection",
+        "add",
+        "--file",
+        &cm.file_path("test.rs"),
+        "--range",
+        "1",
+        "--collection",
+        "my-collection",
     ]);
 
     assert!(json["success"] == true);
@@ -1658,9 +1936,12 @@ fn add_from_query_with_collection_flag() {
     // Use the correct Rust tree-sitter node type with @target capture
     let json = cm.run_json(&[
         "add-from-query",
-        "--file", &cm.file_path("test.rs"),
-        "--query", "(function_item name: (identifier) @name) @target",
-        "--collection", "query-collection",
+        "--file",
+        &cm.file_path("test.rs"),
+        "--query",
+        "(function_item name: (identifier) @name) @target",
+        "--collection",
+        "query-collection",
     ]);
 
     assert!(json["success"] == true);
@@ -1690,8 +1971,10 @@ fn add_from_snippet_with_collection_flag() {
         .arg("json")
         .args([
             "add-from-snippet",
-            "--file", &cm.file_path("test.rs"),
-            "--collection", "snippet-collection",
+            "--file",
+            &cm.file_path("test.rs"),
+            "--collection",
+            "snippet-collection",
         ])
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
@@ -1722,28 +2005,39 @@ fn multiple_bookmarks_added_to_same_collection_maintain_order() {
     let cm = Codemark::with_git_repo();
 
     // Create initial code with multiple functions
-    cm.commit(
-        "test.rs",
-        "fn first() { }\nfn second() { }\nfn third() { }",
-        "Initial",
-    );
+    cm.commit("test.rs", "fn first() { }\nfn second() { }\nfn third() { }", "Initial");
 
     // Add three bookmarks to the same collection
     let json1 = cm.run_json(&[
-        "add", "--file", &cm.file_path("test.rs"), "--range", "1",
-        "--collection", "ordered-collection",
+        "add",
+        "--file",
+        &cm.file_path("test.rs"),
+        "--range",
+        "1",
+        "--collection",
+        "ordered-collection",
     ]);
     let id1 = json1["data"]["id"].as_str().unwrap();
 
     let json2 = cm.run_json(&[
-        "add", "--file", &cm.file_path("test.rs"), "--range", "2",
-        "--collection", "ordered-collection",
+        "add",
+        "--file",
+        &cm.file_path("test.rs"),
+        "--range",
+        "2",
+        "--collection",
+        "ordered-collection",
     ]);
     let id2 = json2["data"]["id"].as_str().unwrap();
 
     let json3 = cm.run_json(&[
-        "add", "--file", &cm.file_path("test.rs"), "--range", "3",
-        "--collection", "ordered-collection",
+        "add",
+        "--file",
+        &cm.file_path("test.rs"),
+        "--range",
+        "3",
+        "--collection",
+        "ordered-collection",
     ]);
     let id3 = json3["data"]["id"].as_str().unwrap();
 
@@ -1755,4 +2049,3 @@ fn multiple_bookmarks_added_to_same_collection_maintain_order() {
     assert_eq!(bookmarks[1]["id"], id2);
     assert_eq!(bookmarks[2]["id"], id3);
 }
-

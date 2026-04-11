@@ -23,12 +23,7 @@ pub struct SemanticConfig {
 
 impl Default for SemanticConfig {
     fn default() -> Self {
-        SemanticConfig {
-            enabled: true,
-            model: None,
-            cache_dir: None,
-            batch_size: None,
-        }
+        SemanticConfig { enabled: true, model: None, cache_dir: None, batch_size: None }
     }
 }
 
@@ -59,17 +54,13 @@ impl Default for Config {
 
 impl Default for StorageConfig {
     fn default() -> Self {
-        StorageConfig {
-            max_resolutions_per_bookmark: 20,
-        }
+        StorageConfig { max_resolutions_per_bookmark: 20 }
     }
 }
 
 impl Default for HealthConfig {
     fn default() -> Self {
-        HealthConfig {
-            auto_archive_after_days: 7,
-        }
+        HealthConfig { auto_archive_after_days: 7 }
     }
 }
 
@@ -79,10 +70,7 @@ impl Config {
         let path = codemark_dir.join("config.toml");
         match std::fs::read_to_string(&path) {
             Ok(content) => toml::from_str(&content).unwrap_or_else(|e| {
-                eprintln!(
-                    "codemark: warning: invalid config at {}: {e}",
-                    path.display()
-                );
+                eprintln!("codemark: warning: invalid config at {}: {e}", path.display());
                 Config::default()
             }),
             Err(_) => Config::default(),
