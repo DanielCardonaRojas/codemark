@@ -26,12 +26,7 @@ pub struct SemanticRepo {
 impl SemanticRepo {
     /// Create a new semantic search repository.
     pub fn new(cache_dir: Option<PathBuf>, model: EmbeddingModel) -> Self {
-        Self {
-            cache_dir,
-            model,
-            distance_metric: DistanceMetric::default(),
-            threshold: None,
-        }
+        Self { cache_dir, model, distance_metric: DistanceMetric::default(), threshold: None }
     }
 
     /// Create a new semantic search repository with custom distance metric and threshold.
@@ -150,9 +145,10 @@ impl SemanticRepo {
         })?;
 
         let store = VecStore::with_metric(provider.dimensions(), self.distance_metric);
-        let results = store
-            .search_with_threshold(conn, &query_embedding, limit, threshold)
-            .map_err(|e| crate::error::Error::Operation(format!("Semantic search failed: {}", e)))?;
+        let results =
+            store.search_with_threshold(conn, &query_embedding, limit, threshold).map_err(|e| {
+                crate::error::Error::Operation(format!("Semantic search failed: {}", e))
+            })?;
 
         Ok(results)
     }

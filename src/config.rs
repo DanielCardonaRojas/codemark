@@ -45,10 +45,7 @@ impl Default for SemanticConfig {
 impl SemanticConfig {
     /// Parse the distance metric from the string config.
     pub fn get_distance_metric(&self) -> DistanceMetric {
-        self.distance_metric
-            .as_ref()
-            .and_then(|s| s.parse().ok())
-            .unwrap_or_default()
+        self.distance_metric.as_ref().and_then(|s| s.parse().ok()).unwrap_or_default()
     }
 }
 
