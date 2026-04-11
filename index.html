@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Codemark | Structural Code Bookmarks</title>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@picocss/pico@2/css/pico.min.css">
+    <style>
+        :root {
+            --pico-font-family: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            --pico-primary: #ff5d01;
+        }
+        header {
+            padding: 2rem 0;
+            text-align: center;
+        }
+        .hero {
+            padding: 4rem 0;
+            background: var(--pico-secondary-background);
+            border-radius: var(--pico-border-radius);
+            margin-bottom: 3rem;
+            text-align: center;
+        }
+        .hero h1 {
+            font-size: 3.5rem;
+            margin-bottom: 1rem;
+        }
+        .hero p {
+            font-size: 1.5rem;
+            color: var(--pico-secondary);
+        }
+        pre {
+            background: #1e1e1e;
+            color: #d4d4d4;
+            padding: 1rem;
+            border-radius: 8px;
+            overflow-x: auto;
+        }
+        code {
+            font-family: "Fira Code", monospace;
+        }
+        .grid-features {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 2rem;
+            margin-bottom: 3rem;
+        }
+        .feature-card {
+            padding: 1.5rem;
+            border: 1px solid var(--pico-border-color);
+            border-radius: var(--pico-border-radius);
+            height: 100%;
+        }
+        footer {
+            padding: 3rem 0;
+            border-top: 1px solid var(--pico-border-color);
+            text-align: center;
+        }
+        .badge-list {
+            display: flex;
+            gap: 10px;
+            justify-content: center;
+            margin-bottom: 2rem;
+        }
+    </style>
+</head>
+<body>
+    <nav class="container">
+        <ul>
+            <li><strong>Codemark</strong></li>
+        </ul>
+        <ul>
+            <li><a href="#features">Features</a></li>
+            <li><a href="#install">Install</a></li>
+            <li><a href="#quickstart">Quick Start</a></li>
+            <li><a href="https://github.com/DanielCardonaRojas/codemark">GitHub</a></li>
+        </ul>
+    </nav>
+
+    <main class="container">
+        <section class="hero">
+            <h1>Codemark</h1>
+            <p>A structural bookmarking system for code.</p>
+            <div class="badge-list">
+                <img src="https://img.shields.io/crates/v/codemark" alt="crates.io">
+                <img src="https://img.shields.io/badge/license-MIT-blue" alt="license">
+            </div>
+            <div style="margin-top: 1rem;">
+                <a href="#install" role="button">Get Started</a>
+                <a href="https://github.com/DanielCardonaRojas/codemark" role="button" class="secondary">View Source</a>
+            </div>
+        </section>
+
+        <section id="features">
+            <h2>Why Codemark?</h2>
+            <p>Line-number bookmarks break on any edit. Codemark bookmarks self-heal because they store <strong>tree-sitter</strong> queries that identify code by its AST shape.</p>
+            <div class="grid-features">
+                <div class="feature-card">
+                    <h3>Durable References</h3>
+                    <p>Identify code structurally (AST queries), not positionally (file:line). A renamed function is still found even if it moved across the file.</p>
+                </div>
+                <div class="feature-card">
+                    <h3>Self-Healing</h3>
+                    <p>Layered resolution (exact match → relaxed query → content hash fallback) means bookmarks degrade gracefully rather than breaking silently.</p>
+                </div>
+                <div class="feature-card">
+                    <h3>Unix Philosophy</h3>
+                    <p>Produces line-oriented, pipe-friendly JSON output. Integrates naturally with fzf, television, and custom shell scripts.</p>
+                </div>
+                <div class="feature-card">
+                    <h3>Semantic Search</h3>
+                    <p>Natural language queries like "where's the login logic?" return relevant bookmarks using local vector embeddings in SQLite.</p>
+                </div>
+            </div>
+        </section>
+
+        <hr>
+
+        <section id="install">
+            <h2>Installation</h2>
+            <p>Codemark is a self-contained binary written in Rust. Requires Rust 1.75+.</p>
+            <h3>Homebrew (macOS/Linux)</h3>
+            <pre><code>brew tap DanielCardonaRojas/codemark
+brew install codemark</code></pre>
+            <h3>Cargo</h3>
+            <pre><code>cargo install --path .</code></pre>
+        </section>
+
+        <hr>
+
+        <section id="quickstart">
+            <h2>Quick Start</h2>
+            <p>Easily bookmark and resolve code references from your terminal.</p>
+            <pre><code># Bookmark a function by line number
+codemark add --file src/auth.rs --range 42 --tag auth --note "Token validation entry point"
+
+# Resolve — find where the code is now
+codemark resolve a1b2
+
+# Search by meaning (semantic search)
+codemark search --semantic "database connection initialization"
+
+# Preview with bat (syntax highlighted)
+codemark preview a1b2 | jq -r '"bat --highlight-line \(.data.line_range) \(.data.file_path)"' | sh</code></pre>
+        </section>
+
+        <hr>
+
+        <section id="languages">
+            <h2>Supported Languages</h2>
+            <p>Codemark uses Tree-sitter to parse source files. Language is auto-detected from file extension.</p>
+            <div class="grid">
+                <ul>
+                    <li><strong>Rust</strong> (.rs)</li>
+                    <li><strong>Swift</strong> (.swift)</li>
+                    <li><strong>TypeScript</strong> (.ts, .tsx)</li>
+                    <li><strong>Python</strong> (.py)</li>
+                </ul>
+                <ul>
+                    <li><strong>Go</strong> (.go)</li>
+                    <li><strong>Java</strong> (.java)</li>
+                    <li><strong>C#</strong> (.cs)</li>
+                    <li><strong>Dart</strong> (.dart)</li>
+                </ul>
+            </div>
+        </section>
+
+        <hr>
+
+        <section id="how-it-works">
+            <h2>How it works</h2>
+            <ol>
+                <li><strong>Parse</strong> the file with <strong>tree-sitter</strong> to build an Abstract Syntax Tree (AST).</li>
+                <li><strong>Find</strong> the target node covering the provided line or byte range.</li>
+                <li><strong>Generate</strong> a unique S-expression query for that node.</li>
+                <li><strong>Store</strong> the query, content hash, and semantic metadata in a local SQLite database.</li>
+                <li><strong>Resolve</strong> later by running the query against the current file state.</li>
+            </ol>
+        </section>
+    </main>
+
+    <footer class="container">
+        <small>
+            Released under the <a href="https://github.com/DanielCardonaRojas/codemark/blob/main/LICENSE">MIT License</a>.
+            Built with Rust and Tree-sitter.
+            <br>
+            © 2026 Codemark Project
+        </small>
+    </footer>
+</body>
+</html>
