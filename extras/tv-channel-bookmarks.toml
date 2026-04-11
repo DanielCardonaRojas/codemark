@@ -1,7 +1,7 @@
 [metadata]
 name = "codemark"
 description = "Codemark structural bookmarks"
-requirements = ["codemark"]
+requirements = ["codemark, bat, glow, jq"]
 
 [source]
 command = "cd \"$(dirname $(git rev-parse --path-format=absolute --git-common-dir))\" && codemark list --format tv"
@@ -11,7 +11,7 @@ output = "{split:\\t:0}"
 [preview]
 command = [
   "cd \"$(dirname $(git rev-parse --path-format=absolute --git-common-dir))\" && codemark preview {split:\\t:0} | jq -r '\"\\(.data.file_path) --highlight-line \\(.data.line_range)\"' | xargs bat --color=always",
-  "cd \"$(dirname $(git rev-parse --path-format=absolute --git-common-dir))\" && codemark show {split:\\t:0} --format markdown | glow",
+  "cd \"$(dirname $(git rev-parse --path-format=absolute --git-common-dir))\" && codemark show {split:\\t:0} --format markdown | glow - --style auto",
 ]
 offset = "{split:\\t:2}"
 
