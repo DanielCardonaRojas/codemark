@@ -1386,6 +1386,10 @@ fn handle_semantic_search(
         .and_then(|m| m.parse::<EmbeddingModel>().ok())
         .unwrap_or(EmbeddingModel::AllMiniLmL6V2);
 
+    // Get distance metric and threshold from config
+    let distance_metric = config.semantic.get_distance_metric();
+    let threshold = config.semantic.threshold;
+
     // Cache directory
     let cache_dir = if let Some(db_path) = cli.db.first() {
         db_path.parent().map(|p| p.to_path_buf())
@@ -1398,7 +1402,7 @@ fn handle_semantic_search(
         }
     };
 
-    let semantic_repo = SemanticRepo::new(cache_dir, model);
+    let semantic_repo = SemanticRepo::with_config(cache_dir, model, distance_metric, threshold);
 
     // Perform semantic search
     let results = semantic_repo.search(db.conn(), query, args.limit)?;

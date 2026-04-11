@@ -2,6 +2,8 @@ use std::path::Path;
 
 use serde::Deserialize;
 
+use crate::embeddings::config::DistanceMetric;
+
 /// Application configuration loaded from `.codemark/config.toml`.
 #[derive(Debug, Deserialize)]
 #[serde(default)]
@@ -19,11 +21,34 @@ pub struct SemanticConfig {
     pub model: Option<String>,
     pub cache_dir: Option<String>,
     pub batch_size: Option<usize>,
+    /// Distance metric for similarity search (l2, cosine, ip).
+    pub distance_metric: Option<String>,
+    /// Maximum distance for a match (None = no threshold).
+    /// For l2/cosine: values <= threshold are matches.
+    /// For ip (inner product): values >= threshold are matches.
+    pub threshold: Option<f32>,
 }
 
 impl Default for SemanticConfig {
     fn default() -> Self {
-        SemanticConfig { enabled: true, model: None, cache_dir: None, batch_size: None }
+        SemanticConfig {
+            enabled: true,
+            model: None,
+            cache_dir: None,
+            batch_size: None,
+            distance_metric: None,
+            threshold: None,
+        }
+    }
+}
+
+impl SemanticConfig {
+    /// Parse the distance metric from the string config.
+    pub fn get_distance_metric(&self) -> DistanceMetric {
+        self.distance_metric
+            .as_ref()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or_default()
     }
 }
 
@@ -120,5 +145,42 @@ auto_archive_after_days = 14
     fn load_missing_file_returns_defaults() {
         let config = Config::load(Path::new("/nonexistent/path"));
         assert_eq!(config.storage.max_resolutions_per_bookmark, 20);
+    }
+
+    #[test]
+    fn parse_semantic_config_with_threshold() {
+        let toml = r#"
+[semantic]
+enabled = true
+distance_metric = "cosine"
+threshold = 0.4
+"#;
+        let config: Config = toml::from_str(toml).unwrap();
+        assert_eq!(config.semantic.threshold, Some(0.4));
+        assert_eq!(config.semantic.distance_metric, Some("cosine".to_string()));
+        assert_eq!(config.semantic.get_distance_metric(), DistanceMetric::Cosine);
+    }
+
+    #[test]
+    fn parse_semantic_config_with_l2_metric() {
+        let toml = r#"
+[semantic]
+distance_metric = "l2"
+threshold = 0.5
+"#;
+        let config: Config = toml::from_str(toml).unwrap();
+        assert_eq!(config.semantic.get_distance_metric(), DistanceMetric::L2);
+    }
+
+    #[test]
+    fn parse_semantic_config_with_inner_product() {
+        let toml = r#"
+[semantic]
+distance_metric = "ip"
+threshold = 0.8
+"#;
+        let config: Config = toml::from_str(toml).unwrap();
+        assert_eq!(config.semantic.get_distance_metric(), DistanceMetric::InnerProduct);
+        assert_eq!(config.semantic.threshold, Some(0.8));
     }
 }
