@@ -46,10 +46,7 @@ impl FromStr for DistanceMetric {
             "l2" | "euclidean" => Ok(DistanceMetric::L2),
             "cosine" => Ok(DistanceMetric::Cosine),
             "ip" | "inner" | "innerproduct" | "dot" => Ok(DistanceMetric::InnerProduct),
-            _ => Err(format!(
-                "Unknown distance metric: {}. Valid options: l2, cosine, ip",
-                s
-            )),
+            _ => Err(format!("Unknown distance metric: {}. Valid options: l2, cosine, ip", s)),
         }
     }
 }

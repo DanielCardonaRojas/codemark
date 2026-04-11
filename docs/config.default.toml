@@ -1,0 +1,52 @@
+# Codemark Configuration File
+#
+# This file controls codemark's behavior. Edit these values to customize
+# how codemark works in your repository.
+
+[storage]
+# Maximum number of resolution history entries to keep per bookmark.
+# Older entries are automatically pruned after each new resolution.
+# Default: 20
+max_resolutions_per_bookmark = 20
+
+[health]
+# Number of days before a stale bookmark is considered for auto-archiving.
+# Used by the `codemark heal --auto-archive` command.
+# Default: 7
+auto_archive_after_days = 7
+
+[semantic]
+# Enable semantic search using vector embeddings.
+# When enabled, bookmarks can be searched by meaning rather than exact keywords.
+# Default: true
+enabled = true
+
+# Embedding model to use for semantic search.
+# Options:
+#   - "all-minilm-l6-v2" (default): 384 dimensions, ~80MB model
+#   - "bge-small-en-v1.5": 384 dimensions, ~130MB model (better quality)
+# model = "all-minilm-l6-v2"
+
+# Cache directory for downloaded embedding models.
+# If not specified, models are cached in the .codemark directory.
+# cache_dir = "/path/to/cache"
+
+# Batch size for embedding generation during reindex.
+# Larger values are faster but use more memory.
+# Default: 32
+# batch_size = 32
+
+# Distance metric for semantic similarity search.
+# Options:
+#   - "l2" (default): Euclidean distance, range [0, ∞), lower is better
+#   - "cosine": Cosine distance (1 - similarity), range [0, 2], lower is better
+#   - "ip": Inner product (dot product), range (-∞, ∞), higher is better
+# distance_metric = "l2"
+
+# Maximum distance threshold for semantic search matches.
+# Results with distance worse than this threshold are filtered out.
+# - For "l2" and "cosine": only returns results with distance <= threshold
+# - For "ip": only returns results with distance >= threshold
+# Set to null to disable threshold filtering (return all results).
+# Typical values: 0.3-0.5 for l2/cosine, 0.7-0.9 for ip
+# threshold = 0.4

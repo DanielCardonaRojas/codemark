@@ -111,7 +111,11 @@ fn generate_embedding_for_bookmark(cli: &Cli, config: &Config, bookmark: &Bookma
         .and_then(|m| m.parse::<EmbeddingModel>().ok())
         .unwrap_or(EmbeddingModel::AllMiniLmL6V2);
 
-    let semantic_repo = SemanticRepo::new(cache_dir, model);
+    // Get distance metric and threshold from config
+    let distance_metric = config.semantic.get_distance_metric();
+    let threshold = config.semantic.threshold;
+
+    let semantic_repo = SemanticRepo::with_config(cache_dir, model, distance_metric, threshold);
 
     // Open database for storing embedding
     let mut db = open_db(cli)?;
@@ -1487,6 +1491,10 @@ fn handle_reindex(cli: &Cli, mode: &OutputMode, args: &ReindexArgs) -> Result<()
         .and_then(|m| m.parse::<EmbeddingModel>().ok())
         .unwrap_or(EmbeddingModel::AllMiniLmL6V2);
 
+    // Get distance metric and threshold from config
+    let distance_metric = config.semantic.get_distance_metric();
+    let threshold = config.semantic.threshold;
+
     // Cache directory
     let cache_dir = if let Some(db_path) = cli.db.first() {
         db_path.parent().map(|p| p.to_path_buf())
@@ -1499,7 +1507,7 @@ fn handle_reindex(cli: &Cli, mode: &OutputMode, args: &ReindexArgs) -> Result<()
         }
     };
 
-    let semantic_repo = SemanticRepo::new(cache_dir, model);
+    let semantic_repo = SemanticRepo::with_config(cache_dir, model, distance_metric, threshold);
 
     // Get bookmarks to reindex
     let filter = BookmarkFilter {
@@ -1708,7 +1716,11 @@ fn handle_import(cli: &Cli, mode: &OutputMode, args: &ImportArgs) -> Result<()> 
                 .and_then(|m| m.parse::<EmbeddingModel>().ok())
                 .unwrap_or(EmbeddingModel::AllMiniLmL6V2);
 
-            let semantic_repo = SemanticRepo::new(cache_dir, model);
+            let distance_metric = config.semantic.get_distance_metric();
+            let threshold = config.semantic.threshold;
+
+            let semantic_repo =
+                SemanticRepo::with_config(cache_dir, model, distance_metric, threshold);
             let conn = db.conn_mut();
             // Ignore errors - embedding generation failure shouldn't block import
             let _ = semantic_repo.store_embeddings(conn, &imported_bookmarks);
