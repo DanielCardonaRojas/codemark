@@ -4,7 +4,7 @@ use std::path::PathBuf;
 
 use rusqlite::Connection;
 
-use crate::embeddings::config::EmbeddingModel;
+use crate::embeddings::config::{DistanceMetric, EmbeddingModel};
 use crate::embeddings::{
     EmbeddingProvider, LocalEmbeddingProvider, SearchResult, VecStore, VecStoreEntry,
 };
@@ -17,12 +17,31 @@ pub struct SemanticRepo {
     cache_dir: Option<PathBuf>,
     /// The embedding model to use.
     model: EmbeddingModel,
+    /// Distance metric for similarity search.
+    distance_metric: DistanceMetric,
+    /// Optional threshold for filtering results.
+    threshold: Option<f32>,
 }
 
 impl SemanticRepo {
     /// Create a new semantic search repository.
     pub fn new(cache_dir: Option<PathBuf>, model: EmbeddingModel) -> Self {
-        Self { cache_dir, model }
+        Self {
+            cache_dir,
+            model,
+            distance_metric: DistanceMetric::default(),
+            threshold: None,
+        }
+    }
+
+    /// Create a new semantic search repository with custom distance metric and threshold.
+    pub fn with_config(
+        cache_dir: Option<PathBuf>,
+        model: EmbeddingModel,
+        distance_metric: DistanceMetric,
+        threshold: Option<f32>,
+    ) -> Self {
+        Self { cache_dir, model, distance_metric, threshold }
     }
 
     /// Get or create the embedding provider.
@@ -83,7 +102,7 @@ impl SemanticRepo {
         })?;
 
         // Create vec_store entries and insert
-        let store = VecStore::new(provider.dimensions());
+        let store = VecStore::with_metric(provider.dimensions(), self.distance_metric);
         let entries: Vec<VecStoreEntry> = bookmarks
             .iter()
             .zip(embeddings.into_iter())
@@ -107,6 +126,17 @@ impl SemanticRepo {
         query: &str,
         limit: usize,
     ) -> Result<Vec<SearchResult>> {
+        self.search_with_threshold(conn, query, limit, self.threshold)
+    }
+
+    /// Search for similar bookmarks with optional threshold override.
+    pub fn search_with_threshold(
+        &self,
+        conn: &Connection,
+        query: &str,
+        limit: usize,
+        threshold: Option<f32>,
+    ) -> Result<Vec<SearchResult>> {
         // Ensure sqlite-vec extension is loaded
         crate::embeddings::VecStore::ensure_extension_loaded();
 
@@ -119,17 +149,17 @@ impl SemanticRepo {
             crate::error::Error::Operation(format!("Failed to generate query embedding: {}", e))
         })?;
 
-        let store = VecStore::new(provider.dimensions());
-        let results = store.search(conn, &query_embedding, limit).map_err(|e| {
-            crate::error::Error::Operation(format!("Semantic search failed: {}", e))
-        })?;
+        let store = VecStore::with_metric(provider.dimensions(), self.distance_metric);
+        let results = store
+            .search_with_threshold(conn, &query_embedding, limit, threshold)
+            .map_err(|e| crate::error::Error::Operation(format!("Semantic search failed: {}", e)))?;
 
         Ok(results)
     }
 
     /// Find bookmarks that don't have embeddings yet.
     pub fn find_without_embeddings(&self, conn: &Connection) -> Result<Vec<String>> {
-        let store = VecStore::new(self.model.dimensions());
+        let store = VecStore::with_metric(self.model.dimensions(), self.distance_metric);
         store.find_without_embeddings(conn).map_err(|e| {
             crate::error::Error::Operation(format!(
                 "Failed to find bookmarks without embeddings: {}",
@@ -140,7 +170,7 @@ impl SemanticRepo {
 
     /// Delete an embedding for a bookmark.
     pub fn delete_embedding(&self, conn: &mut Connection, bookmark_id: &str) -> Result<()> {
-        let store = VecStore::new(self.model.dimensions());
+        let store = VecStore::with_metric(self.model.dimensions(), self.distance_metric);
         store.delete(conn, bookmark_id).map_err(|e| {
             crate::error::Error::Operation(format!("Failed to delete embedding: {}", e))
         })
@@ -148,7 +178,7 @@ impl SemanticRepo {
 
     /// Count total embeddings in the store.
     pub fn count_embeddings(&self, conn: &Connection) -> Result<usize> {
-        let store = VecStore::new(self.model.dimensions());
+        let store = VecStore::with_metric(self.model.dimensions(), self.distance_metric);
         store.count(conn).map_err(|e| {
             crate::error::Error::Operation(format!("Failed to count embeddings: {}", e))
         })
