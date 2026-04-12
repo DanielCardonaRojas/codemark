@@ -55,7 +55,7 @@ local function run_json(args)
     return nil, "codemark binary not found: " .. config.binary .. " (install with: cargo install --path /path/to/codemark)"
   end
 
-  local cmd = { config.binary, "--json" }
+  local cmd = { config.binary, "--format", "json" }
   for _, a in ipairs(args) do
     table.insert(cmd, a)
   end
@@ -84,7 +84,7 @@ local function run_raw(args)
     table.insert(cmd, a)
   end
   local result = vim.system(cmd, { text = true }):wait()
-  return result.stdout or "", result.code
+  return result.stdout or "", result.code, result.stderr
 end
 
 -- Get the visual selection line range
@@ -198,7 +198,7 @@ function M.list()
   local lines = { "Bookmarks for " .. file .. ":" }
   for _, bm in ipairs(data) do
     local id = (bm.id or ""):sub(1, 8)
-    local note = bm.notes or ""
+    local note = bm.notes or bm.note or ""
     local tags = ""
     if bm.tags and #bm.tags > 0 then
       tags = " [" .. table.concat(bm.tags, ", ") .. "]"
@@ -240,7 +240,11 @@ function M.preview_current()
 
   -- Use the first bookmark (could improve to find nearest)
   local bm = data[1]
-  local stdout = run_raw({ "preview", bm.id:sub(1, 8), "--no-color" })
+  local stdout, _, stderr = run_raw({ "preview", bm.id:sub(1, 8) })
+  if not stdout or stdout == "" then
+    vim.notify("Failed to preview: " .. (stderr or "unknown error"), vim.log.levels.ERROR)
+    return
+  end
 
   -- Show in a scratch buffer
   local buf = vim.api.nvim_create_buf(false, true)
@@ -273,7 +277,7 @@ function M.refresh_signs()
 
   -- Get bookmarks for this file (async to avoid blocking)
   vim.system(
-    { config.binary, "--json", "resolve", "--file", file },
+    { config.binary, "--format", "json", "resolve", "--file", file },
     { text = true },
     function(result)
       if result.code ~= 0 then
@@ -348,7 +352,7 @@ function M.browse()
       }),
       previewer = previewers.new_termopen_previewer({
         get_command = function(entry)
-          return { config.binary, "preview", entry.id, "--no-color" }
+          return { config.binary, "preview", entry.id }
         end,
       }),
       sorter = conf.generic_sorter({}),
