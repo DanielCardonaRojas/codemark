@@ -142,7 +142,7 @@ where
     F: Fn(&str) -> Option<usize>,
 {
     match mode {
-        OutputMode::Tv => write_bookmarks_tv(bookmarks, &get_line_fn),
+        OutputMode::Tv => write_bookmarks_tv(bookmarks, get_line_fn),
         _ => write_bookmarks(mode, bookmarks),
     }
 }
@@ -195,16 +195,17 @@ fn write_bookmarks_line(bookmarks: &[Bookmark]) -> io::Result<()> {
 /// Write bookmarks in television format with line numbers.
 /// Format: <id>\t<file>\t<line>\t<status>\t<tags>\t<note>
 /// This requires database access to fetch line numbers from resolutions.
+/// The line number is the center of the line range for better preview positioning.
 pub fn write_bookmarks_tv(
     bookmarks: &[Bookmark],
-    get_line: impl Fn(&str) -> Option<usize>,
+    get_center_line: impl Fn(&str) -> Option<usize>,
 ) -> io::Result<()> {
     let mut stdout = io::stdout().lock();
     for bm in bookmarks {
         let tags = bm.tags.join(",");
         let note = bm.notes.as_deref().unwrap_or("");
         let short = short_id(&bm.id);
-        let line = get_line(short).unwrap_or(0);
+        let line = get_center_line(short).unwrap_or(0);
 
         writeln!(
             stdout,

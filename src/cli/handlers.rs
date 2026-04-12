@@ -317,8 +317,8 @@ fn extract_id(id_or_line: &str) -> &str {
     id_or_line.split('\t').next().unwrap_or(id_or_line)
 }
 
-/// Get the start line number from a bookmark's latest resolution.
-/// Returns the line number (1-indexed) or None if no resolution exists.
+/// Get the center line number from a bookmark's latest resolution.
+/// Returns the center line number (1-indexed) or None if no resolution exists.
 /// Note: bookmark_id should be the full ID, not a short prefix.
 fn get_bookmark_line(db: &Database, bookmark_id: &str, _file_path: &str) -> Option<usize> {
     // Get the latest resolution (limit 1)
@@ -332,7 +332,11 @@ fn get_bookmark_line(db: &Database, bookmark_id: &str, _file_path: &str) -> Opti
         return None;
     }
 
-    parts[0].parse().ok()
+    let start: usize = parts[0].parse().ok()?;
+    let end: usize = parts[1].parse().ok()?;
+
+    // Return the center line for better preview positioning
+    Some((start + end) / 2)
 }
 
 fn find_bookmark(db: &Database, id: &str) -> Result<Bookmark> {
