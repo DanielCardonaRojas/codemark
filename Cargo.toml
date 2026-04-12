@@ -4,6 +4,23 @@ version = "0.4.1"
 edition = "2024"
 description = "A structural bookmarking system for code using tree-sitter queries"
 license = "MIT"
+build = "build.rs"
+
+[lib]
+name = "codemark"
+path = "src/lib.rs"
+
+[[bin]]
+name = "codemark"
+path = "src/main.rs"
+
+[[bin]]
+name = "gen-man-pages"
+path = "src/bin/gen-man-pages.rs"
+required-features = ["man-pages"]
+
+[features]
+man-pages = ["clap_mangen"]
 
 [dev-dependencies]
 tempfile = "3"
@@ -14,6 +31,7 @@ chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4", features = ["derive", "env"] }
 tokio = { version = "1", features = ["rt"] }
 clap_complete = "4"
+clap_mangen = { version = "0.2", optional = true }
 comfy-table = "7"
 candle-core = "0.8"
 candle-transformers = "0.8"

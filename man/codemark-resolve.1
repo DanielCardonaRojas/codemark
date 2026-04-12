@@ -1,0 +1,34 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH resolve 1  "resolve " 
+.SH NAME
+resolve \- Resolve a bookmark to its current file location
+.SH SYNOPSIS
+\fBresolve\fR [\fB\-\-tag\fR] [\fB\-\-status\fR] [\fB\-\-file\fR] [\fB\-\-lang\fR] [\fB\-\-collection\fR] [\fB\-\-dry\-run\fR] [\fB\-h\fR|\fB\-\-help\fR] [\fIID\fR] 
+.SH DESCRIPTION
+Resolve a bookmark to its current file location
+.SH OPTIONS
+.TP
+\fB\-\-tag\fR \fI<TAG>\fR
+Filter by tag
+.TP
+\fB\-\-status\fR \fI<STATUS>\fR
+Filter by status (default: active,drifted)
+.TP
+\fB\-\-file\fR \fI<FILE>\fR
+Filter by file path
+.TP
+\fB\-\-lang\fR \fI<LANG>\fR
+Filter by language (swift, rust, typescript, python)
+.TP
+\fB\-\-collection\fR \fI<COLLECTION>\fR
+Filter by collection
+.TP
+\fB\-\-dry\-run\fR
+Preview what would be resolved without storing anything
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
+.TP
+[\fIID\fR]
+Bookmark ID (full UUID or unambiguous prefix)
