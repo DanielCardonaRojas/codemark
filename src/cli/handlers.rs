@@ -91,17 +91,8 @@ fn generate_embedding_for_bookmark(cli: &Cli, config: &Config, bookmark: &Bookma
         return Ok(());
     }
 
-    // Get cache directory for model storage
-    let cache_dir = if let Some(db_path) = cli.db.first() {
-        db_path.parent().map(|p| p.to_path_buf())
-    } else {
-        let cwd = std::env::current_dir()?;
-        if let Some(ctx) = git_context::detect_context(&cwd) {
-            Some(ctx.repo_root.join(".codemark").join("models"))
-        } else {
-            None
-        }
-    };
+    // Get models directory from config (defaults to global cache)
+    let models_dir = config.semantic.get_models_dir();
 
     // Parse model from config
     let model = config
@@ -115,7 +106,7 @@ fn generate_embedding_for_bookmark(cli: &Cli, config: &Config, bookmark: &Bookma
     let distance_metric = config.semantic.get_distance_metric();
     let threshold = config.semantic.threshold;
 
-    let semantic_repo = SemanticRepo::with_config(cache_dir, model, distance_metric, threshold);
+    let semantic_repo = SemanticRepo::with_config(models_dir, model, distance_metric, threshold);
 
     // Open database for storing embedding
     let mut db = open_db(cli)?;
@@ -1394,19 +1385,10 @@ fn handle_semantic_search(
     let distance_metric = config.semantic.get_distance_metric();
     let threshold = config.semantic.threshold;
 
-    // Cache directory
-    let cache_dir = if let Some(db_path) = cli.db.first() {
-        db_path.parent().map(|p| p.to_path_buf())
-    } else {
-        let cwd = std::env::current_dir()?;
-        if let Some(ctx) = git_context::detect_context(&cwd) {
-            Some(ctx.repo_root.join(".codemark").join("models"))
-        } else {
-            None
-        }
-    };
+    // Get models directory from config (defaults to global cache)
+    let models_dir = config.semantic.get_models_dir();
 
-    let semantic_repo = SemanticRepo::with_config(cache_dir, model, distance_metric, threshold);
+    let semantic_repo = SemanticRepo::with_config(models_dir, model, distance_metric, threshold);
 
     // Perform semantic search
     let results = semantic_repo.search(db.conn(), query, args.limit)?;
@@ -1495,19 +1477,10 @@ fn handle_reindex(cli: &Cli, mode: &OutputMode, args: &ReindexArgs) -> Result<()
     let distance_metric = config.semantic.get_distance_metric();
     let threshold = config.semantic.threshold;
 
-    // Cache directory
-    let cache_dir = if let Some(db_path) = cli.db.first() {
-        db_path.parent().map(|p| p.to_path_buf())
-    } else {
-        let cwd = std::env::current_dir()?;
-        if let Some(ctx) = git_context::detect_context(&cwd) {
-            Some(ctx.repo_root.join(".codemark").join("models"))
-        } else {
-            None
-        }
-    };
+    // Get models directory from config (defaults to global cache)
+    let models_dir = config.semantic.get_models_dir();
 
-    let semantic_repo = SemanticRepo::with_config(cache_dir, model, distance_metric, threshold);
+    let semantic_repo = SemanticRepo::with_config(models_dir, model, distance_metric, threshold);
 
     // Get bookmarks to reindex
     let filter = BookmarkFilter {
@@ -1702,12 +1675,7 @@ fn handle_import(cli: &Cli, mode: &OutputMode, args: &ImportArgs) -> Result<()> 
     if !imported_bookmarks.is_empty() {
         let config = load_config(cli);
         if config.semantic.enabled {
-            let cache_dir =
-                cli.db.first().and_then(|p| p.parent().map(|pb| pb.to_path_buf())).or_else(|| {
-                    let cwd = std::env::current_dir().ok()?;
-                    git_context::detect_context(&cwd)
-                        .map(|ctx| ctx.repo_root.join(".codemark").join("models"))
-                });
+            let models_dir = config.semantic.get_models_dir();
 
             let model = config
                 .semantic
@@ -1720,7 +1688,7 @@ fn handle_import(cli: &Cli, mode: &OutputMode, args: &ImportArgs) -> Result<()> 
             let threshold = config.semantic.threshold;
 
             let semantic_repo =
-                SemanticRepo::with_config(cache_dir, model, distance_metric, threshold);
+                SemanticRepo::with_config(models_dir, model, distance_metric, threshold);
             let conn = db.conn_mut();
             // Ignore errors - embedding generation failure shouldn't block import
             let _ = semantic_repo.store_embeddings(conn, &imported_bookmarks);

@@ -1,8 +1,27 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
 use crate::embeddings::config::DistanceMetric;
+
+/// Returns the global models cache directory.
+///
+/// Platform-specific locations:
+/// - macOS: `~/Library/Caches/codemark`
+/// - Linux: `~/.cache/codemark` (XDG standard)
+/// - Windows: `%LOCALAPPDATA%\codemark\cache`
+///
+/// Can be overridden by the `CODMARK_MODELS_DIR` environment variable.
+pub fn global_models_dir() -> Option<PathBuf> {
+    // Check environment variable first
+    if let Ok(env_dir) = std::env::var("CODMARK_MODELS_DIR") {
+        return Some(PathBuf::from(env_dir));
+    }
+
+    // Use platform-specific cache directory
+    directories::ProjectDirs::from("com", "codemark", "codemark")
+        .map(|proj| proj.cache_dir().join("models"))
+}
 
 /// Application configuration loaded from `.codemark/config.toml`.
 #[derive(Debug, Deserialize, Serialize)]
@@ -19,7 +38,10 @@ pub struct Config {
 pub struct SemanticConfig {
     pub enabled: bool,
     pub model: Option<String>,
-    pub cache_dir: Option<String>,
+    /// Directory for storing embedding models.
+    /// If not set, uses the global cache directory.
+    /// Can also be set via `CODMARK_MODELS_DIR` environment variable.
+    pub models_dir: Option<String>,
     pub batch_size: Option<usize>,
     /// Distance metric for similarity search (l2, cosine, ip).
     pub distance_metric: Option<String>,
@@ -34,7 +56,7 @@ impl Default for SemanticConfig {
         SemanticConfig {
             enabled: true,
             model: None,
-            cache_dir: None,
+            models_dir: None,
             batch_size: None,
             distance_metric: None,
             threshold: None,
@@ -46,6 +68,19 @@ impl SemanticConfig {
     /// Parse the distance metric from the string config.
     pub fn get_distance_metric(&self) -> DistanceMetric {
         self.distance_metric.as_ref().and_then(|s| s.parse().ok()).unwrap_or_default()
+    }
+
+    /// Get the effective models directory.
+    ///
+    /// Returns the configured directory if set, otherwise the global cache.
+    pub fn get_models_dir(&self) -> Option<PathBuf> {
+        if let Some(dir) = &self.models_dir {
+            // Expand ~ to home directory
+            let expanded = shellexpand::tilde(dir);
+            Some(PathBuf::from(expanded.as_ref()))
+        } else {
+            global_models_dir()
+        }
     }
 }
 

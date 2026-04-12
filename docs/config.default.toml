@@ -27,9 +27,14 @@ enabled = true
 #   - "bge-small-en-v1.5": 384 dimensions, ~130MB model (better quality)
 # model = "all-minilm-l6-v2"
 
-# Cache directory for downloaded embedding models.
-# If not specified, models are cached in the .codemark directory.
-# cache_dir = "/path/to/cache"
+# Directory for storing downloaded embedding models.
+# If not specified, uses a global cache directory:
+#   - macOS: ~/Library/Caches/codemark/models
+#   - Linux: ~/.cache/codemark/models
+#   - Windows: %LOCALAPPDATA%\codemark\cache\models
+# Can also be set via the CODMARK_MODELS_DIR environment variable.
+# Supports ~ expansion for home directory.
+# models_dir = "~/.cache/codemark/models"
 
 # Batch size for embedding generation during reindex.
 # Larger values are faster but use more memory.

@@ -41,6 +41,8 @@ uuid = { version = "1", features = ["v4"] }
 hf-hub = "0.4"
 sqlite-vec = "0.1.9"
 zerocopy = "0.8"
+directories = "5"
+shellexpand = "3"
 
 [profile.release]
 strip = true
