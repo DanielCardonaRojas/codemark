@@ -539,7 +539,8 @@ pub fn write_heal_output(mode: &OutputMode, output: &HealOutput) -> io::Result<(
 
 fn write_heal_table(output: &HealOutput) -> io::Result<()> {
     let updated_count = output.updates.iter().filter(|u| u.previous_status != u.new_status).count();
-    let unchanged_count = output.updates.iter().filter(|u| u.previous_status == u.new_status).count();
+    let unchanged_count =
+        output.updates.iter().filter(|u| u.previous_status == u.new_status).count();
 
     println!(
         "Healed {} bookmarks: {} updated, {} unchanged, {} skipped",
@@ -550,7 +551,8 @@ fn write_heal_table(output: &HealOutput) -> io::Result<()> {
 
 fn write_heal_line(output: &HealOutput) -> io::Result<()> {
     let updated_count = output.updates.iter().filter(|u| u.previous_status != u.new_status).count();
-    let unchanged_count = output.updates.iter().filter(|u| u.previous_status == u.new_status).count();
+    let unchanged_count =
+        output.updates.iter().filter(|u| u.previous_status == u.new_status).count();
 
     let mut stdout = io::stdout().lock();
     writeln!(

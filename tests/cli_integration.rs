@@ -1511,12 +1511,10 @@ fn git_repo_move_method_then_heal_gets_new_resolution() {
 
     // Heal should detect the change and record a new resolution
     let heal_json = cm.run_json(&["heal"]);
+    assert_eq!(heal_json["data"]["total_processed"], 1, "should process 1 bookmark");
     assert_eq!(
-        heal_json["data"]["total_processed"], 1,
-        "should process 1 bookmark"
-    );
-    assert_eq!(
-        heal_json["data"]["updates"].as_array().unwrap()[0]["new_status"], "active",
+        heal_json["data"]["updates"].as_array().unwrap()[0]["new_status"],
+        "active",
         "bookmark should still be active after move and heal"
     );
 
@@ -1603,7 +1601,8 @@ fn git_repo_resolve_fails_when_function_deleted() {
     let heal_json = cm.run_json(&["heal"]);
 
     // The bookmark should not be active after the function is deleted
-    let new_status = heal_json["data"]["updates"].as_array().unwrap()[0]["new_status"].as_str().unwrap();
+    let new_status =
+        heal_json["data"]["updates"].as_array().unwrap()[0]["new_status"].as_str().unwrap();
     assert_ne!(
         new_status, "active",
         "bookmark should not be active after function is deleted: got {}",
@@ -1653,8 +1652,13 @@ fn git_repo_bookmark_goes_stale_when_code_completely_changed() {
     let heal_json = cm.run_json(&["heal"]);
 
     // The bookmark should be marked as stale (not drifted, not active)
-    let new_status = heal_json["data"]["updates"].as_array().unwrap()[0]["new_status"].as_str().unwrap();
-    assert_eq!(new_status, "stale", "bookmark should be stale when file is empty: got {}", new_status);
+    let new_status =
+        heal_json["data"]["updates"].as_array().unwrap()[0]["new_status"].as_str().unwrap();
+    assert_eq!(
+        new_status, "stale",
+        "bookmark should be stale when file is empty: got {}",
+        new_status
+    );
 
     // Resolve should use 'failed' method
     let resolve_json = cm.run_json(&["resolve", &id[..8]]);
@@ -1715,7 +1719,8 @@ fn git_repo_resolve_fails_when_file_deleted() {
     let heal_json = cm.run_json(&["heal"]);
 
     // The bookmark should be marked as stale
-    let new_status = heal_json["data"]["updates"].as_array().unwrap()[0]["new_status"].as_str().unwrap();
+    let new_status =
+        heal_json["data"]["updates"].as_array().unwrap()[0]["new_status"].as_str().unwrap();
     assert_eq!(
         new_status, "stale",
         "bookmark should be stale when file is empty/deleted: got {}",

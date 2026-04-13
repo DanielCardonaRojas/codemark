@@ -1083,10 +1083,7 @@ fn handle_heal(cli: &Cli, mode: &OutputMode, args: &HealArgs) -> Result<()> {
 
         // Build the new location (null if failed)
         let new_location = if result.method != ResolutionMethod::Failed {
-            Some(ByteLocation {
-                start_byte: result.byte_range.0,
-                end_byte: result.byte_range.1,
-            })
+            Some(ByteLocation { start_byte: result.byte_range.0, end_byte: result.byte_range.1 })
         } else {
             None
         };
@@ -1097,10 +1094,7 @@ fn handle_heal(cli: &Cli, mode: &OutputMode, args: &HealArgs) -> Result<()> {
             .as_deref()
             .or_else(|| {
                 // Try to extract function name from query
-                bm.query
-                    .lines()
-                    .find(|l| l.contains("#eq?"))
-                    .and_then(|l| l.split('"').nth(1))
+                bm.query.lines().find(|l| l.contains("#eq?")).and_then(|l| l.split('"').nth(1))
             })
             .unwrap_or(&bm.file_path)
             .to_string();
