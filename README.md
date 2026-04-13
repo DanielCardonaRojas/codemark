@@ -244,6 +244,22 @@ codemark completions bash > ~/.local/share/bash-completion/completions/codemark
 codemark completions fish > ~/.config/fish/completions/codemark.fish
 ```
 
+### Man pages
+
+Generate and install man pages:
+
+```bash
+# Generate man pages (from source checkout)
+cargo run --bin gen-man-pages --features man-pages
+
+# Install to system
+sudo install -Dm644 man/*.1 -t /usr/local/share/man/man1/
+
+# Then view with
+man codemark
+man codemark-add
+```
+
 ### [television](https://github.com/alexpasmant/television)
 
 ```bash

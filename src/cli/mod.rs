@@ -3,7 +3,13 @@ pub mod output;
 
 use std::path::PathBuf;
 
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
+
+/// Build the CLI command struct.
+/// This is used by both the main binary and the man page generation in build.rs.
+pub fn build_cli() -> clap::Command {
+    Cli::command()
+}
 
 /// A structural bookmarking system for code using tree-sitter queries.
 ///

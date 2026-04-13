@@ -1,0 +1,43 @@
+.ie \n(.g .ds Aq \(aq
+.el .ds Aq '
+.TH add 1  "add " 
+.SH NAME
+add \- Create a bookmark from a file and byte range
+.SH SYNOPSIS
+\fBadd\fR <\fB\-\-file\fR> [\fB\-\-range\fR] [\fB\-\-hunk\fR] [\fB\-\-lang\fR] [\fB\-\-tag\fR] [\fB\-\-note\fR] [\fB\-\-context\fR] [\fB\-\-created\-by\fR] [\fB\-\-dry\-run\fR] [\fB\-\-collection\fR] [\fB\-h\fR|\fB\-\-help\fR] 
+.SH DESCRIPTION
+Create a bookmark from a file and byte range
+.SH OPTIONS
+.TP
+\fB\-\-file\fR \fI<FILE>\fR
+Path to the file (relative or absolute)
+.TP
+\fB\-\-range\fR \fI<RANGE>\fR
+Line range (42 or 42:67) or byte range with b prefix (b1024:1280)
+.TP
+\fB\-\-hunk\fR \fI<HUNK>\fR
+Git diff hunk header (@@ \-a,b +c,d @@) to derive line range
+.TP
+\fB\-\-lang\fR \fI<LANG>\fR
+Language identifier; auto\-detected from file extension if omitted
+.TP
+\fB\-\-tag\fR \fI<TAG>\fR
+Tag label; repeatable for multiple tags
+.TP
+\fB\-\-note\fR \fI<NOTE>\fR
+Semantic annotation
+.TP
+\fB\-\-context\fR \fI<CONTEXT>\fR
+Agent context at time of bookmarking
+.TP
+\fB\-\-created\-by\fR \fI<CREATED_BY>\fR [default: user]
+Who created this bookmark (defaults to "user")
+.TP
+\fB\-\-dry\-run\fR
+Preview what would be bookmarked without saving
+.TP
+\fB\-\-collection\fR \fI<COLLECTION>\fR
+Add bookmark to this collection (auto\-creates if it doesn\*(Aqt exist)
+.TP
+\fB\-h\fR, \fB\-\-help\fR
+Print help
