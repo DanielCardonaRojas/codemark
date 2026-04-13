@@ -220,8 +220,11 @@ codemark diff --since HEAD~5 --json
 
 ```bash
 # After resolution, queries are regenerated for drifted bookmarks
-# Running validate updates statuses
-codemark validate --collection rate-limiting
+# Running heal updates statuses and records new resolutions
+codemark heal --collection rate-limiting --json
+
+# To validate without recording resolution history
+codemark heal --validate-only --collection rate-limiting --json
 ```
 
 ---

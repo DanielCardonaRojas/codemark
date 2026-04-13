@@ -432,10 +432,16 @@ fn heal_updates_statuses() {
     ]);
 
     let json = cm.run_json(&["heal"]);
-    assert_eq!(json["data"]["active"], 2);
-    assert_eq!(json["data"]["drifted"], 0);
-    assert_eq!(json["data"]["stale"], 0);
-    assert_eq!(json["data"]["validate_only"], false);
+    assert_eq!(json["data"]["total_processed"], 2);
+    assert_eq!(json["data"]["skipped"], 0);
+    assert_eq!(json["data"]["updates"].as_array().unwrap().len(), 2);
+    // Both bookmarks should be active after heal
+    let updates = json["data"]["updates"].as_array().unwrap();
+    assert_eq!(updates[0]["new_status"], "active");
+    assert_eq!(updates[1]["new_status"], "active");
+    // resolution_id should be present (not validate-only)
+    assert!(updates[0]["resolution_id"].is_string());
+    assert!(updates[1]["resolution_id"].is_string());
 }
 
 #[test]
@@ -453,8 +459,11 @@ fn heal_validate_only_skips_recording() {
     ]);
 
     let json = cm.run_json(&["heal", "--validate-only"]);
-    assert_eq!(json["data"]["active"], 1);
-    assert_eq!(json["data"]["validate_only"], true);
+    assert_eq!(json["data"]["total_processed"], 1);
+    assert_eq!(json["data"]["skipped"], 0);
+    assert_eq!(json["data"]["updates"].as_array().unwrap().len(), 1);
+    // resolution_id should be null when validate-only is used
+    assert!(json["data"]["updates"][0]["resolution_id"].is_null());
 }
 
 #[test]
@@ -1175,7 +1184,7 @@ fn heal_validates_without_resolution() {
 
     // Heal should work normally (no resolution to check against)
     let json = cm.run_json(&["heal"]);
-    assert_eq!(json["data"]["active"], 1);
+    assert_eq!(json["data"]["total_processed"], 1);
     assert_eq!(json["data"]["skipped"], 0);
 }
 
@@ -1197,7 +1206,7 @@ fn heal_force_flag_exists() {
     // Should accept --force without error
     let json = cm.run_json(&["heal", "--force"]);
     assert_eq!(json["success"], true);
-    assert_eq!(json["data"]["active"], 1);
+    assert_eq!(json["data"]["total_processed"], 1);
     assert_eq!(json["data"]["skipped"], 0);
 }
 
@@ -1295,7 +1304,7 @@ fn git_repo_heal_skips_when_head_is_before_resolution() {
 
     // Run heal at commit A - should record resolution
     let json = cm.run_json(&["heal"]);
-    assert_eq!(json["data"]["active"], 1);
+    assert_eq!(json["data"]["total_processed"], 1);
     assert_eq!(json["data"]["skipped"], 0);
 
     // Make more commits
@@ -1503,7 +1512,11 @@ fn git_repo_move_method_then_heal_gets_new_resolution() {
     // Heal should detect the change and record a new resolution
     let heal_json = cm.run_json(&["heal"]);
     assert_eq!(
-        heal_json["data"]["active"], 1,
+        heal_json["data"]["total_processed"], 1,
+        "should process 1 bookmark"
+    );
+    assert_eq!(
+        heal_json["data"]["updates"].as_array().unwrap()[0]["new_status"], "active",
         "bookmark should still be active after move and heal"
     );
 
@@ -1590,9 +1603,11 @@ fn git_repo_resolve_fails_when_function_deleted() {
     let heal_json = cm.run_json(&["heal"]);
 
     // The bookmark should not be active after the function is deleted
+    let new_status = heal_json["data"]["updates"].as_array().unwrap()[0]["new_status"].as_str().unwrap();
     assert_ne!(
-        heal_json["data"]["active"], 1,
-        "bookmark should not be active after function is deleted"
+        new_status, "active",
+        "bookmark should not be active after function is deleted: got {}",
+        new_status
     );
 
     // Show should indicate the problem status
@@ -1638,7 +1653,8 @@ fn git_repo_bookmark_goes_stale_when_code_completely_changed() {
     let heal_json = cm.run_json(&["heal"]);
 
     // The bookmark should be marked as stale (not drifted, not active)
-    assert_eq!(heal_json["data"]["stale"], 1, "bookmark should be stale when file is empty");
+    let new_status = heal_json["data"]["updates"].as_array().unwrap()[0]["new_status"].as_str().unwrap();
+    assert_eq!(new_status, "stale", "bookmark should be stale when file is empty: got {}", new_status);
 
     // Resolve should use 'failed' method
     let resolve_json = cm.run_json(&["resolve", &id[..8]]);
@@ -1699,9 +1715,11 @@ fn git_repo_resolve_fails_when_file_deleted() {
     let heal_json = cm.run_json(&["heal"]);
 
     // The bookmark should be marked as stale
+    let new_status = heal_json["data"]["updates"].as_array().unwrap()[0]["new_status"].as_str().unwrap();
     assert_eq!(
-        heal_json["data"]["stale"], 1,
-        "bookmark should be stale when file is empty/deleted"
+        new_status, "stale",
+        "bookmark should be stale when file is empty/deleted: got {}",
+        new_status
     );
 
     // Show should indicate the problem status

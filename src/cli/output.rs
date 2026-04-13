@@ -476,6 +476,91 @@ pub fn write_bookmark_markdown(bm: &Bookmark, resolutions: &[Resolution]) -> io:
     Ok(())
 }
 
+// --- Heal output formatting ---
+
+/// Output for a single bookmark update during heal.
+#[derive(Debug, Serialize)]
+pub struct HealUpdate {
+    pub bookmark_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resolution_id: Option<String>,
+    pub name: String,
+    pub file_path: String,
+    pub previous_status: String,
+    pub new_status: String,
+    pub resolution_method: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub previous_location: Option<ByteLocation>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub new_location: Option<ByteLocation>,
+}
+
+/// Byte location range for resolution.
+#[derive(Debug, Serialize)]
+pub struct ByteLocation {
+    pub start_byte: usize,
+    pub end_byte: usize,
+}
+
+impl ByteLocation {
+    /// Parse from a "start:end" string format stored in the database.
+    pub fn from_str(s: &str) -> Option<Self> {
+        let parts: Vec<&str> = s.split(':').collect();
+        if parts.len() == 2 {
+            let start = parts[0].parse::<usize>().ok()?;
+            let end = parts[1].parse::<usize>().ok()?;
+            Some(ByteLocation { start_byte: start, end_byte: end })
+        } else {
+            None
+        }
+    }
+}
+
+/// Summary output for the heal command.
+#[derive(Debug, Serialize)]
+pub struct HealOutput {
+    pub total_processed: usize,
+    pub skipped: usize,
+    pub updates: Vec<HealUpdate>,
+}
+
+/// Write heal output in the appropriate mode.
+pub fn write_heal_output(mode: &OutputMode, output: &HealOutput) -> io::Result<()> {
+    match mode {
+        OutputMode::Json => write_json_success(output),
+        OutputMode::Table => write_heal_table(output),
+        OutputMode::Line => write_heal_line(output),
+        _ => {
+            // Fallback to table format for other modes
+            write_heal_table(output)
+        }
+    }
+}
+
+fn write_heal_table(output: &HealOutput) -> io::Result<()> {
+    let updated_count = output.updates.iter().filter(|u| u.previous_status != u.new_status).count();
+    let unchanged_count = output.updates.iter().filter(|u| u.previous_status == u.new_status).count();
+
+    println!(
+        "Healed {} bookmarks: {} updated, {} unchanged, {} skipped",
+        output.total_processed, updated_count, unchanged_count, output.skipped
+    );
+    Ok(())
+}
+
+fn write_heal_line(output: &HealOutput) -> io::Result<()> {
+    let updated_count = output.updates.iter().filter(|u| u.previous_status != u.new_status).count();
+    let unchanged_count = output.updates.iter().filter(|u| u.previous_status == u.new_status).count();
+
+    let mut stdout = io::stdout().lock();
+    writeln!(
+        stdout,
+        "total={}:updated={}:unchanged={}:skipped={}",
+        output.total_processed, updated_count, unchanged_count, output.skipped
+    )?;
+    Ok(())
+}
+
 /// Escape special markdown characters in text.
 fn escape_markdown(text: &str) -> String {
     // Escape characters that have special meaning in markdown:

@@ -5,8 +5,8 @@ use clap::CommandFactory;
 use clap_complete::generate;
 
 use crate::cli::output::{
-    self, OutputMode, short_id, write_bookmark_markdown, write_bookmarks, write_json_success,
-    write_not_implemented, write_success,
+    self, ByteLocation, HealOutput, HealUpdate, OutputMode, short_id, write_bookmark_markdown,
+    write_bookmarks, write_heal_output, write_json_success, write_not_implemented, write_success,
 };
 use crate::cli::*;
 use crate::config::Config;
@@ -977,37 +977,40 @@ fn handle_heal(cli: &Cli, mode: &OutputMode, args: &HealArgs) -> Result<()> {
     let cwd = std::env::current_dir()?;
     let current_head = git_context::detect_context(&cwd).and_then(|ctx| ctx.head_commit);
 
-    let mut active = 0u32;
-    let mut drifted = 0u32;
-    let mut stale = 0u32;
-    let mut archived = 0u32;
-    let mut skipped = 0u32;
+    let mut updates = Vec::new();
+    let mut skipped = 0usize;
 
     for bm in &bookmarks {
+        // Get previous resolution for location tracking
+        let previous_resolution = db.list_resolutions(&bm.id, 1).ok();
+        let previous_location = previous_resolution
+            .as_ref()
+            .and_then(|r| r.first())
+            .and_then(|r| r.byte_range.as_ref())
+            .and_then(|s| ByteLocation::from_str(s));
+
         // Skip heal if HEAD is before latest resolution (unless --force is set)
         if !args.force {
             if let Some(ref head) = current_head {
-                if let Ok(latest) = db.list_resolutions(&bm.id, 1) {
-                    if let Some(res) = latest.first() {
-                        if let Some(ref res_commit) = res.commit_hash {
-                            match git_context::is_ancestor(&cwd, head, res_commit) {
-                                Ok(true) => {
-                                    // HEAD is ancestor of resolution (resolution is ahead)
-                                    skipped += 1;
-                                    eprintln!(
-                                        "codemark: skipping {} (resolution at {} is ahead of HEAD {})",
-                                        short_id(&bm.id),
-                                        &res_commit[..8.min(res_commit.len())],
-                                        &head[..8.min(head.len())]
-                                    );
-                                    continue;
-                                }
-                                Ok(false) => {
-                                    // HEAD is ahead or unrelated, proceed with heal
-                                }
-                                Err(_) => {
-                                    // git error, proceed with heal (graceful degradation)
-                                }
+                if let Some(ref res) = previous_resolution.as_ref().and_then(|r| r.first()) {
+                    if let Some(ref res_commit) = res.commit_hash {
+                        match git_context::is_ancestor(&cwd, head, res_commit) {
+                            Ok(true) => {
+                                // HEAD is ancestor of resolution (resolution is ahead)
+                                skipped += 1;
+                                eprintln!(
+                                    "codemark: skipping {} (resolution at {} is ahead of HEAD {})",
+                                    short_id(&bm.id),
+                                    &res_commit[..8.min(res_commit.len())],
+                                    &head[..8.min(head.len())]
+                                );
+                                continue;
+                            }
+                            Ok(false) => {
+                                // HEAD is ahead or unrelated, proceed with heal
+                            }
+                            Err(_) => {
+                                // git error, proceed with heal (graceful degradation)
                             }
                         }
                     }
@@ -1022,6 +1025,7 @@ fn handle_heal(cli: &Cli, mode: &OutputMode, args: &HealArgs) -> Result<()> {
         let ts_lang = lang.tree_sitter_language();
         let result = resolution::resolve(bm, &mut cache, &ts_lang)?;
         let new_status = health::transition(bm.status, result.method, result.hash_matches);
+        let previous_status = bm.status;
 
         let stale_since = if new_status == BookmarkStatus::Stale {
             bm.stale_since.clone().or_else(|| Some(now_iso()))
@@ -1054,8 +1058,8 @@ fn handle_heal(cli: &Cli, mode: &OutputMode, args: &HealArgs) -> Result<()> {
             db.update_bookmark_query(&bm.id, new_query, &result.file_path, &result.content_hash)?;
         }
 
-        // Record resolution history unless --validate-only is set
-        if !args.validate_only {
+        // Track the resolution ID that was created (if any)
+        let resolution_id = if !args.validate_only {
             let res = Resolution {
                 id: uuid::Uuid::new_v4().to_string(),
                 bookmark_id: bm.id.clone(),
@@ -1069,49 +1073,55 @@ fn handle_heal(cli: &Cli, mode: &OutputMode, args: &HealArgs) -> Result<()> {
                 line_range: Some(format!("{}:{}", result.start_line + 1, result.end_line + 1)),
                 content_hash: Some(result.content_hash.clone()),
             };
+            let res_id = res.id.clone();
             let _ =
                 db.insert_resolution_if_changed(&res, config.storage.max_resolutions_per_bookmark);
-        }
+            Some(res_id)
+        } else {
+            None
+        };
 
-        match final_status {
-            BookmarkStatus::Active => active += 1,
-            BookmarkStatus::Drifted => drifted += 1,
-            BookmarkStatus::Stale => stale += 1,
-            BookmarkStatus::Archived => archived += 1,
-        }
+        // Build the new location (null if failed)
+        let new_location = if result.method != ResolutionMethod::Failed {
+            Some(ByteLocation {
+                start_byte: result.byte_range.0,
+                end_byte: result.byte_range.1,
+            })
+        } else {
+            None
+        };
+
+        // Generate a name for the bookmark (extract from query or use file)
+        let name = bm
+            .notes
+            .as_deref()
+            .or_else(|| {
+                // Try to extract function name from query
+                bm.query
+                    .lines()
+                    .find(|l| l.contains("#eq?"))
+                    .and_then(|l| l.split('"').nth(1))
+            })
+            .unwrap_or(&bm.file_path)
+            .to_string();
+
+        updates.push(HealUpdate {
+            bookmark_id: bm.id.clone(),
+            resolution_id,
+            name,
+            file_path: bm.file_path.clone(),
+            previous_status: previous_status.to_string(),
+            new_status: final_status.to_string(),
+            resolution_method: result.method.to_string(),
+            previous_location,
+            new_location,
+        });
     }
 
-    match mode {
-        OutputMode::Json => {
-            write_json_success(&serde_json::json!({
-                "active": active,
-                "drifted": drifted,
-                "stale": stale,
-                "archived": archived,
-                "skipped": skipped,
-                "total": bookmarks.len(),
-                "validate_only": args.validate_only,
-            }))?;
-        }
-        _ => {
-            let action = if args.validate_only { "Validated" } else { "Healed" };
-            let skipped_msg = if skipped > 0 {
-                format!(" ({} skipped - resolutions ahead of HEAD)", skipped)
-            } else {
-                String::new()
-            };
-            println!(
-                "{} {} bookmarks: {} active, {} drifted, {} stale, {} archived{}",
-                action,
-                bookmarks.len(),
-                active,
-                drifted,
-                stale,
-                archived,
-                skipped_msg
-            );
-        }
-    }
+    let total_processed = updates.len();
+    let output = HealOutput { total_processed, skipped, updates };
+
+    write_heal_output(mode, &output)?;
     Ok(())
 }
 
