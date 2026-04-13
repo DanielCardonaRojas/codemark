@@ -184,16 +184,51 @@ codemark heal [--file <path>] [--auto-archive] [--archive-after <days>] [--valid
 **JSON output**:
 ```json
 {
-  "status": "success",
+  "success": true,
   "data": {
-    "active": 42,
-    "drifted": 3,
-    "stale": 1,
-    "archived": 12,
-    "total": 58,
-    "validate_only": false
+    "total_processed": 58,
+    "skipped": 2,
+    "updates": [
+      {
+        "bookmark_id": "01abc123...",
+        "resolution_id": "02def456...",
+        "name": "validateToken",
+        "file_path": "src/auth.swift",
+        "previous_status": "drifted",
+        "new_status": "active",
+        "resolution_method": "exact",
+        "previous_location": { "start_byte": 811, "end_byte": 1302 },
+        "new_location": { "start_byte": 850, "end_byte": 1340 }
+      },
+      {
+        "bookmark_id": "03ghi789...",
+        "resolution_id": null,
+        "name": "deletedFunction",
+        "file_path": "src/old.rs",
+        "previous_status": "active",
+        "new_status": "stale",
+        "resolution_method": "failed",
+        "previous_location": { "start_byte": 100, "end_byte": 200 },
+        "new_location": null
+      }
+    ]
   }
 }
+```
+
+Field descriptions:
+- `total_processed`: Number of bookmarks that were healed
+- `skipped`: Number of bookmarks skipped (e.g., resolutions ahead of HEAD)
+- `updates`: Array of per-bookmark heal results
+  - `bookmark_id`: ID of the bookmark that was healed
+  - `resolution_id`: ID of the new resolution record (null if `--validate-only` or resolution failed)
+  - `name`: Bookmark name (from notes or extracted from query)
+  - `file_path`: Path to the bookmarked file
+  - `previous_status`: Status before heal (`active`, `drifted`, `stale`, `archived`)
+  - `new_status`: Status after heal
+  - `resolution_method`: Resolution tier used (`exact`, `relaxed`, `hash_fallback`, `failed`)
+  - `previous_location`: Previous byte range (if a prior resolution existed)
+  - `new_location`: New byte range (null if resolution failed)
 ```
 
 ---
