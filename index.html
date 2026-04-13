@@ -124,7 +124,7 @@
                 <span class="text-gradient">survive refactors.</span>
             </h1>
             <p class="mt-4 max-w-2xl mx-auto text-xl text-slate-400 mb-10">
-                Stop using fragile line numbers. Codemark stores <strong>tree-sitter</strong> queries to identify code by its AST shape. Persistent memory for developers and AI agents.
+                Stop using fragile line numbers. Codemark stores <strong>tree-sitter</strong> queries to identify code by its AST shape. Enrich your codebase with persistent notes, tags, and collections that survive the refactor.
             </p>
             
             <div class="flex flex-wrap justify-center gap-4 mb-12">
@@ -253,6 +253,118 @@ $ codemark search --semantic "database connection initialization"
                     <p class="text-slate-400 leading-relaxed">Auto-detects and parses Rust, Swift, TypeScript, Python, Go, Java, C#, and Dart files seamlessly.</p>
                 </div>
             </div>
+
+            <!-- Feature Comparison Table -->
+            <div class="mt-24">
+                <h3 class="text-2xl md:text-3xl font-bold mb-10 text-center">Beyond Simple Line Numbers</h3>
+                <div class="glass-panel rounded-2xl overflow-hidden overflow-x-auto border border-slate-700">
+                    <table class="w-full text-left border-collapse">
+                        <thead>
+                            <tr class="bg-slate-700/50">
+                                <th class="p-4 md:p-6 font-bold text-slate-200">Feature</th>
+                                <th class="p-4 md:p-6 font-bold text-slate-400">Standard IDE Bookmarks</th>
+                                <th class="p-4 md:p-6 font-bold text-primary-400">Codemark</th>
+                            </tr>
+                        </thead>
+                        <tbody class="divide-y divide-slate-700">
+                            <tr>
+                                <td class="p-4 md:p-6 font-medium text-slate-200">Refactor Resilience</td>
+                                <td class="p-4 md:p-6 text-slate-500">❌ Breaks on line shifts</td>
+                                <td class="p-4 md:p-6 text-slate-300 font-semibold">✅ Survives renames & moves</td>
+                            </tr>
+                            <tr>
+                                <td class="p-4 md:p-6 font-medium text-slate-200">Semantic Search</td>
+                                <td class="p-4 md:p-6 text-slate-500">❌ Literal text only</td>
+                                <td class="p-4 md:p-6 text-slate-300">✅ Local Vector Embeddings</td>
+                            </tr>
+                            <tr>
+                                <td class="p-4 md:p-6 font-medium text-slate-200">Rich Metadata</td>
+                                <td class="p-4 md:p-6 text-slate-500">❌ Minimal</td>
+                                <td class="p-4 md:p-6 text-slate-300">✅ Notes, Tags, & Authors</td>
+                            </tr>
+                            <tr>
+                                <td class="p-4 md:p-6 font-medium text-slate-200">Agent Integration</td>
+                                <td class="p-4 md:p-6 text-slate-500">❌ UI-only</td>
+                                <td class="p-4 md:p-6 text-slate-300">✅ LLM-Native Skills</td>
+                            </tr>
+                            <tr>
+                                <td class="p-4 md:p-6 font-medium text-slate-200">Organization</td>
+                                <td class="p-4 md:p-6 text-slate-500">❌ Flat list</td>
+                                <td class="p-4 md:p-6 text-slate-300">✅ Collections & Workspaces</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Metadata & Context Section -->
+    <section id="metadata" class="py-24 relative overflow-hidden">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="lg:flex items-center gap-16">
+                <div class="lg:w-1/2 mb-12 lg:mb-0">
+                    <h2 class="text-3xl md:text-4xl font-bold mb-6">Metadata & Contextual Memory</h2>
+                    <p class="text-slate-400 text-lg mb-8 leading-relaxed">
+                        A bookmark is more than just a pointer. It's a container for knowledge. Codemark allows you to attach rich metadata to any piece of code, creating a searchable map of your project's architecture.
+                    </p>
+                    <ul class="space-y-4">
+                        <li class="flex items-start gap-3">
+                            <div class="mt-1 bg-primary-500/20 text-primary-400 rounded-full p-1">
+                                <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+                                </svg>
+                            </div>
+                            <div>
+                                <span class="font-bold text-slate-200">Notes & Rationale:</span>
+                                <p class="text-slate-400">Explain *why* a piece of code exists, its side effects, or known debt.</p>
+                            </div>
+                        </li>
+                        <li class="flex items-start gap-3">
+                            <div class="mt-1 bg-primary-500/20 text-primary-400 rounded-full p-1">
+                                <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+                                </svg>
+                            </div>
+                            <div>
+                                <span class="font-bold text-slate-200">Categorization:</span>
+                                <p class="text-slate-400">Apply tags like <code class="bg-slate-800 px-1 rounded">#auth</code>, <code class="bg-slate-800 px-1 rounded">#vulnerability</code>, or <code class="bg-slate-800 px-1 rounded">#entrypoint</code>.</p>
+                            </div>
+                        </li>
+                        <li class="flex items-start gap-3">
+                            <div class="mt-1 bg-primary-500/20 text-primary-400 rounded-full p-1">
+                                <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+                                </svg>
+                            </div>
+                            <div>
+                                <span class="font-bold text-slate-200">Hierarchical Collections:</span>
+                                <p class="text-slate-400">Group bookmarks into named sets for feature development or bug investigations.</p>
+                            </div>
+                        </li>
+                    </ul>
+                </div>
+                <div class="lg:w-1/2">
+                    <div class="glass-panel p-2 rounded-xl border-slate-700 shadow-2xl">
+                        <div class="terminal-header px-4 py-2 flex items-center gap-2 rounded-t-lg">
+                            <div class="text-xs font-mono text-slate-400">codemark show a1b2 --format json</div>
+                        </div>
+                        <div class="bg-[#0d1117] p-4 rounded-b-lg overflow-x-auto">
+<pre class="!bg-transparent !m-0 !p-0"><code class="language-json">{
+  "id": "a1b2c3d",
+  "data": {
+    "file_path": "src/auth.rs",
+    "line_range": "42:67",
+    "note": "Critical JWT validation logic. Contact security team before modifying.",
+    "tags": ["auth", "security", "entrypoint"],
+    "created_by": "daniel",
+    "collection": "security-audit-2024"
+  }
+}</code></pre>
+                        </div>
+                    </div>
+                </div>
+            </div>
         </div>
     </section>
 
@@ -285,6 +397,54 @@ brew install codemark</code></pre>
                     </div>
                     <div class="p-4 bg-[#0d1117]">
                         <pre class="!bg-transparent !m-0 !p-0"><code class="language-bash">cargo install --path .</code></pre>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Agent Skills & Television Integration -->
+    <section class="py-24 bg-slate-800/20">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+            <div class="grid md:grid-cols-2 gap-12">
+                <!-- Agent Skills -->
+                <div>
+                    <div class="flex items-center gap-3 mb-6">
+                        <div class="bg-purple-500/20 text-purple-400 p-2 rounded-lg">
+                            <svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.364-6.364l-.707-.707M6.343 17.657l-.707.707m12.728 0l-.707-.707M12 11a1 1 0 100-2 1 1 0 000 2z" />
+                            </svg>
+                        </div>
+                        <h3 class="text-2xl font-bold">LLM Agent Skills</h3>
+                    </div>
+                    <p class="text-slate-400 mb-6 leading-relaxed">
+                        Codemark isn't just for humans. It provides a structured "memory" for AI agents. By providing a <code class="bg-slate-800 px-1 rounded">SKILL.md</code>, agents can autonomously bookmark critical discovery paths, helping them maintain context across long-running tasks.
+                    </p>
+                    <div class="bg-[#0d1117] p-4 rounded-xl border border-slate-700 font-mono text-sm overflow-x-auto">
+                        <span class="text-slate-500 italic"># Agent discovers auth logic</span><br>
+                        <span class="text-primary-400">$ codemark add --range 42 --author agent --note "Observed entrypoint"</span><br>
+                        <span class="text-green-400">✔ Bookmarked 'a1b2' for later reference</span>
+                    </div>
+                </div>
+
+                <!-- Television Integration -->
+                <div>
+                    <div class="flex items-center gap-3 mb-6">
+                        <div class="bg-blue-500/20 text-blue-400 p-2 rounded-lg">
+                            <svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
+                            </svg>
+                        </div>
+                        <h3 class="text-2xl font-bold">Television TUI</h3>
+                    </div>
+                    <p class="text-slate-400 mb-6 leading-relaxed">
+                        Navigate your codebase at the speed of thought. Use the <code class="bg-slate-800 px-1 rounded">--format tv</code> flag to integrate seamlessly with the <a href="https://github.com/alexpasmantier/television" class="text-blue-400 hover:underline">Television</a> fuzzy finder.
+                    </p>
+                    <div class="bg-[#0d1117] p-4 rounded-xl border border-slate-700 font-mono text-sm overflow-x-auto">
+                        <span class="text-slate-500 italic"># Launch interactive TUI</span><br>
+                        <span class="text-primary-400">$ tv codemark</span><br>
+                        <span class="text-slate-300">| a1b2 | src/auth.rs | JWT Logic |</span><br>
+                        <span class="text-slate-300">| b3c4 | src/db.rs   | Init Pool |</span>
                     </div>
                 </div>
             </div>
