@@ -45,6 +45,7 @@ pub fn dispatch(cli: &Cli) -> Result<()> {
         Command::Export(args) => handle_export(cli, args),
         Command::Import(args) => handle_import(cli, &mode, args),
         Command::Completions(args) => handle_completions(args),
+        Command::Annotate(args) => handle_annotate(cli, &mode, args),
     }
 }
 
@@ -1078,6 +1079,98 @@ fn handle_remove(cli: &Cli, mode: &OutputMode, args: &RemoveArgs) -> Result<()> 
     if not_found > 0 {
         return Err(Error::Input(format!("{not_found} bookmark(s) not found")));
     }
+    Ok(())
+}
+
+fn handle_annotate(cli: &Cli, mode: &OutputMode, args: &AnnotateArgs) -> Result<()> {
+    let db = open_db(cli)?;
+
+    // Validate that at least one of note, context, or tag is provided
+    if args.note.is_none() && args.context.is_none() && args.tag.is_empty() {
+        return Err(Error::Input(
+            "At least one of --note, --context, or --tag must be provided".to_string(),
+        ));
+    }
+
+    // Find the bookmark
+    let id = extract_id(&args.id);
+    let mut bm = find_bookmark(&db, id)?;
+
+    // Create annotation if note or context is provided
+    if args.note.is_some() || args.context.is_some() {
+        let annotation = Annotation {
+            id: uuid::Uuid::new_v4().to_string(),
+            bookmark_id: bm.id.clone(),
+            added_at: now_iso(),
+            added_by: Some(args.added_by.clone()),
+            notes: args.note.clone(),
+            context: args.context.clone(),
+            source: Some(args.source.clone()),
+        };
+        db.insert_annotation(&annotation)?;
+
+        // Re-fetch bookmark to get updated annotations
+        bm = find_bookmark(&db, id)?;
+    }
+
+    // Add tags if provided
+    if !args.tag.is_empty() {
+        let tags: Vec<Tag> = args
+            .tag
+            .iter()
+            .map(|t| Tag {
+                bookmark_id: bm.id.clone(),
+                tag: t.clone(),
+                added_at: now_iso(),
+                added_by: Some(args.added_by.clone()),
+            })
+            .collect();
+        db.insert_tags(&tags)?;
+
+        // Re-fetch bookmark to get updated tags
+        bm = find_bookmark(&db, id)?;
+    }
+
+    match mode {
+        OutputMode::Json => {
+            write_json_success(&serde_json::json!({
+                "id": bm.id,
+                "short_id": short_id(&bm.id),
+                "file_path": bm.file_path,
+                "language": bm.language,
+                "status": bm.status,
+                "tags": bm.tags,
+                "annotations": bm.annotations,
+                "created_at": bm.created_at,
+            }))?;
+        }
+        _ => {
+            println!("Annotated bookmark: {}", short_id(&bm.id));
+            println!("  File: {}", bm.file_path);
+            println!("  Language: {}", bm.language);
+            println!("  Status: {}", bm.status);
+            if !bm.tags.is_empty() {
+                println!("  Tags: {}", bm.tags.join(", "));
+            }
+            // Show the newly added annotation
+            let latest_ann = bm.annotations.last();
+            if let Some(ann) = latest_ann {
+                if let Some(ref note) = ann.notes {
+                    println!("  Note: {}", note);
+                }
+                if let Some(ref ctx) = ann.context {
+                    println!("  Context: {}", ctx);
+                }
+                println!("  Added by: {}", ann.added_by.as_deref().unwrap_or("unknown"));
+            }
+            // Show newly added tags
+            let added_tags: Vec<&str> = args.tag.iter().map(|t| t.as_str()).collect();
+            if !added_tags.is_empty() {
+                println!("  Tags: {}", added_tags.join(", "));
+            }
+        }
+    }
+
     Ok(())
 }
 
