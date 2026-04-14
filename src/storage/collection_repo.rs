@@ -186,11 +186,12 @@ mod tests {
     use crate::storage::db::Database;
 
     fn test_bookmark(id: &str) -> Bookmark {
+        // Use unique file_path and query to avoid UNIQUE constraint violations
         Bookmark {
             id: id.to_string(),
-            query: "(function_declaration) @target".to_string(),
+            query: format!("(function_declaration) @{} /* {} */", "target", id),
             language: "swift".to_string(),
-            file_path: "src/main.swift".to_string(),
+            file_path: format!("src/main_{}.swift", id),
             content_hash: None,
             commit_hash: None,
             status: BookmarkStatus::Active,
@@ -200,8 +201,7 @@ mod tests {
             created_at: "2026-04-01T00:00:00Z".to_string(),
             created_by: None,
             tags: vec![],
-            notes: None,
-            context: None,
+            annotations: vec![],
         }
     }
 
@@ -215,8 +215,14 @@ mod tests {
         }
     }
 
+    // Initialize test environment
+    fn init_test_env() {
+        crate::embeddings::VecStore::init_extension();
+    }
+
     #[test]
     fn create_and_get_collection() {
+        init_test_env();
         let db = Database::open_in_memory().unwrap();
         let col = test_collection("bugfix-auth");
         db.insert_collection(&col).unwrap();
@@ -228,6 +234,7 @@ mod tests {
 
     #[test]
     fn add_bookmarks_to_collection() {
+        init_test_env();
         let db = Database::open_in_memory().unwrap();
         db.insert_bookmark(&test_bookmark("bm-0001")).unwrap();
         db.insert_bookmark(&test_bookmark("bm-0002")).unwrap();
@@ -245,6 +252,7 @@ mod tests {
 
     #[test]
     fn list_collections_with_counts() {
+        init_test_env();
         let db = Database::open_in_memory().unwrap();
         db.insert_bookmark(&test_bookmark("bm-0001")).unwrap();
         db.insert_collection(&test_collection("col-a")).unwrap();
@@ -263,6 +271,7 @@ mod tests {
 
     #[test]
     fn delete_collection_preserves_bookmarks() {
+        init_test_env();
         let db = Database::open_in_memory().unwrap();
         db.insert_bookmark(&test_bookmark("bm-0001")).unwrap();
         db.insert_collection(&test_collection("temp")).unwrap();
@@ -279,6 +288,7 @@ mod tests {
 
     #[test]
     fn remove_from_collection() {
+        init_test_env();
         let db = Database::open_in_memory().unwrap();
         db.insert_bookmark(&test_bookmark("bm-0001")).unwrap();
         db.insert_collection(&test_collection("sprint-1")).unwrap();
@@ -293,6 +303,7 @@ mod tests {
 
     #[test]
     fn list_collections_for_bookmark() {
+        init_test_env();
         let db = Database::open_in_memory().unwrap();
         db.insert_bookmark(&test_bookmark("bm-0001")).unwrap();
         db.insert_collection(&test_collection("col-a")).unwrap();
@@ -306,6 +317,7 @@ mod tests {
 
     #[test]
     fn add_preserves_insertion_order() {
+        init_test_env();
         let db = Database::open_in_memory().unwrap();
         db.insert_bookmark(&test_bookmark("bm-0001")).unwrap();
         db.insert_bookmark(&test_bookmark("bm-0002")).unwrap();
@@ -331,6 +343,7 @@ mod tests {
 
     #[test]
     fn reorder_changes_order() {
+        init_test_env();
         let db = Database::open_in_memory().unwrap();
         db.insert_bookmark(&test_bookmark("bm-0001")).unwrap();
         db.insert_bookmark(&test_bookmark("bm-0002")).unwrap();
@@ -363,6 +376,7 @@ mod tests {
 
     #[test]
     fn add_at_position_inserts_and_shifts() {
+        init_test_env();
         let db = Database::open_in_memory().unwrap();
         db.insert_bookmark(&test_bookmark("bm-0001")).unwrap();
         db.insert_bookmark(&test_bookmark("bm-0002")).unwrap();

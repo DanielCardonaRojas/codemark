@@ -76,6 +76,25 @@ impl FromStr for ResolutionMethod {
 // --- Domain structs ---
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Annotation {
+    pub id: String,
+    pub bookmark_id: String,
+    pub added_at: String,
+    pub added_by: Option<String>,
+    pub notes: Option<String>,
+    pub context: Option<String>,
+    pub source: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Tag {
+    pub bookmark_id: String,
+    pub tag: String,
+    pub added_at: String,
+    pub added_by: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Bookmark {
     pub id: String,
     pub query: String,
@@ -89,9 +108,11 @@ pub struct Bookmark {
     pub stale_since: Option<String>,
     pub created_at: String,
     pub created_by: Option<String>,
+    // Aggregated from related tables
+    #[serde(default)]
     pub tags: Vec<String>,
-    pub notes: Option<String>,
-    pub context: Option<String>,
+    #[serde(default)]
+    pub annotations: Vec<Annotation>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -130,16 +151,6 @@ pub struct BookmarkFilter {
     pub limit: Option<usize>,
 }
 
-// --- Tag helpers ---
-
-pub fn tags_to_json(tags: &[String]) -> String {
-    serde_json::to_string(tags).unwrap_or_else(|_| "[]".to_string())
-}
-
-pub fn tags_from_json(json: &str) -> Vec<String> {
-    serde_json::from_str(json).unwrap_or_default()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -173,21 +184,6 @@ mod tests {
     }
 
     #[test]
-    fn tags_json_round_trip() {
-        let tags = vec!["auth".to_string(), "api-boundary".to_string()];
-        let json = tags_to_json(&tags);
-        let parsed = tags_from_json(&json);
-        assert_eq!(tags, parsed);
-    }
-
-    #[test]
-    fn tags_from_empty_json() {
-        assert!(tags_from_json("[]").is_empty());
-        assert!(tags_from_json("").is_empty());
-        assert!(tags_from_json("invalid").is_empty());
-    }
-
-    #[test]
     fn invalid_status_returns_error() {
         assert!("bogus".parse::<BookmarkStatus>().is_err());
     }
@@ -208,8 +204,7 @@ mod tests {
             created_at: "2026-04-01T00:00:00Z".into(),
             created_by: None,
             tags: vec!["auth".into()],
-            notes: Some("test note".into()),
-            context: None,
+            annotations: vec![],
         };
         let json = serde_json::to_string(&bookmark).unwrap();
         let parsed: Bookmark = serde_json::from_str(&json).unwrap();

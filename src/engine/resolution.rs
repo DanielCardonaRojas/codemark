@@ -222,8 +222,7 @@ mod tests {
             created_at: "2026-04-01T00:00:00Z".to_string(),
             created_by: None,
             tags: vec![],
-            notes: None,
-            context: None,
+            annotations: vec![],
         };
 
         (bm, cache)

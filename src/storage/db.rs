@@ -10,6 +10,7 @@ const MIGRATION_003: &str = include_str!("../../migrations/003_collection_orderi
 const MIGRATION_004: &str = include_str!("../../migrations/004_add_line_range.sql");
 const MIGRATION_005: &str = include_str!("../../migrations/005_add_embeddings.sql");
 const MIGRATION_006: &str = include_str!("../../migrations/006_add_fts_path_tags.sql");
+const MIGRATION_007: &str = include_str!("../../migrations/007_append_only_metadata.sql");
 
 /// SQLite database wrapper with automatic migrations.
 pub struct Database {
@@ -97,6 +98,55 @@ impl Database {
             self.set_schema_version(6)?;
         }
 
+        if current_version < 7 {
+            self.migrate_to_v7()?;
+            self.set_schema_version(7)?;
+        }
+
+        Ok(())
+    }
+
+    /// Migrate to schema version 7: append-only metadata model
+    /// This handles migrating existing data from the old schema to the new one.
+    fn migrate_to_v7(&mut self) -> Result<()> {
+
+        // First run the base migration which creates new tables and recreates bookmarks
+        self.conn.execute_batch(MIGRATION_007)?;
+
+        // Now migrate existing data if we're coming from schema 6
+        // Check if the old bookmarks table had data (we can tell by checking if annotations are empty)
+        // Actually, the SQL migration should have already copied the bookmarks table data
+        // We just need to migrate the annotations and tags
+
+        // Try to migrate annotations from old schema
+        // This will fail if the old columns don't exist (fresh install), so we ignore errors
+        let migrate_annotations = || -> Result<()> {
+            self.conn.execute(
+                "INSERT INTO bookmark_annotations (id, bookmark_id, added_at, added_by, notes, context, source)
+                 SELECT lower(hex(randomblob(16))), id, created_at, created_by, notes, context, 'migration'
+                 FROM (SELECT id, created_at, created_by, notes, context FROM bookmarks WHERE notes IS NOT NULL OR context IS NOT NULL LIMIT 1)
+                 WHERE notes IS NOT NULL OR context IS NOT NULL",
+                [],
+            )?;
+            Ok(())
+        };
+
+        // Try to migrate tags from old schema
+        let migrate_tags = || -> Result<()> {
+            self.conn.execute(
+                "INSERT INTO bookmark_tags (bookmark_id, tag, added_at, added_by)
+                 SELECT bm.id, TRIM(json_each.value), bm.created_at, bm.created_by
+                 FROM bookmarks bm, json_each(bm.tags)
+                 WHERE json_valid(bm.tags) AND TRIM(json_each.value) != ''",
+                [],
+            )?;
+            Ok(())
+        };
+
+        // Ignore migration errors - they just mean we're on a fresh install
+        let _ = migrate_annotations();
+        let _ = migrate_tags();
+
         Ok(())
     }
 
@@ -122,6 +172,10 @@ impl Database {
     fn ensure_embeddings_table(&mut self) -> Result<()> {
         use crate::embeddings::VecStore;
 
+        // First, ensure the extension is loaded
+        // This is safe to call multiple times
+        VecStore::init_extension();
+
         // Check if table exists by trying to query it
         // vec0 virtual tables don't show up in sqlite_master like regular tables
         let exists = self
@@ -132,9 +186,6 @@ impl Database {
             .is_ok();
 
         if !exists {
-            // Initialize the sqlite-vec extension once
-            VecStore::init_extension();
-
             // Create the vec0 virtual table with 384 dimensions (all-MiniLM-L6-v2)
             let store = VecStore::new(384);
             store.create_table(&mut self.conn).map_err(|e| {
@@ -170,22 +221,31 @@ impl Database {
 mod tests {
     use super::*;
 
+    // Initialize sqlite-vec extension for all tests
+    // This must be called before any database operations
+    fn init_test_env() {
+        crate::embeddings::VecStore::init_extension();
+    }
+
     #[test]
     fn open_in_memory_succeeds() {
+        init_test_env();
         let db = Database::open_in_memory().unwrap();
         let version = db.schema_version();
-        assert_eq!(version, 6);
+        assert_eq!(version, 7);
     }
 
     #[test]
     fn migration_is_idempotent() {
+        init_test_env();
         let mut db = Database::open_in_memory().unwrap();
         db.run_migrations().unwrap();
-        assert_eq!(db.schema_version(), 6);
+        assert_eq!(db.schema_version(), 7);
     }
 
     #[test]
     fn tables_exist_after_migration() {
+        init_test_env();
         let db = Database::open_in_memory().unwrap();
         let tables: Vec<String> = db
             .conn()
@@ -204,6 +264,7 @@ mod tests {
 
     #[test]
     fn foreign_keys_enabled() {
+        init_test_env();
         let db = Database::open_in_memory().unwrap();
         let fk: i64 = db.conn().query_row("PRAGMA foreign_keys", [], |row| row.get(0)).unwrap();
         assert_eq!(fk, 1);

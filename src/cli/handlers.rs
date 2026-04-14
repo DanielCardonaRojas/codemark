@@ -12,8 +12,7 @@ use crate::cli::*;
 use crate::config::Config;
 use crate::embeddings::config::EmbeddingModel;
 use crate::engine::bookmark::{
-    Bookmark, BookmarkFilter, BookmarkStatus, Collection, Resolution, ResolutionMethod,
-    tags_to_json,
+    Annotation, Bookmark, BookmarkFilter, BookmarkStatus, Collection, Resolution, ResolutionMethod, Tag,
 };
 use crate::engine::{hash, health, resolution};
 use crate::error::{Error, Result};
@@ -420,49 +419,85 @@ fn handle_add(cli: &Cli, mode: &OutputMode, args: &AddArgs) -> Result<()> {
     let cwd = std::env::current_dir()?;
     let commit_hash = git_context::detect_context(&cwd).and_then(|ctx| ctx.head_commit);
 
+    let bookmark_id = uuid::Uuid::new_v4().to_string();
     let bookmark = Bookmark {
-        id: uuid::Uuid::new_v4().to_string(),
+        id: bookmark_id.clone(),
         query: generated.query.clone(),
         language: lang.to_string(),
-        file_path: rel_path,
+        file_path: rel_path.clone(),
         content_hash: Some(content_hash.clone()),
-        commit_hash,
+        commit_hash: commit_hash.clone(),
         status: BookmarkStatus::Active,
         resolution_method: Some(ResolutionMethod::Exact),
         last_resolved_at: Some(now_iso()),
         stale_since: None,
         created_at: now_iso(),
         created_by: Some(args.created_by.clone()),
-        tags: args.tag.clone(),
-        notes: args.note.clone(),
-        context: args.context.clone(),
+        tags: vec![],
+        annotations: vec![],
     };
 
-    db.insert_bookmark(&bookmark)?;
+    // Insert bookmark - will return existing ID if duplicate
+    let actual_bookmark_id = db.insert_bookmark(&bookmark)?;
+    let is_new = actual_bookmark_id == bookmark_id;
+
+    // Insert annotation with notes and context if provided
+    if args.note.is_some() || args.context.is_some() {
+        let annotation = Annotation {
+            id: uuid::Uuid::new_v4().to_string(),
+            bookmark_id: actual_bookmark_id.clone(),
+            added_at: now_iso(),
+            added_by: Some(args.created_by.clone()),
+            notes: args.note.clone(),
+            context: args.context.clone(),
+            source: Some("cli".to_string()),
+        };
+        db.insert_annotation(&annotation)?;
+    }
+
+    // Insert tags if provided
+    if !args.tag.is_empty() {
+        let tags: Vec<Tag> = args
+            .tag
+            .iter()
+            .map(|t| Tag {
+                bookmark_id: actual_bookmark_id.clone(),
+                tag: t.clone(),
+                added_at: now_iso(),
+                added_by: Some(args.created_by.clone()),
+            })
+            .collect();
+        db.insert_tags(&tags)?;
+    }
+
+    // For output, we need the full bookmark with metadata
+    let bookmark = db.get_bookmark(&actual_bookmark_id)?.unwrap();
 
     // Generate embedding for semantic search
     let config = load_config(cli);
     // Ignore embedding errors - shouldn't block bookmark creation
     let _ = generate_embedding_for_bookmark(cli, &config, &bookmark);
 
-    // Record initial resolution as baseline
-    let initial_res = Resolution {
-        id: uuid::Uuid::new_v4().to_string(),
-        bookmark_id: bookmark.id.clone(),
-        resolved_at: now_iso(),
-        commit_hash: bookmark.commit_hash.clone(),
-        method: ResolutionMethod::Exact,
-        match_count: Some(match_count as i32),
-        file_path: Some(bookmark.file_path.clone()),
-        byte_range: Some(format!("{}:{}", generated.byte_range.0, generated.byte_range.1)),
-        line_range: Some(format!("{}:{}", target_start_line, target_end_line)),
-        content_hash: Some(content_hash.clone()),
-    };
-    db.insert_resolution_if_changed(&initial_res, config.storage.max_resolutions_per_bookmark)?;
+    // Record initial resolution as baseline (only if new bookmark)
+    if is_new {
+        let initial_res = Resolution {
+            id: uuid::Uuid::new_v4().to_string(),
+            bookmark_id: actual_bookmark_id.clone(),
+            resolved_at: now_iso(),
+            commit_hash,
+            method: ResolutionMethod::Exact,
+            match_count: Some(match_count as i32),
+            file_path: Some(bookmark.file_path.clone()),
+            byte_range: Some(format!("{}:{}", generated.byte_range.0, generated.byte_range.1)),
+            line_range: Some(format!("{}:{}", target_start_line, target_end_line)),
+            content_hash: Some(content_hash.clone()),
+        };
+        db.insert_resolution_if_changed(&initial_res, config.storage.max_resolutions_per_bookmark)?;
+    }
 
     // Add to collection if specified
     let collection_name = if let Some(ref coll_name) = args.collection {
-        add_bookmark_to_collection(&db, &bookmark.id, coll_name)?
+        add_bookmark_to_collection(&db, &actual_bookmark_id, coll_name)?
     } else {
         None
     };
@@ -470,7 +505,7 @@ fn handle_add(cli: &Cli, mode: &OutputMode, args: &AddArgs) -> Result<()> {
     match mode {
         OutputMode::Json => {
             let mut json_data = serde_json::json!({
-                "id": bookmark.id,
+                "id": actual_bookmark_id,
                 "query": generated.query,
                 "node_type": generated.target_node_type,
                 "name": generated.target_name,
@@ -478,6 +513,7 @@ fn handle_add(cli: &Cli, mode: &OutputMode, args: &AddArgs) -> Result<()> {
                 "content_hash": content_hash,
                 "unique": match_count == 1,
                 "created_by": bookmark.created_by,
+                "new": is_new,
             });
             if let Some(ref coll) = collection_name {
                 json_data["collection"] = serde_json::json!(coll);
@@ -485,7 +521,8 @@ fn handle_add(cli: &Cli, mode: &OutputMode, args: &AddArgs) -> Result<()> {
             write_json_success(&json_data)?;
         }
         _ => {
-            println!("Bookmark created: {}", output::short_id(&bookmark.id));
+            let action = if is_new { "created" } else { "updated" };
+            println!("Bookmark {action}: {}", output::short_id(&actual_bookmark_id));
             println!("  Node type: {}", generated.target_node_type);
             if let Some(ref name) = generated.target_name {
                 println!("  Target: {name}");
@@ -546,49 +583,85 @@ fn handle_add_from_snippet(cli: &Cli, mode: &OutputMode, args: &AddFromSnippetAr
     let cwd = std::env::current_dir()?;
     let commit_hash = git_context::detect_context(&cwd).and_then(|ctx| ctx.head_commit);
 
+    let bookmark_id = uuid::Uuid::new_v4().to_string();
     let bookmark = Bookmark {
-        id: uuid::Uuid::new_v4().to_string(),
+        id: bookmark_id.clone(),
         query: generated.query.clone(),
         language: lang.to_string(),
-        file_path: rel_path,
+        file_path: rel_path.clone(),
         content_hash: Some(content_hash.clone()),
-        commit_hash,
+        commit_hash: commit_hash.clone(),
         status: BookmarkStatus::Active,
         resolution_method: Some(ResolutionMethod::Exact),
         last_resolved_at: Some(now_iso()),
         stale_since: None,
         created_at: now_iso(),
         created_by: Some(args.created_by.clone()),
-        tags: args.tag.clone(),
-        notes: args.note.clone(),
-        context: args.context.clone(),
+        tags: vec![],
+        annotations: vec![],
     };
 
-    db.insert_bookmark(&bookmark)?;
+    // Insert bookmark - will return existing ID if duplicate
+    let actual_bookmark_id = db.insert_bookmark(&bookmark)?;
+    let is_new = actual_bookmark_id == bookmark_id;
+
+    // Insert annotation with notes and context if provided
+    if args.note.is_some() || args.context.is_some() {
+        let annotation = Annotation {
+            id: uuid::Uuid::new_v4().to_string(),
+            bookmark_id: actual_bookmark_id.clone(),
+            added_at: now_iso(),
+            added_by: Some(args.created_by.clone()),
+            notes: args.note.clone(),
+            context: args.context.clone(),
+            source: Some("cli".to_string()),
+        };
+        db.insert_annotation(&annotation)?;
+    }
+
+    // Insert tags if provided
+    if !args.tag.is_empty() {
+        let tags: Vec<Tag> = args
+            .tag
+            .iter()
+            .map(|t| Tag {
+                bookmark_id: actual_bookmark_id.clone(),
+                tag: t.clone(),
+                added_at: now_iso(),
+                added_by: Some(args.created_by.clone()),
+            })
+            .collect();
+        db.insert_tags(&tags)?;
+    }
+
+    // For output, we need the full bookmark with metadata
+    let bookmark = db.get_bookmark(&actual_bookmark_id)?.unwrap();
 
     // Generate embedding for semantic search
     let config = load_config(cli);
     // Ignore embedding errors - shouldn't block bookmark creation
     let _ = generate_embedding_for_bookmark(cli, &config, &bookmark);
 
-    // Record initial resolution as baseline
-    let initial_res = Resolution {
-        id: uuid::Uuid::new_v4().to_string(),
-        bookmark_id: bookmark.id.clone(),
-        resolved_at: now_iso(),
-        commit_hash: bookmark.commit_hash.clone(),
-        method: ResolutionMethod::Exact,
-        match_count: Some(match_count as i32),
-        file_path: Some(bookmark.file_path.clone()),
-        byte_range: Some(format!("{}:{}", generated.byte_range.0, generated.byte_range.1)),
-        line_range: Some(format!("{}:{}", target_start_line, target_end_line)),
-        content_hash: Some(content_hash.clone()),
-    };
-    db.insert_resolution_if_changed(&initial_res, config.storage.max_resolutions_per_bookmark)?;
+    // Record initial resolution as baseline (only if new bookmark)
+    if is_new {
+        let initial_res = Resolution {
+            id: uuid::Uuid::new_v4().to_string(),
+            bookmark_id: actual_bookmark_id.clone(),
+            resolved_at: now_iso(),
+            commit_hash,
+            method: ResolutionMethod::Exact,
+            match_count: Some(match_count as i32),
+            file_path: Some(bookmark.file_path.clone()),
+            byte_range: Some(format!("{}:{}", generated.byte_range.0, generated.byte_range.1)),
+            line_range: Some(format!("{}:{}", target_start_line, target_end_line)),
+            content_hash: Some(content_hash.clone()),
+        };
+        db.insert_resolution_if_changed(&initial_res, config.storage.max_resolutions_per_bookmark)?;
+    }
 
     // Add to collection if specified
     let collection_name = if let Some(ref coll_name) = args.collection {
-        add_bookmark_to_collection(&db, &bookmark.id, coll_name)?
+        add_bookmark_to_collection(&db, &actual_bookmark_id, coll_name)?
     } else {
         None
     };
@@ -596,12 +669,13 @@ fn handle_add_from_snippet(cli: &Cli, mode: &OutputMode, args: &AddFromSnippetAr
     match mode {
         OutputMode::Json => {
             let mut json_data = serde_json::json!({
-                "id": bookmark.id,
+                "id": actual_bookmark_id,
                 "query": generated.query,
                 "node_type": generated.target_node_type,
                 "name": generated.target_name,
                 "content_hash": content_hash,
                 "created_by": bookmark.created_by,
+                "new": is_new,
             });
             if let Some(ref coll) = collection_name {
                 json_data["collection"] = serde_json::json!(coll);
@@ -609,7 +683,8 @@ fn handle_add_from_snippet(cli: &Cli, mode: &OutputMode, args: &AddFromSnippetAr
             write_json_success(&json_data)?;
         }
         _ => {
-            println!("Bookmark created: {}", output::short_id(&bookmark.id));
+            let action = if is_new { "created" } else { "updated" };
+            println!("Bookmark {action}: {}", output::short_id(&actual_bookmark_id));
             if let Some(ref name) = generated.target_name {
                 println!("  Target: {name}");
             }
@@ -676,49 +751,85 @@ fn handle_add_from_query(cli: &Cli, mode: &OutputMode, args: &AddFromQueryArgs) 
     let cwd = std::env::current_dir()?;
     let commit_hash = git_context::detect_context(&cwd).and_then(|ctx| ctx.head_commit);
 
+    let bookmark_id = uuid::Uuid::new_v4().to_string();
     let bookmark = Bookmark {
-        id: uuid::Uuid::new_v4().to_string(),
+        id: bookmark_id.clone(),
         query: args.query.clone(),
         language: lang.to_string(),
-        file_path: rel_path,
+        file_path: rel_path.clone(),
         content_hash: Some(content_hash.clone()),
-        commit_hash,
+        commit_hash: commit_hash.clone(),
         status: BookmarkStatus::Active,
         resolution_method: Some(ResolutionMethod::Exact),
         last_resolved_at: Some(now_iso()),
         stale_since: None,
         created_at: now_iso(),
         created_by: Some(args.created_by.clone()),
-        tags: args.tag.clone(),
-        notes: args.note.clone(),
-        context: args.context.clone(),
+        tags: vec![],
+        annotations: vec![],
     };
 
-    db.insert_bookmark(&bookmark)?;
+    // Insert bookmark - will return existing ID if duplicate
+    let actual_bookmark_id = db.insert_bookmark(&bookmark)?;
+    let is_new = actual_bookmark_id == bookmark_id;
+
+    // Insert annotation with notes and context if provided
+    if args.note.is_some() || args.context.is_some() {
+        let annotation = Annotation {
+            id: uuid::Uuid::new_v4().to_string(),
+            bookmark_id: actual_bookmark_id.clone(),
+            added_at: now_iso(),
+            added_by: Some(args.created_by.clone()),
+            notes: args.note.clone(),
+            context: args.context.clone(),
+            source: Some("cli".to_string()),
+        };
+        db.insert_annotation(&annotation)?;
+    }
+
+    // Insert tags if provided
+    if !args.tag.is_empty() {
+        let tags: Vec<Tag> = args
+            .tag
+            .iter()
+            .map(|t| Tag {
+                bookmark_id: actual_bookmark_id.clone(),
+                tag: t.clone(),
+                added_at: now_iso(),
+                added_by: Some(args.created_by.clone()),
+            })
+            .collect();
+        db.insert_tags(&tags)?;
+    }
+
+    // For output, we need the full bookmark with metadata
+    let bookmark = db.get_bookmark(&actual_bookmark_id)?.unwrap();
 
     // Generate embedding for semantic search
     let config = load_config(cli);
     // Ignore embedding errors - shouldn't block bookmark creation
     let _ = generate_embedding_for_bookmark(cli, &config, &bookmark);
 
-    // Record initial resolution as baseline
-    let initial_res = Resolution {
-        id: uuid::Uuid::new_v4().to_string(),
-        bookmark_id: bookmark.id.clone(),
-        resolved_at: now_iso(),
-        commit_hash: bookmark.commit_hash.clone(),
-        method: ResolutionMethod::Exact,
-        match_count: Some(matches.len() as i32),
-        file_path: Some(bookmark.file_path.clone()),
-        byte_range: Some(format!("{}:{}", byte_range.0, byte_range.1)),
-        line_range: Some(format!("{}:{}", target_start_line, target_end_line)),
-        content_hash: Some(content_hash.clone()),
-    };
-    db.insert_resolution_if_changed(&initial_res, config.storage.max_resolutions_per_bookmark)?;
+    // Record initial resolution as baseline (only if new bookmark)
+    if is_new {
+        let initial_res = Resolution {
+            id: uuid::Uuid::new_v4().to_string(),
+            bookmark_id: actual_bookmark_id.clone(),
+            resolved_at: now_iso(),
+            commit_hash,
+            method: ResolutionMethod::Exact,
+            match_count: Some(matches.len() as i32),
+            file_path: Some(bookmark.file_path.clone()),
+            byte_range: Some(format!("{}:{}", byte_range.0, byte_range.1)),
+            line_range: Some(format!("{}:{}", target_start_line, target_end_line)),
+            content_hash: Some(content_hash.clone()),
+        };
+        db.insert_resolution_if_changed(&initial_res, config.storage.max_resolutions_per_bookmark)?;
+    }
 
     // Add to collection if specified
     let collection_name = if let Some(ref coll_name) = args.collection {
-        add_bookmark_to_collection(&db, &bookmark.id, coll_name)?
+        add_bookmark_to_collection(&db, &actual_bookmark_id, coll_name)?
     } else {
         None
     };
@@ -726,11 +837,12 @@ fn handle_add_from_query(cli: &Cli, mode: &OutputMode, args: &AddFromQueryArgs) 
     match mode {
         OutputMode::Json => {
             let mut json_data = serde_json::json!({
-                "id": bookmark.id,
+                "id": actual_bookmark_id,
                 "query": args.query,
                 "node_type": node_type,
                 "content_hash": content_hash,
                 "created_by": bookmark.created_by,
+                "new": is_new,
             });
             if let Some(ref coll) = collection_name {
                 json_data["collection"] = serde_json::json!(coll);
@@ -738,7 +850,8 @@ fn handle_add_from_query(cli: &Cli, mode: &OutputMode, args: &AddFromQueryArgs) 
             write_json_success(&json_data)?;
         }
         _ => {
-            println!("Bookmark created: {}", output::short_id(&bookmark.id));
+            let action = if is_new { "created" } else { "updated" };
+            println!("Bookmark {action}: {}", output::short_id(&actual_bookmark_id));
             println!("  Node type: {node_type}");
             if matches.len() > 1 {
                 println!("  Warning: query matches {} nodes", matches.len());
@@ -896,11 +1009,17 @@ fn handle_show(cli: &Cli, mode: &OutputMode, args: &ShowArgs) -> Result<()> {
             if !bm.tags.is_empty() {
                 println!("Tags:        {}", bm.tags.join(", "));
             }
-            if let Some(ref note) = bm.notes {
-                println!("Note:        {note}");
-            }
-            if let Some(ref ctx) = bm.context {
-                println!("Context:     {ctx}");
+            // Display annotations (notes and context)
+            for ann in &bm.annotations {
+                if let Some(ref note) = ann.notes {
+                    println!("Note:        {note}");
+                }
+                if let Some(ref ctx) = ann.context {
+                    println!("Context:     {ctx}");
+                }
+                if let Some(ref added_by) = ann.added_by {
+                    println!("  (by {added_by}, {})", ann.added_at);
+                }
             }
             if let Some(ref method) = bm.resolution_method {
                 println!("Resolution:  {method}");
@@ -1088,10 +1207,11 @@ fn handle_heal(cli: &Cli, mode: &OutputMode, args: &HealArgs) -> Result<()> {
             None
         };
 
-        // Generate a name for the bookmark (extract from query or use file)
+        // Generate a name for the bookmark (extract from annotations or use file)
         let name = bm
-            .notes
-            .as_deref()
+            .annotations
+            .first()
+            .and_then(|a| a.notes.as_deref())
             .or_else(|| {
                 // Try to extract function name from query
                 bm.query.lines().find(|l| l.contains("#eq?")).and_then(|l| l.split('"').nth(1))
@@ -1414,6 +1534,8 @@ fn handle_semantic_search(
         let data: Vec<serde_json::Value> = bookmarks
             .into_iter()
             .map(|(distance, bm)| {
+                // Collect all annotations for JSON output
+                let annotations: Vec<&Annotation> = bm.annotations.iter().collect();
                 serde_json::json!({
                     "id": bm.id,
                     "short_id": short_id(&bm.id),
@@ -1422,8 +1544,7 @@ fn handle_semantic_search(
                     "file_path": bm.file_path,
                     "status": bm.status,
                     "tags": bm.tags,
-                    "notes": bm.notes,
-                    "context": bm.context,
+                    "annotations": annotations,
                     "created_at": bm.created_at,
                     "created_by": bm.created_by,
                     "distance": distance,
@@ -1442,7 +1563,11 @@ fn handle_semantic_search(
 
         for (distance, bm) in bookmarks {
             let tags_str = bm.tags.join(", ");
-            let notes = bm.notes.as_deref().unwrap_or("").to_string();
+            // Get the first annotation's notes, or empty string
+            let notes = bm.annotations.first()
+                .and_then(|a| a.notes.as_deref())
+                .unwrap_or("")
+                .to_string();
             let notes_trunc = if notes.len() > 30 { format!("{}...", &notes[..27]) } else { notes };
 
             table.add_row(vec![
@@ -1597,8 +1722,11 @@ fn handle_diff(cli: &Cli, mode: &OutputMode, args: &DiffArgs) -> Result<()> {
                     result.method,
                     status_change
                 );
-                if let Some(ref note) = bm.notes {
-                    println!("    {note}");
+                // Display first annotation's notes if available
+                if let Some(ref ann) = bm.annotations.first() {
+                    if let Some(ref note) = ann.notes {
+                        println!("    {note}");
+                    }
                 }
             }
         }
@@ -1645,14 +1773,18 @@ fn handle_export(cli: &Cli, args: &ExportArgs) -> Result<()> {
         ExportFormat::Csv => {
             println!("id,file_path,language,status,tags,notes");
             for bm in &bookmarks {
+                // For CSV, we use the first annotation's notes
+                let notes = bm.annotations.first()
+                    .and_then(|a| a.notes.as_deref())
+                    .unwrap_or("");
                 println!(
                     "{},{},{},{},{},{}",
                     bm.id,
                     bm.file_path,
                     bm.language,
                     bm.status,
-                    tags_to_json(&bm.tags),
-                    bm.notes.as_deref().unwrap_or("")
+                    serde_json::to_string(&bm.tags).unwrap_or_else(|_| "[]".to_string()),
+                    notes
                 );
             }
         }
@@ -1673,8 +1805,32 @@ fn handle_import(cli: &Cli, mode: &OutputMode, args: &ImportArgs) -> Result<()> 
         if db.get_bookmark(&bm.id)?.is_some() {
             skipped += 1;
         } else {
-            db.insert_bookmark(bm)?;
-            imported_bookmarks.push(bm.clone());
+            // Insert the bookmark (without annotations/tags in the main table)
+            let bookmark_id = db.insert_bookmark(bm)?;
+
+            // Insert annotations if present
+            for ann in &bm.annotations {
+                let mut new_ann = ann.clone();
+                new_ann.bookmark_id = bookmark_id.clone();
+                db.insert_annotation(&new_ann)?;
+            }
+
+            // Insert tags if present
+            if !bm.tags.is_empty() {
+                let tags: Vec<Tag> = bm.tags.iter().map(|t| Tag {
+                    bookmark_id: bookmark_id.clone(),
+                    tag: t.clone(),
+                    added_at: now_iso(),
+                    added_by: bm.created_by.clone(),
+                }).collect();
+                db.insert_tags(&tags)?;
+            }
+
+            // Fetch the full bookmark with metadata for embedding generation
+            if let Ok(Some(full_bm)) = db.get_bookmark(&bookmark_id) {
+                imported_bookmarks.push(full_bm);
+            }
+
             imported += 1;
         }
     }
@@ -2053,6 +2209,10 @@ fn write_resolution_output(
     bm: &Bookmark,
     result: &resolution::ResolutionResult,
 ) -> Result<()> {
+    // Get first annotation's note for display
+    let note = bm.annotations.first()
+        .and_then(|a| a.notes.as_deref());
+
     match mode {
         OutputMode::Json => {
             write_json_success(&serde_json::json!({
@@ -2064,7 +2224,7 @@ fn write_resolution_output(
                 "method": result.method.to_string(),
                 "status": health::transition(bm.status, result.method, result.hash_matches).to_string(),
                 "preview": result.matched_text.lines().next().unwrap_or(""),
-                "note": bm.notes,
+                "note": note,
                 "tags": bm.tags,
             }))?;
         }
@@ -2078,7 +2238,7 @@ fn write_resolution_output(
                 result.start_line + 1,
                 result.method,
                 bm.tags.join(","),
-                bm.notes.as_deref().unwrap_or("")
+                note.unwrap_or("")
             )?;
         }
         _ => {
