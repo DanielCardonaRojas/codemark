@@ -43,9 +43,8 @@ CREATE TABLE bookmarks (
     -- metadata
     created_at        TEXT NOT NULL,          -- ISO 8601
     created_by        TEXT,                   -- agent session identifier
-    tags              TEXT,                   -- JSON array: ["auth", "api-boundary"]
-    notes             TEXT,                   -- agent semantic annotation
-    context           TEXT                    -- what the agent was doing
+
+    UNIQUE(file_path, query)                  -- prevent duplicate bookmarks
 );
 
 CREATE INDEX idx_bookmarks_status ON bookmarks(status);
@@ -53,7 +52,43 @@ CREATE INDEX idx_bookmarks_file ON bookmarks(file_path);
 CREATE INDEX idx_bookmarks_language ON bookmarks(language);
 ```
 
-**Note on tags**: Stored as a JSON array in a TEXT column. Queried via `json_each()` for filtering. This avoids a join table for what is fundamentally a simple label system with low cardinality. SQLite's JSON support is sufficient.
+**Note**: As of migration 007, `tags`, `notes`, and `context` are stored in separate tables (see below) to support append-only metadata for multi-agent workflows.
+
+### Bookmark Annotations Table (Append-Only Metadata)
+
+```sql
+CREATE TABLE bookmark_annotations (
+    id          TEXT PRIMARY KEY,       -- UUIDv4
+    bookmark_id TEXT NOT NULL REFERENCES bookmarks(id) ON DELETE CASCADE,
+    added_at    TEXT NOT NULL,          -- ISO 8601
+    added_by    TEXT,                   -- agent or user identifier
+    notes       TEXT,                   -- semantic annotation
+    context     TEXT,                   -- what the agent was doing
+    source      TEXT                    -- where annotation came from (cli, claude-code, etc.)
+);
+
+CREATE INDEX idx_annotations_bookmark ON bookmark_annotations(bookmark_id);
+CREATE INDEX idx_annotations_added ON bookmark_annotations(added_at);
+```
+
+**Append-only design**: Each time an AI agent or user adds context to a bookmark, a new row is created. This allows multiple agents to collaboratively build context without creating duplicate bookmarks.
+
+### Bookmark Tags Table (Many-to-Many)
+
+```sql
+CREATE TABLE bookmark_tags (
+    bookmark_id TEXT NOT NULL REFERENCES bookmarks(id) ON DELETE CASCADE,
+    tag         TEXT NOT NULL,          -- tag label
+    added_at    TEXT NOT NULL,          -- ISO 8601
+    added_by    TEXT,                   -- agent or user identifier
+    PRIMARY KEY (bookmark_id, tag)      -- prevents duplicate tags
+);
+
+CREATE INDEX idx_tags_bookmark ON bookmark_tags(bookmark_id);
+CREATE INDEX idx_tags_tag ON bookmark_tags(tag);
+```
+
+**Append-only**: Adding the same tag twice is silently ignored (PRIMARY KEY constraint). Tags accumulate over time as different agents contribute to the same bookmark.
 
 ### Resolutions Table
 
@@ -171,22 +206,39 @@ The `bookmark_embeddings` table stores vector representations of bookmark metada
 
 ### Find all active bookmarks for a file
 ```sql
-SELECT id, notes, tags, last_resolved_at
-FROM bookmarks
-WHERE file_path = 'src/auth/middleware.swift'
-  AND status = 'active'
-ORDER BY last_resolved_at DESC;
+SELECT b.id, b.file_path, b.status, b.last_resolved_at,
+       GROUP_CONCAT(bt.tag, ',') as tags
+FROM bookmarks b
+LEFT JOIN bookmark_tags bt ON b.id = bt.bookmark_id
+WHERE b.file_path = 'src/auth/middleware.swift'
+  AND b.status = 'active'
+GROUP BY b.id
+ORDER BY b.last_resolved_at DESC;
 ```
 
 ### Find bookmarks by tag
 ```sql
-SELECT b.id, b.file_path, b.notes, b.status
+SELECT b.id, b.file_path, b.status, b.created_at,
+       GROUP_CONCAT(bt.tag, ',') as tags
 FROM bookmarks b
-WHERE EXISTS (
-    SELECT 1 FROM json_each(b.tags) WHERE value = 'auth'
-)
-AND b.status IN ('active', 'drifted')
+JOIN bookmark_tags bt ON b.id = bt.bookmark_id
+WHERE bt.tag = 'auth'
+  AND b.status IN ('active', 'drifted')
+GROUP BY b.id
 ORDER BY b.created_at DESC;
+```
+
+### Search in notes and context
+```sql
+SELECT DISTINCT b.id, b.file_path,
+       GROUP_CONCAT(DISTINCT bt.tag, ',') as tags,
+       GROUP_CONCAT(DISTINCT ba.notes, '; ') as notes
+FROM bookmarks b
+LEFT JOIN bookmark_tags bt ON b.id = bt.bookmark_id
+LEFT JOIN bookmark_annotations ba ON b.id = ba.bookmark_id
+WHERE (ba.notes LIKE '%search term%' OR ba.context LIKE '%search term%')
+  AND b.status IN ('active', 'drifted')
+GROUP BY b.id;
 ```
 
 ### Get resolution history for a bookmark
@@ -216,21 +268,29 @@ ORDER BY c.name;
 
 ### Get bookmarks in a collection
 ```sql
-SELECT b.id, b.file_path, b.notes, b.status, b.tags
+SELECT b.id, b.file_path, b.status,
+       GROUP_CONCAT(DISTINCT bt.tag, ',') as tags,
+       GROUP_CONCAT(DISTINCT ba.notes, '; ') as notes
 FROM bookmarks b
 JOIN collection_bookmarks cb ON b.id = cb.bookmark_id
 JOIN collections c ON cb.collection_id = c.id
+LEFT JOIN bookmark_tags bt ON b.id = bt.bookmark_id
+LEFT JOIN bookmark_annotations ba ON b.id = ba.bookmark_id
 WHERE c.name = ?
-AND b.status IN ('active', 'drifted')
-ORDER BY b.file_path, b.created_at;
+  AND b.status IN ('active', 'drifted')
+GROUP BY b.id
+ORDER BY cb.added_at;
 ```
 
 ### Stale bookmarks older than N days
 ```sql
-SELECT id, file_path, notes, stale_since
-FROM bookmarks
-WHERE status = 'stale'
-  AND stale_since < datetime('now', '-7 days');
+SELECT b.id, b.file_path, b.stale_since,
+       GROUP_CONCAT(DISTINCT ba.notes, '; ') as notes
+FROM bookmarks b
+LEFT JOIN bookmark_annotations ba ON b.id = ba.bookmark_id
+WHERE b.status = 'stale'
+  AND b.stale_since < datetime('now', '-7 days')
+GROUP BY b.id;
 ```
 
 ## Migration Strategy
@@ -246,8 +306,39 @@ Each migration file is numbered and idempotent:
 migrations/
 ├── 001_initial.sql          # Creates bookmarks, resolutions, collections, collection_bookmarks, schema_meta
 ├── 002_add_fts.sql          # Adds FTS5 virtual table (future)
-└── ...
+├── ...
+└── 007_append_only_metadata.sql # Adds bookmark_annotations and bookmark_tags tables
 ```
+
+## Append-Only Metadata (Migration 007)
+
+As of schema version 7, codemark uses an append-only metadata model to support multi-agent workflows:
+
+**Key Design Decisions:**
+
+1. **Unique Bookmarks**: The `UNIQUE(file_path, query)` constraint ensures that the same code location can only have one bookmark. Re-bookmarking returns the existing bookmark ID instead of creating a duplicate.
+
+2. **Annotations Accumulate**: Each call to `codemark add` with `--note` or `--context` creates a new row in `bookmark_annotations`. This allows multiple agents to contribute context without overwriting each other's notes.
+
+3. **Tags are Append-Only**: The `(bookmark_id, tag)` PRIMARY KEY prevents duplicate tags. Adding an existing tag is silently ignored.
+
+4. **Full Provenance**: Every annotation records `added_at`, `added_by`, and `source`, so you can see the complete history of who contributed what and when.
+
+**Example Multi-Agent Workflow:**
+
+```bash
+# Agent 1 bookmarks the auth function
+codemark add --file src/auth.rs --range 42 --note "needs rate limiting" --created-by agent-1
+
+# Agent 2, working on the same function, adds more context
+codemark add --file src/auth.rs --range 42 --context "investigating bug #123" --created-by agent-2
+
+# The bookmark has ONE ID but TWO annotation rows:
+# - [agent-1, "needs rate limiting"]
+# - [agent-2, "investigating bug #123"]
+```
+
+This solves the problem of sparse, duplicated context that would occur if each agent created their own bookmark for the same code.
 
 ## Future Considerations
 
