@@ -386,6 +386,22 @@ pub fn write_success(mode: &OutputMode, message: &str) -> io::Result<()> {
 
 /// Write a bookmark with its resolutions in markdown format.
 pub fn write_bookmark_markdown(bm: &Bookmark, resolutions: &[Resolution]) -> io::Result<()> {
+    // Use Handlebars template for rendering
+    match crate::cli::templates::render_show_template(bm, resolutions) {
+        Ok(rendered) => {
+            print!("{rendered}");
+            Ok(())
+        }
+        Err(e) => {
+            // Fallback to manual rendering if template fails
+            eprintln!("Warning: Template rendering failed: {e}. Using fallback.");
+            write_bookmark_markdown_fallback(bm, resolutions)
+        }
+    }
+}
+
+/// Fallback markdown rendering when template rendering fails.
+fn write_bookmark_markdown_fallback(bm: &Bookmark, resolutions: &[Resolution]) -> io::Result<()> {
     let mut stdout = io::stdout().lock();
 
     // Title

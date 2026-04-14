@@ -19,7 +19,7 @@ pub fn global_models_dir() -> Option<PathBuf> {
     }
 
     // Use platform-specific cache directory
-    directories::ProjectDirs::from("com", "codemark", "codemark")
+    directories::ProjectDirs::from("", "codemark", "codemark")
         .map(|proj| proj.cache_dir().join("models"))
 }
 

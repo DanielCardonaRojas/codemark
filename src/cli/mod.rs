@@ -1,5 +1,6 @@
 pub mod handlers;
 pub mod output;
+pub mod templates;
 
 use std::path::PathBuf;
 
