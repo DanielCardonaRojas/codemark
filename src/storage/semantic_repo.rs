@@ -68,16 +68,10 @@ impl SemanticRepo {
         use crate::embeddings::provider::prepare_embedding_text;
 
         // Get the first annotation's notes and context
-        let notes = bookmark.annotations.first()
-            .and_then(|a| a.notes.as_deref());
-        let context = bookmark.annotations.first()
-            .and_then(|a| a.context.as_deref());
+        let notes = bookmark.annotations.first().and_then(|a| a.notes.as_deref());
+        let context = bookmark.annotations.first().and_then(|a| a.context.as_deref());
 
-        prepare_embedding_text(
-            &bookmark.tags,
-            notes,
-            context,
-        )
+        prepare_embedding_text(&bookmark.tags, notes, context)
     }
 
     /// Store embeddings for multiple bookmarks.
@@ -209,17 +203,15 @@ mod tests {
             created_at: chrono::Utc::now().to_string(),
             created_by: Some("user".to_string()),
             tags: vec!["tag1".to_string(), "tag2".to_string()],
-            annotations: vec![
-                crate::engine::bookmark::Annotation {
-                    id: "ann-1".to_string(),
-                    bookmark_id: "test-bm".to_string(),
-                    added_at: chrono::Utc::now().to_string(),
-                    added_by: None,
-                    notes: Some("A test function".to_string()),
-                    context: Some("Testing utilities".to_string()),
-                    source: None,
-                }
-            ],
+            annotations: vec![crate::engine::bookmark::Annotation {
+                id: "ann-1".to_string(),
+                bookmark_id: "test-bm".to_string(),
+                added_at: chrono::Utc::now().to_string(),
+                added_by: None,
+                notes: Some("A test function".to_string()),
+                context: Some("Testing utilities".to_string()),
+                source: None,
+            }],
         };
 
         let text = repo.prepare_bookmark_text(&bookmark);

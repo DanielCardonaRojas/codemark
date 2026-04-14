@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 
-use crate::engine::bookmark::{Annotation, Bookmark, BookmarkFilter, BookmarkStatus, ResolutionMethod, Tag};
+use crate::engine::bookmark::{
+    Annotation, Bookmark, BookmarkFilter, BookmarkStatus, ResolutionMethod, Tag,
+};
 use crate::error::{Error, Result};
 use crate::storage::db::Database;
 
@@ -134,7 +136,11 @@ impl Database {
     }
 
     /// Find an existing bookmark by file_path and query.
-    pub fn find_bookmark_by_location(&self, file_path: &str, query: &str) -> Result<Option<Bookmark>> {
+    pub fn find_bookmark_by_location(
+        &self,
+        file_path: &str,
+        query: &str,
+    ) -> Result<Option<Bookmark>> {
         let mut stmt = self.conn().prepare(
             "SELECT id, query, language, file_path, content_hash, commit_hash,
              status, resolution_method, last_resolved_at, stale_since, created_at, created_by
@@ -220,7 +226,8 @@ impl Database {
         let param_refs: Vec<&dyn rusqlite::types::ToSql> =
             params.iter().map(|p| p.as_ref()).collect();
         let mut stmt = self.conn().prepare(&sql)?;
-        let mut results: Vec<Bookmark> = stmt.query_map(param_refs.as_slice(), row_to_bookmark_base)?
+        let mut results: Vec<Bookmark> = stmt
+            .query_map(param_refs.as_slice(), row_to_bookmark_base)?
             .filter_map(|r| r.ok())
             .collect();
 
@@ -378,7 +385,8 @@ impl Database {
         let param_refs: Vec<&dyn rusqlite::types::ToSql> =
             params.iter().map(|p| p.as_ref()).collect();
         let mut stmt = self.conn().prepare(&sql)?;
-        let mut results: Vec<Bookmark> = stmt.query_map(param_refs.as_slice(), row_to_bookmark_base)?
+        let mut results: Vec<Bookmark> = stmt
+            .query_map(param_refs.as_slice(), row_to_bookmark_base)?
             .filter_map(|r| r.ok())
             .collect();
 
@@ -397,10 +405,8 @@ impl Database {
             "SELECT id, bookmark_id, added_at, added_by, notes, context, source
              FROM bookmark_annotations WHERE bookmark_id = ?1 ORDER BY added_at ASC",
         )?;
-        let annotations: Vec<Annotation> = ann_stmt
-            .query_map([&bm.id], row_to_annotation)?
-            .filter_map(|r| r.ok())
-            .collect();
+        let annotations: Vec<Annotation> =
+            ann_stmt.query_map([&bm.id], row_to_annotation)?.filter_map(|r| r.ok()).collect();
         bm.annotations = annotations;
 
         // Load tags
@@ -442,7 +448,7 @@ fn row_to_bookmark_base(row: &rusqlite::Row) -> rusqlite::Result<Bookmark> {
         stale_since: row.get(9)?,
         created_at: row.get(10)?,
         created_by: row.get(11)?,
-        tags: Vec::new(),     // Loaded separately
+        tags: Vec::new(),        // Loaded separately
         annotations: Vec::new(), // Loaded separately
     })
 }
@@ -733,7 +739,8 @@ mod tests {
         assert!(found.is_some());
         assert_eq!(found.unwrap().id, "test-id");
 
-        let not_found = db.find_bookmark_by_location("other.swift", "(function_declaration) @target").unwrap();
+        let not_found =
+            db.find_bookmark_by_location("other.swift", "(function_declaration) @target").unwrap();
         assert!(not_found.is_none());
     }
 }

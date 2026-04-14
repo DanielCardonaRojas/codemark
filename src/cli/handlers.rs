@@ -12,7 +12,8 @@ use crate::cli::*;
 use crate::config::Config;
 use crate::embeddings::config::EmbeddingModel;
 use crate::engine::bookmark::{
-    Annotation, Bookmark, BookmarkFilter, BookmarkStatus, Collection, Resolution, ResolutionMethod, Tag,
+    Annotation, Bookmark, BookmarkFilter, BookmarkStatus, Collection, Resolution, ResolutionMethod,
+    Tag,
 };
 use crate::engine::{hash, health, resolution};
 use crate::error::{Error, Result};
@@ -1564,10 +1565,8 @@ fn handle_semantic_search(
         for (distance, bm) in bookmarks {
             let tags_str = bm.tags.join(", ");
             // Get the first annotation's notes, or empty string
-            let notes = bm.annotations.first()
-                .and_then(|a| a.notes.as_deref())
-                .unwrap_or("")
-                .to_string();
+            let notes =
+                bm.annotations.first().and_then(|a| a.notes.as_deref()).unwrap_or("").to_string();
             let notes_trunc = if notes.len() > 30 { format!("{}...", &notes[..27]) } else { notes };
 
             table.add_row(vec![
@@ -1774,9 +1773,7 @@ fn handle_export(cli: &Cli, args: &ExportArgs) -> Result<()> {
             println!("id,file_path,language,status,tags,notes");
             for bm in &bookmarks {
                 // For CSV, we use the first annotation's notes
-                let notes = bm.annotations.first()
-                    .and_then(|a| a.notes.as_deref())
-                    .unwrap_or("");
+                let notes = bm.annotations.first().and_then(|a| a.notes.as_deref()).unwrap_or("");
                 println!(
                     "{},{},{},{},{},{}",
                     bm.id,
@@ -1817,12 +1814,16 @@ fn handle_import(cli: &Cli, mode: &OutputMode, args: &ImportArgs) -> Result<()> 
 
             // Insert tags if present
             if !bm.tags.is_empty() {
-                let tags: Vec<Tag> = bm.tags.iter().map(|t| Tag {
-                    bookmark_id: bookmark_id.clone(),
-                    tag: t.clone(),
-                    added_at: now_iso(),
-                    added_by: bm.created_by.clone(),
-                }).collect();
+                let tags: Vec<Tag> = bm
+                    .tags
+                    .iter()
+                    .map(|t| Tag {
+                        bookmark_id: bookmark_id.clone(),
+                        tag: t.clone(),
+                        added_at: now_iso(),
+                        added_by: bm.created_by.clone(),
+                    })
+                    .collect();
                 db.insert_tags(&tags)?;
             }
 
@@ -2210,8 +2211,7 @@ fn write_resolution_output(
     result: &resolution::ResolutionResult,
 ) -> Result<()> {
     // Get first annotation's note for display
-    let note = bm.annotations.first()
-        .and_then(|a| a.notes.as_deref());
+    let note = bm.annotations.first().and_then(|a| a.notes.as_deref());
 
     match mode {
         OutputMode::Json => {

@@ -8,10 +8,7 @@ use crate::engine::bookmark::{Bookmark, Resolution};
 
 /// Helper function to get the first annotation's notes from a bookmark.
 fn get_first_note(bm: &Bookmark) -> &str {
-    bm.annotations
-        .first()
-        .and_then(|a| a.notes.as_deref())
-        .unwrap_or("")
+    bm.annotations.first().and_then(|a| a.notes.as_deref()).unwrap_or("")
 }
 
 /// Resolved output mode for a command invocation.

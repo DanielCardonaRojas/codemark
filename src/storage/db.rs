@@ -109,7 +109,6 @@ impl Database {
     /// Migrate to schema version 7: append-only metadata model
     /// This handles migrating existing data from the old schema to the new one.
     fn migrate_to_v7(&mut self) -> Result<()> {
-
         // First run the base migration which creates new tables and recreates bookmarks
         self.conn.execute_batch(MIGRATION_007)?;
 
