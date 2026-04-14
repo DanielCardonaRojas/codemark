@@ -23,6 +23,7 @@ codemark list --status active
 ## Agent Directives: Handling Invocations
 If the user invoked you with arguments (e.g. `/codemark something`), use `$ARGUMENTS` to search the active bookmarks or execute the desired behavior:
 - Search text: `codemark search "$ARGUMENTS"`
+- If it looks like a bookmark ID or UUID prefix: `codemark show "$ARGUMENTS"`
 - If no arguments were provided, interpret the user's intent based on the conversation context.
 
 ## When to use codemark
@@ -42,6 +43,7 @@ If the user invoked you with arguments (e.g. `/codemark something`), use `$ARGUM
 - **Collections** group related bookmarks (one per feature, bugfix, or investigation).
 - **Status**: active (healthy), drifted (found but moved), stale (lost), archived (cleaned up).
 - **Author**: bookmarks track who created them (`--created-by agent` vs default `user`).
+- **Annotations**: bookmarks can have multiple annotations (notes, context) added by different agents over time, with provenance tracking.
 
 ## Quick Start
 
@@ -102,6 +104,7 @@ For common query patterns across languages, see `queries.md`.
 
 - Use `--created-by agent` to distinguish your bookmarks from the user's.
 - Use `--collection <name>` when creating bookmarks to add them directly to a collection (collections are auto-created if they don't exist).
+- **Iterative enhancement**: When working with an existing bookmark and discover new context, use `annotate` to add notes without re-parsing the file. Multiple agents can annotate the same bookmark over time.
 - For detailed note guidelines, see `templates.md`.
 - For usage examples, see `examples.md`.
 - For tree-sitter query patterns, see `queries.md`.
@@ -145,6 +148,20 @@ codemark collection list
 ### Check impact
 ```bash
 codemark diff --since HEAD~3
+```
+
+### Enhancing existing bookmarks
+```bash
+# Add notes, context, or tags to an existing bookmark (no re-parsing needed)
+codemark annotate <bookmark-id> --note "Additional context discovered during implementation"
+codemark annotate <bookmark-id> --context "Related to auth-refactor feature"
+codemark annotate <bookmark-id> --tag bug-fix --tag priority:high
+
+# Add annotation as an agent with provenance
+codemark annotate <bookmark-id> \
+  --note "Found this during debugging the session timeout issue" \
+  --added-by agent \
+  --source investigation
 ```
 
 ### Maintenance
