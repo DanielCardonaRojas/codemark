@@ -92,6 +92,9 @@ pub enum Command {
 
     /// Generate shell completions
     Completions(CompletionsArgs),
+
+    /// Add notes, context, or tags to an existing bookmark
+    Annotate(AnnotateArgs),
 }
 
 // --- Subcommand argument structs ---
@@ -536,4 +539,30 @@ pub struct ImportArgs {
 pub struct CompletionsArgs {
     /// Shell to generate completions for
     pub shell: clap_complete::Shell,
+}
+
+#[derive(Debug, clap::Args)]
+pub struct AnnotateArgs {
+    /// Bookmark ID (full UUID or unambiguous prefix)
+    pub id: String,
+
+    /// Semantic annotation to add
+    #[arg(long)]
+    pub note: Option<String>,
+
+    /// Agent context to add
+    #[arg(long)]
+    pub context: Option<String>,
+
+    /// Tag label to add; repeatable for multiple tags
+    #[arg(long)]
+    pub tag: Vec<String>,
+
+    /// Who is adding this annotation (defaults to "user")
+    #[arg(long, default_value = "user")]
+    pub added_by: String,
+
+    /// Source of this annotation (defaults to "cli")
+    #[arg(long, default_value = "cli")]
+    pub source: String,
 }

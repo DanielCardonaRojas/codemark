@@ -148,6 +148,56 @@ codemark resolve --tag auth --status active
 
 ---
 
+### `codemark annotate`
+
+Add notes, context, or tags to an existing bookmark without re-parsing the file.
+
+```
+codemark annotate <bookmark-id> [--note "annotation"] [--context "..."] [--tag <tag>]...
+```
+
+| Flag        | Required | Default | Description                                |
+|-------------|----------|---------|--------------------------------------------|
+| `<id>`      | Yes      | -       | Bookmark ID (full UUID or unambiguous prefix) |
+| `--note`    | No       | -       | Semantic annotation to add                 |
+| `--context` | No       | -       | Agent context to add                        |
+| `--tag`     | No       | -       | Tag label; repeatable for multiple tags    |
+| `--added-by`| No       | user    | Who is adding this annotation               |
+| `--source`  | No       | cli     | Source of this annotation (for tracking)   |
+
+**Behavior**:
+- Creates a new `bookmark_annotations` row with the note/context
+- Adds tags to `bookmark_tags` (duplicate tags are ignored)
+- The bookmark must already exist
+
+**Example**:
+```bash
+# Agent adds more context to an existing bookmark
+codemark annotate abc123 --note "needs rate limiting" --added-by agent-1
+codemark annotate abc123 --tag security --tag api --added-by agent-2
+```
+
+**JSON output**:
+```json
+{
+  "success": true,
+  "data": {
+    "id": "abc123...",
+    "short_id": "abc123",
+    "file_path": "src/auth/middleware.swift",
+    "language": "swift",
+    "status": "active",
+    "tags": ["auth", "security", "api"],
+    "annotations": [
+      { "notes": "JWT validation entry point", "added_by": "user", ... },
+      { "notes": "needs rate limiting", "added_by": "agent-1", ... }
+    ]
+  }
+}
+```
+
+---
+
 ### `codemark show`
 
 Display full details of a bookmark.
