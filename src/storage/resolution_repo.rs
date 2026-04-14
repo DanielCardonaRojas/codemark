@@ -175,13 +175,18 @@ mod tests {
             created_at: "2026-04-01T00:00:00Z".to_string(),
             created_by: None,
             tags: vec![],
-            notes: None,
-            context: None,
+            annotations: vec![],
         }
+    }
+
+    // Initialize test environment
+    fn init_test_env() {
+        crate::embeddings::VecStore::init_extension();
     }
 
     #[test]
     fn insert_and_list_resolutions() {
+        init_test_env();
         let db = Database::open_in_memory().unwrap();
         db.insert_bookmark(&test_bookmark()).unwrap();
 
@@ -207,6 +212,7 @@ mod tests {
 
     #[test]
     fn insert_if_changed_deduplicates() {
+        init_test_env();
         let db = Database::open_in_memory().unwrap();
         db.insert_bookmark(&test_bookmark()).unwrap();
 
@@ -286,6 +292,7 @@ mod tests {
 
     #[test]
     fn pruning_keeps_only_max_entries() {
+        init_test_env();
         let db = Database::open_in_memory().unwrap();
         db.insert_bookmark(&test_bookmark()).unwrap();
 
@@ -321,6 +328,7 @@ mod tests {
 
     #[test]
     fn resolution_cascade_on_bookmark_delete() {
+        init_test_env();
         let db = Database::open_in_memory().unwrap();
         db.insert_bookmark(&test_bookmark()).unwrap();
 

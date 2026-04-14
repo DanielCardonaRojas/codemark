@@ -6,6 +6,11 @@ use serde::Serialize;
 
 use crate::engine::bookmark::{Bookmark, Resolution};
 
+/// Helper function to get the first annotation's notes from a bookmark.
+fn get_first_note(bm: &Bookmark) -> &str {
+    bm.annotations.first().and_then(|a| a.notes.as_deref()).unwrap_or("")
+}
+
 /// Resolved output mode for a command invocation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OutputMode {
@@ -157,7 +162,7 @@ fn write_bookmarks_table(bookmarks: &[Bookmark]) -> io::Result<()> {
 
     for bm in bookmarks {
         let tags = bm.tags.join(", ");
-        let note = bm.notes.as_deref().unwrap_or("").chars().take(40).collect::<String>();
+        let note = get_first_note(bm).chars().take(40).collect::<String>();
         let resolved = bm.last_resolved_at.as_deref().unwrap_or("-");
         table.add_row(vec![
             Cell::new(short_id(&bm.id)),
@@ -176,7 +181,7 @@ fn write_bookmarks_line(bookmarks: &[Bookmark]) -> io::Result<()> {
     let mut stdout = io::stdout().lock();
     for bm in bookmarks {
         let tags = bm.tags.join(",");
-        let note = bm.notes.as_deref().unwrap_or("");
+        let note = get_first_note(bm);
         // Format: <id>\t<file>:<line>\t<status>\t<tags>\t<note>
         // Line is unknown without resolution, so we use file path only
         writeln!(
@@ -203,7 +208,7 @@ pub fn write_bookmarks_tv(
     let mut stdout = io::stdout().lock();
     for bm in bookmarks {
         let tags = bm.tags.join(",");
-        let note = bm.notes.as_deref().unwrap_or("");
+        let note = get_first_note(bm);
         let short = short_id(&bm.id);
         let line = get_center_line(short).unwrap_or(0);
 
@@ -224,7 +229,7 @@ fn write_bookmarks_custom(bookmarks: &[Bookmark], template: &str) -> io::Result<
             .replace("{file}", &bm.file_path)
             .replace("{status}", &bm.status.to_string())
             .replace("{tags}", &bm.tags.join(","))
-            .replace("{note}", bm.notes.as_deref().unwrap_or(""))
+            .replace("{note}", get_first_note(bm))
             .replace("{query}", &bm.query);
         writeln!(stdout, "{line}")?;
     }
@@ -268,7 +273,7 @@ pub fn write_annotated_bookmarks(
             for ab in bookmarks {
                 let bm = ab.bookmark;
                 let tags = bm.tags.join(", ");
-                let note = bm.notes.as_deref().unwrap_or("").chars().take(35).collect::<String>();
+                let note = get_first_note(bm).chars().take(35).collect::<String>();
                 table.add_row(vec![
                     Cell::new(ab.source),
                     Cell::new(short_id(&bm.id)),
@@ -286,7 +291,7 @@ pub fn write_annotated_bookmarks(
             for ab in bookmarks {
                 let bm = ab.bookmark;
                 let tags = bm.tags.join(",");
-                let note = bm.notes.as_deref().unwrap_or("");
+                let note = get_first_note(bm);
                 writeln!(
                     stdout,
                     "{}\t{}\t{}\t{}\t{}\t{}",
@@ -307,7 +312,7 @@ pub fn write_annotated_bookmarks(
             for ab in bookmarks {
                 let bm = ab.bookmark;
                 let tags = bm.tags.join(",");
-                let note = bm.notes.as_deref().unwrap_or("");
+                let note = get_first_note(bm);
                 // Format: source\tid\tfile\tline\tstatus\ttags\tnote
                 // Use 0 for line number (no scroll) in multi-db case
                 writeln!(
@@ -333,7 +338,7 @@ pub fn write_annotated_bookmarks(
                     .replace("{file}", &bm.file_path)
                     .replace("{status}", &bm.status.to_string())
                     .replace("{tags}", &bm.tags.join(","))
-                    .replace("{note}", bm.notes.as_deref().unwrap_or(""))
+                    .replace("{note}", get_first_note(bm))
                     .replace("{query}", &bm.query);
                 writeln!(stdout, "{line}")?;
             }
@@ -346,7 +351,7 @@ pub fn write_annotated_bookmarks(
             for ab in bookmarks {
                 let bm = ab.bookmark;
                 let tags = bm.tags.join(", ");
-                let note = bm.notes.as_deref().unwrap_or("").chars().take(35).collect::<String>();
+                let note = get_first_note(bm).chars().take(35).collect::<String>();
                 table.add_row(vec![
                     Cell::new(ab.source),
                     Cell::new(short_id(&bm.id)),
@@ -433,20 +438,20 @@ pub fn write_bookmark_markdown(bm: &Bookmark, resolutions: &[Resolution]) -> io:
         writeln!(stdout)?;
     }
 
-    // Notes section
-    if let Some(ref notes) = bm.notes {
-        writeln!(stdout, "## Notes")?;
-        writeln!(stdout)?;
-        writeln!(stdout, "{}", escape_markdown(notes))?;
-        writeln!(stdout)?;
-    }
-
-    // Context section
-    if let Some(ref context) = bm.context {
-        writeln!(stdout, "## Context")?;
-        writeln!(stdout)?;
-        writeln!(stdout, "{}", escape_markdown(context))?;
-        writeln!(stdout)?;
+    // Notes section (from annotations)
+    for ann in &bm.annotations {
+        if let Some(ref notes) = ann.notes {
+            writeln!(stdout, "## Notes")?;
+            writeln!(stdout)?;
+            writeln!(stdout, "{}", escape_markdown(notes))?;
+            writeln!(stdout)?;
+        }
+        if let Some(ref context) = ann.context {
+            writeln!(stdout, "## Context")?;
+            writeln!(stdout)?;
+            writeln!(stdout, "{}", escape_markdown(context))?;
+            writeln!(stdout)?;
+        }
     }
 
     // Resolution history section

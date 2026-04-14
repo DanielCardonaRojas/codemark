@@ -7,6 +7,8 @@ Codemark uses SQLite as its storage backend. The database is located at `.codema
 ```mermaid
 erDiagram
     BOOKMARKS ||--o{ RESOLUTIONS : "has"
+    BOOKMARKS ||--o{ BOOKMARK_ANNOTATIONS : "annotated with"
+    BOOKMARKS ||--o{ BOOKMARK_TAGS : "tagged with"
     COLLECTIONS ||--o{ COLLECTION_BOOKMARKS : "contains"
     BOOKMARKS ||--o{ COLLECTION_BOOKMARKS : "member of"
 
@@ -23,9 +25,23 @@ erDiagram
         TEXT stale_since FK "ISO 8601 timestamp"
         TEXT created_at FK "ISO 8601 timestamp"
         TEXT created_by FK "agent session identifier"
-        TEXT tags FK "JSON array of strings"
+    }
+
+    BOOKMARK_ANNOTATIONS {
+        TEXT id PK "UUIDv4"
+        TEXT bookmark_id FK "references BOOKMARKS(id)"
+        TEXT added_at FK "ISO 8601 timestamp"
+        TEXT added_by FK "agent or user identifier"
         TEXT notes FK "semantic annotation"
         TEXT context FK "what the agent was doing"
+        TEXT source FK "where annotation came from"
+    }
+
+    BOOKMARK_TAGS {
+        TEXT bookmark_id FK "references BOOKMARKS(id)"
+        TEXT tag FK "tag label"
+        TEXT added_at FK "ISO 8601 timestamp"
+        TEXT added_by FK "agent or user identifier"
     }
 
     RESOLUTIONS {
@@ -39,7 +55,6 @@ erDiagram
         TEXT byte_range FK "start:end bytes"
         TEXT line_range FK "start:end lines"
         TEXT content_hash FK "hash of matched content"
-        TEXT content_hash FK "sha256 of normalized content"
     }
 
     COLLECTIONS {
@@ -57,6 +72,8 @@ erDiagram
     }
 
     BOOKMARKS }o--|| RESOLUTIONS : "cascade delete"
+    BOOKMARKS }o--|| BOOKMARK_ANNOTATIONS : "cascade delete"
+    BOOKMARKS }o--|| BOOKMARK_TAGS : "cascade delete"
     COLLECTIONS }o--|| COLLECTION_BOOKMARKS : "cascade delete"
     BOOKMARKS }o--|| COLLECTION_BOOKMARKS : "cascade delete"
 ```
@@ -81,14 +98,49 @@ The core table storing bookmark metadata and the tree-sitter query used to re-fi
 | `stale_since` | TEXT | ISO 8601 timestamp when first marked stale |
 | `created_at` | TEXT NOT NULL | ISO 8601 creation timestamp |
 | `created_by` | TEXT | Agent or user identifier |
-| `tags` | TEXT | JSON array: `["tag1", "tag2"]` |
-| `notes` | TEXT | Semantic annotation |
-| `context` | TEXT | What the agent was doing when bookmarking |
+
+**Constraints:**
+- `UNIQUE(file_path, query)` - Prevents duplicate bookmarks for the same code location
 
 **Indexes:**
 - `idx_bookmarks_status` on `status`
 - `idx_bookmarks_file` on `file_path`
 - `idx_bookmarks_language` on `language`
+
+### bookmark_annotations
+
+Append-only metadata for each bookmark. Every time an AI agent or user adds context to a bookmark, a new annotation row is created.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | TEXT PRIMARY KEY | UUIDv4 identifier |
+| `bookmark_id` | TEXT NOT NULL | Foreign key to bookmarks |
+| `added_at` | TEXT NOT NULL | ISO 8601 timestamp |
+| `added_by` | TEXT | Agent or user identifier |
+| `notes` | TEXT | Semantic annotation |
+| `context` | TEXT | What the agent was doing when bookmarking |
+| `source` | TEXT | Where annotation came from (e.g., "cli", "claude-code") |
+
+**Indexes:**
+- `idx_annotations_bookmark` on `bookmark_id`
+- `idx_annotations_added` on `added_at`
+
+### bookmark_tags
+
+Many-to-many relationship between bookmarks and tags. Tags are append-only - adding the same tag twice is ignored.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `bookmark_id` | TEXT NOT NULL | Foreign key to bookmarks |
+| `tag` | TEXT NOT NULL | Tag label |
+| `added_at` | TEXT NOT NULL | ISO 8601 timestamp |
+| `added_by` | TEXT | Agent or user identifier |
+
+**Primary Key:** `(bookmark_id, tag)`
+
+**Indexes:**
+- `idx_tags_bookmark` on `bookmark_id`
+- `idx_tags_tag` on `tag`
 
 ### resolutions
 
@@ -145,9 +197,20 @@ Many-to-many relationship between collections and bookmarks. Maintains insertion
 
 ## Cascade Deletion
 
-- When a bookmark is deleted, all its resolutions are automatically deleted
+- When a bookmark is deleted, all its resolutions, annotations, and tags are automatically deleted
 - When a collection is deleted, all `collection_bookmarks` entries are deleted
 - When a bookmark is deleted, all `collection_bookmarks` references are deleted
+
+## Append-Only Metadata Design
+
+The schema uses an append-only pattern for metadata (notes, context, tags) to support multi-agent workflows:
+
+1. **Bookmarks are unique**: The `UNIQUE(file_path, query)` constraint prevents duplicate bookmarks for the same code
+2. **Annotations accumulate**: Each time context is added, a new `bookmark_annotations` row is created
+3. **Tags are append-only**: Adding the same tag twice is ignored (PRIMARY KEY constraint)
+4. **Full history preserved**: Every annotation shows who added it and when
+
+This design enables AI agents to collaboratively build context around code without creating sparse, duplicate bookmarks.
 
 ## Deduplication Strategy
 

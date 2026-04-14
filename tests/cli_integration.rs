@@ -308,12 +308,20 @@ fn add_with_created_by() {
     let json = cm.run_json(&["list", "--author", "agent"]);
     let bookmarks = json["data"].as_array().unwrap();
     assert_eq!(bookmarks.len(), 1);
-    assert_eq!(bookmarks[0]["notes"], "agent bookmark");
+    // Notes are now in the annotations array
+    let notes = &bookmarks[0]["annotations"];
+    assert!(notes.is_array());
+    let annotations = notes.as_array().unwrap();
+    assert!(!annotations.is_empty());
+    assert_eq!(annotations[0]["notes"], "agent bookmark");
 
     let json = cm.run_json(&["list", "--author", "user"]);
     let bookmarks = json["data"].as_array().unwrap();
     assert_eq!(bookmarks.len(), 1);
-    assert_eq!(bookmarks[0]["notes"], "user bookmark");
+    let notes = &bookmarks[0]["annotations"];
+    let annotations = notes.as_array().unwrap();
+    assert!(!annotations.is_empty());
+    assert_eq!(annotations[0]["notes"], "user bookmark");
 }
 
 #[test]
@@ -376,12 +384,16 @@ fn list_with_filters() {
     // Filter by tag
     let json = cm.run_json(&["list", "--tag", "auth"]);
     assert_eq!(json["data"].as_array().unwrap().len(), 1);
-    assert_eq!(json["data"][0]["notes"], "swift auth");
+    let annotations = json["data"][0]["annotations"].as_array().unwrap();
+    assert!(!annotations.is_empty());
+    assert_eq!(annotations[0]["notes"], "swift auth");
 
     // Filter by language
     let json = cm.run_json(&["list", "--lang", "rust"]);
     assert_eq!(json["data"].as_array().unwrap().len(), 1);
-    assert_eq!(json["data"][0]["notes"], "rust factory");
+    let annotations = json["data"][0]["annotations"].as_array().unwrap();
+    assert!(!annotations.is_empty());
+    assert_eq!(annotations[0]["notes"], "rust factory");
 }
 
 #[test]
@@ -510,7 +522,10 @@ fn search_finds_by_note() {
     let json = cm.run_json(&["search", "unique-search-term"]);
     let bookmarks = json["data"].as_array().unwrap();
     assert_eq!(bookmarks.len(), 1);
-    assert!(bookmarks[0]["notes"].as_str().unwrap().contains("unique-search-term"));
+    // Notes are now in the annotations array
+    let annotations = bookmarks[0]["annotations"].as_array().unwrap();
+    assert!(!annotations.is_empty());
+    assert!(annotations[0]["notes"].as_str().unwrap().contains("unique-search-term"));
 }
 
 #[test]
@@ -659,7 +674,10 @@ fn export_and_import() {
     let json = cm2.run_json(&["list"]);
     let bookmarks = json["data"].as_array().unwrap();
     assert_eq!(bookmarks.len(), 1);
-    assert_eq!(bookmarks[0]["notes"], "export test");
+    // Notes are now in the annotations array
+    let annotations = bookmarks[0]["annotations"].as_array().unwrap();
+    assert!(!annotations.is_empty());
+    assert_eq!(annotations[0]["notes"], "export test");
 }
 
 #[test]
@@ -996,18 +1014,24 @@ fn collection_ordering_and_reorder() {
     // Show should respect insertion order
     let json = cm.run_json(&["collection", "show", "callpath"]);
     let bookmarks = json["data"].as_array().unwrap();
-    assert_eq!(bookmarks[0]["notes"], "step-1");
-    assert_eq!(bookmarks[1]["notes"], "step-2");
-    assert_eq!(bookmarks[2]["notes"], "step-3");
+    let ann1 = bookmarks[0]["annotations"].as_array().unwrap();
+    assert_eq!(ann1[0]["notes"], "step-1");
+    let ann2 = bookmarks[1]["annotations"].as_array().unwrap();
+    assert_eq!(ann2[0]["notes"], "step-2");
+    let ann3 = bookmarks[2]["annotations"].as_array().unwrap();
+    assert_eq!(ann3[0]["notes"], "step-3");
 
     // Reorder: step-3, step-1, step-2
     cm.run_json(&["collection", "reorder", "callpath", &id3, &id1, &id2]);
 
     let json = cm.run_json(&["collection", "show", "callpath"]);
     let bookmarks = json["data"].as_array().unwrap();
-    assert_eq!(bookmarks[0]["notes"], "step-3");
-    assert_eq!(bookmarks[1]["notes"], "step-1");
-    assert_eq!(bookmarks[2]["notes"], "step-2");
+    let ann0 = bookmarks[0]["annotations"].as_array().unwrap();
+    assert_eq!(ann0[0]["notes"], "step-3");
+    let ann1 = bookmarks[1]["annotations"].as_array().unwrap();
+    assert_eq!(ann1[0]["notes"], "step-1");
+    let ann2 = bookmarks[2]["annotations"].as_array().unwrap();
+    assert_eq!(ann2[0]["notes"], "step-2");
 }
 
 // --- Semantic search tests ---
