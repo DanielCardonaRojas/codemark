@@ -3,3 +3,8 @@ target/
 .codemark/
 *.tar.gz
 
+.claude
+.mcp.json
+.gemini/
+lat.md/
+graphify-out/
