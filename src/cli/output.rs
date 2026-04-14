@@ -438,19 +438,29 @@ pub fn write_bookmark_markdown(bm: &Bookmark, resolutions: &[Resolution]) -> io:
         writeln!(stdout)?;
     }
 
-    // Notes section (from annotations)
-    for ann in &bm.annotations {
-        if let Some(ref notes) = ann.notes {
-            writeln!(stdout, "## Notes")?;
+    // Annotations section
+    if !bm.annotations.is_empty() {
+        writeln!(stdout, "## Annotations")?;
+        writeln!(stdout)?;
+        for ann in &bm.annotations {
+            // Header with author and timestamp
+            let source = ann.source.as_deref().unwrap_or("unknown");
+            let added_by = ann.added_by.as_deref().unwrap_or("unknown");
+            writeln!(stdout, "### {}", added_by)?;
+            writeln!(stdout, "*{}* added: {}", source, ann.added_at)?;
             writeln!(stdout)?;
-            writeln!(stdout, "{}", escape_markdown(notes))?;
-            writeln!(stdout)?;
-        }
-        if let Some(ref context) = ann.context {
-            writeln!(stdout, "## Context")?;
-            writeln!(stdout)?;
-            writeln!(stdout, "{}", escape_markdown(context))?;
-            writeln!(stdout)?;
+
+            // Notes
+            if let Some(ref notes) = ann.notes {
+                writeln!(stdout, "{}", escape_markdown(notes))?;
+                writeln!(stdout)?;
+            }
+
+            // Context
+            if let Some(ref context) = ann.context {
+                writeln!(stdout, "{}", escape_markdown(context))?;
+                writeln!(stdout)?;
+            }
         }
     }
 
