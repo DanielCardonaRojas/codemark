@@ -54,6 +54,7 @@ Use `--collection` when creating bookmarks to add them directly to a collection:
 codemark add \
   --file src/auth.rs --range 42 \
   --note "Core auth entry point: Handles all JWT verification" \
+  --note "Related: auth-refactor feature, see docs/auth.md" \
   --tag feature:auth --tag role:entrypoint \
   --created-by agent \
   --collection login-flow
@@ -62,6 +63,7 @@ codemark add-from-query \
   --file src/auth.swift \
   --query '(function_declaration name: (simple_identifier) @name (#eq? @name "validateToken")) @target' \
   --note "Validates JWT tokens" \
+  --note "Checks expiry and signature" \
   --created-by agent \
   --collection login-flow
 
@@ -75,6 +77,7 @@ When you know the file and line numbers:
 codemark add \
   --file src/auth.rs --range 42 \
   --note "Core auth entry point: Handles all JWT verification" \
+  --note "See also: TokenRefreshService for renewal logic" \
   --tag feature:auth --tag role:entrypoint \
   --created-by agent
 ```
@@ -85,6 +88,8 @@ When you have the code snippet but need to find it in a file:
 echo "func validateToken(_ token: String) -> Claims" | \
   codemark add-from-snippet --file src/auth.swift \
   --note "Validates JWT tokens" \
+  --note "Checks expiry and signature" \
+  --note "Throws AuthError.invalidToken for malformed tokens" \
   --created-by agent
 ```
 
@@ -153,7 +158,10 @@ codemark diff --since HEAD~3
 ### Enhancing existing bookmarks
 ```bash
 # Add notes, context, or tags to an existing bookmark (no re-parsing needed)
-codemark annotate <bookmark-id> --note "Additional context discovered during implementation"
+# Notes are repeatable — each --note creates a separate annotation
+codemark annotate <bookmark-id> \
+  --note "Additional context discovered during implementation" \
+  --note "See PR #123 for the fix details"
 codemark annotate <bookmark-id> --context "Related to auth-refactor feature"
 codemark annotate <bookmark-id> --tag bug-fix --tag priority:high
 
