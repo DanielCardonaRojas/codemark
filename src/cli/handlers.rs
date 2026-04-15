@@ -1250,140 +1250,191 @@ fn handle_heal(cli: &Cli, mode: &OutputMode, args: &HealArgs) -> Result<()> {
 
     let mut updates = Vec::new();
     let mut skipped = 0usize;
+    let mut failed = 0usize;
 
     for bm in &bookmarks {
-        // Get previous resolution for location tracking
-        let previous_resolution = db.list_resolutions(&bm.id, 1).ok();
-        let previous_location = previous_resolution
-            .as_ref()
-            .and_then(|r| r.first())
-            .and_then(|r| r.byte_range.as_ref())
-            .and_then(|s| ByteLocation::from_str(s));
+        // Process each bookmark in a closure to catch errors
+        let update_result: Result<HealUpdate> = (|| {
+            // Get previous resolution for location tracking
+            let previous_resolution = db.list_resolutions(&bm.id, 1).ok();
+            let previous_location = previous_resolution
+                .as_ref()
+                .and_then(|r| r.first())
+                .and_then(|r| r.byte_range.as_ref())
+                .and_then(|s| ByteLocation::from_str(s));
 
-        // Skip heal if HEAD is before latest resolution (unless --force is set)
-        if !args.force
-            && let Some(ref head) = current_head
-            && let Some(res) = previous_resolution.as_ref().and_then(|r| r.first())
-            && let Some(ref res_commit) = res.commit_hash
-        {
-            match git_context::is_ancestor(&cwd, head, res_commit) {
-                Ok(true) => {
-                    // HEAD is ancestor of resolution (resolution is ahead)
+            // Skip heal if HEAD is before latest resolution (unless --force is set)
+            if !args.force
+                && let Some(ref head) = current_head
+                && let Some(res) = previous_resolution.as_ref().and_then(|r| r.first())
+                && let Some(ref res_commit) = res.commit_hash
+            {
+                match git_context::is_ancestor(&cwd, head, res_commit) {
+                    Ok(true) => {
+                        // HEAD is ancestor of resolution (resolution is ahead)
+                        return Err(Error::Operation(format!(
+                            "skipped: resolution at {} is ahead of HEAD {}",
+                            &res_commit[..8.min(res_commit.len())],
+                            &head[..8.min(head.len())]
+                        )));
+                    }
+                    Ok(false) => {
+                        // HEAD is ahead or unrelated, proceed with heal
+                    }
+                    Err(_) => {
+                        // git error, proceed with heal (graceful degradation)
+                    }
+                }
+            }
+
+            let lang = bm.language.parse::<Language>()?;
+            let mut cache = ParseCache::new(lang)?;
+            let ts_lang = lang.tree_sitter_language();
+            let result = resolution::resolve(bm, &mut cache, &ts_lang)?;
+            let new_status = health::transition(bm.status, result.method, result.hash_matches);
+            let previous_status = bm.status;
+
+            let stale_since = if new_status == BookmarkStatus::Stale {
+                bm.stale_since.clone().or_else(|| Some(now_iso()))
+            } else {
+                None
+            };
+
+            // Auto-archive check
+            let final_status = if args.auto_archive
+                && new_status == BookmarkStatus::Stale
+                && bm
+                    .stale_since
+                    .as_deref()
+                    .is_some_and(|s| health::should_auto_archive(s, args.archive_after))
+            {
+                BookmarkStatus::Archived
+            } else {
+                new_status
+            };
+
+            db.update_bookmark_status(
+                &bm.id,
+                final_status,
+                Some(result.method),
+                Some(&now_iso()),
+                stale_since.as_deref(),
+            )?;
+
+            if let Some(ref new_query) = result.new_query {
+                db.update_bookmark_query(&bm.id, new_query, &result.file_path, &result.content_hash)?;
+            }
+
+            // Track the resolution ID that was created (if any)
+            let resolution_id = if !args.validate_only {
+                let res = Resolution {
+                    id: uuid::Uuid::new_v4().to_string(),
+                    bookmark_id: bm.id.clone(),
+                    resolved_at: now_iso(),
+                    commit_hash: git_context::detect_context(&std::env::current_dir()?)
+                        .and_then(|ctx| ctx.head_commit),
+                    method: result.method,
+                    match_count: Some(1),
+                    file_path: Some(result.file_path.clone()),
+                    byte_range: Some(format!("{}:{}", result.byte_range.0, result.byte_range.1)),
+                    line_range: Some(format!("{}:{}", result.start_line + 1, result.end_line + 1)),
+                    content_hash: Some(result.content_hash.clone()),
+                };
+                let res_id = res.id.clone();
+                let _ = db.insert_resolution_if_changed(&res, config.storage.max_resolutions_per_bookmark);
+                Some(res_id)
+            } else {
+                None
+            };
+
+            // Build the new location (null if failed)
+            let new_location = if result.method != ResolutionMethod::Failed {
+                Some(ByteLocation { start_byte: result.byte_range.0, end_byte: result.byte_range.1 })
+            } else {
+                None
+            };
+
+            // Generate a name for the bookmark (extract from annotations or use file)
+            let name = bm
+                .annotations
+                .first()
+                .and_then(|a| a.notes.as_deref())
+                .or_else(|| {
+                    // Try to extract function name from query
+                    bm.query.lines().find(|l| l.contains("#eq?")).and_then(|l| l.split('"').nth(1))
+                })
+                .unwrap_or(&bm.file_path)
+                .to_string();
+
+            Ok(HealUpdate {
+                bookmark_id: bm.id.clone(),
+                resolution_id,
+                name,
+                file_path: bm.file_path.clone(),
+                previous_status: previous_status.to_string(),
+                new_status: final_status.to_string(),
+                resolution_method: result.method.to_string(),
+                previous_location,
+                new_location,
+                error: None,
+                error_category: None,
+            })
+        })();
+
+        match update_result {
+            Ok(update) => {
+                updates.push(update);
+            }
+            Err(e) => {
+                failed += 1;
+
+                // Categorize the error
+                let (error_msg, error_category) = categorize_error(&e);
+
+                // Log to stderr for immediate visibility
+                eprintln!(
+                    "codemark: heal failed for {}: {}",
+                    short_id(&bm.id),
+                    error_msg
+                );
+
+                // Generate a name for the bookmark
+                let name = bm
+                    .annotations
+                    .first()
+                    .and_then(|a| a.notes.as_deref())
+                    .or_else(|| {
+                        bm.query.lines().find(|l| l.contains("#eq?")).and_then(|l| l.split('"').nth(1))
+                    })
+                    .unwrap_or(&bm.file_path)
+                    .to_string();
+
+                // Create an error update entry
+                updates.push(HealUpdate {
+                    bookmark_id: bm.id.clone(),
+                    resolution_id: None,
+                    name,
+                    file_path: bm.file_path.clone(),
+                    previous_status: bm.status.to_string(),
+                    new_status: bm.status.to_string(), // Status unchanged on error
+                    resolution_method: "failed".to_string(),
+                    previous_location: None,
+                    new_location: None,
+                    error: Some(error_msg),
+                    error_category: Some(error_category.to_string()),
+                });
+
+                // Check if this was a "skip" error (HEAD ahead case)
+                if e.to_string().starts_with("skipped:") {
                     skipped += 1;
-                    eprintln!(
-                        "codemark: skipping {} (resolution at {} is ahead of HEAD {})",
-                        short_id(&bm.id),
-                        &res_commit[..8.min(res_commit.len())],
-                        &head[..8.min(head.len())]
-                    );
-                    continue;
-                }
-                Ok(false) => {
-                    // HEAD is ahead or unrelated, proceed with heal
-                }
-                Err(_) => {
-                    // git error, proceed with heal (graceful degradation)
+                    failed -= 1; // Don't count skips as failures
                 }
             }
         }
-
-        let Ok(lang) = bm.language.parse::<Language>() else {
-            continue;
-        };
-        let mut cache = ParseCache::new(lang)?;
-        let ts_lang = lang.tree_sitter_language();
-        let result = resolution::resolve(bm, &mut cache, &ts_lang)?;
-        let new_status = health::transition(bm.status, result.method, result.hash_matches);
-        let previous_status = bm.status;
-
-        let stale_since = if new_status == BookmarkStatus::Stale {
-            bm.stale_since.clone().or_else(|| Some(now_iso()))
-        } else {
-            None
-        };
-
-        // Auto-archive check
-        let final_status = if args.auto_archive
-            && new_status == BookmarkStatus::Stale
-            && bm
-                .stale_since
-                .as_deref()
-                .is_some_and(|s| health::should_auto_archive(s, args.archive_after))
-        {
-            BookmarkStatus::Archived
-        } else {
-            new_status
-        };
-
-        db.update_bookmark_status(
-            &bm.id,
-            final_status,
-            Some(result.method),
-            Some(&now_iso()),
-            stale_since.as_deref(),
-        )?;
-
-        if let Some(ref new_query) = result.new_query {
-            db.update_bookmark_query(&bm.id, new_query, &result.file_path, &result.content_hash)?;
-        }
-
-        // Track the resolution ID that was created (if any)
-        let resolution_id = if !args.validate_only {
-            let res = Resolution {
-                id: uuid::Uuid::new_v4().to_string(),
-                bookmark_id: bm.id.clone(),
-                resolved_at: now_iso(),
-                commit_hash: git_context::detect_context(&std::env::current_dir()?)
-                    .and_then(|ctx| ctx.head_commit),
-                method: result.method,
-                match_count: Some(1),
-                file_path: Some(result.file_path.clone()),
-                byte_range: Some(format!("{}:{}", result.byte_range.0, result.byte_range.1)),
-                line_range: Some(format!("{}:{}", result.start_line + 1, result.end_line + 1)),
-                content_hash: Some(result.content_hash.clone()),
-            };
-            let res_id = res.id.clone();
-            let _ =
-                db.insert_resolution_if_changed(&res, config.storage.max_resolutions_per_bookmark);
-            Some(res_id)
-        } else {
-            None
-        };
-
-        // Build the new location (null if failed)
-        let new_location = if result.method != ResolutionMethod::Failed {
-            Some(ByteLocation { start_byte: result.byte_range.0, end_byte: result.byte_range.1 })
-        } else {
-            None
-        };
-
-        // Generate a name for the bookmark (extract from annotations or use file)
-        let name = bm
-            .annotations
-            .first()
-            .and_then(|a| a.notes.as_deref())
-            .or_else(|| {
-                // Try to extract function name from query
-                bm.query.lines().find(|l| l.contains("#eq?")).and_then(|l| l.split('"').nth(1))
-            })
-            .unwrap_or(&bm.file_path)
-            .to_string();
-
-        updates.push(HealUpdate {
-            bookmark_id: bm.id.clone(),
-            resolution_id,
-            name,
-            file_path: bm.file_path.clone(),
-            previous_status: previous_status.to_string(),
-            new_status: final_status.to_string(),
-            resolution_method: result.method.to_string(),
-            previous_location,
-            new_location,
-        });
     }
 
     let total_processed = updates.len();
-    let output = HealOutput { total_processed, skipped, updates };
+    let output = HealOutput { total_processed, skipped, failed, updates };
 
     write_heal_output(mode, &output)?;
     Ok(())
@@ -2402,6 +2453,27 @@ fn write_resolution_output(
         }
     }
     Ok(())
+}
+
+/// Categorize an error into a category and user-friendly message for heal output.
+fn categorize_error(err: &Error) -> (String, &str) {
+    match err {
+        Error::Input(msg) if msg.contains("cannot read") || msg.contains("No such file") => {
+            (format!("File not found: {}", msg.split(':').nth(1).unwrap_or(msg)), "file_not_found")
+        }
+        Error::TreeSitter(_) => (
+            format!("Parse error: {}", err),
+            "parse_error",
+        ),
+        Error::Database(_) => (
+            format!("Database error: {}", err),
+            "database_error",
+        ),
+        _ => (
+            format!("Error: {}", err),
+            "unknown",
+        ),
+    }
 }
 
 fn parse_duration_days(duration: &str) -> Result<i64> {

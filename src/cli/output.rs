@@ -528,6 +528,10 @@ pub struct HealUpdate {
     pub previous_location: Option<ByteLocation>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub new_location: Option<ByteLocation>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_category: Option<String>,
 }
 
 /// Byte location range for resolution.
@@ -553,6 +557,7 @@ impl ByteLocation {
 pub struct HealOutput {
     pub total_processed: usize,
     pub skipped: usize,
+    pub failed: usize,
     pub updates: Vec<HealUpdate>,
 }
 
@@ -573,10 +578,11 @@ fn write_heal_table(output: &HealOutput) -> io::Result<()> {
     let updated_count = output.updates.iter().filter(|u| u.previous_status != u.new_status).count();
     let unchanged_count =
         output.updates.iter().filter(|u| u.previous_status == u.new_status).count();
+    let failed_count = output.failed;
 
     println!(
-        "Healed {} bookmarks: {} updated, {} unchanged, {} skipped",
-        output.total_processed, updated_count, unchanged_count, output.skipped
+        "Healed {} bookmarks: {} updated, {} unchanged, {} skipped, {} failed",
+        output.total_processed, updated_count, unchanged_count, output.skipped, failed_count
     );
     Ok(())
 }
@@ -589,8 +595,8 @@ fn write_heal_line(output: &HealOutput) -> io::Result<()> {
     let mut stdout = io::stdout().lock();
     writeln!(
         stdout,
-        "total={}:updated={}:unchanged={}:skipped={}",
-        output.total_processed, updated_count, unchanged_count, output.skipped
+        "total={}:updated={}:unchanged={}:skipped={}:failed={}",
+        output.total_processed, updated_count, unchanged_count, output.skipped, output.failed
     )?;
     Ok(())
 }

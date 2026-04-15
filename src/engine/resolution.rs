@@ -310,4 +310,33 @@ mod tests {
         let result = resolve(&bm, &mut cache, &lang).unwrap();
         assert_eq!(result.method, ResolutionMethod::Failed);
     }
+
+    #[test]
+    fn resolve_returns_error_when_file_missing() {
+        // Verify that resolution returns an error when the file doesn't exist
+        let (mut bm, _cache) =
+            create_bookmark_for_function("auth_service.swift", "validateToken");
+
+        // Change the file path to a non-existent file
+        bm.file_path = "/nonexistent/path/file.swift".to_string();
+
+        let lang = CodemarkLang::Swift.tree_sitter_language();
+
+        // Create a new cache (it will fail to parse the non-existent file)
+        let mut cache = ParseCache::new(CodemarkLang::Swift).unwrap();
+
+        // The resolve function should return an error from get_or_parse
+        let result = resolve(&bm, &mut cache, &lang);
+
+        // The result should be an error
+        assert!(result.is_err(), "resolve should error when file doesn't exist");
+
+        // The error should be an Input error (file not found)
+        let err = result.unwrap_err();
+        assert!(matches!(err, crate::error::Error::Input(_)), "expected Input error, got: {:?}", err);
+
+        // The error message should mention the file reading issue
+        let err_msg = err.to_string();
+        assert!(err_msg.contains("cannot read") || err_msg.contains("No such file"), "error should mention file reading issue: {}", err_msg);
+    }
 }

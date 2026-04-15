@@ -2103,3 +2103,111 @@ fn multiple_bookmarks_added_to_same_collection_maintain_order() {
     assert_eq!(bookmarks[1]["id"], id2);
     assert_eq!(bookmarks[2]["id"], id3);
 }
+
+// --- Heal error resilience tests ---
+
+#[test]
+fn heal_continues_when_file_missing() {
+    // Verify that heal completes and reports error instead of crashing when file is missing
+    let cm = Codemark::with_git_repo();
+
+    // Create initial file
+    let commit_a = cm.commit("test.rs", "fn my_function() {}", "Commit A");
+
+    // Create bookmark targeting the function
+    let json = cm.run_json(&[
+        "add",
+        "--file",
+        &cm.file_path("test.rs"),
+        "--range",
+        "1",
+        "--note",
+        "test bookmark",
+    ]);
+    let id = json["data"]["id"].as_str().unwrap().to_string();
+
+    // Heal should succeed initially
+    let json = cm.run_json(&["heal"]);
+    assert_eq!(json["data"]["total_processed"], 1);
+    assert_eq!(json["data"]["failed"], 0);
+
+    // Go back to commit A (the file exists there)
+    cm.checkout(&commit_a);
+
+    // Now delete the file from the filesystem directly (not via git)
+    // This simulates the file being deleted from disk but the bookmark still existing
+    std::fs::remove_file(cm.work_dir.join("test.rs")).unwrap();
+
+    // Heal should still complete (exit code 0) and report the failure
+    let result = cm.run(&["--format", "json", "heal"]);
+    assert_eq!(result.status, 0, "heal should exit with success even when file is missing");
+
+    let json: serde_json::Value = serde_json::from_str(&result.stdout).unwrap();
+    assert_eq!(json["data"]["total_processed"], 1);
+    assert_eq!(json["data"]["failed"], 1, "should report 1 failed bookmark");
+
+    // The update should have error fields
+    let updates = json["data"]["updates"].as_array().unwrap();
+    assert_eq!(updates.len(), 1);
+    assert!(!updates[0]["error"].is_null(), "should have error field");
+    assert_eq!(updates[0]["error_category"].as_str().unwrap(), "file_not_found");
+
+    // Status should remain unchanged (not updated to active)
+    assert_eq!(updates[0]["previous_status"], updates[0]["new_status"]);
+}
+
+#[test]
+fn heal_handles_partial_failure() {
+    // Verify that heal processes all bookmarks even if some fail
+    let cm = Codemark::new();
+
+    // Add bookmark for existing file
+    cm.run_json(&[
+        "add",
+        "--file",
+        &cm.fixture("rust/auth_service.rs"),
+        "--range",
+        "108",
+        "--note",
+        "valid bookmark",
+    ]);
+
+    // Add bookmark for non-existent path (this will fail during heal)
+    // We need to manually insert a bookmark with a bad path since add validates the file
+    let conn = rusqlite::Connection::open(&cm.db_path).unwrap();
+    conn.execute(
+        "INSERT INTO bookmarks (id, query, language, file_path, content_hash, status, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        rusqlite::params![
+            uuid::Uuid::new_v4().to_string(),
+            "(function_item) @target",
+            "rust",
+            "/nonexistent/path/file.rs",
+            "some_hash",
+            "active",
+            chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string(),
+        ],
+    ).unwrap();
+
+    // Heal should complete successfully
+    let result = cm.run(&["--format", "json", "heal"]);
+    assert_eq!(result.status, 0, "heal should exit with success even with partial failures");
+
+    let json: serde_json::Value = serde_json::from_str(&result.stdout).unwrap();
+    // Should process 2 bookmarks total
+    assert_eq!(json["data"]["total_processed"], 2);
+    // Should report 1 failed
+    assert_eq!(json["data"]["failed"], 1);
+
+    // The valid bookmark should be updated
+    let updates = json["data"]["updates"].as_array().unwrap();
+    assert_eq!(updates.len(), 2);
+
+    // Find the successful update (no error field)
+    let success_count = updates.iter().filter(|u| u["error"].is_null()).count();
+    assert_eq!(success_count, 1, "should have 1 successful update");
+
+    // Find the failed update (has error field)
+    let failed_count = updates.iter().filter(|u| !u["error"].is_null()).count();
+    assert_eq!(failed_count, 1, "should have 1 failed update");
+}
