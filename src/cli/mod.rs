@@ -123,9 +123,9 @@ pub struct AddArgs {
     #[arg(long)]
     pub tag: Vec<String>,
 
-    /// Semantic annotation
+    /// Semantic annotation; repeatable for multiple notes
     #[arg(long)]
-    pub note: Option<String>,
+    pub note: Vec<String>,
 
     /// Agent context at time of bookmarking
     #[arg(long)]
@@ -158,9 +158,9 @@ pub struct AddFromSnippetArgs {
     #[arg(long)]
     pub tag: Vec<String>,
 
-    /// Semantic annotation
+    /// Semantic annotation; repeatable
     #[arg(long)]
-    pub note: Option<String>,
+    pub note: Vec<String>,
 
     /// Agent context
     #[arg(long)]
@@ -197,9 +197,9 @@ pub struct AddFromQueryArgs {
     #[arg(long)]
     pub tag: Vec<String>,
 
-    /// Semantic annotation
+    /// Semantic annotation; repeatable for multiple notes
     #[arg(long)]
-    pub note: Option<String>,
+    pub note: Vec<String>,
 
     /// Agent context at time of bookmarking
     #[arg(long)]
@@ -548,9 +548,9 @@ pub struct AnnotateArgs {
     /// Bookmark ID (full UUID or unambiguous prefix)
     pub id: String,
 
-    /// Semantic annotation to add
+    /// Semantic annotation to add; repeatable for multiple notes
     #[arg(long)]
-    pub note: Option<String>,
+    pub note: Vec<String>,
 
     /// Agent context to add
     #[arg(long)]
