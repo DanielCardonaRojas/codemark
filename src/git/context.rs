@@ -734,12 +734,8 @@ mod tests {
         let db_path = codemark_dir.join("codemark.db");
 
         // Create a deeply nested file structure
-        let test_file = tmp
-            .join("src")
-            .join("modules")
-            .join("core")
-            .join("utils")
-            .join("helpers.swift");
+        let test_file =
+            tmp.join("src").join("modules").join("core").join("utils").join("helpers.swift");
         let _ = fs::create_dir_all(test_file.parent().unwrap());
         fs::write(&test_file, "deep content").unwrap();
 

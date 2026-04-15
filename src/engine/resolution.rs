@@ -66,7 +66,9 @@ pub fn resolve(
     // Tier 2: Relaxed query
     if let Ok(relaxed) = relaxer::relax_query(&bookmark.query) {
         if let Ok(matches) = matcher::run_query(&relaxed, tree, source_bytes, language) {
-            if let Some(result) = pick_match(&matches, bookmark, ResolutionMethod::Relaxed, &absolute_path) {
+            if let Some(result) =
+                pick_match(&matches, bookmark, ResolutionMethod::Relaxed, &absolute_path)
+            {
                 return Ok(result);
             }
         }
@@ -75,7 +77,9 @@ pub fn resolve(
     // Tier 3: Minimal query
     if let Ok(minimal) = relaxer::minimize_query(&bookmark.query) {
         if let Ok(matches) = matcher::run_query(&minimal, tree, source_bytes, language) {
-            if let Some(result) = pick_match(&matches, bookmark, ResolutionMethod::Relaxed, &absolute_path) {
+            if let Some(result) =
+                pick_match(&matches, bookmark, ResolutionMethod::Relaxed, &absolute_path)
+            {
                 return Ok(result);
             }
         }
@@ -189,7 +193,9 @@ fn hash_fallback_walk(
 
     let mut cursor = node.walk();
     for child in node.named_children(&mut cursor) {
-        if let Some(result) = hash_fallback_walk(child, source, stored_hash, bookmark, language, absolute_path) {
+        if let Some(result) =
+            hash_fallback_walk(child, source, stored_hash, bookmark, language, absolute_path)
+        {
             return Some(result);
         }
     }
@@ -264,7 +270,8 @@ mod tests {
         let (bm, mut cache) = create_bookmark_for_function("auth_service.swift", "validateToken");
         let lang = CodemarkLang::Swift.tree_sitter_language();
         // For tests, use a dummy db path - the bookmark stores absolute paths from fixture_path
-        let dummy_db = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(".codemark/codemark.db");
+        let dummy_db =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(".codemark/codemark.db");
 
         let result = resolve(&bm, &mut cache, &lang, dummy_db.as_path()).unwrap();
         assert_eq!(result.method, ResolutionMethod::Exact);
@@ -279,7 +286,8 @@ mod tests {
         // Corrupt the stored hash
         bm.content_hash = Some("sha256:0000000000000000".to_string());
         let lang = CodemarkLang::Swift.tree_sitter_language();
-        let dummy_db = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(".codemark/codemark.db");
+        let dummy_db =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(".codemark/codemark.db");
 
         let result = resolve(&bm, &mut cache, &lang, dummy_db.as_path()).unwrap();
         assert_eq!(result.method, ResolutionMethod::Exact);
@@ -297,7 +305,8 @@ mod tests {
   (#eq? @fn_name "nonexistentFunction")) @target"#
             .to_string();
         let lang = CodemarkLang::Swift.tree_sitter_language();
-        let dummy_db = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(".codemark/codemark.db");
+        let dummy_db =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(".codemark/codemark.db");
 
         let result = resolve(&bm, &mut cache, &lang, dummy_db.as_path()).unwrap();
         // Relaxed strips the predicate, finds multiple functions, disambiguates by hash
@@ -321,7 +330,8 @@ mod tests {
             .to_string();
         bm.content_hash = Some("sha256:0000000000000000".to_string());
         let lang = CodemarkLang::Swift.tree_sitter_language();
-        let dummy_db = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(".codemark/codemark.db");
+        let dummy_db =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(".codemark/codemark.db");
 
         let result = resolve(&bm, &mut cache, &lang, dummy_db.as_path()).unwrap();
         assert_eq!(result.method, ResolutionMethod::Failed);
