@@ -38,6 +38,10 @@ pub fn resolve(
     let (tree, source) = cache.get_or_parse(&path)?;
     let source_bytes = source.as_bytes();
 
+    // Convert the absolute path to a string for storage in ResolutionResult
+    // This allows preview/editor integration to open the correct file
+    let absolute_path = path.to_string_lossy().to_string();
+
     // Tier 1: Exact query
     if let Ok(matches) = matcher::run_query(&bookmark.query, tree, source_bytes, language) {
         if matches.len() == 1 {
@@ -46,7 +50,7 @@ pub fn resolve(
             let hash_matches = bookmark.content_hash.as_deref() == Some(ch.as_str());
             return Ok(ResolutionResult {
                 method: ResolutionMethod::Exact,
-                file_path: bookmark.file_path.clone(),
+                file_path: absolute_path,
                 byte_range: m.byte_range,
                 start_line: m.start_point.0,
                 start_col: m.start_point.1,
@@ -62,7 +66,7 @@ pub fn resolve(
     // Tier 2: Relaxed query
     if let Ok(relaxed) = relaxer::relax_query(&bookmark.query) {
         if let Ok(matches) = matcher::run_query(&relaxed, tree, source_bytes, language) {
-            if let Some(result) = pick_match(&matches, bookmark, ResolutionMethod::Relaxed) {
+            if let Some(result) = pick_match(&matches, bookmark, ResolutionMethod::Relaxed, &absolute_path) {
                 return Ok(result);
             }
         }
@@ -71,7 +75,7 @@ pub fn resolve(
     // Tier 3: Minimal query
     if let Ok(minimal) = relaxer::minimize_query(&bookmark.query) {
         if let Ok(matches) = matcher::run_query(&minimal, tree, source_bytes, language) {
-            if let Some(result) = pick_match(&matches, bookmark, ResolutionMethod::Relaxed) {
+            if let Some(result) = pick_match(&matches, bookmark, ResolutionMethod::Relaxed, &absolute_path) {
                 return Ok(result);
             }
         }
@@ -81,7 +85,7 @@ pub fn resolve(
     if let Some(ref stored_hash) = bookmark.content_hash {
         let root = tree.root_node();
         if let Some(result) =
-            hash_fallback_walk(root, source_bytes, stored_hash, bookmark, language)
+            hash_fallback_walk(root, source_bytes, stored_hash, bookmark, language, &absolute_path)
         {
             return Ok(result);
         }
@@ -90,7 +94,7 @@ pub fn resolve(
     // Failed
     Ok(ResolutionResult {
         method: ResolutionMethod::Failed,
-        file_path: bookmark.file_path.clone(),
+        file_path: absolute_path,
         byte_range: (0, 0),
         start_line: 0,
         start_col: 0,
@@ -107,6 +111,7 @@ fn pick_match(
     matches: &[matcher::MatchResult],
     bookmark: &Bookmark,
     method: ResolutionMethod,
+    absolute_path: &str,
 ) -> Option<ResolutionResult> {
     if matches.len() == 1 {
         let m = &matches[0];
@@ -114,7 +119,7 @@ fn pick_match(
         let hash_matches = bookmark.content_hash.as_deref() == Some(ch.as_str());
         return Some(ResolutionResult {
             method,
-            file_path: bookmark.file_path.clone(),
+            file_path: absolute_path.to_string(),
             byte_range: m.byte_range,
             start_line: m.start_point.0,
             start_col: m.start_point.1,
@@ -133,7 +138,7 @@ fn pick_match(
             if ch == *stored_hash {
                 return Some(ResolutionResult {
                     method,
-                    file_path: bookmark.file_path.clone(),
+                    file_path: absolute_path.to_string(),
                     byte_range: m.byte_range,
                     start_line: m.start_point.0,
                     start_col: m.start_point.1,
@@ -157,6 +162,7 @@ fn hash_fallback_walk(
     stored_hash: &str,
     bookmark: &Bookmark,
     language: &Language,
+    absolute_path: &str,
 ) -> Option<ResolutionResult> {
     if node.is_named() {
         let text = std::str::from_utf8(&source[node.byte_range()]).unwrap_or("");
@@ -168,7 +174,7 @@ fn hash_fallback_walk(
 
             return Some(ResolutionResult {
                 method: ResolutionMethod::HashFallback,
-                file_path: bookmark.file_path.clone(),
+                file_path: absolute_path.to_string(),
                 byte_range: (node.start_byte(), node.end_byte()),
                 start_line: node.start_position().row,
                 start_col: node.start_position().column,
@@ -183,7 +189,7 @@ fn hash_fallback_walk(
 
     let mut cursor = node.walk();
     for child in node.named_children(&mut cursor) {
-        if let Some(result) = hash_fallback_walk(child, source, stored_hash, bookmark, language) {
+        if let Some(result) = hash_fallback_walk(child, source, stored_hash, bookmark, language, absolute_path) {
             return Some(result);
         }
     }
