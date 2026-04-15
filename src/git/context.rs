@@ -285,8 +285,36 @@ fn count_commits_between(repo: &Repository, start: git2::Oid, end: git2::Oid) ->
 }
 
 /// Try to canonicalize; fall back to the original path if it doesn't exist yet.
-fn canonicalize_best_effort(path: &Path) -> PathBuf {
+pub fn canonicalize_best_effort(path: &Path) -> PathBuf {
     std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+}
+
+/// Resolve a bookmark's file path to an absolute path.
+///
+/// Bookmarks store file paths relative to the repo root. This function
+/// reconstructs the absolute path by:
+/// 1. Using the provided db_path to find the associated repo root
+/// 2. Joining the relative file_path with that repo root
+/// 3. Falling back to CWD if not in a git repo
+pub fn resolve_bookmark_file_path(file_path: &str, db_path: &Path) -> Result<PathBuf> {
+    // Get repo root from database path
+    let repo_root = repo_root_from_db_path(db_path);
+
+    // Join relative path with repo root
+    let full_path = repo_root.join(file_path);
+
+    // Canonicalize to resolve symlinks and get absolute path
+    Ok(canonicalize_best_effort(&full_path))
+}
+
+/// Get the repo root from a database path.
+/// The database is typically at `<repo_root>/.codemark/codemark.db`
+fn repo_root_from_db_path(db_path: &Path) -> PathBuf {
+    db_path
+        .parent() // .codemark/
+        .and_then(|p| p.parent()) // repo root
+        .unwrap_or_else(|| db_path)
+        .to_path_buf()
 }
 
 #[cfg(test)]

@@ -913,7 +913,7 @@ fn handle_resolve(cli: &Cli, mode: &OutputMode, args: &ResolveArgs) -> Result<()
         let mut cache = ParseCache::new(lang)?;
         let ts_lang = lang.tree_sitter_language();
 
-        let result = resolution::resolve(&bm, &mut cache, &ts_lang)?;
+        let result = resolution::resolve(&bm, &mut cache, &ts_lang, db.path())?;
 
         // In dry-run mode, skip database updates and just show the result
         if args.dry_run {
@@ -1224,7 +1224,7 @@ fn handle_heal(cli: &Cli, mode: &OutputMode, args: &HealArgs) -> Result<()> {
         };
         let mut cache = ParseCache::new(lang)?;
         let ts_lang = lang.tree_sitter_language();
-        let result = resolution::resolve(bm, &mut cache, &ts_lang)?;
+        let result = resolution::resolve(bm, &mut cache, &ts_lang, db.path())?;
         let new_status = health::transition(bm.status, result.method, result.hash_matches);
         let previous_status = bm.status;
 
@@ -1762,7 +1762,7 @@ fn handle_diff(cli: &Cli, mode: &OutputMode, args: &DiffArgs) -> Result<()> {
                 let Ok(lang) = bm.language.parse::<Language>() else { continue };
                 let mut cache = ParseCache::new(lang)?;
                 let ts_lang = lang.tree_sitter_language();
-                let result = resolution::resolve(bm, &mut cache, &ts_lang)?;
+                let result = resolution::resolve(bm, &mut cache, &ts_lang, db.path())?;
                 let new_status = health::transition(bm.status, result.method, result.hash_matches);
                 results.push(serde_json::json!({
                     "id": bm.id,
@@ -1785,7 +1785,7 @@ fn handle_diff(cli: &Cli, mode: &OutputMode, args: &DiffArgs) -> Result<()> {
                 let Ok(lang) = bm.language.parse::<Language>() else { continue };
                 let mut cache = ParseCache::new(lang)?;
                 let ts_lang = lang.tree_sitter_language();
-                let result = resolution::resolve(bm, &mut cache, &ts_lang)?;
+                let result = resolution::resolve(bm, &mut cache, &ts_lang, db.path())?;
                 let new_status = health::transition(bm.status, result.method, result.hash_matches);
                 let status_change = if new_status != bm.status {
                     format!("{} -> {}", bm.status, new_status)
@@ -2198,7 +2198,7 @@ fn resolve_batch(
         };
         let mut cache = ParseCache::new(lang)?;
         let ts_lang = lang.tree_sitter_language();
-        let result = resolution::resolve(bm, &mut cache, &ts_lang)?;
+        let result = resolution::resolve(bm, &mut cache, &ts_lang, db.path())?;
         let new_status = health::transition(bm.status, result.method, result.hash_matches);
 
         // In dry-run mode, skip database updates
