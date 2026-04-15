@@ -297,24 +297,38 @@ pub fn canonicalize_best_effort(path: &Path) -> PathBuf {
 /// 2. Joining the relative file_path with that repo root
 /// 3. Falling back to CWD if not in a git repo
 pub fn resolve_bookmark_file_path(file_path: &str, db_path: &Path) -> Result<PathBuf> {
-    // Get repo root from database path
-    let repo_root = repo_root_from_db_path(db_path);
+    // Try to determine the repo root from the database path
+    // The database is typically at `<repo_root>/.codemark/codemark.db`
+    let repo_root_from_db = db_path
+        .parent() // .codemark/
+        .and_then(|codemark_dir| {
+            // Check if the parent directory is named ".codemark"
+            if codemark_dir.file_name() == Some(std::ffi::OsStr::new(".codemark")) {
+                // db is at repo/.codemark/codemark.db, return the repo root
+                codemark_dir.parent().map(|p| p.to_path_buf())
+            } else {
+                None
+            }
+        });
 
-    // Join relative path with repo root
-    let full_path = repo_root.join(file_path);
+    let base_path = if let Some(root) = repo_root_from_db {
+        root
+    } else {
+        // Fallback: try to detect git context from current directory
+        // This handles cases where the db is in a non-standard location (e.g., temp dirs in tests)
+        if let Some(ctx) = detect_context(Path::new(".")) {
+            ctx.repo_root
+        } else {
+            // Last resort: use current directory
+            std::env::current_dir()?
+        }
+    };
+
+    // Join relative path with base path
+    let full_path = base_path.join(file_path);
 
     // Canonicalize to resolve symlinks and get absolute path
     Ok(canonicalize_best_effort(&full_path))
-}
-
-/// Get the repo root from a database path.
-/// The database is typically at `<repo_root>/.codemark/codemark.db`
-fn repo_root_from_db_path(db_path: &Path) -> PathBuf {
-    db_path
-        .parent() // .codemark/
-        .and_then(|p| p.parent()) // repo root
-        .unwrap_or_else(|| db_path)
-        .to_path_buf()
 }
 
 #[cfg(test)]
@@ -693,35 +707,6 @@ mod tests {
 
         // Clean up
         let _ = fs::remove_dir_all(&tmp);
-    }
-
-    #[test]
-    fn repo_root_from_db_path_extracts_correctly() {
-        // Test that repo_root_from_db_path correctly extracts the repo root
-        let test_cases = vec![
-            ("/repo/.codemark/codemark.db", "/repo"),
-            ("/repo/subdir/.codemark/codemark.db", "/repo/subdir"),
-            ("/home/user/project/.codemark/codemark.db", "/home/user/project"),
-        ];
-
-        for (db_path_str, expected_root) in test_cases {
-            let db_path = Path::new(db_path_str);
-            let repo_root = repo_root_from_db_path(db_path);
-            assert_eq!(
-                repo_root,
-                PathBuf::from(expected_root),
-                "db_path={} should give root={}",
-                db_path_str,
-                expected_root
-            );
-        }
-
-        // Test relative path case separately
-        let db_path = Path::new(".codemark/codemark.db");
-        let repo_root = repo_root_from_db_path(db_path);
-        // For relative paths, we get the empty path (root becomes ".codemark"'s parent which is "")
-        // This is fine because in practice, db_path is always absolute
-        assert!(repo_root.as_os_str().is_empty() || repo_root == PathBuf::from("."));
     }
 
     #[test]
