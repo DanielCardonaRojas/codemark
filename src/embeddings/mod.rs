@@ -3,6 +3,9 @@
 //! This module provides embedding generation and vector similarity search
 //! for finding bookmarks by meaning rather than exact keywords.
 
+#![allow(dead_code)]
+#![allow(unused_imports)]
+
 pub mod config;
 pub mod local;
 pub mod provider;

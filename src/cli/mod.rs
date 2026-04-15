@@ -8,6 +8,7 @@ use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
 
 /// Build the CLI command struct.
 /// This is used by both the main binary and the man page generation in build.rs.
+#[allow(dead_code)]
 pub fn build_cli() -> clap::Command {
     Cli::command()
 }

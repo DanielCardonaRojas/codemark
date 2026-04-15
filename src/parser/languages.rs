@@ -1,3 +1,7 @@
+//! Programming language support for tree-sitter parsing.
+
+#![allow(dead_code)]
+
 use std::collections::HashMap;
 use std::fmt;
 use std::path::{Path, PathBuf};

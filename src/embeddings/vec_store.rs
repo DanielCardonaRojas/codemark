@@ -3,6 +3,8 @@
 //! This module provides storage for vector embeddings with efficient
 //! similarity search using the sqlite-vec extension.
 
+#![allow(dead_code)]
+
 use crate::embeddings::config::DistanceMetric;
 use rusqlite::{Connection, Result as SqliteResult};
 use zerocopy::IntoBytes;
@@ -46,6 +48,7 @@ impl VecStore {
 
         static INIT: Once = Once::new();
         INIT.call_once(|| unsafe {
+            #[allow(clippy::missing_transmute_annotations)]
             sqlite3_auto_extension(Some(std::mem::transmute(sqlite3_vec_init as *const ())));
         });
     }

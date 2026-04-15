@@ -50,9 +50,9 @@ impl MeanPooling {
 
         for b in 0..batch_size {
             let count = count_vals[b][0];
-            for h in 0..hidden_dim {
-                result.push(sum_vals[b][h] / count);
-            }
+            result.extend(
+                sum_vals[b].iter().take(hidden_dim).map(|&v| v / count)
+            );
         }
 
         Tensor::from_vec(result.clone(), (batch_size, hidden_dim), sum.device())
@@ -77,7 +77,7 @@ impl BertSentenceEmbedder {
             .map_err(|e| candle_core::Error::Msg(format!("Failed to parse config: {}", e)))?;
 
         let vb = unsafe {
-            VarBuilder::from_mmaped_safetensors(&[weights_path.clone()], DType::F32, device)?
+            VarBuilder::from_mmaped_safetensors(std::slice::from_ref(&weights_path), DType::F32, device)?
         };
 
         let model = BertModel::load(vb, &config)?;
@@ -97,11 +97,11 @@ impl BertSentenceEmbedder {
             let tokens =
                 tokenizer.encode(text, true).map_err(|e| candle_core::Error::Msg(e.to_string()))?;
 
-            let input_ids: Vec<u32> = tokens.get_ids().iter().map(|&id| id as u32).collect();
+            let input_ids: Vec<u32> = tokens.get_ids().to_vec();
             let attention_mask: Vec<u32> =
-                tokens.get_attention_mask().iter().map(|&id| id as u32).collect();
+                tokens.get_attention_mask().to_vec();
             let token_type_ids: Vec<u32> =
-                tokens.get_type_ids().iter().map(|&id| id as u32).collect();
+                tokens.get_type_ids().to_vec();
 
             let seq_len = input_ids.len();
             let input_ids_tensor =

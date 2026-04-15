@@ -16,7 +16,6 @@ pub struct GeneratedQuery {
 #[derive(Debug)]
 struct PathEntry {
     node_type: String,
-    field_name: Option<String>,
     /// Name info for query generation.
     name_info: Option<NameInfo>,
 }
@@ -143,7 +142,7 @@ fn find_declaration_within(node: Node, byte_range: (usize, usize)) -> Option<Nod
         {
             // Prefer the largest declaration that fits — this is the most meaningful
             // structural unit the user intended to select
-            if best.map_or(true, |b| {
+            if best.is_none_or(|b| {
                 (node.end_byte() - node.start_byte()) > (b.end_byte() - b.start_byte())
             }) {
                 *best = Some(node);
@@ -247,7 +246,6 @@ fn build_structural_path(target: Node, source: &[u8]) -> Vec<PathEntry> {
         if !is_wrapper_node(current.kind()) {
             let entry = PathEntry {
                 node_type: current.kind().to_string(),
-                field_name: find_field_name(current),
                 name_info: if is_body_node(current.kind()) {
                     None
                 } else {
@@ -267,23 +265,6 @@ fn build_structural_path(target: Node, source: &[u8]) -> Vec<PathEntry> {
 
     path.reverse(); // outermost first
     path
-}
-
-/// Find what field name the parent uses to refer to this node.
-fn find_field_name(node: Node) -> Option<String> {
-    let parent = node.parent()?;
-    let mut cursor = parent.walk();
-    if cursor.goto_first_child() {
-        loop {
-            if cursor.node().id() == node.id() {
-                return cursor.field_name().map(|s| s.to_string());
-            }
-            if !cursor.goto_next_sibling() {
-                break;
-            }
-        }
-    }
-    None
 }
 
 /// Extract the "name" identifier from a node if it has one.
@@ -313,29 +294,29 @@ fn extract_name_info(node: Node, source: &[u8]) -> Option<NameInfo> {
     }
 
     // For Rust impl_item: use "type" field as the name
-    if node.kind() == "impl_item" {
-        if let Some(type_node) = node.child_by_field_name("type") {
-            return Some(NameInfo {
-                field: "type".to_string(),
-                direct_type: type_node.kind().to_string(),
-                inner_type: None,
-                text: node_text(type_node, source),
-            });
-        }
+    if node.kind() == "impl_item"
+        && let Some(type_node) = node.child_by_field_name("type")
+    {
+        return Some(NameInfo {
+            field: "type".to_string(),
+            direct_type: type_node.kind().to_string(),
+            inner_type: None,
+            text: node_text(type_node, source),
+        });
     }
 
     // For TS export_statement: get the name from the inner declaration
-    if node.kind() == "export_statement" {
-        if let Some(decl) = node.child_by_field_name("declaration") {
-            return extract_name_info(decl, source);
-        }
+    if node.kind() == "export_statement"
+        && let Some(decl) = node.child_by_field_name("declaration")
+    {
+        return extract_name_info(decl, source);
     }
 
     // For Python decorated_definition: get the name from the inner definition
-    if node.kind() == "decorated_definition" {
-        if let Some(def) = node.child_by_field_name("definition") {
-            return extract_name_info(def, source);
-        }
+    if node.kind() == "decorated_definition"
+        && let Some(def) = node.child_by_field_name("definition")
+    {
+        return extract_name_info(def, source);
     }
 
     // For TS method_definition: name is in "name" field as property_identifier
@@ -387,9 +368,7 @@ fn is_body_node(kind: &str) -> bool {
             // Go
             | "interface_type"
             | "struct_type"
-            | "field_declaration_list" // already listed for Rust
             // Java / C#
-            | "class_body"   // already listed for Swift
             | "constructor_body"
             | "enum_body_declarations"
     )
