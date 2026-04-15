@@ -145,7 +145,6 @@ fn open_all_dbs(cli: &Cli) -> Result<Vec<(String, Database)>> {
     Ok(dbs)
 }
 
-
 /// Derive a source label from a db path: /foo/repo-name/.codemark/codemark.db -> "repo-name"
 fn source_label_from_path(path: &std::path::Path) -> String {
     // Canonicalize to resolve relative paths like .codemark/codemark.db
@@ -1744,10 +1743,8 @@ fn handle_diff(cli: &Cli, mode: &OutputMode, args: &DiffArgs) -> Result<()> {
         ..Default::default()
     })?;
 
-    let affected: Vec<&Bookmark> = all_bookmarks
-        .iter()
-        .filter(|bm| changed_files.contains(&bm.file_path))
-        .collect();
+    let affected: Vec<&Bookmark> =
+        all_bookmarks.iter().filter(|bm| changed_files.contains(&bm.file_path)).collect();
 
     if affected.is_empty() {
         write_success(
