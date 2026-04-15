@@ -6,7 +6,7 @@ use clap_complete::generate;
 
 use crate::cli::output::{
     self, ByteLocation, HealOutput, HealUpdate, OutputMode, short_id, write_bookmark_markdown,
-    write_bookmarks, write_heal_output, write_json_success, write_not_implemented, write_success,
+    write_bookmarks, write_heal_output, write_json_success, write_success,
 };
 use crate::cli::*;
 use crate::config::Config;
@@ -62,11 +62,6 @@ fn dispatch_collection(cli: &Cli, mode: &OutputMode, args: &CollectionArgs) -> R
     }
 }
 
-fn stub(mode: &OutputMode, name: &str) -> Result<()> {
-    write_not_implemented(mode, name)?;
-    Err(Error::NotImplemented(format!("{name}: not implemented")))
-}
-
 // --- Helpers ---
 
 /// Open the primary database (for write commands, or single-db reads).
@@ -115,17 +110,17 @@ fn generate_embedding_for_bookmark(cli: &Cli, config: &Config, bookmark: &Bookma
     // Generate and store the embedding
     let conn = db.conn_mut();
     // Ignore errors - embedding generation failure shouldn't block bookmark creation
-    let _ = semantic_repo.store_embeddings(conn, &[bookmark.clone()]);
+    let _ = semantic_repo.store_embeddings(conn, std::slice::from_ref(bookmark));
 
     Ok(())
 }
 
 /// Load the config from the .codemark directory (same location as the primary DB).
 fn load_config(cli: &Cli) -> Config {
-    if let Some(path) = cli.db.first() {
-        if let Some(parent) = path.parent() {
-            return Config::load(parent);
-        }
+    if let Some(path) = cli.db.first()
+        && let Some(parent) = path.parent()
+    {
+        return Config::load(parent);
     }
     let cwd = std::env::current_dir().unwrap_or_default();
     if let Some(ctx) = git_context::detect_context(&cwd) {
@@ -148,11 +143,6 @@ fn open_all_dbs(cli: &Cli) -> Result<Vec<(String, Database)>> {
         dbs.push((label, Database::open(path)?));
     }
     Ok(dbs)
-}
-
-/// Returns true if multiple databases are being queried.
-fn is_multi_db(cli: &Cli) -> bool {
-    cli.db.len() > 1
 }
 
 /// Derive a source label from a db path: /foo/repo-name/.codemark/codemark.db -> "repo-name"
@@ -359,10 +349,10 @@ fn find_bookmark_across<'a>(
         if let Some(bm) = db.get_bookmark(id)? {
             return Ok((bm, db));
         }
-        if id.len() >= 4 {
-            if let Ok(Some(bm)) = db.get_bookmark_by_prefix(id) {
-                return Ok((bm, db));
-            }
+        if id.len() >= 4
+            && let Ok(Some(bm)) = db.get_bookmark_by_prefix(id)
+        {
+            return Ok((bm, db));
         }
     }
     Err(Error::Input(format!("bookmark not found: {id}")))
@@ -1203,30 +1193,28 @@ fn handle_heal(cli: &Cli, mode: &OutputMode, args: &HealArgs) -> Result<()> {
             .and_then(|s| ByteLocation::from_str(s));
 
         // Skip heal if HEAD is before latest resolution (unless --force is set)
-        if !args.force {
-            if let Some(ref head) = current_head {
-                if let Some(ref res) = previous_resolution.as_ref().and_then(|r| r.first()) {
-                    if let Some(ref res_commit) = res.commit_hash {
-                        match git_context::is_ancestor(&cwd, head, res_commit) {
-                            Ok(true) => {
-                                // HEAD is ancestor of resolution (resolution is ahead)
-                                skipped += 1;
-                                eprintln!(
-                                    "codemark: skipping {} (resolution at {} is ahead of HEAD {})",
-                                    short_id(&bm.id),
-                                    &res_commit[..8.min(res_commit.len())],
-                                    &head[..8.min(head.len())]
-                                );
-                                continue;
-                            }
-                            Ok(false) => {
-                                // HEAD is ahead or unrelated, proceed with heal
-                            }
-                            Err(_) => {
-                                // git error, proceed with heal (graceful degradation)
-                            }
-                        }
-                    }
+        if !args.force
+            && let Some(ref head) = current_head
+            && let Some(res) = previous_resolution.as_ref().and_then(|r| r.first())
+            && let Some(ref res_commit) = res.commit_hash
+        {
+            match git_context::is_ancestor(&cwd, head, res_commit) {
+                Ok(true) => {
+                    // HEAD is ancestor of resolution (resolution is ahead)
+                    skipped += 1;
+                    eprintln!(
+                        "codemark: skipping {} (resolution at {} is ahead of HEAD {})",
+                        short_id(&bm.id),
+                        &res_commit[..8.min(res_commit.len())],
+                        &head[..8.min(head.len())]
+                    );
+                    continue;
+                }
+                Ok(false) => {
+                    // HEAD is ahead or unrelated, proceed with heal
+                }
+                Err(_) => {
+                    // git error, proceed with heal (graceful degradation)
                 }
             }
         }
@@ -1755,10 +1743,8 @@ fn handle_diff(cli: &Cli, mode: &OutputMode, args: &DiffArgs) -> Result<()> {
         ..Default::default()
     })?;
 
-    let affected: Vec<&Bookmark> = all_bookmarks
-        .iter()
-        .filter(|bm| changed_files.iter().any(|f| *f == bm.file_path))
-        .collect();
+    let affected: Vec<&Bookmark> =
+        all_bookmarks.iter().filter(|bm| changed_files.contains(&bm.file_path)).collect();
 
     if affected.is_empty() {
         write_success(
@@ -1815,10 +1801,10 @@ fn handle_diff(cli: &Cli, mode: &OutputMode, args: &DiffArgs) -> Result<()> {
                     status_change
                 );
                 // Display first annotation's notes if available
-                if let Some(ref ann) = bm.annotations.first() {
-                    if let Some(ref note) = ann.notes {
-                        println!("    {note}");
-                    }
+                if let Some(ann) = bm.annotations.first()
+                    && let Some(ref note) = ann.notes
+                {
+                    println!("    {note}");
                 }
             }
         }

@@ -1,5 +1,7 @@
 //! Configuration for embedding models.
 
+#![allow(dead_code)]
+
 use serde::{Deserialize, Serialize};
 use std::str::FromStr;
 
@@ -52,11 +54,12 @@ impl FromStr for DistanceMetric {
 }
 
 /// Available embedding models.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[derive(Debug, Default, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]
 pub enum EmbeddingModel {
     /// all-MiniLM-L6-v2: 384 dimensions, ~80MB model
     #[serde(alias = "all-MiniLM-L6-v2")]
+    #[default]
     AllMiniLmL6V2,
     /// bge-small-en-v1.5: 384 dimensions, ~130MB model
     #[serde(alias = "bge-small-en-v1.5")]
@@ -78,12 +81,6 @@ impl EmbeddingModel {
             EmbeddingModel::AllMiniLmL6V2 => "sentence-transformers/all-MiniLM-L6-v2",
             EmbeddingModel::BgeSmallEnV1_5 => "BAAI/bge-small-en-v1.5",
         }
-    }
-}
-
-impl Default for EmbeddingModel {
-    fn default() -> Self {
-        EmbeddingModel::AllMiniLmL6V2
     }
 }
 

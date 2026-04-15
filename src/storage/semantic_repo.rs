@@ -1,5 +1,7 @@
 //! Semantic search operations using vector embeddings.
 
+#![allow(dead_code)]
+
 use std::path::PathBuf;
 
 use rusqlite::Connection;
@@ -100,7 +102,7 @@ impl SemanticRepo {
         let store = VecStore::with_metric(provider.dimensions(), self.distance_metric);
         let entries: Vec<VecStoreEntry> = bookmarks
             .iter()
-            .zip(embeddings.into_iter())
+            .zip(embeddings)
             .map(|(bookmark, embedding)| VecStoreEntry {
                 bookmark_id: bookmark.id.clone(),
                 embedding,

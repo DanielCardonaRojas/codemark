@@ -1,5 +1,7 @@
 //! Embedding provider trait and common types.
 
+#![allow(dead_code)]
+
 use async_trait::async_trait;
 
 /// Result type for embedding operations.

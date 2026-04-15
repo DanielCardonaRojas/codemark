@@ -24,11 +24,14 @@ pub fn global_models_dir() -> Option<PathBuf> {
 }
 
 /// Application configuration loaded from `.codemark/config.toml`.
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Default, Deserialize, Serialize)]
 #[serde(default)]
 pub struct Config {
+    #[serde(default)]
     pub storage: StorageConfig,
+    #[serde(default)]
     pub health: HealthConfig,
+    #[serde(default)]
     pub semantic: SemanticConfig,
 }
 
@@ -97,16 +100,6 @@ pub struct StorageConfig {
 pub struct HealthConfig {
     /// Days before stale bookmarks are auto-archived (used by `heal --auto-archive`).
     pub auto_archive_after_days: u32,
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        Config {
-            storage: StorageConfig::default(),
-            health: HealthConfig::default(),
-            semantic: SemanticConfig::default(),
-        }
-    }
 }
 
 impl Default for StorageConfig {

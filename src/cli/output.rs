@@ -1,3 +1,7 @@
+//! Output formatting for codemark commands.
+
+#![allow(dead_code)]
+
 use std::io::{self, Write};
 
 use comfy_table::{Cell, Table};
@@ -130,7 +134,7 @@ pub fn write_bookmarks(mode: &OutputMode, bookmarks: &[Bookmark]) -> io::Result<
             fn no_line(_: &str) -> Option<usize> {
                 None
             }
-            write_bookmarks_tv(bookmarks, &no_line)
+            write_bookmarks_tv(bookmarks, no_line)
         }
         OutputMode::Markdown => write_bookmarks_table(bookmarks),
         OutputMode::Custom(template) => write_bookmarks_custom(bookmarks, template),
@@ -535,15 +539,12 @@ pub struct ByteLocation {
 
 impl ByteLocation {
     /// Parse from a "start:end" string format stored in the database.
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Option<Self> {
-        let parts: Vec<&str> = s.split(':').collect();
-        if parts.len() == 2 {
-            let start = parts[0].parse::<usize>().ok()?;
-            let end = parts[1].parse::<usize>().ok()?;
-            Some(ByteLocation { start_byte: start, end_byte: end })
-        } else {
-            None
-        }
+        let (start, end) = s.split_once(':')?;
+        let start = start.parse::<usize>().ok()?;
+        let end = end.parse::<usize>().ok()?;
+        Some(ByteLocation { start_byte: start, end_byte: end })
     }
 }
 

@@ -782,6 +782,13 @@ fn diff_runs_without_error() {
         "diff test",
     ]);
 
+    // Skip test if HEAD~1 doesn't exist (e.g., in CI with shallow clones)
+    let repo = git2::Repository::open(&cm.work_dir).unwrap();
+    let obj = repo.revparse_single("HEAD~1");
+    if obj.is_err() {
+        return;
+    }
+
     // diff should succeed (may find 0 affected since fixtures aren't in recent commits)
     let json = cm.run_json(&["diff", "--since", "HEAD~1"]);
     assert_eq!(json["success"], true);

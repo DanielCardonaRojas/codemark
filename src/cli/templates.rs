@@ -348,14 +348,14 @@ pub fn ensure_default_template_exists() {
     let template_path = templates_dir.join("codemark_show.md");
 
     // Only write if file doesn't exist (don't overwrite user customizations)
-    if !template_path.exists() {
-        if let Err(e) = std::fs::write(&template_path, default_show_template()) {
-            eprintln!(
-                "Warning: Failed to write default template to {}: {}",
-                template_path.display(),
-                e
-            );
-        }
+    if !template_path.exists()
+        && let Err(e) = std::fs::write(&template_path, default_show_template())
+    {
+        eprintln!(
+            "Warning: Failed to write default template to {}: {}",
+            template_path.display(),
+            e
+        );
     }
 }
 

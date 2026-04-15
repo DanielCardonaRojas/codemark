@@ -8,6 +8,7 @@ pub const EXIT_INPUT_ERROR: i32 = 2;
 pub const EXIT_DATABASE_ERROR: i32 = 3;
 
 #[derive(Debug, thiserror::Error)]
+#[allow(dead_code)]
 pub enum Error {
     #[error("{0}")]
     NotImplemented(String),

@@ -1,7 +1,11 @@
+//! Git context detection and utilities.
+
+#![allow(dead_code)]
+
 use std::path::{Path, PathBuf};
 
 use crate::error::{Error, Result};
-use git2::{Repository, Signature};
+use git2::Repository;
 
 /// Git repository context captured at a point in time.
 pub struct GitContext {
@@ -288,6 +292,7 @@ fn canonicalize_best_effort(path: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use git2::Signature;
     use std::fs;
 
     #[test]
