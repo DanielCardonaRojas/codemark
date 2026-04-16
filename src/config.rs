@@ -161,6 +161,8 @@ impl EditorTypesConfig {
             "nano".to_string(),
             "micro".to_string(),
             "less".to_string(),
+            "helix".to_string(),
+            "hx".to_string(),
         ]
     }
 
