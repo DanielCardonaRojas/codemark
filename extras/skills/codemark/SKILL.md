@@ -24,6 +24,7 @@ codemark list --status active
 If the user invoked you with arguments (e.g. `/codemark something`), use `$ARGUMENTS` to search the active bookmarks or execute the desired behavior:
 - Search text: `codemark search "$ARGUMENTS"`
 - If it looks like a bookmark ID or UUID prefix: `codemark show "$ARGUMENTS"`
+- If user asks to "open", "edit", or view a bookmark: `codemark open "$ARGUMENTS"`
 - If no arguments were provided, interpret the user's intent based on the conversation context.
 
 ## When to use codemark
@@ -131,6 +132,16 @@ codemark add --file src/auth.rs --range 42 --dry-run
 codemark resolve --status active
 codemark list --author agent
 codemark search "authentication"
+```
+
+### Open bookmarked files
+```bash
+# Open a bookmark in your configured editor
+codemark open <bookmark-id>
+
+# The editor is configured via [open] section in .codemark/config.toml
+# Supports placeholder substitution: {FILE}, {LINE_START}, {LINE_END}, {ID}
+# Example: rs = "nvim +{LINE_START} {FILE}"
 ```
 
 ### Organize with collections
