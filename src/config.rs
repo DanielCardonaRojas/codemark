@@ -316,7 +316,9 @@ impl Config {
     /// Merge another config into this one, with `other` taking precedence.
     fn merge(&mut self, other: Config) {
         // For non-table fields, replace if set
-        if other.storage.max_resolutions_per_bookmark != StorageConfig::default().max_resolutions_per_bookmark {
+        if other.storage.max_resolutions_per_bookmark
+            != StorageConfig::default().max_resolutions_per_bookmark
+        {
             self.storage.max_resolutions_per_bookmark = other.storage.max_resolutions_per_bookmark;
         }
         if other.health.auto_archive_after_days != HealthConfig::default().auto_archive_after_days {
@@ -674,9 +676,15 @@ py = "code {FILE}"
         assert_eq!(global.open.default, Some("vim {FILE}".to_string()));
 
         // Extensions should be merged (both global and local present)
-        assert_eq!(global.open.extensions.get("rs"), Some(&"nvim +{LINE_START} {FILE}".to_string()));
+        assert_eq!(
+            global.open.extensions.get("rs"),
+            Some(&"nvim +{LINE_START} {FILE}".to_string())
+        );
         assert_eq!(global.open.extensions.get("md"), Some(&"typora {FILE}".to_string()));
-        assert_eq!(global.open.extensions.get("swift"), Some(&"xed --line {LINE_START} {FILE}".to_string()));
+        assert_eq!(
+            global.open.extensions.get("swift"),
+            Some(&"xed --line {LINE_START} {FILE}".to_string())
+        );
         assert_eq!(global.open.extensions.get("py"), Some(&"code {FILE}".to_string()));
     }
 
