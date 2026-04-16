@@ -4,14 +4,14 @@ description = "Codemark structural bookmarks"
 requirements = ["codemark, bat, glow, jq"]
 
 [source]
-command = "cd \"$(dirname $(git rev-parse --path-format=absolute --git-common-dir))\" && codemark list --format tv"
+command = "codemark list --format tv"
 display = "{split:\\t:1}  {split:\\t:4}  {split:\\t:5}"
 output = "{split:\\t:0}"
 
 [preview]
 command = [
-  "cd \"$(dirname $(git rev-parse --path-format=absolute --git-common-dir))\" && codemark preview {split:\\t:0} | jq -r '\"\\(.data.file_path) --highlight-line \\(.data.line_range)\"' | xargs bat --color=always",
-  "cd \"$(dirname $(git rev-parse --path-format=absolute --git-common-dir))\" && codemark show {split:\\t:0} --format markdown | glow - --style auto",
+  "codemark preview {split:\\t:0} | jq -r '\"\\(.data.file_path) --highlight-line \\(.data.line_range)\"' | xargs bat --color=always",
+  "codemark show {split:\\t:0} --format markdown | glow - --style auto",
 ]
 offset = "{split:\\t:2}"
 
@@ -26,7 +26,7 @@ ctrl-d = "actions:details"
 
 [actions.edit]
 description = "Open in configured editor"
-command = "cd \"$(dirname $(git rev-parse --path-format=absolute --git-common-dir))\" && codemark open {split:\\t:0}"
+command = "codemark open {split:\\t:0}"
 mode = "fork"
 
 [actions.resolve]
