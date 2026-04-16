@@ -8,12 +8,20 @@ use crate::embeddings::config::DistanceMetric;
 /// Returns the global config directory.
 ///
 /// Platform-specific locations:
-/// - macOS: `~/Library/Application Support/codemark`
-/// - Linux: `~/.config/codemark` (XDG standard)
-/// - Windows: `%APPDATA%\codemark\config`
+/// - All platforms: `$XDG_CONFIG_HOME/codemark` if XDG_CONFIG_HOME is set
+/// - macOS fallback: `~/Library/Application Support/codemark`
+/// - Linux fallback: `~/.config/codemark` (XDG standard)
+/// - Windows fallback: `%APPDATA%\codemark\config`
 ///
 /// This is where the global `config.toml` file is stored.
 pub fn global_config_dir() -> Option<PathBuf> {
+    // Check XDG_CONFIG_HOME first (respects user preference on all platforms)
+    if let Ok(xdg_config) = std::env::var("XDG_CONFIG_HOME") {
+        let path = PathBuf::from(xdg_config).join("codemark");
+        return Some(path);
+    }
+
+    // Fall back to platform-specific defaults
     directories::ProjectDirs::from("", "codemark", "codemark")
         .map(|proj| proj.config_dir().to_path_buf())
 }
