@@ -394,6 +394,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "shellexpand",
+ "shlex",
  "sqlite-vec",
  "tempfile",
  "thiserror 2.0.18",

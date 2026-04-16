@@ -19,6 +19,7 @@ AI coding agents and developers revisit the same code across sessions. Line-numb
 - 🛠️ **8 Languages** — Swift, Rust, TS, Python, Go, Java, C#, Dart
 - 🧠 **Semantic Search** — Find bookmarks by meaning, not just keywords
 - 🧩 **Integrations** — First-class support for `fzf`, `television`, `bat`, `glow`, and `Neovim`
+- 🚀 **Quick Open** — Open bookmarked files directly in your configured editor
 - 🤖 **Agent Ready** — JSON-first output optimized for Claude Code and other AI agents
 - 📦 **Git Integrated** — Track bookmarks across commits and diffs
 - 🗃️ **Collections** — Group and reorder bookmarks for specific investigations
@@ -106,6 +107,17 @@ codemark show a1b2                             # full details + resolution histo
 codemark show a1b2 --format markdown           # rich markdown (great with glow)
 ```
 
+### Opening Bookmarks
+
+```bash
+# Open a bookmark in your configured editor
+codemark open a1b2
+
+# Resolves to current location, then opens in editor
+# Supports extension-specific editors (e.g., .md files in Typora)
+# See [Configuration](#configuration) for editor setup
+```
+
 ### Health Management
 
 ```bash
@@ -189,6 +201,38 @@ All commands output **JSON by default** (optimized for AI agents and scripting).
 | `line` | TSV | `grep`, `awk`, simple piping |
 | `tv` | Custom TSV | `television` and `fzf` integration |
 | `markdown` | Markdown | `glow`, documentation |
+
+## Configuration
+
+Codemark reads configuration from `.codemark/config.toml` in your repository. Run `codemark init` to create the default config, or copy [docs/config.default.toml](docs/config.default.toml).
+
+### Editor Configuration
+
+The `[open]` section configures the `codemark open` command:
+
+```toml
+[open]
+# Default editor command (supports placeholders)
+default = "nvim +{LINE_START} {FILE}"
+
+# Extension-specific overrides
+[open.extensions]
+rs = "nvim +{LINE_START} {FILE}"
+md = "typora {FILE}"
+py = "code --goto {FILE}:{LINE_START}:{LINE_END}"
+
+# Terminal editors (codemark waits for them to exit)
+[open.editor_types]
+terminal = ["vim", "vi", "nvim", "neovim", "emacs", "nano", "micro", "helix", "hx"]
+# GUI editors (codemark spawns and returns immediately)
+gui = ["xed", "code", "idea", "subl", "typora"]
+```
+
+**Placeholders:** `{FILE}`, `{LINE_START}`, `{LINE_END}`, `{ID}`
+
+If no config is set, codemark uses `$EDITOR` or falls back to `vim`.
+
+See [docs/open-command-spec.md](docs/open-command-spec.md) for full documentation.
 
 ## How it works
 

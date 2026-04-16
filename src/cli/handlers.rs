@@ -46,6 +46,7 @@ pub fn dispatch(cli: &Cli) -> Result<()> {
         Command::Import(args) => handle_import(cli, &mode, args),
         Command::Completions(args) => handle_completions(args),
         Command::Annotate(args) => handle_annotate(cli, &mode, args),
+        Command::Open(args) => handle_open(cli, args),
     }
 }
 
@@ -2346,6 +2347,127 @@ fn write_resolution_output(
             }
         }
     }
+    Ok(())
+}
+
+/// Open a bookmarked file in the configured editor.
+fn handle_open(cli: &Cli, args: &OpenArgs) -> Result<()> {
+    let db = open_db(cli)?;
+    let config = load_config(cli);
+
+    // Find the bookmark by ID or prefix
+    let bookmark = match db.get_bookmark(&args.id) {
+        Ok(Some(bm)) => bm,
+        Ok(None) => {
+            // Try prefix match
+            match db.get_bookmark_by_prefix(&args.id) {
+                Ok(Some(bm)) => bm,
+                Ok(None) => return Err(Error::Input(format!("bookmark '{}' not found", args.id))),
+                Err(e) => return Err(e),
+            }
+        }
+        Err(e) => return Err(e),
+    };
+
+    // Resolve the bookmark to get current location
+    let lang = bookmark
+        .language
+        .parse::<Language>()
+        .map_err(|_| Error::Input(format!("unsupported language: {}", bookmark.language)))?;
+    let ts_lang = lang.tree_sitter_language();
+    let mut cache = ParseCache::new(lang)?;
+    let db_path = db.path();
+    let result = resolution::resolve(&bookmark, &mut cache, &ts_lang, db_path)?;
+
+    if result.method == ResolutionMethod::Failed {
+        return Err(Error::Resolution(format!(
+            "failed to resolve bookmark '{}': the code could not be found in the file",
+            short_id(&bookmark.id)
+        )));
+    }
+
+    // Get the absolute file path
+    let absolute_path = git_context::resolve_bookmark_file_path(&result.file_path, db_path)?;
+
+    // Extract file extension for command lookup
+    let extension =
+        std::path::Path::new(&result.file_path).extension().and_then(|e| e.to_str()).unwrap_or("");
+
+    // Get the command template
+    let command_template = if let Some(cmd) =
+        config.open.get_command_for_extension(extension).or(config.open.default.as_ref())
+    {
+        // User configured a full command template
+        cmd.clone()
+    } else {
+        // Use default: $EDITOR {FILE}
+        // Note: We don't add line numbers since syntax varies by editor
+        // Users should configure extension-specific commands for line number support
+        let editor = std::env::var("EDITOR").unwrap_or_else(|_| "vim".to_string());
+        format!("{} {{FILE}}", editor)
+    };
+
+    // Substitute placeholders
+    let line_start = result.start_line + 1; // Convert to 1-indexed
+    let line_end = result.end_line + 1; // Convert to 1-indexed
+    let substituted = command_template
+        .replace("{FILE}", &absolute_path.to_string_lossy())
+        .replace("{LINE_START}", &line_start.to_string())
+        .replace("{LINE_END}", &line_end.to_string())
+        .replace("{ID}", &bookmark.id);
+
+    // Tokenize the command safely
+    let tokens = shlex::split(&substituted)
+        .ok_or_else(|| Error::Input(format!("invalid command template: {}", command_template)))?;
+
+    if tokens.is_empty() {
+        return Err(Error::Input("empty command after tokenization".into()));
+    }
+
+    let program = &tokens[0];
+    let args = &tokens[1..];
+
+    // Determine if we should wait for the editor to complete
+    let program_name =
+        std::path::Path::new(program).file_name().and_then(|n| n.to_str()).unwrap_or("");
+    let should_wait = config.open.should_wait_for_editor(program_name);
+
+    if should_wait {
+        // Wait for terminal editors to complete
+        let status = std::process::Command::new(program)
+            .args(args)
+            .status()
+            .map_err(|e| {
+                if e.kind() == std::io::ErrorKind::NotFound {
+                    Error::Input(format!(
+                        "editor not found: '{}'. Install the editor or configure a different command in codemark.toml",
+                        program
+                    ))
+                } else {
+                    Error::Operation(format!("failed to start editor: {}", e))
+                }
+            })?;
+
+        if !status.success() {
+            eprintln!("codemark: editor exited with status {}", status);
+        }
+    } else {
+        // Spawn GUI editors in the background
+        std::process::Command::new(program)
+            .args(args)
+            .spawn()
+            .map_err(|e| {
+                if e.kind() == std::io::ErrorKind::NotFound {
+                    Error::Input(format!(
+                        "editor not found: '{}'. Install the editor or configure a different command in codemark.toml",
+                        program
+                    ))
+                } else {
+                    Error::Operation(format!("failed to start editor: {}", e))
+                }
+            })?;
+    }
+
     Ok(())
 }
 

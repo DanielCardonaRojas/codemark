@@ -324,6 +324,13 @@ pub fn resolve_bookmark_file_path(file_path: &str, db_path: &Path) -> Result<Pat
         }
     };
 
+    // Ensure base_path is absolute; if not, convert it using current_dir
+    let base_path = if base_path.is_absolute() {
+        base_path
+    } else {
+        std::env::current_dir()?.join(&base_path).canonicalize().unwrap_or(base_path)
+    };
+
     // Join relative path with base path
     let full_path = base_path.join(file_path);
 
@@ -336,6 +343,7 @@ mod tests {
     use super::*;
     use git2::Signature;
     use std::fs;
+    use uuid::Uuid;
 
     #[test]
     fn relative_to_root_normalizes() {
@@ -618,7 +626,8 @@ mod tests {
     #[test]
     fn resolve_bookmark_file_path_standard_db_location() {
         // Test standard database location: <repo>/.codemark/codemark.db
-        let tmp = std::env::temp_dir().join("codemark_test_resolve_standard");
+        let tmp =
+            std::env::temp_dir().join(format!("codemark_test_resolve_standard_{}", Uuid::new_v4()));
         let _ = fs::create_dir_all(&tmp);
 
         // Create the standard .codemark directory structure
@@ -646,7 +655,8 @@ mod tests {
     #[test]
     fn resolve_bookmark_file_path_nested_db_location() {
         // Test nested database location (e.g., monorepo subdirectory)
-        let tmp = std::env::temp_dir().join("codemark_test_resolve_nested");
+        let tmp =
+            std::env::temp_dir().join(format!("codemark_test_resolve_nested_{}", Uuid::new_v4()));
         let _ = fs::create_dir_all(&tmp);
 
         // Create a nested structure like /repo/subdir/.codemark/codemark.db
@@ -682,7 +692,8 @@ mod tests {
         // and the database is at the main repo's .codemark directory.
         // The resolution should still work correctly from either location.
 
-        let tmp = std::env::temp_dir().join("codemark_test_resolve_worktree");
+        let tmp =
+            std::env::temp_dir().join(format!("codemark_test_resolve_worktree_{}", Uuid::new_v4()));
         let _ = fs::create_dir_all(&tmp);
 
         // Main repo structure
@@ -711,7 +722,8 @@ mod tests {
 
     #[test]
     fn resolve_bookmark_file_path_with_deeply_nested_file() {
-        let tmp = std::env::temp_dir().join("codemark_test_resolve_deep");
+        let tmp =
+            std::env::temp_dir().join(format!("codemark_test_resolve_deep_{}", Uuid::new_v4()));
         let _ = fs::create_dir_all(&tmp);
 
         let codemark_dir = tmp.join(".codemark");
@@ -736,7 +748,8 @@ mod tests {
     fn resolve_bookmark_file_path_fallback_for_missing_file() {
         // Test that canonicalize_best_effort falls back gracefully
         // when the file doesn't exist (e.g., deleted file in stale bookmark)
-        let tmp = std::env::temp_dir().join("codemark_test_resolve_missing");
+        let tmp =
+            std::env::temp_dir().join(format!("codemark_test_resolve_missing_{}", Uuid::new_v4()));
         let _ = fs::create_dir_all(&tmp);
 
         let codemark_dir = tmp.join(".codemark");

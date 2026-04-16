@@ -3,6 +3,26 @@
 # This file controls codemark's behavior. Edit these values to customize
 # how codemark works in your repository.
 
+[open]
+# Default editor command for `codemark open`.
+# Placeholders: {FILE} (absolute path), {LINE_START}, {LINE_END}, {ID}
+# If not set, uses $EDITOR or falls back to "vim".
+# default = "nvim +{LINE_START} {FILE}"
+
+# Extension-specific editor commands (these override the default).
+# Uncomment and customize as needed for your preferred editors.
+# [open.extensions]
+# rs = "nvim +{LINE_START} {FILE}"
+# md = "typora {FILE}"
+# py = "code --goto {FILE}:{LINE_START}:{LINE_END}"
+
+# Configure which editors should block (wait) vs. run in background.
+# [open.editor_types]
+# Terminal editors - codemark waits for them to exit before returning.
+# terminal = ["vim", "vi", "nvim", "neovim", "emacs", "nano", "micro"]
+# GUI editors - codemark spawns them and returns immediately.
+# gui = ["xed", "code", "idea", "subl", "typora"]
+
 [storage]
 # Maximum number of resolution history entries to keep per bookmark.
 # Older entries are automatically pruned after each new resolution.

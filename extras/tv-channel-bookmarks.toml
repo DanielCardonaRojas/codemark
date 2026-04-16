@@ -25,8 +25,8 @@ ctrl-r = "actions:resolve"
 ctrl-d = "actions:details"
 
 [actions.edit]
-description = "Open in $EDITOR"
-command = "cd \"$(dirname $(git rev-parse --path-format=absolute --git-common-dir))\" && codemark resolve {split:\\t:0} --format '{file}:{line}' | xargs $EDITOR"
+description = "Open in configured editor"
+command = "cd \"$(dirname $(git rev-parse --path-format=absolute --git-common-dir))\" && codemark open {split:\\t:0}"
 mode = "fork"
 
 [actions.resolve]
