@@ -110,16 +110,27 @@ Any static method:
       (#eq? @type "String")))) @target
 ```
 
+## Module Tagging
+
+Java uses `package:<name>` with the full Java package name (dot notation):
+
+| File path | Module tag |
+|-----------|------------|
+| `com/app/auth/AuthService.java` | `--tag package:com.app.auth` |
+| `org/mycompany/api/handler.java` | `--tag package:org.mycompany.api` |
+| `app/Main.java` | `--tag package:app` |
+
 ## Examples
 
 ### Bookmark an Auth Validator
 
 ```bash
 codemark add-from-query \
-  --file src/auth/AuthService.java \
+  --file com/app/auth/AuthService.java \
   --query '(method_declaration name: (identifier) @name (#eq? @name "validateToken")) @target' \
   --note "Core JWT validation. Entry point for all authenticated requests." \
-  --tag feature:auth --tag role:validator \
+  --context "Package: com.app.auth | Validates JWT tokens with expiry check" \
+  --tag package:com.app.auth --tag feature:auth --tag role:validator \
   --created-by agent
 ```
 
@@ -127,9 +138,10 @@ codemark add-from-query \
 
 ```bash
 codemark add-from-query \
-  --file src/auth/AuthService.java \
+  --file com/app/auth/AuthService.java \
   --query '(class_declaration name: (identifier) @class (#eq? @class "AuthService") body: (class_body (method_declaration name: (identifier) @method (#eq? @method "invalidateCache")) @target))' \
   --note "Clears the JWT token cache" \
-  --tag feature:auth --tag layer:business \
+  --context "Package: com.app.auth | Cache invalidation logic" \
+  --tag package:com.app.auth --tag feature:auth --tag layer:business \
   --created-by agent
 ```

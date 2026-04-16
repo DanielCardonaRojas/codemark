@@ -177,6 +177,88 @@ Identify security-sensitive code.
 --tag layer:config --tag role:constant --tag status:stable
 ```
 
+### Module/Package Tags (Language-Specific)
+Always include the module or package context from the file path. Each language ecosystem has its own conventions—use the appropriate tag format.
+
+#### Swift
+- **Tag**: `module:<name>` — Swift Package Manager module name
+- **Inference**: From `Sources/<ModuleName>/` or target name in Package.swift
+| File path | Module tag |
+|-----------|------------|
+| `Sources/AuthService/Validator.swift` | `--tag module:AuthService` |
+| `Sources/App/Models/User.swift` | `--tag module:App` |
+
+#### Rust
+- **Tag**: `crate:<name>` — For workspace crates (e.g., `crates/`)
+- **Tag**: `module:<name>` — For modules within `src/`
+| File path | Module tag |
+|-----------|------------|
+| `crates/auth/src/lib.rs` | `--tag crate:auth` |
+| `crates/auth/src/service.rs` | `--tag crate:auth --tag module:service` |
+| `src/auth/mod.rs` | `--tag module:auth` |
+| `src/auth/service.rs` | `--tag module:auth` |
+
+#### Go
+- **Tag**: `package:<path>` — Full package path relative to module root
+| File path | Module tag |
+|-----------|------------|
+| `internal/auth/handler.go` | `--tag package:internal.auth` |
+| `pkg/api/middleware.go` | `--tag package:pkg.api` |
+| `cmd/server/main.go` | `--tag package:cmd.server` |
+| `handler.go` (root) | `--tag package:root` |
+
+#### Python
+- **Tag**: `package:<path>` — Python package path (dot notation)
+| File path | Module tag |
+|-----------|------------|
+| `app/auth/service.py` | `--tag package:app.auth` |
+| `src/backend/db/models.py` | `--tag package:src.backend.db` |
+| `tests/test_auth.py` | `--tag package:tests` |
+
+#### TypeScript / JavaScript
+- **Tag**: `module:<name>` — Directory or workspace package name
+| File path | Module tag |
+|-----------|------------|
+| `src/auth/service.ts` | `--tag module:auth` |
+| `packages/backend/src/db.ts` | `--tag module:backend` |
+| `components/auth/Login.tsx` | `--tag module:components.auth` |
+| `lib/api/client.ts` | `--tag module:lib.api` |
+
+#### Java
+- **Tag**: `package:<name>` — Java package name (dot notation)
+| File path | Module tag |
+|-----------|------------|
+| `com/app/auth/AuthService.java` | `--tag package:com.app.auth` |
+| `org/mycompany/api/handler.java` | `--tag package:org.mycompany.api` |
+
+#### C#
+- **Tag**: `namespace:<name>` — C# namespace
+| File path | Module tag |
+|-----------|------------|
+| `App.Auth/Services/AuthService.cs` | `--tag namespace:App.Auth.Services` |
+| `MyCompany.Data/Repositories/UserRepo.cs` | `--tag namespace:MyCompany.Data.Repositories` |
+
+#### Dart
+- **Tag**: `package:<name>` — Dart package name
+| File path | Module tag |
+|-----------|------------|
+| `lib/auth/service.dart` | `--tag package:auth` |
+| `lib/models/user.dart` | `--tag package:models` |
+
+**Example (Rust crate):**
+```bash
+codemark add --file crates/auth/src/lib.rs --range 10 \
+  --note "Core JWT validation" \
+  --tag crate:auth --tag feature:auth --tag layer:business --tag role:validator
+```
+
+**Example (Go package):**
+```bash
+codemark add --file internal/auth/handler.go --range 25 \
+  --note "HTTP handler for authentication" \
+  --tag package:internal.auth --tag feature:auth --tag layer:api --tag role:handler
+```
+
 ## Quick Start
 
 ### Creating a collection of bookmarks (recommended for agents)
@@ -207,7 +289,8 @@ When you know the file and line numbers:
 codemark add \
   --file src/auth.rs --range 42 \
   --note "Core auth entry point: Handles all JWT verification" \
-  --tag feature:auth --tag role:entrypoint \
+  --context "Module: auth | Validates all JWT tokens for API requests" \
+  --tag module:auth --tag feature:auth --tag role:entrypoint \
   --created-by agent
 ```
 
@@ -217,6 +300,8 @@ When you have the code snippet but need to find it in a file:
 echo "func validateToken(_ token: String) -> Claims" | \
   codemark add-from-snippet --file src/auth.swift \
   --note "Validates JWT tokens" \
+  --context "Module: auth | JWT validation with expiry check" \
+  --tag module:auth --tag feature:auth --tag role:validator \
   --created-by agent
 ```
 
@@ -227,6 +312,8 @@ codemark add-from-query \
   --file src/auth.swift \
   --query '(function_declaration name: (simple_identifier) @name (#eq? @name "validateToken")) @target' \
   --note "Validates JWT tokens" \
+  --context "Module: auth | Core validation logic" \
+  --tag module:auth --tag feature:auth --tag role:validator \
   --created-by agent
 ```
 
@@ -314,6 +401,101 @@ codemark annotate <bookmark-id> \
   --added-by agent \
   --source investigation
 ```
+
+## Enriching Bookmark Context
+
+High-quality context makes bookmarks discoverable and useful across sessions. Always enrich bookmarks with information that would help you or another agent find and understand the code later.
+
+### Module/Package Context (Required)
+
+Always include module or package information inferred from the file path. This is critical for finding bookmarks by their location in the codebase.
+
+```bash
+# Infer from file path and add as context
+codemark add --file src/auth/service.rs --range 42 \
+  --context "Module: auth | Package: service" \
+  --note "Core JWT validation" \
+  --tag module:auth
+```
+
+| Language | Path pattern | Module context |
+|----------|--------------|----------------|
+| Rust | `crates/auth/src/lib.rs` | `crate:auth` |
+| Rust | `src/auth/service.rs` | `module:auth` |
+| Go | `internal/auth/handler.go` | `package:internal.auth` |
+| Python | `app/auth/service.py` | `package:app.auth` |
+| TypeScript | `src/auth/service.ts` | `module:auth` |
+| Java | `com/app/auth/AuthService.java` | `package:com.app.auth` |
+| Swift | `Sources/AuthService/` | `module:AuthService` |
+
+### Domain Context
+
+Explain which business domain or bounded context this code belongs to.
+
+```bash
+codemark annotate <id> --context "Domain: User authentication | Bounded context: Identity and Access Management"
+```
+
+### Usage Context
+
+Document where and how this code is used.
+
+```bash
+codemark annotate <id> --context "Used by: API middleware, websocket handler, cron jobs"
+```
+
+### Evolution Context
+
+Track the lifecycle and evolution of the code.
+
+```bash
+codemark annotate <id> --context "Added in: v2.3.0 | Deprecated in: v3.0.0 | Replacement: src/auth/v2/"
+```
+
+### Risk Context
+
+Document risk level and change impact.
+
+```bash
+codemark annotate <id> --context "Risk: High | Change impact: Affects all authenticated routes | Requires: Security review"
+```
+
+### Dependency Context
+
+Link to related bookmarks and dependencies.
+
+```bash
+codemark annotate <id> --context "Depends on: [[bookmark-id-claims]] | Called by: [[bookmark-id-middleware]]"
+```
+
+### Performance Context
+
+Note performance characteristics when relevant.
+
+```bash
+codemark annotate <id> --context "Performance: O(n) where n = user roles | Cache: 30s TTL"
+```
+
+### Security Context
+
+For security-sensitive code, document security considerations.
+
+```bash
+codemark annotate <id> --context "Security: Validates JWT signature | Checks expiry | Handles token rotation"
+```
+
+### Context Template
+
+When creating or annotating bookmarks, use this template:
+
+```
+Context: <domain> | <usage> | <dependencies> | <risk/security/evolution notes>
+```
+
+Examples:
+- `Context: Auth domain | Validates all API requests | Depends on Claims struct | Risk: high`
+- `Context: Payment processing | Called by checkout flow | External: Stripe API | Risk: critical`
+- `Context: User preferences | Cached 30s | DB: users_table | Low risk`
 
 ### Maintenance
 ```bash

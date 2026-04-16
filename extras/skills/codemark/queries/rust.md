@@ -131,16 +131,30 @@ Entire impl block for a type:
   (#eq? @type "AuthService")) @target
 ```
 
+## Module Tagging
+
+Rust uses `crate:<name>` for workspace crates (e.g., `crates/`) and `module:<name>` for modules within `src/`:
+
+| File path | Module tag |
+|-----------|------------|
+| `crates/auth/src/lib.rs` | `--tag crate:auth` |
+| `crates/auth/src/service.rs` | `--tag crate:auth` |
+| `src/auth/mod.rs` | `--tag module:auth` |
+| `src/auth/service.rs` | `--tag module:auth` |
+| `src/main.rs` | `--tag module:main` |
+
 ## Examples
 
 ### Bookmark an Auth Validator
 
 ```bash
+# Workspace crate
 codemark add-from-query \
-  --file src/auth.rs \
+  --file crates/auth/src/lib.rs \
   --query '(function_item name: (identifier) @name (#eq? @name "validate_token")) @target' \
   --note "Core JWT validation. Entry point for all authenticated requests." \
-  --tag feature:auth --tag role:validator \
+  --context "Crate: auth | Validates JWT tokens with expiry check" \
+  --tag crate:auth --tag feature:auth --tag role:validator \
   --created-by agent
 ```
 
@@ -148,9 +162,10 @@ codemark add-from-query \
 
 ```bash
 codemark add-from-query \
-  --file src/auth.rs \
+  --file crates/auth/src/cache.rs \
   --query '(impl_item type: (type_identifier) @type (#eq? @type "AuthService") body: (declaration_list (function_item name: (identifier) @method (#eq? @method "invalidate_cache")) @target))' \
   --note "Clears the JWT token cache" \
-  --tag feature:auth --tag layer:business \
+  --context "Crate: auth | Module: cache | Cache invalidation logic" \
+  --tag crate:auth --tag module:cache --tag feature:auth --tag layer:business \
   --created-by agent
 ```

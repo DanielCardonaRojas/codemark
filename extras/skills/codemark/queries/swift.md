@@ -123,16 +123,27 @@ Function taking String and returning Claims:
   (#eq? @ret "Claims")) @target
 ```
 
+## Module Tagging
+
+Swift uses `module:<name>` tags based on SPM target names. Infer from `Sources/<ModuleName>/` directory structure:
+
+| File path | Module tag |
+|-----------|------------|
+| `Sources/AuthService/Validator.swift` | `--tag module:AuthService` |
+| `Sources/App/Models/User.swift` | `--tag module:App` |
+| `Sources/Networking/Client.swift` | `--tag module:Networking` |
+
 ## Examples
 
 ### Bookmark an Auth Validator
 
 ```bash
 codemark add-from-query \
-  --file src/auth.swift \
+  --file Sources/AuthService/Validator.swift \
   --query '(function_declaration name: (simple_identifier) @name (#eq? @name "validateToken")) @target' \
   --note "Core JWT validation. Entry point for all authenticated requests." \
-  --tag feature:auth --tag role:validator \
+  --context "Module: AuthService | Validates JWT tokens with expiry check" \
+  --tag module:AuthService --tag feature:auth --tag role:validator \
   --created-by agent
 ```
 
@@ -140,9 +151,10 @@ codemark add-from-query \
 
 ```bash
 codemark add-from-query \
-  --file src/AuthService.swift \
+  --file Sources/AuthService/Cache.swift \
   --query '(class_declaration name: (type_identifier) @class (#eq? @class "AuthService") body: (class_body (function_declaration name: (simple_identifier) @method (#eq? @method "invalidateCache")) @target))' \
   --note "Clears the JWT token cache" \
-  --tag feature:auth --tag layer:business \
+  --context "Module: AuthService | Cache invalidation logic" \
+  --tag module:AuthService --tag feature:auth --tag layer:business \
   --created-by agent
 ```

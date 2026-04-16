@@ -81,16 +81,27 @@ Any async function:
     (#eq? @method "parseToken")) @target)
 ```
 
+## Module Tagging
+
+Dart uses `package:<name>` based on the package or library name:
+
+| File path | Module tag |
+|-----------|------------|
+| `lib/auth/service.dart` | `--tag package:auth` |
+| `lib/models/user.dart` | `--tag package:models` |
+| `lib/api/client.dart` | `--tag package:api` |
+
 ## Examples
 
 ### Bookmark an Auth Validator
 
 ```bash
 codemark add-from-query \
-  --file src/auth.dart \
+  --file lib/auth/service.dart \
   --query '(function_signature name: (simple_identifier) @name (#eq? @name "validateToken")) @target' \
   --note "Core JWT validation. Entry point for all authenticated requests." \
-  --tag feature:auth --tag role:validator \
+  --context "Package: auth | Validates JWT tokens with expiry check" \
+  --tag package:auth --tag feature:auth --tag role:validator \
   --created-by agent
 ```
 
@@ -98,9 +109,10 @@ codemark add-from-query \
 
 ```bash
 codemark add-from-query \
-  --file src/auth.dart \
+  --file lib/auth/service.dart \
   --query '(class_definition name: (class_name) @class (#eq? @class "AuthService") body: (class_body (method_signature name: (simple_identifier) @method (#eq? @method "invalidateCache")) @target))' \
   --note "Clears the JWT token cache" \
-  --tag feature:auth --tag layer:business \
+  --context "Package: auth | Cache invalidation logic" \
+  --tag package:auth --tag feature:auth --tag layer:business \
   --created-by agent
 ```

@@ -94,16 +94,28 @@ Any exported (capitalized) function:
       (#eq? @type "string")))) @target
 ```
 
+## Module Tagging
+
+Go uses `package:<path>` with the full package path relative to module root (using dots):
+
+| File path | Module tag |
+|-----------|------------|
+| `internal/auth/handler.go` | `--tag package:internal.auth` |
+| `pkg/api/middleware.go` | `--tag package:pkg.api` |
+| `cmd/server/main.go` | `--tag package:cmd.server` |
+| `handler.go` (root) | `--tag package:root` |
+
 ## Examples
 
 ### Bookmark an Auth Validator
 
 ```bash
 codemark add-from-query \
-  --file src/auth.go \
+  --file internal/auth/validator.go \
   --query '(function_declaration name: (identifier) @name (#eq? @name "ValidateToken")) @target' \
   --note "Core JWT validation. Entry point for all authenticated requests." \
-  --tag feature:auth --tag role:validator \
+  --context "Package: internal/auth | Validates JWT tokens with expiry check" \
+  --tag package:internal.auth --tag feature:auth --tag role:validator \
   --created-by agent
 ```
 
@@ -111,9 +123,10 @@ codemark add-from-query \
 
 ```bash
 codemark add-from-query \
-  --file src/auth.go \
+  --file internal/auth/cache.go \
   --query '(function_declaration receiver: (parameter_list (parameter (type_identifier) @receiver (#eq? @receiver "AuthService"))) name: (identifier) @name (#eq? @name "InvalidateCache")) @target' \
   --note "Clears the JWT token cache" \
-  --tag feature:auth --tag layer:business \
+  --context "Package: internal/auth | Cache invalidation logic" \
+  --tag package:internal.auth --tag feature:auth --tag layer:business \
   --created-by agent
 ```

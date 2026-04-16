@@ -106,16 +106,27 @@ Any async method:
       (#eq? @method "InvalidateCache")) @target))
 ```
 
+## Module Tagging
+
+C# uses `namespace:<name>` with the full C# namespace:
+
+| File path | Module tag |
+|-----------|------------|
+| `App/Auth/Services/AuthService.cs` | `--tag namespace:App.Auth.Services` |
+| `MyCompany/Data/Repositories/UserRepo.cs` | `--tag namespace:MyCompany.Data.Repositories` |
+| `Auth/Validator.cs` | `--tag namespace:Auth` |
+
 ## Examples
 
 ### Bookmark an Auth Validator
 
 ```bash
 codemark add-from-query \
-  --file src/auth/AuthService.cs \
+  --file App/Auth/Services/AuthService.cs \
   --query '(method_declaration name: (identifier) @name (#eq? @name "ValidateToken")) @target' \
   --note "Core JWT validation. Entry point for all authenticated requests." \
-  --tag feature:auth --tag role:validator \
+  --context "Namespace: App.Auth.Services | Validates JWT tokens with expiry check" \
+  --tag namespace:App.Auth.Services --tag feature:auth --tag role:validator \
   --created-by agent
 ```
 
@@ -123,9 +134,10 @@ codemark add-from-query \
 
 ```bash
 codemark add-from-query \
-  --file src/auth/AuthService.cs \
+  --file App/Auth/Services/AuthService.cs \
   --query '(class_declaration name: (identifier) @class (#eq? @class "AuthService") body: (declaration_list (method_declaration name: (identifier) @method (#eq? @method "InvalidateCache")) @target))' \
   --note "Clears the JWT token cache" \
-  --tag feature:auth --tag layer:business \
+  --context "Namespace: App.Auth.Services | Cache invalidation logic" \
+  --tag namespace:App.Auth.Services --tag feature:auth --tag layer:business \
   --created-by agent
 ```
