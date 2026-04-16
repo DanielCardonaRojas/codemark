@@ -80,7 +80,9 @@ pub fn resolve(
     // Tier 4: Hash fallback — walk all named nodes
     if let Some(ref stored_hash) = bookmark.content_hash {
         let root = tree.root_node();
-        if let Some(result) = hash_fallback_walk(root, source_bytes, stored_hash, bookmark, language) {
+        if let Some(result) =
+            hash_fallback_walk(root, source_bytes, stored_hash, bookmark, language)
+        {
             return Ok(result);
         }
     }
