@@ -149,23 +149,11 @@ Rust uses `crate:<name>` for workspace crates (e.g., `crates/`) and `module:<nam
 
 ```bash
 # Workspace crate
-codemark add-from-query \
-  --file crates/auth/src/lib.rs \
-  --query '(function_item name: (identifier) @name (#eq? @name "validate_token")) @target' \
-  --note "Core JWT validation. Entry point for all authenticated requests." \
-  --context "Crate: auth | Validates JWT tokens with expiry check" \
-  --tag crate:auth --tag feature:auth --tag role:validator \
-  --created-by agent
+codemark add-from-query --file crates/auth/src/lib.rs --query '(function_item name: (identifier) @name (#eq? @name "validate_token")) @target' --note "Core JWT validation. Entry point for all authenticated requests." --context "Crate: auth | Validates JWT tokens with expiry check" --tag crate:auth --tag feature:auth --tag role:validator --created-by agent
 ```
 
 ### Bookmark a Method in an Impl
 
 ```bash
-codemark add-from-query \
-  --file crates/auth/src/cache.rs \
-  --query '(impl_item type: (type_identifier) @type (#eq? @type "AuthService") body: (declaration_list (function_item name: (identifier) @method (#eq? @method "invalidate_cache")) @target))' \
-  --note "Clears the JWT token cache" \
-  --context "Crate: auth | Module: cache | Cache invalidation logic" \
-  --tag crate:auth --tag module:cache --tag feature:auth --tag layer:business \
-  --created-by agent
+codemark add-from-query --file crates/auth/src/cache.rs --query '(impl_item type: (type_identifier) @type (#eq? @type "AuthService") body: (declaration_list (function_item name: (identifier) @method (#eq? @method "invalidate_cache")) @target))' --note "Clears the JWT token cache" --context "Crate: auth | Module: cache | Cache invalidation logic" --tag crate:auth --tag module:cache --tag feature:auth --tag layer:business --created-by agent
 ```

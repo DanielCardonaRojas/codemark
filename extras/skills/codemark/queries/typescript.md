@@ -136,23 +136,11 @@ TypeScript uses `module:<name>` based on directory structure or workspace packag
 ### Bookmark an Auth Validator
 
 ```bash
-codemark add-from-query \
-  --file src/auth/service.ts \
-  --query '(function_declaration name: (identifier) @name (#eq? @name "validateToken")) @target' \
-  --note "Core JWT validation. Entry point for all authenticated requests." \
-  --context "Module: auth | Validates JWT tokens with expiry check" \
-  --tag module:auth --tag feature:auth --tag role:validator \
-  --created-by agent
+codemark add-from-query --file src/auth/service.ts --query '(function_declaration name: (identifier) @name (#eq? @name "validateToken")) @target' --note "Core JWT validation. Entry point for all authenticated requests." --context "Module: auth | Validates JWT tokens with expiry check" --tag module:auth --tag feature:auth --tag role:validator --created-by agent
 ```
 
 ### Bookmark a Class Method
 
 ```bash
-codemark add-from-query \
-  --file src/auth/AuthService.ts \
-  --query '(class_declaration name: (type_identifier) @class (#eq? @class "AuthService") body: (class_body (method_definition name: (property_identifier) @method (#eq? @method "invalidateCache")) @target))' \
-  --note "Clears the JWT token cache" \
-  --context "Module: auth | Cache invalidation logic" \
-  --tag module:auth --tag feature:auth --tag layer:business \
-  --created-by agent
+codemark add-from-query --file src/auth/AuthService.ts --query '(class_declaration name: (type_identifier) @class (#eq? @class "AuthService") body: (class_body (method_definition name: (property_identifier) @method (#eq? @method "invalidateCache")) @target))' --note "Clears the JWT token cache" --context "Module: auth | Cache invalidation logic" --tag module:auth --tag feature:auth --tag layer:business --created-by agent
 ```

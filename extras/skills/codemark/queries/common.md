@@ -78,10 +78,7 @@ Tree-sitter queries use S-expressions to match AST nodes:
 Before creating any bookmark, verify your query captures exactly what you intend:
 
 ```bash
-codemark add-from-query \
-  --file src/auth.swift \
-  --query '(function_declaration name: (simple_identifier) @name (#eq? @name "validateToken")) @target' \
-  --dry-run
+codemark add-from-query --file src/auth.swift --query '(function_declaration name: (simple_identifier) @name (#eq? @name "validateToken")) @target' --dry-run
 ```
 
 Check the output:
@@ -98,10 +95,7 @@ Before bookmarking, check if your target is unique:
 
 ```bash
 # Find all functions with similar names/signatures
-codemark add-from-query \
-  --file src/auth.swift \
-  --query '(function_declaration name: (simple_identifier) @name) @target' \
-  --dry-run
+codemark add-from-query --file src/auth.swift --query '(function_declaration name: (simple_identifier) @name) @target' --dry-run
 ```
 
 If `match_count > 1`, you need more context.
@@ -112,15 +106,10 @@ For uniquely named functions, simple queries are sufficient. Always verify first
 
 ```bash
 # Test first
-codemark add-from-query \
-  --file src/auth.swift \
-  --query '(function_declaration name: (simple_identifier) @name (#eq? @name "validateToken")) @target' \
-  --dry-run
+codemark add-from-query --file src/auth.swift --query '(function_declaration name: (simple_identifier) @name (#eq? @name "validateToken")) @target' --dry-run
 
 # Then create if match_count: 1
-codemark add-from-query \
-  --file src/auth.swift \
-  --query '(function_declaration name: (simple_identifier) @name (#eq? @name "validateToken")) @target'
+codemark add-from-query --file src/auth.swift --query '(function_declaration name: (simple_identifier) @name (#eq? @name "validateToken")) @target'
 ```
 
 ```
@@ -168,14 +157,10 @@ If you're bookmarking code that seems like it will be refactored:
 When a function has siblings you also care about, bookmark them explicitly rather than relying on broad queries:
 
 ```bash
-# Bookmark all auth validation methods
-for method in validateToken refreshToken checkPermission; do
-  codemark add-from-query \
-    --file src/auth.swift \
-    --query "(function_declaration name: (simple_identifier) @name (#eq? @name \"$method\")) @target" \
-    --note "Auth validation: $method" \
-    --tag feature:auth
-done
+# Bookmark each method individually
+codemark add-from-query --file src/auth.swift --query '(function_declaration name: (simple_identifier) @name (#eq? @name "validateToken")) @target' --note "Auth validation: validateToken" --tag feature:auth
+codemark add-from-query --file src/auth.swift --query '(function_declaration name: (simple_identifier) @name (#eq? @name "refreshToken")) @target' --note "Auth validation: refreshToken" --tag feature:auth
+codemark add-from-query --file src/auth.swift --query '(function_declaration name: (simple_identifier) @name (#eq? @name "checkPermission")) @target' --note "Auth validation: checkPermission" --tag feature:auth
 ```
 
 ### Structural Signature Matching

@@ -24,49 +24,31 @@ Always include the module or package information inferred from the file path. Ea
 **Examples:**
 ```bash
 # Swift - Module from SPM target
-codemark add --file Sources/AuthService/Validator.swift --range 10 \
-  --context "Module: AuthService | JWT validation logic" \
-  --tag module:AuthService --tag feature:auth
+codemark add --file Sources/AuthService/Validator.swift --range 10 --context "Module: AuthService | JWT validation logic" --tag module:AuthService --tag feature:auth
 
 # Rust - Workspace crate
-codemark add --file crates/auth/src/lib.rs --range 10 \
-  --context "Crate: auth | Provides JWT validation" \
-  --tag crate:auth --tag feature:auth
+codemark add --file crates/auth/src/lib.rs --range 10 --context "Crate: auth | Provides JWT validation" --tag crate:auth --tag feature:auth
 
 # Rust - Module within src/
-codemark add --file src/auth/service.rs --range 42 \
-  --context "Module: auth | User authentication service" \
-  --tag module:auth --tag feature:auth
+codemark add --file src/auth/service.rs --range 42 --context "Module: auth | User authentication service" --tag module:auth --tag feature:auth
 
 # Go - Package path
-codemark add --file internal/auth/handler.go --range 25 \
-  --context "Package: internal/auth | HTTP handlers for authentication" \
-  --tag package:internal.auth --tag layer:api
+codemark add --file internal/auth/handler.go --range 25 --context "Package: internal/auth | HTTP handlers for authentication" --tag package:internal.auth --tag layer:api
 
 # Python - Package path (dot notation)
-codemark add --file app/auth/service.py --range 42 \
-  --context "Package: app.auth | Business logic for user authentication" \
-  --tag package:app.auth --tag layer:business
+codemark add --file app/auth/service.py --range 42 --context "Package: app.auth | Business logic for user authentication" --tag package:app.auth --tag layer:business
 
 # TypeScript - Module from directory
-codemark add --file src/auth/service.ts --range 15 \
-  --context "Module: auth | Authentication service" \
-  --tag module:auth --tag feature:auth
+codemark add --file src/auth/service.ts --range 15 --context "Module: auth | Authentication service" --tag module:auth --tag feature:auth
 
 # Java - Package name (dot notation)
-codemark add --file com/app/auth/AuthService.java --range 30 \
-  --context "Package: com.app.auth | Authentication service implementation" \
-  --tag package:com.app.auth --tag layer:business
+codemark add --file com/app/auth/AuthService.java --range 30 --context "Package: com.app.auth | Authentication service implementation" --tag package:com.app.auth --tag layer:business
 
 # C# - Namespace
-codemark add --file App/Auth/Services/AuthService.cs --range 20 \
-  --context "Namespace: App.Auth.Services | Authentication service" \
-  --tag namespace:App.Auth.Services --tag layer:business
+codemark add --file App/Auth/Services/AuthService.cs --range 20 --context "Namespace: App.Auth.Services | Authentication service" --tag namespace:App.Auth.Services --tag layer:business
 
 # Dart - Package name
-codemark add --file lib/auth/service.dart --range 10 \
-  --context "Package: auth | Authentication service" \
-  --tag package:auth --tag feature:auth
+codemark add --file lib/auth/service.dart --range 10 --context "Package: auth | Authentication service" --tag package:auth --tag feature:auth
 ```
 
 ### Additional Context Categories

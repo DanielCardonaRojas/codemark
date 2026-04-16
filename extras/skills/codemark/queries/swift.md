@@ -138,23 +138,11 @@ Swift uses `module:<name>` tags based on SPM target names. Infer from `Sources/<
 ### Bookmark an Auth Validator
 
 ```bash
-codemark add-from-query \
-  --file Sources/AuthService/Validator.swift \
-  --query '(function_declaration name: (simple_identifier) @name (#eq? @name "validateToken")) @target' \
-  --note "Core JWT validation. Entry point for all authenticated requests." \
-  --context "Module: AuthService | Validates JWT tokens with expiry check" \
-  --tag module:AuthService --tag feature:auth --tag role:validator \
-  --created-by agent
+codemark add-from-query --file Sources/AuthService/Validator.swift --query '(function_declaration name: (simple_identifier) @name (#eq? @name "validateToken")) @target' --note "Core JWT validation. Entry point for all authenticated requests." --context "Module: AuthService | Validates JWT tokens with expiry check" --tag module:AuthService --tag feature:auth --tag role:validator --created-by agent
 ```
 
 ### Bookmark a Class Method
 
 ```bash
-codemark add-from-query \
-  --file Sources/AuthService/Cache.swift \
-  --query '(class_declaration name: (type_identifier) @class (#eq? @class "AuthService") body: (class_body (function_declaration name: (simple_identifier) @method (#eq? @method "invalidateCache")) @target))' \
-  --note "Clears the JWT token cache" \
-  --context "Module: AuthService | Cache invalidation logic" \
-  --tag module:AuthService --tag feature:auth --tag layer:business \
-  --created-by agent
+codemark add-from-query --file Sources/AuthService/Cache.swift --query '(class_declaration name: (type_identifier) @class (#eq? @class "AuthService") body: (class_body (function_declaration name: (simple_identifier) @method (#eq? @method "invalidateCache")) @target))' --note "Clears the JWT token cache" --context "Module: AuthService | Cache invalidation logic" --tag module:AuthService --tag feature:auth --tag layer:business --created-by agent
 ```

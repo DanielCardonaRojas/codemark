@@ -121,23 +121,11 @@ C# uses `namespace:<name>` with the full C# namespace:
 ### Bookmark an Auth Validator
 
 ```bash
-codemark add-from-query \
-  --file App/Auth/Services/AuthService.cs \
-  --query '(method_declaration name: (identifier) @name (#eq? @name "ValidateToken")) @target' \
-  --note "Core JWT validation. Entry point for all authenticated requests." \
-  --context "Namespace: App.Auth.Services | Validates JWT tokens with expiry check" \
-  --tag namespace:App.Auth.Services --tag feature:auth --tag role:validator \
-  --created-by agent
+codemark add-from-query --file App/Auth/Services/AuthService.cs --query '(method_declaration name: (identifier) @name (#eq? @name "ValidateToken")) @target' --note "Core JWT validation. Entry point for all authenticated requests." --context "Namespace: App.Auth.Services | Validates JWT tokens with expiry check" --tag namespace:App.Auth.Services --tag feature:auth --tag role:validator --created-by agent
 ```
 
 ### Bookmark a Class Method
 
 ```bash
-codemark add-from-query \
-  --file App/Auth/Services/AuthService.cs \
-  --query '(class_declaration name: (identifier) @class (#eq? @class "AuthService") body: (declaration_list (method_declaration name: (identifier) @method (#eq? @method "InvalidateCache")) @target))' \
-  --note "Clears the JWT token cache" \
-  --context "Namespace: App.Auth.Services | Cache invalidation logic" \
-  --tag namespace:App.Auth.Services --tag feature:auth --tag layer:business \
-  --created-by agent
+codemark add-from-query --file App/Auth/Services/AuthService.cs --query '(class_declaration name: (identifier) @class (#eq? @class "AuthService") body: (declaration_list (method_declaration name: (identifier) @method (#eq? @method "InvalidateCache")) @target))' --note "Clears the JWT token cache" --context "Namespace: App.Auth.Services | Cache invalidation logic" --tag namespace:App.Auth.Services --tag feature:auth --tag layer:business --created-by agent
 ```

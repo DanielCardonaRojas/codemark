@@ -110,23 +110,11 @@ Go uses `package:<path>` with the full package path relative to module root (usi
 ### Bookmark an Auth Validator
 
 ```bash
-codemark add-from-query \
-  --file internal/auth/validator.go \
-  --query '(function_declaration name: (identifier) @name (#eq? @name "ValidateToken")) @target' \
-  --note "Core JWT validation. Entry point for all authenticated requests." \
-  --context "Package: internal/auth | Validates JWT tokens with expiry check" \
-  --tag package:internal.auth --tag feature:auth --tag role:validator \
-  --created-by agent
+codemark add-from-query --file internal/auth/validator.go --query '(function_declaration name: (identifier) @name (#eq? @name "ValidateToken")) @target' --note "Core JWT validation. Entry point for all authenticated requests." --context "Package: internal/auth | Validates JWT tokens with expiry check" --tag package:internal.auth --tag feature:auth --tag role:validator --created-by agent
 ```
 
 ### Bookmark a Method
 
 ```bash
-codemark add-from-query \
-  --file internal/auth/cache.go \
-  --query '(function_declaration receiver: (parameter_list (parameter (type_identifier) @receiver (#eq? @receiver "AuthService"))) name: (identifier) @name (#eq? @name "InvalidateCache")) @target' \
-  --note "Clears the JWT token cache" \
-  --context "Package: internal/auth | Cache invalidation logic" \
-  --tag package:internal.auth --tag feature:auth --tag layer:business \
-  --created-by agent
+codemark add-from-query --file internal/auth/cache.go --query '(function_declaration receiver: (parameter_list (parameter (type_identifier) @receiver (#eq? @receiver "AuthService"))) name: (identifier) @name (#eq? @name "InvalidateCache")) @target' --note "Clears the JWT token cache" --context "Package: internal/auth | Cache invalidation logic" --tag package:internal.auth --tag feature:auth --tag layer:business --created-by agent
 ```

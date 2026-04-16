@@ -15,8 +15,10 @@ allowed-tools: Bash(codemark *)
 You have access to `codemark`, a CLI tool that creates **structural bookmarks** for code using tree-sitter AST queries. Unlike file:line references, these bookmarks survive renames, refactors, and reformatting.
 
 ## Active Context
-```!
-# Inject a summary of active bookmarks into the session
+
+When starting a session, inject a summary of active bookmarks:
+
+```
 codemark list --status active
 ```
 
@@ -247,74 +249,44 @@ Always include the module or package context from the file path. Each language e
 
 **Example (Rust crate):**
 ```bash
-codemark add --file crates/auth/src/lib.rs --range 10 \
-  --note "Core JWT validation" \
-  --tag crate:auth --tag feature:auth --tag layer:business --tag role:validator
+codemark add --file crates/auth/src/lib.rs --range 10 --note "Core JWT validation" --tag crate:auth --tag feature:auth --tag layer:business --tag role:validator
 ```
 
 **Example (Go package):**
 ```bash
-codemark add --file internal/auth/handler.go --range 25 \
-  --note "HTTP handler for authentication" \
-  --tag package:internal.auth --tag feature:auth --tag layer:api --tag role:handler
+codemark add --file internal/auth/handler.go --range 25 --note "HTTP handler for authentication" --tag package:internal.auth --tag feature:auth --tag layer:api --tag role:handler
 ```
 
 ## Quick Start
 
 ### Creating a collection of bookmarks (recommended for agents)
 Use `--collection` when creating bookmarks to add them directly to a collection:
+
 ```bash
-# Create multiple bookmarks in a single collection
-codemark add \
-  --file src/auth.rs --range 42 \
-  --note "Core auth entry point: Handles all JWT verification" \
-  --tag feature:auth --tag role:entrypoint \
-  --created-by agent \
-  --collection login-flow
-
-codemark add-from-query \
-  --file src/auth.swift \
-  --query '(function_declaration name: (simple_identifier) @name (#eq? @name "validateToken")) @target' \
-  --note "Validates JWT tokens" \
-  --created-by agent \
-  --collection login-flow
-
-# View the collection
+codemark add --file src/auth.rs --range 42 --note "Core auth entry point: Handles all JWT verification" --tag feature:auth --tag role:entrypoint --created-by agent --collection login-flow
+codemark add-from-query --file src/auth.swift --query '(function_declaration name: (simple_identifier) @name (#eq? @name "validateToken")) @target' --note "Validates JWT tokens" --created-by agent --collection login-flow
 codemark collection show login-flow
 ```
 
 ### Method 1: Range-based bookmarking
 When you know the file and line numbers:
+
 ```bash
-codemark add \
-  --file src/auth.rs --range 42 \
-  --note "Core auth entry point: Handles all JWT verification" \
-  --context "Module: auth | Validates all JWT tokens for API requests" \
-  --tag module:auth --tag feature:auth --tag role:entrypoint \
-  --created-by agent
+codemark add --file src/auth.rs --range 42 --note "Core auth entry point: Handles all JWT verification" --context "Module: auth | Validates all JWT tokens for API requests" --tag module:auth --tag feature:auth --tag role:entrypoint --created-by agent
 ```
 
 ### Method 2: Snippet-based bookmarking
 When you have the code snippet but need to find it in a file:
+
 ```bash
-echo "func validateToken(_ token: String) -> Claims" | \
-  codemark add-from-snippet --file src/auth.swift \
-  --note "Validates JWT tokens" \
-  --context "Module: auth | JWT validation with expiry check" \
-  --tag module:auth --tag feature:auth --tag role:validator \
-  --created-by agent
+echo "func validateToken(_ token: String) -> Claims" | codemark add-from-snippet --file src/auth.swift --note "Validates JWT tokens" --context "Module: auth | JWT validation with expiry check" --tag module:auth --tag feature:auth --tag role:validator --created-by agent
 ```
 
 ### Method 3: Raw tree-sitter query (recommended for agents)
 When you want precise control over what gets bookmarked:
+
 ```bash
-codemark add-from-query \
-  --file src/auth.swift \
-  --query '(function_declaration name: (simple_identifier) @name (#eq? @name "validateToken")) @target' \
-  --note "Validates JWT tokens" \
-  --context "Module: auth | Core validation logic" \
-  --tag module:auth --tag feature:auth --tag role:validator \
-  --created-by agent
+codemark add-from-query --file src/auth.swift --query '(function_declaration name: (simple_identifier) @name (#eq? @name "validateToken")) @target' --note "Validates JWT tokens" --context "Module: auth | Core validation logic" --tag module:auth --tag feature:auth --tag role:validator --created-by agent
 ```
 
 For common query patterns across languages, see:
@@ -390,16 +362,13 @@ codemark diff --since HEAD~3
 
 ### Enhancing existing bookmarks
 ```bash
-# Add notes, context, or tags to an existing bookmark (no re-parsing needed)
+# Add notes, context, or tags to an existing bookmark
 codemark annotate <bookmark-id> --note "Additional context discovered during implementation"
 codemark annotate <bookmark-id> --context "Related to auth-refactor feature"
 codemark annotate <bookmark-id> --tag bug-fix --tag priority:high
 
 # Add annotation as an agent with provenance
-codemark annotate <bookmark-id> \
-  --note "Found this during debugging the session timeout issue" \
-  --added-by agent \
-  --source investigation
+codemark annotate <bookmark-id> --note "Found this during debugging the session timeout issue" --added-by agent --source investigation
 ```
 
 ## Enriching Bookmark Context
@@ -412,10 +381,7 @@ Always include module or package information inferred from the file path. This i
 
 ```bash
 # Infer from file path and add as context
-codemark add --file src/auth/service.rs --range 42 \
-  --context "Module: auth | Package: service" \
-  --note "Core JWT validation" \
-  --tag module:auth
+codemark add --file src/auth/service.rs --range 42 --context "Module: auth | Package: service" --note "Core JWT validation" --tag module:auth
 ```
 
 | Language | Path pattern | Module context |

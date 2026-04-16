@@ -96,23 +96,11 @@ Dart uses `package:<name>` based on the package or library name:
 ### Bookmark an Auth Validator
 
 ```bash
-codemark add-from-query \
-  --file lib/auth/service.dart \
-  --query '(function_signature name: (simple_identifier) @name (#eq? @name "validateToken")) @target' \
-  --note "Core JWT validation. Entry point for all authenticated requests." \
-  --context "Package: auth | Validates JWT tokens with expiry check" \
-  --tag package:auth --tag feature:auth --tag role:validator \
-  --created-by agent
+codemark add-from-query --file lib/auth/service.dart --query '(function_signature name: (simple_identifier) @name (#eq? @name "validateToken")) @target' --note "Core JWT validation. Entry point for all authenticated requests." --context "Package: auth | Validates JWT tokens with expiry check" --tag package:auth --tag feature:auth --tag role:validator --created-by agent
 ```
 
 ### Bookmark a Class Method
 
 ```bash
-codemark add-from-query \
-  --file lib/auth/service.dart \
-  --query '(class_definition name: (class_name) @class (#eq? @class "AuthService") body: (class_body (method_signature name: (simple_identifier) @method (#eq? @method "invalidateCache")) @target))' \
-  --note "Clears the JWT token cache" \
-  --context "Package: auth | Cache invalidation logic" \
-  --tag package:auth --tag feature:auth --tag layer:business \
-  --created-by agent
+codemark add-from-query --file lib/auth/service.dart --query '(class_definition name: (class_name) @class (#eq? @class "AuthService") body: (class_body (method_signature name: (simple_identifier) @method (#eq? @method "invalidateCache")) @target))' --note "Clears the JWT token cache" --context "Package: auth | Cache invalidation logic" --tag package:auth --tag feature:auth --tag layer:business --created-by agent
 ```
