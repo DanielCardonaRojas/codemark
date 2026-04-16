@@ -204,7 +204,23 @@ All commands output **JSON by default** (optimized for AI agents and scripting).
 
 ## Configuration
 
-Codemark reads configuration from `.codemark/config.toml` in your repository. Run `codemark init` to create the default config, or copy [docs/config.default.toml](docs/config.default.toml).
+Codemark reads configuration from two locations (layered, with local override):
+
+1. **Global config:** `$XDG_CONFIG_HOME/codemark/config.toml` (or platform-specific default)
+2. **Local override (optional):** `.codemark/config.toml` in your repository
+
+When a local config exists, its values override the global config. This allows you to set global defaults while customizing per-repository settings.
+
+### Config File Locations
+
+| Platform | Global Config Path |
+|----------|-------------------|
+| All (if `$XDG_CONFIG_HOME` is set) | `$XDG_CONFIG_HOME/codemark/config.toml` |
+| macOS | `~/Library/Application Support/codemark/config.toml` |
+| Linux | `~/.config/codemark/config.toml` |
+| Windows | `%APPDATA%\codemark\config\config.toml` |
+
+The global config file is automatically created on first run with sensible defaults.
 
 ### Editor Configuration
 
@@ -218,6 +234,7 @@ default = "nvim +{LINE_START} {FILE}"
 # Extension-specific overrides
 [open.extensions]
 rs = "nvim +{LINE_START} {FILE}"
+swift = "xed --line {LINE_START} {FILE}"
 md = "typora {FILE}"
 py = "code --goto {FILE}:{LINE_START}:{LINE_END}"
 
