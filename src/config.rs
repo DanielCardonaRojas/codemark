@@ -126,6 +126,17 @@ pub struct OpenConfig {
     pub default: Option<String>,
     /// Extension-specific command templates (e.g., "rs" -> "nvim +{LINE_START} {FILE}").
     pub extensions: HashMap<String, String>,
+    /// Classification of editors by type (terminal vs GUI).
+    pub editor_types: EditorTypesConfig,
+}
+
+/// Classification of editors by how they should be spawned.
+#[derive(Debug, Deserialize, Serialize, Default)]
+pub struct EditorTypesConfig {
+    /// Terminal editors that take over the terminal and should be waited for.
+    pub terminal: Vec<String>,
+    /// GUI editors that spawn independently and return immediately.
+    pub gui: Vec<String>,
 }
 
 impl Default for OpenConfig {
@@ -133,7 +144,60 @@ impl Default for OpenConfig {
         OpenConfig {
             default: None,
             extensions: HashMap::new(),
+            editor_types: EditorTypesConfig::default(),
         }
+    }
+}
+
+impl EditorTypesConfig {
+    /// Default terminal editors that should block.
+    fn default_terminal() -> Vec<String> {
+        vec![
+            "vim".to_string(),
+            "vi".to_string(),
+            "nvim".to_string(),
+            "neovim".to_string(),
+            "emacs".to_string(),
+            "nano".to_string(),
+            "micro".to_string(),
+            "less".to_string(),
+        ]
+    }
+
+    /// Default GUI editors that should spawn in background.
+    fn default_gui() -> Vec<String> {
+        vec![
+            "xed".to_string(),
+            "code".to_string(),
+            "code-insiders".to_string(),
+            "idea".to_string(),
+            "subl".to_string(),
+            "sublime".to_string(),
+            "typora".to_string(),
+            "atom".to_string(),
+            "bbedit".to_string(),
+            "textmate".to_string(),
+        ]
+    }
+
+    /// Check if an editor program name is a terminal editor (should wait).
+    pub fn is_terminal_editor(&self, program_name: &str) -> bool {
+        // Check configured terminal list
+        if self.terminal.iter().any(|e| e == program_name) {
+            return true;
+        }
+        // Check if it's in the default terminal list
+        Self::default_terminal().iter().any(|e| e == program_name)
+    }
+
+    /// Check if an editor program name is a GUI editor (should spawn in background).
+    pub fn is_gui_editor(&self, program_name: &str) -> bool {
+        // Check configured GUI list
+        if self.gui.iter().any(|e| e == program_name) {
+            return true;
+        }
+        // Check if it's in the default GUI list
+        Self::default_gui().iter().any(|e| e == program_name)
     }
 }
 
@@ -153,6 +217,16 @@ impl OpenConfig {
             }
         }
         None
+    }
+
+    /// Check if an editor program name should block (wait for completion).
+    /// Defaults to true for unknown editors (safer default).
+    pub fn should_wait_for_editor(&self, program_name: &str) -> bool {
+        if self.editor_types.is_gui_editor(program_name) {
+            return false;
+        }
+        // If it's a known terminal editor or unknown, wait for it
+        self.editor_types.is_terminal_editor(program_name) || !self.editor_types.is_gui_editor(program_name)
     }
 }
 
@@ -281,6 +355,54 @@ md = "typora {FILE}"
         assert_eq!(config.open.default, Some("xed --line {LINE_START} {FILE}".to_string()));
         assert_eq!(config.open.extensions.get("rs"), Some(&"nvim +{LINE_START} {FILE}".to_string()));
         assert_eq!(config.open.extensions.get("md"), Some(&"typora {FILE}".to_string()));
+    }
+
+    #[test]
+    fn editor_types_default_terminal_editors() {
+        let config = EditorTypesConfig::default();
+        assert!(config.is_terminal_editor("vim"));
+        assert!(config.is_terminal_editor("nvim"));
+        assert!(config.is_terminal_editor("emacs"));
+        assert!(config.is_terminal_editor("nano"));
+        assert!(!config.is_terminal_editor("code"));
+        assert!(!config.is_terminal_editor("xed"));
+    }
+
+    #[test]
+    fn editor_types_default_gui_editors() {
+        let config = EditorTypesConfig::default();
+        assert!(config.is_gui_editor("code"));
+        assert!(config.is_gui_editor("xed"));
+        assert!(config.is_gui_editor("idea"));
+        assert!(config.is_gui_editor("typora"));
+        assert!(!config.is_gui_editor("vim"));
+        assert!(!config.is_gui_editor("nvim"));
+    }
+
+    #[test]
+    fn editor_types_custom_override() {
+        let toml = r#"
+[open.editor_types]
+terminal = ["myterm", "vim"]
+gui = ["mygui", "code"]
+"#;
+        let config: Config = toml::from_str(toml).unwrap();
+        assert!(config.open.editor_types.is_terminal_editor("myterm"));
+        assert!(config.open.editor_types.is_gui_editor("mygui"));
+    }
+
+    #[test]
+    fn should_wait_for_editor() {
+        let config = OpenConfig::default();
+        // Terminal editors - should wait
+        assert!(config.should_wait_for_editor("vim"));
+        assert!(config.should_wait_for_editor("nvim"));
+        assert!(config.should_wait_for_editor("emacs"));
+        // GUI editors - should not wait
+        assert!(!config.should_wait_for_editor("code"));
+        assert!(!config.should_wait_for_editor("xed"));
+        // Unknown editors - safer to wait
+        assert!(config.should_wait_for_editor("unknown-editor"));
     }
 
     #[test]

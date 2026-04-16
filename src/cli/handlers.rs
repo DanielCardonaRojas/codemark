@@ -2429,16 +2429,14 @@ fn handle_open(cli: &Cli, args: &OpenArgs) -> Result<()> {
     let program = &tokens[0];
     let args = &tokens[1..];
 
-    // Terminal editors that need to wait for completion
-    // These editors take over the terminal and should be waited for
-    let terminal_editors = ["vim", "vi", "nvim", "neovim", "emacs", "nano", "micro", "less"];
+    // Determine if we should wait for the editor to complete
     let program_name = std::path::Path::new(program)
         .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or("");
-    let is_terminal_editor = terminal_editors.contains(&program_name);
+    let should_wait = config.open.should_wait_for_editor(program_name);
 
-    if is_terminal_editor {
+    if should_wait {
         // Wait for terminal editors to complete
         let status = std::process::Command::new(program)
             .args(args)
