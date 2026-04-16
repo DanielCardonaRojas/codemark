@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -33,6 +34,8 @@ pub struct Config {
     pub health: HealthConfig,
     #[serde(default)]
     pub semantic: SemanticConfig,
+    #[serde(default)]
+    pub open: OpenConfig,
 }
 
 /// Semantic search configuration wrapper.
@@ -111,6 +114,45 @@ impl Default for StorageConfig {
 impl Default for HealthConfig {
     fn default() -> Self {
         HealthConfig { auto_archive_after_days: 7 }
+    }
+}
+
+/// Editor configuration for the `codemark open` command.
+#[derive(Debug, Deserialize, Serialize)]
+#[serde(default)]
+pub struct OpenConfig {
+    /// Default command template to use when no extension-specific override matches.
+    /// Supports placeholders: {FILE}, {LINE_START}, {LINE_END}, {ID}
+    pub default: Option<String>,
+    /// Extension-specific command templates (e.g., "rs" -> "nvim +{LINE_START} {FILE}").
+    pub extensions: HashMap<String, String>,
+}
+
+impl Default for OpenConfig {
+    fn default() -> Self {
+        OpenConfig {
+            default: None,
+            extensions: HashMap::new(),
+        }
+    }
+}
+
+impl OpenConfig {
+    /// Get the command for a specific file extension.
+    /// Returns None if no extension-specific command is configured.
+    pub fn get_command_for_extension(&self, extension: &str) -> Option<&String> {
+        // Try case-sensitive match first
+        if let Some(cmd) = self.extensions.get(extension) {
+            return Some(cmd);
+        }
+        // Try case-insensitive match
+        let lower_ext = extension.to_lowercase();
+        for (key, cmd) in &self.extensions {
+            if key.to_lowercase() == lower_ext {
+                return Some(cmd);
+            }
+        }
+        None
     }
 }
 
@@ -223,6 +265,51 @@ threshold = 0.8
         let config: Config = toml::from_str(toml).unwrap();
         assert_eq!(config.semantic.get_distance_metric(), DistanceMetric::InnerProduct);
         assert_eq!(config.semantic.threshold, Some(0.8));
+    }
+
+    #[test]
+    fn parse_open_config_default() {
+        let toml = r#"
+[open]
+default = "xed --line {LINE_START} {FILE}"
+
+[open.extensions]
+rs = "nvim +{LINE_START} {FILE}"
+md = "typora {FILE}"
+"#;
+        let config: Config = toml::from_str(toml).unwrap();
+        assert_eq!(config.open.default, Some("xed --line {LINE_START} {FILE}".to_string()));
+        assert_eq!(config.open.extensions.get("rs"), Some(&"nvim +{LINE_START} {FILE}".to_string()));
+        assert_eq!(config.open.extensions.get("md"), Some(&"typora {FILE}".to_string()));
+    }
+
+    #[test]
+    fn parse_open_config_empty() {
+        let toml = r#"
+"#;
+        let config: Config = toml::from_str(toml).unwrap();
+        assert_eq!(config.open.default, None);
+        assert!(config.open.extensions.is_empty());
+    }
+
+    #[test]
+    fn get_command_for_extension_case_insensitive() {
+        let mut config = OpenConfig::default();
+        config.extensions.insert("rs".to_string(), "nvim +{LINE_START} {FILE}".to_string());
+        config.extensions.insert("md".to_string(), "typora {FILE}".to_string());
+
+        // Case-sensitive match
+        assert_eq!(
+            config.get_command_for_extension("rs"),
+            Some(&"nvim +{LINE_START} {FILE}".to_string())
+        );
+        // Case-insensitive match
+        assert_eq!(
+            config.get_command_for_extension("RS"),
+            Some(&"nvim +{LINE_START} {FILE}".to_string())
+        );
+        // No match
+        assert!(config.get_command_for_extension("py").is_none());
     }
 
     #[test]

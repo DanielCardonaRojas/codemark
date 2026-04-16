@@ -97,6 +97,9 @@ pub enum Command {
 
     /// Add notes, context, or tags to an existing bookmark
     Annotate(AnnotateArgs),
+
+    /// Open a bookmarked file in your editor
+    Open(OpenArgs),
 }
 
 // --- Subcommand argument structs ---
@@ -567,4 +570,10 @@ pub struct AnnotateArgs {
     /// Source of this annotation (defaults to "cli")
     #[arg(long, default_value = "cli")]
     pub source: String,
+}
+
+#[derive(Debug, clap::Args)]
+pub struct OpenArgs {
+    /// Bookmark ID (full UUID or unambiguous prefix)
+    pub id: String,
 }
