@@ -218,7 +218,7 @@ When a local config exists, its values override the global config. This allows y
 | All (if `$XDG_CONFIG_HOME` is set) | `$XDG_CONFIG_HOME/codemark/config.toml` |
 | macOS | `~/Library/Application Support/codemark/config.toml` |
 | Linux | `~/.config/codemark/config.toml` |
-| Windows | `%APPDATA%\codemark\config\config.toml` |
+| Windows | `%APPDATA%\codemark\config.toml` |
 
 The global config file is automatically created on first run with sensible defaults.
 

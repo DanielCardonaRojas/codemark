@@ -11,7 +11,7 @@ use crate::embeddings::config::DistanceMetric;
 /// - All platforms: `$XDG_CONFIG_HOME/codemark` if XDG_CONFIG_HOME is set
 /// - macOS fallback: `~/Library/Application Support/codemark`
 /// - Linux fallback: `~/.config/codemark` (XDG standard)
-/// - Windows fallback: `%APPDATA%\codemark\config`
+/// - Windows fallback: `%APPDATA%\codemark`
 ///
 /// This is where the global `config.toml` file is stored.
 pub fn global_config_dir() -> Option<PathBuf> {
@@ -21,9 +21,9 @@ pub fn global_config_dir() -> Option<PathBuf> {
         return Some(path);
     }
 
-    // Fall back to platform-specific defaults
-    directories::ProjectDirs::from("", "codemark", "codemark")
-        .map(|proj| proj.config_dir().to_path_buf())
+    // Use BaseDirs to avoid doubling the app name (ProjectDirs::from("", "codemark", "codemark")
+    // would create "codemark-codemark" on macOS and "codemark\codemark" on Windows)
+    directories::BaseDirs::new().map(|dirs| dirs.config_dir().join("codemark"))
 }
 
 /// Returns the global models cache directory.
@@ -40,9 +40,8 @@ pub fn global_models_dir() -> Option<PathBuf> {
         return Some(PathBuf::from(env_dir));
     }
 
-    // Use platform-specific cache directory
-    directories::ProjectDirs::from("", "codemark", "codemark")
-        .map(|proj| proj.cache_dir().join("models"))
+    // Use BaseDirs to avoid doubling the app name
+    directories::BaseDirs::new().map(|dirs| dirs.cache_dir().join("codemark").join("models"))
 }
 
 /// Application configuration.
@@ -183,6 +182,7 @@ pub struct OpenConfig {
 
 /// Classification of editors by how they should be spawned.
 #[derive(Debug, Default, Deserialize, Serialize)]
+#[serde(default)]
 pub struct EditorTypesConfig {
     /// Terminal editors that take over the terminal and should be waited for.
     pub terminal: Vec<String>,
@@ -377,12 +377,16 @@ impl Config {
         for (key, value) in other.open.extensions {
             self.open.extensions.insert(key, value);
         }
-        // Merge editor types
-        if !other.open.editor_types.terminal.is_empty() {
-            self.open.editor_types.terminal = other.open.editor_types.terminal;
+        // Merge editor types (extend, don't replace)
+        for editor in other.open.editor_types.terminal {
+            if !self.open.editor_types.terminal.contains(&editor) {
+                self.open.editor_types.terminal.push(editor);
+            }
         }
-        if !other.open.editor_types.gui.is_empty() {
-            self.open.editor_types.gui = other.open.editor_types.gui;
+        for editor in other.open.editor_types.gui {
+            if !self.open.editor_types.gui.contains(&editor) {
+                self.open.editor_types.gui.push(editor);
+            }
         }
     }
 
@@ -783,5 +787,68 @@ enabled = true
         assert!(config.open.extensions.contains_key("rs"));
         assert!(config.open.extensions.contains_key("swift"));
         assert!(config.open.extensions.contains_key("py"));
+    }
+
+    #[test]
+    fn editor_types_merge_extends_not_replaces() {
+        // Editor type lists should extend, not replace
+        let global_toml = r#"
+[open.editor_types]
+terminal = ["vim", "nvim"]
+gui = ["code"]
+"#;
+
+        let local_toml = r#"
+[open.editor_types]
+terminal = ["emacs"]
+gui = ["xed", "idea"]
+"#;
+
+        let mut global: Config = toml::from_str(global_toml).unwrap();
+        let local: Config = toml::from_str(local_toml).unwrap();
+
+        global.merge(local);
+
+        // Terminal editors should be merged
+        assert_eq!(global.open.editor_types.terminal.len(), 3);
+        assert!(global.open.editor_types.terminal.contains(&"vim".to_string()));
+        assert!(global.open.editor_types.terminal.contains(&"nvim".to_string()));
+        assert!(global.open.editor_types.terminal.contains(&"emacs".to_string()));
+
+        // GUI editors should be merged
+        assert_eq!(global.open.editor_types.gui.len(), 3);
+        assert!(global.open.editor_types.gui.contains(&"code".to_string()));
+        assert!(global.open.editor_types.gui.contains(&"xed".to_string()));
+        assert!(global.open.editor_types.gui.contains(&"idea".to_string()));
+    }
+
+    #[test]
+    fn editor_types_merge_deduplicates() {
+        // Duplicate editor names should not be added twice
+        let global_toml = r#"
+[open.editor_types]
+terminal = ["vim", "nvim"]
+"#;
+
+        let local_toml = r#"
+[open.editor_types]
+terminal = ["vim", "emacs"]
+"#;
+
+        let mut global: Config = toml::from_str(global_toml).unwrap();
+        let local: Config = toml::from_str(local_toml).unwrap();
+
+        global.merge(local);
+
+        // vim should appear only once
+        assert_eq!(global.open.editor_types.terminal.len(), 3);
+        let vim_count = global
+            .open
+            .editor_types
+            .terminal
+            .iter()
+            .filter(|x| x.as_str() == "vim")
+            .count();
+        assert_eq!(vim_count, 1);
     }
 }
