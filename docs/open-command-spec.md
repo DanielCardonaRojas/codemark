@@ -6,7 +6,7 @@ The `codemark open` command allows users to quickly open bookmarked files in the
 
 ## Configuration
 
-The open command is configured via the `[open]` section in `codemark.toml`:
+The open command is configured via the `[open]` section in `.codemark/config.toml`:
 
 ```toml
 [open]
@@ -100,7 +100,8 @@ md = "typora {FILE}"
 - Commands are tokenized using `shlex` for safe shell parsing
 - The editor process is spawned directly (not via shell) for security
 - The command inherits stdin/stdout/stderr from the parent process
-- The command blocks until the editor exits (for GUI editors, this typically returns immediately)
+- For terminal editors (vim, nvim, emacs, nano, etc.), the command blocks until the editor exits
+- For GUI editors (xed, code, idea, etc.), the editor is spawned and the command returns immediately
 
 ### Extension Matching
 

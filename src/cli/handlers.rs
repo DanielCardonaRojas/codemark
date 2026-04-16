@@ -2400,9 +2400,11 @@ fn handle_open(cli: &Cli, args: &OpenArgs) -> Result<()> {
         // User configured a full command template
         cmd.clone()
     } else {
-        // Use default: $EDITOR +{LINE_START} {FILE}
+        // Use default: $EDITOR {FILE}
+        // Note: We don't add line numbers since syntax varies by editor
+        // Users should configure extension-specific commands for line number support
         let editor = std::env::var("EDITOR").unwrap_or_else(|_| "vim".to_string());
-        format!("{} +{{LINE_START}} {{FILE}}", editor)
+        format!("{} {{FILE}}", editor)
     };
 
     // Substitute placeholders
