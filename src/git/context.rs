@@ -285,8 +285,50 @@ fn count_commits_between(repo: &Repository, start: git2::Oid, end: git2::Oid) ->
 }
 
 /// Try to canonicalize; fall back to the original path if it doesn't exist yet.
-fn canonicalize_best_effort(path: &Path) -> PathBuf {
+pub fn canonicalize_best_effort(path: &Path) -> PathBuf {
     std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+}
+
+/// Resolve a bookmark's file path to an absolute path.
+///
+/// Bookmarks store file paths relative to the repo root. This function
+/// reconstructs the absolute path by:
+/// 1. Using the provided db_path to find the associated repo root
+/// 2. Joining the relative file_path with that repo root
+/// 3. Falling back to CWD if not in a git repo
+pub fn resolve_bookmark_file_path(file_path: &str, db_path: &Path) -> Result<PathBuf> {
+    // Try to determine the repo root from the database path
+    // The database is typically at `<repo_root>/.codemark/codemark.db`
+    let repo_root_from_db = db_path
+        .parent() // .codemark/
+        .and_then(|codemark_dir| {
+            // Check if the parent directory is named ".codemark"
+            if codemark_dir.file_name() == Some(std::ffi::OsStr::new(".codemark")) {
+                // db is at repo/.codemark/codemark.db, return the repo root
+                codemark_dir.parent().map(|p| p.to_path_buf())
+            } else {
+                None
+            }
+        });
+
+    let base_path = if let Some(root) = repo_root_from_db {
+        root
+    } else {
+        // Fallback: try to detect git context from current directory
+        // This handles cases where the db is in a non-standard location (e.g., temp dirs in tests)
+        if let Some(ctx) = detect_context(Path::new(".")) {
+            ctx.repo_root
+        } else {
+            // Last resort: use current directory
+            std::env::current_dir()?
+        }
+    };
+
+    // Join relative path with base path
+    let full_path = base_path.join(file_path);
+
+    // Canonicalize to resolve symlinks and get absolute path
+    Ok(canonicalize_best_effort(&full_path))
 }
 
 #[cfg(test)]
@@ -569,6 +611,145 @@ mod tests {
         assert!(result.is_ok());
         let found = result.unwrap();
         assert_eq!(found, Some(commit_a), "should filter out non-ancestors");
+
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn resolve_bookmark_file_path_standard_db_location() {
+        // Test standard database location: <repo>/.codemark/codemark.db
+        let tmp = std::env::temp_dir().join("codemark_test_resolve_standard");
+        let _ = fs::create_dir_all(&tmp);
+
+        // Create the standard .codemark directory structure
+        let codemark_dir = tmp.join(".codemark");
+        let _ = fs::create_dir_all(&codemark_dir);
+        let db_path = codemark_dir.join("codemark.db");
+
+        // Create a test file in the repo
+        let test_file = tmp.join("src").join("test.swift");
+        let _ = fs::create_dir_all(test_file.parent().unwrap());
+        fs::write(&test_file, "test content").unwrap();
+
+        // The bookmark stores the path relative to repo root
+        let relative_path = "src/test.swift";
+
+        // Resolve should give us the absolute path
+        let resolved = resolve_bookmark_file_path(relative_path, &db_path).unwrap();
+
+        // Should resolve to the absolute path of the test file
+        assert_eq!(resolved, test_file.canonicalize().unwrap());
+
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn resolve_bookmark_file_path_nested_db_location() {
+        // Test nested database location (e.g., monorepo subdirectory)
+        let tmp = std::env::temp_dir().join("codemark_test_resolve_nested");
+        let _ = fs::create_dir_all(&tmp);
+
+        // Create a nested structure like /repo/subdir/.codemark/codemark.db
+        let subdir = tmp.join("subdir");
+        let codemark_dir = subdir.join(".codemark");
+        let _ = fs::create_dir_all(&codemark_dir);
+        let db_path = codemark_dir.join("codemark.db");
+
+        // Create a test file in the subdirectory (repo root for this db)
+        let test_file = subdir.join("src").join("lib.swift");
+        let _ = fs::create_dir_all(test_file.parent().unwrap());
+        fs::write(&test_file, "test content").unwrap();
+
+        // The bookmark stores the path relative to the db's repo root (subdir)
+        let relative_path = "src/lib.swift";
+
+        let resolved = resolve_bookmark_file_path(relative_path, &db_path).unwrap();
+        assert_eq!(resolved, test_file.canonicalize().unwrap());
+
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn resolve_bookmark_file_path_worktree_scenario() {
+        // Simulate a worktree scenario:
+        // - Main repo at /repo
+        // - Worktree at /repo-worktree
+        // - Database at /repo/.codemark/codemark.db
+        // - File at /repo/src/file.swift
+        // - Bookmark stores "src/file.swift" relative to main repo
+        //
+        // In a real worktree, both main and worktree have the same files,
+        // and the database is at the main repo's .codemark directory.
+        // The resolution should still work correctly from either location.
+
+        let tmp = std::env::temp_dir().join("codemark_test_resolve_worktree");
+        let _ = fs::create_dir_all(&tmp);
+
+        // Main repo structure
+        let main_repo = tmp.join("main_repo");
+        let codemark_dir = main_repo.join(".codemark");
+        let _ = fs::create_dir_all(&codemark_dir);
+        let db_path = codemark_dir.join("codemark.db");
+
+        // Create the file in the main repo (where the db expects it)
+        let test_file = main_repo.join("src").join("feature.swift");
+        let _ = fs::create_dir_all(test_file.parent().unwrap());
+        fs::write(&test_file, "feature content").unwrap();
+
+        // The bookmark stores "src/feature.swift" relative to the db's repo root
+        let relative_path = "src/feature.swift";
+
+        // Resolve from db path should give us main_repo/src/feature.swift
+        let resolved = resolve_bookmark_file_path(relative_path, &db_path).unwrap();
+
+        // The resolved path should match the actual file location
+        assert_eq!(resolved, test_file.canonicalize().unwrap());
+
+        // Clean up
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn resolve_bookmark_file_path_with_deeply_nested_file() {
+        let tmp = std::env::temp_dir().join("codemark_test_resolve_deep");
+        let _ = fs::create_dir_all(&tmp);
+
+        let codemark_dir = tmp.join(".codemark");
+        let _ = fs::create_dir_all(&codemark_dir);
+        let db_path = codemark_dir.join("codemark.db");
+
+        // Create a deeply nested file structure
+        let test_file =
+            tmp.join("src").join("modules").join("core").join("utils").join("helpers.swift");
+        let _ = fs::create_dir_all(test_file.parent().unwrap());
+        fs::write(&test_file, "deep content").unwrap();
+
+        let relative_path = "src/modules/core/utils/helpers.swift";
+
+        let resolved = resolve_bookmark_file_path(relative_path, &db_path).unwrap();
+        assert_eq!(resolved, test_file.canonicalize().unwrap());
+
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn resolve_bookmark_file_path_fallback_for_missing_file() {
+        // Test that canonicalize_best_effort falls back gracefully
+        // when the file doesn't exist (e.g., deleted file in stale bookmark)
+        let tmp = std::env::temp_dir().join("codemark_test_resolve_missing");
+        let _ = fs::create_dir_all(&tmp);
+
+        let codemark_dir = tmp.join(".codemark");
+        let _ = fs::create_dir_all(&codemark_dir);
+        let db_path = codemark_dir.join("codemark.db");
+
+        // Don't create the actual file - simulate a stale bookmark
+        let relative_path = "deleted/file.swift";
+
+        // Should still return a path (joined with repo root)
+        let resolved = resolve_bookmark_file_path(relative_path, &db_path).unwrap();
+        let expected = tmp.join("deleted").join("file.swift");
+        assert_eq!(resolved, expected);
 
         let _ = fs::remove_dir_all(&tmp);
     }

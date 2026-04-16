@@ -1,8 +1,11 @@
+use std::path::Path;
+
 use tree_sitter::Language;
 
 use crate::engine::bookmark::{Bookmark, ResolutionMethod};
 use crate::engine::hash;
 use crate::error::Result;
+use crate::git::context as git_context;
 use crate::parser::languages::ParseCache;
 use crate::query::{generator, matcher, relaxer};
 
@@ -28,9 +31,11 @@ pub fn resolve(
     bookmark: &Bookmark,
     cache: &mut ParseCache,
     language: &Language,
+    db_path: &Path,
 ) -> Result<ResolutionResult> {
-    let path = std::path::Path::new(&bookmark.file_path);
-    let (tree, source) = cache.get_or_parse(path)?;
+    // Resolve relative path to absolute for file reading
+    let path = git_context::resolve_bookmark_file_path(&bookmark.file_path, db_path)?;
+    let (tree, source) = cache.get_or_parse(&path)?;
     let source_bytes = source.as_bytes();
 
     // Tier 1: Exact query
@@ -252,8 +257,11 @@ mod tests {
     fn resolve_exact_match() {
         let (bm, mut cache) = create_bookmark_for_function("auth_service.swift", "validateToken");
         let lang = CodemarkLang::Swift.tree_sitter_language();
+        // For tests, use a dummy db path - the bookmark stores absolute paths from fixture_path
+        let dummy_db =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(".codemark/codemark.db");
 
-        let result = resolve(&bm, &mut cache, &lang).unwrap();
+        let result = resolve(&bm, &mut cache, &lang, dummy_db.as_path()).unwrap();
         assert_eq!(result.method, ResolutionMethod::Exact);
         assert!(result.hash_matches);
         assert!(result.matched_text.contains("validateToken"));
@@ -266,8 +274,10 @@ mod tests {
         // Corrupt the stored hash
         bm.content_hash = Some("sha256:0000000000000000".to_string());
         let lang = CodemarkLang::Swift.tree_sitter_language();
+        let dummy_db =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(".codemark/codemark.db");
 
-        let result = resolve(&bm, &mut cache, &lang).unwrap();
+        let result = resolve(&bm, &mut cache, &lang, dummy_db.as_path()).unwrap();
         assert_eq!(result.method, ResolutionMethod::Exact);
         assert!(!result.hash_matches);
     }
@@ -283,8 +293,10 @@ mod tests {
   (#eq? @fn_name "nonexistentFunction")) @target"#
             .to_string();
         let lang = CodemarkLang::Swift.tree_sitter_language();
+        let dummy_db =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(".codemark/codemark.db");
 
-        let result = resolve(&bm, &mut cache, &lang).unwrap();
+        let result = resolve(&bm, &mut cache, &lang, dummy_db.as_path()).unwrap();
         // Relaxed strips the predicate, finds multiple functions, disambiguates by hash
         assert!(
             result.method == ResolutionMethod::Relaxed
@@ -306,8 +318,10 @@ mod tests {
             .to_string();
         bm.content_hash = Some("sha256:0000000000000000".to_string());
         let lang = CodemarkLang::Swift.tree_sitter_language();
+        let dummy_db =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(".codemark/codemark.db");
 
-        let result = resolve(&bm, &mut cache, &lang).unwrap();
+        let result = resolve(&bm, &mut cache, &lang, dummy_db.as_path()).unwrap();
         assert_eq!(result.method, ResolutionMethod::Failed);
     }
 }

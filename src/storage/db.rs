@@ -2,7 +2,7 @@
 
 #![allow(dead_code)]
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use rusqlite::Connection;
 
@@ -19,6 +19,7 @@ const MIGRATION_007: &str = include_str!("../../migrations/007_append_only_metad
 /// SQLite database wrapper with automatic migrations.
 pub struct Database {
     conn: Connection,
+    path: PathBuf,
 }
 
 impl Database {
@@ -30,7 +31,7 @@ impl Database {
             let _ = crate::config::Config::init_default(parent);
         }
         let conn = Connection::open(path)?;
-        let mut db = Database { conn };
+        let mut db = Database { conn, path: path.to_path_buf() };
         db.init()?;
         Ok(db)
     }
@@ -38,7 +39,7 @@ impl Database {
     /// Open an in-memory database (for testing).
     pub fn open_in_memory() -> Result<Self> {
         let conn = Connection::open_in_memory()?;
-        let mut db = Database { conn };
+        let mut db = Database { conn, path: PathBuf::from(":memory:") };
         db.init()?;
         Ok(db)
     }
@@ -52,6 +53,11 @@ impl Database {
     /// Use with caution - only for operations that require mutability.
     pub fn conn_mut(&mut self) -> &mut Connection {
         &mut self.conn
+    }
+
+    /// Get the path to this database.
+    pub fn path(&self) -> &Path {
+        &self.path
     }
 
     fn init(&mut self) -> Result<()> {

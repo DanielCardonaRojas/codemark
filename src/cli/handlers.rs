@@ -913,11 +913,11 @@ fn handle_resolve(cli: &Cli, mode: &OutputMode, args: &ResolveArgs) -> Result<()
         let mut cache = ParseCache::new(lang)?;
         let ts_lang = lang.tree_sitter_language();
 
-        let result = resolution::resolve(&bm, &mut cache, &ts_lang)?;
+        let result = resolution::resolve(&bm, &mut cache, &ts_lang, db.path())?;
 
         // In dry-run mode, skip database updates and just show the result
         if args.dry_run {
-            return write_resolution_output(mode, &bm, &result);
+            return write_resolution_output(mode, &bm, &result, db.path());
         }
 
         let new_status = health::transition(bm.status, result.method, result.hash_matches);
@@ -957,7 +957,7 @@ fn handle_resolve(cli: &Cli, mode: &OutputMode, args: &ResolveArgs) -> Result<()
         let config = load_config(cli);
         db.insert_resolution_if_changed(&res, config.storage.max_resolutions_per_bookmark)?;
 
-        write_resolution_output(mode, &bm, &result)?;
+        write_resolution_output(mode, &bm, &result, db.path())?;
     } else {
         // Batch resolution — fan out across all DBs
         let filter = BookmarkFilter {
@@ -1224,7 +1224,7 @@ fn handle_heal(cli: &Cli, mode: &OutputMode, args: &HealArgs) -> Result<()> {
         };
         let mut cache = ParseCache::new(lang)?;
         let ts_lang = lang.tree_sitter_language();
-        let result = resolution::resolve(bm, &mut cache, &ts_lang)?;
+        let result = resolution::resolve(bm, &mut cache, &ts_lang, db.path())?;
         let new_status = health::transition(bm.status, result.method, result.hash_matches);
         let previous_status = bm.status;
 
@@ -1485,10 +1485,14 @@ fn handle_preview(cli: &Cli, args: &PreviewArgs) -> Result<()> {
         }
     };
 
+    // Resolve the file path to absolute for output (but keep it relative in the database)
+    let relative_path = resolution.file_path.as_ref().unwrap_or(&bm.file_path);
+    let absolute_path = git_context::resolve_bookmark_file_path(relative_path, db.path())?;
+
     // Output JSON with resolution data (using standard envelope)
     let data = serde_json::json!({
         "bookmark_id": bm.id,
-        "file_path": resolution.file_path.as_ref().unwrap_or(&bm.file_path),
+        "file_path": absolute_path.to_string_lossy(),
         "line_range": resolution.line_range,
         "byte_range": resolution.byte_range,
         "status": bm.status,
@@ -1762,7 +1766,7 @@ fn handle_diff(cli: &Cli, mode: &OutputMode, args: &DiffArgs) -> Result<()> {
                 let Ok(lang) = bm.language.parse::<Language>() else { continue };
                 let mut cache = ParseCache::new(lang)?;
                 let ts_lang = lang.tree_sitter_language();
-                let result = resolution::resolve(bm, &mut cache, &ts_lang)?;
+                let result = resolution::resolve(bm, &mut cache, &ts_lang, db.path())?;
                 let new_status = health::transition(bm.status, result.method, result.hash_matches);
                 results.push(serde_json::json!({
                     "id": bm.id,
@@ -1785,7 +1789,7 @@ fn handle_diff(cli: &Cli, mode: &OutputMode, args: &DiffArgs) -> Result<()> {
                 let Ok(lang) = bm.language.parse::<Language>() else { continue };
                 let mut cache = ParseCache::new(lang)?;
                 let ts_lang = lang.tree_sitter_language();
-                let result = resolution::resolve(bm, &mut cache, &ts_lang)?;
+                let result = resolution::resolve(bm, &mut cache, &ts_lang, db.path())?;
                 let new_status = health::transition(bm.status, result.method, result.hash_matches);
                 let status_change = if new_status != bm.status {
                     format!("{} -> {}", bm.status, new_status)
@@ -2198,12 +2202,12 @@ fn resolve_batch(
         };
         let mut cache = ParseCache::new(lang)?;
         let ts_lang = lang.tree_sitter_language();
-        let result = resolution::resolve(bm, &mut cache, &ts_lang)?;
+        let result = resolution::resolve(bm, &mut cache, &ts_lang, db.path())?;
         let new_status = health::transition(bm.status, result.method, result.hash_matches);
 
         // In dry-run mode, skip database updates
         if dry_run {
-            write_resolution_output(mode, bm, &result)?;
+            write_resolution_output(mode, bm, &result, db.path())?;
             continue;
         }
 
@@ -2241,9 +2245,13 @@ fn resolve_batch(
         };
         let _ = db.insert_resolution_if_changed(&res, config.storage.max_resolutions_per_bookmark);
 
+        // Resolve relative path to absolute for output
+        let absolute_path = git_context::resolve_bookmark_file_path(&result.file_path, db.path())
+            .unwrap_or_else(|_| std::path::PathBuf::from(&result.file_path));
+
         results.push(serde_json::json!({
             "id": output::short_id(&bm.id),
-            "file": result.file_path,
+            "file": absolute_path.to_string_lossy(),
             "line": result.start_line + 1,
             "method": result.method.to_string(),
             "status": new_status.to_string(),
@@ -2288,15 +2296,20 @@ fn write_resolution_output(
     mode: &OutputMode,
     bm: &Bookmark,
     result: &resolution::ResolutionResult,
+    db_path: &std::path::Path,
 ) -> Result<()> {
     // Get first annotation's note for display
     let note = bm.annotations.first().and_then(|a| a.notes.as_deref());
+
+    // Resolve relative path to absolute for output
+    let absolute_path = git_context::resolve_bookmark_file_path(&result.file_path, db_path)?;
+    let absolute_path_str = absolute_path.to_string_lossy();
 
     match mode {
         OutputMode::Json => {
             write_json_success(&serde_json::json!({
                 "id": bm.id,
-                "file": result.file_path,
+                "file": absolute_path_str,
                 "line": result.start_line + 1,
                 "column": result.start_col,
                 "byte_range": format!("{}:{}", result.byte_range.0, result.byte_range.1),
@@ -2313,7 +2326,7 @@ fn write_resolution_output(
                 stdout,
                 "{}\t{}:{}\t{}\t{}\t{}",
                 output::short_id(&bm.id),
-                result.file_path,
+                absolute_path_str,
                 result.start_line + 1,
                 result.method,
                 bm.tags.join(","),
@@ -2324,7 +2337,7 @@ fn write_resolution_output(
             println!(
                 "{}  {}:{}  [{}]",
                 output::short_id(&bm.id),
-                result.file_path,
+                absolute_path_str,
                 result.start_line + 1,
                 result.method
             );
