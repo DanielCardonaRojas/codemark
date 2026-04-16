@@ -235,7 +235,7 @@ default = "nvim +{LINE_START} {FILE}"
 [open.extensions]
 rs = "nvim +{LINE_START} {FILE}"
 swift = "xed --line {LINE_START} {FILE}"
-md = "typora {FILE}"
+# md = "typora {FILE}"  # uncomment to use typora for markdown
 py = "code --goto {FILE}:{LINE_START}:{LINE_END}"
 
 # Terminal editors (codemark waits for them to exit)

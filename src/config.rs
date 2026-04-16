@@ -69,7 +69,9 @@ pub struct Config {
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(default)]
 pub struct SemanticConfig {
-    pub enabled: bool,
+    /// Whether semantic search is enabled (Some = explicitly set, None = use default).
+    /// Use `is_enabled()` to get the resolved value.
+    pub enabled: Option<bool>,
     pub model: Option<String>,
     /// Directory for storing embedding models.
     /// If not set, uses the global cache directory.
@@ -87,7 +89,7 @@ pub struct SemanticConfig {
 impl Default for SemanticConfig {
     fn default() -> Self {
         SemanticConfig {
-            enabled: true,
+            enabled: None,
             model: None,
             models_dir: None,
             batch_size: None,
@@ -98,6 +100,12 @@ impl Default for SemanticConfig {
 }
 
 impl SemanticConfig {
+    /// Get whether semantic search is enabled.
+    /// Returns true if not explicitly set (default is enabled).
+    pub fn is_enabled(&self) -> bool {
+        self.enabled.unwrap_or(true)
+    }
+
     /// Parse the distance metric from the string config.
     pub fn get_distance_metric(&self) -> DistanceMetric {
         self.distance_metric.as_ref().and_then(|s| s.parse().ok()).unwrap_or_default()
@@ -122,25 +130,41 @@ impl SemanticConfig {
 pub struct StorageConfig {
     /// Maximum resolution history entries to keep per bookmark.
     /// Older entries are pruned after each new resolution.
-    pub max_resolutions_per_bookmark: usize,
+    /// Use `max_resolutions()` to get the resolved value (default: 20).
+    pub max_resolutions_per_bookmark: Option<usize>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(default)]
 pub struct HealthConfig {
     /// Days before stale bookmarks are auto-archived (used by `heal --auto-archive`).
-    pub auto_archive_after_days: u32,
+    /// Use `auto_archive_days()` to get the resolved value (default: 7).
+    pub auto_archive_after_days: Option<u32>,
+}
+
+impl StorageConfig {
+    /// Get the maximum resolutions per bookmark (default: 20).
+    pub fn max_resolutions(&self) -> usize {
+        self.max_resolutions_per_bookmark.unwrap_or(20)
+    }
+}
+
+impl HealthConfig {
+    /// Get the auto-archive days threshold (default: 7).
+    pub fn auto_archive_days(&self) -> u32 {
+        self.auto_archive_after_days.unwrap_or(7)
+    }
 }
 
 impl Default for StorageConfig {
     fn default() -> Self {
-        StorageConfig { max_resolutions_per_bookmark: 20 }
+        StorageConfig { max_resolutions_per_bookmark: None }
     }
 }
 
 impl Default for HealthConfig {
     fn default() -> Self {
-        HealthConfig { auto_archive_after_days: 7 }
+        HealthConfig { auto_archive_after_days: None }
     }
 }
 
@@ -314,19 +338,19 @@ impl Config {
     }
 
     /// Merge another config into this one, with `other` taking precedence.
+    /// Local config values override global ones only when explicitly set.
     fn merge(&mut self, other: Config) {
-        // For non-table fields, replace if set
-        if other.storage.max_resolutions_per_bookmark
-            != StorageConfig::default().max_resolutions_per_bookmark
-        {
+        // Storage config - override only if explicitly set in local
+        if other.storage.max_resolutions_per_bookmark.is_some() {
             self.storage.max_resolutions_per_bookmark = other.storage.max_resolutions_per_bookmark;
         }
-        if other.health.auto_archive_after_days != HealthConfig::default().auto_archive_after_days {
+        // Health config - override only if explicitly set in local
+        if other.health.auto_archive_after_days.is_some() {
             self.health.auto_archive_after_days = other.health.auto_archive_after_days;
         }
 
-        // Semantic config merge
-        if other.semantic.enabled != SemanticConfig::default().enabled {
+        // Semantic config - override only if explicitly set in local
+        if other.semantic.enabled.is_some() {
             self.semantic.enabled = other.semantic.enabled;
         }
         if other.semantic.model.is_some() {
@@ -413,9 +437,9 @@ mod tests {
     #[test]
     fn defaults() {
         let config = Config::default();
-        assert_eq!(config.storage.max_resolutions_per_bookmark, 20);
-        assert_eq!(config.health.auto_archive_after_days, 7);
-        assert_eq!(config.semantic.enabled, true);
+        assert_eq!(config.storage.max_resolutions(), 20);
+        assert_eq!(config.health.auto_archive_days(), 7);
+        assert_eq!(config.semantic.is_enabled(), true);
     }
 
     #[test]
@@ -425,9 +449,9 @@ mod tests {
 max_resolutions_per_bookmark = 5
 "#;
         let config: Config = toml::from_str(toml).unwrap();
-        assert_eq!(config.storage.max_resolutions_per_bookmark, 5);
+        assert_eq!(config.storage.max_resolutions(), 5);
         // Health defaults preserved
-        assert_eq!(config.health.auto_archive_after_days, 7);
+        assert_eq!(config.health.auto_archive_days(), 7);
     }
 
     #[test]
@@ -440,14 +464,14 @@ max_resolutions_per_bookmark = 10
 auto_archive_after_days = 14
 "#;
         let config: Config = toml::from_str(toml).unwrap();
-        assert_eq!(config.storage.max_resolutions_per_bookmark, 10);
-        assert_eq!(config.health.auto_archive_after_days, 14);
+        assert_eq!(config.storage.max_resolutions(), 10);
+        assert_eq!(config.health.auto_archive_days(), 14);
     }
 
     #[test]
     fn load_missing_file_returns_defaults() {
         let config = Config::load(Path::new("/nonexistent/path"));
-        assert_eq!(config.storage.max_resolutions_per_bookmark, 20);
+        assert_eq!(config.storage.max_resolutions(), 20);
     }
 
     #[test]
@@ -600,8 +624,8 @@ gui = ["mygui", "code"]
 
         // Verify the config can be loaded
         let config = Config::load(&tmp);
-        assert_eq!(config.storage.max_resolutions_per_bookmark, 20);
-        assert_eq!(config.semantic.enabled, true);
+        assert_eq!(config.storage.max_resolutions(), 20);
+        assert_eq!(config.semantic.is_enabled(), true);
 
         // Second call should not overwrite
         let created_again = Config::init_default(&tmp).unwrap();
@@ -670,7 +694,7 @@ py = "code {FILE}"
         global.merge(local);
 
         // Local storage override should win
-        assert_eq!(global.storage.max_resolutions_per_bookmark, 5);
+        assert_eq!(global.storage.max_resolutions(), 5);
 
         // Global default should remain
         assert_eq!(global.open.default, Some("vim {FILE}".to_string()));
@@ -710,10 +734,54 @@ auto_archive_after_days = 14
         global.merge(local);
 
         // Global values preserved
-        assert_eq!(global.storage.max_resolutions_per_bookmark, 15);
-        assert_eq!(global.semantic.enabled, true);
+        assert_eq!(global.storage.max_resolutions(), 15);
+        assert_eq!(global.semantic.is_enabled(), true);
 
         // Local value applied
-        assert_eq!(global.health.auto_archive_after_days, 14);
+        assert_eq!(global.health.auto_archive_days(), 14);
+    }
+
+    #[test]
+    fn layered_config_local_default_values_override_global() {
+        // Test that local values equal to defaults still override global
+        let global_toml = r#"
+[storage]
+max_resolutions_per_bookmark = 100
+
+[semantic]
+enabled = false
+"#;
+
+        let local_toml = r#"
+[storage]
+max_resolutions_per_bookmark = 20
+
+[semantic]
+enabled = true
+"#;
+
+        let mut global: Config = toml::from_str(global_toml).unwrap();
+        let local: Config = toml::from_str(local_toml).unwrap();
+
+        global.merge(local);
+
+        // Local values (equal to defaults) should win over global
+        assert_eq!(global.storage.max_resolutions(), 20);
+        assert_eq!(global.semantic.is_enabled(), true);
+    }
+
+    #[test]
+    fn default_config_template_parses_correctly() {
+        // Regression test: ensure the embedded default config template parses correctly
+        let default_content = include_str!("../docs/config.default.toml");
+        let config: Config = toml::from_str(default_content)
+            .expect("Default config template should parse correctly");
+        assert_eq!(config.storage.max_resolutions(), 20);
+        assert_eq!(config.health.auto_archive_days(), 7);
+        assert_eq!(config.semantic.is_enabled(), true);
+        assert_eq!(config.open.default, Some("vim +{LINE_START} {FILE}".to_string()));
+        assert!(config.open.extensions.contains_key("rs"));
+        assert!(config.open.extensions.contains_key("swift"));
+        assert!(config.open.extensions.contains_key("py"));
     }
 }

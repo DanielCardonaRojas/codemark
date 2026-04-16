@@ -22,7 +22,7 @@ swift = "xed --line {LINE_START} {FILE}"
 py = "code --goto {FILE}:{LINE_START}:{LINE_END}"
 
 # Configure which editors should block (wait) vs. run in background.
-# [open.editor_types]
+[open.editor_types]
 # Terminal editors - codemark waits for them to exit before returning.
 terminal = ["vim", "vi", "nvim", "neovim", "emacs", "nano", "micro", "hx"]
 # GUI editors - codemark spawns them and returns immediately.
