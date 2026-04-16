@@ -5,6 +5,19 @@ use serde::{Deserialize, Serialize};
 
 use crate::embeddings::config::DistanceMetric;
 
+/// Returns the global config directory.
+///
+/// Platform-specific locations:
+/// - macOS: `~/Library/Application Support/codemark`
+/// - Linux: `~/.config/codemark` (XDG standard)
+/// - Windows: `%APPDATA%\codemark\config`
+///
+/// This is where the global `config.toml` file is stored.
+pub fn global_config_dir() -> Option<PathBuf> {
+    directories::ProjectDirs::from("", "codemark", "codemark")
+        .map(|proj| proj.config_dir().to_path_buf())
+}
+
 /// Returns the global models cache directory.
 ///
 /// Platform-specific locations:
@@ -24,7 +37,13 @@ pub fn global_models_dir() -> Option<PathBuf> {
         .map(|proj| proj.cache_dir().join("models"))
 }
 
-/// Application configuration loaded from `.codemark/config.toml`.
+/// Application configuration.
+///
+/// Loaded from multiple sources with per-repo override:
+/// 1. Global config: `~/.config/codemark/config.toml` (XDG standard)
+/// 2. Local override (optional): `.codemark/config.toml` (repo-specific)
+///
+/// Local config values override global ones.
 #[derive(Debug, Default, Deserialize, Serialize)]
 #[serde(default)]
 pub struct Config {
@@ -225,6 +244,10 @@ impl OpenConfig {
 
 impl Config {
     /// Load config from a `.codemark/config.toml` file. Returns defaults if the file doesn't exist.
+    ///
+    /// This loads a local (per-repo) config file only. For the full layered config
+    /// (global + local override), use `Config::load_layered()`.
+    #[allow(dead_code)]
     pub fn load(codemark_dir: &Path) -> Self {
         let path = codemark_dir.join("config.toml");
         match std::fs::read_to_string(&path) {
@@ -236,9 +259,129 @@ impl Config {
         }
     }
 
+    /// Load layered config: global config merged with local (per-repo) override.
+    ///
+    /// Loading strategy:
+    /// 1. Always load global config from `~/.config/codemark/config.toml` (if it exists)
+    /// 2. Load local config from `.codemark/config.toml` (if it exists)
+    /// 3. Merge them, with local values taking precedence
+    ///
+    /// This allows users to have global defaults while customizing per-repo settings.
+    pub fn load_layered(codemark_dir: &Path) -> Self {
+        // Start with global config
+        let mut config = Self::load_global();
+
+        // Merge with local config if it exists
+        let local_path = codemark_dir.join("config.toml");
+        if let Ok(content) = std::fs::read_to_string(&local_path) {
+            if let Ok(local) = toml::from_str::<Config>(&content) {
+                // Merge: local values override global ones
+                config.merge(local);
+            } else {
+                eprintln!(
+                    "codemark: warning: invalid local config at {}: using global config only",
+                    local_path.display()
+                );
+            }
+        }
+
+        config
+    }
+
+    /// Load global config from `~/.config/codemark/config.toml`.
+    /// Returns defaults if the file doesn't exist.
+    fn load_global() -> Self {
+        let Some(config_dir) = global_config_dir() else {
+            return Config::default();
+        };
+
+        let path = config_dir.join("config.toml");
+        match std::fs::read_to_string(&path) {
+            Ok(content) => toml::from_str(&content).unwrap_or_else(|e| {
+                eprintln!("codemark: warning: invalid global config at {}: {e}", path.display());
+                Config::default()
+            }),
+            Err(_) => Config::default(),
+        }
+    }
+
+    /// Merge another config into this one, with `other` taking precedence.
+    fn merge(&mut self, other: Config) {
+        // For non-table fields, replace if set
+        if other.storage.max_resolutions_per_bookmark != StorageConfig::default().max_resolutions_per_bookmark {
+            self.storage.max_resolutions_per_bookmark = other.storage.max_resolutions_per_bookmark;
+        }
+        if other.health.auto_archive_after_days != HealthConfig::default().auto_archive_after_days {
+            self.health.auto_archive_after_days = other.health.auto_archive_after_days;
+        }
+
+        // Semantic config merge
+        if other.semantic.enabled != SemanticConfig::default().enabled {
+            self.semantic.enabled = other.semantic.enabled;
+        }
+        if other.semantic.model.is_some() {
+            self.semantic.model = other.semantic.model;
+        }
+        if other.semantic.models_dir.is_some() {
+            self.semantic.models_dir = other.semantic.models_dir;
+        }
+        if other.semantic.batch_size.is_some() {
+            self.semantic.batch_size = other.semantic.batch_size;
+        }
+        if other.semantic.distance_metric.is_some() {
+            self.semantic.distance_metric = other.semantic.distance_metric;
+        }
+        if other.semantic.threshold.is_some() {
+            self.semantic.threshold = other.semantic.threshold;
+        }
+
+        // Open config merge
+        if other.open.default.is_some() {
+            self.open.default = other.open.default;
+        }
+        // Merge extensions (local extends global)
+        for (key, value) in other.open.extensions {
+            self.open.extensions.insert(key, value);
+        }
+        // Merge editor types
+        if !other.open.editor_types.terminal.is_empty() {
+            self.open.editor_types.terminal = other.open.editor_types.terminal;
+        }
+        if !other.open.editor_types.gui.is_empty() {
+            self.open.editor_types.gui = other.open.editor_types.gui;
+        }
+    }
+
+    /// Write the default config file to the global config directory.
+    /// This creates a new config file with helpful comments explaining each option.
+    /// Returns Ok(true) if the file was created, Ok(false) if it already exists.
+    pub fn init_global_default() -> std::io::Result<bool> {
+        let Some(config_dir) = global_config_dir() else {
+            return Ok(false);
+        };
+
+        // Create config directory if it doesn't exist
+        std::fs::create_dir_all(&config_dir)?;
+
+        let path = config_dir.join("config.toml");
+
+        // Don't overwrite existing config
+        if path.exists() {
+            return Ok(false);
+        }
+
+        let default_content = include_str!("../docs/config.default.toml");
+        std::fs::write(&path, default_content)?;
+        Ok(true)
+    }
+
     /// Write the default config file to the `.codemark` directory.
     /// This creates a new config file with helpful comments explaining each option.
     /// Returns Ok(true) if the file was created, Ok(false) if it already exists.
+    ///
+    /// Deprecated: Use `init_global_default()` for the new global config location.
+    /// This method is kept for backward compatibility.
+    #[allow(dead_code)]
     pub fn init_default(codemark_dir: &Path) -> std::io::Result<bool> {
         let path = codemark_dir.join("config.toml");
 
@@ -484,5 +627,77 @@ max_resolutions_per_bookmark = 99
         // Cleanup
         let _ = std::fs::remove_file(&config_path);
         let _ = std::fs::remove_dir(&tmp);
+    }
+
+    #[test]
+    fn layered_config_merges_global_and_local() {
+        // This test verifies that local config overrides global config
+        let global_toml = r#"
+[storage]
+max_resolutions_per_bookmark = 10
+
+[open]
+default = "vim {FILE}"
+
+[open.extensions]
+rs = "nvim +{LINE_START} {FILE}"
+md = "typora {FILE}"
+"#;
+
+        let local_toml = r#"
+[storage]
+max_resolutions_per_bookmark = 5
+
+[open.extensions]
+swift = "xed --line {LINE_START} {FILE}"
+py = "code {FILE}"
+"#;
+
+        let mut global: Config = toml::from_str(global_toml).unwrap();
+        let local: Config = toml::from_str(local_toml).unwrap();
+
+        // Merge local into global
+        global.merge(local);
+
+        // Local storage override should win
+        assert_eq!(global.storage.max_resolutions_per_bookmark, 5);
+
+        // Global default should remain
+        assert_eq!(global.open.default, Some("vim {FILE}".to_string()));
+
+        // Extensions should be merged (both global and local present)
+        assert_eq!(global.open.extensions.get("rs"), Some(&"nvim +{LINE_START} {FILE}".to_string()));
+        assert_eq!(global.open.extensions.get("md"), Some(&"typora {FILE}".to_string()));
+        assert_eq!(global.open.extensions.get("swift"), Some(&"xed --line {LINE_START} {FILE}".to_string()));
+        assert_eq!(global.open.extensions.get("py"), Some(&"code {FILE}".to_string()));
+    }
+
+    #[test]
+    fn layered_config_defaults_preserved() {
+        // When local config doesn't specify a value, global defaults are used
+        let global_toml = r#"
+[storage]
+max_resolutions_per_bookmark = 15
+
+[semantic]
+enabled = true
+"#;
+
+        let local_toml = r#"
+[health]
+auto_archive_after_days = 14
+"#;
+
+        let mut global: Config = toml::from_str(global_toml).unwrap();
+        let local: Config = toml::from_str(local_toml).unwrap();
+
+        global.merge(local);
+
+        // Global values preserved
+        assert_eq!(global.storage.max_resolutions_per_bookmark, 15);
+        assert_eq!(global.semantic.enabled, true);
+
+        // Local value applied
+        assert_eq!(global.health.auto_archive_after_days, 14);
     }
 }

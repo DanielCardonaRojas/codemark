@@ -117,17 +117,18 @@ fn generate_embedding_for_bookmark(cli: &Cli, config: &Config, bookmark: &Bookma
 }
 
 /// Load the config from the .codemark directory (same location as the primary DB).
+/// Uses layered loading: global config merged with local (per-repo) override.
 fn load_config(cli: &Cli) -> Config {
     if let Some(path) = cli.db.first()
         && let Some(parent) = path.parent()
     {
-        return Config::load(parent);
+        return Config::load_layered(parent);
     }
     let cwd = std::env::current_dir().unwrap_or_default();
     if let Some(ctx) = git_context::detect_context(&cwd) {
-        return Config::load(&ctx.repo_root.join(".codemark"));
+        return Config::load_layered(&ctx.repo_root.join(".codemark"));
     }
-    Config::load(&cwd.join(".codemark"))
+    Config::load_layered(&cwd.join(".codemark"))
 }
 
 /// Open all specified databases (for read commands that support cross-repo queries).

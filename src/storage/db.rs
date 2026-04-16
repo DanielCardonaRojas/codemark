@@ -27,8 +27,8 @@ impl Database {
     pub fn open(path: &Path) -> Result<Self> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
-            // Initialize default config file if it doesn't exist
-            let _ = crate::config::Config::init_default(parent);
+            // Initialize global config file if it doesn't exist
+            let _ = crate::config::Config::init_global_default();
         }
         let conn = Connection::open(path)?;
         let mut db = Database { conn, path: path.to_path_buf() };
