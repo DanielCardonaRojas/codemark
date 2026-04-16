@@ -27,6 +27,54 @@ If the user invoked you with arguments (e.g. `/codemark something`), use `$ARGUM
 - If user asks to "open", "edit", or view a bookmark: `codemark open "$ARGUMENTS"`
 - If no arguments were provided, interpret the user's intent based on the conversation context.
 
+## Intelligent Bookmark Discovery
+
+When the user asks about something, try these strategies in order:
+
+### 1. Semantic Search (Most Flexible)
+Best for natural language queries and conceptual searches:
+```bash
+codemark search "user query" --semantic
+```
+
+### 2. Tag-Based Filtering
+When the user mentions specific concepts or categories:
+```bash
+codemark list --tag feature:auth --tag role:entrypoint
+codemark list --tag layer:api --status active
+codemark list --tag type:config --author agent
+```
+
+### 3. File-Aware Search
+When discussing specific files or modules:
+```bash
+codemark list --file src/auth.rs --status active
+codemark list --file src/auth.rs --lang rust
+```
+
+### 4. Collection Browsing
+When exploring a feature or workflow:
+```bash
+codemark collection list
+codemark collection show <collection-name>
+```
+
+### 5. Hybrid Search Pattern
+For best results, combine semantic search with filters:
+```bash
+codemark search "authentication" --lang rust --author agent
+codemark search "middleware" --tag layer:api --status active
+```
+
+### Discovery Strategy Summary
+| User Query Type | Primary Strategy | Fallback |
+|-----------------|------------------|----------|
+| "Show my auth bookmarks" | `--tag feature:auth` | semantic search |
+| "Where's the config?" | `--tag type:config` | `--tag role:config` |
+| "Bookmarks in auth.rs" | `--file src/auth.rs` | semantic search |
+| "Recent agent bookmarks" | `--author agent` | semantic search |
+| "What did I mark for X?" | semantic search | collection browse |
+
 ## When to use codemark
 
 - **Starting a session**: Load bookmarks from a previous session to restore context.
@@ -45,6 +93,89 @@ If the user invoked you with arguments (e.g. `/codemark something`), use `$ARGUM
 - **Status**: active (healthy), drifted (found but moved), stale (lost), archived (cleaned up).
 - **Author**: bookmarks track who created them (`--created-by agent` vs default `user`).
 - **Annotations**: bookmarks can have multiple annotations (notes, context) added by different agents over time, with provenance tracking.
+
+## Tag Taxonomy
+
+Use structured, colon-prefixed tags for powerful filtering. Combine multiple tags to create precise filters.
+
+### Feature/Domain Tags
+Identify which feature or domain area the bookmark belongs to.
+- `feature:<name>` — e.g., `feature:auth`, `feature:logging`, `feature:payments`
+- `domain:<name>` — e.g., `domain:user-management`, `domain:analytics`
+
+### Architectural Layer Tags
+Identify the architectural layer or component boundary.
+- `layer:api` — HTTP handlers, API endpoints, controllers
+- `layer:business` — Business logic, domain services, use cases
+- `layer:data` — Database queries, repositories, data access
+- `layer:infra` — Infrastructure, external services, I/O
+- `layer:ui` — UI components, views, presentation logic
+- `layer:config` — Configuration, constants, environment setup
+
+### Role/Responsibility Tags
+Identify the primary role or responsibility of the code.
+- `role:entrypoint` — Application entry points, main functions
+- `role:handler` — Request handlers, event handlers
+- `role:service` — Service layer, business logic
+- `role:repository` — Data access, database operations
+- `role:middleware` — Middleware, interceptors, filters
+- `role:validator` — Validation, verification logic
+- `role:transformer` — Data transformation, mapping, conversion
+- `role:config` — Configuration loading/parsing
+- `role:constant` — Constants, enums, static values
+- `role:error` — Error handling, error types
+- `role:test` — Test utilities, fixtures, test helpers
+- `role:utility` — Helper functions, utilities
+
+### Type Tags
+Identify the kind of code element.
+- `type:function` — Functions, methods
+- `type:class` — Classes, structs
+- `type:interface` — Interfaces, protocols, traits
+- `type:enum` — Enums, unions
+- `type:constant` — Constants, literals
+- `type:module` — Modules, packages
+
+### Lifecycle Tags
+Identify the state or lifecycle of the bookmarked code.
+- `status:active` — Currently in use
+- `status:deprecated` — Deprecated, planned for removal
+- `status:experimental` — Experimental, may change
+- `status:stable` — Stable, unlikely to change
+
+### Task/Work Tags
+Link bookmarks to specific tasks or work items.
+- `task:<id>` — e.g., `task:fix-123`, `task:refactor-auth`
+- `pr:<number>` — Associated pull request
+- `issue:<number>` — Associated issue
+
+### Risk Tags
+Identify risk level or sensitivity.
+- `risk:high` — High risk, changes require careful review
+- `risk:medium` — Medium risk
+- `risk:low` — Low risk, safe to modify
+
+### Security Tags
+Identify security-sensitive code.
+- `security:auth` — Authentication, authorization
+- `security:crypto` — Encryption, hashing, cryptography
+- `security:validation` — Input validation, sanitization
+- `security:sensitive` — Accesses sensitive data
+
+### Recommended Tag Combinations
+```bash
+# Auth entry point
+--tag feature:auth --tag layer:api --tag role:entrypoint --tag security:auth
+
+# Database query
+--tag feature:users --tag layer:data --tag role:repository
+
+# Business logic
+--tag feature:payments --tag layer:business --tag role:service --tag risk:high
+
+# Configuration
+--tag layer:config --tag role:constant --tag status:stable
+```
 
 ## Quick Start
 
@@ -99,7 +230,16 @@ codemark add-from-query \
   --created-by agent
 ```
 
-For common query patterns across languages, see `queries.md`.
+For common query patterns across languages, see:
+- `queries/swift.md`
+- `queries/rust.md`
+- `queries/typescript.md`
+- `queries/python.md`
+- `queries/go.md`
+- `queries/java.md`
+- `queries/csharp.md`
+- `queries/dart.md`
+- `queries/common.md` — Cross-language patterns and strategies
 
 ## Best Practices
 
@@ -108,7 +248,7 @@ For common query patterns across languages, see `queries.md`.
 - **Iterative enhancement**: When working with an existing bookmark and discover new context, use `annotate` to add notes without re-parsing the file. Multiple agents can annotate the same bookmark over time.
 - For detailed note guidelines, see `templates.md`.
 - For usage examples, see `examples.md`.
-- For tree-sitter query patterns, see `queries.md`.
+- For tree-sitter query patterns, see `queries/` directory for language-specific guides.
 
 ## Commands Reference
 

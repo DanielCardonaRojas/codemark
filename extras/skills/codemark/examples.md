@@ -53,20 +53,21 @@ codemark add-from-query \
 ```
 
 ### 3. Cross-language query examples
+For detailed query patterns per language, see `queries/` directory.
 ```bash
-# Swift
+# Swift - see queries/swift.md
 codemark add-from-query --file AuthService.swift \
   --query '(function_declaration name: (simple_identifier) @name (#eq? @name "validateToken")) @target'
 
-# Rust
+# Rust - see queries/rust.md
 codemark add-from-query --file auth.rs \
   --query '(function_item name: (identifier) @name (#eq? @name "validate_token")) @target'
 
-# TypeScript
+# TypeScript - see queries/typescript.md
 codemark add-from-query --file AuthService.ts \
   --query '(method_definition name: (property_identifier) @name (#eq? @name "validateToken")) @target'
 
-# Python
+# Python - see queries/python.md
 codemark add-from-query --file auth.py \
   --query '(function_definition name: (identifier) @name (#eq? @name "validate_token")) @target'
 ```
