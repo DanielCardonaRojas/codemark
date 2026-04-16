@@ -228,7 +228,8 @@ impl OpenConfig {
             return false;
         }
         // If it's a known terminal editor or unknown, wait for it
-        self.editor_types.is_terminal_editor(program_name) || !self.editor_types.is_gui_editor(program_name)
+        self.editor_types.is_terminal_editor(program_name)
+            || !self.editor_types.is_gui_editor(program_name)
     }
 }
 
@@ -355,7 +356,10 @@ md = "typora {FILE}"
 "#;
         let config: Config = toml::from_str(toml).unwrap();
         assert_eq!(config.open.default, Some("xed --line {LINE_START} {FILE}".to_string()));
-        assert_eq!(config.open.extensions.get("rs"), Some(&"nvim +{LINE_START} {FILE}".to_string()));
+        assert_eq!(
+            config.open.extensions.get("rs"),
+            Some(&"nvim +{LINE_START} {FILE}".to_string())
+        );
         assert_eq!(config.open.extensions.get("md"), Some(&"typora {FILE}".to_string()));
     }
 

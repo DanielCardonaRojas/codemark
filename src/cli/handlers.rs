@@ -2390,16 +2390,12 @@ fn handle_open(cli: &Cli, args: &OpenArgs) -> Result<()> {
     let absolute_path = git_context::resolve_bookmark_file_path(&result.file_path, db_path)?;
 
     // Extract file extension for command lookup
-    let extension = std::path::Path::new(&result.file_path)
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("");
+    let extension =
+        std::path::Path::new(&result.file_path).extension().and_then(|e| e.to_str()).unwrap_or("");
 
     // Get the command template
-    let command_template = if let Some(cmd) = config
-        .open
-        .get_command_for_extension(extension)
-        .or(config.open.default.as_ref())
+    let command_template = if let Some(cmd) =
+        config.open.get_command_for_extension(extension).or(config.open.default.as_ref())
     {
         // User configured a full command template
         cmd.clone()
@@ -2430,10 +2426,8 @@ fn handle_open(cli: &Cli, args: &OpenArgs) -> Result<()> {
     let args = &tokens[1..];
 
     // Determine if we should wait for the editor to complete
-    let program_name = std::path::Path::new(program)
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("");
+    let program_name =
+        std::path::Path::new(program).file_name().and_then(|n| n.to_str()).unwrap_or("");
     let should_wait = config.open.should_wait_for_editor(program_name);
 
     if should_wait {
