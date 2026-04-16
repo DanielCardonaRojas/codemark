@@ -7,7 +7,7 @@
 # Default editor command for `codemark open`.
 # Placeholders: {FILE} (absolute path), {LINE_START}, {LINE_END}, {ID}
 # If not set, uses $EDITOR or falls back to "vim".
-# default = "nvim +{LINE_START} {FILE}"
+default = "vim +{LINE_START} {FILE}"
 
 # Extension-specific editor commands (these override the default).
 # Uncomment and customize as needed for your preferred editors.
@@ -19,14 +19,14 @@ swift = "xed --line {LINE_START} {FILE}"
 # Markdown files with typora
 # md = "typora {FILE}"
 # Python files with VS Code
-# py = "code --goto {FILE}:{LINE_START}:{LINE_END}"
+py = "code --goto {FILE}:{LINE_START}:{LINE_END}"
 
 # Configure which editors should block (wait) vs. run in background.
 # [open.editor_types]
 # Terminal editors - codemark waits for them to exit before returning.
-# terminal = ["vim", "vi", "nvim", "neovim", "emacs", "nano", "micro"]
+terminal = ["vim", "vi", "nvim", "neovim", "emacs", "nano", "micro", "hx"]
 # GUI editors - codemark spawns them and returns immediately.
-# gui = ["xed", "code", "idea", "subl", "typora"]
+gui = ["xed", "code", "idea", "subl", "typora"]
 
 [storage]
 # Maximum number of resolution history entries to keep per bookmark.
