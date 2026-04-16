@@ -118,7 +118,7 @@ impl Default for HealthConfig {
 }
 
 /// Editor configuration for the `codemark open` command.
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Default, Deserialize, Serialize)]
 #[serde(default)]
 pub struct OpenConfig {
     /// Default command template to use when no extension-specific override matches.
@@ -131,22 +131,12 @@ pub struct OpenConfig {
 }
 
 /// Classification of editors by how they should be spawned.
-#[derive(Debug, Deserialize, Serialize, Default)]
+#[derive(Debug, Default, Deserialize, Serialize)]
 pub struct EditorTypesConfig {
     /// Terminal editors that take over the terminal and should be waited for.
     pub terminal: Vec<String>,
     /// GUI editors that spawn independently and return immediately.
     pub gui: Vec<String>,
-}
-
-impl Default for OpenConfig {
-    fn default() -> Self {
-        OpenConfig {
-            default: None,
-            extensions: HashMap::new(),
-            editor_types: EditorTypesConfig::default(),
-        }
-    }
 }
 
 impl EditorTypesConfig {
