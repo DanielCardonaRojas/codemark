@@ -1388,9 +1388,10 @@ fn handle_list(cli: &Cli, mode: &OutputMode, args: &ListArgs) -> Result<()> {
     };
 
     // Check if we need line numbers (custom line format with {LINE})
-    let needs_line = args.line_format.as_ref().map_or(false, |f| {
-        f.contains("{LINE}") || f.contains("{line}")
-    });
+    let needs_line = args
+        .line_format
+        .as_deref()
+        .is_some_and(output::template_needs_line);
 
     if dbs.len() == 1 {
         let bookmarks = dbs[0].1.list_bookmarks(&filter)?;
@@ -1421,7 +1422,7 @@ fn handle_list(cli: &Cli, mode: &OutputMode, args: &ListArgs) -> Result<()> {
             .iter()
             .map(|(label, bm)| output::AnnotatedBookmark { source: label, bookmark: bm })
             .collect();
-        output::write_annotated_bookmarks(mode, &annotated)?;
+        output::write_annotated_bookmarks(mode, &annotated, args.line_format.as_deref())?;
     }
     Ok(())
 }
@@ -1563,7 +1564,7 @@ fn handle_search(cli: &Cli, mode: &OutputMode, args: &SearchArgs) -> Result<()> 
             .iter()
             .map(|(label, bm)| output::AnnotatedBookmark { source: label, bookmark: bm })
             .collect();
-        output::write_annotated_bookmarks(mode, &annotated)?;
+        output::write_annotated_bookmarks(mode, &annotated, None)?;
     }
     Ok(())
 }

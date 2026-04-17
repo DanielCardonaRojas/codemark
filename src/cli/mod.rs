@@ -25,7 +25,7 @@ pub struct Cli {
     #[arg(long, global = true)]
     pub db: Vec<PathBuf>,
 
-    /// Output format: json (default), table, line, or tv (or a custom template)
+    /// Output format: json (default), table, line, markdown (or a custom template)
     #[arg(long, global = true)]
     pub format: Option<String>,
 

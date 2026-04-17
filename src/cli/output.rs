@@ -37,13 +37,16 @@ pub struct LineFormatContext<'a> {
     pub note: &'a str,
     pub context: &'a str,
     pub query: &'a str,
+    pub source: Option<&'a str>,
 }
 
 /// Format a single line using a template string with placeholder substitution.
 /// Supports both uppercase and lowercase placeholder variants (e.g., {ID} and {id}).
 pub fn format_line(template: &str, ctx: &LineFormatContext) -> String {
+    let source = ctx.source.unwrap_or("");
     template
         // Uppercase variants
+        .replace("{SOURCE}", source)
         .replace("{ID}", ctx.id)
         .replace("{FILE}", ctx.file)
         .replace("{FILENAME}", ctx.filename)
@@ -54,6 +57,7 @@ pub fn format_line(template: &str, ctx: &LineFormatContext) -> String {
         .replace("{CONTEXT}", ctx.context)
         .replace("{QUERY}", ctx.query)
         // Lowercase variants (replace after uppercase to avoid partial replacements)
+        .replace("{source}", source)
         .replace("{id}", ctx.id)
         .replace("{file}", ctx.file)
         .replace("{filename}", ctx.filename)
@@ -275,21 +279,6 @@ fn write_bookmarks_line(bookmarks: &[Bookmark]) -> io::Result<()> {
 /// Format: <id>\t<file>\t<line>\t<status>\t<tags>\t<note>
 /// This requires database access to fetch line numbers from resolutions.
 /// The line number is the center of the line range for better preview positioning.
-fn write_bookmarks_custom(bookmarks: &[Bookmark], template: &str) -> io::Result<()> {
-    let mut stdout = io::stdout().lock();
-    for bm in bookmarks {
-        let line = template
-            .replace("{id}", short_id(&bm.id))
-            .replace("{file}", &bm.file_path)
-            .replace("{status}", &bm.status.to_string())
-            .replace("{tags}", &bm.tags.join(","))
-            .replace("{note}", get_first_note(bm))
-            .replace("{query}", &bm.query);
-        writeln!(stdout, "{line}")?;
-    }
-    Ok(())
-}
-
 /// Write bookmarks using a flexible line format template.
 /// This function supports all available placeholders including filename, context, and line numbers.
 pub fn write_bookmarks_line_format<F>(
@@ -325,6 +314,7 @@ where
             note,
             context,
             query: &bm.query,
+            source: None,
         };
 
         let formatted = format_line(template, &ctx);
@@ -341,10 +331,42 @@ pub struct AnnotatedBookmark<'a> {
     pub bookmark: &'a Bookmark,
 }
 
+/// Write annotated bookmarks using a line format template.
+fn write_annotated_line_format(bookmarks: &[AnnotatedBookmark], template: &str) -> io::Result<()> {
+    let mut stdout = io::stdout().lock();
+    for ab in bookmarks {
+        let bm = ab.bookmark;
+        let short = short_id(&bm.id);
+        let filename = get_filename(&bm.file_path);
+        let tags = bm.tags.iter().map(|t| format!("#{t}")).collect::<Vec<_>>().join(" ");
+        let note = get_first_note(bm);
+        let context = get_first_context(bm);
+        let status = bm.status.to_string();
+
+        let ctx = LineFormatContext {
+            id: short,
+            file: &bm.file_path,
+            filename,
+            line: 0, // Line numbers not supported in multi-db mode
+            status: status.as_str(),
+            tags: &tags,
+            note,
+            context,
+            query: &bm.query,
+            source: Some(ab.source),
+        };
+
+        let formatted = format_line(template, &ctx);
+        writeln!(stdout, "{formatted}")?;
+    }
+    Ok(())
+}
+
 /// Write annotated bookmarks (multi-db results with source labels).
 pub fn write_annotated_bookmarks(
     mode: &OutputMode,
     bookmarks: &[AnnotatedBookmark],
+    line_format: Option<&str>,
 ) -> io::Result<()> {
     match mode {
         OutputMode::Json => {
@@ -384,39 +406,30 @@ pub fn write_annotated_bookmarks(
             Ok(())
         }
         OutputMode::Line => {
-            let mut stdout = io::stdout().lock();
-            for ab in bookmarks {
-                let bm = ab.bookmark;
-                let tags = bm.tags.join(",");
-                let note = get_first_note(bm);
-                writeln!(
-                    stdout,
-                    "{}\t{}\t{}\t{}\t{}\t{}",
-                    ab.source,
-                    short_id(&bm.id),
-                    bm.file_path,
-                    bm.status,
-                    tags,
-                    note
-                )?;
+            if let Some(fmt) = line_format {
+                write_annotated_line_format(bookmarks, fmt)
+            } else {
+                let mut stdout = io::stdout().lock();
+                for ab in bookmarks {
+                    let bm = ab.bookmark;
+                    let tags = bm.tags.iter().map(|t| format!("#{t}")).collect::<Vec<_>>().join(",");
+                    let note = get_first_note(bm);
+                    writeln!(
+                        stdout,
+                        "{}\t{}\t{}\t{}\t{}\t{}",
+                        ab.source,
+                        short_id(&bm.id),
+                        bm.file_path,
+                        bm.status,
+                        tags,
+                        note
+                    )?;
+                }
+                Ok(())
             }
-            Ok(())
         }
         OutputMode::Custom(template) => {
-            let mut stdout = io::stdout().lock();
-            for ab in bookmarks {
-                let bm = ab.bookmark;
-                let line = template
-                    .replace("{source}", ab.source)
-                    .replace("{id}", short_id(&bm.id))
-                    .replace("{file}", &bm.file_path)
-                    .replace("{status}", &bm.status.to_string())
-                    .replace("{tags}", &bm.tags.join(","))
-                    .replace("{note}", get_first_note(bm))
-                    .replace("{query}", &bm.query);
-                writeln!(stdout, "{line}")?;
-            }
-            Ok(())
+            write_annotated_line_format(bookmarks, template)
         }
         OutputMode::Markdown => {
             // For multi-db markdown output, fall back to table format
