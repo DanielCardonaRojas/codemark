@@ -84,7 +84,7 @@ fn open_db(cli: &Cli) -> Result<Database> {
 /// Generate embedding for a bookmark if semantic search is enabled.
 /// Returns Ok(()) even if semantic search is disabled or fails.
 fn generate_embedding_for_bookmark(cli: &Cli, config: &Config, bookmark: &Bookmark) -> Result<()> {
-    if !config.semantic.enabled {
+    if !config.semantic.is_enabled() {
         return Ok(());
     }
 
@@ -117,17 +117,18 @@ fn generate_embedding_for_bookmark(cli: &Cli, config: &Config, bookmark: &Bookma
 }
 
 /// Load the config from the .codemark directory (same location as the primary DB).
+/// Uses layered loading: global config merged with local (per-repo) override.
 fn load_config(cli: &Cli) -> Config {
     if let Some(path) = cli.db.first()
         && let Some(parent) = path.parent()
     {
-        return Config::load(parent);
+        return Config::load_layered(parent);
     }
     let cwd = std::env::current_dir().unwrap_or_default();
     if let Some(ctx) = git_context::detect_context(&cwd) {
-        return Config::load(&ctx.repo_root.join(".codemark"));
+        return Config::load_layered(&ctx.repo_root.join(".codemark"));
     }
-    Config::load(&cwd.join(".codemark"))
+    Config::load_layered(&cwd.join(".codemark"))
 }
 
 /// Open all specified databases (for read commands that support cross-repo queries).
@@ -485,7 +486,7 @@ fn handle_add(cli: &Cli, mode: &OutputMode, args: &AddArgs) -> Result<()> {
             line_range: Some(format!("{}:{}", target_start_line, target_end_line)),
             content_hash: Some(content_hash.clone()),
         };
-        db.insert_resolution_if_changed(&initial_res, config.storage.max_resolutions_per_bookmark)?;
+        db.insert_resolution_if_changed(&initial_res, config.storage.max_resolutions())?;
     }
 
     // Add to collection if specified
@@ -649,7 +650,7 @@ fn handle_add_from_snippet(cli: &Cli, mode: &OutputMode, args: &AddFromSnippetAr
             line_range: Some(format!("{}:{}", target_start_line, target_end_line)),
             content_hash: Some(content_hash.clone()),
         };
-        db.insert_resolution_if_changed(&initial_res, config.storage.max_resolutions_per_bookmark)?;
+        db.insert_resolution_if_changed(&initial_res, config.storage.max_resolutions())?;
     }
 
     // Add to collection if specified
@@ -817,7 +818,7 @@ fn handle_add_from_query(cli: &Cli, mode: &OutputMode, args: &AddFromQueryArgs) 
             line_range: Some(format!("{}:{}", target_start_line, target_end_line)),
             content_hash: Some(content_hash.clone()),
         };
-        db.insert_resolution_if_changed(&initial_res, config.storage.max_resolutions_per_bookmark)?;
+        db.insert_resolution_if_changed(&initial_res, config.storage.max_resolutions())?;
     }
 
     // Add to collection if specified
@@ -956,7 +957,7 @@ fn handle_resolve(cli: &Cli, mode: &OutputMode, args: &ResolveArgs) -> Result<()
             content_hash: Some(result.content_hash.clone()),
         };
         let config = load_config(cli);
-        db.insert_resolution_if_changed(&res, config.storage.max_resolutions_per_bookmark)?;
+        db.insert_resolution_if_changed(&res, config.storage.max_resolutions())?;
 
         write_resolution_output(mode, &bm, &result, db.path())?;
     } else {
@@ -1276,8 +1277,7 @@ fn handle_heal(cli: &Cli, mode: &OutputMode, args: &HealArgs) -> Result<()> {
                 content_hash: Some(result.content_hash.clone()),
             };
             let res_id = res.id.clone();
-            let _ =
-                db.insert_resolution_if_changed(&res, config.storage.max_resolutions_per_bookmark);
+            let _ = db.insert_resolution_if_changed(&res, config.storage.max_resolutions());
             Some(res_id)
         } else {
             None
@@ -1513,7 +1513,7 @@ fn handle_search(cli: &Cli, mode: &OutputMode, args: &SearchArgs) -> Result<()> 
 
     // Semantic search requires a query
     if args.semantic {
-        if !config.semantic.enabled {
+        if !config.semantic.is_enabled() {
             return Err(Error::Input("Semantic search is not enabled in config".to_string()));
         }
         let query = args
@@ -1677,7 +1677,7 @@ fn handle_reindex(cli: &Cli, mode: &OutputMode, args: &ReindexArgs) -> Result<()
     use crate::storage::SemanticRepo;
 
     let config = load_config(cli);
-    if !config.semantic.enabled {
+    if !config.semantic.is_enabled() {
         return Err(Error::Input("Semantic search is not enabled in config".to_string()));
     }
 
@@ -1923,7 +1923,7 @@ fn handle_import(cli: &Cli, mode: &OutputMode, args: &ImportArgs) -> Result<()> 
     // Generate embeddings for imported bookmarks (if semantic search is enabled)
     if !imported_bookmarks.is_empty() {
         let config = load_config(cli);
-        if config.semantic.enabled {
+        if config.semantic.is_enabled() {
             let models_dir = config.semantic.get_models_dir();
 
             let model = config
@@ -2244,7 +2244,7 @@ fn resolve_batch(
             line_range: Some(format!("{}:{}", result.start_line + 1, result.end_line + 1)),
             content_hash: Some(result.content_hash.clone()),
         };
-        let _ = db.insert_resolution_if_changed(&res, config.storage.max_resolutions_per_bookmark);
+        let _ = db.insert_resolution_if_changed(&res, config.storage.max_resolutions());
 
         // Resolve relative path to absolute for output
         let absolute_path = git_context::resolve_bookmark_file_path(&result.file_path, db.path())
