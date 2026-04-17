@@ -1509,11 +1509,7 @@ fn handle_preview(cli: &Cli, args: &PreviewArgs) -> Result<()> {
             .ok_or_else(|| Error::Input(format!("invalid byte range format: {byte_range_str}")))?;
 
         let file_bytes = std::fs::read(&absolute_path).map_err(|e| {
-            Error::Input(format!(
-                "failed to read file {}: {}",
-                absolute_path.display(),
-                e
-            ))
+            Error::Input(format!("failed to read file {}: {}", absolute_path.display(), e))
         })?;
 
         if byte_location.start_byte >= file_bytes.len()
