@@ -254,7 +254,7 @@ fn write_bookmarks_table(bookmarks: &[Bookmark]) -> io::Result<()> {
 fn write_bookmarks_line(bookmarks: &[Bookmark]) -> io::Result<()> {
     let mut stdout = io::stdout().lock();
     for bm in bookmarks {
-        let tags = bm.tags.join(",");
+        let tags = bm.tags.iter().map(|t| format!("#{t}")).collect::<Vec<_>>().join(",");
         let note = get_first_note(bm);
         // Format: <id>\t<file>:<line>\t<status>\t<tags>\t<note>
         // Line is unknown without resolution, so we use file path only
@@ -304,7 +304,8 @@ where
     for bm in bookmarks {
         let short = short_id(&bm.id);
         let filename = get_filename(&bm.file_path);
-        let tags = bm.tags.join(",");
+        // Prefix tags with #
+        let tags = bm.tags.iter().map(|t| format!("#{t}")).collect::<Vec<_>>().join(" ");
         let note = get_first_note(bm);
         let context = get_first_context(bm);
         let line = if let Some(ref fn_line) = get_line_fn {

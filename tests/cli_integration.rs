@@ -817,7 +817,7 @@ fn line_output_is_tab_separated() {
     assert_eq!(fields.len(), 5, "expected 5 tab-separated fields, got: {line}");
     // Fields: id, file, status, tags, note
     assert_eq!(fields[2], "active");
-    assert_eq!(fields[3], "auth");
+    assert_eq!(fields[3], "#auth");
     assert!(fields[4].contains("line format test"));
 }
 
