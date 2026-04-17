@@ -1387,11 +1387,10 @@ fn handle_list(cli: &Cli, mode: &OutputMode, args: &ListArgs) -> Result<()> {
         limit: args.limit,
     };
 
-    // Check if we need line numbers (for Tv mode or custom line format with {LINE})
-    let needs_line = matches!(mode, OutputMode::Tv)
-        || args.line_format.as_ref().map_or(false, |f| {
-            f.contains("{LINE}") || f.contains("{line}")
-        });
+    // Check if we need line numbers (custom line format with {LINE})
+    let needs_line = args.line_format.as_ref().map_or(false, |f| {
+        f.contains("{LINE}") || f.contains("{line}")
+    });
 
     if dbs.len() == 1 {
         let bookmarks = dbs[0].1.list_bookmarks(&filter)?;
@@ -1544,19 +1543,7 @@ fn handle_search(cli: &Cli, mode: &OutputMode, args: &SearchArgs) -> Result<()> 
             args.author.as_deref(),
             args.collection.as_deref(),
         )?;
-        if matches!(mode, OutputMode::Tv) {
-            let db = &dbs[0].1;
-            let bookmark_data: std::collections::HashMap<String, (String, String)> = bookmarks
-                .iter()
-                .map(|bm| (short_id(&bm.id).to_string(), (bm.id.clone(), bm.file_path.clone())))
-                .collect();
-            output::write_bookmarks_with_line(mode, &bookmarks, None, |short_id| {
-                let (full_id, file_path) = bookmark_data.get(short_id)?;
-                get_bookmark_line(db, full_id, file_path)
-            })?;
-        } else {
-            output::write_bookmarks(mode, &bookmarks, None)?;
-        }
+        output::write_bookmarks(mode, &bookmarks, None)?;
     } else {
         let mut all = Vec::new();
         for (label, db) in &dbs {
@@ -2067,13 +2054,6 @@ fn handle_collection_list(cli: &Cli, mode: &OutputMode, args: &CollectionListArg
                 }
                 println!("{table}");
             }
-            OutputMode::Tv => {
-                // TV format: name\tdescription
-                let mut stdout = io::stdout().lock();
-                for c in &collections {
-                    writeln!(stdout, "{}\t{}", c.name, c.description.as_deref().unwrap_or(""))?;
-                }
-            }
             _ => {
                 let mut stdout = io::stdout().lock();
                 for c in &collections {
@@ -2098,19 +2078,6 @@ fn handle_collection_list(cli: &Cli, mode: &OutputMode, args: &CollectionListArg
                 }
                 println!("{table}");
             }
-            OutputMode::Tv => {
-                // TV format: name\tcount\tdescription (for preview display)
-                let mut stdout = io::stdout().lock();
-                for (c, count) in &collections {
-                    writeln!(
-                        stdout,
-                        "{}\t{}\t{}",
-                        c.name,
-                        count,
-                        c.description.as_deref().unwrap_or("")
-                    )?;
-                }
-            }
             _ => {
                 let mut stdout = io::stdout().lock();
                 for (c, count) in &collections {
@@ -2132,18 +2099,7 @@ fn handle_collection_show(cli: &Cli, mode: &OutputMode, args: &CollectionShowArg
     let db = open_db(cli)?;
     let filter = BookmarkFilter { collection: Some(args.name.clone()), ..Default::default() };
     let bookmarks = db.list_bookmarks(&filter)?;
-    if matches!(mode, OutputMode::Tv) {
-        let bookmark_data: std::collections::HashMap<String, (String, String)> = bookmarks
-            .iter()
-            .map(|bm| (short_id(&bm.id).to_string(), (bm.id.clone(), bm.file_path.clone())))
-            .collect();
-        output::write_bookmarks_with_line(mode, &bookmarks, None, |short_id| {
-            let (full_id, file_path) = bookmark_data.get(short_id)?;
-            get_bookmark_line(&db, full_id, file_path)
-        })?;
-    } else {
-        output::write_bookmarks(mode, &bookmarks, None)?;
-    }
+    output::write_bookmarks(mode, &bookmarks, None)?;
     Ok(())
 }
 
