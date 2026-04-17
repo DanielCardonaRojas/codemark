@@ -6,7 +6,7 @@ use clap_complete::generate;
 
 use crate::cli::output::{
     self, ByteLocation, HealOutput, HealUpdate, OutputMode, short_id, write_bookmark_markdown,
-    write_bookmarks, write_heal_output, write_json_success, write_success,
+    write_heal_output, write_json_success, write_success,
 };
 use crate::cli::*;
 use crate::config::Config;
@@ -1387,22 +1387,28 @@ fn handle_list(cli: &Cli, mode: &OutputMode, args: &ListArgs) -> Result<()> {
         limit: args.limit,
     };
 
+    // Check if we need line numbers (for Tv mode or custom line format with {LINE})
+    let needs_line = matches!(mode, OutputMode::Tv)
+        || args.line_format.as_ref().map_or(false, |f| {
+            f.contains("{LINE}") || f.contains("{line}")
+        });
+
     if dbs.len() == 1 {
         let bookmarks = dbs[0].1.list_bookmarks(&filter)?;
-        // For Tv mode, provide a closure to fetch line numbers
-        if matches!(mode, OutputMode::Tv) {
-            let db = &dbs[0].1;
+        let db = &dbs[0].1;
+
+        if needs_line {
             // Capture both full IDs and file paths
             let bookmark_data: std::collections::HashMap<String, (String, String)> = bookmarks
                 .iter()
                 .map(|bm| (short_id(&bm.id).to_string(), (bm.id.clone(), bm.file_path.clone())))
                 .collect();
-            output::write_bookmarks_with_line(mode, &bookmarks, |short_id| {
+            output::write_bookmarks_with_line(mode, &bookmarks, args.line_format.as_deref(), |short_id| {
                 let (full_id, file_path) = bookmark_data.get(short_id)?;
                 get_bookmark_line(db, full_id, file_path)
             })?;
         } else {
-            write_bookmarks(mode, &bookmarks)?;
+            output::write_bookmarks(mode, &bookmarks, args.line_format.as_deref())?;
         }
     } else {
         let mut all = Vec::new();
@@ -1544,12 +1550,12 @@ fn handle_search(cli: &Cli, mode: &OutputMode, args: &SearchArgs) -> Result<()> 
                 .iter()
                 .map(|bm| (short_id(&bm.id).to_string(), (bm.id.clone(), bm.file_path.clone())))
                 .collect();
-            output::write_bookmarks_with_line(mode, &bookmarks, |short_id| {
+            output::write_bookmarks_with_line(mode, &bookmarks, None, |short_id| {
                 let (full_id, file_path) = bookmark_data.get(short_id)?;
                 get_bookmark_line(db, full_id, file_path)
             })?;
         } else {
-            write_bookmarks(mode, &bookmarks)?;
+            output::write_bookmarks(mode, &bookmarks, None)?;
         }
     } else {
         let mut all = Vec::new();
@@ -2131,12 +2137,12 @@ fn handle_collection_show(cli: &Cli, mode: &OutputMode, args: &CollectionShowArg
             .iter()
             .map(|bm| (short_id(&bm.id).to_string(), (bm.id.clone(), bm.file_path.clone())))
             .collect();
-        output::write_bookmarks_with_line(mode, &bookmarks, |short_id| {
+        output::write_bookmarks_with_line(mode, &bookmarks, None, |short_id| {
             let (full_id, file_path) = bookmark_data.get(short_id)?;
             get_bookmark_line(&db, full_id, file_path)
         })?;
     } else {
-        write_bookmarks(mode, &bookmarks)?;
+        output::write_bookmarks(mode, &bookmarks, None)?;
     }
     Ok(())
 }

@@ -324,6 +324,10 @@ pub struct ListArgs {
     /// Filter by collection
     #[arg(long)]
     pub collection: Option<String>,
+
+    /// Custom line format template (placeholders: {ID}, {FILE}, {FILENAME}, {LINE}, {STATUS}, {TAGS}, {NOTE}, {CONTEXT}, {QUERY})
+    #[arg(long)]
+    pub line_format: Option<String>,
 }
 
 #[derive(Debug, clap::Args)]
