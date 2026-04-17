@@ -32,6 +32,7 @@ pub struct LineFormatContext<'a> {
     pub file: &'a str,
     pub filename: &'a str,
     pub line: usize,
+    pub offset: usize,
     pub status: &'a str,
     pub tags: &'a str,
     pub note: &'a str,
@@ -51,6 +52,7 @@ pub fn format_line(template: &str, ctx: &LineFormatContext) -> String {
         .replace("{FILE}", ctx.file)
         .replace("{FILENAME}", ctx.filename)
         .replace("{LINE}", &ctx.line.to_string())
+        .replace("{OFFSET}", &ctx.offset.to_string())
         .replace("{STATUS}", ctx.status)
         .replace("{TAGS}", ctx.tags)
         .replace("{NOTE}", ctx.note)
@@ -62,6 +64,7 @@ pub fn format_line(template: &str, ctx: &LineFormatContext) -> String {
         .replace("{file}", ctx.file)
         .replace("{filename}", ctx.filename)
         .replace("{line}", &ctx.line.to_string())
+        .replace("{offset}", &ctx.offset.to_string())
         .replace("{status}", ctx.status)
         .replace("{tags}", ctx.tags)
         .replace("{note}", ctx.note)
@@ -69,9 +72,9 @@ pub fn format_line(template: &str, ctx: &LineFormatContext) -> String {
         .replace("{query}", ctx.query)
 }
 
-/// Check if a template contains the {LINE} or {line} placeholder.
+/// Check if a template contains the {LINE}, {line}, {OFFSET}, or {offset} placeholder.
 pub fn template_needs_line(template: &str) -> bool {
-    template.contains("{LINE}") || template.contains("{line}")
+    template.contains("{LINE}") || template.contains("{line}") || template.contains("{OFFSET}") || template.contains("{offset}")
 }
 
 /// Resolved output mode for a command invocation.
@@ -306,6 +309,7 @@ where
             file: &bm.file_path,
             filename,
             line,
+            offset: line,
             status: status.as_str(),
             tags: &tags,
             note,
@@ -345,6 +349,7 @@ fn write_annotated_line_format(bookmarks: &[AnnotatedBookmark], template: &str) 
             file: &bm.file_path,
             filename,
             line: 0, // Line numbers not supported in multi-db mode
+            offset: 0,
             status: status.as_str(),
             tags: &tags,
             note,

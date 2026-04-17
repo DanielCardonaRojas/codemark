@@ -4,7 +4,7 @@ description = "Codemark structural bookmarks"
 requirements = ["codemark, bat, glow, jq"]
 
 [source]
-command = "codemark list --format line --line-format \"{ID}\t{FILENAME}\t{STATUS}\t{TAGS}\t{CONTEXT}\t{NOTE}\""
+command = "codemark list --format line --line-format \"{ID}\t{FILENAME}\t{STATUS}\t{TAGS}\t{CONTEXT}\t{NOTE}\t{OFFSET}\""
 display = "{split:\\t:1} {split:\\t:3} {split:\\t:4}"
 output = "{split:\\t:0}"
 
@@ -13,7 +13,7 @@ command = [
   "codemark preview {split:\\t:0} | jq -r '\"\\(.data.file_path) --highlight-line \\(.data.line_range)\"' | xargs bat --color=always",
   "codemark show {split:\\t:0} --format markdown | glow - --style auto",
 ]
-offset = "{split:\\t:2}"
+offset = "{split:\\t:6}"
 
 [ui.preview_panel]
 size = 55

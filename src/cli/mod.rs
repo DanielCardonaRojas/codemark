@@ -325,7 +325,7 @@ pub struct ListArgs {
     #[arg(long)]
     pub collection: Option<String>,
 
-    /// Custom line format template (placeholders: {ID}, {FILE}, {FILENAME}, {LINE}, {STATUS}, {TAGS}, {NOTE}, {CONTEXT}, {QUERY})
+    /// Custom line format template (placeholders: {ID}, {FILE}, {FILENAME}, {LINE}, {OFFSET}, {STATUS}, {TAGS}, {NOTE}, {CONTEXT}, {QUERY})
     #[arg(long)]
     pub line_format: Option<String>,
 }
