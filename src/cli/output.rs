@@ -297,11 +297,8 @@ where
         let tags = bm.tags.iter().map(|t| format!("#{t}")).collect::<Vec<_>>().join(" ");
         let note = get_first_note(bm);
         let context = get_first_context(bm);
-        let line = if let Some(ref fn_line) = get_line_fn {
-            fn_line(short).unwrap_or(0)
-        } else {
-            0
-        };
+        let line =
+            if let Some(ref fn_line) = get_line_fn { fn_line(short).unwrap_or(0) } else { 0 };
         let status = bm.status.to_string();
 
         let ctx = LineFormatContext {
@@ -412,7 +409,8 @@ pub fn write_annotated_bookmarks(
                 let mut stdout = io::stdout().lock();
                 for ab in bookmarks {
                     let bm = ab.bookmark;
-                    let tags = bm.tags.iter().map(|t| format!("#{t}")).collect::<Vec<_>>().join(",");
+                    let tags =
+                        bm.tags.iter().map(|t| format!("#{t}")).collect::<Vec<_>>().join(",");
                     let note = get_first_note(bm);
                     writeln!(
                         stdout,
@@ -428,9 +426,7 @@ pub fn write_annotated_bookmarks(
                 Ok(())
             }
         }
-        OutputMode::Custom(template) => {
-            write_annotated_line_format(bookmarks, template)
-        }
+        OutputMode::Custom(template) => write_annotated_line_format(bookmarks, template),
         OutputMode::Markdown => {
             // For multi-db markdown output, fall back to table format
             let mut table = Table::new();

@@ -1388,10 +1388,7 @@ fn handle_list(cli: &Cli, mode: &OutputMode, args: &ListArgs) -> Result<()> {
     };
 
     // Check if we need line numbers (custom line format with {LINE})
-    let needs_line = args
-        .line_format
-        .as_deref()
-        .is_some_and(output::template_needs_line);
+    let needs_line = args.line_format.as_deref().is_some_and(output::template_needs_line);
 
     if dbs.len() == 1 {
         let bookmarks = dbs[0].1.list_bookmarks(&filter)?;
@@ -1403,10 +1400,15 @@ fn handle_list(cli: &Cli, mode: &OutputMode, args: &ListArgs) -> Result<()> {
                 .iter()
                 .map(|bm| (short_id(&bm.id).to_string(), (bm.id.clone(), bm.file_path.clone())))
                 .collect();
-            output::write_bookmarks_with_line(mode, &bookmarks, args.line_format.as_deref(), |short_id| {
-                let (full_id, file_path) = bookmark_data.get(short_id)?;
-                get_bookmark_line(db, full_id, file_path)
-            })?;
+            output::write_bookmarks_with_line(
+                mode,
+                &bookmarks,
+                args.line_format.as_deref(),
+                |short_id| {
+                    let (full_id, file_path) = bookmark_data.get(short_id)?;
+                    get_bookmark_line(db, full_id, file_path)
+                },
+            )?;
         } else {
             output::write_bookmarks(mode, &bookmarks, args.line_format.as_deref())?;
         }
