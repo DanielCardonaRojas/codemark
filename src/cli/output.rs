@@ -74,7 +74,10 @@ pub fn format_line(template: &str, ctx: &LineFormatContext) -> String {
 
 /// Check if a template contains the {LINE}, {line}, {OFFSET}, or {offset} placeholder.
 pub fn template_needs_line(template: &str) -> bool {
-    template.contains("{LINE}") || template.contains("{line}") || template.contains("{OFFSET}") || template.contains("{offset}")
+    template.contains("{LINE}")
+        || template.contains("{line}")
+        || template.contains("{OFFSET}")
+        || template.contains("{offset}")
 }
 
 /// Resolved output mode for a command invocation.
