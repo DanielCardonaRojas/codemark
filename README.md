@@ -182,6 +182,109 @@ Render markdown bookmarks in the terminal with syntax highlighting:
 codemark show a1b2 --format markdown | glow -
 ```
 
+## Customizing Markdown Templates
+
+The `codemark show --format markdown` output uses a Handlebars template that you can customize.
+
+### Template Location
+
+Templates are stored in your configuration directory:
+
+| Platform | Template Path |
+|----------|---------------|
+| macOS | `~/Library/Application Support/codemark/templates/codemark_show.md` |
+| Linux | `~/.config/codemark/templates/codemark_show.md` |
+| Windows | `%APPDATA%\codemark\templates\codemark_show.md` |
+
+The template file is created automatically on first run with sensible defaults. You can edit this file to customize the markdown output.
+
+### Template Variables
+
+The following variables are available in the template:
+
+| Variable | Type | Description |
+|----------|------|-------------|
+| `{{short_id}}` | String | First 8 chars of bookmark ID |
+| `{{id}}` | String | Full bookmark ID |
+| `{{file_path}}` | String | Path to the file |
+| `{{file_name}}` | String | Just the filename |
+| `{{language}}` | String | Programming language |
+| `{{status}}` | String | `active`, `drifted`, `stale`, or `archived` |
+| `{{query}}` | String | Tree-sitter query |
+| `{{created_at}}` | String | Creation timestamp |
+| `{{created_by}}` | String? | Creator (optional) |
+| `{{commit_hash}}` | String? | Git commit hash (optional) |
+| `{{short_commit}}` | String? | First 8 chars of commit (optional) |
+| `{{last_resolved_at}}` | String? | Last resolution time (optional) |
+| `{{resolution_method}}` | String? | Resolution method (optional) |
+| `{{stale_since}}` | String? | When it became stale (optional) |
+| `{{tags}}` | Array | List of tags (use `{{#each tags}}` loop) |
+| `{{annotations}}` | Array | List of annotations (use `{{#each annotations}}` loop) |
+| `{{resolutions}}` | Array | Resolution history (use `{{#each resolutions}}` loop) |
+
+### Custom Helpers
+
+- `{{escape_markdown value}}` — Escapes special markdown characters
+- `{{truncate value}}` — Truncates a string to 8 characters
+
+### Default Template
+
+```handlebars
+# Bookmark: {{short_id}}
+
+## Metadata
+| Property | Value |
+|----------|-------|
+| **File** | {{file_path}} |
+| **Language** | {{language}} |
+| **Status** | {{status}} |
+| **Created** | {{created_at}} |
+{{#if created_by}}| **Author** | {{escape_markdown created_by}} |{{/if}}
+{{#if last_resolved_at}}| **Last Resolved** | {{last_resolved_at}} |{{/if}}
+{{#if resolution_method}}| **Resolution Method** | {{resolution_method}} |{{/if}}
+{{#if commit_hash}}| **Commit** | `{{short_commit}}` |{{/if}}
+{{#if stale_since}}| **Stale Since** | {{stale_since}} |{{/if}}
+
+## Tree-sitter Query
+```scheme
+{{query}}
+```
+
+{{#if tags}}
+## Tags
+{{#each tags}}
+- `{{escape_markdown this}}`
+{{/each}}
+{{/if}}
+
+{{#if annotations}}
+## Annotations
+{{#each annotations}}
+### {{added_by}}
+*{{source}}* added: {{added_at}}
+
+{{#if notes}}{{escape_markdown notes}}{{/if}}
+
+{{#if context}}
+```
+{{escape_markdown context}}
+```
+{{/if}}
+{{/each}}
+{{/if}}
+
+{{#if resolutions}}
+## Resolution History
+| Time | Method | File | Lines | Matches | Commit |
+|------|--------|------|-------|---------|--------|
+{{#each resolutions}}
+| {{resolved_at}} | {{method}} | {{file_path}} | {{line_range}} | {{match_count}} | {{#if commit_hash}}`{{short_commit}}`{{else}}-{{/if}} |
+{{/each}}
+{{/if}}
+```
+
+See [TEMPLATE_DESIGN.md](TEMPLATE_DESIGN.md) for full template documentation.
+
 ### Claude Code
 
 Install the plugin to give Claude proactive bookmarking skills:
