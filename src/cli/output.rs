@@ -15,12 +15,70 @@ fn get_first_note(bm: &Bookmark) -> &str {
     bm.annotations.first().and_then(|a| a.notes.as_deref()).unwrap_or("")
 }
 
+/// Helper function to get the first annotation's context from a bookmark.
+fn get_first_context(bm: &Bookmark) -> &str {
+    bm.annotations.first().and_then(|a| a.context.as_deref()).unwrap_or("")
+}
+
+/// Helper function to extract the filename from a file path.
+fn get_filename(file_path: &str) -> &str {
+    // Try to get the last path component
+    file_path.rsplit('/').next().unwrap_or(file_path)
+}
+
+/// Context for line format templates containing all available fields.
+pub struct LineFormatContext<'a> {
+    pub id: &'a str,
+    pub file: &'a str,
+    pub filename: &'a str,
+    pub line: usize,
+    pub status: &'a str,
+    pub tags: &'a str,
+    pub note: &'a str,
+    pub context: &'a str,
+    pub query: &'a str,
+    pub source: Option<&'a str>,
+}
+
+/// Format a single line using a template string with placeholder substitution.
+/// Supports both uppercase and lowercase placeholder variants (e.g., {ID} and {id}).
+pub fn format_line(template: &str, ctx: &LineFormatContext) -> String {
+    let source = ctx.source.unwrap_or("");
+    template
+        // Uppercase variants
+        .replace("{SOURCE}", source)
+        .replace("{ID}", ctx.id)
+        .replace("{FILE}", ctx.file)
+        .replace("{FILENAME}", ctx.filename)
+        .replace("{LINE}", &ctx.line.to_string())
+        .replace("{STATUS}", ctx.status)
+        .replace("{TAGS}", ctx.tags)
+        .replace("{NOTE}", ctx.note)
+        .replace("{CONTEXT}", ctx.context)
+        .replace("{QUERY}", ctx.query)
+        // Lowercase variants (replace after uppercase to avoid partial replacements)
+        .replace("{source}", source)
+        .replace("{id}", ctx.id)
+        .replace("{file}", ctx.file)
+        .replace("{filename}", ctx.filename)
+        .replace("{line}", &ctx.line.to_string())
+        .replace("{status}", ctx.status)
+        .replace("{tags}", ctx.tags)
+        .replace("{note}", ctx.note)
+        .replace("{context}", ctx.context)
+        .replace("{query}", ctx.query)
+}
+
+/// Check if a template contains the {LINE} or {line} placeholder.
+pub fn template_needs_line(template: &str) -> bool {
+    template.contains("{LINE}") || template.contains("{line}")
+}
+
 /// Resolved output mode for a command invocation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum OutputMode {
     Table,
     Line,
-    Tv, // Television format: includes line numbers for preview.offset
     Json,
     Markdown,
     Custom(String),
@@ -51,7 +109,6 @@ impl OutputMode {
         match format_flag {
             Some("table") => OutputMode::Table,
             Some("line") => OutputMode::Line,
-            Some("tv") => OutputMode::Tv,
             Some("json") => OutputMode::Json,
             Some("markdown") => OutputMode::Markdown,
             Some(template) => OutputMode::Custom(template.to_string()),
@@ -125,34 +182,51 @@ pub fn short_id(id: &str) -> &str {
 }
 
 /// Write a list of bookmarks in the appropriate output mode.
-pub fn write_bookmarks(mode: &OutputMode, bookmarks: &[Bookmark]) -> io::Result<()> {
-    match mode {
-        OutputMode::Json => write_json_success(&bookmarks),
-        OutputMode::Table => write_bookmarks_table(bookmarks),
-        OutputMode::Line => write_bookmarks_line(bookmarks),
-        OutputMode::Tv => {
-            fn no_line(_: &str) -> Option<usize> {
-                None
-            }
-            write_bookmarks_tv(bookmarks, no_line)
-        }
-        OutputMode::Markdown => write_bookmarks_table(bookmarks),
-        OutputMode::Custom(template) => write_bookmarks_custom(bookmarks, template),
-    }
+pub fn write_bookmarks(
+    mode: &OutputMode,
+    bookmarks: &[Bookmark],
+    line_format: Option<&str>,
+) -> io::Result<()> {
+    write_bookmarks_impl(mode, bookmarks, line_format, &|_| None)
 }
 
-/// Write bookmarks in television format with line numbers.
+/// Write a list of bookmarks with line number support.
 pub fn write_bookmarks_with_line<F>(
     mode: &OutputMode,
     bookmarks: &[Bookmark],
+    line_format: Option<&str>,
     get_line_fn: F,
 ) -> io::Result<()>
 where
     F: Fn(&str) -> Option<usize>,
 {
+    write_bookmarks_impl(mode, bookmarks, line_format, &get_line_fn)
+}
+
+/// Internal implementation of write_bookmarks that takes a line number fetcher.
+fn write_bookmarks_impl<F>(
+    mode: &OutputMode,
+    bookmarks: &[Bookmark],
+    line_format: Option<&str>,
+    get_line_fn: &F,
+) -> io::Result<()>
+where
+    F: Fn(&str) -> Option<usize>,
+{
     match mode {
-        OutputMode::Tv => write_bookmarks_tv(bookmarks, get_line_fn),
-        _ => write_bookmarks(mode, bookmarks),
+        OutputMode::Json => write_json_success(&bookmarks),
+        OutputMode::Table => write_bookmarks_table(bookmarks),
+        OutputMode::Line => {
+            if let Some(fmt) = line_format {
+                write_bookmarks_line_format(bookmarks, fmt, Some(get_line_fn))
+            } else {
+                write_bookmarks_line(bookmarks)
+            }
+        }
+        OutputMode::Markdown => write_bookmarks_table(bookmarks),
+        OutputMode::Custom(template) => {
+            write_bookmarks_line_format(bookmarks, template, Some(get_line_fn))
+        }
     }
 }
 
@@ -184,7 +258,7 @@ fn write_bookmarks_table(bookmarks: &[Bookmark]) -> io::Result<()> {
 fn write_bookmarks_line(bookmarks: &[Bookmark]) -> io::Result<()> {
     let mut stdout = io::stdout().lock();
     for bm in bookmarks {
-        let tags = bm.tags.join(",");
+        let tags = bm.tags.iter().map(|t| format!("#{t}")).collect::<Vec<_>>().join(",");
         let note = get_first_note(bm);
         // Format: <id>\t<file>:<line>\t<status>\t<tags>\t<note>
         // Line is unknown without resolution, so we use file path only
@@ -205,37 +279,43 @@ fn write_bookmarks_line(bookmarks: &[Bookmark]) -> io::Result<()> {
 /// Format: <id>\t<file>\t<line>\t<status>\t<tags>\t<note>
 /// This requires database access to fetch line numbers from resolutions.
 /// The line number is the center of the line range for better preview positioning.
-pub fn write_bookmarks_tv(
+/// Write bookmarks using a flexible line format template.
+/// This function supports all available placeholders including filename, context, and line numbers.
+pub fn write_bookmarks_line_format<F>(
     bookmarks: &[Bookmark],
-    get_center_line: impl Fn(&str) -> Option<usize>,
-) -> io::Result<()> {
+    template: &str,
+    get_line_fn: Option<&F>,
+) -> io::Result<()>
+where
+    F: Fn(&str) -> Option<usize>,
+{
     let mut stdout = io::stdout().lock();
     for bm in bookmarks {
-        let tags = bm.tags.join(",");
-        let note = get_first_note(bm);
         let short = short_id(&bm.id);
-        let line = get_center_line(short).unwrap_or(0);
+        let filename = get_filename(&bm.file_path);
+        // Prefix tags with #
+        let tags = bm.tags.iter().map(|t| format!("#{t}")).collect::<Vec<_>>().join(" ");
+        let note = get_first_note(bm);
+        let context = get_first_context(bm);
+        let line =
+            if let Some(ref fn_line) = get_line_fn { fn_line(short).unwrap_or(0) } else { 0 };
+        let status = bm.status.to_string();
 
-        writeln!(
-            stdout,
-            "{}\t{}\t{}\t{}\t{}\t{}",
-            short, bm.file_path, line, bm.status, tags, note
-        )?;
-    }
-    Ok(())
-}
+        let ctx = LineFormatContext {
+            id: short,
+            file: &bm.file_path,
+            filename,
+            line,
+            status: status.as_str(),
+            tags: &tags,
+            note,
+            context,
+            query: &bm.query,
+            source: None,
+        };
 
-fn write_bookmarks_custom(bookmarks: &[Bookmark], template: &str) -> io::Result<()> {
-    let mut stdout = io::stdout().lock();
-    for bm in bookmarks {
-        let line = template
-            .replace("{id}", short_id(&bm.id))
-            .replace("{file}", &bm.file_path)
-            .replace("{status}", &bm.status.to_string())
-            .replace("{tags}", &bm.tags.join(","))
-            .replace("{note}", get_first_note(bm))
-            .replace("{query}", &bm.query);
-        writeln!(stdout, "{line}")?;
+        let formatted = format_line(template, &ctx);
+        writeln!(stdout, "{formatted}")?;
     }
     Ok(())
 }
@@ -248,10 +328,42 @@ pub struct AnnotatedBookmark<'a> {
     pub bookmark: &'a Bookmark,
 }
 
+/// Write annotated bookmarks using a line format template.
+fn write_annotated_line_format(bookmarks: &[AnnotatedBookmark], template: &str) -> io::Result<()> {
+    let mut stdout = io::stdout().lock();
+    for ab in bookmarks {
+        let bm = ab.bookmark;
+        let short = short_id(&bm.id);
+        let filename = get_filename(&bm.file_path);
+        let tags = bm.tags.iter().map(|t| format!("#{t}")).collect::<Vec<_>>().join(" ");
+        let note = get_first_note(bm);
+        let context = get_first_context(bm);
+        let status = bm.status.to_string();
+
+        let ctx = LineFormatContext {
+            id: short,
+            file: &bm.file_path,
+            filename,
+            line: 0, // Line numbers not supported in multi-db mode
+            status: status.as_str(),
+            tags: &tags,
+            note,
+            context,
+            query: &bm.query,
+            source: Some(ab.source),
+        };
+
+        let formatted = format_line(template, &ctx);
+        writeln!(stdout, "{formatted}")?;
+    }
+    Ok(())
+}
+
 /// Write annotated bookmarks (multi-db results with source labels).
 pub fn write_annotated_bookmarks(
     mode: &OutputMode,
     bookmarks: &[AnnotatedBookmark],
+    line_format: Option<&str>,
 ) -> io::Result<()> {
     match mode {
         OutputMode::Json => {
@@ -291,63 +403,30 @@ pub fn write_annotated_bookmarks(
             Ok(())
         }
         OutputMode::Line => {
-            let mut stdout = io::stdout().lock();
-            for ab in bookmarks {
-                let bm = ab.bookmark;
-                let tags = bm.tags.join(",");
-                let note = get_first_note(bm);
-                writeln!(
-                    stdout,
-                    "{}\t{}\t{}\t{}\t{}\t{}",
-                    ab.source,
-                    short_id(&bm.id),
-                    bm.file_path,
-                    bm.status,
-                    tags,
-                    note
-                )?;
+            if let Some(fmt) = line_format {
+                write_annotated_line_format(bookmarks, fmt)
+            } else {
+                let mut stdout = io::stdout().lock();
+                for ab in bookmarks {
+                    let bm = ab.bookmark;
+                    let tags =
+                        bm.tags.iter().map(|t| format!("#{t}")).collect::<Vec<_>>().join(",");
+                    let note = get_first_note(bm);
+                    writeln!(
+                        stdout,
+                        "{}\t{}\t{}\t{}\t{}\t{}",
+                        ab.source,
+                        short_id(&bm.id),
+                        bm.file_path,
+                        bm.status,
+                        tags,
+                        note
+                    )?;
+                }
+                Ok(())
             }
-            Ok(())
         }
-        OutputMode::Tv => {
-            // For multi-db, fall back to line format without line numbers
-            // (line numbers would require db access per bookmark)
-            let mut stdout = io::stdout().lock();
-            for ab in bookmarks {
-                let bm = ab.bookmark;
-                let tags = bm.tags.join(",");
-                let note = get_first_note(bm);
-                // Format: source\tid\tfile\tline\tstatus\ttags\tnote
-                // Use 0 for line number (no scroll) in multi-db case
-                writeln!(
-                    stdout,
-                    "{}\t{}\t{}\t0\t{}\t{}\t{}",
-                    ab.source,
-                    short_id(&bm.id),
-                    bm.file_path,
-                    bm.status,
-                    tags,
-                    note
-                )?;
-            }
-            Ok(())
-        }
-        OutputMode::Custom(template) => {
-            let mut stdout = io::stdout().lock();
-            for ab in bookmarks {
-                let bm = ab.bookmark;
-                let line = template
-                    .replace("{source}", ab.source)
-                    .replace("{id}", short_id(&bm.id))
-                    .replace("{file}", &bm.file_path)
-                    .replace("{status}", &bm.status.to_string())
-                    .replace("{tags}", &bm.tags.join(","))
-                    .replace("{note}", get_first_note(bm))
-                    .replace("{query}", &bm.query);
-                writeln!(stdout, "{line}")?;
-            }
-            Ok(())
-        }
+        OutputMode::Custom(template) => write_annotated_line_format(bookmarks, template),
         OutputMode::Markdown => {
             // For multi-db markdown output, fall back to table format
             let mut table = Table::new();

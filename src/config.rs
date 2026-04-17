@@ -67,6 +67,7 @@ pub struct Config {
 /// Semantic search configuration wrapper.
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(default)]
+#[derive(Default)]
 pub struct SemanticConfig {
     /// Whether semantic search is enabled (Some = explicitly set, None = use default).
     /// Use `is_enabled()` to get the resolved value.
@@ -83,19 +84,6 @@ pub struct SemanticConfig {
     /// For l2/cosine: values <= threshold are matches.
     /// For ip (inner product): values >= threshold are matches.
     pub threshold: Option<f32>,
-}
-
-impl Default for SemanticConfig {
-    fn default() -> Self {
-        SemanticConfig {
-            enabled: None,
-            model: None,
-            models_dir: None,
-            batch_size: None,
-            distance_metric: None,
-            threshold: None,
-        }
-    }
 }
 
 impl SemanticConfig {
@@ -126,6 +114,7 @@ impl SemanticConfig {
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(default)]
+#[derive(Default)]
 pub struct StorageConfig {
     /// Maximum resolution history entries to keep per bookmark.
     /// Older entries are pruned after each new resolution.
@@ -135,6 +124,7 @@ pub struct StorageConfig {
 
 #[derive(Debug, Deserialize, Serialize)]
 #[serde(default)]
+#[derive(Default)]
 pub struct HealthConfig {
     /// Days before stale bookmarks are auto-archived (used by `heal --auto-archive`).
     /// Use `auto_archive_days()` to get the resolved value (default: 7).
@@ -152,18 +142,6 @@ impl HealthConfig {
     /// Get the auto-archive days threshold (default: 7).
     pub fn auto_archive_days(&self) -> u32 {
         self.auto_archive_after_days.unwrap_or(7)
-    }
-}
-
-impl Default for StorageConfig {
-    fn default() -> Self {
-        StorageConfig { max_resolutions_per_bookmark: None }
-    }
-}
-
-impl Default for HealthConfig {
-    fn default() -> Self {
-        HealthConfig { auto_archive_after_days: None }
     }
 }
 

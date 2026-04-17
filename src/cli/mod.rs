@@ -25,7 +25,7 @@ pub struct Cli {
     #[arg(long, global = true)]
     pub db: Vec<PathBuf>,
 
-    /// Output format: json (default), table, line, or tv (or a custom template)
+    /// Output format: json (default), table, line, markdown (or a custom template)
     #[arg(long, global = true)]
     pub format: Option<String>,
 
@@ -324,6 +324,10 @@ pub struct ListArgs {
     /// Filter by collection
     #[arg(long)]
     pub collection: Option<String>,
+
+    /// Custom line format template (placeholders: {ID}, {FILE}, {FILENAME}, {LINE}, {STATUS}, {TAGS}, {NOTE}, {CONTEXT}, {QUERY})
+    #[arg(long)]
+    pub line_format: Option<String>,
 }
 
 #[derive(Debug, clap::Args)]

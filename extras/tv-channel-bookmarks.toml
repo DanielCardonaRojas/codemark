@@ -4,8 +4,8 @@ description = "Codemark structural bookmarks"
 requirements = ["codemark, bat, glow, jq"]
 
 [source]
-command = "codemark list --format tv"
-display = "{split:\\t:1}  {split:\\t:4}  {split:\\t:5}"
+command = "codemark list --format line --line-format \"{ID}\t{FILENAME}\t{STATUS}\t{TAGS}\t{CONTEXT}\t{NOTE}\""
+display = "{split:\\t:1} {split:\\t:3} {split:\\t:4}"
 output = "{split:\\t:0}"
 
 [preview]
