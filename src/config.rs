@@ -86,7 +86,6 @@ pub struct SemanticConfig {
     pub threshold: Option<f32>,
 }
 
-
 impl SemanticConfig {
     /// Get whether semantic search is enabled.
     /// Returns true if not explicitly set (default is enabled).
@@ -145,8 +144,6 @@ impl HealthConfig {
         self.auto_archive_after_days.unwrap_or(7)
     }
 }
-
-
 
 /// Editor configuration for the `codemark open` command.
 #[derive(Debug, Default, Deserialize, Serialize)]
