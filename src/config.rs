@@ -842,13 +842,8 @@ terminal = ["vim", "emacs"]
 
         // vim should appear only once
         assert_eq!(global.open.editor_types.terminal.len(), 3);
-        let vim_count = global
-            .open
-            .editor_types
-            .terminal
-            .iter()
-            .filter(|x| x.as_str() == "vim")
-            .count();
+        let vim_count =
+            global.open.editor_types.terminal.iter().filter(|x| x.as_str() == "vim").count();
         assert_eq!(vim_count, 1);
     }
 }

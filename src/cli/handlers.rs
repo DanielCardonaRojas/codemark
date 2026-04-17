@@ -1277,8 +1277,7 @@ fn handle_heal(cli: &Cli, mode: &OutputMode, args: &HealArgs) -> Result<()> {
                 content_hash: Some(result.content_hash.clone()),
             };
             let res_id = res.id.clone();
-            let _ =
-                db.insert_resolution_if_changed(&res, config.storage.max_resolutions());
+            let _ = db.insert_resolution_if_changed(&res, config.storage.max_resolutions());
             Some(res_id)
         } else {
             None
