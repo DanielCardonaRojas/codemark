@@ -346,6 +346,10 @@ pub struct PreviewArgs {
     /// Use a specific resolution (by ID) instead of the latest
     #[arg(long)]
     resolution_id: Option<String>,
+
+    /// Output raw file content to stdout instead of JSON metadata
+    #[arg(long)]
+    pub raw: bool,
 }
 
 #[derive(Debug, clap::Args)]
