@@ -23,6 +23,7 @@ shortcut = "F5"
 ctrl-e = "actions:edit"
 ctrl-r = "actions:resolve"
 ctrl-d = "actions:details"
+ctrl-c = "actions:copy"
 
 [actions.edit]
 description = "Open in configured editor"
@@ -37,4 +38,9 @@ mode = "execute"
 [actions.details]
 description = "Show full details"
 command = "codemark show {split:\\t:0}"
+mode = "execute"
+
+[actions.copy]
+description = "Copy content to clipboard"
+command = "codemark preview {split:\\t:0} --raw | pbcopy"
 mode = "execute"
