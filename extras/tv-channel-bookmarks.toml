@@ -4,7 +4,7 @@ description = "Codemark structural bookmarks"
 requirements = ["codemark, bat, glow, jq"]
 
 [source]
-command = "codemark list --format line --line-format \"{ID}\t{FILENAME}\t{STATUS}\t{TAGS}\t{CONTEXT}\t{NOTE}\""
+command = "codemark list --format line --line-format \"{ID}\t{FILENAME}\t{STATUS}\t{TAGS}\t{CONTEXT}\t{NOTE}\t{OFFSET}\""
 display = "{split:\\t:1} {split:\\t:3} {split:\\t:4}"
 output = "{split:\\t:0}"
 
@@ -13,7 +13,7 @@ command = [
   "codemark preview {split:\\t:0} | jq -r '\"\\(.data.file_path) --highlight-line \\(.data.line_range)\"' | xargs bat --color=always",
   "codemark show {split:\\t:0} --format markdown | glow - --style auto",
 ]
-offset = "{split:\\t:2}"
+offset = "{split:\\t:6}"
 
 [ui.preview_panel]
 size = 55
@@ -23,6 +23,7 @@ shortcut = "F5"
 ctrl-e = "actions:edit"
 ctrl-r = "actions:resolve"
 ctrl-d = "actions:details"
+ctrl-c = "actions:copy"
 
 [actions.edit]
 description = "Open in configured editor"
@@ -37,4 +38,9 @@ mode = "execute"
 [actions.details]
 description = "Show full details"
 command = "codemark show {split:\\t:0}"
+mode = "execute"
+
+[actions.copy]
+description = "Copy content to clipboard"
+command = "codemark preview {split:\\t:0} --raw | pbcopy"
 mode = "execute"

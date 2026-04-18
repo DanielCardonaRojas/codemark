@@ -325,7 +325,7 @@ pub struct ListArgs {
     #[arg(long)]
     pub collection: Option<String>,
 
-    /// Custom line format template (placeholders: {ID}, {FILE}, {FILENAME}, {LINE}, {STATUS}, {TAGS}, {NOTE}, {CONTEXT}, {QUERY})
+    /// Custom line format template (placeholders: {ID}, {FILE}, {FILENAME}, {LINE}, {OFFSET}, {STATUS}, {TAGS}, {NOTE}, {CONTEXT}, {QUERY})
     #[arg(long)]
     pub line_format: Option<String>,
 }
@@ -346,6 +346,10 @@ pub struct PreviewArgs {
     /// Use a specific resolution (by ID) instead of the latest
     #[arg(long)]
     resolution_id: Option<String>,
+
+    /// Output raw file content to stdout instead of JSON metadata
+    #[arg(long)]
+    pub raw: bool,
 }
 
 #[derive(Debug, clap::Args)]

@@ -2103,3 +2103,149 @@ fn multiple_bookmarks_added_to_same_collection_maintain_order() {
     assert_eq!(bookmarks[1]["id"], id2);
     assert_eq!(bookmarks[2]["id"], id3);
 }
+
+// --- Raw output and offset placeholder tests ---
+
+#[test]
+fn preview_raw_outputs_file_content() {
+    let cm = Codemark::new();
+
+    // Add a bookmark
+    let json = cm.run_json(&[
+        "add",
+        "--file",
+        &cm.fixture("rust/auth_service.rs"),
+        "--range",
+        "108",
+        "--note",
+        "raw output test",
+    ]);
+    let id = json["data"]["id"].as_str().unwrap().to_string();
+
+    // Run preview with --raw
+    let result = cm.run(&["preview", &id[..8], "--raw"]);
+    assert_eq!(result.status, 0);
+
+    // The output should contain actual code content, not JSON
+    assert!(!result.stdout.starts_with('{'), "raw output should not be JSON");
+    assert!(!result.stdout.contains("bookmark_id"), "raw output should not contain JSON keys");
+    // Should contain some Rust code from the fixture
+    assert!(
+        result.stdout.contains("fn") || result.stdout.contains("create_default_auth_service"),
+        "raw output should contain function code"
+    );
+}
+
+#[test]
+fn preview_raw_with_piping() {
+    let cm = Codemark::with_git_repo();
+
+    // Create a small test file with known content in the git repo
+    cm.commit("test_raw.rs", "fn test_function() {\n    return 42;\n}", "Initial");
+
+    // Add bookmark on the test file
+    let json = cm.run_json(&[
+        "add",
+        "--file",
+        &cm.file_path("test_raw.rs"),
+        "--range",
+        "1",
+        "--note",
+        "pipe test",
+    ]);
+    let id = json["data"]["id"].as_str().unwrap().to_string();
+
+    // Run preview with --raw
+    let result = cm.run(&["preview", &id[..8], "--raw"]);
+    assert_eq!(result.status, 0);
+
+    // Verify the content matches
+    assert!(result.stdout.contains("test_function"));
+    assert!(result.stdout.contains("return 42"));
+}
+
+#[test]
+fn line_format_with_offset_placeholder() {
+    let cm = Codemark::new();
+
+    // Add a bookmark - the range is a byte range, not line range
+    let json = cm.run_json(&[
+        "add",
+        "--file",
+        &cm.fixture("rust/auth_service.rs"),
+        "--range",
+        "108",
+        "--note",
+        "offset test",
+    ]);
+    let _id = json["data"]["id"].as_str().unwrap();
+
+    // List with custom line format including {OFFSET}
+    let result =
+        cm.run(&["list", "--format", "line", "--line-format", "{ID}\t{FILE}\t{LINE}\t{OFFSET}"]);
+    assert_eq!(result.status, 0);
+
+    let line = result.stdout.trim();
+    let fields: Vec<&str> = line.split('\t').collect();
+
+    // Should have 4 fields: ID, FILE, LINE, OFFSET
+    assert_eq!(fields.len(), 4, "expected 4 fields, got: {line}");
+
+    // OFFSET should be a number (the center of the line range)
+    let offset: usize = fields[3].parse().unwrap();
+    assert!(offset > 0, "offset should be greater than 0");
+
+    // LINE and OFFSET should both be present and similar
+    let _line_num: usize = fields[2].parse().unwrap();
+
+    // Both should be positive numbers (we can't assert exact values since
+    // they depend on where the function is in the fixture file)
+    assert!(offset > 100, "offset should be around line 100+ for this fixture");
+}
+
+#[test]
+fn line_format_offset_is_center_of_range() {
+    let cm = Codemark::with_git_repo();
+
+    // Create a test file with a multi-line function
+    // The function spans lines 2-6 (5 lines total)
+    let content = "
+fn test_function() {
+    let x = 1;
+    let y = 2;
+    return x + y;
+}
+";
+    cm.commit("test_offset.rs", content, "Initial");
+
+    // Add a bookmark - we'll use line 1 (0-indexed byte position near the function)
+    // After resolution, this should resolve to the function which spans lines 2-7
+    let json = cm.run_json(&[
+        "add",
+        "--file",
+        &cm.file_path("test_offset.rs"),
+        "--range",
+        "1",
+        "--note",
+        "multiline range",
+    ]);
+
+    let _id = json["data"]["id"].as_str().unwrap();
+
+    // List with custom line format including {OFFSET}
+    let result = cm.run(&["list", "--format", "line", "--line-format", "{ID}\t{LINE}\t{OFFSET}"]);
+    assert_eq!(result.status, 0);
+
+    let line = result.stdout.trim();
+    let fields: Vec<&str> = line.split('\t').collect();
+
+    let line_num: usize = fields[1].parse().unwrap();
+    let offset: usize = fields[2].parse().unwrap();
+
+    // Both should be positive numbers
+    assert!(line_num > 0, "LINE should be positive");
+    assert!(offset > 0, "OFFSET should be positive");
+
+    // OFFSET should be >= LINE (offset is center of range, line is start)
+    assert!(offset >= line_num, "OFFSET ({}) should be >= LINE ({})", offset, line_num);
+}

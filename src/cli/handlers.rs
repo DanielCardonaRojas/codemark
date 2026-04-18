@@ -1498,6 +1498,38 @@ fn handle_preview(cli: &Cli, args: &PreviewArgs) -> Result<()> {
     let relative_path = resolution.file_path.as_ref().unwrap_or(&bm.file_path);
     let absolute_path = git_context::resolve_bookmark_file_path(relative_path, db.path())?;
 
+    // Handle raw output mode
+    if args.raw {
+        let byte_range_str = resolution
+            .byte_range
+            .as_ref()
+            .ok_or_else(|| Error::Input("no byte range available for this bookmark".to_string()))?;
+
+        let byte_location = ByteLocation::from_str(byte_range_str)
+            .ok_or_else(|| Error::Input(format!("invalid byte range format: {byte_range_str}")))?;
+
+        let file_bytes = std::fs::read(&absolute_path).map_err(|e| {
+            Error::Input(format!("failed to read file {}: {}", absolute_path.display(), e))
+        })?;
+
+        if byte_location.start_byte >= file_bytes.len()
+            || byte_location.end_byte > file_bytes.len()
+            || byte_location.start_byte > byte_location.end_byte
+        {
+            return Err(Error::Input(format!(
+                "byte range {}:{} out of bounds for file (size: {})",
+                byte_location.start_byte,
+                byte_location.end_byte,
+                file_bytes.len()
+            )));
+        }
+
+        let content = &file_bytes[byte_location.start_byte..byte_location.end_byte];
+        std::io::stdout().write_all(content)?;
+        std::io::stdout().flush()?;
+        return Ok(());
+    }
+
     // Output JSON with resolution data (using standard envelope)
     let data = serde_json::json!({
         "bookmark_id": bm.id,
