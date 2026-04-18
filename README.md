@@ -3,11 +3,15 @@
 [![crates.io](https://img.shields.io/crates/v/codemark)](https://crates.io/crates/codemark)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 
+**In the age of AI, being in your editor is less important.** Codemark lets you bookmark the critical parts of your codebase, providing a structured map that helps you jump into the editor only when needed.
+
 A structural bookmarking system for code. Instead of fragile `file:line` references, Codemark stores **[tree-sitter](https://tree-sitter.github.io/tree-sitter/)** queries that identify code by its AST shape. Bookmarks survive renames, refactors, and reformatting through layered resolution.
 
 ## Why
 
-AI coding agents and developers revisit the same code across sessions. Line-number bookmarks break on any edit. Codemark bookmarks **self-heal**:
+In the era of AI-driven development, we spend more time orchestrating agents and reviewing code than writing it line-by-line. Constant presence in a full IDE is less important than having a reliable map of the system's critical paths.
+
+Line-number bookmarks break on any edit. Codemark bookmarks **self-heal**:
 
 - **Exact match** — the AST query still finds the node (even if moved)
 - **Relaxed match** — structure matches but names changed
