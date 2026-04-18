@@ -155,15 +155,22 @@ Located in `extras/neovim-plugin`. It provides visual selection bookmarking, gut
 }
 ```
 
-### [television](https://github.com/alexpasmant/television)
+### [television](https://alexpasmantier.github.io/television/)
 
-A modern, fuzzy selector with built-in support for codemark.
+Navigate your codebase at the speed of thought. The built-in Television channel is the **recommended way to browse bookmarks**, as it handles the complex orchestration of previews and metadata for you.
+
+With Television, you can:
+- 🔍 **Fuzzy find** — filter through thousands of bookmarks instantly.
+- 📺 **Multi-preview** — toggle between code context (via `bat`) and rich metadata (via `glow`).
+- 🚀 **Open in editor** — jump directly to the code in your configured editor with `Enter`.
+- 📋 **Copy to clipboard** — use `Ctrl-C` to copy the bookmarked snippet without leaving the TUI.
+- 🗃️ **Browse Collections** — pick a collection to filter your view.
 
 ```bash
-# Install the channel
+# 1. Install the channel
 cp extras/tv-channel-bookmarks.toml ~/.config/television/channels/codemark.toml
 
-# Use it
+# 2. Launch interactive TUI
 tv codemark
 ```
 
