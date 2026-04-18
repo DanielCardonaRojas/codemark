@@ -1,12 +1,4 @@
-# Codemark
-
-```text
-   ______              __                          __ 
-  / ____/____   _____ / /_   ____ ___   ____ _ ____/ /__
- / /    / __ \ / ___// __ \ / __ `__ \ / __ `// __  // /_/
-/ /___ / /_/ // /__ / / / // / / / / // /_/ // /_/ // ,< 
-\____/ \____/ \___//_/ /_//_/ /_/ /_/ \__,_/ \__,_//_/|_|
-```
+# 🔖 Codemark
 
 [![crates.io](https://img.shields.io/crates/v/codemark)](https://crates.io/crates/codemark)
 [![CI](https://github.com/DanielCardonaRojas/codemark/actions/workflows/test.yml/badge.svg)](https://github.com/DanielCardonaRojas/codemark/actions/workflows/test.yml)
@@ -113,6 +105,16 @@ Codemark speaks AST for:
 - ☕ **Java**
 - 🎯 **Dart**
 - ♯ **C#**
+
+---
+
+## 🎨 Visual Identity
+
+Codemark's identity is built on the intersection of **structure** and **retrieval**.
+
+**Logo Concept Suggestion:**
+- **Symbol**: A stylized "C" formed by nested AST brackets `{ }`, with a bookmark ribbon dropping through the center.
+- **Palette**: `Deep Indigo (#2E3440)` for stability, `Vibrant Teal (#88C0D0)` for precision, and `Safety Orange (#D08770)` for highlighted bookmarks.
 
 ---
 
