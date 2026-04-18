@@ -1500,22 +1500,6 @@ fn handle_preview(cli: &Cli, args: &PreviewArgs) -> Result<()> {
 
     // Handle raw output mode
     if args.raw {
-        // Reject raw output for failed resolutions (no valid content)
-        if resolution.method == ResolutionMethod::Failed {
-            return Err(Error::Input(
-                "cannot output raw content for a failed resolution".to_string(),
-            ));
-        }
-
-        // Warn if using raw output with historical resolution flags
-        // (raw output reads from current worktree, not from the historical commit)
-        if args.at_creation || args.at_commit.is_some() || args.resolution_id.is_some() {
-            return Err(Error::Input(
-                "--raw cannot be used with --at-creation, --at-commit, or --resolution-id; \
-                 raw output reads from the current worktree, not from historical commits".to_string(),
-            ));
-        }
-
         let byte_range_str = resolution
             .byte_range
             .as_ref()

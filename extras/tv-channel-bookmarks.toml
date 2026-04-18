@@ -1,7 +1,7 @@
 [metadata]
 name = "codemark"
 description = "Codemark structural bookmarks"
-requirements = ["codemark, bat, glow, jq (macOS: pbcopy, Linux: wl-copy/xclip, Windows: clip)"]
+requirements = ["codemark, bat, glow, jq"]
 
 [source]
 command = "codemark list --format line --line-format \"{ID}\t{FILENAME}\t{STATUS}\t{TAGS}\t{CONTEXT}\t{NOTE}\t{OFFSET}\""
@@ -44,4 +44,3 @@ mode = "execute"
 description = "Copy content to clipboard"
 command = "codemark preview {split:\\t:0} --raw | pbcopy"
 mode = "execute"
-# Note: On Linux replace pbcopy with wl-copy (Wayland) or xclip -selection clipboard (X11); on Windows use clip
