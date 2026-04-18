@@ -2130,8 +2130,10 @@ fn preview_raw_outputs_file_content() {
     assert!(!result.stdout.starts_with('{'), "raw output should not be JSON");
     assert!(!result.stdout.contains("bookmark_id"), "raw output should not contain JSON keys");
     // Should contain some Rust code from the fixture
-    assert!(result.stdout.contains("fn") || result.stdout.contains("create_default_auth_service"),
-            "raw output should contain function code");
+    assert!(
+        result.stdout.contains("fn") || result.stdout.contains("create_default_auth_service"),
+        "raw output should contain function code"
+    );
 }
 
 #[test]
@@ -2179,13 +2181,8 @@ fn line_format_with_offset_placeholder() {
     let _id = json["data"]["id"].as_str().unwrap();
 
     // List with custom line format including {OFFSET}
-    let result = cm.run(&[
-        "list",
-        "--format",
-        "line",
-        "--line-format",
-        "{ID}\t{FILE}\t{LINE}\t{OFFSET}",
-    ]);
+    let result =
+        cm.run(&["list", "--format", "line", "--line-format", "{ID}\t{FILE}\t{LINE}\t{OFFSET}"]);
     assert_eq!(result.status, 0);
 
     let line = result.stdout.trim();
@@ -2236,13 +2233,7 @@ fn test_function() {
     let _id = json["data"]["id"].as_str().unwrap();
 
     // List with custom line format including {OFFSET}
-    let result = cm.run(&[
-        "list",
-        "--format",
-        "line",
-        "--line-format",
-        "{ID}\t{LINE}\t{OFFSET}",
-    ]);
+    let result = cm.run(&["list", "--format", "line", "--line-format", "{ID}\t{LINE}\t{OFFSET}"]);
     assert_eq!(result.status, 0);
 
     let line = result.stdout.trim();
