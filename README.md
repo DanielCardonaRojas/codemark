@@ -9,6 +9,8 @@ A structural bookmarking system for code. Instead of fragile `file:line` referen
 
 ## Why
 
+Traditional bookmarks are brittle. Codemark uses abstract syntax trees to understand your code the way a compiler does.
+
 In the era of AI-driven development, we spend more time orchestrating agents and reviewing code than writing it line-by-line. Constant presence in a full IDE is less important than having a reliable map of the system's critical paths.
 
 Line-number bookmarks break on any edit. Codemark bookmarks **self-heal**:
