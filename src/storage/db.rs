@@ -37,7 +37,9 @@ impl Database {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
             // Initialize global config file if it doesn't exist
-            let _ = crate::config::Config::init_global_default();
+            if let Err(e) = crate::config::Config::init_global_default() {
+                eprintln!("codemark: warning: failed to initialize global config: {e}");
+            }
         }
         Self::open(path)
     }

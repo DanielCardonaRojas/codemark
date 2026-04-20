@@ -38,7 +38,7 @@ When querying multiple databases, results include a `source` field identifying w
 
 Initialize a new codemark repository.
 
-```
+```bash
 codemark init
 ```
 
