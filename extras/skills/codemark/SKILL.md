@@ -138,13 +138,6 @@ Identify the kind of code element.
 - `type:constant` — Constants, literals
 - `type:module` — Modules, packages
 
-### Lifecycle Tags
-Identify the state or lifecycle of the bookmarked code.
-- `status:active` — Currently in use
-- `status:deprecated` — Deprecated, planned for removal
-- `status:experimental` — Experimental, may change
-- `status:stable` — Stable, unlikely to change
-
 ### Task/Work Tags
 Link bookmarks to specific tasks or work items.
 - `task:<id>` — e.g., `task:fix-123`, `task:refactor-auth`
@@ -176,7 +169,7 @@ Identify security-sensitive code.
 --tag feature:payments --tag layer:business --tag role:service --tag risk:high
 
 # Configuration
---tag layer:config --tag role:constant --tag status:stable
+--tag layer:config --tag role:constant --tag risk:low
 ```
 
 ### Module/Package Tags (Language-Specific)
@@ -302,6 +295,7 @@ For common query patterns across languages, see:
 
 ## Best Practices
 
+- **Target small, specific code**: Prefer single functions over entire classes, specific methods over whole modules. Smaller bookmarks are more resilient to refactoring, easier to understand, and more precise for navigation. A well-chosen function bookmark survives most structural changes, while large class bookmarks often drift when code is reorganized.
 - Use `--created-by agent` to distinguish your bookmarks from the user's.
 - Use `--collection <name>` when creating bookmarks to add them directly to a collection (collections are auto-created if they don't exist).
 - **Iterative enhancement**: When working with an existing bookmark and discover new context, use `annotate` to add notes without re-parsing the file. Multiple agents can annotate the same bookmark over time.
