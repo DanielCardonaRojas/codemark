@@ -23,17 +23,23 @@ pub struct Database {
 }
 
 impl Database {
-    /// Open (or create) the database at the given path, run migrations.
+    /// Open the database at the given path, run migrations.
+    /// Returns an error if the parent directory does not exist.
     pub fn open(path: &Path) -> Result<Self> {
+        let conn = Connection::open(path)?;
+        let mut db = Database { conn, path: path.to_path_buf() };
+        db.init()?;
+        Ok(db)
+    }
+
+    /// Create and open the database at the given path, creating parent directories if needed.
+    pub fn create(path: &Path) -> Result<Self> {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
             // Initialize global config file if it doesn't exist
             let _ = crate::config::Config::init_global_default();
         }
-        let conn = Connection::open(path)?;
-        let mut db = Database { conn, path: path.to_path_buf() };
-        db.init()?;
-        Ok(db)
+        Self::open(path)
     }
 
     /// Open an in-memory database (for testing).

@@ -2,6 +2,7 @@ target/
 .DS_Store
 .codemark/
 *.tar.gz
+man/
 
 .claude
 .mcp.json

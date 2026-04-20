@@ -22,6 +22,11 @@ pub enum Error {
     #[error("database error: {0}")]
     Database(String),
 
+    #[error(
+        "not a codemark repository (or any of the parent directories): .codemark. Run 'codemark init' to initialize."
+    )]
+    NotInitialized,
+
     #[error("tree-sitter error: {0}")]
     TreeSitter(String),
 
@@ -53,6 +58,7 @@ impl From<git2::Error> for Error {
 impl Error {
     pub fn exit_code(&self) -> i32 {
         match self {
+            Error::NotInitialized => EXIT_INPUT_ERROR,
             Error::NotImplemented(_) | Error::Operation(_) => EXIT_OPERATION_FAILED,
             Error::Input(_) | Error::Io(_) => EXIT_INPUT_ERROR,
             Error::Database(_) => EXIT_DATABASE_ERROR,
