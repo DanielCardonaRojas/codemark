@@ -27,6 +27,7 @@ pub fn dispatch(cli: &Cli) -> Result<()> {
     // JSON is the default output format for all commands
     let mode = OutputMode::resolve_with_default(false, cli.format.as_deref(), true);
     match &cli.command {
+        Command::Init => handle_init(cli, &mode),
         Command::Add(args) => handle_add(cli, &mode, args),
         Command::AddFromSnippet(args) => handle_add_from_snippet(cli, &mode, args),
         Command::AddFromQuery(args) => handle_add_from_query(cli, &mode, args),
@@ -65,20 +66,57 @@ fn dispatch_collection(cli: &Cli, mode: &OutputMode, args: &CollectionArgs) -> R
 
 // --- Helpers ---
 
-/// Open the primary database (for write commands, or single-db reads).
-fn open_db(cli: &Cli) -> Result<Database> {
+/// Open the primary database for writing.
+///
+/// If an explicit path is provided, it will be created if it doesn't exist.
+/// For auto-detected paths, it requires the .codemark directory to exist.
+fn open_db_for_write(cli: &Cli) -> Result<Database> {
     if let Some(path) = cli.db.first() {
-        return Database::open(path);
+        return Database::create(path);
     }
     // Auto-detect from git root
     let cwd = std::env::current_dir()?;
     if let Some(ctx) = git_context::detect_context(&cwd) {
         let db_path = ctx.repo_root.join(".codemark").join("codemark.db");
-        return Database::open(&db_path);
+        if !db_path.parent().map(|p| p.exists()).unwrap_or(false) {
+            return Err(Error::NotInitialized);
+        }
+        return Database::create(&db_path);
     }
     // Fallback: current directory
     let db_path = cwd.join(".codemark").join("codemark.db");
-    Database::open(&db_path)
+    if !db_path.parent().map(|p| p.exists()).unwrap_or(false) {
+        return Err(Error::NotInitialized);
+    }
+    Database::create(&db_path)
+}
+
+/// Open the primary database (for single-db reads).
+///
+/// Returns Error::NotInitialized only if an explicit path was provided but it doesn't exist.
+/// For auto-detected paths, if the DB doesn't exist, it returns an in-memory DB (effectively empty).
+fn open_db(cli: &Cli) -> Result<Database> {
+    if let Some(path) = cli.db.first() {
+        if path.exists() {
+            return Database::open(path);
+        }
+        return Database::open_in_memory();
+    }
+    // Auto-detect from git root
+    let cwd = std::env::current_dir()?;
+    if let Some(ctx) = git_context::detect_context(&cwd) {
+        let db_path = ctx.repo_root.join(".codemark").join("codemark.db");
+        if db_path.exists() {
+            return Database::open(&db_path);
+        }
+    } else {
+        // Fallback: current directory
+        let db_path = cwd.join(".codemark").join("codemark.db");
+        if db_path.exists() {
+            return Database::open(&db_path);
+        }
+    }
+    Database::open_in_memory()
 }
 
 /// Generate embedding for a bookmark if semantic search is enabled.
@@ -105,8 +143,8 @@ fn generate_embedding_for_bookmark(cli: &Cli, config: &Config, bookmark: &Bookma
 
     let semantic_repo = SemanticRepo::with_config(models_dir, model, distance_metric, threshold);
 
-    // Open database for storing embedding
-    let mut db = open_db(cli)?;
+    // Open database for writing embedding
+    let mut db = open_db_for_write(cli)?;
 
     // Generate and store the embedding
     let conn = db.conn_mut();
@@ -132,22 +170,28 @@ fn load_config(cli: &Cli) -> Config {
 }
 
 /// Open all specified databases (for read commands that support cross-repo queries).
+///
 /// Returns (source_label, database) pairs. Falls back to single auto-detected db.
+/// Returns Error::NotInitialized if any of the specified databases do not exist.
 fn open_all_dbs(cli: &Cli) -> Result<Vec<(String, Database)>> {
-    if cli.db.len() <= 1 {
+    if cli.db.is_empty() {
         let db = open_db(cli)?;
         let label = source_label_from_cli(cli);
         return Ok(vec![(label, db)]);
     }
     let mut dbs = Vec::new();
     for path in &cli.db {
-        let label = source_label_from_path(path);
-        dbs.push((label, Database::open(path)?));
+        if path.exists() {
+            let label = source_label_from_path(path);
+            dbs.push((label, Database::open(path)?));
+        }
     }
     Ok(dbs)
 }
 
-/// Derive a source label from a db path: /foo/repo-name/.codemark/codemark.db -> "repo-name"
+/// Derive a source label from a db path.
+///
+/// Example: /foo/repo-name/.codemark/codemark.db -> "repo-name"
 fn source_label_from_path(path: &std::path::Path) -> String {
     // Canonicalize to resolve relative paths like .codemark/codemark.db
     let resolved = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
@@ -366,6 +410,47 @@ fn now_iso() -> String {
 
 // --- Command handlers ---
 
+/// Initialize a new codemark repository in the current directory or git root.
+///
+/// Creates the .codemark directory and initializes the database.
+/// If already initialized, prints a message and does nothing.
+fn handle_init(cli: &Cli, mode: &OutputMode) -> Result<()> {
+    if let Some(path) = cli.db.first() {
+        if path.exists() {
+            write_success(mode, &format!("Codemark already initialized at {}", path.display()))?;
+            return Ok(());
+        }
+        Database::create(path)?;
+        write_success(mode, &format!("Initialized codemark database at {}", path.display()))?;
+        return Ok(());
+    }
+
+    let cwd = std::env::current_dir()?;
+    let git_ctx = git_context::detect_context(&cwd);
+    let db_path = if let Some(ref ctx) = git_ctx {
+        ctx.repo_root.join(".codemark").join("codemark.db")
+    } else {
+        cwd.join(".codemark").join("codemark.db")
+    };
+
+    if db_path.exists() {
+        write_success(mode, &format!("Codemark already initialized at {}", db_path.display()))?;
+        return Ok(());
+    }
+
+    Database::create(&db_path)?;
+    write_success(
+        mode,
+        &format!("Initialized codemark repository in {}", db_path.parent().unwrap().display()),
+    )?;
+
+    if git_ctx.is_some() {
+        eprintln!("Note: It is recommended to add .codemark/ to your .gitignore");
+    }
+
+    Ok(())
+}
+
 fn handle_add(cli: &Cli, mode: &OutputMode, args: &AddArgs) -> Result<()> {
     let lang = resolve_language(args.lang.as_deref(), &args.file)?;
     let (abs_path, rel_path) = resolve_file_path(&args.file)?;
@@ -409,7 +494,7 @@ fn handle_add(cli: &Cli, mode: &OutputMode, args: &AddArgs) -> Result<()> {
         );
     }
 
-    let db = open_db(cli)?;
+    let db = open_db_for_write(cli)?;
     let cwd = std::env::current_dir()?;
     let commit_hash = git_context::detect_context(&cwd).and_then(|ctx| ctx.head_commit);
 
@@ -573,7 +658,7 @@ fn handle_add_from_snippet(cli: &Cli, mode: &OutputMode, args: &AddFromSnippetAr
         );
     }
 
-    let db = open_db(cli)?;
+    let db = open_db_for_write(cli)?;
     let cwd = std::env::current_dir()?;
     let commit_hash = git_context::detect_context(&cwd).and_then(|ctx| ctx.head_commit);
 
@@ -741,7 +826,7 @@ fn handle_add_from_query(cli: &Cli, mode: &OutputMode, args: &AddFromQueryArgs) 
         );
     }
 
-    let db = open_db(cli)?;
+    let db = open_db_for_write(cli)?;
     let cwd = std::env::current_dir()?;
     let commit_hash = git_context::detect_context(&cwd).and_then(|ctx| ctx.head_commit);
 
@@ -1045,7 +1130,7 @@ fn handle_show(cli: &Cli, mode: &OutputMode, args: &ShowArgs) -> Result<()> {
 }
 
 fn handle_remove(cli: &Cli, mode: &OutputMode, args: &RemoveArgs) -> Result<()> {
-    let db = open_db(cli)?;
+    let db = open_db_for_write(cli)?;
     let mut removed = 0;
     let mut not_found = 0;
 
@@ -1075,7 +1160,7 @@ fn handle_remove(cli: &Cli, mode: &OutputMode, args: &RemoveArgs) -> Result<()> 
 }
 
 fn handle_annotate(cli: &Cli, mode: &OutputMode, args: &AnnotateArgs) -> Result<()> {
-    let db = open_db(cli)?;
+    let db = open_db_for_write(cli)?;
 
     // Validate that at least one of note, context, or tag is provided
     if args.note.is_none() && args.context.is_none() && args.tag.is_empty() {
@@ -1167,7 +1252,7 @@ fn handle_annotate(cli: &Cli, mode: &OutputMode, args: &AnnotateArgs) -> Result<
 }
 
 fn handle_heal(cli: &Cli, mode: &OutputMode, args: &HealArgs) -> Result<()> {
-    let db = open_db(cli)?;
+    let db = open_db_for_write(cli)?;
     let filter = BookmarkFilter {
         file_path: args.file.as_ref().map(|p| p.to_string_lossy().to_string()),
         language: args.lang.clone(),
@@ -1846,7 +1931,7 @@ fn handle_diff(cli: &Cli, mode: &OutputMode, args: &DiffArgs) -> Result<()> {
 }
 
 fn handle_gc(cli: &Cli, mode: &OutputMode, args: &GcArgs) -> Result<()> {
-    let db = open_db(cli)?;
+    let db = open_db_for_write(cli)?;
     let days = parse_duration_days(&args.older_than)?;
     let cutoff = chrono::Utc::now() - chrono::Duration::days(days);
     let cutoff_str = cutoff.format("%Y-%m-%dT%H:%M:%SZ").to_string();
@@ -1902,7 +1987,7 @@ fn handle_export(cli: &Cli, args: &ExportArgs) -> Result<()> {
 }
 
 fn handle_import(cli: &Cli, mode: &OutputMode, args: &ImportArgs) -> Result<()> {
-    let mut db = open_db(cli)?;
+    let mut db = open_db_for_write(cli)?;
     let content = std::fs::read_to_string(&args.file)
         .map_err(|e| Error::Input(format!("cannot read {}: {e}", args.file.display())))?;
     let bookmarks: Vec<Bookmark> = serde_json::from_str(&content)?;
@@ -1989,7 +2074,7 @@ fn handle_collection_create(
     mode: &OutputMode,
     args: &CollectionCreateArgs,
 ) -> Result<()> {
-    let db = open_db(cli)?;
+    let db = open_db_for_write(cli)?;
     let collection = Collection {
         id: uuid::Uuid::new_v4().to_string(),
         name: args.name.clone(),
@@ -2007,7 +2092,7 @@ fn handle_collection_delete(
     mode: &OutputMode,
     args: &CollectionDeleteArgs,
 ) -> Result<()> {
-    let db = open_db(cli)?;
+    let db = open_db_for_write(cli)?;
     let count = db.delete_collection(&args.name)?;
     write_success(
         mode,
@@ -2017,7 +2102,7 @@ fn handle_collection_delete(
 }
 
 fn handle_collection_add(cli: &Cli, mode: &OutputMode, args: &CollectionAddArgs) -> Result<()> {
-    let db = open_db(cli)?;
+    let db = open_db_for_write(cli)?;
     // Auto-create collection if it doesn't exist
     let collection = match db.get_collection_by_name(&args.name)? {
         Some(c) => c,
@@ -2043,7 +2128,7 @@ fn handle_collection_reorder(
     mode: &OutputMode,
     args: &CollectionReorderArgs,
 ) -> Result<()> {
-    let db = open_db(cli)?;
+    let db = open_db_for_write(cli)?;
     let collection = db
         .get_collection_by_name(&args.name)?
         .ok_or_else(|| Error::Input(format!("collection '{}' not found", args.name)))?;
@@ -2060,7 +2145,7 @@ fn handle_collection_remove(
     mode: &OutputMode,
     args: &CollectionRemoveArgs,
 ) -> Result<()> {
-    let db = open_db(cli)?;
+    let db = open_db_for_write(cli)?;
     let collection = db
         .get_collection_by_name(&args.name)?
         .ok_or_else(|| Error::Input(format!("collection '{}' not found", args.name)))?;
@@ -2143,7 +2228,7 @@ fn handle_collection_resolve(
     mode: &OutputMode,
     args: &CollectionResolveArgs,
 ) -> Result<()> {
-    let db = open_db(cli)?;
+    let db = open_db_for_write(cli)?;
     let filter = BookmarkFilter {
         collection: Some(args.name.clone()),
         status: Some(vec![BookmarkStatus::Active, BookmarkStatus::Drifted]),

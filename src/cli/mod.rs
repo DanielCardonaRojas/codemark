@@ -39,6 +39,9 @@ pub struct Cli {
 
 #[derive(Debug, Subcommand)]
 pub enum Command {
+    /// Initialize a new codemark repository
+    Init,
+
     /// Create a bookmark from a file and byte range
     Add(AddArgs),
 
