@@ -27,6 +27,7 @@ pub fn dispatch(cli: &Cli) -> Result<()> {
     // JSON is the default output format for all commands
     let mode = OutputMode::resolve_with_default(false, cli.format.as_deref(), true);
     match &cli.command {
+        Command::Init => handle_init(cli, &mode),
         Command::Add(args) => handle_add(cli, &mode, args),
         Command::AddFromSnippet(args) => handle_add_from_snippet(cli, &mode, args),
         Command::AddFromQuery(args) => handle_add_from_query(cli, &mode, args),
@@ -68,16 +69,22 @@ fn dispatch_collection(cli: &Cli, mode: &OutputMode, args: &CollectionArgs) -> R
 /// Open the primary database (for write commands, or single-db reads).
 fn open_db(cli: &Cli) -> Result<Database> {
     if let Some(path) = cli.db.first() {
-        return Database::open(path);
+        return Database::open(path).map_err(|_| Error::NotInitialized);
     }
     // Auto-detect from git root
     let cwd = std::env::current_dir()?;
     if let Some(ctx) = git_context::detect_context(&cwd) {
         let db_path = ctx.repo_root.join(".codemark").join("codemark.db");
+        if !db_path.exists() {
+            return Err(Error::NotInitialized);
+        }
         return Database::open(&db_path);
     }
     // Fallback: current directory
     let db_path = cwd.join(".codemark").join("codemark.db");
+    if !db_path.exists() {
+        return Err(Error::NotInitialized);
+    }
     Database::open(&db_path)
 }
 
@@ -365,6 +372,38 @@ fn now_iso() -> String {
 }
 
 // --- Command handlers ---
+
+fn handle_init(cli: &Cli, mode: &OutputMode) -> Result<()> {
+    if let Some(path) = cli.db.first() {
+        Database::create(path)?;
+        write_success(mode, &format!("Initialized codemark database at {}", path.display()))?;
+        return Ok(());
+    }
+
+    let cwd = std::env::current_dir()?;
+    let db_path = if let Some(ctx) = git_context::detect_context(&cwd) {
+        ctx.repo_root.join(".codemark").join("codemark.db")
+    } else {
+        cwd.join(".codemark").join("codemark.db")
+    };
+
+    if db_path.exists() {
+        write_success(mode, &format!("Codemark already initialized at {}", db_path.display()))?;
+        return Ok(());
+    }
+
+    Database::create(&db_path)?;
+    write_success(
+        mode,
+        &format!("Initialized codemark repository in {}", db_path.parent().unwrap().display()),
+    )?;
+
+    if git_context::detect_context(&cwd).is_some() {
+        eprintln!("Note: It is recommended to add .codemark/ to your .gitignore");
+    }
+
+    Ok(())
+}
 
 fn handle_add(cli: &Cli, mode: &OutputMode, args: &AddArgs) -> Result<()> {
     let lang = resolve_language(args.lang.as_deref(), &args.file)?;

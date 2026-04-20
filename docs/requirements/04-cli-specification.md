@@ -34,6 +34,18 @@ When querying multiple databases, results include a `source` field identifying w
 
 ---
 
+### `codemark init`
+
+Initialize a new codemark repository.
+
+```
+codemark init
+```
+
+Creates the `.codemark/` directory and initializes the SQLite database. If the current directory is within a git repository, it initializes at the repository root.
+
+---
+
 ### `codemark add`
 
 Create a bookmark from a file and byte range.
