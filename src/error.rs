@@ -22,7 +22,9 @@ pub enum Error {
     #[error("database error: {0}")]
     Database(String),
 
-    #[error("not a codemark repository (or any of the parent directories): .codemark. Run 'codemark init' to initialize.")]
+    #[error(
+        "not a codemark repository (or any of the parent directories): .codemark. Run 'codemark init' to initialize."
+    )]
     NotInitialized,
 
     #[error("tree-sitter error: {0}")]
