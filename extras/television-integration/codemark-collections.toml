@@ -4,12 +4,12 @@ description = "Codemark collections picker - select a collection to view its boo
 requirements = ["codemark"]
 
 [source]
-command = "codemark collection list --line-format \"{NAME}\t{COUNT}\t{DESCRIPTION}\" --db .codemark/codemark.db"
+command = "codemark collection list --line-format \"{NAME}\t{COUNT}\t{DESCRIPTION}\""
 display = "{split:\t:0}  ({split:\t:1} bookmarks)  {split:\t:2}"
 output = "{split:\t:0}"
 
 [preview]
-command = "codemark collection show {split:\t:0} --format table --db .codemark/codemark.db"
+command = "codemark collection show {split:\t:0} --format table"
 offset = "0"
 
 [ui.preview_panel]
