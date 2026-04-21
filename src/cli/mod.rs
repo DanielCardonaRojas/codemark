@@ -492,6 +492,10 @@ pub struct CollectionListArgs {
     /// List collections containing this bookmark
     #[arg(long)]
     pub bookmark: Option<String>,
+
+    /// Custom line format template (placeholders: {ID}, {NAME}, {COUNT}, {DESCRIPTION}, {CREATED})
+    #[arg(long)]
+    pub line_format: Option<String>,
 }
 
 #[derive(Debug, clap::Args)]
