@@ -235,13 +235,11 @@ mod tests {
 
     fn find_function_range(tree: &tree_sitter::Tree, source: &str, name: &str) -> (usize, usize) {
         fn search(node: tree_sitter::Node, source: &str, name: &str) -> Option<(usize, usize)> {
-            if node.kind() == "function_declaration" {
-                if let Some(name_node) = node.child_by_field_name("name") {
-                    if &source[name_node.byte_range()] == name {
+            if node.kind() == "function_declaration"
+                && let Some(name_node) = node.child_by_field_name("name")
+                    && &source[name_node.byte_range()] == name {
                         return Some((node.start_byte(), node.end_byte()));
                     }
-                }
-            }
             let mut cursor = node.walk();
             for child in node.named_children(&mut cursor) {
                 if let Some(r) = search(child, source, name) {

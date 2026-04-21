@@ -526,14 +526,13 @@ mod tests {
 
     fn find_function_byte_range(tree: &Tree, source: &str, func_name: &str) -> (usize, usize) {
         fn search(node: Node, source: &str, name: &str) -> Option<(usize, usize)> {
-            if node.kind() == "function_declaration" {
-                if let Some(name_node) = node.child_by_field_name("name") {
+            if node.kind() == "function_declaration"
+                && let Some(name_node) = node.child_by_field_name("name") {
                     let text = &source[name_node.byte_range()];
                     if text == name {
                         return Some((node.start_byte(), node.end_byte()));
                     }
                 }
-            }
             let mut cursor = node.walk();
             for child in node.named_children(&mut cursor) {
                 if let Some(range) = search(child, source, name) {
@@ -651,13 +650,11 @@ mod tests {
 
     fn find_rust_function_byte_range(tree: &Tree, source: &str, func_name: &str) -> (usize, usize) {
         fn search(node: Node, source: &str, name: &str) -> Option<(usize, usize)> {
-            if node.kind() == "function_item" {
-                if let Some(name_node) = node.child_by_field_name("name") {
-                    if &source[name_node.byte_range()] == name {
+            if node.kind() == "function_item"
+                && let Some(name_node) = node.child_by_field_name("name")
+                    && &source[name_node.byte_range()] == name {
                         return Some((node.start_byte(), node.end_byte()));
                     }
-                }
-            }
             let mut cursor = node.walk();
             for child in node.named_children(&mut cursor) {
                 if let Some(range) = search(child, source, name) {
@@ -764,13 +761,11 @@ mod tests {
     fn find_ts_function_byte_range(tree: &Tree, source: &str, func_name: &str) -> (usize, usize) {
         fn search(node: Node, source: &str, name: &str) -> Option<(usize, usize)> {
             let kind = node.kind();
-            if kind == "function_declaration" || kind == "method_definition" {
-                if let Some(name_node) = node.child_by_field_name("name") {
-                    if &source[name_node.byte_range()] == name {
+            if (kind == "function_declaration" || kind == "method_definition")
+                && let Some(name_node) = node.child_by_field_name("name")
+                    && &source[name_node.byte_range()] == name {
                         return Some((node.start_byte(), node.end_byte()));
                     }
-                }
-            }
             let mut cursor = node.walk();
             for child in node.named_children(&mut cursor) {
                 if let Some(range) = search(child, source, name) {
@@ -834,13 +829,11 @@ mod tests {
     fn find_py_function_byte_range(tree: &Tree, source: &str, func_name: &str) -> (usize, usize) {
         fn search(node: Node, source: &str, name: &str) -> Option<(usize, usize)> {
             let kind = node.kind();
-            if kind == "function_definition" {
-                if let Some(name_node) = node.child_by_field_name("name") {
-                    if &source[name_node.byte_range()] == name {
+            if kind == "function_definition"
+                && let Some(name_node) = node.child_by_field_name("name")
+                    && &source[name_node.byte_range()] == name {
                         return Some((node.start_byte(), node.end_byte()));
                     }
-                }
-            }
             let mut cursor = node.walk();
             for child in node.named_children(&mut cursor) {
                 if let Some(range) = search(child, source, name) {
@@ -917,13 +910,11 @@ mod tests {
     fn find_go_function_range(tree: &Tree, source: &str, func_name: &str) -> (usize, usize) {
         fn search(node: Node, source: &str, name: &str) -> Option<(usize, usize)> {
             let kind = node.kind();
-            if kind == "function_declaration" || kind == "method_declaration" {
-                if let Some(name_node) = node.child_by_field_name("name") {
-                    if &source[name_node.byte_range()] == name {
+            if (kind == "function_declaration" || kind == "method_declaration")
+                && let Some(name_node) = node.child_by_field_name("name")
+                    && &source[name_node.byte_range()] == name {
                         return Some((node.start_byte(), node.end_byte()));
                     }
-                }
-            }
             let mut cursor = node.walk();
             for child in node.named_children(&mut cursor) {
                 if let Some(r) = search(child, source, name) {
@@ -979,13 +970,11 @@ mod tests {
 
     fn find_java_method_range(tree: &Tree, source: &str, method_name: &str) -> (usize, usize) {
         fn search(node: Node, source: &str, name: &str) -> Option<(usize, usize)> {
-            if node.kind() == "method_declaration" || node.kind() == "constructor_declaration" {
-                if let Some(name_node) = node.child_by_field_name("name") {
-                    if &source[name_node.byte_range()] == name {
+            if (node.kind() == "method_declaration" || node.kind() == "constructor_declaration")
+                && let Some(name_node) = node.child_by_field_name("name")
+                    && &source[name_node.byte_range()] == name {
                         return Some((node.start_byte(), node.end_byte()));
                     }
-                }
-            }
             let mut cursor = node.walk();
             for child in node.named_children(&mut cursor) {
                 if let Some(r) = search(child, source, name) {
@@ -1042,13 +1031,11 @@ mod tests {
 
     fn find_csharp_method_range(tree: &Tree, source: &str, method_name: &str) -> (usize, usize) {
         fn search(node: Node, source: &str, name: &str) -> Option<(usize, usize)> {
-            if node.kind() == "method_declaration" {
-                if let Some(name_node) = node.child_by_field_name("name") {
-                    if &source[name_node.byte_range()] == name {
+            if node.kind() == "method_declaration"
+                && let Some(name_node) = node.child_by_field_name("name")
+                    && &source[name_node.byte_range()] == name {
                         return Some((node.start_byte(), node.end_byte()));
                     }
-                }
-            }
             let mut cursor = node.walk();
             for child in node.named_children(&mut cursor) {
                 if let Some(r) = search(child, source, name) {

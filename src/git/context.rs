@@ -391,7 +391,7 @@ mod tests {
     fn is_ancestor_true() {
         // HEAD~1 should be an ancestor of HEAD in a repo with commits
         let ctx = detect_context(Path::new(".")).unwrap();
-        let head = ctx.head_commit.unwrap();
+        let _head = ctx.head_commit.unwrap();
 
         // Create a temp repo with known ancestry
         let tmp = std::env::temp_dir().join("codemark_test_ancestor_true");

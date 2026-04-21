@@ -110,7 +110,7 @@ impl Codemark {
         let tree = obj.peel_to_tree().unwrap();
 
         // Checkout the tree with force
-        repo.checkout_tree(&tree.as_object(), Some(git2::build::CheckoutBuilder::new().force()))
+        repo.checkout_tree(tree.as_object(), Some(git2::build::CheckoutBuilder::new().force()))
             .unwrap();
 
         // Update HEAD to point to the commit (detached HEAD state)
@@ -1416,7 +1416,7 @@ fn git_repo_heal_force_bypasses_ancestry_check() {
     // Create initial file and bookmark
     let commit_a = cm.commit("test.rs", "fn original() {}", "Commit A");
     let json = cm.run_json(&["add", "--file", &cm.file_path("test.rs"), "--range", "1"]);
-    let id = json["data"]["id"].as_str().unwrap().to_string();
+    let _id = json["data"]["id"].as_str().unwrap().to_string();
     cm.run_json(&["heal"]);
 
     // Make more commits and heal again
@@ -1512,7 +1512,7 @@ fn git_repo_move_method_then_heal_gets_new_resolution() {
     let cm = Codemark::with_git_repo();
 
     // Initial file with function at line 1
-    let commit_a = cm.commit("test.rs", "fn my_function() {}\nfn other() {}", "Commit A");
+    let _commit_a = cm.commit("test.rs", "fn my_function() {}\nfn other() {}", "Commit A");
 
     // Create bookmark targeting the function
     let json = cm.run_json(&[
@@ -1589,7 +1589,7 @@ fn git_repo_resolve_fails_when_function_deleted() {
     let cm = Codemark::with_git_repo();
 
     // Initial file with function
-    let commit_a = cm.commit("test.rs", "fn my_function() {}\nfn other() {}", "Commit A");
+    let _commit_a = cm.commit("test.rs", "fn my_function() {}\nfn other() {}", "Commit A");
 
     // Create bookmark targeting the function
     let json = cm.run_json(&[
@@ -1609,7 +1609,7 @@ fn git_repo_resolve_fails_when_function_deleted() {
     assert_eq!(resolve_json["data"]["method"], "exact", "should find exact match initially");
 
     // Delete the function (only keep other function)
-    let commit_b = cm.commit("test.rs", "fn other() {}", "Commit B");
+    let _commit_b = cm.commit("test.rs", "fn other() {}", "Commit B");
 
     // Resolve should now fail or fall back to a different method
     let resolve_json = cm.run_json(&["resolve", &id[..8]]);
@@ -1657,7 +1657,7 @@ fn git_repo_bookmark_goes_stale_when_code_completely_changed() {
     let cm = Codemark::with_git_repo();
 
     // Initial file with function
-    let commit_a = cm.commit("test.rs", "fn original_function() { return 42; }", "Commit A");
+    let _commit_a = cm.commit("test.rs", "fn original_function() { return 42; }", "Commit A");
 
     // Create bookmark targeting the function
     let json = cm.run_json(&[
@@ -1677,7 +1677,7 @@ fn git_repo_bookmark_goes_stale_when_code_completely_changed() {
 
     // Completely remove the function and make the file empty
     // This should cause resolution to fail entirely (stale, not drifted)
-    let commit_b = cm.commit("test.rs", "", "Commit B - empty file");
+    let _commit_b = cm.commit("test.rs", "", "Commit B - empty file");
 
     // Heal should mark the bookmark as stale (can't find the function at all)
     let heal_json = cm.run_json(&["heal"]);
@@ -1710,7 +1710,7 @@ fn git_repo_resolve_fails_when_file_deleted() {
     let cm = Codemark::with_git_repo();
 
     // Initial file with function
-    let commit_a = cm.commit("test.rs", "fn my_function() {}", "Commit A");
+    let _commit_a = cm.commit("test.rs", "fn my_function() {}", "Commit A");
 
     // Create bookmark targeting the function
     let json = cm.run_json(&[
@@ -1771,7 +1771,7 @@ fn git_repo_function_renamed_resolve_uses_fallback() {
     let cm = Codemark::with_git_repo();
 
     // Initial file with function
-    let commit_a = cm.commit("test.rs", "fn my_function() {}", "Commit A");
+    let _commit_a = cm.commit("test.rs", "fn my_function() {}", "Commit A");
 
     // Create bookmark targeting the function
     let json = cm.run_json(&[
@@ -1786,7 +1786,7 @@ fn git_repo_function_renamed_resolve_uses_fallback() {
     let id = json["data"]["id"].as_str().unwrap().to_string();
 
     // Rename the function
-    let commit_b = cm.commit("test.rs", "fn renamed_function() {}", "Commit B - function renamed");
+    let _commit_b = cm.commit("test.rs", "fn renamed_function() {}", "Commit B - function renamed");
 
     // Resolve should use fallback (relaxed/minimal) or fail
     let resolve_json = cm.run_json(&["resolve", &id[..8]]);
