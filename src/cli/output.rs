@@ -8,7 +8,48 @@ use comfy_table::{Cell, Table};
 use is_terminal::IsTerminal;
 use serde::Serialize;
 
-use crate::engine::bookmark::{Bookmark, Resolution};
+use crate::engine::bookmark::{Bookmark, Collection, Resolution};
+
+// --- Collection output formatting ---
+
+/// A collection with its associated bookmark count for list output.
+#[derive(Debug, Serialize)]
+pub struct CollectionWithCount {
+    pub id: String,
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    pub created_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub created_by: Option<String>,
+    pub bookmark_count: usize,
+}
+
+impl From<&(Collection, usize)> for CollectionWithCount {
+    fn from((collection, count): &(Collection, usize)) -> Self {
+        Self {
+            id: collection.id.clone(),
+            name: collection.name.clone(),
+            description: collection.description.clone(),
+            created_at: collection.created_at.clone(),
+            created_by: collection.created_by.clone(),
+            bookmark_count: *count,
+        }
+    }
+}
+
+impl From<(Collection, usize)> for CollectionWithCount {
+    fn from((collection, count): (Collection, usize)) -> Self {
+        Self {
+            id: collection.id,
+            name: collection.name,
+            description: collection.description,
+            created_at: collection.created_at,
+            created_by: collection.created_by,
+            bookmark_count: count,
+        }
+    }
+}
 
 /// Helper function to get the first annotation's notes from a bookmark.
 fn get_first_note(bm: &Bookmark) -> &str {

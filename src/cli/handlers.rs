@@ -5,8 +5,8 @@ use clap::CommandFactory;
 use clap_complete::generate;
 
 use crate::cli::output::{
-    self, ByteLocation, HealOutput, HealUpdate, OutputMode, short_id, write_bookmark_markdown,
-    write_heal_output, write_json_success, write_success,
+    self, ByteLocation, CollectionWithCount, HealOutput, HealUpdate, OutputMode, short_id,
+    write_bookmark_markdown, write_heal_output, write_json_success, write_success,
 };
 use crate::cli::*;
 use crate::config::Config;
@@ -2226,7 +2226,11 @@ fn handle_collection_list(cli: &Cli, mode: &OutputMode, args: &CollectionListArg
         }
 
         match mode {
-            OutputMode::Json => write_json_success(&collections)?,
+            OutputMode::Json => {
+                let with_counts: Vec<CollectionWithCount> =
+                    collections.iter().map(CollectionWithCount::from).collect();
+                write_json_success(&with_counts)?
+            }
             OutputMode::Table => {
                 let mut table = comfy_table::Table::new();
                 table.set_header(vec!["Name", "Bookmarks", "Description", "Created"]);
