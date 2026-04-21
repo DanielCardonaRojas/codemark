@@ -140,6 +140,7 @@ impl StorageConfig {
 
 impl HealthConfig {
     /// Get the auto-archive days threshold (default: 7).
+    #[allow(dead_code)]
     pub fn auto_archive_days(&self) -> u32 {
         self.auto_archive_after_days.unwrap_or(7)
     }
@@ -421,7 +422,7 @@ mod tests {
         let config = Config::default();
         assert_eq!(config.storage.max_resolutions(), 20);
         assert_eq!(config.health.auto_archive_days(), 7);
-        assert_eq!(config.semantic.is_enabled(), true);
+        assert!(config.semantic.is_enabled());
     }
 
     #[test]
@@ -607,7 +608,7 @@ gui = ["mygui", "code"]
         // Verify the config can be loaded
         let config = Config::load(&tmp);
         assert_eq!(config.storage.max_resolutions(), 20);
-        assert_eq!(config.semantic.is_enabled(), true);
+        assert!(config.semantic.is_enabled());
 
         // Second call should not overwrite
         let created_again = Config::init_default(&tmp).unwrap();
@@ -717,7 +718,7 @@ auto_archive_after_days = 14
 
         // Global values preserved
         assert_eq!(global.storage.max_resolutions(), 15);
-        assert_eq!(global.semantic.is_enabled(), true);
+        assert!(global.semantic.is_enabled());
 
         // Local value applied
         assert_eq!(global.health.auto_archive_days(), 14);
@@ -749,7 +750,7 @@ enabled = true
 
         // Local values (equal to defaults) should win over global
         assert_eq!(global.storage.max_resolutions(), 20);
-        assert_eq!(global.semantic.is_enabled(), true);
+        assert!(global.semantic.is_enabled());
     }
 
     #[test]
@@ -760,7 +761,7 @@ enabled = true
             .expect("Default config template should parse correctly");
         assert_eq!(config.storage.max_resolutions(), 20);
         assert_eq!(config.health.auto_archive_days(), 7);
-        assert_eq!(config.semantic.is_enabled(), true);
+        assert!(config.semantic.is_enabled());
         assert_eq!(config.open.default, Some("vim +{LINE_START} {FILE}".to_string()));
         assert!(config.open.extensions.contains_key("rs"));
         assert!(config.open.extensions.contains_key("swift"));

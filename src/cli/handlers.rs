@@ -2160,6 +2160,26 @@ fn handle_collection_list(cli: &Cli, mode: &OutputMode, args: &CollectionListArg
     if let Some(ref bookmark_id) = args.bookmark {
         let bm = find_bookmark(&db, bookmark_id)?;
         let collections = db.list_collections_for_bookmark(&bm.id)?;
+
+        // Custom line format for bookmark's collections
+        if let Some(ref template) = args.line_format {
+            let mut stdout = io::stdout().lock();
+            for c in &collections {
+                let short_id = output::short_id(&c.id);
+                let line = template
+                    .replace("{ID}", short_id)
+                    .replace("{id}", short_id)
+                    .replace("{NAME}", &c.name)
+                    .replace("{name}", &c.name)
+                    .replace("{DESCRIPTION}", c.description.as_deref().unwrap_or(""))
+                    .replace("{description}", c.description.as_deref().unwrap_or(""))
+                    .replace("{CREATED}", &c.created_at)
+                    .replace("{created}", &c.created_at);
+                writeln!(stdout, "{line}")?;
+            }
+            return Ok(());
+        }
+
         match mode {
             OutputMode::Json => write_json_success(&collections)?,
             OutputMode::Table => {
@@ -2183,6 +2203,28 @@ fn handle_collection_list(cli: &Cli, mode: &OutputMode, args: &CollectionListArg
         }
     } else {
         let collections = db.list_collections()?;
+
+        // Custom line format for collections with counts
+        if let Some(ref template) = args.line_format {
+            let mut stdout = io::stdout().lock();
+            for (c, count) in &collections {
+                let short_id = output::short_id(&c.id);
+                let line = template
+                    .replace("{ID}", short_id)
+                    .replace("{id}", short_id)
+                    .replace("{NAME}", &c.name)
+                    .replace("{name}", &c.name)
+                    .replace("{COUNT}", &count.to_string())
+                    .replace("{count}", &count.to_string())
+                    .replace("{DESCRIPTION}", c.description.as_deref().unwrap_or(""))
+                    .replace("{description}", c.description.as_deref().unwrap_or(""))
+                    .replace("{CREATED}", &c.created_at)
+                    .replace("{created}", &c.created_at);
+                writeln!(stdout, "{line}")?;
+            }
+            return Ok(());
+        }
+
         match mode {
             OutputMode::Json => write_json_success(&collections)?,
             OutputMode::Table => {
