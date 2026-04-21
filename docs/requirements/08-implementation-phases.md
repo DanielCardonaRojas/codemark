@@ -12,6 +12,7 @@
 | **Phase 2b** (Enhanced Semantic) | ❌ **NOT STARTED** | 0% |
 | **Phase 3** (Hook Integration) | ❌ **NOT STARTED** | 0% |
 | **Phase 4** (Advanced Features) | ⚠️ **PARTIAL** | 30% |
+| **Phase 5** (Graph Integration) | ❌ **NOT STARTED** | 0% |
 
 ---
 
@@ -282,6 +283,7 @@ See [docs/requirements/10-semantic-search.md](./10-semantic-search.md) for compl
 | v0.3.0    | 2b    | ❌ PLANNED  | Enhanced semantic features, hybrid search |
 | v0.4.0    | 3     | ❌ PLANNED  | Hook integration, auto-bookmarking     |
 | v0.5.0    | 4     | ❌ PLANNED  | Cross-file resolution, performance     |
+| v0.6.0    | 5     | ❌ PLANNED  | Tree-sitter Graph Integration          |
 | v1.0.0    | —     | ❌ PLANNED  | Stable API, documented, battle-tested  |
 
 ### Current Release: v0.2.0
