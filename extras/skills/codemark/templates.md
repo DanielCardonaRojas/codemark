@@ -9,6 +9,9 @@ The `--note` should be concise and focus on the purpose of the code. **Do not re
 - **<Action/Role>**: The primary function or role of this code (e.g., Auth Validator, Configuration, Entry point).
 - **<Brief Description>**: Why this piece of code is important or what it does.
 
+**Tip for Fine-Grained Bookmarks:** When targeting internal nodes like `call_expression` or `if_statement`, use the note to explain the *specific execution boundary* being marked.
+*Example:* `Execution Boundary: Exact point where the JWT signature is verified before proceeding to claims extraction.`
+
 *Example:* `Auth Validator: Handles all JWT verification for incoming requests.`
 
 ## 2. Context Template (Extended)

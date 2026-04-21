@@ -108,6 +108,38 @@ Any async function:
   (#eq? @effect "async")) @target
 ```
 
+### Call Expression (Function Call)
+
+Target where a specific function is invoked:
+
+```scheme
+(call_expression
+  function: (navigation_expression
+    (navigation_suffix
+      (simple_identifier) @method
+      (#eq? @method "verifyToken")))) @target
+```
+
+### Switch Statement
+
+Target complex branching logic:
+
+```scheme
+(switch_statement
+  expr: (identifier) @val
+  (#eq? @val "action")) @target
+```
+
+### If Statement
+
+Target specific logical decision points:
+
+```scheme
+(if_statement
+  condition: (identifier) @cond
+  (#eq? @cond "isAdmin")) @target
+```
+
 ### Function with Specific Signature
 
 Function taking String and returning Claims:

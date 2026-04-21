@@ -94,6 +94,37 @@ Any exported (capitalized) function:
       (#eq? @type "string")))) @target
 ```
 
+### Call Expression (Function Call)
+
+Target where a specific function is invoked:
+
+```scheme
+(call_expression
+  function: (identifier) @func
+  (#eq? @func "VerifyToken")) @target
+```
+
+### Switch Statement
+
+Target complex branching logic:
+
+```scheme
+(switch_statement
+  value: (identifier) @val
+  (#eq? @val "action")) @target
+```
+
+### If Statement
+
+Target specific logical decision points:
+
+```scheme
+(if_statement
+  condition: (call_expression
+    function: (identifier) @func
+    (#eq? @func "IsAuthorized"))) @target
+```
+
 ## Module Tagging
 
 Go uses `package:<path>` with the full package path relative to module root (using dots):

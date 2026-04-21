@@ -107,6 +107,37 @@ Any async function:
   (async)) @target
 ```
 
+### Call Expression (Function Call)
+
+Target where a specific function is invoked:
+
+```scheme
+(call_expression
+  function: (identifier) @func
+  (#eq? @func "verify_token")) @target
+```
+
+### Match Expression
+
+Target complex branching logic:
+
+```scheme
+(match_expression
+  value: (identifier) @val
+  (#eq? @val "event")) @target
+```
+
+### If Statement
+
+Target specific logical decision points:
+
+```scheme
+(if_statement
+  condition: (call_expression
+    function: (identifier) @func
+    (#eq? @func "is_authorized"))) @target
+```
+
 ### Function with Specific Signature
 
 Function taking String and returning Claims:

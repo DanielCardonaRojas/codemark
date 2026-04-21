@@ -110,6 +110,38 @@ Any static method:
       (#eq? @type "String")))) @target
 ```
 
+### Call Expression (Method Call)
+
+Target where a specific method is invoked:
+
+```scheme
+(method_invocation
+  name: (identifier) @method
+  (#eq? @method "verifyToken")) @target
+```
+
+### Switch Statement
+
+Target complex branching logic:
+
+```scheme
+(switch_statement
+  condition: (parenthesized_expression
+    (identifier) @val
+    (#eq? @val "action"))) @target
+```
+
+### If Statement
+
+Target specific logical decision points:
+
+```scheme
+(if_statement
+  condition: (parenthesized_expression
+    (identifier) @cond
+    (#eq? @cond "isAdmin"))) @target
+```
+
 ## Module Tagging
 
 Java uses `package:<name>` with the full Java package name (dot notation):

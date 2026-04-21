@@ -74,6 +74,37 @@ Decorators are automatically skipped; this targets the function itself:
       (#eq? @method "validate_token")) @target))
 ```
 
+### Call Expression (Function Call)
+
+Target where a specific function is invoked:
+
+```scheme
+(call_expression
+  function: (identifier) @func
+  (#eq? @func "verify_token")) @target
+```
+
+### Match Statement (Python 3.10+)
+
+Target complex branching logic:
+
+```scheme
+(match_statement
+  subject: (identifier) @val
+  (#eq? @val "event")) @target
+```
+
+### If Statement
+
+Target specific logical decision points:
+
+```scheme
+(if_statement
+  condition: (call_expression
+    function: (identifier) @func
+    (#eq? @func "is_authorized"))) @target
+```
+
 ### Function with Specific Parameters
 
 Function with a specific parameter name:

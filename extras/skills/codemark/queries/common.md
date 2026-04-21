@@ -154,16 +154,69 @@ If you're bookmarking code that seems like it will be refactored:
 
 ### Strategy: Bookmark Multiple Related Functions
 
-When a function has siblings you also care about, bookmark them explicitly rather than relying on broad queries:
+When a function has siblings or internal steps you also care about, bookmark them explicitly. We prefer **more, highly specific bookmarks** over fewer, general ones.
 
 ```bash
 # Bookmark each method individually
 codemark add-from-query --file src/auth.swift --query '(function_declaration name: (simple_identifier) @name (#eq? @name "validateToken")) @target' --note "Auth validation: validateToken" --tag feature:auth
 codemark add-from-query --file src/auth.swift --query '(function_declaration name: (simple_identifier) @name (#eq? @name "refreshToken")) @target' --note "Auth validation: refreshToken" --tag feature:auth
-codemark add-from-query --file src/auth.swift --query '(function_declaration name: (simple_identifier) @name (#eq? @name "checkPermission")) @target' --note "Auth validation: checkPermission" --tag feature:auth
 ```
 
-### Structural Signature Matching
+## Targeting Fine-Grained Execution Logic
+
+Sometimes bookmarking an entire function is too broad. You can target specific execution boundaries, logic gates, and method calls *inside* those functions.
+
+### 1. Bookmarking Method Calls (`call_expression`)
+Instead of bookmarking where a function is defined, bookmark where a critical function is **invoked**.
+
+```scheme
+# Target any execution of `verify_signature` (Rust, TS, Python)
+(call_expression
+  function: (identifier) @func
+  (#eq? @func "verify_signature")) @target
+```
+
+```scheme
+# Target a specific method call on an object, like `db.commit()`
+(call_expression
+  function: (member_expression
+    property: (property_identifier) @method
+    (#eq? @method "commit"))) @target
+```
+
+### 2. Bookmarking Conditionals (`if_statement`)
+Target the exact decision points, such as authorization guards or error handling branches.
+
+```scheme
+# Target an if-statement that checks an "is_admin" variable
+(if_statement
+  condition: (identifier) @cond
+  (#eq? @cond "is_admin")) @target
+```
+
+### 3. Bookmarking Comparisons (`binary_expression`)
+Identify hardcoded business rules or boundary limits.
+
+```scheme
+# Target anywhere a strict equality check compares against the string "admin"
+(binary_expression
+  operator: "=="
+  right: (string) @val
+  (#match? @val "admin")) @target
+```
+
+### 4. Bookmarking Complex Branching (`switch` / `match`)
+Target state machines or reducers by locating `switch_statement` or `match_expression`.
+
+```scheme
+# TS / Go / Swift: Target a switch statement switching on "action.type"
+(switch_statement
+  value: (member_expression
+    property: (property_identifier) @prop
+    (#eq? @prop "type"))) @target
+```
+
+## Structural Signature Matching
 
 Instead of matching by name, match by parameter/return types which change less often:
 
