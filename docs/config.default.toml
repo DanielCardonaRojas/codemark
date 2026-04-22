@@ -80,3 +80,14 @@ enabled = true
 # Set to null to disable threshold filtering (return all results).
 # Typical values: 0.3-0.5 for l2/cosine, 0.7-0.9 for ip
 # threshold = 0.4
+
+[databases]
+# Additional database paths to include in read-only cross-repo queries.
+# The primary database (current repo) is always included.
+# This setting is only recognized in .codemark/config.toml (local repo config).
+# Supports ~ expansion and relative paths (relative to repo root).
+# Additional databases are read-only; write operations affect only the primary DB.
+# additional = [
+#     "../shared-library/.codemark/codemark.db",
+#     "~/projects/dependency-repo/.codemark/codemark.db",
+# ]

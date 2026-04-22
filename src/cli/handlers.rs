@@ -173,19 +173,49 @@ fn load_config(cli: &Cli) -> Config {
 ///
 /// Returns (source_label, database) pairs. Falls back to single auto-detected db.
 /// Returns Error::NotInitialized if any of the specified databases do not exist.
+///
+/// Database loading strategy:
+/// 1. If CLI `--db` is specified, only those paths are used (override mode)
+/// 2. Otherwise, uses auto-detected primary DB + configured additional databases
 fn open_all_dbs(cli: &Cli) -> Result<Vec<(String, Database)>> {
-    if cli.db.is_empty() {
-        let db = open_db(cli)?;
-        let label = source_label_from_cli(cli);
-        return Ok(vec![(label, db)]);
+    // If CLI specified explicit --db paths, use only those (override mode)
+    if !cli.db.is_empty() {
+        let mut dbs = Vec::new();
+        for path in &cli.db {
+            if path.exists() {
+                let label = source_label_from_path(path);
+                dbs.push((label, Database::open(path)?));
+            }
+        }
+        return Ok(dbs);
     }
+
+    // No CLI --db specified: use auto-detected primary + configured additional
     let mut dbs = Vec::new();
-    for path in &cli.db {
-        if path.exists() {
-            let label = source_label_from_path(path);
-            dbs.push((label, Database::open(path)?));
+
+    // Always include primary DB (auto-detected from git root)
+    let primary_db = open_db(cli)?;
+    let primary_label = source_label_from_cli(cli);
+    dbs.push((primary_label, primary_db));
+
+    // Load additional DBs from local config
+    let cwd = std::env::current_dir()?;
+    if let Some(ctx) = git_context::detect_context(&cwd) {
+        let codemark_dir = ctx.repo_root.join(".codemark");
+        let config = Config::load_layered(&codemark_dir);
+        let additional_paths = config.databases.resolve_additional_paths(&ctx.repo_root);
+
+        for path in additional_paths {
+            if path.exists() {
+                let label = source_label_from_path(&path);
+                // Only add if not already present (avoid duplicates)
+                if !dbs.iter().any(|(l, _)| l == &label) {
+                    dbs.push((label, Database::open(&path)?));
+                }
+            }
         }
     }
+
     Ok(dbs)
 }
 
