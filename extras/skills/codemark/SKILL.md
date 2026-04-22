@@ -295,7 +295,9 @@ For common query patterns across languages, see:
 
 ## Best Practices
 
-- **Target small, specific code**: Prefer single functions over entire classes, specific methods over whole modules. Smaller bookmarks are more resilient to refactoring, easier to understand, and more precise for navigation. A well-chosen function bookmark survives most structural changes, while large class bookmarks often drift when code is reorganized.
+- **Target small, specific code**: Prefer single functions over entire classes, specific methods over whole modules. Smaller bookmarks are more resilient to refactoring, easier to understand, and more precise for navigation.
+- **Fine-grained execution targeting**: Don't just bookmark containers (classes/functions). Bookmark **execution boundaries** like critical method calls (`call_expression`), authorization gates (`if_statement`), or complex state transitions (`switch`/`match`).
+- **Granularity Strategy**: We prefer **more, highly specific bookmarks** over fewer, general ones. For example, if a function performs three critical steps (auth, validation, DB write), it is better to bookmark those three specific lines/nodes than to bookmark the entire function.
 - Use `--created-by agent` to distinguish your bookmarks from the user's.
 - Use `--collection <name>` when creating bookmarks to add them directly to a collection (collections are auto-created if they don't exist).
 - **Iterative enhancement**: When working with an existing bookmark and discover new context, use `annotate` to add notes without re-parsing the file. Multiple agents can annotate the same bookmark over time.

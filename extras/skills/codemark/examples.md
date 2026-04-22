@@ -28,6 +28,22 @@ Focus on *why* the code matters and its relationships. Avoid repeating informati
 codemark add --file src/auth.rs --range 42 --note "Core auth validator. entry point for all signed requests. Relationships: depends on Claims struct." --tag feature:auth --tag role:entrypoint --tag layer:logic --created-by agent
 ```
 
+## Targeting Fine-Grained Execution Logic
+
+Instead of bookmarking the entire function, target the specific execution point where critical actions occur.
+
+### Bookmark a specific method call inside a function
+```bash
+# Target the exact line where the database is updated
+codemark add-from-query \
+  --file src/db/repo.rs \
+  --query '(call_expression function: (member_expression property: (property_identifier) @method (#eq? @method "update_user_balance"))) @target' \
+  --note "Critical: Database update point for user balances. Relationships: triggered after payment verification." \
+  --tag layer:data \
+  --tag role:repository \
+  --created-by agent
+```
+
 ## Creating Bookmarks with Raw Queries
 
 ### 1. Use dry-run to verify query uniqueness

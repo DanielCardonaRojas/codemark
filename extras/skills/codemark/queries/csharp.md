@@ -106,6 +106,37 @@ Any async method:
       (#eq? @method "InvalidateCache")) @target))
 ```
 
+### Call Expression (Invocation)
+
+Target where a specific method is invoked:
+
+```scheme
+(invocation_expression
+  function: (identifier) @func
+  (#eq? @func "VerifyToken")) @target
+```
+
+### Switch Statement
+
+Target complex branching logic:
+
+```scheme
+(switch_statement
+  expression: (identifier) @val
+  (#eq? @val "action")) @target
+```
+
+### If Statement
+
+Target specific logical decision points:
+
+```scheme
+(if_statement
+  condition: (parenthesized_expression
+    (identifier) @cond
+    (#eq? @cond "IsAdmin"))) @target
+```
+
 ## Module Tagging
 
 C# uses `namespace:<name>` with the full C# namespace:

@@ -81,6 +81,36 @@ Any async function:
     (#eq? @method "parseToken")) @target)
 ```
 
+### Call Expression (Method Call)
+
+Target where a specific method is invoked:
+
+```scheme
+(method_invocation
+  name: (simple_identifier) @method
+  (#eq? @method "verifyToken")) @target
+```
+
+### Switch Statement
+
+Target complex branching logic:
+
+```scheme
+(switch_statement
+  expression: (identifier) @val
+  (#eq? @val "action")) @target
+```
+
+### If Statement
+
+Target specific logical decision points:
+
+```scheme
+(if_statement
+  condition: (identifier) @cond
+  (#eq? @cond "isAdmin")) @target
+```
+
 ## Module Tagging
 
 Dart uses `package:<name>` based on the package or library name:
