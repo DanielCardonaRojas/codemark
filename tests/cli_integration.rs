@@ -167,10 +167,37 @@ impl Codemark {
         }
     }
 
+    /// Run codemark without specifying --db (uses auto-detection + config).
+    /// This is used to test config-based multi-database behavior.
+    fn run_no_db(&self, args: &[&str]) -> CmdResult {
+        let output = Command::new(&self.binary)
+            .args(args)
+            .current_dir(&self.work_dir)
+            .output()
+            .expect("failed to run codemark");
+
+        CmdResult {
+            stdout: String::from_utf8_lossy(&output.stdout).to_string(),
+            stderr: String::from_utf8_lossy(&output.stderr).to_string(),
+            status: output.status.code().unwrap_or(-1),
+        }
+    }
+
     fn run_json(&self, args: &[&str]) -> serde_json::Value {
         let mut full_args = vec!["--format", "json"];
         full_args.extend_from_slice(args);
         let result = self.run(&full_args);
+        assert_eq!(result.status, 0, "command failed: {}\n{}", result.stderr, result.stdout);
+        serde_json::from_str(&result.stdout)
+            .unwrap_or_else(|e| panic!("invalid JSON: {e}\nstdout: {}", result.stdout))
+    }
+
+    /// Run codemark with JSON output but without specifying --db.
+    /// Uses auto-detection + config for database paths.
+    fn run_json_no_db(&self, args: &[&str]) -> serde_json::Value {
+        let mut full_args = vec!["--format", "json"];
+        full_args.extend_from_slice(args);
+        let result = self.run_no_db(&full_args);
         assert_eq!(result.status, 0, "command failed: {}\n{}", result.stderr, result.stdout);
         serde_json::from_str(&result.stdout)
             .unwrap_or_else(|e| panic!("invalid JSON: {e}\nstdout: {}", result.stdout))
@@ -2249,3 +2276,438 @@ fn test_function() {
     // OFFSET should be >= LINE (offset is center of range, line is start)
     assert!(offset >= line_num, "OFFSET ({}) should be >= LINE ({})", offset, line_num);
 }
+
+// --- Multi-database configuration tests ---
+
+#[test]
+fn config_additional_databases_relative_path() {
+    // Create a parent tempdir for both repos
+    let parent_temp = tempfile::tempdir().unwrap();
+
+    // Create main repo
+    let parent_path = parent_temp.path().to_path_buf();
+    let main_repo_path = parent_path.join("main-repo");
+    std::fs::create_dir_all(&main_repo_path).unwrap();
+    let _main_repo = git2::Repository::init(&main_repo_path).unwrap();
+    let main_codemark_dir = main_repo_path.join(".codemark");
+    std::fs::create_dir_all(&main_codemark_dir).unwrap();
+    let main_db_path = main_codemark_dir.join("codemark.db");
+
+    let cm_main = Codemark {
+        db_path: main_db_path.clone(),
+        binary: PathBuf::from(env!("CARGO_BIN_EXE_codemark")),
+        temp_dir: Some(parent_temp),
+        work_dir: main_repo_path.clone(),
+    };
+
+    // Create a shared lib repo (sibling directory)
+    let shared_repo_path = parent_path.join("shared-lib");
+    std::fs::create_dir_all(&shared_repo_path).unwrap();
+
+    // Initialize shared lib as git repo
+    let _shared_repo = git2::Repository::init(&shared_repo_path).unwrap();
+    let shared_codemark_dir = shared_repo_path.join(".codemark");
+    std::fs::create_dir_all(&shared_codemark_dir).unwrap();
+    let shared_db_path = shared_codemark_dir.join("codemark.db");
+
+    // Add a bookmark to the shared lib
+    let shared_cm = Codemark {
+        db_path: shared_db_path.clone(),
+        binary: cm_main.binary.clone(),
+        temp_dir: None,  // Don't double-drop the parent temp
+        work_dir: shared_repo_path.clone(),
+    };
+
+    // Create a test file in shared lib
+    let content = "fn shared_function() { println!(\"shared\"); }";
+    std::fs::write(shared_repo_path.join("shared.rs"), content).unwrap();
+
+    shared_cm.run_json(&[
+        "add",
+        "--file",
+        &shared_cm.file_path("shared.rs"),
+        "--range",
+        "1",
+        "--note",
+        "shared lib bookmark",
+    ]);
+
+    // Verify the shared db has the bookmark
+    let json = shared_cm.run_json(&["list"]);
+    assert_eq!(json["data"].as_array().unwrap().len(), 1);
+
+    // Create config in main repo with relative path to shared lib
+    let config_content = r#"[databases]
+additional = [
+    "../shared-lib/.codemark/codemark.db",
+]
+"#;
+    std::fs::write(cm_main.work_dir.join(".codemark/config.toml"), config_content).unwrap();
+
+    // List should include bookmarks from both databases
+    let json = cm_main.run_json_no_db(&["list"]);
+    let bookmarks = json["data"].as_array().unwrap();
+
+    // Should have at least the shared lib bookmark
+    assert!(
+        bookmarks.len() >= 1,
+        "Expected at least 1 bookmark, got {}",
+        bookmarks.len()
+    );
+
+    // Check that we have a bookmark from the shared lib
+    // Notes are in the annotations array
+    let found_shared = bookmarks
+        .iter()
+        .any(|b| {
+            b["annotations"]
+                .as_array()
+                .and_then(|arr| arr.first())
+                .and_then(|ann| ann["notes"].as_str())
+                .unwrap_or("")
+                == "shared lib bookmark"
+        });
+    assert!(found_shared, "Expected to find shared lib bookmark");
+}
+
+#[test]
+fn config_additional_databases_absolute_path() {
+    let cm = Codemark::with_git_repo();
+
+    // Create a separate database file
+    let temp_dir = tempfile::tempdir().unwrap();
+    let other_db_path = temp_dir.path().join("other.db");
+
+    // Add a bookmark to the other database using direct --db
+    let other_cm = Codemark {
+        db_path: other_db_path.clone(),
+        binary: cm.binary.clone(),
+        temp_dir: Some(temp_dir),
+        work_dir: cm.work_dir.clone(),
+    };
+
+    let content = "fn other_function() { println!(\"other\"); }";
+    std::fs::write(cm.work_dir.join("other.rs"), content).unwrap();
+
+    other_cm.run_json(&[
+        "add",
+        "--file",
+        &other_cm.file_path("other.rs"),
+        "--range",
+        "1",
+        "--note",
+        "other db bookmark",
+    ]);
+
+    // Create config with absolute path
+    let config_content = format!(
+        r#"[databases]
+additional = [
+    "{}",
+]
+"#,
+        other_db_path.display()
+    );
+    std::fs::write(cm.work_dir.join(".codemark/config.toml"), config_content).unwrap();
+
+    // List should include bookmarks from both databases
+    let json = cm.run_json_no_db(&["list"]);
+    let bookmarks = json["data"].as_array().unwrap();
+
+    // Should have at least the other db bookmark
+    assert!(
+        bookmarks.len() >= 1,
+        "Expected at least 1 bookmark, got {}",
+        bookmarks.len()
+    );
+
+    let found_other = bookmarks
+        .iter()
+        .any(|b| {
+            b["annotations"]
+                .as_array()
+                .and_then(|arr| arr.first())
+                .and_then(|ann| ann["notes"].as_str())
+                .unwrap_or("")
+                == "other db bookmark"
+        });
+    assert!(found_other, "Expected to find other db bookmark");
+}
+
+#[test]
+fn cli_db_overrides_config() {
+    let cm = Codemark::with_git_repo();
+
+    // Create a separate database file
+    let temp_dir = tempfile::tempdir().unwrap();
+    let other_db_path = temp_dir.path().join("other.db");
+
+    // Add a bookmark to the main database
+    let content = "fn main_function() { println!(\"main\"); }";
+    std::fs::write(cm.work_dir.join("main.rs"), content).unwrap();
+
+    cm.run_json(&[
+        "add",
+        "--file",
+        &cm.file_path("main.rs"),
+        "--range",
+        "1",
+        "--note",
+        "main db bookmark",
+    ]);
+
+    // Add a bookmark to the other database
+    let other_cm = Codemark {
+        db_path: other_db_path.clone(),
+        binary: cm.binary.clone(),
+        temp_dir: Some(temp_dir),
+        work_dir: cm.work_dir.clone(),
+    };
+
+    let other_content = "fn other_function() { println!(\"other\"); }";
+    std::fs::write(cm.work_dir.join("other.rs"), other_content).unwrap();
+
+    other_cm.run_json(&[
+        "add",
+        "--file",
+        &other_cm.file_path("other.rs"),
+        "--range",
+        "1",
+        "--note",
+        "other db bookmark",
+    ]);
+
+    // Create config that includes other db
+    let config_content = format!(
+        r#"[databases]
+additional = [
+    "{}",
+]
+"#,
+        other_db_path.display()
+    );
+    std::fs::write(cm.work_dir.join(".codemark/config.toml"), config_content).unwrap();
+
+    // Without --db, should see both bookmarks
+    let json = cm.run_json_no_db(&["list"]);
+    let bookmarks_all = json["data"].as_array().unwrap();
+    assert!(
+        bookmarks_all.len() >= 2,
+        "Expected at least 2 bookmarks with config, got {}",
+        bookmarks_all.len()
+    );
+
+    // With explicit --db pointing only to main db, should only see main db bookmark
+    let json = cm.run(&["--db", &cm.db_path.to_string_lossy(), "list", "--format", "json"]);
+    let result: serde_json::Value = serde_json::from_str(&json.stdout).unwrap();
+    let bookmarks_cli = result["data"].as_array().unwrap();
+
+    // Should only have the main db bookmark
+    let found_main = bookmarks_cli
+        .iter()
+        .any(|b| {
+            b["annotations"]
+                .as_array()
+                .and_then(|arr| arr.first())
+                .and_then(|ann| ann["notes"].as_str())
+                .unwrap_or("")
+                == "main db bookmark"
+        });
+    let found_other = bookmarks_cli
+        .iter()
+        .any(|b| {
+            b["annotations"]
+                .as_array()
+                .and_then(|arr| arr.first())
+                .and_then(|ann| ann["notes"].as_str())
+                .unwrap_or("")
+                == "other db bookmark"
+        });
+
+    assert!(found_main, "Expected to find main db bookmark with --db override");
+    assert!(!found_other, "Did not expect other db bookmark with --db override");
+}
+
+#[test]
+fn write_operations_only_affect_primary_db() {
+    let cm = Codemark::with_git_repo();
+
+    // Create a separate database file
+    let temp_dir = tempfile::tempdir().unwrap();
+    let other_db_path = temp_dir.path().join("other.db");
+
+    // Add a bookmark to the other database
+    let other_cm = Codemark {
+        db_path: other_db_path.clone(),
+        binary: cm.binary.clone(),
+        temp_dir: Some(temp_dir),
+        work_dir: cm.work_dir.clone(),
+    };
+
+    let content = "fn existing_function() { println!(\"existing\"); }";
+    std::fs::write(cm.work_dir.join("existing.rs"), content).unwrap();
+
+    let json = other_cm.run_json(&[
+        "add",
+        "--file",
+        &other_cm.file_path("existing.rs"),
+        "--range",
+        "1",
+        "--note",
+        "existing bookmark",
+    ]);
+    let existing_id = json["data"]["id"].as_str().unwrap();
+
+    // Create config that includes other db
+    let config_content = format!(
+        r#"[databases]
+additional = [
+    "{}",
+]
+"#,
+        other_db_path.display()
+    );
+    std::fs::write(cm.work_dir.join(".codemark/config.toml"), config_content).unwrap();
+
+    // Verify we can see the bookmark from other db
+    let json = cm.run_json_no_db(&["list"]);
+    let bookmarks_before = json["data"].as_array().unwrap();
+    assert!(
+        bookmarks_before
+            .iter()
+            .any(|b| {
+                b["annotations"]
+                    .as_array()
+                    .and_then(|arr| arr.first())
+                    .and_then(|ann| ann["notes"].as_str())
+                    .unwrap_or("")
+                    == "existing bookmark"
+            }),
+        "Expected to see bookmark from additional db"
+    );
+
+    // Try to remove the bookmark (this should only affect primary db)
+    let result = cm.run_no_db(&["remove", &existing_id[..8]]);
+    // The remove command should succeed but not actually remove from the other db
+    // because write operations only affect the primary db
+    assert!(result.status == 0 || result.stderr.contains("not found"));
+
+    // Verify the bookmark still exists in the other db
+    let json = other_cm.run_json(&["list"]);
+    let bookmarks_other = json["data"].as_array().unwrap();
+    assert!(
+        bookmarks_other
+            .iter()
+            .any(|b| b["id"].as_str().unwrap_or("").starts_with(existing_id)),
+        "Bookmark should still exist in other db after remove from primary"
+    );
+}
+
+#[test]
+fn config_empty_additional_list_behaves_same_as_no_config() {
+    let cm = Codemark::with_git_repo();
+
+    // Add a bookmark to main db
+    let content = "fn main_function() { println!(\"main\"); }";
+    std::fs::write(cm.work_dir.join("main.rs"), content).unwrap();
+
+    cm.run_json(&[
+        "add",
+        "--file",
+        &cm.file_path("main.rs"),
+        "--range",
+        "1",
+        "--note",
+        "main bookmark",
+    ]);
+
+    // Create config with empty additional list
+    let config_content = r#"[databases]
+additional = []
+"#;
+    std::fs::write(cm.work_dir.join(".codemark/config.toml"), config_content).unwrap();
+
+    // List should only show main db bookmark
+    let json = cm.run_json_no_db(&["list"]);
+    let bookmarks = json["data"].as_array().unwrap();
+    assert_eq!(bookmarks.len(), 1, "Expected only 1 bookmark with empty additional list");
+    assert_eq!(
+        bookmarks[0]["annotations"]
+            .as_array()
+            .and_then(|arr| arr.first())
+            .and_then(|ann| ann["notes"].as_str())
+            .unwrap(),
+        "main bookmark"
+    );
+}
+
+#[test]
+fn databases_config_only_in_local_config() {
+    // This test verifies that databases config in global config is ignored
+    // Only local config (.codemark/config.toml) should be respected
+    let cm = Codemark::with_git_repo();
+
+    // Create a separate database file
+    let temp_dir = tempfile::tempdir().unwrap();
+    let other_db_path = temp_dir.path().join("other.db");
+
+    // Add a bookmark to the other database
+    let other_cm = Codemark {
+        db_path: other_db_path.clone(),
+        binary: cm.binary.clone(),
+        temp_dir: Some(temp_dir),
+        work_dir: cm.work_dir.clone(),
+    };
+
+    let content = "fn other_function() { println!(\"other\"); }";
+    std::fs::write(cm.work_dir.join("other.rs"), content).unwrap();
+
+    other_cm.run_json(&[
+        "add",
+        "--file",
+        &other_cm.file_path("other.rs"),
+        "--range",
+        "1",
+        "--note",
+        "other db bookmark",
+    ]);
+
+    // Create global config directory and add databases config there
+    let global_config_dir = std::env::temp_dir().join(format!("codemark_global_{}", uuid()));
+    std::fs::create_dir_all(&global_config_dir).unwrap();
+
+    let global_config = format!(
+        r#"[databases]
+additional = [
+    "{}",
+]
+"#,
+        other_db_path.display()
+    );
+    std::fs::write(global_config_dir.join("config.toml"), global_config).unwrap();
+
+    // Set XDG_CONFIG_HOME to use our test global config
+    unsafe { std::env::set_var("XDG_CONFIG_HOME", &global_config_dir) };
+
+    // Without local config, global databases config should be ignored
+    let json = cm.run_json_no_db(&["list"]);
+    let bookmarks = json["data"].as_array().unwrap();
+
+    // Should NOT have the other db bookmark because databases config is local-only
+    let found_other = bookmarks
+        .iter()
+        .any(|b| {
+            b["annotations"]
+                .as_array()
+                .and_then(|arr| arr.first())
+                .and_then(|ann| ann["notes"].as_str())
+                .unwrap_or("")
+                == "other db bookmark"
+        });
+    assert!(!found_other, "Global databases config should be ignored");
+
+    // Cleanup
+    let _ = std::fs::remove_dir_all(&global_config_dir);
+    unsafe { std::env::remove_var("XDG_CONFIG_HOME") };
+}
+

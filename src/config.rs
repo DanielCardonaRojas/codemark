@@ -62,6 +62,8 @@ pub struct Config {
     pub semantic: SemanticConfig,
     #[serde(default)]
     pub open: OpenConfig,
+    #[serde(default)]
+    pub databases: DatabasesConfig,
 }
 
 /// Semantic search configuration wrapper.
@@ -143,6 +145,86 @@ impl HealthConfig {
     #[allow(dead_code)]
     pub fn auto_archive_days(&self) -> u32 {
         self.auto_archive_after_days.unwrap_or(7)
+    }
+}
+
+/// Additional database paths configuration for cross-repo queries.
+///
+/// This configuration is only supported in local config (`.codemark/config.toml`),
+/// not in global config. Each repo defines its own related databases.
+#[derive(Debug, Default, Deserialize, Serialize)]
+#[serde(default)]
+pub struct DatabasesConfig {
+    /// Additional database paths for cross-repo queries.
+    /// Paths are relative to the repo root containing `.codemark/config.toml`.
+    /// Supports `~` expansion for home directory.
+    pub additional: Vec<String>,
+}
+
+impl DatabasesConfig {
+    /// Resolve additional database paths, expanding `~` and resolving relative paths.
+    ///
+    /// `repo_root` is the git repository root containing the `.codemark` directory.
+    /// Relative paths are resolved from the repo root (not from `.codemark/`).
+    pub fn resolve_additional_paths(&self, repo_root: &Path) -> Vec<PathBuf> {
+        self.additional
+            .iter()
+            .map(|p| {
+                let expanded = shellexpand::tilde(p);
+                let path = PathBuf::from(expanded.as_ref());
+                let resolved = if path.is_absolute() {
+                    path
+                } else {
+                    // Relative to repo root (where .codemark/ lives)
+                    repo_root.join(path)
+                };
+                // Normalize the path to resolve . and .. components
+                normalize_path(&resolved)
+            })
+            .collect()
+    }
+}
+
+/// Normalize a path by resolving . and .. components.
+/// Unlike std::fs::canonicalize, this doesn't require the path to exist.
+fn normalize_path(path: &Path) -> PathBuf {
+    use std::path::Component;
+
+    let mut result = PathBuf::new();
+    let mut has_root = false;
+
+    for component in path.components() {
+        match component {
+            Component::Prefix(prefix) => {
+                // Prefix needs special handling - it's part of the path's structure
+                // We need to reconstruct it properly
+                let mut temp = PathBuf::new();
+                temp.push(prefix.as_os_str());
+                result = temp;
+            }
+            Component::RootDir => {
+                if !has_root {
+                    result.push(component);
+                    has_root = true;
+                }
+            }
+            Component::CurDir => {
+                // Skip . components
+            }
+            Component::ParentDir => {
+                // Pop if possible, but don't go above root
+                if !result.pop() || !has_root {
+                    // If we can't pop, we're at root - keep the ..
+                    result.push(component);
+                }
+            }
+            Component::Normal(normal) => result.push(normal),
+        }
+    }
+    if result.as_os_str().is_empty() {
+        PathBuf::from(".")
+    } else {
+        result
     }
 }
 
@@ -366,6 +448,12 @@ impl Config {
             if !self.open.editor_types.gui.contains(&editor) {
                 self.open.editor_types.gui.push(editor);
             }
+        }
+
+        // Databases config - local-only setting, replace entire section if set
+        // This is only respected in local config (.codemark/config.toml)
+        if !other.databases.additional.is_empty() {
+            self.databases.additional = other.databases.additional;
         }
     }
 
@@ -824,5 +912,71 @@ terminal = ["vim", "emacs"]
         let vim_count =
             global.open.editor_types.terminal.iter().filter(|x| x.as_str() == "vim").count();
         assert_eq!(vim_count, 1);
+    }
+
+    #[test]
+    fn parse_databases_config() {
+        let toml = r#"
+[databases]
+additional = [
+    "../shared-lib/.codemark/codemark.db",
+    "~/projects/another-repo/.codemark/codemark.db",
+]
+"#;
+        let config: Config = toml::from_str(toml).unwrap();
+        assert_eq!(config.databases.additional.len(), 2);
+        assert_eq!(
+            config.databases.additional[0],
+            "../shared-lib/.codemark/codemark.db"
+        );
+        assert_eq!(
+            config.databases.additional[1],
+            "~/projects/another-repo/.codemark/codemark.db"
+        );
+    }
+
+    #[test]
+    fn resolve_additional_paths_empty() {
+        let config = DatabasesConfig::default();
+        let repo_root = Path::new("/test/repo");
+        let paths = config.resolve_additional_paths(repo_root);
+        assert!(paths.is_empty());
+    }
+
+    #[test]
+    fn resolve_additional_paths_relative() {
+        let mut config = DatabasesConfig::default();
+        config.additional = vec![
+            "../shared-lib/.codemark/codemark.db".to_string(),
+            "./local.db".to_string(),
+        ];
+        let repo_root = Path::new("/test/repo");
+        let paths = config.resolve_additional_paths(repo_root);
+        assert_eq!(paths.len(), 2);
+        // Paths should be normalized
+        assert_eq!(paths[0], PathBuf::from("/test/shared-lib/.codemark/codemark.db"));
+        assert_eq!(paths[1], PathBuf::from("/test/repo/local.db"));
+    }
+
+    #[test]
+    fn resolve_additional_paths_absolute() {
+        let mut config = DatabasesConfig::default();
+        config.additional = vec!["/absolute/path/to/db.sqlite".to_string()];
+        let repo_root = Path::new("/test/repo");
+        let paths = config.resolve_additional_paths(repo_root);
+        assert_eq!(paths.len(), 1);
+        assert_eq!(paths[0], PathBuf::from("/absolute/path/to/db.sqlite"));
+    }
+
+    #[test]
+    fn resolve_additional_paths_tilde_expansion() {
+        let mut config = DatabasesConfig::default();
+        config.additional = vec!["~/projects/db.sqlite".to_string()];
+        let repo_root = Path::new("/test/repo");
+        let paths = config.resolve_additional_paths(repo_root);
+        assert_eq!(paths.len(), 1);
+        // Tilde should be expanded to the home directory
+        assert!(paths[0].to_string_lossy().contains("projects"));
+        assert!(paths[0].is_absolute());
     }
 }
