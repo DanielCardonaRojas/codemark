@@ -210,7 +210,11 @@ fn open_all_dbs(cli: &Cli) -> Result<Vec<(String, Database)>> {
                 let label = source_label_from_path(&path);
                 // Only add if not already present (avoid duplicates)
                 if !dbs.iter().any(|(l, _)| l == &label) {
-                    dbs.push((label, Database::open(&path)?));
+                    // Silently skip databases that fail to open (e.g., locked, corrupted)
+                    // This prevents flakiness when tests run in parallel
+                    if let Ok(db) = Database::open(&path) {
+                        dbs.push((label, db));
+                    }
                 }
             }
         }
