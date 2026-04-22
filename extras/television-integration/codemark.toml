@@ -20,6 +20,7 @@ size = 55
 
 [keybindings]
 shortcut = "F5"
+enter = "actions:edit"
 ctrl-e = "actions:edit"
 ctrl-r = "actions:resolve"
 ctrl-c = "actions:copy"
