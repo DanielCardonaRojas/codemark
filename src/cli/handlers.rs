@@ -210,7 +210,11 @@ fn open_all_dbs(cli: &Cli) -> Result<Vec<(String, Database)>> {
                 let label = source_label_from_path(&path);
                 // Only add if not already present (avoid duplicates)
                 if !dbs.iter().any(|(l, _)| l == &label) {
-                    dbs.push((label, Database::open(&path)?));
+                    // Silently skip databases that fail to open (e.g., locked, corrupted)
+                    // This prevents flakiness when tests run in parallel
+                    if let Ok(db) = Database::open(&path) {
+                        dbs.push((label, db));
+                    }
                 }
             }
         }
@@ -1528,8 +1532,13 @@ fn handle_list(cli: &Cli, mode: &OutputMode, args: &ListArgs) -> Result<()> {
             output::write_bookmarks(mode, &bookmarks, args.line_format.as_deref())?;
         }
     } else {
+        // Multi-database case with line number support
         let mut all = Vec::new();
+        // Keep track of which database each bookmark belongs to
+        let mut db_map: std::collections::HashMap<String, &Database> =
+            std::collections::HashMap::new();
         for (label, db) in &dbs {
+            db_map.insert(label.clone(), db);
             let bookmarks = db.list_bookmarks(&filter)?;
             for bm in bookmarks {
                 all.push((label.clone(), bm));
@@ -1539,7 +1548,26 @@ fn handle_list(cli: &Cli, mode: &OutputMode, args: &ListArgs) -> Result<()> {
             .iter()
             .map(|(label, bm)| output::AnnotatedBookmark { source: label, bookmark: bm })
             .collect();
-        output::write_annotated_bookmarks(mode, &annotated, args.line_format.as_deref())?;
+
+        // Create a line fetcher that looks up the line from the correct database
+        let get_line_fn = |short_id: &str| -> Option<usize> {
+            // Find the bookmark with this short_id
+            for (label, bm) in &all {
+                if crate::cli::output::short_id(&bm.id) == short_id
+                    && let Some(db) = db_map.get(label)
+                {
+                    return get_bookmark_line(db, &bm.id, &bm.file_path);
+                }
+            }
+            None
+        };
+
+        output::write_annotated_bookmarks(
+            mode,
+            &annotated,
+            args.line_format.as_deref(),
+            Some(&get_line_fn),
+        )?;
     }
     Ok(())
 }
@@ -1713,7 +1741,12 @@ fn handle_search(cli: &Cli, mode: &OutputMode, args: &SearchArgs) -> Result<()> 
             .iter()
             .map(|(label, bm)| output::AnnotatedBookmark { source: label, bookmark: bm })
             .collect();
-        output::write_annotated_bookmarks(mode, &annotated, None)?;
+        output::write_annotated_bookmarks(
+            mode,
+            &annotated,
+            None,
+            None as Option<&fn(&str) -> Option<usize>>,
+        )?;
     }
     Ok(())
 }

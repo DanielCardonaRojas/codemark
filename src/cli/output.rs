@@ -377,7 +377,15 @@ pub struct AnnotatedBookmark<'a> {
 }
 
 /// Write annotated bookmarks using a line format template.
-fn write_annotated_line_format(bookmarks: &[AnnotatedBookmark], template: &str) -> io::Result<()> {
+/// Accepts an optional function to fetch line numbers for each bookmark.
+fn write_annotated_line_format<F>(
+    bookmarks: &[AnnotatedBookmark],
+    template: &str,
+    get_line_fn: Option<&F>,
+) -> io::Result<()>
+where
+    F: Fn(&str) -> Option<usize>,
+{
     let mut stdout = io::stdout().lock();
     for ab in bookmarks {
         let bm = ab.bookmark;
@@ -386,14 +394,16 @@ fn write_annotated_line_format(bookmarks: &[AnnotatedBookmark], template: &str) 
         let tags = bm.tags.iter().map(|t| format!("#{t}")).collect::<Vec<_>>().join(" ");
         let note = get_first_note(bm);
         let context = get_first_context(bm);
+        let line =
+            if let Some(ref fn_line) = get_line_fn { fn_line(short).unwrap_or(0) } else { 0 };
         let status = bm.status.to_string();
 
         let ctx = LineFormatContext {
             id: short,
             file: &bm.file_path,
             filename,
-            line: 0, // Line numbers not supported in multi-db mode
-            offset: 0,
+            line,
+            offset: line,
             status: status.as_str(),
             tags: &tags,
             note,
@@ -409,11 +419,15 @@ fn write_annotated_line_format(bookmarks: &[AnnotatedBookmark], template: &str) 
 }
 
 /// Write annotated bookmarks (multi-db results with source labels).
-pub fn write_annotated_bookmarks(
+pub fn write_annotated_bookmarks<F>(
     mode: &OutputMode,
     bookmarks: &[AnnotatedBookmark],
     line_format: Option<&str>,
-) -> io::Result<()> {
+    get_line_fn: Option<&F>,
+) -> io::Result<()>
+where
+    F: Fn(&str) -> Option<usize>,
+{
     match mode {
         OutputMode::Json => {
             let items: Vec<serde_json::Value> = bookmarks
@@ -453,7 +467,7 @@ pub fn write_annotated_bookmarks(
         }
         OutputMode::Line => {
             if let Some(fmt) = line_format {
-                write_annotated_line_format(bookmarks, fmt)
+                write_annotated_line_format(bookmarks, fmt, get_line_fn)
             } else {
                 let mut stdout = io::stdout().lock();
                 for ab in bookmarks {
@@ -475,7 +489,9 @@ pub fn write_annotated_bookmarks(
                 Ok(())
             }
         }
-        OutputMode::Custom(template) => write_annotated_line_format(bookmarks, template),
+        OutputMode::Custom(template) => {
+            write_annotated_line_format(bookmarks, template, get_line_fn)
+        }
         OutputMode::Markdown => {
             // For multi-db markdown output, fall back to table format
             let mut table = Table::new();
