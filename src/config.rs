@@ -221,11 +221,7 @@ fn normalize_path(path: &Path) -> PathBuf {
             Component::Normal(normal) => result.push(normal),
         }
     }
-    if result.as_os_str().is_empty() {
-        PathBuf::from(".")
-    } else {
-        result
-    }
+    if result.as_os_str().is_empty() { PathBuf::from(".") } else { result }
 }
 
 /// Editor configuration for the `codemark open` command.
@@ -925,14 +921,8 @@ additional = [
 "#;
         let config: Config = toml::from_str(toml).unwrap();
         assert_eq!(config.databases.additional.len(), 2);
-        assert_eq!(
-            config.databases.additional[0],
-            "../shared-lib/.codemark/codemark.db"
-        );
-        assert_eq!(
-            config.databases.additional[1],
-            "~/projects/another-repo/.codemark/codemark.db"
-        );
+        assert_eq!(config.databases.additional[0], "../shared-lib/.codemark/codemark.db");
+        assert_eq!(config.databases.additional[1], "~/projects/another-repo/.codemark/codemark.db");
     }
 
     #[test]
@@ -946,10 +936,8 @@ additional = [
     #[test]
     fn resolve_additional_paths_relative() {
         let mut config = DatabasesConfig::default();
-        config.additional = vec![
-            "../shared-lib/.codemark/codemark.db".to_string(),
-            "./local.db".to_string(),
-        ];
+        config.additional =
+            vec!["../shared-lib/.codemark/codemark.db".to_string(), "./local.db".to_string()];
         let repo_root = Path::new("/test/repo");
         let paths = config.resolve_additional_paths(repo_root);
         assert_eq!(paths.len(), 2);

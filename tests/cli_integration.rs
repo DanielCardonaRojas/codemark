@@ -2314,7 +2314,7 @@ fn config_additional_databases_relative_path() {
     let shared_cm = Codemark {
         db_path: shared_db_path.clone(),
         binary: cm_main.binary.clone(),
-        temp_dir: None,  // Don't double-drop the parent temp
+        temp_dir: None, // Don't double-drop the parent temp
         work_dir: shared_repo_path.clone(),
     };
 
@@ -2349,24 +2349,18 @@ additional = [
     let bookmarks = json["data"].as_array().unwrap();
 
     // Should have at least the shared lib bookmark
-    assert!(
-        bookmarks.len() >= 1,
-        "Expected at least 1 bookmark, got {}",
-        bookmarks.len()
-    );
+    assert!(bookmarks.len() >= 1, "Expected at least 1 bookmark, got {}", bookmarks.len());
 
     // Check that we have a bookmark from the shared lib
     // Notes are in the annotations array
-    let found_shared = bookmarks
-        .iter()
-        .any(|b| {
-            b["annotations"]
-                .as_array()
-                .and_then(|arr| arr.first())
-                .and_then(|ann| ann["notes"].as_str())
-                .unwrap_or("")
-                == "shared lib bookmark"
-        });
+    let found_shared = bookmarks.iter().any(|b| {
+        b["annotations"]
+            .as_array()
+            .and_then(|arr| arr.first())
+            .and_then(|ann| ann["notes"].as_str())
+            .unwrap_or("")
+            == "shared lib bookmark"
+    });
     assert!(found_shared, "Expected to find shared lib bookmark");
 }
 
@@ -2415,22 +2409,16 @@ additional = [
     let bookmarks = json["data"].as_array().unwrap();
 
     // Should have at least the other db bookmark
-    assert!(
-        bookmarks.len() >= 1,
-        "Expected at least 1 bookmark, got {}",
-        bookmarks.len()
-    );
+    assert!(bookmarks.len() >= 1, "Expected at least 1 bookmark, got {}", bookmarks.len());
 
-    let found_other = bookmarks
-        .iter()
-        .any(|b| {
-            b["annotations"]
-                .as_array()
-                .and_then(|arr| arr.first())
-                .and_then(|ann| ann["notes"].as_str())
-                .unwrap_or("")
-                == "other db bookmark"
-        });
+    let found_other = bookmarks.iter().any(|b| {
+        b["annotations"]
+            .as_array()
+            .and_then(|arr| arr.first())
+            .and_then(|ann| ann["notes"].as_str())
+            .unwrap_or("")
+            == "other db bookmark"
+    });
     assert!(found_other, "Expected to find other db bookmark");
 }
 
@@ -2503,26 +2491,22 @@ additional = [
     let bookmarks_cli = result["data"].as_array().unwrap();
 
     // Should only have the main db bookmark
-    let found_main = bookmarks_cli
-        .iter()
-        .any(|b| {
-            b["annotations"]
-                .as_array()
-                .and_then(|arr| arr.first())
-                .and_then(|ann| ann["notes"].as_str())
-                .unwrap_or("")
-                == "main db bookmark"
-        });
-    let found_other = bookmarks_cli
-        .iter()
-        .any(|b| {
-            b["annotations"]
-                .as_array()
-                .and_then(|arr| arr.first())
-                .and_then(|ann| ann["notes"].as_str())
-                .unwrap_or("")
-                == "other db bookmark"
-        });
+    let found_main = bookmarks_cli.iter().any(|b| {
+        b["annotations"]
+            .as_array()
+            .and_then(|arr| arr.first())
+            .and_then(|ann| ann["notes"].as_str())
+            .unwrap_or("")
+            == "main db bookmark"
+    });
+    let found_other = bookmarks_cli.iter().any(|b| {
+        b["annotations"]
+            .as_array()
+            .and_then(|arr| arr.first())
+            .and_then(|ann| ann["notes"].as_str())
+            .unwrap_or("")
+            == "other db bookmark"
+    });
 
     assert!(found_main, "Expected to find main db bookmark with --db override");
     assert!(!found_other, "Did not expect other db bookmark with --db override");
@@ -2573,16 +2557,14 @@ additional = [
     let json = cm.run_json_no_db(&["list"]);
     let bookmarks_before = json["data"].as_array().unwrap();
     assert!(
-        bookmarks_before
-            .iter()
-            .any(|b| {
-                b["annotations"]
-                    .as_array()
-                    .and_then(|arr| arr.first())
-                    .and_then(|ann| ann["notes"].as_str())
-                    .unwrap_or("")
-                    == "existing bookmark"
-            }),
+        bookmarks_before.iter().any(|b| {
+            b["annotations"]
+                .as_array()
+                .and_then(|arr| arr.first())
+                .and_then(|ann| ann["notes"].as_str())
+                .unwrap_or("")
+                == "existing bookmark"
+        }),
         "Expected to see bookmark from additional db"
     );
 
@@ -2596,9 +2578,7 @@ additional = [
     let json = other_cm.run_json(&["list"]);
     let bookmarks_other = json["data"].as_array().unwrap();
     assert!(
-        bookmarks_other
-            .iter()
-            .any(|b| b["id"].as_str().unwrap_or("").starts_with(existing_id)),
+        bookmarks_other.iter().any(|b| b["id"].as_str().unwrap_or("").starts_with(existing_id)),
         "Bookmark should still exist in other db after remove from primary"
     );
 }
@@ -2694,20 +2674,17 @@ additional = [
     let bookmarks = json["data"].as_array().unwrap();
 
     // Should NOT have the other db bookmark because databases config is local-only
-    let found_other = bookmarks
-        .iter()
-        .any(|b| {
-            b["annotations"]
-                .as_array()
-                .and_then(|arr| arr.first())
-                .and_then(|ann| ann["notes"].as_str())
-                .unwrap_or("")
-                == "other db bookmark"
-        });
+    let found_other = bookmarks.iter().any(|b| {
+        b["annotations"]
+            .as_array()
+            .and_then(|arr| arr.first())
+            .and_then(|ann| ann["notes"].as_str())
+            .unwrap_or("")
+            == "other db bookmark"
+    });
     assert!(!found_other, "Global databases config should be ignored");
 
     // Cleanup
     let _ = std::fs::remove_dir_all(&global_config_dir);
     unsafe { std::env::remove_var("XDG_CONFIG_HOME") };
 }
-
