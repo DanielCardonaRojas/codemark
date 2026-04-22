@@ -24,9 +24,21 @@ Standard bookmarks are "dumb"—they point to a coordinate. When the code moves,
 
 ---
 
+## 📊 Rich Metadata
+
+Codemark doesn't just store a pointer; it stores a comprehensive snapshot of the code's context:
+- **AST Structure**: The exact Tree-Sitter query used to locate the node.
+- **Git Context**: Commit hashes for both creation and every successful resolution.
+- **Content Hashes**: Resilient SHA-256 hashes of normalized code content.
+- **Append-only Annotations**: Multiple notes and context entries from different users or agents.
+- **Resolution History**: A full audit log of how and where the bookmark has moved over time.
+
+---
+
 ## 🛠️ Features
 
 - 🧠 **Smart Resolution**: Bookmarks survive renames and structural changes.
+- 📑 **Rich Metadata**: Captures AST structure, git context, content hashes, and append-only notes/tags.
 - 🔍 **Semantic Search**: Find code by intent (e.g., *"where is authentication handled?"*).
 - 🗃️ **Collections**: Group bookmarks into logical sets for specific tasks.
 - 📦 **Git Integrated**: Track bookmarks across commits and branches.
@@ -105,16 +117,6 @@ Codemark speaks AST for:
 - ☕ **Java**
 - 🎯 **Dart**
 - ♯ **C#**
-
----
-
-## 🎨 Visual Identity
-
-Codemark's identity is built on the intersection of **structure** and **retrieval**.
-
-**Logo Concept Suggestion:**
-- **Symbol**: A stylized "C" formed by nested AST brackets `{ }`, with a bookmark ribbon dropping through the center.
-- **Palette**: `Deep Indigo (#2E3440)` for stability, `Vibrant Teal (#88C0D0)` for precision, and `Safety Orange (#D08770)` for highlighted bookmarks.
 
 ---
 
