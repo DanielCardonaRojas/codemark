@@ -12,6 +12,84 @@ pub struct GeneratedQuery {
     pub byte_range: (usize, usize),
 }
 
+/// Context information passed to query strategies.
+///
+/// This provides strategies with the information they need to make
+/// decisions about target selection, anchor validity, and query construction.
+#[derive(Clone, Debug)]
+pub struct QueryContext<'a> {
+    /// The original source code.
+    pub source: &'a [u8],
+    /// The tree-sitter language.
+    pub language: &'a Language,
+    /// The byte range the user selected.
+    pub byte_range: (usize, usize),
+    /// The root of the AST.
+    pub root: Node<'a>,
+}
+
+/// Information about a node for use in query generation.
+#[derive(Clone, Debug)]
+pub struct NodeInfo {
+    /// The node's type (e.g., "function_declaration", "if_statement").
+    pub kind: String,
+    /// The node's byte range.
+    pub byte_range: (usize, usize),
+    /// Extracted name information, if available.
+    pub name: Option<String>,
+    /// Any semantic content that distinguishes this node.
+    pub semantic_info: Option<SemanticInfo>,
+}
+
+/// Semantic information that can distinguish a node from others of the same type.
+#[derive(Clone, Debug)]
+pub enum SemanticInfo {
+    /// For if statements: the condition being tested.
+    IfCondition(String),
+    /// For call expressions: the function being called.
+    CallTarget(String),
+    /// For assignments: the variable being assigned.
+    AssignmentTarget(String),
+    /// For return statements: the value being returned.
+    ReturnValue(String),
+    /// For binary expressions: the operator.
+    BinaryOperator(String),
+}
+
+/// Strategy for generating tree-sitter queries.
+///
+/// This trait encapsulates the key decision points in query generation,
+/// allowing different behaviors for declaration-based vs fine-grained targeting.
+pub trait QueryStrategy: Send + Sync {
+    /// Select the target node for a given byte range.
+    ///
+    /// This determines what AST node the query will target.
+    /// Different strategies may target declarations, statements, or expressions.
+    fn select_target(&self, ctx: &QueryContext<'_>) -> Result<NodeInfo>;
+
+    /// Determine if a node is a valid anchor for query construction.
+    ///
+    /// Anchors provide context to disambiguate the target.
+    /// Strategies may prefer different types of anchors (declarations, blocks, etc.).
+    fn is_valid_anchor(&self, node: Node) -> bool;
+
+    /// Extract identifying information from a node.
+    ///
+    /// Returns the name or other identifying text for the node.
+    fn extract_name(&self, node: Node, source: &[u8]) -> Option<String>;
+
+    /// Build a query from the target and its anchor chain.
+    ///
+    /// The anchors are ordered from outermost to innermost.
+    /// The target is the node returned by `select_target`.
+    fn build_query(
+        &self,
+        ctx: &QueryContext<'_>,
+        target: &NodeInfo,
+        anchors: &[NodeInfo],
+    ) -> Result<String>;
+}
+
 /// One entry in the structural path from root to target.
 #[derive(Debug)]
 struct PathEntry {
@@ -35,14 +113,69 @@ struct NameInfo {
 
 /// Given a parsed tree and a byte range, generate a tree-sitter query that uniquely
 /// identifies the target node.
+///
+/// Uses the default declaration-based strategy.
 pub fn generate_query(
     tree: &Tree,
     source: &[u8],
     byte_range: (usize, usize),
     language: &Language,
 ) -> Result<GeneratedQuery> {
-    let target = find_target_node(tree, byte_range)?;
-    generate_query_for_node(target, source, language)
+    generate_query_with_strategy(tree, source, byte_range, language, &DeclarationStrategy)
+}
+
+/// Generate a query using a specific strategy.
+///
+/// This allows callers to opt into different targeting behaviors.
+pub fn generate_query_with_strategy(
+    tree: &Tree,
+    source: &[u8],
+    byte_range: (usize, usize),
+    language: &Language,
+    strategy: &impl QueryStrategy,
+) -> Result<GeneratedQuery> {
+    let ctx = QueryContext {
+        source,
+        language,
+        byte_range,
+        root: tree.root_node(),
+    };
+
+    // Select the target node
+    let target = strategy.select_target(&ctx)?;
+
+    // Collect anchors by walking up from target
+    let mut anchors = Vec::new();
+    let mut current = ctx
+        .root
+        .descendant_for_byte_range(target.byte_range.0, target.byte_range.1)
+        .ok_or_else(|| Error::TreeSitter("target node not found".into()))?;
+
+    // Walk up to collect valid anchors
+    while let Some(parent) = current.parent() {
+        if !is_root_node(parent.kind()) && strategy.is_valid_anchor(parent) {
+            anchors.push(NodeInfo {
+                kind: parent.kind().to_string(),
+                byte_range: (parent.start_byte(), parent.end_byte()),
+                name: strategy.extract_name(parent, source),
+                semantic_info: None,
+            });
+        }
+        current = parent;
+    }
+
+    // Reverse so anchors are outermost-first
+    anchors.reverse();
+
+    // Build the query
+    let query = strategy.build_query(&ctx, &target, &anchors)?;
+
+    Ok(GeneratedQuery {
+        query,
+        target_node_type: target.kind.clone(),
+        target_name: target.name.clone(),
+        byte_range: target.byte_range,
+    })
 }
 
 /// Given a specific AST node, generate a tree-sitter query for it.
@@ -507,6 +640,185 @@ fn extract_first_param_type(func_node: Node, source: &[u8]) -> Option<String> {
                     return Some(clean.to_string());
                 }
             }
+        }
+    }
+    None
+}
+
+// ============================================================================
+// Query Strategy Implementations
+// ============================================================================
+
+/// The default declaration-based query strategy.
+///
+/// This strategy targets named declarations (functions, classes, etc.)
+/// and builds structural queries using ancestor chains.
+pub struct DeclarationStrategy;
+
+impl QueryStrategy for DeclarationStrategy {
+    fn select_target(&self, ctx: &QueryContext<'_>) -> Result<NodeInfo> {
+        // Find the node at the range and walk to named declaration
+        let node = ctx
+            .root
+            .descendant_for_byte_range(ctx.byte_range.0, ctx.byte_range.1)
+            .ok_or_else(|| Error::TreeSitter("no node found at byte range".into()))?;
+
+        let target_node = walk_to_named_declaration(node);
+
+        Ok(NodeInfo {
+            kind: target_node.kind().to_string(),
+            byte_range: (target_node.start_byte(), target_node.end_byte()),
+            name: self.extract_name(target_node, ctx.source),
+            semantic_info: None,
+        })
+    }
+
+    fn is_valid_anchor(&self, node: Node) -> bool {
+        // Anchors must be named declarations
+        DECLARATION_TYPES.contains(&node.kind())
+    }
+
+    fn extract_name(&self, node: Node, source: &[u8]) -> Option<String> {
+        extract_name_info(node, source).map(|info| info.text)
+    }
+
+    fn build_query(
+        &self,
+        ctx: &QueryContext<'_>,
+        _target: &NodeInfo,
+        _anchors: &[NodeInfo],
+    ) -> Result<String> {
+        // Use the existing logic for backward compatibility
+        // We need to find the target node again since we only have NodeInfo
+        let node = ctx
+            .root
+            .descendant_for_byte_range(ctx.byte_range.0, ctx.byte_range.1)
+            .ok_or_else(|| Error::TreeSitter("no node found at byte range".into()))?;
+
+        let target = walk_to_named_declaration(node);
+        let path = build_structural_path(target, ctx.source);
+        Ok(build_tier1_query(&path))
+    }
+}
+
+/// A fine-grained targeting strategy that targets statements and expressions.
+///
+/// This strategy targets the actual node containing the user's range
+/// rather than walking up to a declaration.
+pub struct FineGrainedStrategy;
+
+impl QueryStrategy for FineGrainedStrategy {
+    fn select_target(&self, ctx: &QueryContext<'_>) -> Result<NodeInfo> {
+        // Find the deepest node containing the range
+        let mut node = ctx
+            .root
+            .descendant_for_byte_range(ctx.byte_range.0, ctx.byte_range.1)
+            .ok_or_else(|| Error::TreeSitter("no node found at byte range".into()))?;
+
+        // Walk down to find the smallest meaningful node
+        loop {
+            let mut found_child = false;
+            let mut cursor = node.walk();
+
+            for child in node.named_children(&mut cursor) {
+                if child.start_byte() <= ctx.byte_range.0 && child.end_byte() >= ctx.byte_range.1 {
+                    // Skip body nodes - we want the actual statement
+                    if !is_body_node(child.kind()) && !is_root_node(child.kind()) {
+                        node = child;
+                        found_child = true;
+                        break;
+                    }
+                }
+            }
+
+            if !found_child {
+                break;
+            }
+        }
+
+        // Extract semantic information for disambiguation
+        let semantic_info = extract_semantic_info(node, ctx.source);
+
+        Ok(NodeInfo {
+            kind: node.kind().to_string(),
+            byte_range: (node.start_byte(), node.end_byte()),
+            name: self.extract_name(node, ctx.source),
+            semantic_info,
+        })
+    }
+
+    fn is_valid_anchor(&self, node: Node) -> bool {
+        // For fine-grained targeting, we prefer named declarations as anchors
+        // but can also use certain statement-level containers
+        DECLARATION_TYPES.contains(&node.kind()) || matches!(node.kind(), "block" | "function_body" | "statement_block")
+    }
+
+    fn extract_name(&self, node: Node, source: &[u8]) -> Option<String> {
+        // Try the standard name extraction first
+        if let Some(info) = extract_name_info(node, source) {
+            return Some(info.text);
+        }
+        // For statements without names, try to extract a distinguishing identifier
+        extract_identifier_from_node(node, source)
+    }
+
+    fn build_query(
+        &self,
+        _ctx: &QueryContext<'_>,
+        target: &NodeInfo,
+        _anchors: &[NodeInfo],
+    ) -> Result<String> {
+        // Build a simple type-based query
+        // The anchors provide context through position, not structure
+        Ok(format!("({}) @target", target.kind))
+    }
+}
+
+/// Extract semantic information from a node for fine-grained targeting.
+fn extract_semantic_info(node: Node, source: &[u8]) -> Option<SemanticInfo> {
+    match node.kind() {
+        "if_statement" | "if_expression" => {
+            // Extract the condition
+            if let Some(cond) = node.child_by_field_name("condition") {
+                let text = node_text(cond, source);
+                return Some(SemanticInfo::IfCondition(text));
+            }
+        }
+        "call_expression" | "macro_invocation" => {
+            // Extract the function being called
+            if let Some(func) = node.child_by_field_name("function") {
+                let text = node_text(func, source);
+                return Some(SemanticInfo::CallTarget(text));
+            }
+        }
+        "assignment_expression" | "assignment_statement" => {
+            // Extract the variable being assigned
+            if let Some(left) = node.child_by_field_name("left") {
+                let text = node_text(left, source);
+                return Some(SemanticInfo::AssignmentTarget(text));
+            }
+        }
+        "return_statement" => {
+            // Extract the return value
+            if let Some(value) = node.child_by_field_name("value") {
+                let text = node_text(value, source);
+                if !text.trim().is_empty() {
+                    return Some(SemanticInfo::ReturnValue(text));
+                }
+            }
+        }
+        _ => {}
+    }
+    None
+}
+
+/// Extract an identifier from a node for fallback naming.
+fn extract_identifier_from_node(node: Node, source: &[u8]) -> Option<String> {
+    // Try to find any identifier child
+    let mut cursor = node.walk();
+    for child in node.named_children(&mut cursor) {
+        if child.kind().contains("identifier") {
+            return Some(node_text(child, source));
         }
     }
     None
