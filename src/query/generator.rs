@@ -22,13 +22,6 @@ pub struct QueryContext<'a> {
     pub tree: &'a Tree,
 }
 
-/// A selected target node with its metadata.
-pub struct TargetNode<'a> {
-    pub node: Node<'a>,
-    pub name: Option<String>,
-    pub semantic_info: Option<SemanticInfo>,
-}
-
 /// Semantic information that can distinguish a node from others of the same type.
 #[derive(Clone, Debug)]
 #[allow(dead_code)]
@@ -43,19 +36,6 @@ pub enum SemanticInfo {
     ReturnValue(String),
     /// For binary expressions: the operator.
     BinaryOperator(String),
-}
-
-/// Strategy for generating tree-sitter queries.
-pub trait QueryStrategy: Send + Sync {
-    /// Select the target node for a given byte range.
-    fn select_target<'a>(&self, ctx: &QueryContext<'a>) -> Result<TargetNode<'a>>;
-
-    /// Build a query from the target node.
-    fn build_query<'a>(
-        &self,
-        ctx: &QueryContext<'a>,
-        target: &TargetNode<'a>,
-    ) -> Result<String>;
 }
 
 /// One entry in the structural path from root to target.
@@ -80,15 +60,6 @@ struct NameInfo {
     text: String,
 }
 
-/// Available strategies for query generation.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum StrategyType {
-    /// Target named declarations (functions, classes, etc.)
-    Declaration,
-    /// Target specific statements or expressions.
-    FineGrained,
-}
-
 /// Given a parsed tree and a byte range, generate a tree-sitter query that uniquely
 /// identifies the target node.
 pub fn generate_query(
@@ -96,33 +67,6 @@ pub fn generate_query(
     source: &[u8],
     byte_range: (usize, usize),
     language: &Language,
-    strategy_type: StrategyType,
-) -> Result<GeneratedQuery> {
-    match strategy_type {
-        StrategyType::Declaration => generate_query_with_strategy(
-            tree,
-            source,
-            byte_range,
-            language,
-            &DeclarationStrategy,
-        ),
-        StrategyType::FineGrained => generate_query_with_strategy(
-            tree,
-            source,
-            byte_range,
-            language,
-            &FineGrainedStrategy,
-        ),
-    }
-}
-
-/// Generate a query using a specific strategy.
-pub fn generate_query_with_strategy(
-    tree: &Tree,
-    source: &[u8],
-    byte_range: (usize, usize),
-    language: &Language,
-    strategy: &impl QueryStrategy,
 ) -> Result<GeneratedQuery> {
     let ctx = QueryContext {
         source,
@@ -132,21 +76,138 @@ pub fn generate_query_with_strategy(
         tree,
     };
 
-    // Select the target node
-    let target = strategy.select_target(&ctx)?;
+    // 1. Select target node (favoring named declarations)
+    let node = find_target_node(&ctx.root, ctx.source, ctx.byte_range)?;
 
-    // Build the query
-    let base_query = strategy.build_query(&ctx, &target)?;
+    // 2. Extract metadata
+    let name = extract_name_info(node, ctx.source)
+        .map(|info| info.text)
+        .or_else(|| extract_identifier_from_node(node, ctx.source));
+    let semantic_info = extract_semantic_info(node, ctx.source);
 
-    // Disambiguate if necessary by adding parent context
-    let query = disambiguate_query(base_query, target.node, &ctx)?;
+    // 3. Build the base query
+    let base_query = build_base_query(node, name.as_deref(), semantic_info, ctx.source)?;
+
+    // 4. Disambiguate and anchor
+    let query = disambiguate_query(base_query, node, &ctx)?;
 
     Ok(GeneratedQuery {
         query,
-        target_node_type: target.node.kind().to_string(),
-        target_name: target.name.clone(),
-        byte_range: (target.node.start_byte(), target.node.end_byte()),
+        target_node_type: node.kind().to_string(),
+        target_name: name,
+        byte_range: (node.start_byte(), node.end_byte()),
     })
+}
+
+/// Find the most appropriate target node for a declaration-favored search.
+fn find_target_node<'a>(
+    root: &Node<'a>,
+    source: &[u8],
+    byte_range: (usize, usize),
+) -> Result<Node<'a>> {
+    let mut start = byte_range.0;
+    let mut end = byte_range.1;
+
+    // Trim whitespace
+    while start < end && (source[start] as char).is_whitespace() {
+        start += 1;
+    }
+    while end > start && (source[end - 1] as char).is_whitespace() {
+        end -= 1;
+    }
+
+    let node = root
+        .descendant_for_byte_range(start, end)
+        .ok_or_else(|| Error::TreeSitter("no node found at byte range".into()))?;
+
+    // First, try to find a declaration that is contained within the trimmed range.
+    if let Some(inner) = find_declaration_within(*root, (start, end)) {
+        return Ok(inner);
+    }
+
+    // Otherwise, walk up from the deepest node to the nearest named declaration.
+    Ok(walk_to_named_declaration(node))
+}
+
+fn build_base_query(
+    node: Node,
+    name: Option<&str>,
+    semantic_info: Option<SemanticInfo>,
+    source: &[u8],
+) -> Result<String> {
+    if let Some(ref semantic) = semantic_info {
+        match semantic {
+            SemanticInfo::IfCondition(cond) => {
+                return Ok(format!(
+                    "({} condition: (_) @cond) @target\n  (#eq? @cond \"{}\")",
+                    node.kind(),
+                    escape_query_text(cond)
+                ));
+            }
+            SemanticInfo::CallTarget(func) => {
+                let (child, field) = node
+                    .child_by_field_name("function")
+                    .map(|c| (c, Some("function")))
+                    .or_else(|| node.named_child(0).map(|c| (c, None)))
+                    .ok_or_else(|| {
+                        Error::TreeSitter("call target missing function child".into())
+                    })?;
+
+                if let Some(field) = field {
+                    return Ok(format!(
+                        "({} {}: ({}) @func) @target\n  (#eq? @func \"{}\")",
+                        node.kind(),
+                        field,
+                        child.kind(),
+                        escape_query_text(func)
+                    ));
+                } else {
+                    return Ok(format!(
+                        "({} ({}) @func) @target\n  (#eq? @func \"{}\")",
+                        node.kind(),
+                        child.kind(),
+                        escape_query_text(func)
+                    ));
+                }
+            }
+            SemanticInfo::AssignmentTarget(target_name) => {
+                return Ok(format!(
+                    "({} left: (_) @left) @target\n  (#eq? @left \"{}\")",
+                    node.kind(),
+                    escape_query_text(target_name)
+                ));
+            }
+            SemanticInfo::ReturnValue(val) => {
+                return Ok(format!(
+                    "({} value: (_) @val) @target\n  (#eq? @val \"{}\")",
+                    node.kind(),
+                    escape_query_text(val)
+                ));
+            }
+            SemanticInfo::BinaryOperator(op) => {
+                return Ok(format!(
+                    "({} operator: \"{}\") @target",
+                    node.kind(),
+                    escape_query_text(op)
+                ));
+            }
+        }
+    }
+
+    if let Some(name) = name {
+        // For leaf nodes (identifiers, literals), add a text match predicate
+        // But don't match on huge text blocks (like closures)
+        if node.named_child_count() == 0 && name.len() < 100 {
+            return Ok(format!(
+                "({}) @target\n  (#eq? @target \"{}\")",
+                node.kind(),
+                escape_query_text(name)
+            ));
+        }
+    }
+
+    // Fallback to simple type-based query
+    Ok(format!("({}) @target", node.kind()))
 }
 
 /// Helper to ensure a query is unique by walking up parents if it matches multiple nodes.
@@ -200,15 +261,23 @@ fn disambiguate_query(
             inner_type: n.inner_type.clone(),
             text: n.text.clone(),
         });
-        
+
+        // Anchor is a named ancestor (excluding the target node)
+        let has_named_ancestor = |p: &[PathEntry]| {
+             p.len() > 1 && p[0..p.len()-1].iter().any(|entry| entry.name_info.is_some())
+        };
+
         let query = build_tier1_query(&named_target_path);
-        if matcher::run_query(&query, ctx.tree, ctx.source, ctx.language)?.len() == 1 {
+        let match_count = matcher::run_query(&query, ctx.tree, ctx.source, ctx.language)?.len();
+        
+        if match_count == 1 && (has_named_ancestor(&named_target_path) || path_len == depth) {
             return Ok(query);
         }
 
-        // Try without any names (lower priority, but more robust than ambiguous names)
+        // Try without any names (lower priority)
         let query = build_tier1_query(sub_path);
-        if matcher::run_query(&query, ctx.tree, ctx.source, ctx.language)?.len() == 1 {
+        let match_count = matcher::run_query(&query, ctx.tree, ctx.source, ctx.language)?.len();
+        if match_count == 1 && (has_named_ancestor(&sub_path) || path_len == depth) {
             return Ok(query);
         }
 
@@ -224,7 +293,8 @@ fn disambiguate_query(
             });
 
             let query = build_tier1_query(&named_path);
-            if matcher::run_query(&query, ctx.tree, ctx.source, ctx.language)?.len() == 1 {
+            let match_count = matcher::run_query(&query, ctx.tree, ctx.source, ctx.language)?.len();
+            if match_count == 1 && (has_named_ancestor(&named_path) || path_len == depth) {
                 return Ok(query);
             }
         }
@@ -252,71 +322,12 @@ pub fn generate_query_for_node(
     source: &[u8],
     language: &Language,
 ) -> Result<GeneratedQuery> {
-    generate_query_with_strategy(
+    generate_query(
         tree,
         source,
         (node.start_byte(), node.end_byte()),
         language,
-        &DeclarationStrategy,
     )
-}
-
-/// Find the tightest meaningful node for a given byte range.
-/// If it's a point range, find the deepest named node.
-/// If it's a multi-byte range, find the smallest node covering it.
-fn find_tightest_node<'a>(
-    root: &Node<'a>,
-    source: &[u8],
-    byte_range: (usize, usize),
-) -> Result<Node<'a>> {
-    let mut start = byte_range.0;
-    let mut end = byte_range.1;
-
-    // Trim whitespace
-    while start < end && (source[start] as char).is_whitespace() {
-        start += 1;
-    }
-    while end > start && (source[end - 1] as char).is_whitespace() {
-        end -= 1;
-    }
-
-    if start == end {
-        // Point range: pick the deepest named node at this position
-        let mut node = root
-            .descendant_for_byte_range(start, start)
-            .ok_or_else(|| Error::TreeSitter("no node found at position".into()))?;
-
-        // If the node is very large (e.g. it includes trailing whitespace), 
-        // try to find a tighter child that also contains the point.
-        while let Some(tighter_child) = find_tighter_child(node, start) {
-            node = tighter_child;
-        }
-
-        // Walk up to the nearest named node if we hit an anonymous one
-        while !node.is_named() {
-            if let Some(parent) = node.parent() {
-                node = parent;
-            } else {
-                break;
-            }
-        }
-        Ok(node)
-    } else {
-        // Range: pick the smallest node covering it
-        let mut node = root
-            .descendant_for_byte_range(start, end)
-            .ok_or_else(|| Error::TreeSitter("no node found at byte range".into()))?;
-
-        // Walk up to the nearest named node if we hit an anonymous one
-        while !node.is_named() {
-            if let Some(parent) = node.parent() {
-                node = parent;
-            } else {
-                break;
-            }
-        }
-        Ok(node)
-    }
 }
 
 /// Helper to find a smaller child node that still contains the point.
@@ -334,32 +345,6 @@ fn find_tighter_child(node: Node, point: usize) -> Option<Node> {
         }
     }
     None
-}
-
-/// Find the smallest named node that spans the given byte range.
-fn find_target_node<'a>(root: &Node<'a>, source: &[u8], byte_range: (usize, usize)) -> Result<Node<'a>> {
-    // Trim whitespace from the range
-    let mut start = byte_range.0;
-    let mut end = byte_range.1;
-
-    while start < end && (source[start] as char).is_whitespace() {
-        start += 1;
-    }
-    while end > start && (source[end - 1] as char).is_whitespace() {
-        end -= 1;
-    }
-
-    let node = root
-        .descendant_for_byte_range(start, end)
-        .ok_or_else(|| Error::TreeSitter("no node found at byte range".into()))?;
-
-    // First, try to find a declaration that is contained within the trimmed range.
-    if let Some(inner) = find_declaration_within(*root, (start, end)) {
-        return Ok(inner);
-    }
-
-    // Otherwise, walk up from the deepest node to the nearest declaration.
-    Ok(walk_to_named_declaration(node))
 }
 
 /// Find the largest declaration node whose span is contained within the given byte range.
@@ -394,6 +379,51 @@ fn find_declaration_within(node: Node, byte_range: (usize, usize)) -> Option<Nod
 
     search(node, byte_range, &mut best);
     best
+}
+
+/// Walk up to the nearest named declaration node (function, class, struct, enum, etc).
+fn walk_to_named_declaration(mut node: Node) -> Node {
+    // If we're already on a non-local declaration, use it
+    if DECLARATION_TYPES.contains(&node.kind()) && !is_local_declaration(node) {
+        return node;
+    }
+
+    // Walk up to find the nearest non-local declaration
+    while let Some(parent) = node.parent() {
+        if DECLARATION_TYPES.contains(&parent.kind()) && !is_local_declaration(parent) {
+            return parent;
+        }
+        // Stop at source_file
+        if is_root_node(parent.kind()) {
+            break;
+        }
+        node = parent;
+    }
+
+    // Fall back to the original node if no non-local declaration found
+    node
+}
+
+/// Check if a declaration node is likely a local variable/constant.
+fn is_local_declaration(node: Node) -> bool {
+    let kind = node.kind();
+    if kind != "property_declaration" && kind != "variable_declaration" && kind != "lexical_declaration" {
+        return false;
+    }
+
+    // Check ancestors: if we're inside a function or closure, it's local
+    let mut current = node;
+    while let Some(parent) = current.parent() {
+        let pk = parent.kind();
+        if pk.contains("function") || pk.contains("method") || pk.contains("lambda") || pk == "closure_expression" {
+            return true;
+        }
+        if is_root_node(pk) {
+            break;
+        }
+        current = parent;
+    }
+    false
 }
 
 const DECLARATION_TYPES: &[&str] = &[
@@ -446,29 +476,6 @@ const DECLARATION_TYPES: &[&str] = &[
     "initialized_identifier",
     "enum_constant",
 ];
-
-/// Walk up to the nearest named declaration node (function, class, struct, enum, etc).
-fn walk_to_named_declaration(mut node: Node) -> Node {
-    // If we're already on a non-local declaration, use it
-    if DECLARATION_TYPES.contains(&node.kind()) && !is_local_declaration(node) {
-        return node;
-    }
-
-    // Walk up to find the nearest non-local declaration
-    while let Some(parent) = node.parent() {
-        if DECLARATION_TYPES.contains(&parent.kind()) && !is_local_declaration(parent) {
-            return parent;
-        }
-        // Stop at source_file
-        if is_root_node(parent.kind()) {
-            break;
-        }
-        node = parent;
-    }
-
-    // Fall back to the original node if no non-local declaration found
-    node
-}
 
 /// Build the structural path from the target node up to (but not including) the root.
 /// Body nodes (class_body, etc.) are included to ensure the query nesting matches the AST.
@@ -651,28 +658,6 @@ fn is_root_node(kind: &str) -> bool {
     matches!(kind, "source_file" | "program" | "module" | "compilation_unit")
 }
 
-/// Check if a declaration node is likely a local variable/constant.
-fn is_local_declaration(node: Node) -> bool {
-    let kind = node.kind();
-    if kind != "property_declaration" && kind != "variable_declaration" && kind != "lexical_declaration" {
-        return false;
-    }
-
-    // Check ancestors: if we're inside a function or closure, it's local
-    let mut current = node;
-    while let Some(parent) = current.parent() {
-        let pk = parent.kind();
-        if pk.contains("function") || pk.contains("method") || pk.contains("lambda") || pk == "closure_expression" {
-            return true;
-        }
-        if is_root_node(pk) {
-            break;
-        }
-        current = parent;
-    }
-    false
-}
-
 /// Build a Tier 1 (exact) S-expression query from the structural path.
 fn build_tier1_query(path: &[PathEntry]) -> String {
     if path.is_empty() {
@@ -776,176 +761,6 @@ fn escape_query_text(text: &str) -> String {
         .replace('\r', "\\r")
 }
 
-// ============================================================================
-// Query Strategy Implementations
-// ============================================================================
-
-/// The default declaration-based query strategy.
-///
-/// This strategy targets named declarations (functions, classes, etc.)
-/// and builds structural queries using ancestor chains.
-pub struct DeclarationStrategy;
-
-impl QueryStrategy for DeclarationStrategy {
-    fn select_target<'a>(&self, ctx: &QueryContext<'a>) -> Result<TargetNode<'a>> {
-        let target_node = find_target_node(&ctx.root, ctx.source, ctx.byte_range)?;
-
-        Ok(TargetNode {
-            node: target_node,
-            name: extract_name_info(target_node, ctx.source).map(|info| info.text),
-            semantic_info: None,
-        })
-    }
-
-    fn build_query<'a>(
-        &self,
-        ctx: &QueryContext<'a>,
-        target: &TargetNode<'a>,
-    ) -> Result<String> {
-        let path = build_structural_path(target.node, ctx.source);
-        Ok(build_tier1_query(&path))
-    }
-}
-
-/// A fine-grained targeting strategy that targets statements and expressions.
-///
-/// This strategy targets the actual node containing the user's range
-/// rather than walking up to a declaration.
-pub struct FineGrainedStrategy;
-
-impl QueryStrategy for FineGrainedStrategy {
-    fn select_target<'a>(&self, ctx: &QueryContext<'a>) -> Result<TargetNode<'a>> {
-        let mut node = find_tightest_node(&ctx.root, ctx.source, ctx.byte_range)?;
-
-        // For fine-grained targeting, we want to descend into blocks to find the
-        // actual statement or expression.
-        while is_body_node(node.kind()) {
-            let mut found_child = false;
-            let mut cursor = node.walk();
-
-            for child in node.named_children(&mut cursor) {
-                if child.start_byte() < ctx.byte_range.1 && child.end_byte() > ctx.byte_range.0 {
-                    node = child;
-                    found_child = true;
-                    break;
-                }
-            }
-
-            if !found_child {
-                break;
-            }
-
-            // If we found a node with semantic info, stop here
-            if extract_semantic_info(node, ctx.source).is_some() {
-                break;
-            }
-        }
-
-        // Extract semantic information for disambiguation
-        let semantic_info = extract_semantic_info(node, ctx.source);
-        let name = extract_name_info(node, ctx.source)
-            .map(|info| info.text)
-            .or_else(|| extract_identifier_from_node(node, ctx.source));
-
-        // Final safety check: if we're still on a body node but it's very large,
-        // and we have no name/semantic info, try to pick the first interesting child.
-        let node = if is_body_node(node.kind()) && name.is_none() && semantic_info.is_none() {
-            node.named_child(0).unwrap_or(node)
-        } else {
-            node
-        };
-
-        Ok(TargetNode {
-            node,
-            name: extract_name_info(node, ctx.source)
-                .map(|info| info.text)
-                .or_else(|| extract_identifier_from_node(node, ctx.source)),
-            semantic_info: extract_semantic_info(node, ctx.source),
-        })
-    }
-
-    fn build_query<'a>(
-        &self,
-        _ctx: &QueryContext<'a>,
-        target: &TargetNode<'a>,
-    ) -> Result<String> {
-        if let Some(ref semantic) = target.semantic_info {
-            match semantic {
-                SemanticInfo::IfCondition(cond) => {
-                    return Ok(format!(
-                        "({} condition: (_) @cond) @target\n  (#eq? @cond \"{}\")",
-                        target.node.kind(),
-                        escape_query_text(cond)
-                    ));
-                }
-                SemanticInfo::CallTarget(func) => {
-                    let (child, field) = target
-                        .node
-                        .child_by_field_name("function")
-                        .map(|c| (c, Some("function")))
-                        .or_else(|| target.node.named_child(0).map(|c| (c, None)))
-                        .ok_or_else(|| {
-                            Error::TreeSitter("call target missing function child".into())
-                        })?;
-
-                    if let Some(field) = field {
-                        return Ok(format!(
-                            "({} {}: ({}) @func) @target\n  (#eq? @func \"{}\")",
-                            target.node.kind(),
-                            field,
-                            child.kind(),
-                            escape_query_text(func)
-                        ));
-                    } else {
-                        return Ok(format!(
-                            "({} ({}) @func) @target\n  (#eq? @func \"{}\")",
-                            target.node.kind(),
-                            child.kind(),
-                            escape_query_text(func)
-                        ));
-                    }
-                }
-                SemanticInfo::AssignmentTarget(target_name) => {
-                    return Ok(format!(
-                        "({} left: (_) @left) @target\n  (#eq? @left \"{}\")",
-                        target.node.kind(),
-                        escape_query_text(target_name)
-                    ));
-                }
-                SemanticInfo::ReturnValue(val) => {
-                    return Ok(format!(
-                        "({} value: (_) @val) @target\n  (#eq? @val \"{}\")",
-                        target.node.kind(),
-                        escape_query_text(val)
-                    ));
-                }
-                SemanticInfo::BinaryOperator(op) => {
-                    return Ok(format!(
-                        "({} operator: \"{}\") @target",
-                        target.node.kind(),
-                        escape_query_text(op)
-                    ));
-                }
-            }
-        }
-
-        if let Some(ref name) = target.name {
-            // For leaf nodes (identifiers, literals), add a text match predicate
-            // But don't match on huge text blocks (like closures)
-            if target.node.named_child_count() == 0 && name.len() < 100 {
-                return Ok(format!(
-                    "({}) @target\n  (#eq? @target \"{}\")",
-                    target.node.kind(),
-                    escape_query_text(name)
-                ));
-            }
-        }
-
-        // Fallback to simple type-based query
-        Ok(format!("({}) @target", target.node.kind()))
-    }
-}
-
 /// Extract semantic information from a node for fine-grained targeting.
 fn extract_semantic_info(node: Node, source: &[u8]) -> Option<SemanticInfo> {
     match node.kind() {
@@ -1036,7 +851,7 @@ mod tests {
         let range = find_function_byte_range(&tree, &source, "createDefaultAuthService");
         let lang = CodemarkLang::Swift.tree_sitter_language();
 
-        let result = generate_query(&tree, source.as_bytes(), range, &lang, StrategyType::Declaration).unwrap();
+        let result = generate_query(&tree, source.as_bytes(), range, &lang).unwrap();
         assert_eq!(result.target_node_type, "function_declaration");
         assert_eq!(result.target_name.as_deref(), Some("createDefaultAuthService"));
 
@@ -1052,7 +867,7 @@ mod tests {
         let range = find_function_byte_range(&tree, &source, "validateToken");
         let lang = CodemarkLang::Swift.tree_sitter_language();
 
-        let result = generate_query(&tree, source.as_bytes(), range, &lang, StrategyType::Declaration).unwrap();
+        let result = generate_query(&tree, source.as_bytes(), range, &lang).unwrap();
         assert_eq!(result.target_node_type, "function_declaration");
         assert_eq!(result.target_name.as_deref(), Some("validateToken"));
 
@@ -1067,7 +882,7 @@ mod tests {
         let range = find_function_byte_range(&tree, &source, "decode");
         let lang = CodemarkLang::Swift.tree_sitter_language();
 
-        let result = generate_query(&tree, source.as_bytes(), range, &lang, StrategyType::Declaration).unwrap();
+        let result = generate_query(&tree, source.as_bytes(), range, &lang).unwrap();
         assert_eq!(result.target_name.as_deref(), Some("decode"));
 
         let matches = matcher::run_query(&result.query, &tree, source.as_bytes(), &lang).unwrap();
@@ -1080,7 +895,7 @@ mod tests {
         let range = find_function_byte_range(&tree, &source, "invalidateCache");
         let lang = CodemarkLang::Swift.tree_sitter_language();
 
-        let result = generate_query(&tree, source.as_bytes(), range, &lang, StrategyType::Declaration).unwrap();
+        let result = generate_query(&tree, source.as_bytes(), range, &lang).unwrap();
         assert_eq!(result.target_name.as_deref(), Some("invalidateCache"));
 
         let matches = matcher::run_query(&result.query, &tree, source.as_bytes(), &lang).unwrap();
@@ -1106,7 +921,7 @@ mod tests {
 
         for func_name in functions {
             let range = find_function_byte_range(&tree, &source, func_name);
-            let result = generate_query(&tree, source.as_bytes(), range, &lang, StrategyType::Declaration).unwrap();
+            let result = generate_query(&tree, source.as_bytes(), range, &lang).unwrap();
             let matches =
                 matcher::run_query(&result.query, &tree, source.as_bytes(), &lang).unwrap();
 
@@ -1159,7 +974,7 @@ mod tests {
         let range = find_rust_function_byte_range(&tree, &source, "create_default_auth_service");
         let lang = CodemarkLang::Rust.tree_sitter_language();
 
-        let result = generate_query(&tree, source.as_bytes(), range, &lang, StrategyType::Declaration).unwrap();
+        let result = generate_query(&tree, source.as_bytes(), range, &lang).unwrap();
         assert_eq!(result.target_node_type, "function_item");
         assert_eq!(result.target_name.as_deref(), Some("create_default_auth_service"));
 
@@ -1173,7 +988,7 @@ mod tests {
         let range = find_rust_function_byte_range(&tree, &source, "decode");
         let lang = CodemarkLang::Rust.tree_sitter_language();
 
-        let result = generate_query(&tree, source.as_bytes(), range, &lang, StrategyType::Declaration).unwrap();
+        let result = generate_query(&tree, source.as_bytes(), range, &lang).unwrap();
         assert_eq!(result.target_name.as_deref(), Some("decode"));
 
         let matches = matcher::run_query(&result.query, &tree, source.as_bytes(), &lang).unwrap();
@@ -1188,7 +1003,7 @@ mod tests {
         let range = find_rust_function_byte_range(&tree, &source, "validate_token");
         let lang = CodemarkLang::Rust.tree_sitter_language();
 
-        let result = generate_query(&tree, source.as_bytes(), range, &lang, StrategyType::Declaration).unwrap();
+        let result = generate_query(&tree, source.as_bytes(), range, &lang).unwrap();
         let matches = matcher::run_query(&result.query, &tree, source.as_bytes(), &lang).unwrap();
         // Should match at least 1 (may match trait decl too if query isn't precise enough)
         assert!(!matches.is_empty(), "query:\n{}", result.query);
@@ -1200,7 +1015,7 @@ mod tests {
         let range = find_rust_function_byte_range(&tree, &source, "validate_and_check");
         let lang = CodemarkLang::Rust.tree_sitter_language();
 
-        let result = generate_query(&tree, source.as_bytes(), range, &lang, StrategyType::Declaration).unwrap();
+        let result = generate_query(&tree, source.as_bytes(), range, &lang).unwrap();
         assert_eq!(result.target_name.as_deref(), Some("validate_and_check"));
 
         let matches = matcher::run_query(&result.query, &tree, source.as_bytes(), &lang).unwrap();
@@ -1223,7 +1038,7 @@ mod tests {
 
         for func_name in functions {
             let range = find_rust_function_byte_range(&tree, &source, func_name);
-            let result = generate_query(&tree, source.as_bytes(), range, &lang, StrategyType::Declaration).unwrap();
+            let result = generate_query(&tree, source.as_bytes(), range, &lang).unwrap();
             let matches =
                 matcher::run_query(&result.query, &tree, source.as_bytes(), &lang).unwrap();
 
@@ -1271,7 +1086,7 @@ mod tests {
         let range = find_ts_function_byte_range(&tree, &source, "validateAndCheck");
         let lang = CodemarkLang::TypeScript.tree_sitter_language();
 
-        let result = generate_query(&tree, source.as_bytes(), range, &lang, StrategyType::Declaration).unwrap();
+        let result = generate_query(&tree, source.as_bytes(), range, &lang).unwrap();
         assert_eq!(result.target_name.as_deref(), Some("validateAndCheck"));
 
         let matches = matcher::run_query(&result.query, &tree, source.as_bytes(), &lang).unwrap();
@@ -1284,7 +1099,7 @@ mod tests {
         let range = find_ts_function_byte_range(&tree, &source, "validateToken");
         let lang = CodemarkLang::TypeScript.tree_sitter_language();
 
-        let result = generate_query(&tree, source.as_bytes(), range, &lang, StrategyType::Declaration).unwrap();
+        let result = generate_query(&tree, source.as_bytes(), range, &lang).unwrap();
         assert_eq!(result.target_name.as_deref(), Some("validateToken"));
 
         let matches = matcher::run_query(&result.query, &tree, source.as_bytes(), &lang).unwrap();
@@ -1297,7 +1112,7 @@ mod tests {
         let range = find_ts_function_byte_range(&tree, &source, "decode");
         let lang = CodemarkLang::TypeScript.tree_sitter_language();
 
-        let result = generate_query(&tree, source.as_bytes(), range, &lang, StrategyType::Declaration).unwrap();
+        let result = generate_query(&tree, source.as_bytes(), range, &lang).unwrap();
         assert_eq!(result.target_name.as_deref(), Some("decode"));
 
         let matches = matcher::run_query(&result.query, &tree, source.as_bytes(), &lang).unwrap();
@@ -1340,7 +1155,7 @@ mod tests {
         let range = find_py_function_byte_range(&tree, &source, "create_default_auth_service");
         let lang = CodemarkLang::Python.tree_sitter_language();
 
-        let result = generate_query(&tree, source.as_bytes(), range, &lang, StrategyType::Declaration).unwrap();
+        let result = generate_query(&tree, source.as_bytes(), range, &lang).unwrap();
         assert_eq!(result.target_name.as_deref(), Some("create_default_auth_service"));
 
         let matches = matcher::run_query(&result.query, &tree, source.as_bytes(), &lang).unwrap();
@@ -1353,7 +1168,7 @@ mod tests {
         let range = find_py_function_byte_range(&tree, &source, "validate_token");
         let lang = CodemarkLang::Python.tree_sitter_language();
 
-        let result = generate_query(&tree, source.as_bytes(), range, &lang, StrategyType::Declaration).unwrap();
+        let result = generate_query(&tree, source.as_bytes(), range, &lang).unwrap();
         assert_eq!(result.target_name.as_deref(), Some("validate_token"));
 
         let matches = matcher::run_query(&result.query, &tree, source.as_bytes(), &lang).unwrap();
@@ -1366,7 +1181,7 @@ mod tests {
         let range = find_py_function_byte_range(&tree, &source, "_decode");
         let lang = CodemarkLang::Python.tree_sitter_language();
 
-        let result = generate_query(&tree, source.as_bytes(), range, &lang, StrategyType::Declaration).unwrap();
+        let result = generate_query(&tree, source.as_bytes(), range, &lang).unwrap();
         assert_eq!(result.target_name.as_deref(), Some("_decode"));
 
         let matches = matcher::run_query(&result.query, &tree, source.as_bytes(), &lang).unwrap();
@@ -1379,7 +1194,7 @@ mod tests {
         let range = find_py_function_byte_range(&tree, &source, "require_auth");
         let lang = CodemarkLang::Python.tree_sitter_language();
 
-        let result = generate_query(&tree, source.as_bytes(), range, &lang, StrategyType::Declaration).unwrap();
+        let result = generate_query(&tree, source.as_bytes(), range, &lang).unwrap();
         assert_eq!(result.target_name.as_deref(), Some("require_auth"));
 
         let matches = matcher::run_query(&result.query, &tree, source.as_bytes(), &lang).unwrap();
@@ -1421,7 +1236,7 @@ mod tests {
         let (tree, source) = parse_go_fixture("auth_service.go");
         let range = find_go_function_range(&tree, &source, "CreateDefaultAuthService");
         let lang = CodemarkLang::Go.tree_sitter_language();
-        let result = generate_query(&tree, source.as_bytes(), range, &lang, StrategyType::Declaration).unwrap();
+        let result = generate_query(&tree, source.as_bytes(), range, &lang).unwrap();
         assert_eq!(result.target_name.as_deref(), Some("CreateDefaultAuthService"));
         let matches = matcher::run_query(&result.query, &tree, source.as_bytes(), &lang).unwrap();
         assert_eq!(matches.len(), 1, "query:\n{}", result.query);
@@ -1432,7 +1247,7 @@ mod tests {
         let (tree, source) = parse_go_fixture("auth_service.go");
         let range = find_go_function_range(&tree, &source, "ValidateToken");
         let lang = CodemarkLang::Go.tree_sitter_language();
-        let result = generate_query(&tree, source.as_bytes(), range, &lang, StrategyType::Declaration).unwrap();
+        let result = generate_query(&tree, source.as_bytes(), range, &lang).unwrap();
         let matches = matcher::run_query(&result.query, &tree, source.as_bytes(), &lang).unwrap();
         assert!(!matches.is_empty(), "query:\n{}", result.query);
     }
@@ -1442,7 +1257,7 @@ mod tests {
         let (tree, source) = parse_go_fixture("auth_service.go");
         let range = find_go_function_range(&tree, &source, "decode");
         let lang = CodemarkLang::Go.tree_sitter_language();
-        let result = generate_query(&tree, source.as_bytes(), range, &lang, StrategyType::Declaration).unwrap();
+        let result = generate_query(&tree, source.as_bytes(), range, &lang).unwrap();
         assert_eq!(result.target_name.as_deref(), Some("decode"));
         let matches = matcher::run_query(&result.query, &tree, source.as_bytes(), &lang).unwrap();
         assert_eq!(matches.len(), 1, "query:\n{}", result.query);
@@ -1457,7 +1272,7 @@ mod tests {
         parser.parse_file(&fixture).unwrap()
     }
 
-    fn find_java_method_range(tree: &Tree, source: &str, method_name: &str) -> (usize, usize) {
+    fn find_java_range(tree: &Tree, source: &str, method_name: &str) -> (usize, usize) {
         fn search(node: Node, source: &str, name: &str) -> Option<(usize, usize)> {
             if (node.kind() == "method_declaration" || node.kind() == "constructor_declaration")
                 && let Some(name_node) = node.child_by_field_name("name")
@@ -1480,9 +1295,9 @@ mod tests {
     #[test]
     fn java_method() {
         let (tree, source) = parse_java_fixture("AuthService.java");
-        let range = find_java_method_range(&tree, &source, "validateToken");
+        let range = find_java_range(&tree, &source, "validateToken");
         let lang = CodemarkLang::Java.tree_sitter_language();
-        let result = generate_query(&tree, source.as_bytes(), range, &lang, StrategyType::Declaration).unwrap();
+        let result = generate_query(&tree, source.as_bytes(), range, &lang).unwrap();
         assert_eq!(result.target_name.as_deref(), Some("validateToken"));
         let matches = matcher::run_query(&result.query, &tree, source.as_bytes(), &lang).unwrap();
         assert_eq!(matches.len(), 1, "query:\n{}", result.query);
@@ -1491,9 +1306,9 @@ mod tests {
     #[test]
     fn java_private_method() {
         let (tree, source) = parse_java_fixture("AuthService.java");
-        let range = find_java_method_range(&tree, &source, "decode");
+        let range = find_java_range(&tree, &source, "decode");
         let lang = CodemarkLang::Java.tree_sitter_language();
-        let result = generate_query(&tree, source.as_bytes(), range, &lang, StrategyType::Declaration).unwrap();
+        let result = generate_query(&tree, source.as_bytes(), range, &lang).unwrap();
         assert_eq!(result.target_name.as_deref(), Some("decode"));
         let matches = matcher::run_query(&result.query, &tree, source.as_bytes(), &lang).unwrap();
         assert_eq!(matches.len(), 1, "query:\n{}", result.query);
@@ -1502,9 +1317,9 @@ mod tests {
     #[test]
     fn java_static_method() {
         let (tree, source) = parse_java_fixture("AuthService.java");
-        let range = find_java_method_range(&tree, &source, "createDefault");
+        let range = find_java_range(&tree, &source, "createDefault");
         let lang = CodemarkLang::Java.tree_sitter_language();
-        let result = generate_query(&tree, source.as_bytes(), range, &lang, StrategyType::Declaration).unwrap();
+        let result = generate_query(&tree, source.as_bytes(), range, &lang).unwrap();
         assert_eq!(result.target_name.as_deref(), Some("createDefault"));
         let matches = matcher::run_query(&result.query, &tree, source.as_bytes(), &lang).unwrap();
         assert_eq!(matches.len(), 1, "query:\n{}", result.query);
@@ -1519,7 +1334,7 @@ mod tests {
         parser.parse_file(&fixture).unwrap()
     }
 
-    fn find_csharp_method_range(tree: &Tree, source: &str, method_name: &str) -> (usize, usize) {
+    fn find_csharp_range(tree: &Tree, source: &str, method_name: &str) -> (usize, usize) {
         fn search(node: Node, source: &str, name: &str) -> Option<(usize, usize)> {
             if node.kind() == "method_declaration"
                 && let Some(name_node) = node.child_by_field_name("name")
@@ -1542,9 +1357,9 @@ mod tests {
     #[test]
     fn csharp_method() {
         let (tree, source) = parse_csharp_fixture("AuthService.cs");
-        let range = find_csharp_method_range(&tree, &source, "ValidateToken");
+        let range = find_csharp_range(&tree, &source, "ValidateToken");
         let lang = CodemarkLang::CSharp.tree_sitter_language();
-        let result = generate_query(&tree, source.as_bytes(), range, &lang, StrategyType::Declaration).unwrap();
+        let result = generate_query(&tree, source.as_bytes(), range, &lang).unwrap();
         assert_eq!(result.target_name.as_deref(), Some("ValidateToken"));
         let matches = matcher::run_query(&result.query, &tree, source.as_bytes(), &lang).unwrap();
         assert_eq!(matches.len(), 1, "query:\n{}", result.query);
@@ -1553,9 +1368,9 @@ mod tests {
     #[test]
     fn csharp_private_method() {
         let (tree, source) = parse_csharp_fixture("AuthService.cs");
-        let range = find_csharp_method_range(&tree, &source, "Decode");
+        let range = find_csharp_range(&tree, &source, "Decode");
         let lang = CodemarkLang::CSharp.tree_sitter_language();
-        let result = generate_query(&tree, source.as_bytes(), range, &lang, StrategyType::Declaration).unwrap();
+        let result = generate_query(&tree, source.as_bytes(), range, &lang).unwrap();
         assert_eq!(result.target_name.as_deref(), Some("Decode"));
         let matches = matcher::run_query(&result.query, &tree, source.as_bytes(), &lang).unwrap();
         assert_eq!(matches.len(), 1, "query:\n{}", result.query);
@@ -1564,9 +1379,9 @@ mod tests {
     #[test]
     fn csharp_static_method() {
         let (tree, source) = parse_csharp_fixture("AuthService.cs");
-        let range = find_csharp_method_range(&tree, &source, "CreateDefault");
+        let range = find_csharp_range(&tree, &source, "CreateDefault");
         let lang = CodemarkLang::CSharp.tree_sitter_language();
-        let result = generate_query(&tree, source.as_bytes(), range, &lang, StrategyType::Declaration).unwrap();
+        let result = generate_query(&tree, source.as_bytes(), range, &lang).unwrap();
         assert_eq!(result.target_name.as_deref(), Some("CreateDefault"));
         let matches = matcher::run_query(&result.query, &tree, source.as_bytes(), &lang).unwrap();
         assert_eq!(matches.len(), 1, "query:\n{}", result.query);
@@ -1588,7 +1403,7 @@ mod tests {
         let offset = source.find("createDefaultAuthService").unwrap();
         let range = (offset, offset + 10);
         let lang = CodemarkLang::Dart.tree_sitter_language();
-        let result = generate_query(&tree, source.as_bytes(), range, &lang, StrategyType::Declaration).unwrap();
+        let result = generate_query(&tree, source.as_bytes(), range, &lang).unwrap();
         assert_eq!(result.target_name.as_deref(), Some("createDefaultAuthService"));
         let matches = matcher::run_query(&result.query, &tree, source.as_bytes(), &lang).unwrap();
         assert_eq!(matches.len(), 1, "query:\n{}", result.query);
@@ -1600,7 +1415,7 @@ mod tests {
         let offset = source.find("Claims _decode").unwrap();
         let range = (offset, offset + 10);
         let lang = CodemarkLang::Dart.tree_sitter_language();
-        let result = generate_query(&tree, source.as_bytes(), range, &lang, StrategyType::Declaration).unwrap();
+        let result = generate_query(&tree, source.as_bytes(), range, &lang).unwrap();
         let matches = matcher::run_query(&result.query, &tree, source.as_bytes(), &lang).unwrap();
         assert!(!matches.is_empty(), "query:\n{}", result.query);
     }
@@ -1611,7 +1426,7 @@ mod tests {
         let offset = source.find("enum AuthError").unwrap();
         let range = (offset, offset + 10);
         let lang = CodemarkLang::Dart.tree_sitter_language();
-        let result = generate_query(&tree, source.as_bytes(), range, &lang, StrategyType::Declaration).unwrap();
+        let result = generate_query(&tree, source.as_bytes(), range, &lang).unwrap();
         assert_eq!(result.target_name.as_deref(), Some("AuthError"));
         let matches = matcher::run_query(&result.query, &tree, source.as_bytes(), &lang).unwrap();
         assert_eq!(matches.len(), 1, "query:\n{}", result.query);
@@ -1620,14 +1435,14 @@ mod tests {
     // --- Range precision tests: method range should target method, not class ---
 
     #[test]
-    fn swift_exact_method_range_targets_method_not_class() {
+    fn swift_exact_range_targets_method_not_class() {
         let (tree, source) = parse_fixture("auth_service.swift");
         let lang = CodemarkLang::Swift.tree_sitter_language();
 
         // Get the exact byte range of validateToken
-        let method_range = find_function_byte_range(&tree, &source, "validateToken");
+        let range = find_function_byte_range(&tree, &source, "validateToken");
 
-        let result = generate_query(&tree, source.as_bytes(), method_range, &lang, StrategyType::Declaration).unwrap();
+        let result = generate_query(&tree, source.as_bytes(), range, &lang).unwrap();
         assert_eq!(
             result.target_node_type, "function_declaration",
             "should target function_declaration, not class_declaration"
@@ -1636,13 +1451,13 @@ mod tests {
     }
 
     #[test]
-    fn rust_exact_method_range_targets_method_not_impl() {
+    fn rust_exact_range_targets_method_not_impl() {
         let (tree, source) = parse_rust_fixture("auth_service.rs");
         let lang = CodemarkLang::Rust.tree_sitter_language();
 
-        let method_range = find_rust_function_byte_range(&tree, &source, "decode");
+        let range = find_rust_function_byte_range(&tree, &source, "decode");
 
-        let result = generate_query(&tree, source.as_bytes(), method_range, &lang, StrategyType::Declaration).unwrap();
+        let result = generate_query(&tree, source.as_bytes(), range, &lang).unwrap();
         assert_eq!(
             result.target_node_type, "function_item",
             "should target function_item, not impl_item"
@@ -1651,13 +1466,13 @@ mod tests {
     }
 
     #[test]
-    fn ts_exact_method_range_targets_method_not_class() {
+    fn ts_exact_range_targets_method_not_class() {
         let (tree, source) = parse_ts_fixture("auth_service.ts");
         let lang = CodemarkLang::TypeScript.tree_sitter_language();
 
-        let method_range = find_ts_function_byte_range(&tree, &source, "validateToken");
+        let range = find_ts_function_byte_range(&tree, &source, "validateToken");
 
-        let result = generate_query(&tree, source.as_bytes(), method_range, &lang, StrategyType::Declaration).unwrap();
+        let result = generate_query(&tree, source.as_bytes(), range, &lang).unwrap();
         assert_eq!(
             result.target_node_type, "method_definition",
             "should target method_definition, not class_declaration"
@@ -1666,13 +1481,13 @@ mod tests {
     }
 
     #[test]
-    fn py_exact_method_range_targets_method_not_class() {
+    fn py_exact_range_targets_method_not_class() {
         let (tree, source) = parse_py_fixture("auth_service.py");
         let lang = CodemarkLang::Python.tree_sitter_language();
 
-        let method_range = find_py_function_byte_range(&tree, &source, "validate_token");
+        let range = find_py_function_byte_range(&tree, &source, "validate_token");
 
-        let result = generate_query(&tree, source.as_bytes(), method_range, &lang, StrategyType::Declaration).unwrap();
+        let result = generate_query(&tree, source.as_bytes(), range, &lang).unwrap();
         assert_eq!(
             result.target_node_type, "function_definition",
             "should target function_definition, not class_definition"
@@ -1681,13 +1496,13 @@ mod tests {
     }
 
     #[test]
-    fn go_exact_method_range_targets_method() {
+    fn go_exact_range_targets_method() {
         let (tree, source) = parse_go_fixture("auth_service.go");
         let lang = CodemarkLang::Go.tree_sitter_language();
 
-        let method_range = find_go_function_range(&tree, &source, "ValidateToken");
+        let range = find_go_function_range(&tree, &source, "ValidateToken");
 
-        let result = generate_query(&tree, source.as_bytes(), method_range, &lang, StrategyType::Declaration).unwrap();
+        let result = generate_query(&tree, source.as_bytes(), range, &lang).unwrap();
         assert_eq!(
             result.target_node_type, "method_declaration",
             "should target method_declaration"
@@ -1695,13 +1510,13 @@ mod tests {
     }
 
     #[test]
-    fn java_exact_method_range_targets_method_not_class() {
+    fn java_exact_range_targets_method_not_class() {
         let (tree, source) = parse_java_fixture("AuthService.java");
         let lang = CodemarkLang::Java.tree_sitter_language();
 
-        let method_range = find_java_method_range(&tree, &source, "validateToken");
+        let range = find_java_range(&tree, &source, "validateToken");
 
-        let result = generate_query(&tree, source.as_bytes(), method_range, &lang, StrategyType::Declaration).unwrap();
+        let result = generate_query(&tree, source.as_bytes(), range, &lang).unwrap();
         assert_eq!(
             result.target_node_type, "method_declaration",
             "should target method_declaration, not class_declaration"
@@ -1710,8 +1525,8 @@ mod tests {
     }
 
     #[test]
-    fn single_line_inside_method_targets_method_not_class() {
-        // A single line inside a method should still target the enclosing method
+    fn single_line_inside_method_targets_anchored_declaration() {
+        // A single line inside a method should target the enclosing method
         let (tree, source) = parse_rust_fixture("auth_service.rs");
         let lang = CodemarkLang::Rust.tree_sitter_language();
 
@@ -1720,10 +1535,10 @@ mod tests {
         let line_50_end = line_50_start + source.lines().nth(49).unwrap_or("").len();
 
         let result =
-            generate_query(&tree, source.as_bytes(), (line_50_start, line_50_end), &lang, StrategyType::Declaration).unwrap();
+            generate_query(&tree, source.as_bytes(), (line_50_start, line_50_end), &lang).unwrap();
         assert_eq!(
             result.target_node_type, "function_item",
-            "single line inside method should target function_item, not impl_item or struct_item"
+            "single line inside method should target the enclosing declaration"
         );
     }
 }

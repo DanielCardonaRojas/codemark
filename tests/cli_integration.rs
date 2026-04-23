@@ -2785,11 +2785,8 @@ let json = cm.run_json(&[
     &cm.fixture(fixture),
     "--range",
     &range,
-    "--strategy",
-    "fine-grained",
     "--dry-run",
 ]);
-
 // Fine-grained strategy targets the exact node
 let node_type = json["data"]["node_type"].as_str().unwrap();
 assert_eq!(node_type, "boolean_literal");

@@ -107,22 +107,6 @@ pub enum Command {
 
 // --- Subcommand argument structs ---
 
-#[derive(Debug, Clone, Copy, ValueEnum, Default)]
-pub enum QueryStrategyType {
-    #[default]
-    Declaration,
-    FineGrained,
-}
-
-impl From<QueryStrategyType> for crate::query::generator::StrategyType {
-    fn from(s: QueryStrategyType) -> Self {
-        match s {
-            QueryStrategyType::Declaration => crate::query::generator::StrategyType::Declaration,
-            QueryStrategyType::FineGrained => crate::query::generator::StrategyType::FineGrained,
-        }
-    }
-}
-
 #[derive(Debug, clap::Args)]
 pub struct AddArgs {
     /// Path to the file (relative or absolute)
@@ -164,10 +148,6 @@ pub struct AddArgs {
     /// Add bookmark to this collection (auto-creates if it doesn't exist)
     #[arg(long)]
     pub collection: Option<String>,
-
-    /// Query generation strategy: declaration (default) or fine-grained
-    #[arg(long, value_enum, default_value_t = QueryStrategyType::Declaration)]
-    pub strategy: QueryStrategyType,
 }
 
 #[derive(Debug, clap::Args)]
@@ -203,10 +183,6 @@ pub struct AddFromSnippetArgs {
     /// Add bookmark to this collection (auto-creates if it doesn't exist)
     #[arg(long)]
     pub collection: Option<String>,
-
-    /// Query generation strategy: declaration (default) or fine-grained
-    #[arg(long, value_enum, default_value_t = QueryStrategyType::Declaration)]
-    pub strategy: QueryStrategyType,
 }
 
 #[derive(Debug, clap::Args)]

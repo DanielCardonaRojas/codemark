@@ -2,6 +2,12 @@
 source: tests/query_snapshots.rs
 expression: result.query
 ---
-(navigation_expression
-  ((simple_identifier) @target
-    (#eq? @target "queue")))
+(function_declaration
+  name: (simple_identifier) @name0
+  (#eq? @name0 "update")
+  (function_body
+    (statements
+      (call_expression
+        (navigation_expression
+          ((simple_identifier) @target
+            (#eq? @target "queue")))))))

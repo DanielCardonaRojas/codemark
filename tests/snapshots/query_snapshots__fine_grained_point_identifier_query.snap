@@ -2,7 +2,14 @@
 source: tests/query_snapshots.rs
 expression: result.query
 ---
-(lambda_literal
-  (statements
-    (property_declaration
-      ((value_binding_pattern) @target))))
+(class_declaration
+  (class_body
+    (function_declaration
+      (function_body
+        (statements
+          (call_expression
+            (call_suffix
+              (lambda_literal
+                (statements
+                  (property_declaration
+                    ((value_binding_pattern) @target)))))))))))
