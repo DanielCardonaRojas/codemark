@@ -1,0 +1,8 @@
+---
+source: tests/query_snapshots.rs
+expression: result.query
+---
+(lambda_literal
+  (statements
+    (property_declaration
+      ((value_binding_pattern) @target))))

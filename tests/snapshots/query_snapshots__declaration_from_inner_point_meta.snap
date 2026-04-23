@@ -1,0 +1,9 @@
+---
+source: tests/query_snapshots.rs
+expression: snapshot
+---
+name: declaration_from_inner_point
+strategy: Declaration
+range: "33:14"
+node_type: function_declaration
+query: "[query stored in .scm file]"

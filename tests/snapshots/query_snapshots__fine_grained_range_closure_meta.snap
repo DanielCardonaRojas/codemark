@@ -1,0 +1,9 @@
+---
+source: tests/query_snapshots.rs
+expression: snapshot
+---
+name: fine_grained_range_closure
+strategy: FineGrained
+range: 28-37
+node_type: call_expression
+query: "[query stored in .scm file]"

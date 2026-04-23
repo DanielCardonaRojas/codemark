@@ -1,0 +1,7 @@
+---
+source: tests/query_snapshots.rs
+expression: result.query
+---
+(navigation_expression
+  ((simple_identifier) @target
+    (#eq? @target "queue")))

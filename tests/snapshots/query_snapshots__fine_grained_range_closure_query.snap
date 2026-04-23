@@ -1,0 +1,10 @@
+---
+source: tests/query_snapshots.rs
+expression: result.query
+---
+(function_declaration
+  name: (simple_identifier) @name0
+  (#eq? @name0 "update")
+  (function_body
+    (statements
+      ((call_expression) @target))))

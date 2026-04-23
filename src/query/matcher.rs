@@ -90,7 +90,7 @@ mod tests {
     #[test]
     fn dump_swift_ast_structure() {
         let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/swift/auth_service.swift");
+            .join("tests/fixtures/swift/complex_scenarios.swift");
         if !fixture.exists() {
             return;
         }
@@ -111,7 +111,7 @@ mod tests {
                 node.start_byte(),
                 node.end_byte(),
             );
-            if depth < 3 {
+            if depth < 10 {
                 let mut cursor = node.walk();
                 if cursor.goto_first_child() {
                     loop {
@@ -155,7 +155,7 @@ mod tests {
                 node.start_byte(),
                 node.end_byte(),
             );
-            if depth < 3 {
+            if depth < 10 {
                 let mut cursor = node.walk();
                 if cursor.goto_first_child() {
                     loop {
@@ -197,7 +197,7 @@ mod tests {
                 node.start_byte(),
                 node.end_byte()
             );
-            if depth < 3 {
+            if depth < 10 {
                 let mut cursor = node.walk();
                 if cursor.goto_first_child() {
                     loop {
@@ -238,7 +238,7 @@ mod tests {
                 node.start_byte(),
                 node.end_byte()
             );
-            if depth < 3 {
+            if depth < 10 {
                 let mut cursor = node.walk();
                 if cursor.goto_first_child() {
                     loop {

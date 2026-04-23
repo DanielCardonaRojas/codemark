@@ -31,6 +31,7 @@ pub struct TargetNode<'a> {
 
 /// Semantic information that can distinguish a node from others of the same type.
 #[derive(Clone, Debug)]
+#[allow(dead_code)]
 pub enum SemanticInfo {
     /// For if statements: the condition being tested.
     IfCondition(String),
@@ -58,7 +59,7 @@ pub trait QueryStrategy: Send + Sync {
 }
 
 /// One entry in the structural path from root to target.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct PathEntry {
     node_type: String,
     /// Name info for query generation.
@@ -66,7 +67,7 @@ struct PathEntry {
 }
 
 /// How to query for the "name" of a node.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct NameInfo {
     /// The field name used in the parent (usually "name", but "type" for Rust impl_item)
     /// If None, the name is matched as a descendant without a specific field.
@@ -135,16 +136,10 @@ pub fn generate_query_with_strategy(
     let target = strategy.select_target(&ctx)?;
 
     // Build the query
-    let query = strategy.build_query(&ctx, &target)?;
+    let base_query = strategy.build_query(&ctx, &target)?;
 
-    // Validate uniqueness
-    let matches = matcher::run_query(&query, tree, source, language)?;
-    if matches.len() != 1 {
-        return Err(Error::AmbiguousQuery(format!(
-            "Generated query matched {} nodes, expected 1",
-            matches.len()
-        )));
-    }
+    // Disambiguate if necessary by adding parent context
+    let query = disambiguate_query(base_query, target.node, &ctx)?;
 
     Ok(GeneratedQuery {
         query,
@@ -152,6 +147,91 @@ pub fn generate_query_with_strategy(
         target_name: target.name.clone(),
         byte_range: (target.node.start_byte(), target.node.end_byte()),
     })
+}
+
+/// Helper to ensure a query is unique by walking up parents if it matches multiple nodes.
+fn disambiguate_query(
+    base_query: String,
+    target_node: Node,
+    ctx: &QueryContext<'_>,
+) -> Result<String> {
+    let matches = matcher::run_query(&base_query, ctx.tree, ctx.source, ctx.language)?;
+    if matches.len() == 1 {
+        return Ok(base_query);
+    }
+
+    // Too many matches or 0 matches (invalid base query)
+    // Fall back to a structural path approach that is guaranteed to be correct
+    let mut path = build_structural_path(target_node, ctx.source);
+    
+    // Progressive disambiguation:
+    // 1. Try structural path with only the target node named.
+    // 2. Try structural path with target + 1st ancestor named, etc.
+    
+    // First, clear all names in the path to start with a pure structural query
+    let mut names = Vec::new();
+    for entry in &mut path {
+        names.push(entry.name_info.take());
+    }
+
+    let depth = path.len();
+    
+    // Try increasing structural path depth
+    for path_len in 1..=depth {
+        let sub_path = &path[depth - path_len..depth];
+        
+        // Try with only target node named (highest priority)
+        let mut named_target_path = sub_path.to_vec();
+        let last = named_target_path.len() - 1;
+        named_target_path[last].name_info = names[depth - 1].as_ref().map(|n| NameInfo {
+            field: n.field.clone(),
+            direct_type: n.direct_type.clone(),
+            inner_type: n.inner_type.clone(),
+            text: n.text.clone(),
+        });
+        
+        let query = build_tier1_query(&named_target_path);
+        if matcher::run_query(&query, ctx.tree, ctx.source, ctx.language)?.len() == 1 {
+            return Ok(query);
+        }
+
+        // Try without any names (lower priority, but more robust than ambiguous names)
+        let query = build_tier1_query(sub_path);
+        if matcher::run_query(&query, ctx.tree, ctx.source, ctx.language)?.len() == 1 {
+            return Ok(query);
+        }
+
+        // Progressive disambiguation: try adding ancestor names one by one
+        let mut named_path = named_target_path;
+        for name_depth in 1..named_path.len() {
+             let idx = named_path.len() - 1 - name_depth;
+             named_path[idx].name_info = names[depth - 1 - name_depth].as_ref().map(|n| NameInfo {
+                field: n.field.clone(),
+                direct_type: n.direct_type.clone(),
+                inner_type: n.inner_type.clone(),
+                text: n.text.clone(),
+            });
+
+            let query = build_tier1_query(&named_path);
+            if matcher::run_query(&query, ctx.tree, ctx.source, ctx.language)?.len() == 1 {
+                return Ok(query);
+            }
+        }
+    }
+
+    // If still not unique, use the base_query if it was unique, 
+    // otherwise return the best we could do (which might still be ambiguous)
+    let final_query = build_tier1_query(&path);
+    let final_matches = matcher::run_query(&final_query, ctx.tree, ctx.source, ctx.language)?;
+    
+    if final_matches.len() != 1 {
+         return Err(Error::AmbiguousQuery(format!(
+            "Generated query matched {} nodes, expected 1. Try selecting a more specific range.",
+            final_matches.len()
+        )));
+    }
+
+    Ok(final_query)
 }
 
 /// Given a specific AST node, generate a tree-sitter query for it.
@@ -168,6 +248,81 @@ pub fn generate_query_for_node(
         language,
         &DeclarationStrategy,
     )
+}
+
+/// Find the tightest meaningful node for a given byte range.
+/// If it's a point range, find the deepest named node.
+/// If it's a multi-byte range, find the smallest node covering it.
+fn find_tightest_node<'a>(
+    root: &Node<'a>,
+    source: &[u8],
+    byte_range: (usize, usize),
+) -> Result<Node<'a>> {
+    let mut start = byte_range.0;
+    let mut end = byte_range.1;
+
+    // Trim whitespace
+    while start < end && (source[start] as char).is_whitespace() {
+        start += 1;
+    }
+    while end > start && (source[end - 1] as char).is_whitespace() {
+        end -= 1;
+    }
+
+    if start == end {
+        // Point range: pick the deepest named node at this position
+        let mut node = root
+            .descendant_for_byte_range(start, start)
+            .ok_or_else(|| Error::TreeSitter("no node found at position".into()))?;
+
+        // If the node is very large (e.g. it includes trailing whitespace), 
+        // try to find a tighter child that also contains the point.
+        while let Some(tighter_child) = find_tighter_child(node, start) {
+            node = tighter_child;
+        }
+
+        // Walk up to the nearest named node if we hit an anonymous one
+        while !node.is_named() {
+            if let Some(parent) = node.parent() {
+                node = parent;
+            } else {
+                break;
+            }
+        }
+        Ok(node)
+    } else {
+        // Range: pick the smallest node covering it
+        let mut node = root
+            .descendant_for_byte_range(start, end)
+            .ok_or_else(|| Error::TreeSitter("no node found at byte range".into()))?;
+
+        // Walk up to the nearest named node if we hit an anonymous one
+        while !node.is_named() {
+            if let Some(parent) = node.parent() {
+                node = parent;
+            } else {
+                break;
+            }
+        }
+        Ok(node)
+    }
+}
+
+/// Helper to find a smaller child node that still contains the point.
+fn find_tighter_child(node: Node, point: usize) -> Option<Node> {
+    let mut cursor = node.walk();
+    if cursor.goto_first_child() {
+        loop {
+            let child = cursor.node();
+            if child.start_byte() <= point && child.end_byte() > point {
+                return Some(child);
+            }
+            if !cursor.goto_next_sibling() {
+                break;
+            }
+        }
+    }
+    None
 }
 
 /// Find the smallest named node that spans the given byte range.
@@ -292,24 +447,24 @@ const DECLARATION_TYPES: &[&str] = &[
 
 /// Walk up to the nearest named declaration node (function, class, struct, enum, etc).
 fn walk_to_named_declaration(mut node: Node) -> Node {
-    // If we're already on a declaration, use it
-    if DECLARATION_TYPES.contains(&node.kind()) {
+    // If we're already on a non-local declaration, use it
+    if DECLARATION_TYPES.contains(&node.kind()) && !is_local_declaration(node) {
         return node;
     }
 
-    // Walk up to find the nearest declaration
+    // Walk up to find the nearest non-local declaration
     while let Some(parent) = node.parent() {
-        if DECLARATION_TYPES.contains(&parent.kind()) {
+        if DECLARATION_TYPES.contains(&parent.kind()) && !is_local_declaration(parent) {
             return parent;
         }
         // Stop at source_file
-        if parent.kind() == "source_file" {
+        if is_root_node(parent.kind()) {
             break;
         }
         node = parent;
     }
 
-    // Fall back to the original node
+    // Fall back to the original node if no non-local declaration found
     node
 }
 
@@ -373,6 +528,18 @@ fn extract_nested_name(node: Node, source: &[u8]) -> Option<NameInfo> {
 
 /// Direct name extraction without recursion, to avoid infinite loops.
 fn extract_name_info_direct(node: Node, source: &[u8]) -> Option<NameInfo> {
+    // If the node itself is an identifier, it is its own name.
+    // Literals (boolean_literal, etc.) should not be treated as names because they
+    // are often not searchable as node types in the same way.
+    if node.kind().contains("identifier") {
+        return Some(NameInfo {
+            field: None,
+            direct_type: node.kind().to_string(),
+            inner_type: None,
+            text: node_text(node, source),
+        });
+    }
+
     // Try the "name" field first
     if let Some(name_node) = node.child_by_field_name("name") {
         // For Swift user_type nodes (extensions), we need nested matching
@@ -482,6 +649,28 @@ fn is_root_node(kind: &str) -> bool {
     matches!(kind, "source_file" | "program" | "module" | "compilation_unit")
 }
 
+/// Check if a declaration node is likely a local variable/constant.
+fn is_local_declaration(node: Node) -> bool {
+    let kind = node.kind();
+    if kind != "property_declaration" && kind != "variable_declaration" && kind != "lexical_declaration" {
+        return false;
+    }
+
+    // Check ancestors: if we're inside a function or closure, it's local
+    let mut current = node;
+    while let Some(parent) = current.parent() {
+        let pk = parent.kind();
+        if pk.contains("function") || pk.contains("method") || pk.contains("lambda") || pk == "closure_expression" {
+            return true;
+        }
+        if is_root_node(pk) {
+            break;
+        }
+        current = parent;
+    }
+    false
+}
+
 /// Build a Tier 1 (exact) S-expression query from the structural path.
 fn build_tier1_query(path: &[PathEntry]) -> String {
     if path.is_empty() {
@@ -545,11 +734,10 @@ fn build_tier1_query(path: &[PathEntry]) -> String {
                 }
             }
             if info.field.is_none() {
-                // If it's a descendant name, match against the whole node text
-                // using a word-boundary-like match to be safe.
-                // This MUST be an outer predicate for the target.
+                // If it's a descendant name, match against the whole node text.
+                // We use #eq? for exact match which is safer than regex #match? for code blocks.
                 let cap = if is_target { "target" } else { &capture_name };
-                outer_predicate = format!("\n{pad}  (#match? @{} \"\\\\b{}\\\\b\")", cap, escape_query_text(&info.text));
+                outer_predicate = format!("\n{pad}  (#eq? @{} \"{}\")", cap, escape_query_text(&info.text));
             } else {
                 inner_predicate = format!("\n{pad}  (#eq? @{} \"{}\")", capture_name, escape_query_text(&info.text));
             };
@@ -580,7 +768,10 @@ fn build_tier1_query(path: &[PathEntry]) -> String {
 }
 
 fn escape_query_text(text: &str) -> String {
-    text.replace('\\', "\\\\").replace('"', "\\\"")
+    text.replace('\\', "\\\\")
+        .replace('"', "\\\"")
+        .replace('\n', "\\n")
+        .replace('\r', "\\r")
 }
 
 // ============================================================================
@@ -622,21 +813,15 @@ pub struct FineGrainedStrategy;
 
 impl QueryStrategy for FineGrainedStrategy {
     fn select_target<'a>(&self, ctx: &QueryContext<'a>) -> Result<TargetNode<'a>> {
-        // Find the deepest node containing the range
-        let mut node = ctx
-            .root
-            .descendant_for_byte_range(ctx.byte_range.0, ctx.byte_range.1)
-            .ok_or_else(|| Error::TreeSitter("no node found at byte range".into()))?;
+        let mut node = find_tightest_node(&ctx.root, ctx.source, ctx.byte_range)?;
 
-        // For fine-grained targeting, we want to descend into blocks to find the 
-        // actual statement or expression, even if the user's selection includes 
-        // surrounding whitespace that technically forces a larger parent node.
+        // For fine-grained targeting, we want to descend into blocks to find the
+        // actual statement or expression.
         while is_body_node(node.kind()) {
             let mut found_child = false;
             let mut cursor = node.walk();
 
             for child in node.named_children(&mut cursor) {
-                // If child overlaps with the selection, it's a better target
                 if child.start_byte() < ctx.byte_range.1 && child.end_byte() > ctx.byte_range.0 {
                     node = child;
                     found_child = true;
@@ -647,6 +832,11 @@ impl QueryStrategy for FineGrainedStrategy {
             if !found_child {
                 break;
             }
+
+            // If we found a node with semantic info, stop here
+            if extract_semantic_info(node, ctx.source).is_some() {
+                break;
+            }
         }
 
         // Extract semantic information for disambiguation
@@ -655,10 +845,20 @@ impl QueryStrategy for FineGrainedStrategy {
             .map(|info| info.text)
             .or_else(|| extract_identifier_from_node(node, ctx.source));
 
+        // Final safety check: if we're still on a body node but it's very large,
+        // and we have no name/semantic info, try to pick the first interesting child.
+        let node = if is_body_node(node.kind()) && name.is_none() && semantic_info.is_none() {
+            node.named_child(0).unwrap_or(node)
+        } else {
+            node
+        };
+
         Ok(TargetNode {
             node,
-            name,
-            semantic_info,
+            name: extract_name_info(node, ctx.source)
+                .map(|info| info.text)
+                .or_else(|| extract_identifier_from_node(node, ctx.source)),
+            semantic_info: extract_semantic_info(node, ctx.source),
         })
     }
 
@@ -677,11 +877,23 @@ impl QueryStrategy for FineGrainedStrategy {
                     ));
                 }
                 SemanticInfo::CallTarget(func) => {
-                    return Ok(format!(
-                        "({} function: (_) @func) @target\n  (#eq? @func \"{}\")",
-                        target.node.kind(),
-                        escape_query_text(func)
-                    ));
+                    let child = target.node.named_child(0).unwrap(); // Safe as we extracted semantic info from it
+                    if let Some(field) = target.node.field_name_for_child(0) {
+                        return Ok(format!(
+                            "({} {}: ({}) @func) @target\n  (#eq? @func \"{}\")",
+                            target.node.kind(),
+                            field,
+                            child.kind(),
+                            escape_query_text(func)
+                        ));
+                    } else {
+                        return Ok(format!(
+                            "({} ({}) @func) @target\n  (#eq? @func \"{}\")",
+                            target.node.kind(),
+                            child.kind(),
+                            escape_query_text(func)
+                        ));
+                    }
                 }
                 SemanticInfo::AssignmentTarget(target_name) => {
                     return Ok(format!(
@@ -709,7 +921,8 @@ impl QueryStrategy for FineGrainedStrategy {
 
         if let Some(ref name) = target.name {
             // For leaf nodes (identifiers, literals), add a text match predicate
-            if target.node.named_child_count() == 0 {
+            // But don't match on huge text blocks (like closures)
+            if (target.node.named_child_count() == 0 || target.semantic_info.is_none()) && name.len() < 100 {
                 return Ok(format!(
                     "({}) @target\n  (#eq? @target \"{}\")",
                     target.node.kind(),
@@ -735,7 +948,7 @@ fn extract_semantic_info(node: Node, source: &[u8]) -> Option<SemanticInfo> {
         }
         "call_expression" | "macro_invocation" => {
             // Extract the function being called
-            if let Some(func) = node.child_by_field_name("function") {
+            if let Some(func) = node.child_by_field_name("function").or_else(|| node.named_child(0)) {
                 let text = node_text(func, source);
                 return Some(SemanticInfo::CallTarget(text));
             }

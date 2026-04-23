@@ -256,7 +256,7 @@ fn source_label_from_cli(cli: &Cli) -> String {
 /// - "42" — single line
 /// - "42:67" — line range (inclusive)
 /// - "b42:67" or "42:67b" — byte range (explicit)
-fn parse_range(range: &str, source: &str) -> Result<(usize, usize)> {
+pub fn parse_range(range: &str, source: &str) -> Result<(usize, usize)> {
     let r = range.trim();
 
     // Byte range: b prefix or b suffix
@@ -267,7 +267,15 @@ fn parse_range(range: &str, source: &str) -> Result<(usize, usize)> {
         return parse_byte_range(&r[..r.len() - 1]);
     }
 
-    // Line range
+    // Range can be START-END or just a single point/line
+    let range_parts: Vec<&str> = r.split('-').collect();
+    if range_parts.len() == 2 {
+        let start = parse_point(source, range_parts[0])?;
+        let end = parse_point(source, range_parts[1])?;
+        return Ok((start, end));
+    }
+
+    // Single point or legacy LINE:LINE range
     let parts: Vec<&str> = r.split(':').collect();
     match parts.len() {
         1 => {
@@ -277,15 +285,23 @@ fn parse_range(range: &str, source: &str) -> Result<(usize, usize)> {
             line_range_to_bytes(source, line, line)
         }
         2 => {
-            let start: usize = parts[0]
-                .parse()
-                .map_err(|_| Error::Input(format!("invalid start line: {}", parts[0])))?;
-            let end: usize = parts[1]
-                .parse()
-                .map_err(|_| Error::Input(format!("invalid end line: {}", parts[1])))?;
-            line_range_to_bytes(source, start, end)
+            // Could be LINE:LINE (legacy range) or LINE:COL (point)
+            let p0: usize = parts[0].parse().map_err(|_| Error::Input("invalid line".into()))?;
+            let p1: usize = parts[1].parse().map_err(|_| Error::Input("invalid line/col".into()))?;
+
+            // Heuristic: if p1 is a valid line number and p1 >= p0, assume it's a line range
+            // (backward compatibility for 10:20)
+            let line_count = source.lines().count();
+            if p1 <= line_count && p1 >= p0 {
+                line_range_to_bytes(source, p0, p1)
+            } else {
+                let byte = line_col_to_byte(source, p0, p1)?;
+                Ok((byte, byte))
+            }
         }
-        _ => Err(Error::Input("range must be LINE, LINE:LINE, or bBYTE:BYTE".into())),
+        _ => Err(Error::Input(
+            "range must be LINE, LINE:COL, START-END, or bBYTE:BYTE".into(),
+        )),
     }
 }
 
@@ -298,6 +314,43 @@ fn parse_byte_range(s: &str) -> Result<(usize, usize)> {
         parts[0].parse().map_err(|_| Error::Input("invalid byte range start".into()))?;
     let end: usize = parts[1].parse().map_err(|_| Error::Input("invalid byte range end".into()))?;
     Ok((start, end))
+}
+
+/// Convert 1-indexed line and 1-indexed column to a byte offset.
+fn line_col_to_byte(source: &str, line: usize, col: usize) -> Result<usize> {
+    if line == 0 || col == 0 {
+        return Err(Error::Input("line and column numbers are 1-indexed".into()));
+    }
+
+    let mut byte_offset = 0;
+    for (i, line_text) in source.lines().enumerate() {
+        let line_num = i + 1;
+        if line_num == line {
+            if col > line_text.len() + 1 {
+                return Err(Error::Input(format!(
+                    "column {} is out of bounds for line {}",
+                    col, line
+                )));
+            }
+            return Ok(byte_offset + col - 1);
+        }
+        byte_offset += line_text.len() + 1;
+    }
+
+    Err(Error::Input(format!("line {} is out of bounds", line)))
+}
+
+fn parse_point(source: &str, s: &str) -> Result<usize> {
+    let parts: Vec<&str> = s.split(':').collect();
+    if parts.len() == 2 {
+        let line: usize = parts[0].parse().map_err(|_| Error::Input("invalid line".into()))?;
+        let col: usize = parts[1].parse().map_err(|_| Error::Input("invalid col".into()))?;
+        line_col_to_byte(source, line, col)
+    } else {
+        let line: usize = s.parse().map_err(|_| Error::Input("invalid line".into()))?;
+        let (start, _) = line_range_to_bytes(source, line, line)?;
+        Ok(start)
+    }
 }
 
 /// Convert 1-indexed inclusive line range to byte range.

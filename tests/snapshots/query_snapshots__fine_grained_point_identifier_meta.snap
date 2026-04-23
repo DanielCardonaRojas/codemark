@@ -1,0 +1,9 @@
+---
+source: tests/query_snapshots.rs
+expression: snapshot
+---
+name: fine_grained_point_identifier
+strategy: FineGrained
+range: "33:14"
+node_type: value_binding_pattern
+query: "[query stored in .scm file]"

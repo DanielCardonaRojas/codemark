@@ -1,0 +1,9 @@
+---
+source: tests/query_snapshots.rs
+expression: snapshot
+---
+name: declaration_enum_property
+strategy: Declaration
+range: "56"
+node_type: property_declaration
+query: "[query stored in .scm file]"

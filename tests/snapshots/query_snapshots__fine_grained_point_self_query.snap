@@ -1,0 +1,7 @@
+---
+source: tests/query_snapshots.rs
+expression: result.query
+---
+(guard_statement
+  ((simple_identifier) @target
+    (#eq? @target "self")))

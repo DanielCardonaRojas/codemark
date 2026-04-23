@@ -1,0 +1,9 @@
+---
+source: tests/query_snapshots.rs
+expression: snapshot
+---
+name: declaration_extension_method
+strategy: Declaration
+range: "46"
+node_type: function_declaration
+query: "[query stored in .scm file]"
