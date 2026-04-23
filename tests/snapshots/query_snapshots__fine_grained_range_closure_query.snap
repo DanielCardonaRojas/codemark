@@ -7,4 +7,10 @@ expression: result.query
   (#eq? @name0 "update")
   (function_body
     (statements
-      ((call_expression) @target))))
+      (call_expression
+        (call_suffix
+          (lambda_literal
+            (statements
+              ((property_declaration
+                name: (pattern) @fn_name
+                (#eq? @fn_name "result")) @target))))))))

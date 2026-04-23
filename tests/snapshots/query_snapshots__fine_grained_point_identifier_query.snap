@@ -4,12 +4,6 @@ expression: result.query
 ---
 (class_declaration
   (class_body
-    (function_declaration
-      (function_body
-        (statements
-          (call_expression
-            (call_suffix
-              (lambda_literal
-                (statements
-                  (property_declaration
-                    ((value_binding_pattern) @target)))))))))))
+    ((function_declaration
+      name: (simple_identifier) @fn_name
+      (#eq? @fn_name "update")) @target)))

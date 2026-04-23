@@ -3,7 +3,7 @@ source: tests/query_snapshots.rs
 expression: snapshot
 ---
 name: declaration_enum_property
-strategy: Declaration
+strategy: Unified
 range: "56"
 node_type: property_declaration
-query: "[query stored in .scm file]"
+query: "[query stored in separate _query.snap file]"

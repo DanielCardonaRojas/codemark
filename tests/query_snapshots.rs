@@ -95,7 +95,7 @@ fn test_swift_complex_query_snapshots() {
             strategy: "Unified".to_string(),
             range: range_str.to_string(),
             node_type: result.target_node_type,
-            query: "[query stored in .scm file]".to_string(),
+            query: "[query stored in separate _query.snap file]".to_string(),
         };
 
         // Snapshot metadata as YAML

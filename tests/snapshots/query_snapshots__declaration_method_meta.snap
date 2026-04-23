@@ -3,7 +3,7 @@ source: tests/query_snapshots.rs
 expression: snapshot
 ---
 name: declaration_method
-strategy: Declaration
+strategy: Unified
 range: "27"
 node_type: function_declaration
-query: "[query stored in .scm file]"
+query: "[query stored in separate _query.snap file]"
