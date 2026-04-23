@@ -2688,3 +2688,94 @@ additional = [
     let _ = std::fs::remove_dir_all(&global_config_dir);
     unsafe { std::env::remove_var("XDG_CONFIG_HOME") };
 }
+
+#[test]
+fn rust_data_models_bookmarking() {
+    let cm = Codemark::new();
+
+    // Bookmark a struct
+    let json = cm.run_json(&[
+        "add",
+        "--file",
+        &cm.fixture("rust/data_models.rs"),
+        "--range",
+        "1",
+        "--note",
+        "User struct",
+    ]);
+    assert_eq!(json["data"]["node_type"], "struct_item");
+
+    // Bookmark an enum
+    let json = cm.run_json(&[
+        "add",
+        "--file",
+        &cm.fixture("rust/data_models.rs"),
+        "--range",
+        "6",
+        "--note",
+        "Role enum",
+    ]);
+    assert_eq!(json["data"]["node_type"], "enum_item");
+
+    // Bookmark a trait
+    let json = cm.run_json(&[
+        "add",
+        "--file",
+        &cm.fixture("rust/data_models.rs"),
+        "--range",
+        "12",
+        "--note",
+        "Auth trait",
+    ]);
+    assert_eq!(json["data"]["node_type"], "trait_item");
+
+    // Bookmark an impl block
+    let json = cm.run_json(&[
+        "add",
+        "--file",
+        &cm.fixture("rust/data_models.rs"),
+        "--range",
+        "16",
+        "--note",
+        "Auth impl",
+    ]);
+    assert_eq!(json["data"]["node_type"], "impl_item");
+}
+
+#[test]
+fn targets_method_when_selecting_body() {
+    let cm = Codemark::new();
+
+    // selecting line 18 (inside login method) should target the method
+    let json = cm.run_json(&[
+        "add",
+        "--file",
+        &cm.fixture("rust/data_models.rs"),
+        "--range",
+        "18",
+        "--dry-run",
+    ]);
+    assert_eq!(json["data"]["node_type"], "function_item");
+    assert_eq!(json["data"]["name"], "login");
+}
+
+#[test]
+fn add_with_fine_grained_strategy() {
+    let cm = Codemark::new();
+
+    let json = cm.run_json(&[
+        "add",
+        "--file",
+        &cm.fixture("rust/data_models.rs"),
+        "--range",
+        "18",
+        "--strategy",
+        "fine-grained",
+        "--dry-run",
+    ]);
+    
+    // Fine-grained strategy targets the exact node
+    let node_type = json["data"]["node_type"].as_str().unwrap();
+    assert_eq!(node_type, "boolean_literal");
+    assert!(json["data"]["query"].as_str().unwrap().contains("@target"));
+}

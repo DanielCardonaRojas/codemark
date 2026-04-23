@@ -210,7 +210,7 @@ mod tests {
 
         let (tree, source) = cache.get_or_parse(&path).unwrap();
         let range = find_function_range(tree, source, func_name);
-        let generated = qgen::generate_query(tree, source.as_bytes(), range, &lang).unwrap();
+        let generated = qgen::generate_query(tree, source.as_bytes(), range, &lang, qgen::StrategyType::Declaration).unwrap();
         let ch = hash::content_hash(&source[range.0..range.1]);
 
         let bm = Bookmark {

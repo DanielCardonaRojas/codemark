@@ -503,7 +503,12 @@ fn handle_add(cli: &Cli, mode: &OutputMode, args: &AddArgs) -> Result<()> {
         return Err(Error::Input("either --range or --hunk is required".into()));
     };
 
-    let generated = qgen::generate_query(&tree, source.as_bytes(), byte_range, &ts_lang)?;
+    let strategy = match args.strategy {
+        QueryStrategyType::Declaration => qgen::StrategyType::Declaration,
+        QueryStrategyType::FineGrained => qgen::StrategyType::FineGrained,
+    };
+
+    let generated = qgen::generate_query(&tree, source.as_bytes(), byte_range, &ts_lang, strategy)?;
     let content_hash = hash::content_hash(&source[generated.byte_range.0..generated.byte_range.1]);
 
     // Count matches for uniqueness info
@@ -669,7 +674,12 @@ fn handle_add_from_snippet(cli: &Cli, mode: &OutputMode, args: &AddFromSnippetAr
         source.find(snippet).ok_or_else(|| Error::Input("snippet not found in file".into()))?;
     let byte_range = (offset, offset + snippet.len());
 
-    let generated = qgen::generate_query(&tree, source.as_bytes(), byte_range, &ts_lang)?;
+    let strategy = match args.strategy {
+        QueryStrategyType::Declaration => qgen::StrategyType::Declaration,
+        QueryStrategyType::FineGrained => qgen::StrategyType::FineGrained,
+    };
+
+    let generated = qgen::generate_query(&tree, source.as_bytes(), byte_range, &ts_lang, strategy)?;
     let content_hash = hash::content_hash(&source[generated.byte_range.0..generated.byte_range.1]);
 
     let match_count =
