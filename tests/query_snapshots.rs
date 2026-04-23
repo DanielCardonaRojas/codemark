@@ -4,9 +4,7 @@ use std::fs;
 use std::path::Path;
 
 fn get_fixture_content(name: &str) -> (String, tree_sitter::Tree) {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/swift")
-        .join(name);
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/swift").join(name);
     let source = fs::read_to_string(&path).unwrap();
     let mut parser = Parser::new(CodemarkLang::Swift).unwrap();
     let (tree, _) = parser.parse_file(&path).unwrap();
@@ -87,12 +85,10 @@ fn test_swift_complex_query_snapshots() {
 
     for (name, range_str) in scenarios {
         let range = parse_test_range(&source, range_str);
-        let result = generator::generate_query(
-            &tree,
-            source.as_bytes(),
-            range,
-            &language,
-        ).unwrap_or_else(|e| panic!("Failed to generate query for {} ({}): {}", name, range_str, e));
+        let result = generator::generate_query(&tree, source.as_bytes(), range, &language)
+            .unwrap_or_else(|e| {
+                panic!("Failed to generate query for {} ({}): {}", name, range_str, e)
+            });
 
         let snapshot = QuerySnapshot {
             name: name.to_string(),

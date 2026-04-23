@@ -273,7 +273,10 @@ pub fn parse_range(range: &str, source: &str) -> Result<(usize, usize)> {
         let start = parse_point(source, range_parts[0])?;
         let end = parse_point(source, range_parts[1])?;
         if start > end {
-            return Err(Error::Input(format!("invalid range: start byte {} is greater than end byte {}", start, end)));
+            return Err(Error::Input(format!(
+                "invalid range: start byte {} is greater than end byte {}",
+                start, end
+            )));
         }
         return Ok((start, end));
     }
@@ -290,7 +293,8 @@ pub fn parse_range(range: &str, source: &str) -> Result<(usize, usize)> {
         2 => {
             // Could be LINE:LINE (legacy range) or LINE:COL (point)
             let p0: usize = parts[0].parse().map_err(|_| Error::Input("invalid line".into()))?;
-            let p1: usize = parts[1].parse().map_err(|_| Error::Input("invalid line/col".into()))?;
+            let p1: usize =
+                parts[1].parse().map_err(|_| Error::Input("invalid line/col".into()))?;
 
             // Heuristic: if p1 is a valid line number and p1 >= p0, assume it's a line range
             // (backward compatibility for 10:20)
@@ -302,9 +306,7 @@ pub fn parse_range(range: &str, source: &str) -> Result<(usize, usize)> {
                 Ok((byte, byte))
             }
         }
-        _ => Err(Error::Input(
-            "range must be LINE, LINE:COL, START-END, or bBYTE:BYTE".into(),
-        )),
+        _ => Err(Error::Input("range must be LINE, LINE:COL, START-END, or bBYTE:BYTE".into())),
     }
 }
 

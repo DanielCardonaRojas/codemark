@@ -68,34 +68,29 @@ pub fn generate_query(
     byte_range: (usize, usize),
     language: &Language,
 ) -> Result<GeneratedQuery> {
-    let ctx = QueryContext {
-        source,
-        language,
-        byte_range,
-        root: tree.root_node(),
-        tree,
-    };
+    let ctx = QueryContext { source, language, byte_range, root: tree.root_node(), tree };
 
     // 1. Select target node (favoring named declarations)
     let node = find_target_node(&ctx.root, ctx.source, ctx.byte_range)?;
 
     // 2. Extract metadata
-    let name = extract_name_info(node, ctx.source)
+    let target_node = node;
+    let name = extract_name_info(target_node, ctx.source)
         .map(|info| info.text)
-        .or_else(|| extract_identifier_from_node(node, ctx.source));
-    let semantic_info = extract_semantic_info(node, ctx.source);
+        .or_else(|| extract_identifier_from_node(target_node, ctx.source));
+    let semantic_info = extract_semantic_info(target_node, ctx.source);
 
     // 3. Build the base query
-    let base_query = build_base_query(node, name.as_deref(), semantic_info, ctx.source)?;
+    let base_query = build_base_query(target_node, name.as_deref(), semantic_info, ctx.source)?;
 
     // 4. Disambiguate and anchor
-    let query = disambiguate_query(base_query, node, &ctx)?;
+    let query = disambiguate_query(base_query, target_node, &ctx)?;
 
     Ok(GeneratedQuery {
         query,
-        target_node_type: node.kind().to_string(),
+        target_node_type: target_node.kind().to_string(),
         target_name: name,
-        byte_range: (node.start_byte(), node.end_byte()),
+        byte_range: (target_node.start_byte(), target_node.end_byte()),
     })
 }
 
@@ -129,11 +124,148 @@ fn find_target_node<'a>(
     Ok(walk_to_named_declaration(node))
 }
 
+/// Find the largest declaration node whose span is contained within the given byte range.
+fn find_declaration_within(node: Node, byte_range: (usize, usize)) -> Option<Node> {
+    let mut best: Option<Node> = None;
+
+    fn search<'a>(node: Node<'a>, byte_range: (usize, usize), best: &mut Option<Node<'a>>) {
+        // Skip nodes entirely outside the range
+        if node.end_byte() <= byte_range.0 || node.start_byte() >= byte_range.1 {
+            return;
+        }
+
+        // Check if this declaration fits within the user's range
+        if DECLARATION_TYPES.contains(&node.kind())
+            && node.start_byte() >= byte_range.0
+            && node.end_byte() <= byte_range.1
+        {
+            // Prefer the largest declaration that fits
+            if best.is_none_or(|b| {
+                (node.end_byte() - node.start_byte()) > (b.end_byte() - b.start_byte())
+            }) {
+                *best = Some(node);
+            }
+        }
+
+        // Recurse into children
+        let mut cursor = node.walk();
+        for child in node.named_children(&mut cursor) {
+            search(child, byte_range, best);
+        }
+    }
+
+    search(node, byte_range, &mut best);
+    best
+}
+
+/// Walk up to the nearest named declaration node (function, class, struct, enum, etc).
+fn walk_to_named_declaration(mut node: Node) -> Node {
+    // If we're already on a non-local declaration, use it
+    if DECLARATION_TYPES.contains(&node.kind()) && !is_local_declaration(node) {
+        return node;
+    }
+
+    // Walk up to find the nearest non-local declaration
+    while let Some(parent) = node.parent() {
+        if DECLARATION_TYPES.contains(&parent.kind()) && !is_local_declaration(parent) {
+            return parent;
+        }
+        // Stop at source_file
+        if is_root_node(parent.kind()) {
+            break;
+        }
+        node = parent;
+    }
+
+    // Fall back to the original node if no non-local declaration found
+    node
+}
+
+const DECLARATION_TYPES: &[&str] = &[
+    // Common / Shared types
+    "class_declaration",
+    "interface_declaration",
+    "enum_declaration",
+    "method_declaration",
+    "constructor_declaration",
+    "property_declaration",
+    "type_alias_declaration",
+    // Swift
+    "function_declaration",
+    "protocol_declaration",
+    "init_declaration",
+    "deinit_declaration",
+    "subscript_declaration",
+    "enum_entry",
+    "protocol_function_declaration",
+    // Rust
+    "function_item",
+    "struct_item",
+    "enum_item",
+    "trait_item",
+    "impl_item",
+    "type_item",
+    "const_item",
+    "static_item",
+    "mod_item",
+    "macro_definition",
+    // TypeScript
+    "method_definition",
+    "lexical_declaration",
+    "export_statement",
+    // Python
+    "function_definition",
+    "class_definition",
+    "decorated_definition",
+    // Go
+    "type_declaration",
+    "type_spec",
+    "var_declaration",
+    // Java (shared above)
+    // C#
+    "namespace_declaration",
+    "record_declaration",
+    "struct_declaration",
+    // Dart
+    "function_signature",
+    "initialized_identifier",
+    "enum_constant",
+];
+
+/// Check if a declaration node is likely a local variable/constant.
+fn is_local_declaration(node: Node) -> bool {
+    let kind = node.kind();
+    if kind != "property_declaration"
+        && kind != "variable_declaration"
+        && kind != "lexical_declaration"
+    {
+        return false;
+    }
+
+    // Check ancestors: if we're inside a function or closure, it's local
+    let mut current = node;
+    while let Some(parent) = current.parent() {
+        let pk = parent.kind();
+        if pk.contains("function")
+            || pk.contains("method")
+            || pk.contains("lambda")
+            || pk == "closure_expression"
+        {
+            return true;
+        }
+        if is_root_node(pk) {
+            break;
+        }
+        current = parent;
+    }
+    false
+}
+
 fn build_base_query(
     node: Node,
     name: Option<&str>,
     semantic_info: Option<SemanticInfo>,
-    source: &[u8],
+    _source: &[u8],
 ) -> Result<String> {
     if let Some(ref semantic) = semantic_info {
         match semantic {
@@ -224,7 +356,7 @@ fn disambiguate_query(
     // Too many matches or 0 matches (invalid base query)
     // Fall back to a structural path approach that is guaranteed to be correct
     let mut path = build_structural_path(target_node, ctx.source);
-    
+
     if path.is_empty() {
         let final_matches = matcher::run_query(&base_query, ctx.tree, ctx.source, ctx.language)?;
         if final_matches.len() != 1 {
@@ -239,7 +371,7 @@ fn disambiguate_query(
     // Progressive disambiguation:
     // 1. Try structural path with only the target node named.
     // 2. Try structural path with target + 1st ancestor named, etc.
-    
+
     // First, clear all names in the path to start with a pure structural query
     let mut names = Vec::new();
     for entry in &mut path {
@@ -247,11 +379,11 @@ fn disambiguate_query(
     }
 
     let depth = path.len();
-    
+
     // Try increasing structural path depth
     for path_len in 1..=depth {
         let sub_path = &path[depth - path_len..depth];
-        
+
         // Try with only target node named (highest priority)
         let mut named_target_path = sub_path.to_vec();
         let last = named_target_path.len() - 1;
@@ -264,12 +396,12 @@ fn disambiguate_query(
 
         // Anchor is a named ancestor (excluding the target node)
         let has_named_ancestor = |p: &[PathEntry]| {
-             p.len() > 1 && p[0..p.len()-1].iter().any(|entry| entry.name_info.is_some())
+            p.len() > 1 && p[0..p.len() - 1].iter().any(|entry| entry.name_info.is_some())
         };
 
         let query = build_tier1_query(&named_target_path);
         let match_count = matcher::run_query(&query, ctx.tree, ctx.source, ctx.language)?.len();
-        
+
         if match_count == 1 && (has_named_ancestor(&named_target_path) || path_len == depth) {
             return Ok(query);
         }
@@ -277,15 +409,15 @@ fn disambiguate_query(
         // Try without any names (lower priority)
         let query = build_tier1_query(sub_path);
         let match_count = matcher::run_query(&query, ctx.tree, ctx.source, ctx.language)?.len();
-        if match_count == 1 && (has_named_ancestor(&sub_path) || path_len == depth) {
+        if match_count == 1 && (has_named_ancestor(sub_path) || path_len == depth) {
             return Ok(query);
         }
 
         // Progressive disambiguation: try adding ancestor names one by one
         let mut named_path = named_target_path;
         for name_depth in 1..named_path.len() {
-             let idx = named_path.len() - 1 - name_depth;
-             named_path[idx].name_info = names[depth - 1 - name_depth].as_ref().map(|n| NameInfo {
+            let idx = named_path.len() - 1 - name_depth;
+            named_path[idx].name_info = names[depth - 1 - name_depth].as_ref().map(|n| NameInfo {
                 field: n.field.clone(),
                 direct_type: n.direct_type.clone(),
                 inner_type: n.inner_type.clone(),
@@ -300,13 +432,13 @@ fn disambiguate_query(
         }
     }
 
-    // If still not unique, use the base_query if it was unique, 
+    // If still not unique, use the base_query if it was unique,
     // otherwise return the best we could do (which might still be ambiguous)
     let final_query = build_tier1_query(&path);
     let final_matches = matcher::run_query(&final_query, ctx.tree, ctx.source, ctx.language)?;
-    
+
     if final_matches.len() != 1 {
-         return Err(Error::AmbiguousQuery(format!(
+        return Err(Error::AmbiguousQuery(format!(
             "Generated query matched {} nodes, expected 1. Try selecting a more specific range.",
             final_matches.len()
         )));
@@ -322,160 +454,8 @@ pub fn generate_query_for_node(
     source: &[u8],
     language: &Language,
 ) -> Result<GeneratedQuery> {
-    generate_query(
-        tree,
-        source,
-        (node.start_byte(), node.end_byte()),
-        language,
-    )
+    generate_query(tree, source, (node.start_byte(), node.end_byte()), language)
 }
-
-/// Helper to find a smaller child node that still contains the point.
-fn find_tighter_child(node: Node, point: usize) -> Option<Node> {
-    let mut cursor = node.walk();
-    if cursor.goto_first_child() {
-        loop {
-            let child = cursor.node();
-            if child.start_byte() <= point && child.end_byte() > point {
-                return Some(child);
-            }
-            if !cursor.goto_next_sibling() {
-                break;
-            }
-        }
-    }
-    None
-}
-
-/// Find the largest declaration node whose span is contained within the given byte range.
-fn find_declaration_within(node: Node, byte_range: (usize, usize)) -> Option<Node> {
-    let mut best: Option<Node> = None;
-
-    fn search<'a>(node: Node<'a>, byte_range: (usize, usize), best: &mut Option<Node<'a>>) {
-        // Skip nodes entirely outside the range
-        if node.end_byte() <= byte_range.0 || node.start_byte() >= byte_range.1 {
-            return;
-        }
-
-        // Check if this declaration fits within the user's range
-        if DECLARATION_TYPES.contains(&node.kind())
-            && node.start_byte() >= byte_range.0
-            && node.end_byte() <= byte_range.1
-        {
-            // Prefer the largest declaration that fits
-            if best.is_none_or(|b| {
-                (node.end_byte() - node.start_byte()) > (b.end_byte() - b.start_byte())
-            }) {
-                *best = Some(node);
-            }
-        }
-
-        // Recurse into children
-        let mut cursor = node.walk();
-        for child in node.named_children(&mut cursor) {
-            search(child, byte_range, best);
-        }
-    }
-
-    search(node, byte_range, &mut best);
-    best
-}
-
-/// Walk up to the nearest named declaration node (function, class, struct, enum, etc).
-fn walk_to_named_declaration(mut node: Node) -> Node {
-    // If we're already on a non-local declaration, use it
-    if DECLARATION_TYPES.contains(&node.kind()) && !is_local_declaration(node) {
-        return node;
-    }
-
-    // Walk up to find the nearest non-local declaration
-    while let Some(parent) = node.parent() {
-        if DECLARATION_TYPES.contains(&parent.kind()) && !is_local_declaration(parent) {
-            return parent;
-        }
-        // Stop at source_file
-        if is_root_node(parent.kind()) {
-            break;
-        }
-        node = parent;
-    }
-
-    // Fall back to the original node if no non-local declaration found
-    node
-}
-
-/// Check if a declaration node is likely a local variable/constant.
-fn is_local_declaration(node: Node) -> bool {
-    let kind = node.kind();
-    if kind != "property_declaration" && kind != "variable_declaration" && kind != "lexical_declaration" {
-        return false;
-    }
-
-    // Check ancestors: if we're inside a function or closure, it's local
-    let mut current = node;
-    while let Some(parent) = current.parent() {
-        let pk = parent.kind();
-        if pk.contains("function") || pk.contains("method") || pk.contains("lambda") || pk == "closure_expression" {
-            return true;
-        }
-        if is_root_node(pk) {
-            break;
-        }
-        current = parent;
-    }
-    false
-}
-
-const DECLARATION_TYPES: &[&str] = &[
-    // Common / Shared types
-    "class_declaration",
-    "interface_declaration",
-    "enum_declaration",
-    "method_declaration",
-    "constructor_declaration",
-    "property_declaration",
-    "type_alias_declaration",
-    // Swift
-    "function_declaration",
-    "protocol_declaration",
-    "init_declaration",
-    "deinit_declaration",
-    "subscript_declaration",
-    "enum_entry",
-    "protocol_function_declaration",
-    // Rust
-    "function_item",
-    "struct_item",
-    "enum_item",
-    "trait_item",
-    "impl_item",
-    "type_item",
-    "const_item",
-    "static_item",
-    "mod_item",
-    "macro_definition",
-    // TypeScript
-    "method_definition",
-    "lexical_declaration",
-    "export_statement",
-    // Python
-    "function_definition",
-    "class_definition",
-    "decorated_definition",
-    // Go
-    "type_declaration",
-    "type_spec",
-    "var_declaration",
-    // Java (shared above)
-    // C#
-    "namespace_declaration",
-    "record_declaration",
-    "struct_declaration",
-    // Dart
-    "function_signature",
-    "initialized_identifier",
-    "enum_constant",
-];
 
 /// Build the structural path from the target node up to (but not including) the root.
 /// Body nodes (class_body, etc.) are included to ensure the query nesting matches the AST.
@@ -574,7 +554,9 @@ fn extract_name_info_direct(node: Node, source: &[u8]) -> Option<NameInfo> {
     }
 
     // For Rust impl_item: use "type" field as the name
-    if node.kind() == "impl_item" && let Some(type_node) = node.child_by_field_name("type") {
+    if node.kind() == "impl_item"
+        && let Some(type_node) = node.child_by_field_name("type")
+    {
         return Some(NameInfo {
             field: Some("type".to_string()),
             direct_type: type_node.kind().to_string(),
@@ -584,12 +566,16 @@ fn extract_name_info_direct(node: Node, source: &[u8]) -> Option<NameInfo> {
     }
 
     // For TS export_statement: get the name from the inner declaration
-    if node.kind() == "export_statement" && let Some(decl) = node.child_by_field_name("declaration") {
+    if node.kind() == "export_statement"
+        && let Some(decl) = node.child_by_field_name("declaration")
+    {
         return extract_name_info_direct(decl, source);
     }
 
     // For Python decorated_definition: get the name from the inner definition
-    if node.kind() == "decorated_definition" && let Some(def) = node.child_by_field_name("definition") {
+    if node.kind() == "decorated_definition"
+        && let Some(def) = node.child_by_field_name("definition")
+    {
         return extract_name_info_direct(def, source);
     }
 
@@ -705,28 +691,29 @@ fn build_tier1_query(path: &[PathEntry]) -> String {
                         info.direct_type
                     ));
                 }
+            } else if let Some(ref field_name) = info.field {
+                s.push_str(&format!(
+                    "\n{pad}  {}: ({}) @{capture_name}",
+                    field_name, info.direct_type
+                ));
             } else {
-                if let Some(ref field_name) = info.field {
-                    s.push_str(&format!(
-                        "\n{pad}  {}: ({}) @{capture_name}",
-                        field_name, info.direct_type
-                    ));
-                } else {
-                    // Match anywhere inside - handled by outer_predicate on target
-                    if !is_target {
-                         s.push_str(&format!(
-                            "\n{pad}  (_) @{capture_name}"
-                        ));
-                    }
+                // Match anywhere inside - handled by outer_predicate on target
+                if !is_target {
+                    s.push_str(&format!("\n{pad}  (_) @{capture_name}"));
                 }
             }
             if info.field.is_none() {
                 // If it's a descendant name, match against the whole node text.
                 // We use #eq? for exact match which is safer than regex #match? for code blocks.
                 let cap = if is_target { "target" } else { &capture_name };
-                outer_predicate = format!("\n{pad}  (#eq? @{} \"{}\")", cap, escape_query_text(&info.text));
+                outer_predicate =
+                    format!("\n{pad}  (#eq? @{} \"{}\")", cap, escape_query_text(&info.text));
             } else {
-                inner_predicate = format!("\n{pad}  (#eq? @{} \"{}\")", capture_name, escape_query_text(&info.text));
+                inner_predicate = format!(
+                    "\n{pad}  (#eq? @{} \"{}\")",
+                    capture_name,
+                    escape_query_text(&info.text)
+                );
             };
         }
 
@@ -755,10 +742,7 @@ fn build_tier1_query(path: &[PathEntry]) -> String {
 }
 
 fn escape_query_text(text: &str) -> String {
-    text.replace('\\', "\\\\")
-        .replace('"', "\\\"")
-        .replace('\n', "\\n")
-        .replace('\r', "\\r")
+    text.replace('\\', "\\\\").replace('"', "\\\"").replace('\n', "\\n").replace('\r', "\\r")
 }
 
 /// Extract semantic information from a node for fine-grained targeting.
@@ -773,7 +757,8 @@ fn extract_semantic_info(node: Node, source: &[u8]) -> Option<SemanticInfo> {
         }
         "call_expression" | "macro_invocation" => {
             // Extract the function being called
-            if let Some(func) = node.child_by_field_name("function").or_else(|| node.named_child(0)) {
+            if let Some(func) = node.child_by_field_name("function").or_else(|| node.named_child(0))
+            {
                 let text = node_text(func, source);
                 return Some(SemanticInfo::CallTarget(text));
             }

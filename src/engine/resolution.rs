@@ -164,8 +164,9 @@ fn hash_fallback_walk(
         let ch = hash::content_hash(text);
         if ch == stored_hash {
             // Regenerate query for this new location
-            let new_query =
-                generator::generate_query_for_node(tree, node, source, language).ok().map(|gq| gq.query);
+            let new_query = generator::generate_query_for_node(tree, node, source, language)
+                .ok()
+                .map(|gq| gq.query);
 
             return Some(ResolutionResult {
                 method: ResolutionMethod::HashFallback,
@@ -184,7 +185,9 @@ fn hash_fallback_walk(
 
     let mut cursor = node.walk();
     for child in node.named_children(&mut cursor) {
-        if let Some(result) = hash_fallback_walk(tree, child, source, stored_hash, bookmark, language) {
+        if let Some(result) =
+            hash_fallback_walk(tree, child, source, stored_hash, bookmark, language)
+        {
             return Some(result);
         }
     }

@@ -935,9 +935,12 @@ additional = [
 
     #[test]
     fn resolve_additional_paths_relative() {
-        let mut config = DatabasesConfig::default();
-        config.additional =
-            vec!["../shared-lib/.codemark/codemark.db".to_string(), "./local.db".to_string()];
+        let config = DatabasesConfig {
+            additional: vec![
+                "../shared-lib/.codemark/codemark.db".to_string(),
+                "./local.db".to_string(),
+            ],
+        };
         let repo_root = Path::new("/test/repo");
         let paths = config.resolve_additional_paths(repo_root);
         assert_eq!(paths.len(), 2);
@@ -948,8 +951,9 @@ additional = [
 
     #[test]
     fn resolve_additional_paths_absolute() {
-        let mut config = DatabasesConfig::default();
-        config.additional = vec!["/absolute/path/to/db.sqlite".to_string()];
+        let config = DatabasesConfig {
+            additional: vec!["/absolute/path/to/db.sqlite".to_string()],
+        };
         let repo_root = Path::new("/test/repo");
         let paths = config.resolve_additional_paths(repo_root);
         assert_eq!(paths.len(), 1);
@@ -958,8 +962,9 @@ additional = [
 
     #[test]
     fn resolve_additional_paths_tilde_expansion() {
-        let mut config = DatabasesConfig::default();
-        config.additional = vec!["~/projects/db.sqlite".to_string()];
+        let config = DatabasesConfig {
+            additional: vec!["~/projects/db.sqlite".to_string()],
+        };
         let repo_root = Path::new("/test/repo");
         let paths = config.resolve_additional_paths(repo_root);
         assert_eq!(paths.len(), 1);

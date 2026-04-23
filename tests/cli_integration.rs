@@ -2354,7 +2354,7 @@ additional = [
     let bookmarks = json["data"].as_array().unwrap();
 
     // Should have at least the shared lib bookmark
-    assert!(bookmarks.len() >= 1, "Expected at least 1 bookmark, got {}", bookmarks.len());
+    assert!(!bookmarks.is_empty(), "Expected at least 1 bookmark, got {}", bookmarks.len());
 
     // Check that we have a bookmark from the shared lib
     // Notes are in the annotations array
@@ -2414,7 +2414,7 @@ additional = [
     let bookmarks = json["data"].as_array().unwrap();
 
     // Should have at least the other db bookmark
-    assert!(bookmarks.len() >= 1, "Expected at least 1 bookmark, got {}", bookmarks.len());
+    assert!(!bookmarks.is_empty(), "Expected at least 1 bookmark, got {}", bookmarks.len());
 
     let found_other = bookmarks.iter().any(|b| {
         b["annotations"]
@@ -2749,48 +2749,36 @@ fn rust_data_models_bookmarking() {
 
 #[test]
 fn targets_method_when_selecting_body() {
-let cm = Codemark::new();
-let fixture = "rust/data_models.rs";
-let source = cm.fixture_text(fixture);
+    let cm = Codemark::new();
+    let fixture = "rust/data_models.rs";
+    let source = cm.fixture_text(fixture);
 
-// Find "true" inside login method
-let offset = source.find("true").expect("marker 'true' not found in fixture");
-let range = format!("b{}:{}", offset, offset + 4);
+    // Find "true" inside login method
+    let offset = source.find("true").expect("marker 'true' not found in fixture");
+    let range = format!("b{}:{}", offset, offset + 4);
 
-let json = cm.run_json(&[
-    "add",
-    "--file",
-    &cm.fixture(fixture),
-    "--range",
-    &range,
-    "--dry-run",
-]);
-assert_eq!(json["data"]["node_type"], "function_item");
-assert_eq!(json["data"]["name"], "login");
+    let json =
+        cm.run_json(&["add", "--file", &cm.fixture(fixture), "--range", &range, "--dry-run"]);
+    assert_eq!(json["data"]["node_type"], "function_item");
+    assert_eq!(json["data"]["name"], "login");
 }
 
 #[test]
 fn add_with_fine_grained_strategy() {
-let cm = Codemark::new();
-let fixture = "rust/data_models.rs";
-let source = cm.fixture_text(fixture);
+    let cm = Codemark::new();
+    let fixture = "rust/data_models.rs";
+    let source = cm.fixture_text(fixture);
 
-// Find "true" inside login method
-let offset = source.find("true").expect("marker 'true' not found in fixture");
-let range = format!("b{}:{}", offset, offset + 4);
+    // Find "true" inside login method
+    let offset = source.find("true").expect("marker 'true' not found in fixture");
+    let range = format!("b{}:{}", offset, offset + 4);
 
-let json = cm.run_json(&[
-    "add",
-    "--file",
-    &cm.fixture(fixture),
-    "--range",
-    &range,
-    "--dry-run",
-]);
-// Fine-grained strategy targets the exact node
-let node_type = json["data"]["node_type"].as_str().unwrap();
-assert_eq!(node_type, "boolean_literal");
-assert!(json["data"]["query"].as_str().unwrap().contains("@target"));
-assert_eq!(json["data"]["unique"], true, "fine-grained query should identify one node");
-assert_eq!(json["data"]["match_count"], 1);
+    let json =
+        cm.run_json(&["add", "--file", &cm.fixture(fixture), "--range", &range, "--dry-run"]);
+    // Fine-grained strategy targets the exact node
+    let node_type = json["data"]["node_type"].as_str().unwrap();
+    assert_eq!(node_type, "boolean_literal");
+    assert!(json["data"]["query"].as_str().unwrap().contains("@target"));
+    assert_eq!(json["data"]["unique"], true, "fine-grained query should identify one node");
+    assert_eq!(json["data"]["match_count"], 1);
 }
