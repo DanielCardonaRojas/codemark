@@ -24,6 +24,51 @@ struct QuerySnapshot {
     query: String,
 }
 
+fn parse_test_range(source: &str, range_str: &str) -> (usize, usize) {
+    if let Some((start_str, end_str)) = range_str.split_once('-') {
+        let start = parse_test_point(source, start_str);
+        let end = parse_test_point(source, end_str);
+        (start, end)
+    } else if let Some((line_str, col_str)) = range_str.split_once(':') {
+        let line: usize = line_str.parse().unwrap();
+        let col: usize = col_str.parse().unwrap();
+        let offset = line_col_to_byte(source, line, col);
+        (offset, offset)
+    } else {
+        let line: usize = range_str.parse().unwrap();
+        let offset = line_col_to_byte(source, line, 1);
+        // Find end of line
+        let mut end = offset;
+        let bytes = source.as_bytes();
+        while end < bytes.len() && bytes[end] != b'\n' {
+            end += 1;
+        }
+        (offset, end)
+    }
+}
+
+fn parse_test_point(source: &str, s: &str) -> usize {
+    if let Some((line_str, col_str)) = s.split_once(':') {
+        let line: usize = line_str.parse().unwrap();
+        let col: usize = col_str.parse().unwrap();
+        line_col_to_byte(source, line, col)
+    } else {
+        let line: usize = s.parse().unwrap();
+        line_col_to_byte(source, line, 1)
+    }
+}
+
+fn line_col_to_byte(source: &str, line: usize, col: usize) -> usize {
+    let mut byte_offset = 0;
+    for (i, line_text) in source.split_inclusive('\n').enumerate() {
+        if i + 1 == line {
+            return byte_offset + col - 1;
+        }
+        byte_offset += line_text.len();
+    }
+    panic!("Line {} out of bounds", line);
+}
+
 #[test]
 fn test_swift_complex_query_snapshots() {
     let (source, tree) = get_fixture_content("complex_scenarios.swift");
@@ -41,7 +86,7 @@ fn test_swift_complex_query_snapshots() {
     ];
 
     for (name, range_str, strategy) in scenarios {
-        let range = codemark::cli::handlers::parse_range(&range_str, &source).unwrap();
+        let range = parse_test_range(&source, range_str);
         let result = generator::generate_query(
             &tree,
             source.as_bytes(),

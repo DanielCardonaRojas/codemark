@@ -272,6 +272,9 @@ pub fn parse_range(range: &str, source: &str) -> Result<(usize, usize)> {
     if range_parts.len() == 2 {
         let start = parse_point(source, range_parts[0])?;
         let end = parse_point(source, range_parts[1])?;
+        if start > end {
+            return Err(Error::Input(format!("invalid range: start byte {} is greater than end byte {}", start, end)));
+        }
         return Ok((start, end));
     }
 
@@ -316,17 +319,18 @@ fn parse_byte_range(s: &str) -> Result<(usize, usize)> {
     Ok((start, end))
 }
 
-/// Convert 1-indexed line and 1-indexed column to a byte offset.
 fn line_col_to_byte(source: &str, line: usize, col: usize) -> Result<usize> {
     if line == 0 || col == 0 {
         return Err(Error::Input("line and column numbers are 1-indexed".into()));
     }
 
     let mut byte_offset = 0;
-    for (i, line_text) in source.lines().enumerate() {
+    for (i, line_text) in source.split_inclusive('\n').enumerate() {
         let line_num = i + 1;
         if line_num == line {
-            if col > line_text.len() + 1 {
+            // Trim trailing newline/carriage return for bounds check
+            let clean_line = line_text.trim_end_matches(['\n', '\r']);
+            if col > clean_line.len() + 1 {
                 return Err(Error::Input(format!(
                     "column {} is out of bounds for line {}",
                     col, line
@@ -334,7 +338,7 @@ fn line_col_to_byte(source: &str, line: usize, col: usize) -> Result<usize> {
             }
             return Ok(byte_offset + col - 1);
         }
-        byte_offset += line_text.len() + 1;
+        byte_offset += line_text.len();
     }
 
     Err(Error::Input(format!("line {} is out of bounds", line)))
@@ -556,10 +560,7 @@ fn handle_add(cli: &Cli, mode: &OutputMode, args: &AddArgs) -> Result<()> {
         return Err(Error::Input("either --range or --hunk is required".into()));
     };
 
-    let strategy = match args.strategy {
-        QueryStrategyType::Declaration => qgen::StrategyType::Declaration,
-        QueryStrategyType::FineGrained => qgen::StrategyType::FineGrained,
-    };
+    let strategy = args.strategy.into();
 
     let generated = qgen::generate_query(&tree, source.as_bytes(), byte_range, &ts_lang, strategy)?;
     let content_hash = hash::content_hash(&source[generated.byte_range.0..generated.byte_range.1]);
@@ -727,10 +728,7 @@ fn handle_add_from_snippet(cli: &Cli, mode: &OutputMode, args: &AddFromSnippetAr
         source.find(snippet).ok_or_else(|| Error::Input("snippet not found in file".into()))?;
     let byte_range = (offset, offset + snippet.len());
 
-    let strategy = match args.strategy {
-        QueryStrategyType::Declaration => qgen::StrategyType::Declaration,
-        QueryStrategyType::FineGrained => qgen::StrategyType::FineGrained,
-    };
+    let strategy = args.strategy.into();
 
     let generated = qgen::generate_query(&tree, source.as_bytes(), byte_range, &ts_lang, strategy)?;
     let content_hash = hash::content_hash(&source[generated.byte_range.0..generated.byte_range.1]);

@@ -114,6 +114,15 @@ pub enum QueryStrategyType {
     FineGrained,
 }
 
+impl From<QueryStrategyType> for crate::query::generator::StrategyType {
+    fn from(s: QueryStrategyType) -> Self {
+        match s {
+            QueryStrategyType::Declaration => crate::query::generator::StrategyType::Declaration,
+            QueryStrategyType::FineGrained => crate::query::generator::StrategyType::FineGrained,
+        }
+    }
+}
+
 #[derive(Debug, clap::Args)]
 pub struct AddArgs {
     /// Path to the file (relative or absolute)

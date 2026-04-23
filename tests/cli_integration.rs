@@ -151,6 +151,11 @@ impl Codemark {
         String::from_utf8(blob.content().to_vec()).unwrap()
     }
 
+    /// Read a fixture's full text.
+    fn fixture_text(&self, relative_path: &str) -> String {
+        std::fs::read_to_string(self.fixture(relative_path)).unwrap()
+    }
+
     fn run(&self, args: &[&str]) -> CmdResult {
         let output = Command::new(&self.binary)
             .arg("--db")
@@ -2744,40 +2749,51 @@ fn rust_data_models_bookmarking() {
 
 #[test]
 fn targets_method_when_selecting_body() {
-    let cm = Codemark::new();
+let cm = Codemark::new();
+let fixture = "rust/data_models.rs";
+let source = cm.fixture_text(fixture);
 
-    // selecting line 18 (inside login method) should target the method
-    let json = cm.run_json(&[
-        "add",
-        "--file",
-        &cm.fixture("rust/data_models.rs"),
-        "--range",
-        "18",
-        "--dry-run",
-    ]);
-    assert_eq!(json["data"]["node_type"], "function_item");
-    assert_eq!(json["data"]["name"], "login");
+// Find "true" inside login method
+let offset = source.find("true").expect("marker 'true' not found in fixture");
+let range = format!("b{}:{}", offset, offset + 4);
+
+let json = cm.run_json(&[
+    "add",
+    "--file",
+    &cm.fixture(fixture),
+    "--range",
+    &range,
+    "--dry-run",
+]);
+assert_eq!(json["data"]["node_type"], "function_item");
+assert_eq!(json["data"]["name"], "login");
 }
 
 #[test]
 fn add_with_fine_grained_strategy() {
-    let cm = Codemark::new();
+let cm = Codemark::new();
+let fixture = "rust/data_models.rs";
+let source = cm.fixture_text(fixture);
 
-    let json = cm.run_json(&[
-        "add",
-        "--file",
-        &cm.fixture("rust/data_models.rs"),
-        "--range",
-        "18",
-        "--strategy",
-        "fine-grained",
-        "--dry-run",
-    ]);
-    
-    // Fine-grained strategy targets the exact node
-    let node_type = json["data"]["node_type"].as_str().unwrap();
-    assert_eq!(node_type, "boolean_literal");
-    assert!(json["data"]["query"].as_str().unwrap().contains("@target"));
-    assert_eq!(json["data"]["unique"], true, "fine-grained query should identify one node");
-    assert_eq!(json["data"]["match_count"], 1);
+// Find "true" inside login method
+let offset = source.find("true").expect("marker 'true' not found in fixture");
+let range = format!("b{}:{}", offset, offset + 4);
+
+let json = cm.run_json(&[
+    "add",
+    "--file",
+    &cm.fixture(fixture),
+    "--range",
+    &range,
+    "--strategy",
+    "fine-grained",
+    "--dry-run",
+]);
+
+// Fine-grained strategy targets the exact node
+let node_type = json["data"]["node_type"].as_str().unwrap();
+assert_eq!(node_type, "boolean_literal");
+assert!(json["data"]["query"].as_str().unwrap().contains("@target"));
+assert_eq!(json["data"]["unique"], true, "fine-grained query should identify one node");
+assert_eq!(json["data"]["match_count"], 1);
 }

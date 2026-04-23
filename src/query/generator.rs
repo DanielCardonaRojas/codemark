@@ -164,6 +164,17 @@ fn disambiguate_query(
     // Fall back to a structural path approach that is guaranteed to be correct
     let mut path = build_structural_path(target_node, ctx.source);
     
+    if path.is_empty() {
+        let final_matches = matcher::run_query(&base_query, ctx.tree, ctx.source, ctx.language)?;
+        if final_matches.len() != 1 {
+            return Err(Error::AmbiguousQuery(format!(
+                "Generated query matched {} nodes, expected 1. Try selecting a more specific range.",
+                final_matches.len()
+            )));
+        }
+        return Ok(base_query);
+    }
+
     // Progressive disambiguation:
     // 1. Try structural path with only the target node named.
     // 2. Try structural path with target + 1st ancestor named, etc.
@@ -386,15 +397,20 @@ fn find_declaration_within(node: Node, byte_range: (usize, usize)) -> Option<Nod
 }
 
 const DECLARATION_TYPES: &[&str] = &[
+    // Common / Shared types
+    "class_declaration",
+    "interface_declaration",
+    "enum_declaration",
+    "method_declaration",
+    "constructor_declaration",
+    "property_declaration",
+    "type_alias_declaration",
     // Swift
     "function_declaration",
-    "class_declaration",
     "protocol_declaration",
-    "property_declaration",
     "init_declaration",
     "deinit_declaration",
     "subscript_declaration",
-    "typealias_declaration",
     "enum_entry",
     "protocol_function_declaration",
     // Rust
@@ -409,9 +425,6 @@ const DECLARATION_TYPES: &[&str] = &[
     "mod_item",
     "macro_definition",
     // TypeScript
-    "interface_declaration",
-    "enum_declaration",
-    "type_alias_declaration",
     "method_definition",
     "lexical_declaration",
     "export_statement",
@@ -422,22 +435,11 @@ const DECLARATION_TYPES: &[&str] = &[
     // Go
     "type_declaration",
     "type_spec",
-    "method_declaration",
     "var_declaration",
-    // Java
-    "method_declaration",
-    "class_declaration",
-    "interface_declaration",
-    "enum_declaration",
-    "constructor_declaration",
+    // Java (shared above)
     // C#
     "namespace_declaration",
     "record_declaration",
-    "class_declaration",
-    "interface_declaration",
-    "enum_declaration",
-    "method_declaration",
-    "constructor_declaration",
     "struct_declaration",
     // Dart
     "function_signature",
@@ -877,8 +879,16 @@ impl QueryStrategy for FineGrainedStrategy {
                     ));
                 }
                 SemanticInfo::CallTarget(func) => {
-                    let child = target.node.named_child(0).unwrap(); // Safe as we extracted semantic info from it
-                    if let Some(field) = target.node.field_name_for_child(0) {
+                    let (child, field) = target
+                        .node
+                        .child_by_field_name("function")
+                        .map(|c| (c, Some("function")))
+                        .or_else(|| target.node.named_child(0).map(|c| (c, None)))
+                        .ok_or_else(|| {
+                            Error::TreeSitter("call target missing function child".into())
+                        })?;
+
+                    if let Some(field) = field {
                         return Ok(format!(
                             "({} {}: ({}) @func) @target\n  (#eq? @func \"{}\")",
                             target.node.kind(),
@@ -922,7 +932,7 @@ impl QueryStrategy for FineGrainedStrategy {
         if let Some(ref name) = target.name {
             // For leaf nodes (identifiers, literals), add a text match predicate
             // But don't match on huge text blocks (like closures)
-            if (target.node.named_child_count() == 0 || target.semantic_info.is_none()) && name.len() < 100 {
+            if target.node.named_child_count() == 0 && name.len() < 100 {
                 return Ok(format!(
                     "({}) @target\n  (#eq? @target \"{}\")",
                     target.node.kind(),
