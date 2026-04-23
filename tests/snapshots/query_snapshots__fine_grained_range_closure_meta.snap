@@ -6,5 +6,5 @@ name: fine_grained_range_closure
 fixture: complex_scenarios.swift
 strategy: Unified
 range: 28-37
-node_type: property_declaration
+node_type: call_expression
 query: "[query stored in separate _query.snap file]"

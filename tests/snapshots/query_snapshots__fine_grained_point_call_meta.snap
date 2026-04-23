@@ -6,5 +6,5 @@ name: fine_grained_point_call
 fixture: complex_scenarios.swift
 strategy: Unified
 range: "28:10"
-node_type: function_declaration
+node_type: simple_identifier
 query: "[query stored in separate _query.snap file]"

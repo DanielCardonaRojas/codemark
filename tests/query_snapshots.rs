@@ -83,6 +83,7 @@ fn test_swift_complex_query_snapshots() {
         ("declaration_from_inner_point", "33:14"),
         ("declaration_extension_method", "46"),
         ("declaration_enum_property", "56"),
+        ("fine_grained_side_effect", "35"),
     ];
 
     for (name, range_str) in scenarios {
