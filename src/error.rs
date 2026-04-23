@@ -36,6 +36,9 @@ pub enum Error {
     #[error("resolution error: {0}")]
     Resolution(String),
 
+    #[error("ambiguous query: {0}")]
+    AmbiguousQuery(String),
+
     #[error(transparent)]
     Io(#[from] std::io::Error),
 
@@ -62,7 +65,9 @@ impl Error {
             Error::NotImplemented(_) | Error::Operation(_) => EXIT_OPERATION_FAILED,
             Error::Input(_) | Error::Io(_) => EXIT_INPUT_ERROR,
             Error::Database(_) => EXIT_DATABASE_ERROR,
-            Error::TreeSitter(_) | Error::Resolution(_) => EXIT_OPERATION_FAILED,
+            Error::TreeSitter(_) | Error::Resolution(_) | Error::AmbiguousQuery(_) => {
+                EXIT_OPERATION_FAILED
+            }
             Error::Git(_) => EXIT_OPERATION_FAILED,
             Error::Json(_) => EXIT_OPERATION_FAILED,
         }

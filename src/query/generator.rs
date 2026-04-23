@@ -19,6 +19,7 @@ pub struct QueryContext<'a> {
     pub language: &'a Language,
     pub byte_range: (usize, usize),
     pub root: Node<'a>,
+    pub tree: &'a Tree,
 }
 
 /// A selected target node with its metadata.
@@ -68,7 +69,8 @@ struct PathEntry {
 #[derive(Debug)]
 struct NameInfo {
     /// The field name used in the parent (usually "name", but "type" for Rust impl_item)
-    field: String,
+    /// If None, the name is matched as a descendant without a specific field.
+    field: Option<String>,
     /// The direct name node type (e.g., "simple_identifier" or "user_type")
     direct_type: String,
     /// If the name is nested (e.g., user_type > type_identifier), the inner type
@@ -97,14 +99,14 @@ pub fn generate_query(
 ) -> Result<GeneratedQuery> {
     match strategy_type {
         StrategyType::Declaration => generate_query_with_strategy(
-            tree.root_node(),
+            tree,
             source,
             byte_range,
             language,
             &DeclarationStrategy,
         ),
         StrategyType::FineGrained => generate_query_with_strategy(
-            tree.root_node(),
+            tree,
             source,
             byte_range,
             language,
@@ -115,7 +117,7 @@ pub fn generate_query(
 
 /// Generate a query using a specific strategy.
 pub fn generate_query_with_strategy(
-    root: Node<'_>,
+    tree: &Tree,
     source: &[u8],
     byte_range: (usize, usize),
     language: &Language,
@@ -125,7 +127,8 @@ pub fn generate_query_with_strategy(
         source,
         language,
         byte_range,
-        root,
+        root: tree.root_node(),
+        tree,
     };
 
     // Select the target node
@@ -133,6 +136,15 @@ pub fn generate_query_with_strategy(
 
     // Build the query
     let query = strategy.build_query(&ctx, &target)?;
+
+    // Validate uniqueness
+    let matches = matcher::run_query(&query, tree, source, language)?;
+    if matches.len() != 1 {
+        return Err(Error::AmbiguousQuery(format!(
+            "Generated query matched {} nodes, expected 1",
+            matches.len()
+        )));
+    }
 
     Ok(GeneratedQuery {
         query,
@@ -144,18 +156,13 @@ pub fn generate_query_with_strategy(
 
 /// Given a specific AST node, generate a tree-sitter query for it.
 pub fn generate_query_for_node(
+    tree: &Tree,
     node: Node,
     source: &[u8],
     language: &Language,
 ) -> Result<GeneratedQuery> {
-    // Walk up to find the root
-    let mut root = node;
-    while let Some(parent) = root.parent() {
-        root = parent;
-    }
-
     generate_query_with_strategy(
-        root,
+        tree,
         source,
         (node.start_byte(), node.end_byte()),
         language,
@@ -164,13 +171,24 @@ pub fn generate_query_for_node(
 }
 
 /// Find the smallest named node that spans the given byte range.
-fn find_target_node<'a>(root: &Node<'a>, byte_range: (usize, usize)) -> Result<Node<'a>> {
+fn find_target_node<'a>(root: &Node<'a>, source: &[u8], byte_range: (usize, usize)) -> Result<Node<'a>> {
+    // Trim whitespace from the range
+    let mut start = byte_range.0;
+    let mut end = byte_range.1;
+
+    while start < end && (source[start] as char).is_whitespace() {
+        start += 1;
+    }
+    while end > start && (source[end - 1] as char).is_whitespace() {
+        end -= 1;
+    }
+
     let node = root
-        .descendant_for_byte_range(byte_range.0, byte_range.1)
+        .descendant_for_byte_range(start, end)
         .ok_or_else(|| Error::TreeSitter("no node found at byte range".into()))?;
 
-    // First, try to find a declaration that is contained within the user's range.
-    if let Some(inner) = find_declaration_within(*root, byte_range) {
+    // First, try to find a declaration that is contained within the trimmed range.
+    if let Some(inner) = find_declaration_within(*root, (start, end)) {
         return Ok(inner);
     }
 
@@ -268,7 +286,7 @@ const DECLARATION_TYPES: &[&str] = &[
     "struct_declaration",
     // Dart
     "function_signature",
-    "class_member",
+    "initialized_identifier",
     "enum_constant",
 ];
 
@@ -331,6 +349,30 @@ fn build_structural_path(target: Node, source: &[u8]) -> Vec<PathEntry> {
 
 /// Extract the "name" identifier from a node if it has one.
 fn extract_name_info(node: Node, source: &[u8]) -> Option<NameInfo> {
+    if node.kind() == "class_member" || node.kind() == "declaration" {
+        return extract_nested_name(node, source);
+    }
+    extract_name_info_direct(node, source)
+}
+
+/// Helper to recursively search for a "name" field in a node's children.
+fn extract_nested_name(node: Node, source: &[u8]) -> Option<NameInfo> {
+    if let Some(mut info) = extract_name_info_direct(node, source) {
+        info.field = None; // Field name is relative to child, not node
+        return Some(info);
+    }
+
+    let mut cursor = node.walk();
+    for child in node.named_children(&mut cursor) {
+        if let Some(info) = extract_nested_name(child, source) {
+            return Some(info);
+        }
+    }
+    None
+}
+
+/// Direct name extraction without recursion, to avoid infinite loops.
+fn extract_name_info_direct(node: Node, source: &[u8]) -> Option<NameInfo> {
     // Try the "name" field first
     if let Some(name_node) = node.child_by_field_name("name") {
         // For Swift user_type nodes (extensions), we need nested matching
@@ -339,7 +381,7 @@ fn extract_name_info(node: Node, source: &[u8]) -> Option<NameInfo> {
             for child in name_node.named_children(&mut cursor) {
                 if child.kind() == "type_identifier" {
                     return Some(NameInfo {
-                        field: "name".to_string(),
+                        field: Some("name".to_string()),
                         direct_type: "user_type".to_string(),
                         inner_type: Some("type_identifier".to_string()),
                         text: node_text(child, source),
@@ -348,7 +390,7 @@ fn extract_name_info(node: Node, source: &[u8]) -> Option<NameInfo> {
             }
         }
         return Some(NameInfo {
-            field: "name".to_string(),
+            field: Some("name".to_string()),
             direct_type: name_node.kind().to_string(),
             inner_type: None,
             text: node_text(name_node, source),
@@ -356,11 +398,9 @@ fn extract_name_info(node: Node, source: &[u8]) -> Option<NameInfo> {
     }
 
     // For Rust impl_item: use "type" field as the name
-    if node.kind() == "impl_item"
-        && let Some(type_node) = node.child_by_field_name("type")
-    {
+    if node.kind() == "impl_item" && let Some(type_node) = node.child_by_field_name("type") {
         return Some(NameInfo {
-            field: "type".to_string(),
+            field: Some("type".to_string()),
             direct_type: type_node.kind().to_string(),
             inner_type: None,
             text: node_text(type_node, source),
@@ -368,21 +408,14 @@ fn extract_name_info(node: Node, source: &[u8]) -> Option<NameInfo> {
     }
 
     // For TS export_statement: get the name from the inner declaration
-    if node.kind() == "export_statement"
-        && let Some(decl) = node.child_by_field_name("declaration")
-    {
-        return extract_name_info(decl, source);
+    if node.kind() == "export_statement" && let Some(decl) = node.child_by_field_name("declaration") {
+        return extract_name_info_direct(decl, source);
     }
 
     // For Python decorated_definition: get the name from the inner definition
-    if node.kind() == "decorated_definition"
-        && let Some(def) = node.child_by_field_name("definition")
-    {
-        return extract_name_info(def, source);
+    if node.kind() == "decorated_definition" && let Some(def) = node.child_by_field_name("definition") {
+        return extract_name_info_direct(def, source);
     }
-
-    // For TS method_definition: name is in "name" field as property_identifier
-    // (already handled by the generic "name" field check above)
 
     // For Swift enum_entry, try to find the name pattern
     if node.kind() == "enum_entry" {
@@ -390,7 +423,7 @@ fn extract_name_info(node: Node, source: &[u8]) -> Option<NameInfo> {
         for child in node.named_children(&mut cursor) {
             if child.kind() == "simple_identifier" {
                 return Some(NameInfo {
-                    field: "name".to_string(),
+                    field: Some("name".to_string()),
                     direct_type: "simple_identifier".to_string(),
                     inner_type: None,
                     text: node_text(child, source),
@@ -433,6 +466,9 @@ fn is_body_node(kind: &str) -> bool {
             // Java / C#
             | "constructor_body"
             | "enum_body_declarations"
+            // Dart
+            | "class_member"
+            | "declaration"
     )
 }
 
@@ -470,7 +506,8 @@ fn build_tier1_query(path: &[PathEntry]) -> String {
         let mut s = format!("{pad}({}", entry.node_type);
 
         // Name field with text predicate
-        let mut predicate = String::new();
+        let mut inner_predicate = String::new();
+        let mut outer_predicate = String::new();
         if let Some(ref info) = entry.name_info {
             let capture_name = if is_target {
                 "fn_name".to_string()
@@ -481,31 +518,59 @@ fn build_tier1_query(path: &[PathEntry]) -> String {
             };
             if let Some(ref inner_type) = info.inner_type {
                 // Nested name: e.g., name: (user_type (type_identifier) @capture)
-                s.push_str(&format!(
-                    "\n{pad}  {}: ({} ({inner_type}) @{capture_name})",
-                    info.field, info.direct_type
-                ));
+                if let Some(ref field_name) = info.field {
+                    s.push_str(&format!(
+                        "\n{pad}  {}: ({} ({inner_type}) @{capture_name})",
+                        field_name, info.direct_type
+                    ));
+                } else {
+                    s.push_str(&format!(
+                        "\n{pad}  ({} ({inner_type}) @{capture_name})",
+                        info.direct_type
+                    ));
+                }
             } else {
-                s.push_str(&format!(
-                    "\n{pad}  {}: ({}) @{capture_name}",
-                    info.field, info.direct_type
-                ));
+                if let Some(ref field_name) = info.field {
+                    s.push_str(&format!(
+                        "\n{pad}  {}: ({}) @{capture_name}",
+                        field_name, info.direct_type
+                    ));
+                } else {
+                    // Match anywhere inside - handled by outer_predicate on target
+                    if !is_target {
+                         s.push_str(&format!(
+                            "\n{pad}  (_) @{capture_name}"
+                        ));
+                    }
+                }
             }
-            predicate =
-                format!("\n{pad}  (#eq? @{capture_name} \"{}\")", escape_query_text(&info.text));
+            if info.field.is_none() {
+                // If it's a descendant name, match against the whole node text
+                // using a word-boundary-like match to be safe.
+                // This MUST be an outer predicate for the target.
+                let cap = if is_target { "target" } else { &capture_name };
+                outer_predicate = format!("\n{pad}  (#match? @{} \"\\\\b{}\\\\b\")", cap, escape_query_text(&info.text));
+            } else {
+                inner_predicate = format!("\n{pad}  (#eq? @{} \"{}\")", capture_name, escape_query_text(&info.text));
+            };
         }
 
         if is_target {
-            // Add predicate before closing, then close with @target
-            s.push_str(&predicate);
-            s.push_str(") @target");
+            // Add inner predicate and close inner node
+            s.push_str(&inner_predicate);
+            s.push(')');
+            // Wrap in extra parens if we have an outer predicate or to safely attach @target
+            s = format!("{pad}({} @target{}", &s[pad.len()..], outer_predicate);
+            s.push(')');
         } else {
-            // Add predicate, then nest the child
-            s.push_str(&predicate);
+            // Add inner predicate, then nest the child
+            s.push_str(&inner_predicate);
             let child_str = build_node(path, idx + 1, depth, indent + 1, counter);
             s.push('\n');
             s.push_str(&child_str);
             s.push(')');
+            // Add outer predicate (though we don't expect them for non-targets yet)
+            s.push_str(&outer_predicate);
         }
 
         s
@@ -516,62 +581,6 @@ fn build_tier1_query(path: &[PathEntry]) -> String {
 
 fn escape_query_text(text: &str) -> String {
     text.replace('\\', "\\\\").replace('"', "\\\"")
-}
-
-/// Try to disambiguate by adding parameter type info.
-#[allow(clippy::collapsible_if)]
-fn try_disambiguate(
-    path: &[PathEntry],
-    target: Node,
-    source: &[u8],
-    _source_text: &str,
-    tree: &Tree,
-    language: &Language,
-) -> Option<String> {
-    if target.kind() != "function_declaration" {
-        return None;
-    }
-
-    // Find the first parameter's type annotation
-    let param_type = extract_first_param_type(target, source)?;
-
-    // Build query with parameter disambiguation
-    let base_query = build_tier1_query(path);
-    // Insert parameter constraint before @target
-    let disambiguated = base_query.replace(
-        ") @target",
-        &format!(
-            "\n  (parameter\n    (simple_identifier)\n    (type_annotation (user_type (type_identifier) @param_type)))\n) @target\n(#eq? @param_type \"{param_type}\")"
-        ),
-    );
-
-    // Verify this now gives exactly one match
-    if let Ok(matches) = matcher::run_query(&disambiguated, tree, source, language) {
-        if matches.len() == 1 {
-            return Some(disambiguated);
-        }
-    }
-
-    None
-}
-
-fn extract_first_param_type(func_node: Node, source: &[u8]) -> Option<String> {
-    let mut cursor = func_node.walk();
-    for child in func_node.named_children(&mut cursor) {
-        if child.kind() == "parameter" {
-            // Look for type_annotation
-            let mut param_cursor = child.walk();
-            for param_child in child.named_children(&mut param_cursor) {
-                if param_child.kind() == "type_annotation" {
-                    let text = node_text(param_child, source);
-                    // Strip the leading ": "
-                    let clean = text.trim().trim_start_matches(':').trim();
-                    return Some(clean.to_string());
-                }
-            }
-        }
-    }
-    None
 }
 
 // ============================================================================
@@ -586,7 +595,7 @@ pub struct DeclarationStrategy;
 
 impl QueryStrategy for DeclarationStrategy {
     fn select_target<'a>(&self, ctx: &QueryContext<'a>) -> Result<TargetNode<'a>> {
-        let target_node = find_target_node(&ctx.root, ctx.byte_range)?;
+        let target_node = find_target_node(&ctx.root, ctx.source, ctx.byte_range)?;
 
         Ok(TargetNode {
             node: target_node,
@@ -658,7 +667,58 @@ impl QueryStrategy for FineGrainedStrategy {
         _ctx: &QueryContext<'a>,
         target: &TargetNode<'a>,
     ) -> Result<String> {
-        // Build a simple type-based query
+        if let Some(ref semantic) = target.semantic_info {
+            match semantic {
+                SemanticInfo::IfCondition(cond) => {
+                    return Ok(format!(
+                        "({} condition: (_) @cond) @target\n  (#eq? @cond \"{}\")",
+                        target.node.kind(),
+                        escape_query_text(cond)
+                    ));
+                }
+                SemanticInfo::CallTarget(func) => {
+                    return Ok(format!(
+                        "({} function: (_) @func) @target\n  (#eq? @func \"{}\")",
+                        target.node.kind(),
+                        escape_query_text(func)
+                    ));
+                }
+                SemanticInfo::AssignmentTarget(target_name) => {
+                    return Ok(format!(
+                        "({} left: (_) @left) @target\n  (#eq? @left \"{}\")",
+                        target.node.kind(),
+                        escape_query_text(target_name)
+                    ));
+                }
+                SemanticInfo::ReturnValue(val) => {
+                    return Ok(format!(
+                        "({} value: (_) @val) @target\n  (#eq? @val \"{}\")",
+                        target.node.kind(),
+                        escape_query_text(val)
+                    ));
+                }
+                SemanticInfo::BinaryOperator(op) => {
+                    return Ok(format!(
+                        "({} operator: \"{}\") @target",
+                        target.node.kind(),
+                        escape_query_text(op)
+                    ));
+                }
+            }
+        }
+
+        if let Some(ref name) = target.name {
+            // For leaf nodes (identifiers, literals), add a text match predicate
+            if target.node.named_child_count() == 0 {
+                return Ok(format!(
+                    "({}) @target\n  (#eq? @target \"{}\")",
+                    target.node.kind(),
+                    escape_query_text(name)
+                ));
+            }
+        }
+
+        // Fallback to simple type-based query
         Ok(format!("({}) @target", target.node.kind()))
     }
 }

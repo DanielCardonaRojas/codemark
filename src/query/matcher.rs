@@ -289,7 +289,7 @@ mod tests {
                         node.start_byte(),
                         node.end_byte()
                     );
-                    if depth < 3 {
+                    if depth < 10 {
                         let mut cursor = node.walk();
                         if cursor.goto_first_child() {
                             loop {

@@ -107,7 +107,7 @@ pub enum Command {
 
 // --- Subcommand argument structs ---
 
-#[derive(Debug, Clone, ValueEnum, Default)]
+#[derive(Debug, Clone, Copy, ValueEnum, Default)]
 pub enum QueryStrategyType {
     #[default]
     Declaration,

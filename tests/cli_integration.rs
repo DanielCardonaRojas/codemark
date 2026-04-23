@@ -573,7 +573,7 @@ fn search_finds_by_file_path() {
         "--file",
         &cm.fixture("rust/api_client.rs"),
         "--range",
-        "1",
+        "15",
         "--note",
         "test 2",
     ]);
@@ -2778,4 +2778,6 @@ fn add_with_fine_grained_strategy() {
     let node_type = json["data"]["node_type"].as_str().unwrap();
     assert_eq!(node_type, "boolean_literal");
     assert!(json["data"]["query"].as_str().unwrap().contains("@target"));
+    assert_eq!(json["data"]["unique"], true, "fine-grained query should identify one node");
+    assert_eq!(json["data"]["match_count"], 1);
 }
