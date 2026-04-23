@@ -951,9 +951,8 @@ additional = [
 
     #[test]
     fn resolve_additional_paths_absolute() {
-        let config = DatabasesConfig {
-            additional: vec!["/absolute/path/to/db.sqlite".to_string()],
-        };
+        let config =
+            DatabasesConfig { additional: vec!["/absolute/path/to/db.sqlite".to_string()] };
         let repo_root = Path::new("/test/repo");
         let paths = config.resolve_additional_paths(repo_root);
         assert_eq!(paths.len(), 1);
@@ -962,9 +961,7 @@ additional = [
 
     #[test]
     fn resolve_additional_paths_tilde_expansion() {
-        let config = DatabasesConfig {
-            additional: vec!["~/projects/db.sqlite".to_string()],
-        };
+        let config = DatabasesConfig { additional: vec!["~/projects/db.sqlite".to_string()] };
         let repo_root = Path::new("/test/repo");
         let paths = config.resolve_additional_paths(repo_root);
         assert_eq!(paths.len(), 1);
