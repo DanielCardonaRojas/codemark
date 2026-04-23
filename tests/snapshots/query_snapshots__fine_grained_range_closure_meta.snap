@@ -3,6 +3,7 @@ source: tests/query_snapshots.rs
 expression: snapshot
 ---
 name: fine_grained_range_closure
+fixture: complex_scenarios.swift
 strategy: Unified
 range: 28-37
 node_type: property_declaration

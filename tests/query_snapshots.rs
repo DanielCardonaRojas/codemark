@@ -16,6 +16,7 @@ use serde::Serialize;
 #[derive(Serialize)]
 struct QuerySnapshot {
     name: String,
+    fixture: String,
     strategy: String,
     range: String,
     node_type: String,
@@ -69,7 +70,8 @@ fn line_col_to_byte(source: &str, line: usize, col: usize) -> usize {
 
 #[test]
 fn test_swift_complex_query_snapshots() {
-    let (source, tree) = get_fixture_content("complex_scenarios.swift");
+    let fixture_name = "complex_scenarios.swift";
+    let (source, tree) = get_fixture_content(fixture_name);
     let language = CodemarkLang::Swift.tree_sitter_language();
 
     let scenarios = [
@@ -92,6 +94,7 @@ fn test_swift_complex_query_snapshots() {
 
         let snapshot = QuerySnapshot {
             name: name.to_string(),
+            fixture: fixture_name.to_string(),
             strategy: "Unified".to_string(),
             range: range_str.to_string(),
             node_type: result.target_node_type,

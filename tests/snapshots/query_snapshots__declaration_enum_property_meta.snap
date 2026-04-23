@@ -3,6 +3,7 @@ source: tests/query_snapshots.rs
 expression: snapshot
 ---
 name: declaration_enum_property
+fixture: complex_scenarios.swift
 strategy: Unified
 range: "56"
 node_type: property_declaration

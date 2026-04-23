@@ -3,6 +3,7 @@ source: tests/query_snapshots.rs
 expression: snapshot
 ---
 name: declaration_extension_method
+fixture: complex_scenarios.swift
 strategy: Unified
 range: "46"
 node_type: function_declaration
