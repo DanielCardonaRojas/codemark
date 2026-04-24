@@ -254,8 +254,9 @@ fn source_label_from_cli(cli: &Cli) -> String {
 
 /// Parse a range string. Supports:
 /// - "42" — single line
-/// - "42:67" — line range (inclusive)
-/// - "b42:67" or "42:67b" — byte range (explicit)
+/// - "42:10" — line 42, column 10
+/// - "42-67" — line range (inclusive)
+/// - "b42-67" or "42-67b" — byte range (explicit)
 pub fn parse_range(range: &str, source: &str) -> Result<(usize, usize)> {
     let r = range.trim();
 

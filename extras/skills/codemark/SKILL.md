@@ -310,7 +310,7 @@ For common query patterns across languages, see:
 ### Creating bookmarks
 ```bash
 # By range (line or byte) — optionally add to collection
-codemark add --file src/auth.rs --range 42:67 --collection my-work
+codemark add --file src/auth.rs --range 42-67 --collection my-work
 
 # By code snippet (searches for snippet in file) — optionally add to collection
 codemark add-from-snippet --file src/auth.rs --collection my-work

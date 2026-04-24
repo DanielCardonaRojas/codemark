@@ -113,7 +113,7 @@ pub struct AddArgs {
     #[arg(long)]
     pub file: PathBuf,
 
-    /// Line range (42 or 42:67) or byte range with b prefix (b1024:1280)
+    /// Line range (42, 42-67, 10:5-12:20) or byte range with b prefix (b1024-1280)
     #[arg(long, conflicts_with = "hunk")]
     pub range: Option<String>,
 
