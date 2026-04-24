@@ -435,7 +435,7 @@ mod tests {
             match_count: Some(1),
             file_path: Some("/path/to/file.rs".to_string()),
             byte_range: None,
-            line_range: Some("10:20".to_string()),
+            line_range: Some("10-20".to_string()),
             content_hash: None,
         }];
 

@@ -685,7 +685,7 @@ impl ByteLocation {
     /// Parse from a "start:end" string format stored in the database.
     #[allow(clippy::should_implement_trait)]
     pub fn from_str(s: &str) -> Option<Self> {
-        let (start, end) = s.split_once(':')?;
+        let (start, end) = s.split_once('-')?;
         let start = start.parse::<usize>().ok()?;
         let end = end.parse::<usize>().ok()?;
         Some(ByteLocation { start_byte: start, end_byte: end })

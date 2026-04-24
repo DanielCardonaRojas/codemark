@@ -881,7 +881,7 @@ fn byte_range_backwards_compat() {
         "--file",
         &cm.fixture("swift/auth_service.swift"),
         "--range",
-        "b811:1302",
+        "b811-1302",
         "--dry-run",
     ]);
     assert_eq!(json["data"]["dry_run"], true);
@@ -1328,8 +1328,8 @@ fn preview_uses_nearest_ancestor_resolution() {
             "exact".to_string(),
             1i32,
             "tests/fixtures/rust/auth_service.rs".to_string(),
-            "108:200".to_string(),
-            "108:109".to_string(),
+            "108-200".to_string(),
+            "108-109".to_string(),
             "hash_at_head".to_string(),
         ],
     ).unwrap();
@@ -1422,8 +1422,8 @@ fn git_repo_heal_skips_when_head_is_before_resolution() {
             "exact".to_string(),
             1i32,
             cm.file_path("test.rs"),
-            "0:100".to_string(),
-            "1:1".to_string(),
+            "0-100".to_string(),
+            "1-1".to_string(),
             "hash".to_string(),
         ],
     ).unwrap();
@@ -1567,7 +1567,7 @@ fn git_repo_move_method_then_heal_gets_new_resolution() {
     assert_eq!(resolutions_a.len(), 1, "should have 1 resolution after initial heal");
     let line_range_a = resolutions_a[0]["line_range"].as_str().unwrap();
     assert!(
-        line_range_a == "1:2" || line_range_a == "1:1",
+        line_range_a == "1-2" || line_range_a == "1-1",
         "initial resolution should target line 1"
     );
 
@@ -1605,7 +1605,7 @@ fn git_repo_move_method_then_heal_gets_new_resolution() {
     let line_range_b = preview_json["data"]["line_range"].as_str().unwrap();
     // After adding a blank line, the function is now at line 2
     assert!(
-        line_range_b == "2:3" || line_range_b == "2:2",
+        line_range_b == "2-3" || line_range_b == "2-2",
         "preview should show updated line range after move: got {}",
         line_range_b
     );
