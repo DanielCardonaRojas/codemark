@@ -563,15 +563,15 @@ fn extract_name_info_direct(node: Node, source: &[u8]) -> Option<NameInfo> {
     }
 
     // For Rust match_arm: use pattern text
-    if node.kind() == "match_arm" {
-        if let Some(pattern) = node.child_by_field_name("pattern") {
-            return Some(NameInfo {
-                field: Some("pattern".to_string()),
-                direct_type: pattern.kind().to_string(),
-                inner_type: None,
-                text: node_text(pattern, source),
-            });
-        }
+    if node.kind() == "match_arm"
+        && let Some(pattern) = node.child_by_field_name("pattern")
+    {
+        return Some(NameInfo {
+            field: Some("pattern".to_string()),
+            direct_type: pattern.kind().to_string(),
+            inner_type: None,
+            text: node_text(pattern, source),
+        });
     }
 
     // For Swift switch_entry: use pattern or "default"
