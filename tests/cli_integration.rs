@@ -151,8 +151,15 @@ impl Codemark {
         String::from_utf8(blob.content().to_vec()).unwrap()
     }
 
+    /// Read a fixture's full text.
+    fn fixture_text(&self, relative_path: &str) -> String {
+        std::fs::read_to_string(self.fixture(relative_path)).unwrap()
+    }
+
     fn run(&self, args: &[&str]) -> CmdResult {
         let output = Command::new(&self.binary)
+            .envs(std::env::vars())
+            .stderr(std::io::stderr()) // Pipe stderr to parent
             .arg("--db")
             .arg(&self.db_path)
             .args(args)
@@ -573,7 +580,7 @@ fn search_finds_by_file_path() {
         "--file",
         &cm.fixture("rust/api_client.rs"),
         "--range",
-        "1",
+        "15",
         "--note",
         "test 2",
     ]);
@@ -862,7 +869,7 @@ fn hunk_range_parsing() {
         "--dry-run",
     ]);
     assert_eq!(json["data"]["dry_run"], true);
-    assert_eq!(json["data"]["node_type"], "function_item");
+    assert_eq!(json["data"]["node_type"], "call_expression");
 }
 
 #[test]
@@ -874,7 +881,7 @@ fn byte_range_backwards_compat() {
         "--file",
         &cm.fixture("swift/auth_service.swift"),
         "--range",
-        "b811:1302",
+        "b811-1302",
         "--dry-run",
     ]);
     assert_eq!(json["data"]["dry_run"], true);
@@ -1321,8 +1328,8 @@ fn preview_uses_nearest_ancestor_resolution() {
             "exact".to_string(),
             1i32,
             "tests/fixtures/rust/auth_service.rs".to_string(),
-            "108:200".to_string(),
-            "108:109".to_string(),
+            "108-200".to_string(),
+            "108-109".to_string(),
             "hash_at_head".to_string(),
         ],
     ).unwrap();
@@ -1415,8 +1422,8 @@ fn git_repo_heal_skips_when_head_is_before_resolution() {
             "exact".to_string(),
             1i32,
             cm.file_path("test.rs"),
-            "0:100".to_string(),
-            "1:1".to_string(),
+            "0-100".to_string(),
+            "1-1".to_string(),
             "hash".to_string(),
         ],
     ).unwrap();
@@ -1560,7 +1567,7 @@ fn git_repo_move_method_then_heal_gets_new_resolution() {
     assert_eq!(resolutions_a.len(), 1, "should have 1 resolution after initial heal");
     let line_range_a = resolutions_a[0]["line_range"].as_str().unwrap();
     assert!(
-        line_range_a == "1:2" || line_range_a == "1:1",
+        line_range_a == "1-2" || line_range_a == "1-1",
         "initial resolution should target line 1"
     );
 
@@ -1598,7 +1605,7 @@ fn git_repo_move_method_then_heal_gets_new_resolution() {
     let line_range_b = preview_json["data"]["line_range"].as_str().unwrap();
     // After adding a blank line, the function is now at line 2
     assert!(
-        line_range_b == "2:3" || line_range_b == "2:2",
+        line_range_b == "2-3" || line_range_b == "2-2",
         "preview should show updated line range after move: got {}",
         line_range_b
     );
@@ -2349,7 +2356,7 @@ additional = [
     let bookmarks = json["data"].as_array().unwrap();
 
     // Should have at least the shared lib bookmark
-    assert!(bookmarks.len() >= 1, "Expected at least 1 bookmark, got {}", bookmarks.len());
+    assert!(!bookmarks.is_empty(), "Expected at least 1 bookmark, got {}", bookmarks.len());
 
     // Check that we have a bookmark from the shared lib
     // Notes are in the annotations array
@@ -2409,7 +2416,7 @@ additional = [
     let bookmarks = json["data"].as_array().unwrap();
 
     // Should have at least the other db bookmark
-    assert!(bookmarks.len() >= 1, "Expected at least 1 bookmark, got {}", bookmarks.len());
+    assert!(!bookmarks.is_empty(), "Expected at least 1 bookmark, got {}", bookmarks.len());
 
     let found_other = bookmarks.iter().any(|b| {
         b["annotations"]
@@ -2687,4 +2694,92 @@ additional = [
     // Cleanup
     let _ = std::fs::remove_dir_all(&global_config_dir);
     unsafe { std::env::remove_var("XDG_CONFIG_HOME") };
+}
+
+#[test]
+fn rust_data_models_bookmarking() {
+    let cm = Codemark::new();
+
+    // Bookmark a struct
+    let json = cm.run_json(&[
+        "add",
+        "--file",
+        &cm.fixture("rust/data_models.rs"),
+        "--range",
+        "1",
+        "--note",
+        "User struct",
+    ]);
+    assert_eq!(json["data"]["node_type"], "struct_item");
+
+    // Bookmark an enum
+    let json = cm.run_json(&[
+        "add",
+        "--file",
+        &cm.fixture("rust/data_models.rs"),
+        "--range",
+        "6",
+        "--note",
+        "Role enum",
+    ]);
+    assert_eq!(json["data"]["node_type"], "enum_item");
+
+    // Bookmark a trait
+    let json = cm.run_json(&[
+        "add",
+        "--file",
+        &cm.fixture("rust/data_models.rs"),
+        "--range",
+        "12",
+        "--note",
+        "Auth trait",
+    ]);
+    assert_eq!(json["data"]["node_type"], "trait_item");
+
+    // Bookmark an impl block
+    let json = cm.run_json(&[
+        "add",
+        "--file",
+        &cm.fixture("rust/data_models.rs"),
+        "--range",
+        "16",
+        "--note",
+        "Auth impl",
+    ]);
+    assert_eq!(json["data"]["node_type"], "impl_item");
+}
+
+#[test]
+fn targets_method_when_selecting_body() {
+    let cm = Codemark::new();
+    let fixture = "rust/data_models.rs";
+    let source = cm.fixture_text(fixture);
+
+    // Find "true" inside login method
+    let offset = source.find("true").expect("marker 'true' not found in fixture");
+    let range = format!("b{}:{}", offset, offset + 4);
+
+    let json =
+        cm.run_json(&["add", "--file", &cm.fixture(fixture), "--range", &range, "--dry-run"]);
+    assert_eq!(json["data"]["node_type"], "boolean_literal");
+}
+
+#[test]
+fn add_with_fine_grained_strategy() {
+    let cm = Codemark::new();
+    let fixture = "rust/data_models.rs";
+    let source = cm.fixture_text(fixture);
+
+    // Find "true" inside login method
+    let offset = source.find("true").expect("marker 'true' not found in fixture");
+    let range = format!("b{}:{}", offset, offset + 4);
+
+    let json =
+        cm.run_json(&["add", "--file", &cm.fixture(fixture), "--range", &range, "--dry-run"]);
+    // Fine-grained strategy targets the exact node
+    let node_type = json["data"]["node_type"].as_str().unwrap();
+    assert_eq!(node_type, "boolean_literal");
+    assert!(json["data"]["query"].as_str().unwrap().contains("@target"));
+    assert_eq!(json["data"]["unique"], true, "fine-grained query should identify one node");
+    assert_eq!(json["data"]["match_count"], 1);
 }

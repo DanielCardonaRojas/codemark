@@ -1,0 +1,10 @@
+---
+source: tests/query_snapshots.rs
+expression: snapshot
+---
+name: fine_grained_side_effect
+fixture: complex_scenarios.swift
+strategy: Unified
+range: "35"
+node_type: call_expression
+query: "[query stored in separate _query.snap file]"

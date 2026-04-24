@@ -68,7 +68,7 @@ codemark add --file <path> --range <start:end> --lang <language>
 
 **Example**:
 ```bash
-codemark add --file src/auth/middleware.swift --range 1024:1280 --lang swift \
+codemark add --file src/auth/middleware.swift --range 1024-1280 --lang swift \
   --tag auth --tag middleware --note "JWT validation entry point"
 ```
 
@@ -148,7 +148,7 @@ codemark resolve --tag auth --status active
     "file": "src/auth/middleware.swift",
     "line": 42,
     "column": 4,
-    "byte_range": "1024:1280",
+    "byte_range": "1024-1280",
     "method": "exact",
     "status": "active",
     "preview": "func validateToken(_ token: String) -> Bool {",

@@ -46,7 +46,8 @@ This document describes the Handlebars template system for codemark's markdown o
 | `{{resolved_at}}` | String | When resolution occurred |
 | `{{method}}` | String | Resolution method |
 | `{{file_path}}` | String? | Resolved file path |
-| `{{line_range}}` | String? | Line range (e.g., "10:20") |
+| `{{line_range}}` | String? | Line range (e.g., "10-20") |
+| `{{line_range_colon}}` | String? | Line range with colon for tools (e.g., "10:20") |
 | `{{match_count}}` | Number? | Number of matches |
 | `{{commit_hash}}` | String? | Resolution commit |
 | `{{short_commit}}` | String? | First 8 chars (computed) |

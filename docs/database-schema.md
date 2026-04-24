@@ -218,8 +218,8 @@ Resolutions are deduplicated based on the code location, not the commit:
 
 ```sql
 -- A duplicate is detected when all three match:
-byte_range = "806:3337"
-line_range = "27:102"
+byte_range = "806-3337"
+line_range = "27-102"
 method = "exact"
 ```
 

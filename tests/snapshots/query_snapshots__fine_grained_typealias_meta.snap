@@ -1,0 +1,10 @@
+---
+source: tests/query_snapshots.rs
+expression: snapshot
+---
+name: fine_grained_typealias
+fixture: complex_scenarios.swift
+strategy: Unified
+range: "18"
+node_type: typealias_declaration
+query: "[query stored in separate _query.snap file]"

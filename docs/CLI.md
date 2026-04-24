@@ -19,9 +19,9 @@ codemark [--db <path>]... [--format <fmt>] [--verbose] <subcommand>
 ### `add`
 Create a bookmark from a file and range.
 ```bash
-codemark add --file <path> --range <start:end> [--tag <tag>]... [--note <note>]
+codemark add --file <path> --range <start-end> [--tag <tag>]... [--note <note>]
 ```
-- `--range`: Line range (e.g., `42` or `42:67`) or byte range with `b` prefix (e.g., `b1024:1280`).
+- `--range`: Line range (e.g., `42`, `42-67`, `10:5-10:20`) or byte range with `b` prefix (e.g., `b1024-1280`).
 - `--hunk`: Derive range from a git diff hunk header.
 
 ### `add-from-snippet`

@@ -254,9 +254,10 @@ fn source_label_from_cli(cli: &Cli) -> String {
 
 /// Parse a range string. Supports:
 /// - "42" — single line
-/// - "42:67" — line range (inclusive)
-/// - "b42:67" or "42:67b" — byte range (explicit)
-fn parse_range(range: &str, source: &str) -> Result<(usize, usize)> {
+/// - "42:10" — line 42, column 10
+/// - "42-67" — line range (inclusive)
+/// - "b42-67" or "42-67b" — byte range (explicit)
+pub fn parse_range(range: &str, source: &str) -> Result<(usize, usize)> {
     let r = range.trim();
 
     // Byte range: b prefix or b suffix
@@ -267,37 +268,97 @@ fn parse_range(range: &str, source: &str) -> Result<(usize, usize)> {
         return parse_byte_range(&r[..r.len() - 1]);
     }
 
-    // Line range
-    let parts: Vec<&str> = r.split(':').collect();
-    match parts.len() {
-        1 => {
-            let line: usize = parts[0]
-                .parse()
-                .map_err(|_| Error::Input(format!("invalid line number: {}", parts[0])))?;
-            line_range_to_bytes(source, line, line)
+    // Unambiguous Range: START-END (e.g., 10-20 or 10:5-10:20)
+    if let Some((start_str, end_str)) = r.split_once('-') {
+        let start = parse_point(source, start_str)?;
+        let end = parse_point(source, end_str)?;
+        if start > end {
+            return Err(Error::Input(format!(
+                "invalid range: start byte {} is greater than end byte {}",
+                start, end
+            )));
         }
-        2 => {
-            let start: usize = parts[0]
-                .parse()
-                .map_err(|_| Error::Input(format!("invalid start line: {}", parts[0])))?;
-            let end: usize = parts[1]
-                .parse()
-                .map_err(|_| Error::Input(format!("invalid end line: {}", parts[1])))?;
-            line_range_to_bytes(source, start, end)
-        }
-        _ => Err(Error::Input("range must be LINE, LINE:LINE, or bBYTE:BYTE".into())),
+        return Ok((start, end));
+    }
+
+    // Point or Single Line: LINE:COL or LINE
+    if let Some((line_str, col_str)) = r.split_once(':') {
+        let line: usize = line_str
+            .parse()
+            .map_err(|_| Error::Input(format!("invalid line number: {}", line_str)))?;
+        let col: usize = col_str
+            .parse()
+            .map_err(|_| Error::Input(format!("invalid column number: {}", col_str)))?;
+        let byte = line_col_to_byte(source, line, col)?;
+        Ok((byte, byte))
+    } else {
+        // Single line: treat as a range covering the whole line
+        let line: usize =
+            r.parse().map_err(|_| Error::Input(format!("invalid line number: {}", r)))?;
+        line_range_to_bytes(source, line, line)
     }
 }
 
 fn parse_byte_range(s: &str) -> Result<(usize, usize)> {
-    let parts: Vec<&str> = s.split(':').collect();
-    if parts.len() != 2 {
-        return Err(Error::Input("byte range must be start:end".into()));
-    }
+    let (start_str, end_str) = s
+        .split_once('-')
+        .or_else(|| s.split_once(':'))
+        .ok_or_else(|| Error::Input("byte range must be start-end or start:end".into()))?;
+
     let start: usize =
-        parts[0].parse().map_err(|_| Error::Input("invalid byte range start".into()))?;
-    let end: usize = parts[1].parse().map_err(|_| Error::Input("invalid byte range end".into()))?;
+        start_str.parse().map_err(|_| Error::Input("invalid byte range start".into()))?;
+    let end: usize = end_str.parse().map_err(|_| Error::Input("invalid byte range end".into()))?;
     Ok((start, end))
+}
+
+fn line_col_to_byte(source: &str, line: usize, col: usize) -> Result<usize> {
+    if line == 0 || col == 0 {
+        return Err(Error::Input("line and column numbers are 1-indexed".into()));
+    }
+
+    let mut byte_offset = 0;
+    for (i, line_text) in source.split_inclusive('\n').enumerate() {
+        let line_num = i + 1;
+        if line_num == line {
+            // Trim trailing newline/carriage return for bounds check
+            let clean_line = line_text.trim_end_matches(['\n', '\r']);
+            if col > clean_line.len() + 1 {
+                return Err(Error::Input(format!(
+                    "column {} is out of bounds for line {}",
+                    col, line
+                )));
+            }
+            return Ok(byte_offset + col - 1);
+        }
+        byte_offset += line_text.len();
+    }
+
+    Err(Error::Input(format!("line {} is out of bounds", line)))
+}
+
+fn parse_point(source: &str, s: &str) -> Result<usize> {
+    let parts: Vec<&str> = s.split(':').collect();
+    if parts.len() == 2 {
+        let line: usize = parts[0].parse().map_err(|_| Error::Input("invalid line".into()))?;
+        let col: usize = parts[1].parse().map_err(|_| Error::Input("invalid col".into()))?;
+        line_col_to_byte(source, line, col)
+    } else {
+        let line: usize = s.parse().map_err(|_| Error::Input("invalid line".into()))?;
+        let (start, _) = line_range_to_bytes(source, line, line)?;
+        Ok(start)
+    }
+}
+
+fn byte_to_line(source: &str, byte_offset: usize) -> usize {
+    let mut current_byte = 0;
+    for (i, line_text) in source.split_inclusive('\n').enumerate() {
+        current_byte += line_text.len();
+        if current_byte > byte_offset {
+            return i + 1;
+        }
+    }
+    // If we're exactly at the end of the file
+    source.split_inclusive('\n').count()
 }
 
 /// Convert 1-indexed inclusive line range to byte range.
@@ -309,28 +370,31 @@ fn line_range_to_bytes(source: &str, start_line: usize, end_line: usize) -> Resu
         return Err(Error::Input(format!("start line {start_line} > end line {end_line}")));
     }
 
-    let mut byte_offset = 0;
     let mut start_byte = None;
     let mut end_byte = None;
+    let mut current_byte = 0;
 
-    for (i, line) in source.lines().enumerate() {
+    for (i, line_text) in source.split_inclusive('\n').enumerate() {
         let line_num = i + 1;
         if line_num == start_line {
-            start_byte = Some(byte_offset);
+            start_byte = Some(current_byte);
         }
-        byte_offset += line.len() + 1; // +1 for newline
+        current_byte += line_text.len();
         if line_num == end_line {
-            end_byte = Some(byte_offset.min(source.len()));
+            end_byte = Some(current_byte);
             break;
         }
     }
 
     match (start_byte, end_byte) {
-        (Some(s), Some(e)) => Ok((s, e)),
-        _ => Err(Error::Input(format!(
-            "line range {start_line}:{end_line} is out of bounds (file has {} lines)",
-            source.lines().count()
-        ))),
+        (Some(s), Some(e)) => Ok((s, e.min(source.len()))),
+        _ => {
+            let line_count = source.split_inclusive('\n').count();
+            Err(Error::Input(format!(
+                "line range {start_line}-{end_line} is out of bounds (file has {} lines)",
+                line_count
+            )))
+        }
     }
 }
 
@@ -396,9 +460,9 @@ fn get_bookmark_line(db: &Database, bookmark_id: &str, _file_path: &str) -> Opti
     let resolutions = db.list_resolutions(bookmark_id, 1).ok()?;
     let res = resolutions.first()?;
 
-    // Parse the line_range "start:end" (1-indexed, inclusive)
+    // Parse the line_range "start-end" (1-indexed, inclusive)
     let line_range = res.line_range.as_ref()?;
-    let parts: Vec<&str> = line_range.split(':').collect();
+    let parts: Vec<&str> = line_range.split('-').collect();
     if parts.len() != 2 {
         return None;
     }
@@ -513,8 +577,8 @@ fn handle_add(cli: &Cli, mode: &OutputMode, args: &AddArgs) -> Result<()> {
             .unwrap_or(0);
 
     // Compute the line range of the target for display
-    let target_start_line = source[..generated.byte_range.0].lines().count() + 1;
-    let target_end_line = source[..generated.byte_range.1].lines().count();
+    let target_start_line = byte_to_line(&source, generated.byte_range.0);
+    let target_end_line = byte_to_line(&source, generated.byte_range.1.saturating_sub(1));
 
     if args.dry_run {
         return write_dry_run(
@@ -601,8 +665,8 @@ fn handle_add(cli: &Cli, mode: &OutputMode, args: &AddArgs) -> Result<()> {
             method: ResolutionMethod::Exact,
             match_count: Some(match_count as i32),
             file_path: Some(bookmark.file_path.clone()),
-            byte_range: Some(format!("{}:{}", generated.byte_range.0, generated.byte_range.1)),
-            line_range: Some(format!("{}:{}", target_start_line, target_end_line)),
+            byte_range: Some(format!("{}-{}", generated.byte_range.0, generated.byte_range.1)),
+            line_range: Some(format!("{}-{}", target_start_line, target_end_line)),
             content_hash: Some(content_hash.clone()),
         };
         db.insert_resolution_if_changed(&initial_res, config.storage.max_resolutions())?;
@@ -677,8 +741,8 @@ fn handle_add_from_snippet(cli: &Cli, mode: &OutputMode, args: &AddFromSnippetAr
             .map(|m| m.len())
             .unwrap_or(0);
 
-    let target_start_line = source[..generated.byte_range.0].lines().count() + 1;
-    let target_end_line = source[..generated.byte_range.1].lines().count();
+    let target_start_line = byte_to_line(&source, generated.byte_range.0);
+    let target_end_line = byte_to_line(&source, generated.byte_range.1.saturating_sub(1));
 
     if args.dry_run {
         return write_dry_run(
@@ -765,8 +829,8 @@ fn handle_add_from_snippet(cli: &Cli, mode: &OutputMode, args: &AddFromSnippetAr
             method: ResolutionMethod::Exact,
             match_count: Some(match_count as i32),
             file_path: Some(bookmark.file_path.clone()),
-            byte_range: Some(format!("{}:{}", generated.byte_range.0, generated.byte_range.1)),
-            line_range: Some(format!("{}:{}", target_start_line, target_end_line)),
+            byte_range: Some(format!("{}-{}", generated.byte_range.0, generated.byte_range.1)),
+            line_range: Some(format!("{}-{}", target_start_line, target_end_line)),
             content_hash: Some(content_hash.clone()),
         };
         db.insert_resolution_if_changed(&initial_res, config.storage.max_resolutions())?;
@@ -933,8 +997,8 @@ fn handle_add_from_query(cli: &Cli, mode: &OutputMode, args: &AddFromQueryArgs) 
             method: ResolutionMethod::Exact,
             match_count: Some(matches.len() as i32),
             file_path: Some(bookmark.file_path.clone()),
-            byte_range: Some(format!("{}:{}", byte_range.0, byte_range.1)),
-            line_range: Some(format!("{}:{}", target_start_line, target_end_line)),
+            byte_range: Some(format!("{}-{}", byte_range.0, byte_range.1)),
+            line_range: Some(format!("{}-{}", target_start_line, target_end_line)),
             content_hash: Some(content_hash.clone()),
         };
         db.insert_resolution_if_changed(&initial_res, config.storage.max_resolutions())?;
@@ -1071,8 +1135,8 @@ fn handle_resolve(cli: &Cli, mode: &OutputMode, args: &ResolveArgs) -> Result<()
             method: result.method,
             match_count: Some(1),
             file_path: Some(result.file_path.clone()),
-            byte_range: Some(format!("{}:{}", result.byte_range.0, result.byte_range.1)),
-            line_range: Some(format!("{}:{}", result.start_line + 1, result.end_line + 1)),
+            byte_range: Some(format!("{}-{}", result.byte_range.0, result.byte_range.1)),
+            line_range: Some(format!("{}-{}", result.start_line + 1, result.end_line + 1)),
             content_hash: Some(result.content_hash.clone()),
         };
         let config = load_config(cli);
@@ -1391,8 +1455,8 @@ fn handle_heal(cli: &Cli, mode: &OutputMode, args: &HealArgs) -> Result<()> {
                 method: result.method,
                 match_count: Some(1),
                 file_path: Some(result.file_path.clone()),
-                byte_range: Some(format!("{}:{}", result.byte_range.0, result.byte_range.1)),
-                line_range: Some(format!("{}:{}", result.start_line + 1, result.end_line + 1)),
+                byte_range: Some(format!("{}-{}", result.byte_range.0, result.byte_range.1)),
+                line_range: Some(format!("{}-{}", result.start_line + 1, result.end_line + 1)),
                 content_hash: Some(result.content_hash.clone()),
             };
             let res_id = res.id.clone();
@@ -1674,10 +1738,12 @@ fn handle_preview(cli: &Cli, args: &PreviewArgs) -> Result<()> {
     }
 
     // Output JSON with resolution data (using standard envelope)
+    let line_range_colon = resolution.line_range.as_ref().map(|r| r.replace('-', ":"));
     let data = serde_json::json!({
         "bookmark_id": bm.id,
         "file_path": absolute_path.to_string_lossy(),
         "line_range": resolution.line_range,
+        "line_range_colon": line_range_colon,
         "byte_range": resolution.byte_range,
         "status": bm.status,
         "resolution_method": resolution.method,
@@ -2431,8 +2497,8 @@ fn resolve_batch(
             method: result.method,
             match_count: Some(1),
             file_path: Some(result.file_path.clone()),
-            byte_range: Some(format!("{}:{}", result.byte_range.0, result.byte_range.1)),
-            line_range: Some(format!("{}:{}", result.start_line + 1, result.end_line + 1)),
+            byte_range: Some(format!("{}-{}", result.byte_range.0, result.byte_range.1)),
+            line_range: Some(format!("{}-{}", result.start_line + 1, result.end_line + 1)),
             content_hash: Some(result.content_hash.clone()),
         };
         let _ = db.insert_resolution_if_changed(&res, config.storage.max_resolutions());
@@ -2504,7 +2570,9 @@ fn write_resolution_output(
                 "file": absolute_path_str,
                 "line": result.start_line + 1,
                 "column": result.start_col,
-                "byte_range": format!("{}:{}", result.byte_range.0, result.byte_range.1),
+                "byte_range": format!("{}-{}", result.byte_range.0, result.byte_range.1),
+                "line_range": format!("{}-{}", result.start_line + 1, result.end_line + 1),
+                "line_range_colon": format!("{}:{}", result.start_line + 1, result.end_line + 1),
                 "method": result.method.to_string(),
                 "status": health::transition(bm.status, result.method, result.hash_matches).to_string(),
                 "preview": result.matched_text.lines().next().unwrap_or(""),

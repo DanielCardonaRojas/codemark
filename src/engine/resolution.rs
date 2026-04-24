@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use tree_sitter::Language;
+use tree_sitter::{Language, Tree};
 
 use crate::engine::bookmark::{Bookmark, ResolutionMethod};
 use crate::engine::hash;
@@ -40,6 +40,13 @@ pub fn resolve(
 
     // Tier 1: Exact query
     if let Ok(matches) = matcher::run_query(&bookmark.query, tree, source_bytes, language) {
+        if std::env::var("CODEMARK_DEBUG_QUERY").is_ok() {
+            eprintln!(
+                "DEBUG: resolve: Tier 1 matches={} query=\n{}",
+                matches.len(),
+                bookmark.query
+            );
+        }
         if matches.len() == 1 {
             let m = &matches[0];
             let ch = hash::content_hash(&m.node_text);
@@ -81,7 +88,7 @@ pub fn resolve(
     if let Some(ref stored_hash) = bookmark.content_hash {
         let root = tree.root_node();
         if let Some(result) =
-            hash_fallback_walk(root, source_bytes, stored_hash, bookmark, language)
+            hash_fallback_walk(tree, root, source_bytes, stored_hash, bookmark, language)
         {
             return Ok(result);
         }
@@ -152,6 +159,7 @@ fn pick_match(
 
 /// Walk all named nodes looking for a hash match.
 fn hash_fallback_walk(
+    tree: &Tree,
     node: tree_sitter::Node,
     source: &[u8],
     stored_hash: &str,
@@ -163,8 +171,9 @@ fn hash_fallback_walk(
         let ch = hash::content_hash(text);
         if ch == stored_hash {
             // Regenerate query for this new location
-            let new_query =
-                generator::generate_query_for_node(node, source, language).ok().map(|gq| gq.query);
+            let new_query = generator::generate_query_for_node(tree, node, source, language)
+                .ok()
+                .map(|gq| gq.query);
 
             return Some(ResolutionResult {
                 method: ResolutionMethod::HashFallback,
@@ -183,7 +192,9 @@ fn hash_fallback_walk(
 
     let mut cursor = node.walk();
     for child in node.named_children(&mut cursor) {
-        if let Some(result) = hash_fallback_walk(child, source, stored_hash, bookmark, language) {
+        if let Some(result) =
+            hash_fallback_walk(tree, child, source, stored_hash, bookmark, language)
+        {
             return Some(result);
         }
     }

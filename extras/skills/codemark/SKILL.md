@@ -253,33 +253,50 @@ codemark add --file internal/auth/handler.go --range 25 --note "HTTP handler for
 ## Quick Start
 
 ### Creating a collection of bookmarks (recommended for agents)
-Use `--collection` when creating bookmarks to add them directly to a collection:
+Use `--collection` when creating bookmarks to add them directly to a collection. **Always prefer range-based targeting** as the first resource:
 
 ```bash
-codemark add --file src/auth.rs --range 42 --note "Core auth entry point: Handles all JWT verification" --tag feature:auth --tag role:entrypoint --created-by agent --collection login-flow
-codemark add-from-query --file src/auth.swift --query '(function_declaration name: (simple_identifier) @name (#eq? @name "validateToken")) @target' --note "Validates JWT tokens" --created-by agent --collection login-flow
+# 1. Preferred: Range-based targeting (Line or Point)
+codemark add --file src/auth.rs --range 42 --note "Core auth entry point" --collection login-flow
+
+# 2. Alternative: Snippet-based (if range is unknown)
+echo "func validateToken" | codemark add-from-snippet --file src/auth.swift --collection login-flow
+
+# 3. Last Resort: Raw tree-sitter query (for extreme precision/disambiguation)
+codemark add-from-query --file src/auth.swift --query '(function_declaration) @target' --collection login-flow
+
 codemark collection show login-flow
 ```
 
-### Method 1: Range-based bookmarking
-When you know the file and line numbers:
+### Method 1: Range-based bookmarking (Primary Resource)
+When you know the file and line numbers. This leverages the **Anchored Precision** engine to automatically generate stable, architecturally-anchored queries.
 
 ```bash
-codemark add --file src/auth.rs --range 42 --note "Core auth entry point: Handles all JWT verification" --context "Module: auth | Validates all JWT tokens for API requests" --tag module:auth --tag feature:auth --tag role:entrypoint --created-by agent
+# Point targeting: targets the smallest node at line 42, column 10
+codemark add --file src/auth.rs --range 42:10 --note "Specific authorization gate" --created-by agent
+
+# Line targeting: targets the tightest node containing line 42
+codemark add --file src/auth.rs --range 42 --note "Core auth entry point" --created-by agent
+
+# Span targeting: targets a specific range of lines
+codemark add --file src/auth.rs --range 42-67 --note "Full login method" --created-by agent
+
+# Precise Span targeting: targets a specific range of characters
+codemark add --file src/auth.rs --range 10:5-10:20 --note "Specific expression" --created-by agent
 ```
 
 ### Method 2: Snippet-based bookmarking
 When you have the code snippet but need to find it in a file:
 
 ```bash
-echo "func validateToken(_ token: String) -> Claims" | codemark add-from-snippet --file src/auth.swift --note "Validates JWT tokens" --context "Module: auth | JWT validation with expiry check" --tag module:auth --tag feature:auth --tag role:validator --created-by agent
+echo "func validateToken(_ token: String) -> Claims" | codemark add-from-snippet --file src/auth.swift --note "Validates JWT tokens" --tag role:validator --created-by agent
 ```
 
-### Method 3: Raw tree-sitter query (recommended for agents)
-When you want precise control over what gets bookmarked:
+### Method 3: Raw tree-sitter query (Last Resort)
+Use this **only** if range-based targeting is ambiguous or you need a highly specific non-positional pattern.
 
 ```bash
-codemark add-from-query --file src/auth.swift --query '(function_declaration name: (simple_identifier) @name (#eq? @name "validateToken")) @target' --note "Validates JWT tokens" --context "Module: auth | Core validation logic" --tag module:auth --tag feature:auth --tag role:validator --created-by agent
+codemark add-from-query --file src/auth.swift --query '(function_declaration name: (simple_identifier) @name (#eq? @name "validateToken")) @target' --note "Validates JWT tokens" --created-by agent
 ```
 
 For common query patterns across languages, see:
@@ -296,6 +313,7 @@ For common query patterns across languages, see:
 ## Best Practices
 
 - **Target small, specific code**: Prefer single functions over entire classes, specific methods over whole modules. Smaller bookmarks are more resilient to refactoring, easier to understand, and more precise for navigation.
+- **Range-First Policy**: **Always prefer range-based targeting** (`--range`) as your first choice. It leverages the unified "Anchored Precision" engine to generate stable, architecturally-anchored queries automatically. Only use raw tree-sitter queries (`--query`) as a last resort if range-based targeting is ambiguous.
 - **Fine-grained execution targeting**: Don't just bookmark containers (classes/functions). Bookmark **execution boundaries** like critical method calls (`call_expression`), authorization gates (`if_statement`), or complex state transitions (`switch`/`match`).
 - **Granularity Strategy**: We prefer **more, highly specific bookmarks** over fewer, general ones. For example, if a function performs three critical steps (auth, validation, DB write), it is better to bookmark those three specific lines/nodes than to bookmark the entire function.
 - Use `--created-by agent` to distinguish your bookmarks from the user's.
@@ -310,7 +328,7 @@ For common query patterns across languages, see:
 ### Creating bookmarks
 ```bash
 # By range (line or byte) — optionally add to collection
-codemark add --file src/auth.rs --range 42:67 --collection my-work
+codemark add --file src/auth.rs --range 42-67 --collection my-work
 
 # By code snippet (searches for snippet in file) — optionally add to collection
 codemark add-from-snippet --file src/auth.rs --collection my-work

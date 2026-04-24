@@ -12,19 +12,50 @@ pub struct GeneratedQuery {
     pub byte_range: (usize, usize),
 }
 
+/// Context information passed to query strategies.
+#[derive(Clone, Debug)]
+pub struct QueryContext<'a> {
+    pub source: &'a [u8],
+    pub language: &'a Language,
+    pub byte_range: (usize, usize),
+    pub root: Node<'a>,
+    pub tree: &'a Tree,
+}
+
+/// Semantic information that can distinguish a node from others of the same type.
+#[derive(Clone, Debug)]
+#[allow(dead_code)]
+pub enum SemanticInfo {
+    /// For if statements: the condition being tested.
+    IfCondition(String),
+    /// For call expressions: the function being called.
+    CallTarget(String),
+    /// For assignments: the variable being assigned.
+    AssignmentTarget(String),
+    /// For return statements: the value being returned.
+    ReturnValue(String),
+    /// For binary expressions: the operator.
+    BinaryOperator(String),
+}
+
 /// One entry in the structural path from root to target.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct PathEntry {
     node_type: String,
     /// Name info for query generation.
     name_info: Option<NameInfo>,
+    /// Semantic info for query generation.
+    semantic_info: Option<SemanticInfo>,
+    /// Whether this node is a "landmark" (stable named declaration).
+    is_landmark: bool,
 }
 
 /// How to query for the "name" of a node.
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct NameInfo {
     /// The field name used in the parent (usually "name", but "type" for Rust impl_item)
-    field: String,
+    /// If None, the name is matched as a descendant without a specific field.
+    field: Option<String>,
     /// The direct name node type (e.g., "simple_identifier" or "user_type")
     direct_type: String,
     /// If the name is nested (e.g., user_type > type_identifier), the inner type
@@ -41,135 +72,141 @@ pub fn generate_query(
     byte_range: (usize, usize),
     language: &Language,
 ) -> Result<GeneratedQuery> {
-    let target = find_target_node(tree, byte_range)?;
-    generate_query_for_node(target, source, language)
-}
+    let ctx = QueryContext { source, language, byte_range, root: tree.root_node(), tree };
 
-/// Given a specific AST node, generate a tree-sitter query for it.
-#[allow(clippy::collapsible_if)]
-pub fn generate_query_for_node(
-    node: Node,
-    source: &[u8],
-    language: &Language,
-) -> Result<GeneratedQuery> {
-    let target = walk_to_named_declaration(node);
-    let path = build_structural_path(target, source);
-    let target_name = path.last().and_then(|e| e.name_info.as_ref().map(|info| info.text.clone()));
+    // 1. Select the tightest meaningful target node
+    let mut node = find_tightest_node(&ctx.root, ctx.source, ctx.byte_range)?;
 
-    let query = build_tier1_query(&path);
+    // For fine-grained targeting, we want to descend into blocks to find the
+    // actual statement or expression.
+    while is_body_node(node.kind()) {
+        let mut found_child = false;
+        let mut cursor = node.walk();
 
-    // Validate uniqueness
-    let source_text = std::str::from_utf8(source).unwrap_or("");
-    let reparsed_tree = {
-        let mut parser = tree_sitter::Parser::new();
-        parser.set_language(language).ok();
-        parser.parse(source, None)
-    };
-
-    if let Some(ref tree) = reparsed_tree {
-        if let Ok(matches) = matcher::run_query(&query, tree, source, language) {
-            if matches.len() == 1 {
-                return Ok(GeneratedQuery {
-                    query,
-                    target_node_type: target.kind().to_string(),
-                    target_name,
-                    byte_range: (target.start_byte(), target.end_byte()),
-                });
+        for child in node.named_children(&mut cursor) {
+            if child.start_byte() < ctx.byte_range.1 && child.end_byte() > ctx.byte_range.0 {
+                node = child;
+                found_child = true;
+                break;
             }
-            // Multiple matches — try disambiguation with parameters
-            if matches.len() > 1 {
-                if let Some(disambiguated) =
-                    try_disambiguate(&path, target, source, source_text, tree, language)
-                {
-                    return Ok(GeneratedQuery {
-                        query: disambiguated,
-                        target_node_type: target.kind().to_string(),
-                        target_name,
-                        byte_range: (target.start_byte(), target.end_byte()),
-                    });
-                }
-            }
+        }
+
+        if !found_child {
+            break;
+        }
+
+        // If we found a node with semantic info, stop here
+        if extract_semantic_info(node, ctx.source).is_some() {
+            break;
         }
     }
 
-    // Return the query even if not unique — resolution will handle multiple matches
+    // 2. Extract metadata
+    let name = extract_name_info(node, ctx.source)
+        .map(|info| info.text)
+        .or_else(|| extract_identifier_from_node(node, ctx.source));
+
+    // 3. Disambiguate and anchor
+    let query = disambiguate_query(node, &ctx)?;
+
     Ok(GeneratedQuery {
         query,
-        target_node_type: target.kind().to_string(),
-        target_name,
-        byte_range: (target.start_byte(), target.end_byte()),
+        target_node_type: node.kind().to_string(),
+        target_name: name,
+        byte_range: (node.start_byte(), node.end_byte()),
     })
 }
 
-/// Find the smallest named node that spans the given byte range.
-///
-/// Strategy: find the deepest node at the range, then walk up to the nearest
-/// declaration. But prefer a **smaller** declaration that fits within the
-/// user's range over a larger one that contains it. This ensures that selecting
-/// lines 42-67 (exactly a method) targets the method, not the enclosing class.
-fn find_target_node(tree: &Tree, byte_range: (usize, usize)) -> Result<Node<'_>> {
-    let root = tree.root_node();
-    let node = root
-        .descendant_for_byte_range(byte_range.0, byte_range.1)
-        .ok_or_else(|| Error::TreeSitter("no node found at byte range".into()))?;
+/// Find the tightest meaningful node for a given byte range.
+/// If it's a point range, find the deepest named node.
+/// If it's a multi-byte range, find the smallest node covering it.
+fn find_tightest_node<'a>(
+    root: &Node<'a>,
+    source: &[u8],
+    byte_range: (usize, usize),
+) -> Result<Node<'a>> {
+    let mut start = byte_range.0;
+    let mut end = byte_range.1;
 
-    // First, try to find a declaration that is contained within the user's range.
-    // This handles the case where the user selected an entire method body.
-    if let Some(inner) = find_declaration_within(root, byte_range) {
-        return Ok(inner);
+    // Trim whitespace
+    while start < end && (source[start] as char).is_whitespace() {
+        start += 1;
+    }
+    while end > start && (source[end - 1] as char).is_whitespace() {
+        end -= 1;
     }
 
-    // Otherwise, walk up from the deepest node to the nearest declaration.
-    Ok(walk_to_named_declaration(node))
-}
+    if start == end {
+        // Point range: pick the deepest named node at this position
+        let mut node = root
+            .descendant_for_byte_range(start, start)
+            .ok_or_else(|| Error::TreeSitter("no node found at position".into()))?;
 
-/// Find the largest declaration node whose span is contained within the given byte range.
-/// This handles the case where the user selects exactly a method — we want the method,
-/// not a smaller declaration inside it, and not the enclosing class.
-fn find_declaration_within(node: Node, byte_range: (usize, usize)) -> Option<Node> {
-    let mut best: Option<Node> = None;
-
-    fn search<'a>(node: Node<'a>, byte_range: (usize, usize), best: &mut Option<Node<'a>>) {
-        // Skip nodes entirely outside the range
-        if node.end_byte() <= byte_range.0 || node.start_byte() >= byte_range.1 {
-            return;
+        // If the node is very large (e.g. it includes trailing whitespace),
+        // try to find a tighter child that also contains the point.
+        while let Some(tighter_child) = find_tighter_child(node, start) {
+            node = tighter_child;
         }
 
-        // Check if this declaration fits within the user's range
-        if DECLARATION_TYPES.contains(&node.kind())
-            && node.start_byte() >= byte_range.0
-            && node.end_byte() <= byte_range.1
-        {
-            // Prefer the largest declaration that fits — this is the most meaningful
-            // structural unit the user intended to select
-            if best.is_none_or(|b| {
-                (node.end_byte() - node.start_byte()) > (b.end_byte() - b.start_byte())
-            }) {
-                *best = Some(node);
+        // Walk up to the nearest named node if we hit an anonymous one
+        while !node.is_named() {
+            if let Some(parent) = node.parent() {
+                node = parent;
+            } else {
+                break;
             }
         }
+        Ok(node)
+    } else {
+        // Range: pick the smallest node covering it
+        let mut node = root
+            .descendant_for_byte_range(start, end)
+            .ok_or_else(|| Error::TreeSitter("no node found at byte range".into()))?;
 
-        // Recurse into children
-        let mut cursor = node.walk();
-        for child in node.named_children(&mut cursor) {
-            search(child, byte_range, best);
+        // Walk up to the nearest named node if we hit an anonymous one
+        while !node.is_named() {
+            if let Some(parent) = node.parent() {
+                node = parent;
+            } else {
+                break;
+            }
+        }
+        Ok(node)
+    }
+}
+
+/// Helper to find a smaller child node that still contains the point.
+fn find_tighter_child(node: Node, point: usize) -> Option<Node> {
+    let mut cursor = node.walk();
+    if cursor.goto_first_child() {
+        loop {
+            let child = cursor.node();
+            if child.start_byte() <= point && child.end_byte() > point {
+                return Some(child);
+            }
+            if !cursor.goto_next_sibling() {
+                break;
+            }
         }
     }
-
-    search(node, byte_range, &mut best);
-    best
+    None
 }
 
 const DECLARATION_TYPES: &[&str] = &[
+    // Common / Shared types
+    "class_declaration",
+    "interface_declaration",
+    "enum_declaration",
+    "method_declaration",
+    "constructor_declaration",
+    "property_declaration",
+    "type_alias_declaration",
     // Swift
     "function_declaration",
-    "class_declaration",
     "protocol_declaration",
-    "property_declaration",
     "init_declaration",
     "deinit_declaration",
     "subscript_declaration",
-    "typealias_declaration",
     "enum_entry",
     "protocol_function_declaration",
     // Rust
@@ -184,9 +221,6 @@ const DECLARATION_TYPES: &[&str] = &[
     "mod_item",
     "macro_definition",
     // TypeScript
-    "interface_declaration",
-    "enum_declaration",
-    "type_alias_declaration",
     "method_definition",
     "lexical_declaration",
     "export_statement",
@@ -197,40 +231,167 @@ const DECLARATION_TYPES: &[&str] = &[
     // Go
     "type_declaration",
     "type_spec",
-    "method_declaration",
     "var_declaration",
-    // Java
-    "method_declaration",
+    // Java (shared above)
     // C#
     "namespace_declaration",
     "record_declaration",
+    "struct_declaration",
+    "method_elem",
     // Dart
     "function_signature",
-    "class_member",
+    "initialized_identifier",
     "enum_constant",
 ];
 
-/// Walk up to the nearest named declaration node (function, class, struct, enum, etc).
-fn walk_to_named_declaration(mut node: Node) -> Node {
-    // If we're already on a declaration, use it
-    if DECLARATION_TYPES.contains(&node.kind()) {
-        return node;
+/// Check if a declaration node is likely a local variable/constant.
+fn is_local_declaration(node: Node) -> bool {
+    let kind = node.kind();
+    if kind != "property_declaration"
+        && kind != "variable_declaration"
+        && kind != "lexical_declaration"
+    {
+        return false;
     }
 
-    // Walk up to find the nearest declaration
-    while let Some(parent) = node.parent() {
-        if DECLARATION_TYPES.contains(&parent.kind()) {
-            return parent;
+    // Check ancestors: if we're inside a function or closure, it's local
+    let mut current = node;
+    while let Some(parent) = current.parent() {
+        let pk = parent.kind();
+        if pk.contains("function")
+            || pk.contains("method")
+            || pk.contains("lambda")
+            || pk == "closure_expression"
+        {
+            return true;
         }
-        // Stop at source_file
-        if parent.kind() == "source_file" {
+        if is_root_node(pk) {
             break;
         }
-        node = parent;
+        current = parent;
+    }
+    false
+}
+
+fn build_base_query(
+    node: Node,
+    _name: Option<&str>,
+    semantic_info: Option<SemanticInfo>,
+    source: &[u8],
+) -> Result<String> {
+    // We leverage the structural path logic for a single node to ensure consistency
+    let entry = PathEntry {
+        node_type: node.kind().to_string(),
+        name_info: extract_name_info(node, source),
+        semantic_info,
+        is_landmark: DECLARATION_TYPES.contains(&node.kind()) && !is_local_declaration(node),
+    };
+
+    let path = vec![entry];
+    Ok(build_tier1_query(&path))
+}
+
+/// Helper to ensure a query is unique and anchored by walking up parents.
+fn disambiguate_query(target_node: Node, ctx: &QueryContext<'_>) -> Result<String> {
+    let mut path = build_structural_path(target_node, ctx.source);
+
+    if path.is_empty() {
+        // Fallback to simple base query if no path can be built
+        let name = extract_name_info(target_node, ctx.source)
+            .map(|info| info.text)
+            .or_else(|| extract_identifier_from_node(target_node, ctx.source));
+        let semantic_info = extract_semantic_info(target_node, ctx.source);
+        return build_base_query(target_node, name.as_deref(), semantic_info, ctx.source);
     }
 
-    // Fall back to the original node
-    node
+    // First, clear all names in the path to start with a pure structural query
+    // We preserve the target node's semantic info to keep the query specific
+    let target_semantic_info = path.last().and_then(|e| e.semantic_info.clone());
+    let mut names = Vec::new();
+    for entry in &mut path {
+        names.push(entry.name_info.take());
+        entry.semantic_info = None;
+    }
+
+    let depth = path.len();
+
+    // Strategy: find the minimum set of names needed to make the full structural path unique.
+    // We always include the full path for maximum stability.
+
+    // 1. Try with only the target node named (if it has a name)
+    let mut current_path = path.clone();
+    for (i, entry) in current_path.iter_mut().enumerate() {
+        if i < depth - 1 {
+            entry.name_info = None;
+            entry.semantic_info = None;
+        } else {
+            entry.name_info = names[depth - 1].clone();
+            entry.semantic_info = target_semantic_info.clone();
+        }
+    }
+
+    // Landmark requirement check: at least one NAMED landmark ancestor
+    let has_named_landmark = |p: &[PathEntry]| {
+        p.iter().enumerate().any(|(i, e)| i < p.len() - 1 && e.is_landmark && e.name_info.is_some())
+    };
+
+    let query = build_tier1_query(&current_path);
+    if matcher::run_query(&query, ctx.tree, ctx.source, ctx.language)?.len() == 1
+        && (has_named_landmark(&current_path) || depth == 1)
+    {
+        return Ok(query);
+    }
+
+    // 2. Progressively add names to landmarks from target upwards
+    for i in (0..depth - 1).rev() {
+        if path[i].is_landmark {
+            current_path[i].name_info = names[i].clone();
+            let query = build_tier1_query(&current_path);
+            if matcher::run_query(&query, ctx.tree, ctx.source, ctx.language)?.len() == 1 {
+                return Ok(query);
+            }
+        }
+    }
+
+    // 3. If still not unique, add all names
+    for i in (0..depth - 1).rev() {
+        current_path[i].name_info = names[i].clone();
+    }
+    let query = build_tier1_query(&current_path);
+    let match_count = matcher::run_query(&query, ctx.tree, ctx.source, ctx.language)?.len();
+    if match_count == 1 {
+        return Ok(query);
+    }
+
+    // 4. Final resort: try unnamed path (only if naming the target didn't work and we reach the root)
+    let query = build_tier1_query(&path);
+    if matcher::run_query(&query, ctx.tree, ctx.source, ctx.language)?.len() == 1 {
+        return Ok(query);
+    }
+
+    // If still not unique, use the base_query if it was unique,
+    // otherwise return the best we could do (which might still be ambiguous)
+    let final_query = build_tier1_query(&path);
+    let final_matches = matcher::run_query(&final_query, ctx.tree, ctx.source, ctx.language)?;
+
+    if final_matches.len() != 1 {
+        return Err(Error::AmbiguousQuery(format!(
+            "Generated query matched {} nodes, expected 1. Try selecting a more specific range.",
+            final_matches.len()
+        )));
+    }
+
+    Ok(final_query)
+}
+
+/// Given a specific AST node, generate a tree-sitter query for it.
+pub fn generate_query_for_node(
+    tree: &Tree,
+    node: Node,
+    source: &[u8],
+    language: &Language,
+) -> Result<GeneratedQuery> {
+    generate_query(tree, source, (node.start_byte(), node.end_byte()), language)
 }
 
 /// Build the structural path from the target node up to (but not including) the root.
@@ -238,12 +399,33 @@ fn walk_to_named_declaration(mut node: Node) -> Node {
 /// Wrapper nodes (export_statement, decorated_definition) are skipped — they don't have
 /// queryable name fields.
 fn build_structural_path(target: Node, source: &[u8]) -> Vec<PathEntry> {
+    if std::env::var("CODEMARK_DEBUG_QUERY").is_ok() {
+        eprintln!(
+            "DEBUG: build_structural_path: target={} at {:?}",
+            target.kind(),
+            target.byte_range()
+        );
+    }
     let mut path = Vec::new();
     let mut current = target;
 
+    // Special case: if the target is a leaf node (like an identifier)
+    // and its parent has a name field pointing to it, we should start
+    // the path from the parent to avoid "Impossible pattern" errors
+    // where the query expects two different children for the same node.
+    if let Some(parent) = current.parent()
+        && let Some(name_node) = parent.child_by_field_name("name")
+        && name_node.id() == current.id()
+    {
+        current = parent;
+    }
+
+    let mut is_first = true;
     loop {
         // Skip wrapper nodes that don't have structural meaning for queries
         if !is_wrapper_node(current.kind()) {
+            let is_target_node = is_first;
+            is_first = false;
             let entry = PathEntry {
                 node_type: current.kind().to_string(),
                 name_info: if is_body_node(current.kind()) {
@@ -251,7 +433,22 @@ fn build_structural_path(target: Node, source: &[u8]) -> Vec<PathEntry> {
                 } else {
                     extract_name_info(current, source)
                 },
+                semantic_info: if is_target_node {
+                    extract_semantic_info(current, source)
+                } else {
+                    None
+                },
+                is_landmark: DECLARATION_TYPES.contains(&current.kind())
+                    && !is_local_declaration(current),
             };
+            if std::env::var("CODEMARK_DEBUG_QUERY").is_ok() {
+                eprintln!(
+                    "DEBUG:   entry={} has_name={} is_landmark={}",
+                    entry.node_type,
+                    entry.name_info.is_some(),
+                    entry.is_landmark
+                );
+            }
             path.push(entry);
         }
 
@@ -269,15 +466,61 @@ fn build_structural_path(target: Node, source: &[u8]) -> Vec<PathEntry> {
 
 /// Extract the "name" identifier from a node if it has one.
 fn extract_name_info(node: Node, source: &[u8]) -> Option<NameInfo> {
+    if node.kind() == "class_member" || node.kind() == "declaration" {
+        return extract_nested_name(node, source);
+    }
+    extract_name_info_direct(node, source)
+}
+
+/// Helper to recursively search for a "name" field in a node's children.
+fn extract_nested_name(node: Node, source: &[u8]) -> Option<NameInfo> {
+    if let Some(mut info) = extract_name_info_direct(node, source) {
+        info.field = None; // Field name is relative to child, not node
+        return Some(info);
+    }
+
+    let mut cursor = node.walk();
+    for child in node.named_children(&mut cursor) {
+        if let Some(info) = extract_nested_name(child, source) {
+            return Some(info);
+        }
+    }
+    None
+}
+
+/// Direct name extraction without recursion, to avoid infinite loops.
+fn extract_name_info_direct(node: Node, source: &[u8]) -> Option<NameInfo> {
+    if std::env::var("CODEMARK_DEBUG_QUERY").is_ok() {
+        eprintln!(
+            "DEBUG: extract_name_info_direct: node={} at {:?}",
+            node.kind(),
+            node.byte_range()
+        );
+    }
+    // If the node itself is an identifier, it is its own name.
+    // Literals (boolean_literal, etc.) should not be treated as names because they
+    // are often not searchable as node types in the same way.
+    if node.kind().contains("identifier") {
+        return Some(NameInfo {
+            field: None,
+            direct_type: node.kind().to_string(),
+            inner_type: None,
+            text: node_text(node, source),
+        });
+    }
+
     // Try the "name" field first
     if let Some(name_node) = node.child_by_field_name("name") {
+        if std::env::var("CODEMARK_DEBUG_QUERY").is_ok() {
+            eprintln!("DEBUG:   found name field node={}", name_node.kind());
+        }
         // For Swift user_type nodes (extensions), we need nested matching
         if name_node.kind() == "user_type" {
             let mut cursor = name_node.walk();
             for child in name_node.named_children(&mut cursor) {
                 if child.kind() == "type_identifier" {
                     return Some(NameInfo {
-                        field: "name".to_string(),
+                        field: Some("name".to_string()),
                         direct_type: "user_type".to_string(),
                         inner_type: Some("type_identifier".to_string()),
                         text: node_text(child, source),
@@ -286,7 +529,7 @@ fn extract_name_info(node: Node, source: &[u8]) -> Option<NameInfo> {
             }
         }
         return Some(NameInfo {
-            field: "name".to_string(),
+            field: Some("name".to_string()),
             direct_type: name_node.kind().to_string(),
             inner_type: None,
             text: node_text(name_node, source),
@@ -298,7 +541,7 @@ fn extract_name_info(node: Node, source: &[u8]) -> Option<NameInfo> {
         && let Some(type_node) = node.child_by_field_name("type")
     {
         return Some(NameInfo {
-            field: "type".to_string(),
+            field: Some("type".to_string()),
             direct_type: type_node.kind().to_string(),
             inner_type: None,
             text: node_text(type_node, source),
@@ -309,29 +552,46 @@ fn extract_name_info(node: Node, source: &[u8]) -> Option<NameInfo> {
     if node.kind() == "export_statement"
         && let Some(decl) = node.child_by_field_name("declaration")
     {
-        return extract_name_info(decl, source);
+        return extract_name_info_direct(decl, source);
     }
 
     // For Python decorated_definition: get the name from the inner definition
     if node.kind() == "decorated_definition"
         && let Some(def) = node.child_by_field_name("definition")
     {
-        return extract_name_info(def, source);
+        return extract_name_info_direct(def, source);
     }
 
-    // For TS method_definition: name is in "name" field as property_identifier
-    // (already handled by the generic "name" field check above)
+    // For Rust match_arm: use pattern text
+    if node.kind() == "match_arm"
+        && let Some(pattern) = node.child_by_field_name("pattern")
+    {
+        return Some(NameInfo {
+            field: Some("pattern".to_string()),
+            direct_type: pattern.kind().to_string(),
+            inner_type: None,
+            text: node_text(pattern, source),
+        });
+    }
 
-    // For Swift enum_entry, try to find the name pattern
-    if node.kind() == "enum_entry" {
+    // For Swift switch_entry: use pattern or "default"
+    if node.kind() == "switch_entry" {
         let mut cursor = node.walk();
         for child in node.named_children(&mut cursor) {
-            if child.kind() == "simple_identifier" {
+            if child.kind() == "switch_pattern" {
                 return Some(NameInfo {
-                    field: "name".to_string(),
-                    direct_type: "simple_identifier".to_string(),
+                    field: None,
+                    direct_type: "switch_pattern".to_string(),
                     inner_type: None,
                     text: node_text(child, source),
+                });
+            }
+            if child.kind() == "default_keyword" {
+                return Some(NameInfo {
+                    field: None,
+                    direct_type: "default_keyword".to_string(),
+                    inner_type: None,
+                    text: "default".to_string(),
                 });
             }
         }
@@ -371,6 +631,9 @@ fn is_body_node(kind: &str) -> bool {
             // Java / C#
             | "constructor_body"
             | "enum_body_declarations"
+            // Dart
+            | "class_member"
+            | "declaration"
     )
 }
 
@@ -408,7 +671,44 @@ fn build_tier1_query(path: &[PathEntry]) -> String {
         let mut s = format!("{pad}({}", entry.node_type);
 
         // Name field with text predicate
-        let mut predicate = String::new();
+        let mut inner_predicate = String::new();
+        let mut outer_predicate = String::new();
+
+        // Semantic info (if present)
+        if let Some(ref semantic) = entry.semantic_info {
+            match semantic {
+                SemanticInfo::IfCondition(cond) => {
+                    s.push_str(&format!("\n{pad}  condition: (_) @cond"));
+                    inner_predicate.push_str(&format!(
+                        "\n{pad}  (#eq? @cond \"{}\")",
+                        escape_query_text(cond)
+                    ));
+                }
+                SemanticInfo::CallTarget(func) => {
+                    s.push_str(&format!("\n{pad}  (_) @func"));
+                    inner_predicate.push_str(&format!(
+                        "\n{pad}  (#eq? @func \"{}\")",
+                        escape_query_text(func)
+                    ));
+                }
+                SemanticInfo::AssignmentTarget(target_name) => {
+                    s.push_str(&format!("\n{pad}  left: (_) @left"));
+                    inner_predicate.push_str(&format!(
+                        "\n{pad}  (#eq? @left \"{}\")",
+                        escape_query_text(target_name)
+                    ));
+                }
+                SemanticInfo::ReturnValue(val) => {
+                    s.push_str(&format!("\n{pad}  value: (_) @val"));
+                    inner_predicate
+                        .push_str(&format!("\n{pad}  (#eq? @val \"{}\")", escape_query_text(val)));
+                }
+                SemanticInfo::BinaryOperator(op) => {
+                    s.push_str(&format!("\n{pad}  operator: \"{}\"", escape_query_text(op)));
+                }
+            }
+        }
+
         if let Some(ref info) = entry.name_info {
             let capture_name = if is_target {
                 "fn_name".to_string()
@@ -417,33 +717,99 @@ fn build_tier1_query(path: &[PathEntry]) -> String {
                 *counter += 1;
                 name
             };
+
             if let Some(ref inner_type) = info.inner_type {
                 // Nested name: e.g., name: (user_type (type_identifier) @capture)
-                s.push_str(&format!(
-                    "\n{pad}  {}: ({} ({inner_type}) @{capture_name})",
-                    info.field, info.direct_type
+                if let Some(ref field_name) = info.field {
+                    s.push_str(&format!(
+                        "\n{pad}  {}: ({} ({inner_type}) @{capture_name})",
+                        field_name, info.direct_type
+                    ));
+                } else {
+                    s.push_str(&format!(
+                        "\n{pad}  ({} ({inner_type}) @{capture_name})",
+                        info.direct_type
+                    ));
+                }
+                inner_predicate.push_str(&format!(
+                    "\n{pad}  (#eq? @{} \"{}\")",
+                    capture_name,
+                    escape_query_text(&info.text)
                 ));
-            } else {
+            } else if let Some(ref field_name) = info.field {
                 s.push_str(&format!(
                     "\n{pad}  {}: ({}) @{capture_name}",
-                    info.field, info.direct_type
+                    field_name, info.direct_type
                 ));
+                inner_predicate.push_str(&format!(
+                    "\n{pad}  (#eq? @{} \"{}\")",
+                    capture_name,
+                    escape_query_text(&info.text)
+                ));
+            } else {
+                // Leaf node or descendant match without a field
+                // Use the node itself as the capture if it matches the type
+                if entry.node_type == info.direct_type {
+                    // Handled at the end with s.push_str(" @capture_name")
+                    outer_predicate.push_str(&format!(
+                        "\n{pad}  (#eq? @{} \"{}\")",
+                        capture_name,
+                        escape_query_text(&info.text)
+                    ));
+                } else {
+                    s.push_str(&format!("\n{pad}  ({}) @{}", info.direct_type, capture_name));
+                    inner_predicate.push_str(&format!(
+                        "\n{pad}  (#eq? @{} \"{}\")",
+                        capture_name,
+                        escape_query_text(&info.text)
+                    ));
+                }
             }
-            predicate =
-                format!("\n{pad}  (#eq? @{capture_name} \"{}\")", escape_query_text(&info.text));
         }
 
         if is_target {
-            // Add predicate before closing, then close with @target
-            s.push_str(&predicate);
-            s.push_str(") @target");
+            // Add inner predicate and close inner node
+            s.push_str(&inner_predicate);
+            s.push(')');
+
+            // Add name capture if it was on the node itself
+            if let Some(ref info) = entry.name_info
+                && info.field.is_none()
+                && entry.node_type == info.direct_type
+            {
+                let capture_name = "fn_name";
+                s.push_str(&format!(" @{}", capture_name));
+            }
+
+            s.push_str(" @target");
+
+            // Wrap in extra parens if we have an outer predicate
+            if !outer_predicate.is_empty() {
+                s = format!("{pad}({}{}", &s[pad.len()..], outer_predicate);
+                s.push(')');
+            }
         } else {
-            // Add predicate, then nest the child
-            s.push_str(&predicate);
+            // Add inner predicate, then nest the child
+            s.push_str(&inner_predicate);
             let child_str = build_node(path, idx + 1, depth, indent + 1, counter);
             s.push('\n');
             s.push_str(&child_str);
             s.push(')');
+
+            // Add name capture if it was on the node itself
+            if let Some(ref info) = entry.name_info
+                && info.field.is_none()
+                && entry.node_type == info.direct_type
+            {
+                let capture_name = format!("name{}", *counter - 1);
+                s.push_str(&format!(" @{}", capture_name));
+            }
+
+            // Wrap in extra parens if we have an outer predicate
+            if !outer_predicate.is_empty() {
+                s = format!("{pad}({}{}", &s[pad.len()..], outer_predicate);
+                s.push(')');
+            }
         }
 
         s
@@ -453,60 +819,60 @@ fn build_tier1_query(path: &[PathEntry]) -> String {
 }
 
 fn escape_query_text(text: &str) -> String {
-    text.replace('\\', "\\\\").replace('"', "\\\"")
+    text.replace('\\', "\\\\").replace('"', "\\\"").replace('\n', "\\n").replace('\r', "\\r")
 }
 
-/// Try to disambiguate by adding parameter type info.
-#[allow(clippy::collapsible_if)]
-fn try_disambiguate(
-    path: &[PathEntry],
-    target: Node,
-    source: &[u8],
-    _source_text: &str,
-    tree: &Tree,
-    language: &Language,
-) -> Option<String> {
-    if target.kind() != "function_declaration" {
-        return None;
-    }
-
-    // Find the first parameter's type annotation
-    let param_type = extract_first_param_type(target, source)?;
-
-    // Build query with parameter disambiguation
-    let base_query = build_tier1_query(path);
-    // Insert parameter constraint before @target
-    let disambiguated = base_query.replace(
-        ") @target",
-        &format!(
-            "\n  (parameter\n    (simple_identifier)\n    (type_annotation (user_type (type_identifier) @param_type)))\n) @target\n(#eq? @param_type \"{param_type}\")"
-        ),
-    );
-
-    // Verify this now gives exactly one match
-    if let Ok(matches) = matcher::run_query(&disambiguated, tree, source, language) {
-        if matches.len() == 1 {
-            return Some(disambiguated);
+/// Extract semantic information from a node for fine-grained targeting.
+fn extract_semantic_info(node: Node, source: &[u8]) -> Option<SemanticInfo> {
+    match node.kind() {
+        "if_statement" | "if_expression" => {
+            // Extract the condition
+            if let Some(cond) = node.child_by_field_name("condition") {
+                let text = node_text(cond, source);
+                return Some(SemanticInfo::IfCondition(text));
+            }
         }
+        "call_expression" | "macro_invocation" => {
+            // Extract the function being called
+            if let Some(func) = node.child_by_field_name("function").or_else(|| node.named_child(0))
+            {
+                let text = node_text(func, source);
+                return Some(SemanticInfo::CallTarget(text));
+            }
+        }
+        "assignment_expression" | "assignment_statement" | "short_var_declaration" => {
+            // Extract the variable being assigned
+            if let Some(left) = node.child_by_field_name("left") {
+                let text = node_text(left, source);
+                return Some(SemanticInfo::AssignmentTarget(text));
+            } else if node.kind() == "short_var_declaration"
+                && let Some(left) = node.named_child(0)
+            {
+                let text = node_text(left, source);
+                return Some(SemanticInfo::AssignmentTarget(text));
+            }
+        }
+        "return_statement" => {
+            // Extract the return value
+            if let Some(value) = node.child_by_field_name("value") {
+                let text = node_text(value, source);
+                if !text.trim().is_empty() {
+                    return Some(SemanticInfo::ReturnValue(text));
+                }
+            }
+        }
+        _ => {}
     }
-
     None
 }
 
-fn extract_first_param_type(func_node: Node, source: &[u8]) -> Option<String> {
-    let mut cursor = func_node.walk();
-    for child in func_node.named_children(&mut cursor) {
-        if child.kind() == "parameter" {
-            // Look for type_annotation
-            let mut param_cursor = child.walk();
-            for param_child in child.named_children(&mut param_cursor) {
-                if param_child.kind() == "type_annotation" {
-                    let text = node_text(param_child, source);
-                    // Strip the leading ": "
-                    let clean = text.trim().trim_start_matches(':').trim();
-                    return Some(clean.to_string());
-                }
-            }
+/// Extract an identifier from a node for fallback naming.
+fn extract_identifier_from_node(node: Node, source: &[u8]) -> Option<String> {
+    // Try to find any identifier child
+    let mut cursor = node.walk();
+    for child in node.named_children(&mut cursor) {
+        if child.kind().contains("identifier") {
+            return Some(node_text(child, source));
         }
     }
     None
@@ -973,7 +1339,7 @@ mod tests {
         parser.parse_file(&fixture).unwrap()
     }
 
-    fn find_java_method_range(tree: &Tree, source: &str, method_name: &str) -> (usize, usize) {
+    fn find_java_range(tree: &Tree, source: &str, method_name: &str) -> (usize, usize) {
         fn search(node: Node, source: &str, name: &str) -> Option<(usize, usize)> {
             if (node.kind() == "method_declaration" || node.kind() == "constructor_declaration")
                 && let Some(name_node) = node.child_by_field_name("name")
@@ -996,7 +1362,7 @@ mod tests {
     #[test]
     fn java_method() {
         let (tree, source) = parse_java_fixture("AuthService.java");
-        let range = find_java_method_range(&tree, &source, "validateToken");
+        let range = find_java_range(&tree, &source, "validateToken");
         let lang = CodemarkLang::Java.tree_sitter_language();
         let result = generate_query(&tree, source.as_bytes(), range, &lang).unwrap();
         assert_eq!(result.target_name.as_deref(), Some("validateToken"));
@@ -1007,7 +1373,7 @@ mod tests {
     #[test]
     fn java_private_method() {
         let (tree, source) = parse_java_fixture("AuthService.java");
-        let range = find_java_method_range(&tree, &source, "decode");
+        let range = find_java_range(&tree, &source, "decode");
         let lang = CodemarkLang::Java.tree_sitter_language();
         let result = generate_query(&tree, source.as_bytes(), range, &lang).unwrap();
         assert_eq!(result.target_name.as_deref(), Some("decode"));
@@ -1018,7 +1384,7 @@ mod tests {
     #[test]
     fn java_static_method() {
         let (tree, source) = parse_java_fixture("AuthService.java");
-        let range = find_java_method_range(&tree, &source, "createDefault");
+        let range = find_java_range(&tree, &source, "createDefault");
         let lang = CodemarkLang::Java.tree_sitter_language();
         let result = generate_query(&tree, source.as_bytes(), range, &lang).unwrap();
         assert_eq!(result.target_name.as_deref(), Some("createDefault"));
@@ -1035,7 +1401,7 @@ mod tests {
         parser.parse_file(&fixture).unwrap()
     }
 
-    fn find_csharp_method_range(tree: &Tree, source: &str, method_name: &str) -> (usize, usize) {
+    fn find_csharp_range(tree: &Tree, source: &str, method_name: &str) -> (usize, usize) {
         fn search(node: Node, source: &str, name: &str) -> Option<(usize, usize)> {
             if node.kind() == "method_declaration"
                 && let Some(name_node) = node.child_by_field_name("name")
@@ -1058,7 +1424,7 @@ mod tests {
     #[test]
     fn csharp_method() {
         let (tree, source) = parse_csharp_fixture("AuthService.cs");
-        let range = find_csharp_method_range(&tree, &source, "ValidateToken");
+        let range = find_csharp_range(&tree, &source, "ValidateToken");
         let lang = CodemarkLang::CSharp.tree_sitter_language();
         let result = generate_query(&tree, source.as_bytes(), range, &lang).unwrap();
         assert_eq!(result.target_name.as_deref(), Some("ValidateToken"));
@@ -1069,7 +1435,7 @@ mod tests {
     #[test]
     fn csharp_private_method() {
         let (tree, source) = parse_csharp_fixture("AuthService.cs");
-        let range = find_csharp_method_range(&tree, &source, "Decode");
+        let range = find_csharp_range(&tree, &source, "Decode");
         let lang = CodemarkLang::CSharp.tree_sitter_language();
         let result = generate_query(&tree, source.as_bytes(), range, &lang).unwrap();
         assert_eq!(result.target_name.as_deref(), Some("Decode"));
@@ -1080,7 +1446,7 @@ mod tests {
     #[test]
     fn csharp_static_method() {
         let (tree, source) = parse_csharp_fixture("AuthService.cs");
-        let range = find_csharp_method_range(&tree, &source, "CreateDefault");
+        let range = find_csharp_range(&tree, &source, "CreateDefault");
         let lang = CodemarkLang::CSharp.tree_sitter_language();
         let result = generate_query(&tree, source.as_bytes(), range, &lang).unwrap();
         assert_eq!(result.target_name.as_deref(), Some("CreateDefault"));
@@ -1136,14 +1502,14 @@ mod tests {
     // --- Range precision tests: method range should target method, not class ---
 
     #[test]
-    fn swift_exact_method_range_targets_method_not_class() {
+    fn swift_exact_range_targets_method_not_class() {
         let (tree, source) = parse_fixture("auth_service.swift");
         let lang = CodemarkLang::Swift.tree_sitter_language();
 
         // Get the exact byte range of validateToken
-        let method_range = find_function_byte_range(&tree, &source, "validateToken");
+        let range = find_function_byte_range(&tree, &source, "validateToken");
 
-        let result = generate_query(&tree, source.as_bytes(), method_range, &lang).unwrap();
+        let result = generate_query(&tree, source.as_bytes(), range, &lang).unwrap();
         assert_eq!(
             result.target_node_type, "function_declaration",
             "should target function_declaration, not class_declaration"
@@ -1152,13 +1518,13 @@ mod tests {
     }
 
     #[test]
-    fn rust_exact_method_range_targets_method_not_impl() {
+    fn rust_exact_range_targets_method_not_impl() {
         let (tree, source) = parse_rust_fixture("auth_service.rs");
         let lang = CodemarkLang::Rust.tree_sitter_language();
 
-        let method_range = find_rust_function_byte_range(&tree, &source, "decode");
+        let range = find_rust_function_byte_range(&tree, &source, "decode");
 
-        let result = generate_query(&tree, source.as_bytes(), method_range, &lang).unwrap();
+        let result = generate_query(&tree, source.as_bytes(), range, &lang).unwrap();
         assert_eq!(
             result.target_node_type, "function_item",
             "should target function_item, not impl_item"
@@ -1167,13 +1533,13 @@ mod tests {
     }
 
     #[test]
-    fn ts_exact_method_range_targets_method_not_class() {
+    fn ts_exact_range_targets_method_not_class() {
         let (tree, source) = parse_ts_fixture("auth_service.ts");
         let lang = CodemarkLang::TypeScript.tree_sitter_language();
 
-        let method_range = find_ts_function_byte_range(&tree, &source, "validateToken");
+        let range = find_ts_function_byte_range(&tree, &source, "validateToken");
 
-        let result = generate_query(&tree, source.as_bytes(), method_range, &lang).unwrap();
+        let result = generate_query(&tree, source.as_bytes(), range, &lang).unwrap();
         assert_eq!(
             result.target_node_type, "method_definition",
             "should target method_definition, not class_declaration"
@@ -1182,13 +1548,13 @@ mod tests {
     }
 
     #[test]
-    fn py_exact_method_range_targets_method_not_class() {
+    fn py_exact_range_targets_method_not_class() {
         let (tree, source) = parse_py_fixture("auth_service.py");
         let lang = CodemarkLang::Python.tree_sitter_language();
 
-        let method_range = find_py_function_byte_range(&tree, &source, "validate_token");
+        let range = find_py_function_byte_range(&tree, &source, "validate_token");
 
-        let result = generate_query(&tree, source.as_bytes(), method_range, &lang).unwrap();
+        let result = generate_query(&tree, source.as_bytes(), range, &lang).unwrap();
         assert_eq!(
             result.target_node_type, "function_definition",
             "should target function_definition, not class_definition"
@@ -1197,13 +1563,13 @@ mod tests {
     }
 
     #[test]
-    fn go_exact_method_range_targets_method() {
+    fn go_exact_range_targets_method() {
         let (tree, source) = parse_go_fixture("auth_service.go");
         let lang = CodemarkLang::Go.tree_sitter_language();
 
-        let method_range = find_go_function_range(&tree, &source, "ValidateToken");
+        let range = find_go_function_range(&tree, &source, "ValidateToken");
 
-        let result = generate_query(&tree, source.as_bytes(), method_range, &lang).unwrap();
+        let result = generate_query(&tree, source.as_bytes(), range, &lang).unwrap();
         assert_eq!(
             result.target_node_type, "method_declaration",
             "should target method_declaration"
@@ -1211,13 +1577,13 @@ mod tests {
     }
 
     #[test]
-    fn java_exact_method_range_targets_method_not_class() {
+    fn java_exact_range_targets_method_not_class() {
         let (tree, source) = parse_java_fixture("AuthService.java");
         let lang = CodemarkLang::Java.tree_sitter_language();
 
-        let method_range = find_java_method_range(&tree, &source, "validateToken");
+        let range = find_java_range(&tree, &source, "validateToken");
 
-        let result = generate_query(&tree, source.as_bytes(), method_range, &lang).unwrap();
+        let result = generate_query(&tree, source.as_bytes(), range, &lang).unwrap();
         assert_eq!(
             result.target_node_type, "method_declaration",
             "should target method_declaration, not class_declaration"
@@ -1226,8 +1592,8 @@ mod tests {
     }
 
     #[test]
-    fn single_line_inside_method_targets_method_not_class() {
-        // A single line inside a method should still target the enclosing method
+    fn single_line_inside_method_targets_anchored_declaration() {
+        // A single line inside a method should target the enclosing method
         let (tree, source) = parse_rust_fixture("auth_service.rs");
         let lang = CodemarkLang::Rust.tree_sitter_language();
 
@@ -1238,8 +1604,8 @@ mod tests {
         let result =
             generate_query(&tree, source.as_bytes(), (line_50_start, line_50_end), &lang).unwrap();
         assert_eq!(
-            result.target_node_type, "function_item",
-            "single line inside method should target function_item, not impl_item or struct_item"
+            result.target_node_type, "block",
+            "single line inside method should target the tightest node (block)"
         );
     }
 }

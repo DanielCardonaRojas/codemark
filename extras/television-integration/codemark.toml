@@ -10,7 +10,7 @@ output = "{split:\\t:0}"
 
 [preview]
 command = [
-  "codemark preview {split:\\t:0} | jq -r '\"\\(.data.file_path) --highlight-line \\(.data.line_range)\"' | xargs bat --color=always",
+  "codemark preview {split:\\t:0} | jq -r '\"\\(.data.file_path) --highlight-line \\(.data.line_range_colon)\"' | xargs bat --color=always",
   "codemark show {split:\\t:0} --format markdown | glow - --style auto",
 ]
 offset = "{split:\\t:6}"
@@ -45,4 +45,4 @@ mode = "execute"
 [actions.delete]
 description = "Delete bookmark"
 command = "codemark remove {split:\\t:0}"
-mode = "execute"
+mode = "fork"

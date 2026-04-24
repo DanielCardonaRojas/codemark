@@ -16,7 +16,7 @@ The agent is tasked with adding rate limiting to the API client.
 
 ```bash
 # Agent finds the main API client and bookmarks it
-codemark add --file src/networking/APIClient.swift --range 1024:1280 --lang swift \
+codemark add --file src/networking/APIClient.swift --range 1024-1280 --lang swift \
   --tag api --tag networking \
   --note "Main API request dispatcher — all requests flow through here"
 ```
@@ -47,7 +47,7 @@ echo 'func retryWithBackoff(_ request: URLRequest, attempts: Int) async throws -
 ### Step 3: Agent bookmarks the configuration
 
 ```bash
-codemark add --file src/networking/NetworkConfig.swift --range 256:512 --lang swift \
+codemark add --file src/networking/NetworkConfig.swift --range 256-512 --lang swift \
   --tag api --tag config \
   --note "Timeout and retry configuration — add rate limit settings here"
 ```
@@ -141,7 +141,7 @@ codemark search "request" --json
 
 ```bash
 # Agent discovers the test file and bookmarks it
-codemark add --file tests/APIClientTests.swift --range 2048:2560 --lang swift \
+codemark add --file tests/APIClientTests.swift --range 2048-2560 --lang swift \
   --tag api --tag tests \
   --note "Existing request tests — add rate limiting test cases here"
 

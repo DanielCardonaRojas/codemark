@@ -24,6 +24,7 @@ man-pages = ["clap_mangen"]
 
 [dev-dependencies]
 tempfile = "3"
+insta = { version = "1.39", features = ["yaml"] }
 
 [dependencies]
 async-trait = "0.1"

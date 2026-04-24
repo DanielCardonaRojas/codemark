@@ -2,7 +2,7 @@
 
 ## Problem
 
-The current `codemark add --range` flag accepts **byte ranges** (`--range 1024:1280`). This is an implementation detail that's unfriendly to both humans and tools:
+The current `codemark add --range` flag accepts **byte ranges** (`--range 1024-1280`). This is an implementation detail that's unfriendly to both humans and tools:
 
 - **Humans** think in line numbers, not byte offsets. Nobody runs `wc -c` to figure out where a function starts.
 - **Editors** report cursor positions as `file:line:col`, not byte offsets.
@@ -30,12 +30,14 @@ The current `codemark add --range` flag accepts **byte ranges** (`--range 1024:1
 **`--range` accepts both line ranges and byte ranges**, auto-detected by format:
 
 | Format | Interpretation | Example |
-|--------|---------------|---------|
-| `42` | Single line | Line 42 |
-| `42:67` | Line range (inclusive) | Lines 42 through 67 |
-| `42:67b` | Byte range (explicit) | Bytes 42 through 67 |
-| `b42:67` | Byte range (explicit) | Bytes 42 through 67 |
-
+| Syntax | Type | Meaning |
+|--------|------|---------|
+| `42`   | Single line | Line 42 |
+| `42:10` | Point | Line 42, column 10 |
+| `42-67` | Line range (inclusive) | Lines 42 through 67 |
+| `10:5-10:20` | Precise range | Line 10:5 through 10:20 |
+| `42-67b`| Byte range (explicit) | Bytes 42 through 67 |
+| `b42-67`| Byte range (explicit) | Bytes 42 through 67 |
 **Default is line range.** The `b` suffix/prefix opts into byte mode for backwards compatibility and agent use.
 
 **Conversion**: Line ranges are converted to byte ranges at parse time by reading the file and computing byte offsets for the start of the first line and end of the last line.
@@ -48,10 +50,10 @@ The current `codemark add --range` flag accepts **byte ranges** (`--range 1024:1
 codemark add --file src/auth.swift --range 42 --lang swift --note "auth entry"
 
 # Bookmark lines 42-67 (function body)
-codemark add --file src/auth.swift --range 42:67 --lang swift
+codemark add --file src/auth.swift --range 42-67 --lang swift
 
 # Byte range (agent use, backwards compatible)
-codemark add --file src/auth.swift --range b1024:1280 --lang swift
+codemark add --file src/auth.swift --range b1024-1280 --lang swift
 ```
 
 ### FR-10.2: Dry-run mode
@@ -146,7 +148,7 @@ codemark add --file <path> --hunk "@@ ... @@"
 | Flag        | Required | Description |
 |-------------|----------|-------------|
 | `--file`    | Yes      | Path to the file |
-| `--range`   | Yes*     | Line range (`42`, `42:67`) or byte range (`b42:67`). *Mutually exclusive with `--hunk` |
+| `--range`   | Yes*     | Line range (`42`, `42-67`, `42:10`) or byte range (`b42-67`). *Mutually exclusive with `--hunk` |
 | `--hunk`    | Yes*     | Git diff hunk header (`@@ -a,b +c,d @@`). *Mutually exclusive with `--range` |
 | `--lang`    | No       | Language identifier; auto-detected from extension if omitted |
 | `--tag`     | No       | Tag label; repeatable |

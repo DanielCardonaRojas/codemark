@@ -103,7 +103,7 @@ end
 function M.dry_run_visual()
   local start_line, end_line = get_visual_range()
   local file = get_file_path()
-  local range = start_line == end_line and tostring(start_line) or (start_line .. ":" .. end_line)
+  local range = start_line == end_line and tostring(start_line) or (start_line .. "-" .. end_line)
 
   local data, err = run_json({ "add", "--file", file, "--range", range, "--dry-run" })
   if not data then
@@ -133,7 +133,7 @@ end
 function M.add_visual()
   local start_line, end_line = get_visual_range()
   local file = get_file_path()
-  local range = start_line == end_line and tostring(start_line) or (start_line .. ":" .. end_line)
+  local range = start_line == end_line and tostring(start_line) or (start_line .. "-" .. end_line)
 
   -- First do a dry run to show what will be bookmarked
   local preview, err = run_json({ "add", "--file", file, "--range", range, "--dry-run" })

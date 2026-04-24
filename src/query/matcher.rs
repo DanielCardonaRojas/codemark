@@ -86,48 +86,54 @@ mod tests {
         assert!(results[0].node_text.contains("hello"));
     }
 
+    fn dump_ast_with_limit(
+        node: tree_sitter::Node,
+        source: &str,
+        depth: usize,
+        limit: usize,
+        field_name: Option<&str>,
+    ) {
+        if !node.is_named() {
+            return;
+        }
+        let indent = "  ".repeat(depth);
+        let field_str = field_name.map(|f| format!("{f}: ")).unwrap_or_default();
+        let text_preview: String =
+            source[node.byte_range()].chars().take(80).collect::<String>().replace('\n', "\\n");
+        println!(
+            "{indent}{field_str}{} [{}-{}] {text_preview:?}",
+            node.kind(),
+            node.start_byte(),
+            node.end_byte(),
+        );
+        if depth < limit {
+            let mut cursor = node.walk();
+            if cursor.goto_first_child() {
+                loop {
+                    let child = cursor.node();
+                    if child.is_named() {
+                        dump_ast_with_limit(child, source, depth + 1, limit, cursor.field_name());
+                    }
+                    if !cursor.goto_next_sibling() {
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
     /// Dump AST for Swift fixture to discover actual node type names.
     #[test]
     fn dump_swift_ast_structure() {
         let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/swift/auth_service.swift");
+            .join("tests/fixtures/swift/complex_scenarios.swift");
         if !fixture.exists() {
             return;
         }
         let mut parser = Parser::new(CodemarkLang::Swift).unwrap();
         let (tree, source) = parser.parse_file(&fixture).unwrap();
 
-        fn dump(node: tree_sitter::Node, source: &str, depth: usize, field_name: Option<&str>) {
-            if !node.is_named() {
-                return;
-            }
-            let indent = "  ".repeat(depth);
-            let field_str = field_name.map(|f| format!("{f}: ")).unwrap_or_default();
-            let text_preview: String =
-                source[node.byte_range()].chars().take(80).collect::<String>().replace('\n', "\\n");
-            println!(
-                "{indent}{field_str}{} [{}-{}] {text_preview:?}",
-                node.kind(),
-                node.start_byte(),
-                node.end_byte(),
-            );
-            if depth < 3 {
-                let mut cursor = node.walk();
-                if cursor.goto_first_child() {
-                    loop {
-                        let child = cursor.node();
-                        if child.is_named() {
-                            dump(child, source, depth + 1, cursor.field_name());
-                        }
-                        if !cursor.goto_next_sibling() {
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-
-        dump(tree.root_node(), &source, 0, None);
+        dump_ast_with_limit(tree.root_node(), &source, 0, 10, None);
     }
 
     /// Dump AST for Rust fixture to discover node type names.
@@ -141,37 +147,7 @@ mod tests {
         let mut parser = Parser::new(CodemarkLang::Rust).unwrap();
         let (tree, source) = parser.parse_file(&fixture).unwrap();
 
-        fn dump(node: tree_sitter::Node, source: &str, depth: usize, field_name: Option<&str>) {
-            if !node.is_named() {
-                return;
-            }
-            let indent = "  ".repeat(depth);
-            let field_str = field_name.map(|f| format!("{f}: ")).unwrap_or_default();
-            let text_preview: String =
-                source[node.byte_range()].chars().take(80).collect::<String>().replace('\n', "\\n");
-            println!(
-                "{indent}{field_str}{} [{}-{}] {text_preview:?}",
-                node.kind(),
-                node.start_byte(),
-                node.end_byte(),
-            );
-            if depth < 3 {
-                let mut cursor = node.walk();
-                if cursor.goto_first_child() {
-                    loop {
-                        let child = cursor.node();
-                        if child.is_named() {
-                            dump(child, source, depth + 1, cursor.field_name());
-                        }
-                        if !cursor.goto_next_sibling() {
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-
-        dump(tree.root_node(), &source, 0, None);
+        dump_ast_with_limit(tree.root_node(), &source, 0, 10, None);
     }
 
     #[test]
@@ -183,36 +159,7 @@ mod tests {
         }
         let mut parser = Parser::new(CodemarkLang::TypeScript).unwrap();
         let (tree, source) = parser.parse_file(&fixture).unwrap();
-        fn dump(node: tree_sitter::Node, source: &str, depth: usize, field_name: Option<&str>) {
-            if !node.is_named() {
-                return;
-            }
-            let indent = "  ".repeat(depth);
-            let field_str = field_name.map(|f| format!("{f}: ")).unwrap_or_default();
-            let text: String =
-                source[node.byte_range()].chars().take(80).collect::<String>().replace('\n', "\\n");
-            println!(
-                "{indent}{field_str}{} [{}-{}] {text:?}",
-                node.kind(),
-                node.start_byte(),
-                node.end_byte()
-            );
-            if depth < 3 {
-                let mut cursor = node.walk();
-                if cursor.goto_first_child() {
-                    loop {
-                        let child = cursor.node();
-                        if child.is_named() {
-                            dump(child, source, depth + 1, cursor.field_name());
-                        }
-                        if !cursor.goto_next_sibling() {
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-        dump(tree.root_node(), &source, 0, None);
+        dump_ast_with_limit(tree.root_node(), &source, 0, 10, None);
     }
 
     #[test]
@@ -224,36 +171,7 @@ mod tests {
         }
         let mut parser = Parser::new(CodemarkLang::Python).unwrap();
         let (tree, source) = parser.parse_file(&fixture).unwrap();
-        fn dump(node: tree_sitter::Node, source: &str, depth: usize, field_name: Option<&str>) {
-            if !node.is_named() {
-                return;
-            }
-            let indent = "  ".repeat(depth);
-            let field_str = field_name.map(|f| format!("{f}: ")).unwrap_or_default();
-            let text: String =
-                source[node.byte_range()].chars().take(80).collect::<String>().replace('\n', "\\n");
-            println!(
-                "{indent}{field_str}{} [{}-{}] {text:?}",
-                node.kind(),
-                node.start_byte(),
-                node.end_byte()
-            );
-            if depth < 3 {
-                let mut cursor = node.walk();
-                if cursor.goto_first_child() {
-                    loop {
-                        let child = cursor.node();
-                        if child.is_named() {
-                            dump(child, source, depth + 1, cursor.field_name());
-                        }
-                        if !cursor.goto_next_sibling() {
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-        dump(tree.root_node(), &source, 0, None);
+        dump_ast_with_limit(tree.root_node(), &source, 0, 10, None);
     }
 
     // Macro to generate AST dump tests for any language/fixture pair
@@ -289,7 +207,7 @@ mod tests {
                         node.start_byte(),
                         node.end_byte()
                     );
-                    if depth < 3 {
+                    if depth < 10 {
                         let mut cursor = node.walk();
                         if cursor.goto_first_child() {
                             loop {
