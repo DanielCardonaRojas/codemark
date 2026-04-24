@@ -84,6 +84,14 @@ fn test_swift_complex_query_snapshots() {
         ("declaration_extension_method", "46"),
         ("declaration_enum_property", "56"),
         ("fine_grained_side_effect", "35"),
+        ("fine_grained_property_setter", "8"),
+        ("fine_grained_typealias", "18"),
+        ("fine_grained_property_wrapper", "20"),
+        ("fine_grained_private_let", "21"),
+        ("fine_grained_interpolation", "31"),
+        ("fine_grained_chained_closures", "33"),
+        ("fine_grained_extension_local", "47"),
+        ("fine_grained_enum_case_where", "58"),
     ];
 
     for (name, range_str) in scenarios {

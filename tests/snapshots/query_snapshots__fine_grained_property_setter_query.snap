@@ -1,0 +1,11 @@
+---
+source: tests/query_snapshots.rs
+expression: result.query
+---
+(class_declaration
+  (class_body
+    (property_declaration
+      name: (pattern) @name0
+      (#eq? @name0 "wrappedValue")
+      (computed_property
+        (computed_setter) @target))))

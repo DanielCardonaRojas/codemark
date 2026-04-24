@@ -15,6 +15,6 @@ expression: result.query
                 (statements
                   (if_statement
                     (statements
-                      ((call_expression
+                      (call_expression
                         (_) @func
-                        (#eq? @func "self.performSideEffect")) @target))))))))))))
+                        (#eq? @func "self.performSideEffect")) @target)))))))))))

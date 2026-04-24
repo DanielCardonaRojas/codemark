@@ -14,4 +14,4 @@ expression: result.query
               (lambda_literal
                 (statements
                   (property_declaration
-                    ((value_binding_pattern) @target)))))))))))
+                    (value_binding_pattern) @target))))))))))

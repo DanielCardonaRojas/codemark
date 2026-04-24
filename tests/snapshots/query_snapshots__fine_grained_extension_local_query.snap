@@ -6,9 +6,9 @@ expression: result.query
   (class_body
     (function_declaration
       name: (simple_identifier) @name0
-      (#eq? @name0 "update")
+      (#eq? @name0 "specializedAction")
       (function_body
         (statements
-          (call_expression
-            (_) @func
-            (#eq? @func "queue.async")) @target)))))
+          (property_declaration
+            name: (pattern) @fn_name
+            (#eq? @fn_name "message")) @target)))))

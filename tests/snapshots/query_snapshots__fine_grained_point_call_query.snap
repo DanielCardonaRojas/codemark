@@ -11,5 +11,5 @@ expression: result.query
         (statements
           (call_expression
             (navigation_expression
-              ((simple_identifier) @target
-                (#eq? @target "queue")))))))))
+              ((simple_identifier) @fn_name @target
+                (#eq? @fn_name "queue")))))))))

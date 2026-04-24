@@ -1,0 +1,15 @@
+---
+source: tests/query_snapshots.rs
+expression: result.query
+---
+(class_declaration
+  (enum_class_body
+    (property_declaration
+      name: (pattern) @name0
+      (#eq? @name0 "isRetryable")
+      (computed_property
+        (statements
+          (switch_statement
+            (switch_entry
+              (switch_pattern) @fn_name
+              (#eq? @fn_name ".serverError(let code)")) @target))))))

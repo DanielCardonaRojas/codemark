@@ -4,8 +4,8 @@ expression: result.query
 ---
 (class_declaration
   name: (type_identifier) @name0
-  (#eq? @name0 "NetworkError")
-  (enum_class_body
+  (#eq? @name0 "ComplexViewModel")
+  (class_body
     (property_declaration
       name: (pattern) @fn_name
-      (#eq? @fn_name "isRetryable")) @target))
+      (#eq? @fn_name "queue")) @target))

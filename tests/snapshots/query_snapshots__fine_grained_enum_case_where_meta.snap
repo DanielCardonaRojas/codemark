@@ -1,0 +1,10 @@
+---
+source: tests/query_snapshots.rs
+expression: snapshot
+---
+name: fine_grained_enum_case_where
+fixture: complex_scenarios.swift
+strategy: Unified
+range: "58"
+node_type: switch_entry
+query: "[query stored in separate _query.snap file]"

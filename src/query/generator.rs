@@ -557,16 +557,24 @@ fn extract_name_info_direct(node: Node, source: &[u8]) -> Option<NameInfo> {
         return extract_name_info_direct(def, source);
     }
 
-    // For Swift enum_entry, try to find the name pattern
-    if node.kind() == "enum_entry" {
+    // For Swift switch_entry: use pattern or "default"
+    if node.kind() == "switch_entry" {
         let mut cursor = node.walk();
         for child in node.named_children(&mut cursor) {
-            if child.kind() == "simple_identifier" {
+            if child.kind() == "switch_pattern" {
                 return Some(NameInfo {
-                    field: Some("name".to_string()),
-                    direct_type: "simple_identifier".to_string(),
+                    field: None,
+                    direct_type: "switch_pattern".to_string(),
                     inner_type: None,
                     text: node_text(child, source),
+                });
+            }
+            if child.kind() == "default_keyword" {
+                return Some(NameInfo {
+                    field: None,
+                    direct_type: "default_keyword".to_string(),
+                    inner_type: None,
+                    text: "default".to_string(),
                 });
             }
         }
@@ -694,6 +702,7 @@ fn build_tier1_query(path: &[PathEntry]) -> String {
                 *counter += 1;
                 name
             };
+
             if let Some(ref inner_type) = info.inner_type {
                 // Nested name: e.g., name: (user_type (type_identifier) @capture)
                 if let Some(ref field_name) = info.field {
@@ -707,39 +716,62 @@ fn build_tier1_query(path: &[PathEntry]) -> String {
                         info.direct_type
                     ));
                 }
+                inner_predicate.push_str(&format!(
+                    "\n{pad}  (#eq? @{} \"{}\")",
+                    capture_name,
+                    escape_query_text(&info.text)
+                ));
             } else if let Some(ref field_name) = info.field {
                 s.push_str(&format!(
                     "\n{pad}  {}: ({}) @{capture_name}",
                     field_name, info.direct_type
                 ));
-            } else {
-                // Match anywhere inside - handled by outer_predicate on target
-                if !is_target {
-                    s.push_str(&format!("\n{pad}  (_) @{capture_name}"));
-                }
-            }
-            if info.field.is_none() {
-                // If it's a descendant name, match against the whole node text.
-                // We use #eq? for exact match which is safer than regex #match? for code blocks.
-                let cap = if is_target { "target" } else { &capture_name };
-                outer_predicate =
-                    format!("\n{pad}  (#eq? @{} \"{}\")", cap, escape_query_text(&info.text));
-            } else {
-                inner_predicate = format!(
+                inner_predicate.push_str(&format!(
                     "\n{pad}  (#eq? @{} \"{}\")",
                     capture_name,
                     escape_query_text(&info.text)
-                );
-            };
+                ));
+            } else {
+                // Leaf node or descendant match without a field
+                // Use the node itself as the capture if it matches the type
+                if entry.node_type == info.direct_type {
+                    // Handled at the end with s.push_str(" @capture_name")
+                    outer_predicate.push_str(&format!(
+                        "\n{pad}  (#eq? @{} \"{}\")",
+                        capture_name,
+                        escape_query_text(&info.text)
+                    ));
+                } else {
+                    s.push_str(&format!("\n{pad}  ({}) @{}", info.direct_type, capture_name));
+                    inner_predicate.push_str(&format!(
+                        "\n{pad}  (#eq? @{} \"{}\")",
+                        capture_name,
+                        escape_query_text(&info.text)
+                    ));
+                }
+            }
         }
 
         if is_target {
             // Add inner predicate and close inner node
             s.push_str(&inner_predicate);
             s.push(')');
-            // Wrap in extra parens if we have an outer predicate or to safely attach @target
-            s = format!("{pad}({} @target{}", &s[pad.len()..], outer_predicate);
-            s.push(')');
+
+            // Add name capture if it was on the node itself
+            if let Some(ref info) = entry.name_info {
+                if info.field.is_none() && entry.node_type == info.direct_type {
+                    let capture_name = "fn_name";
+                    s.push_str(&format!(" @{}", capture_name));
+                }
+            }
+
+            s.push_str(" @target");
+
+            // Wrap in extra parens if we have an outer predicate
+            if !outer_predicate.is_empty() {
+                s = format!("{pad}({}{}", &s[pad.len()..], outer_predicate);
+                s.push(')');
+            }
         } else {
             // Add inner predicate, then nest the child
             s.push_str(&inner_predicate);
@@ -747,6 +779,14 @@ fn build_tier1_query(path: &[PathEntry]) -> String {
             s.push('\n');
             s.push_str(&child_str);
             s.push(')');
+
+            // Add name capture if it was on the node itself
+            if let Some(ref info) = entry.name_info {
+                if info.field.is_none() && entry.node_type == info.direct_type {
+                    let capture_name = format!("name{}", *counter - 1);
+                    s.push_str(&format!(" @{}", capture_name));
+                }
+            }
 
             // Wrap in extra parens if we have an outer predicate
             if !outer_predicate.is_empty() {

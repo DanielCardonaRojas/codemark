@@ -13,6 +13,6 @@ expression: result.query
             (call_suffix
               (lambda_literal
                 (statements
-                  (guard_statement
-                    ((simple_identifier) @fn_name @target
-                      (#eq? @fn_name "self"))))))))))))
+                  (property_declaration
+                    name: (pattern) @fn_name
+                    (#eq? @fn_name "result")) @target)))))))))
