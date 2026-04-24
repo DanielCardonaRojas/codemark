@@ -142,7 +142,7 @@ fn find_tightest_node<'a>(
             .descendant_for_byte_range(start, start)
             .ok_or_else(|| Error::TreeSitter("no node found at position".into()))?;
 
-        // If the node is very large (e.g. it includes trailing whitespace), 
+        // If the node is very large (e.g. it includes trailing whitespace),
         // try to find a tighter child that also contains the point.
         while let Some(tighter_child) = find_tighter_child(node, start) {
             node = tighter_child;
@@ -332,9 +332,7 @@ fn disambiguate_query(target_node: Node, ctx: &QueryContext<'_>) -> Result<Strin
 
     // Landmark requirement check: at least one NAMED landmark ancestor
     let has_named_landmark = |p: &[PathEntry]| {
-        p.iter()
-            .enumerate()
-            .any(|(i, e)| i < p.len() - 1 && e.is_landmark && e.name_info.is_some())
+        p.iter().enumerate().any(|(i, e)| i < p.len() - 1 && e.is_landmark && e.name_info.is_some())
     };
 
     let query = build_tier1_query(&current_path);
@@ -402,7 +400,11 @@ pub fn generate_query_for_node(
 /// queryable name fields.
 fn build_structural_path(target: Node, source: &[u8]) -> Vec<PathEntry> {
     if std::env::var("CODEMARK_DEBUG_QUERY").is_ok() {
-        eprintln!("DEBUG: build_structural_path: target={} at {:?}", target.kind(), target.byte_range());
+        eprintln!(
+            "DEBUG: build_structural_path: target={} at {:?}",
+            target.kind(),
+            target.byte_range()
+        );
     }
     let mut path = Vec::new();
     let mut current = target;
@@ -411,12 +413,11 @@ fn build_structural_path(target: Node, source: &[u8]) -> Vec<PathEntry> {
     // and its parent has a name field pointing to it, we should start
     // the path from the parent to avoid "Impossible pattern" errors
     // where the query expects two different children for the same node.
-    if let Some(parent) = current.parent() {
-        if let Some(name_node) = parent.child_by_field_name("name") {
-            if name_node.id() == current.id() {
-                current = parent;
-            }
-        }
+    if let Some(parent) = current.parent()
+        && let Some(name_node) = parent.child_by_field_name("name")
+        && name_node.id() == current.id()
+    {
+        current = parent;
     }
 
     let mut is_first = true;
@@ -490,7 +491,11 @@ fn extract_nested_name(node: Node, source: &[u8]) -> Option<NameInfo> {
 /// Direct name extraction without recursion, to avoid infinite loops.
 fn extract_name_info_direct(node: Node, source: &[u8]) -> Option<NameInfo> {
     if std::env::var("CODEMARK_DEBUG_QUERY").is_ok() {
-        eprintln!("DEBUG: extract_name_info_direct: node={} at {:?}", node.kind(), node.byte_range());
+        eprintln!(
+            "DEBUG: extract_name_info_direct: node={} at {:?}",
+            node.kind(),
+            node.byte_range()
+        );
     }
     // If the node itself is an identifier, it is its own name.
     // Literals (boolean_literal, etc.) should not be treated as names because they
@@ -683,10 +688,8 @@ fn build_tier1_query(path: &[PathEntry]) -> String {
                 }
                 SemanticInfo::ReturnValue(val) => {
                     s.push_str(&format!("\n{pad}  value: (_) @val"));
-                    inner_predicate.push_str(&format!(
-                        "\n{pad}  (#eq? @val \"{}\")",
-                        escape_query_text(val)
-                    ));
+                    inner_predicate
+                        .push_str(&format!("\n{pad}  (#eq? @val \"{}\")", escape_query_text(val)));
                 }
                 SemanticInfo::BinaryOperator(op) => {
                     s.push_str(&format!("\n{pad}  operator: \"{}\"", escape_query_text(op)));
@@ -758,11 +761,12 @@ fn build_tier1_query(path: &[PathEntry]) -> String {
             s.push(')');
 
             // Add name capture if it was on the node itself
-            if let Some(ref info) = entry.name_info {
-                if info.field.is_none() && entry.node_type == info.direct_type {
-                    let capture_name = "fn_name";
-                    s.push_str(&format!(" @{}", capture_name));
-                }
+            if let Some(ref info) = entry.name_info
+                && info.field.is_none()
+                && entry.node_type == info.direct_type
+            {
+                let capture_name = "fn_name";
+                s.push_str(&format!(" @{}", capture_name));
             }
 
             s.push_str(" @target");
@@ -781,11 +785,12 @@ fn build_tier1_query(path: &[PathEntry]) -> String {
             s.push(')');
 
             // Add name capture if it was on the node itself
-            if let Some(ref info) = entry.name_info {
-                if info.field.is_none() && entry.node_type == info.direct_type {
-                    let capture_name = format!("name{}", *counter - 1);
-                    s.push_str(&format!(" @{}", capture_name));
-                }
+            if let Some(ref info) = entry.name_info
+                && info.field.is_none()
+                && entry.node_type == info.direct_type
+            {
+                let capture_name = format!("name{}", *counter - 1);
+                s.push_str(&format!(" @{}", capture_name));
             }
 
             // Wrap in extra parens if we have an outer predicate
@@ -828,11 +833,11 @@ fn extract_semantic_info(node: Node, source: &[u8]) -> Option<SemanticInfo> {
             if let Some(left) = node.child_by_field_name("left") {
                 let text = node_text(left, source);
                 return Some(SemanticInfo::AssignmentTarget(text));
-            } else if node.kind() == "short_var_declaration" {
-                if let Some(left) = node.named_child(0) {
-                    let text = node_text(left, source);
-                    return Some(SemanticInfo::AssignmentTarget(text));
-                }
+            } else if node.kind() == "short_var_declaration"
+                && let Some(left) = node.named_child(0)
+            {
+                let text = node_text(left, source);
+                return Some(SemanticInfo::AssignmentTarget(text));
             }
         }
         "return_statement" => {

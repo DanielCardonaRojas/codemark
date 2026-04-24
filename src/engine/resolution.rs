@@ -41,7 +41,11 @@ pub fn resolve(
     // Tier 1: Exact query
     if let Ok(matches) = matcher::run_query(&bookmark.query, tree, source_bytes, language) {
         if std::env::var("CODEMARK_DEBUG_QUERY").is_ok() {
-            eprintln!("DEBUG: resolve: Tier 1 matches={} query=\n{}", matches.len(), bookmark.query);
+            eprintln!(
+                "DEBUG: resolve: Tier 1 matches={} query=\n{}",
+                matches.len(),
+                bookmark.query
+            );
         }
         if matches.len() == 1 {
             let m = &matches[0];
