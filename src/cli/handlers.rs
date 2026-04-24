@@ -267,11 +267,10 @@ pub fn parse_range(range: &str, source: &str) -> Result<(usize, usize)> {
         return parse_byte_range(&r[..r.len() - 1]);
     }
 
-    // Range can be START-END or just a single point/line
-    let range_parts: Vec<&str> = r.split('-').collect();
-    if range_parts.len() == 2 {
-        let start = parse_point(source, range_parts[0])?;
-        let end = parse_point(source, range_parts[1])?;
+    // Unambiguous Range: START-END (e.g., 10-20 or 10:5-10:20)
+    if let Some((start_str, end_str)) = r.split_once('-') {
+        let start = parse_point(source, start_str)?;
+        let end = parse_point(source, end_str)?;
         if start > end {
             return Err(Error::Input(format!(
                 "invalid range: start byte {} is greater than end byte {}",
@@ -281,32 +280,21 @@ pub fn parse_range(range: &str, source: &str) -> Result<(usize, usize)> {
         return Ok((start, end));
     }
 
-    // Single point or legacy LINE:LINE range
-    let parts: Vec<&str> = r.split(':').collect();
-    match parts.len() {
-        1 => {
-            let line: usize = parts[0]
-                .parse()
-                .map_err(|_| Error::Input(format!("invalid line number: {}", parts[0])))?;
-            line_range_to_bytes(source, line, line)
-        }
-        2 => {
-            // Could be LINE:LINE (legacy range) or LINE:COL (point)
-            let p0: usize = parts[0].parse().map_err(|_| Error::Input("invalid line".into()))?;
-            let p1: usize =
-                parts[1].parse().map_err(|_| Error::Input("invalid line/col".into()))?;
-
-            // Heuristic: if p1 is a valid line number and p1 >= p0, assume it's a line range
-            // (backward compatibility for 10:20)
-            let line_count = source.lines().count();
-            if p1 <= line_count && p1 >= p0 {
-                line_range_to_bytes(source, p0, p1)
-            } else {
-                let byte = line_col_to_byte(source, p0, p1)?;
-                Ok((byte, byte))
-            }
-        }
-        _ => Err(Error::Input("range must be LINE, LINE:COL, START-END, or bBYTE:BYTE".into())),
+    // Point or Single Line: LINE:COL or LINE
+    if let Some((line_str, col_str)) = r.split_once(':') {
+        let line: usize = line_str
+            .parse()
+            .map_err(|_| Error::Input(format!("invalid line number: {}", line_str)))?;
+        let col: usize = col_str
+            .parse()
+            .map_err(|_| Error::Input(format!("invalid column number: {}", col_str)))?;
+        let byte = line_col_to_byte(source, line, col)?;
+        Ok((byte, byte))
+    } else {
+        // Single line: treat as a range covering the whole line
+        let line: usize =
+            r.parse().map_err(|_| Error::Input(format!("invalid line number: {}", r)))?;
+        line_range_to_bytes(source, line, line)
     }
 }
 
