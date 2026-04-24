@@ -144,12 +144,6 @@ Link bookmarks to specific tasks or work items.
 - `pr:<number>` — Associated pull request
 - `issue:<number>` — Associated issue
 
-### Risk Tags
-Identify risk level or sensitivity.
-- `risk:high` — High risk, changes require careful review
-- `risk:medium` — Medium risk
-- `risk:low` — Low risk, safe to modify
-
 ### Security Tags
 Identify security-sensitive code.
 - `security:auth` — Authentication, authorization
@@ -166,10 +160,10 @@ Identify security-sensitive code.
 --tag feature:users --tag layer:data --tag role:repository
 
 # Business logic
---tag feature:payments --tag layer:business --tag role:service --tag risk:high
+--tag feature:payments --tag layer:business --tag role:service
 
 # Configuration
---tag layer:config --tag role:constant --tag risk:low
+--tag layer:config --tag role:constant
 ```
 
 ### Module/Package Tags (Language-Specific)
@@ -432,14 +426,6 @@ Track the lifecycle and evolution of the code.
 codemark annotate <id> --context "Added in: v2.3.0 | Deprecated in: v3.0.0 | Replacement: src/auth/v2/"
 ```
 
-### Risk Context
-
-Document risk level and change impact.
-
-```bash
-codemark annotate <id> --context "Risk: High | Change impact: Affects all authenticated routes | Requires: Security review"
-```
-
 ### Dependency Context
 
 Link to related bookmarks and dependencies.
@@ -469,13 +455,13 @@ codemark annotate <id> --context "Security: Validates JWT signature | Checks exp
 When creating or annotating bookmarks, use this template:
 
 ```
-Context: <domain> | <usage> | <dependencies> | <risk/security/evolution notes>
+Context: <domain> | <usage> | <dependencies> | <security/evolution notes>
 ```
 
 Examples:
-- `Context: Auth domain | Validates all API requests | Depends on Claims struct | Risk: high`
-- `Context: Payment processing | Called by checkout flow | External: Stripe API | Risk: critical`
-- `Context: User preferences | Cached 30s | DB: users_table | Low risk`
+- `Context: Auth domain | Validates all API requests | Depends on Claims struct`
+- `Context: Payment processing | Called by checkout flow | External: Stripe API`
+- `Context: User preferences | Cached 30s | DB: users_table`
 
 ### Maintenance
 ```bash

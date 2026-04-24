@@ -71,11 +71,6 @@ Context: Used by: API middleware, websocket handler, cron jobs
 Context: Added in: v2.3.0 | Deprecated in: v3.0.0 | Replacement: src/auth/v2/
 ```
 
-**Risk Context:**
-```
-Context: Risk: High | Change impact: Affects all authenticated routes
-```
-
 **Dependency Context:**
 ```
 Context: Depends on: [[bookmark-id-claims]] | Called by: [[bookmark-id-middleware]]
@@ -158,7 +153,6 @@ Use structured, colon-prefixed tags for powerful filtering. Each language uses i
 - `type:<name>` — e.g., `type:function`, `type:class`
 - `status:<name>` — e.g., `status:active`, `status:deprecated`
 - `task:<id>` — e.g., `task:fix-123`, `task:refactor`
-- `risk:<level>` — e.g., `risk:high`, `risk:medium`, `risk:low`
 - `security:<type>` — e.g., `security:auth`, `security:crypto`
 
 *Example:* `--tag module:auth --tag feature:auth --tag layer:api --tag role:entrypoint --tag security:auth`
