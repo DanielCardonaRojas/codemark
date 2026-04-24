@@ -89,6 +89,9 @@ pub struct ResolutionTemplateContext {
     /// Line range (optional)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub line_range: Option<String>,
+    /// Line range with colon separator for tools (optional)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub line_range_colon: Option<String>,
     /// Number of matches (optional)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub match_count: Option<i32>,
@@ -166,6 +169,7 @@ impl ResolutionTemplateContext {
             method: r.method.to_string(),
             file_path: r.file_path.clone(),
             line_range: r.line_range.clone(),
+            line_range_colon: r.line_range.as_ref().map(|l| l.replace('-', ":")),
             match_count: r.match_count,
             commit_hash: r.commit_hash.clone(),
             short_commit,

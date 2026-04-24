@@ -1738,10 +1738,12 @@ fn handle_preview(cli: &Cli, args: &PreviewArgs) -> Result<()> {
     }
 
     // Output JSON with resolution data (using standard envelope)
+    let line_range_colon = resolution.line_range.as_ref().map(|r| r.replace('-', ":"));
     let data = serde_json::json!({
         "bookmark_id": bm.id,
         "file_path": absolute_path.to_string_lossy(),
         "line_range": resolution.line_range,
+        "line_range_colon": line_range_colon,
         "byte_range": resolution.byte_range,
         "status": bm.status,
         "resolution_method": resolution.method,
@@ -2569,6 +2571,8 @@ fn write_resolution_output(
                 "line": result.start_line + 1,
                 "column": result.start_col,
                 "byte_range": format!("{}-{}", result.byte_range.0, result.byte_range.1),
+                "line_range": format!("{}-{}", result.start_line + 1, result.end_line + 1),
+                "line_range_colon": format!("{}:{}", result.start_line + 1, result.end_line + 1),
                 "method": result.method.to_string(),
                 "status": health::transition(bm.status, result.method, result.hash_matches).to_string(),
                 "preview": result.matched_text.lines().next().unwrap_or(""),
