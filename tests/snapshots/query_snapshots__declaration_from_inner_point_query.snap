@@ -5,6 +5,8 @@ expression: result.query
 (class_declaration
   (class_body
     (function_declaration
+      name: (simple_identifier) @name0
+      (#eq? @name0 "update")
       (function_body
         (statements
           (call_expression

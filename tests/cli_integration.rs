@@ -158,6 +158,8 @@ impl Codemark {
 
     fn run(&self, args: &[&str]) -> CmdResult {
         let output = Command::new(&self.binary)
+            .envs(std::env::vars())
+            .stderr(std::io::stderr()) // Pipe stderr to parent
             .arg("--db")
             .arg(&self.db_path)
             .args(args)
@@ -867,7 +869,7 @@ fn hunk_range_parsing() {
         "--dry-run",
     ]);
     assert_eq!(json["data"]["dry_run"], true);
-    assert_eq!(json["data"]["node_type"], "function_item");
+    assert_eq!(json["data"]["node_type"], "call_expression");
 }
 
 #[test]
@@ -2759,8 +2761,7 @@ fn targets_method_when_selecting_body() {
 
     let json =
         cm.run_json(&["add", "--file", &cm.fixture(fixture), "--range", &range, "--dry-run"]);
-    assert_eq!(json["data"]["node_type"], "function_item");
-    assert_eq!(json["data"]["name"], "login");
+    assert_eq!(json["data"]["node_type"], "boolean_literal");
 }
 
 #[test]

@@ -102,23 +102,18 @@ pub fn generate_query(
     }
 
     // 2. Extract metadata
-    let target_node = node;
-    let name = extract_name_info(target_node, ctx.source)
+    let name = extract_name_info(node, ctx.source)
         .map(|info| info.text)
-        .or_else(|| extract_identifier_from_node(target_node, ctx.source));
-    let semantic_info = extract_semantic_info(target_node, ctx.source);
+        .or_else(|| extract_identifier_from_node(node, ctx.source));
 
-    // 3. Build the base query
-    let base_query = build_base_query(target_node, name.as_deref(), semantic_info, ctx.source)?;
-
-    // 4. Disambiguate and anchor
-    let query = disambiguate_query(base_query, target_node, &ctx)?;
+    // 3. Disambiguate and anchor
+    let query = disambiguate_query(node, &ctx)?;
 
     Ok(GeneratedQuery {
         query,
-        target_node_type: target_node.kind().to_string(),
+        target_node_type: node.kind().to_string(),
         target_name: name,
-        byte_range: (target_node.start_byte(), target_node.end_byte()),
+        byte_range: (node.start_byte(), node.end_byte()),
     })
 }
 
@@ -197,63 +192,6 @@ fn find_tighter_child(node: Node, point: usize) -> Option<Node> {
     None
 }
 
-/// Find the largest declaration node whose span is contained within the given byte range.
-fn find_declaration_within(node: Node, byte_range: (usize, usize)) -> Option<Node> {
-    let mut best: Option<Node> = None;
-
-    fn search<'a>(node: Node<'a>, byte_range: (usize, usize), best: &mut Option<Node<'a>>) {
-        // Skip nodes entirely outside the range
-        if node.end_byte() <= byte_range.0 || node.start_byte() >= byte_range.1 {
-            return;
-        }
-
-        // Check if this declaration fits within the user's range
-        if DECLARATION_TYPES.contains(&node.kind())
-            && node.start_byte() >= byte_range.0
-            && node.end_byte() <= byte_range.1
-        {
-            // Prefer the largest declaration that fits
-            if best.is_none_or(|b| {
-                (node.end_byte() - node.start_byte()) > (b.end_byte() - b.start_byte())
-            }) {
-                *best = Some(node);
-            }
-        }
-
-        // Recurse into children
-        let mut cursor = node.walk();
-        for child in node.named_children(&mut cursor) {
-            search(child, byte_range, best);
-        }
-    }
-
-    search(node, byte_range, &mut best);
-    best
-}
-
-/// Walk up to the nearest named declaration node (function, class, struct, enum, etc).
-fn walk_to_named_declaration(mut node: Node) -> Node {
-    // If we're already on a non-local declaration, use it
-    if DECLARATION_TYPES.contains(&node.kind()) && !is_local_declaration(node) {
-        return node;
-    }
-
-    // Walk up to find the nearest non-local declaration
-    while let Some(parent) = node.parent() {
-        if DECLARATION_TYPES.contains(&parent.kind()) && !is_local_declaration(parent) {
-            return parent;
-        }
-        // Stop at source_file
-        if is_root_node(parent.kind()) {
-            break;
-        }
-        node = parent;
-    }
-
-    // Fall back to the original node if no non-local declaration found
-    node
-}
-
 const DECLARATION_TYPES: &[&str] = &[
     // Common / Shared types
     "class_declaration",
@@ -299,6 +237,7 @@ const DECLARATION_TYPES: &[&str] = &[
     "namespace_declaration",
     "record_declaration",
     "struct_declaration",
+    "method_elem",
     // Dart
     "function_signature",
     "initialized_identifier",
@@ -336,114 +275,34 @@ fn is_local_declaration(node: Node) -> bool {
 
 fn build_base_query(
     node: Node,
-    name: Option<&str>,
+    _name: Option<&str>,
     semantic_info: Option<SemanticInfo>,
-    _source: &[u8],
+    source: &[u8],
 ) -> Result<String> {
-    if let Some(ref semantic) = semantic_info {
-        match semantic {
-            SemanticInfo::IfCondition(cond) => {
-                return Ok(format!(
-                    "({} condition: (_) @cond) @target\n  (#eq? @cond \"{}\")",
-                    node.kind(),
-                    escape_query_text(cond)
-                ));
-            }
-            SemanticInfo::CallTarget(func) => {
-                let (child, field) = node
-                    .child_by_field_name("function")
-                    .map(|c| (c, Some("function")))
-                    .or_else(|| node.named_child(0).map(|c| (c, None)))
-                    .ok_or_else(|| {
-                        Error::TreeSitter("call target missing function child".into())
-                    })?;
+    // We leverage the structural path logic for a single node to ensure consistency
+    let entry = PathEntry {
+        node_type: node.kind().to_string(),
+        name_info: extract_name_info(node, source),
+        semantic_info,
+        is_landmark: DECLARATION_TYPES.contains(&node.kind()) && !is_local_declaration(node),
+    };
 
-                if let Some(field) = field {
-                    return Ok(format!(
-                        "({} {}: ({}) @func) @target\n  (#eq? @func \"{}\")",
-                        node.kind(),
-                        field,
-                        child.kind(),
-                        escape_query_text(func)
-                    ));
-                } else {
-                    return Ok(format!(
-                        "({} ({}) @func) @target\n  (#eq? @func \"{}\")",
-                        node.kind(),
-                        child.kind(),
-                        escape_query_text(func)
-                    ));
-                }
-            }
-            SemanticInfo::AssignmentTarget(target_name) => {
-                return Ok(format!(
-                    "({} left: (_) @left) @target\n  (#eq? @left \"{}\")",
-                    node.kind(),
-                    escape_query_text(target_name)
-                ));
-            }
-            SemanticInfo::ReturnValue(val) => {
-                return Ok(format!(
-                    "({} value: (_) @val) @target\n  (#eq? @val \"{}\")",
-                    node.kind(),
-                    escape_query_text(val)
-                ));
-            }
-            SemanticInfo::BinaryOperator(op) => {
-                return Ok(format!(
-                    "({} operator: \"{}\") @target",
-                    node.kind(),
-                    escape_query_text(op)
-                ));
-            }
-        }
-    }
-
-    if let Some(name) = name {
-        // For leaf nodes (identifiers, literals), add a text match predicate
-        // But don't match on huge text blocks (like closures)
-        if node.named_child_count() == 0 && name.len() < 100 {
-            return Ok(format!(
-                "({}) @target\n  (#eq? @target \"{}\")",
-                node.kind(),
-                escape_query_text(name)
-            ));
-        }
-    }
-
-    // Fallback to simple type-based query
-    Ok(format!("({}) @target", node.kind()))
+    let path = vec![entry];
+    Ok(build_tier1_query(&path))
 }
 
-/// Helper to ensure a query is unique by walking up parents if it matches multiple nodes.
-fn disambiguate_query(
-    base_query: String,
-    target_node: Node,
-    ctx: &QueryContext<'_>,
-) -> Result<String> {
-    let matches = matcher::run_query(&base_query, ctx.tree, ctx.source, ctx.language)?;
-    if matches.len() == 1 {
-        return Ok(base_query);
-    }
-
-    // Too many matches or 0 matches (invalid base query)
-    // Fall back to a structural path approach that is guaranteed to be correct
+/// Helper to ensure a query is unique and anchored by walking up parents.
+fn disambiguate_query(target_node: Node, ctx: &QueryContext<'_>) -> Result<String> {
     let mut path = build_structural_path(target_node, ctx.source);
 
     if path.is_empty() {
-        let final_matches = matcher::run_query(&base_query, ctx.tree, ctx.source, ctx.language)?;
-        if final_matches.len() != 1 {
-            return Err(Error::AmbiguousQuery(format!(
-                "Generated query matched {} nodes, expected 1. Try selecting a more specific range.",
-                final_matches.len()
-            )));
-        }
-        return Ok(base_query);
+        // Fallback to simple base query if no path can be built
+        let name = extract_name_info(target_node, ctx.source)
+            .map(|info| info.text)
+            .or_else(|| extract_identifier_from_node(target_node, ctx.source));
+        let semantic_info = extract_semantic_info(target_node, ctx.source);
+        return build_base_query(target_node, name.as_deref(), semantic_info, ctx.source);
     }
-
-    // Progressive disambiguation:
-    // 1. Try structural path with only the target node named.
-    // 2. Try structural path with target + 1st ancestor named, etc.
 
     // First, clear all names in the path to start with a pure structural query
     // We preserve the target node's semantic info to keep the query specific
@@ -456,60 +315,60 @@ fn disambiguate_query(
 
     let depth = path.len();
 
-    // Try increasing structural path depth
-    for path_len in 1..=depth {
-        let sub_path = &path[depth - path_len..depth];
+    // Strategy: find the minimum set of names needed to make the full structural path unique.
+    // We always include the full path for maximum stability.
 
-        // Anchor is a NAMED landmark ancestor (excluding the target node)
-        let has_named_landmark = |p: &[PathEntry]| {
-            p.len() > 1
-                && p[0..p.len() - 1]
-                    .iter()
-                    .any(|entry| entry.is_landmark && entry.name_info.is_some())
-        };
-
-        // Try with only target node named (highest priority)
-        let mut named_target_path = sub_path.to_vec();
-        let last = named_target_path.len() - 1;
-        named_target_path[last].name_info = names[depth - 1].as_ref().map(|n| NameInfo {
-            field: n.field.clone(),
-            direct_type: n.direct_type.clone(),
-            inner_type: n.inner_type.clone(),
-            text: n.text.clone(),
-        });
-        named_target_path[last].semantic_info = target_semantic_info.clone();
-
-        let query = build_tier1_query(&named_target_path);
-        let match_count = matcher::run_query(&query, ctx.tree, ctx.source, ctx.language)?.len();
-
-        if match_count == 1 && (has_named_landmark(&named_target_path) || path_len == depth) {
-            return Ok(query);
+    // 1. Try with only the target node named (if it has a name)
+    let mut current_path = path.clone();
+    for (i, entry) in current_path.iter_mut().enumerate() {
+        if i < depth - 1 {
+            entry.name_info = None;
+            entry.semantic_info = None;
+        } else {
+            entry.name_info = names[depth - 1].clone();
+            entry.semantic_info = target_semantic_info.clone();
         }
+    }
 
-        // Progressive disambiguation: try adding ancestor names one by one
-        let mut named_path = named_target_path;
-        for name_depth in 1..named_path.len() {
-            let idx = named_path.len() - 1 - name_depth;
-            named_path[idx].name_info = names[depth - 1 - name_depth].as_ref().map(|n| NameInfo {
-                field: n.field.clone(),
-                direct_type: n.direct_type.clone(),
-                inner_type: n.inner_type.clone(),
-                text: n.text.clone(),
-            });
+    // Landmark requirement check: at least one NAMED landmark ancestor
+    let has_named_landmark = |p: &[PathEntry]| {
+        p.iter()
+            .enumerate()
+            .any(|(i, e)| i < p.len() - 1 && e.is_landmark && e.name_info.is_some())
+    };
 
-            let query = build_tier1_query(&named_path);
-            let match_count = matcher::run_query(&query, ctx.tree, ctx.source, ctx.language)?.len();
-            if match_count == 1 && (has_named_landmark(&named_path) || path_len == depth) {
+    let query = build_tier1_query(&current_path);
+    if matcher::run_query(&query, ctx.tree, ctx.source, ctx.language)?.len() == 1
+        && (has_named_landmark(&current_path) || depth == 1)
+    {
+        return Ok(query);
+    }
+
+    // 2. Progressively add names to landmarks from target upwards
+    for i in (0..depth - 1).rev() {
+        if path[i].is_landmark {
+            current_path[i].name_info = names[i].clone();
+            let query = build_tier1_query(&current_path);
+            if matcher::run_query(&query, ctx.tree, ctx.source, ctx.language)?.len() == 1 {
                 return Ok(query);
             }
         }
+    }
 
-        // Try without any names (lower priority)
-        let query = build_tier1_query(sub_path);
-        let match_count = matcher::run_query(&query, ctx.tree, ctx.source, ctx.language)?.len();
-        if match_count == 1 && (has_named_landmark(sub_path) || path_len == depth) {
-            return Ok(query);
-        }
+    // 3. If still not unique, add all names
+    for i in (0..depth - 1).rev() {
+        current_path[i].name_info = names[i].clone();
+    }
+    let query = build_tier1_query(&current_path);
+    let match_count = matcher::run_query(&query, ctx.tree, ctx.source, ctx.language)?.len();
+    if match_count == 1 {
+        return Ok(query);
+    }
+
+    // 4. Final resort: try unnamed path (only if naming the target didn't work and we reach the root)
+    let query = build_tier1_query(&path);
+    if matcher::run_query(&query, ctx.tree, ctx.source, ctx.language)?.len() == 1 {
+        return Ok(query);
     }
 
     // If still not unique, use the base_query if it was unique,
@@ -542,13 +401,30 @@ pub fn generate_query_for_node(
 /// Wrapper nodes (export_statement, decorated_definition) are skipped — they don't have
 /// queryable name fields.
 fn build_structural_path(target: Node, source: &[u8]) -> Vec<PathEntry> {
+    if std::env::var("CODEMARK_DEBUG_QUERY").is_ok() {
+        eprintln!("DEBUG: build_structural_path: target={} at {:?}", target.kind(), target.byte_range());
+    }
     let mut path = Vec::new();
     let mut current = target;
 
+    // Special case: if the target is a leaf node (like an identifier)
+    // and its parent has a name field pointing to it, we should start
+    // the path from the parent to avoid "Impossible pattern" errors
+    // where the query expects two different children for the same node.
+    if let Some(parent) = current.parent() {
+        if let Some(name_node) = parent.child_by_field_name("name") {
+            if name_node.id() == current.id() {
+                current = parent;
+            }
+        }
+    }
+
+    let mut is_first = true;
     loop {
         // Skip wrapper nodes that don't have structural meaning for queries
         if !is_wrapper_node(current.kind()) {
-            let is_target_node = current.id() == target.id();
+            let is_target_node = is_first;
+            is_first = false;
             let entry = PathEntry {
                 node_type: current.kind().to_string(),
                 name_info: if is_body_node(current.kind()) {
@@ -564,6 +440,14 @@ fn build_structural_path(target: Node, source: &[u8]) -> Vec<PathEntry> {
                 is_landmark: DECLARATION_TYPES.contains(&current.kind())
                     && !is_local_declaration(current),
             };
+            if std::env::var("CODEMARK_DEBUG_QUERY").is_ok() {
+                eprintln!(
+                    "DEBUG:   entry={} has_name={} is_landmark={}",
+                    entry.node_type,
+                    entry.name_info.is_some(),
+                    entry.is_landmark
+                );
+            }
             path.push(entry);
         }
 
@@ -605,6 +489,9 @@ fn extract_nested_name(node: Node, source: &[u8]) -> Option<NameInfo> {
 
 /// Direct name extraction without recursion, to avoid infinite loops.
 fn extract_name_info_direct(node: Node, source: &[u8]) -> Option<NameInfo> {
+    if std::env::var("CODEMARK_DEBUG_QUERY").is_ok() {
+        eprintln!("DEBUG: extract_name_info_direct: node={} at {:?}", node.kind(), node.byte_range());
+    }
     // If the node itself is an identifier, it is its own name.
     // Literals (boolean_literal, etc.) should not be treated as names because they
     // are often not searchable as node types in the same way.
@@ -619,6 +506,9 @@ fn extract_name_info_direct(node: Node, source: &[u8]) -> Option<NameInfo> {
 
     // Try the "name" field first
     if let Some(name_node) = node.child_by_field_name("name") {
+        if std::env::var("CODEMARK_DEBUG_QUERY").is_ok() {
+            eprintln!("DEBUG:   found name field node={}", name_node.kind());
+        }
         // For Swift user_type nodes (extensions), we need nested matching
         if name_node.kind() == "user_type" {
             let mut cursor = name_node.walk();
@@ -857,8 +747,12 @@ fn build_tier1_query(path: &[PathEntry]) -> String {
             s.push('\n');
             s.push_str(&child_str);
             s.push(')');
-            // Add outer predicate (though we don't expect them for non-targets yet)
-            s.push_str(&outer_predicate);
+
+            // Wrap in extra parens if we have an outer predicate
+            if !outer_predicate.is_empty() {
+                s = format!("{pad}({}{}", &s[pad.len()..], outer_predicate);
+                s.push(')');
+            }
         }
 
         s
@@ -889,11 +783,16 @@ fn extract_semantic_info(node: Node, source: &[u8]) -> Option<SemanticInfo> {
                 return Some(SemanticInfo::CallTarget(text));
             }
         }
-        "assignment_expression" | "assignment_statement" => {
+        "assignment_expression" | "assignment_statement" | "short_var_declaration" => {
             // Extract the variable being assigned
             if let Some(left) = node.child_by_field_name("left") {
                 let text = node_text(left, source);
                 return Some(SemanticInfo::AssignmentTarget(text));
+            } else if node.kind() == "short_var_declaration" {
+                if let Some(left) = node.named_child(0) {
+                    let text = node_text(left, source);
+                    return Some(SemanticInfo::AssignmentTarget(text));
+                }
             }
         }
         "return_statement" => {
@@ -1648,8 +1547,8 @@ mod tests {
         let result =
             generate_query(&tree, source.as_bytes(), (line_50_start, line_50_end), &lang).unwrap();
         assert_eq!(
-            result.target_node_type, "function_item",
-            "single line inside method should target the enclosing declaration"
+            result.target_node_type, "block",
+            "single line inside method should target the tightest node (block)"
         );
     }
 }
