@@ -280,6 +280,9 @@ codemark add --file src/auth.rs --range 42 --note "Core auth entry point" --crea
 
 # Span targeting: targets a specific range of lines
 codemark add --file src/auth.rs --range 42-67 --note "Full login method" --created-by agent
+
+# Precise Span targeting: targets a specific range of characters
+codemark add --file src/auth.rs --range 10:5-10:20 --note "Specific expression" --created-by agent
 ```
 
 ### Method 2: Snippet-based bookmarking

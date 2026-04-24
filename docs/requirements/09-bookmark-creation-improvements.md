@@ -35,6 +35,7 @@ The current `codemark add --range` flag accepts **byte ranges** (`--range 1024-1
 | `42`   | Single line | Line 42 |
 | `42:10` | Point | Line 42, column 10 |
 | `42-67` | Line range (inclusive) | Lines 42 through 67 |
+| `10:5-10:20` | Precise range | Line 10:5 through 10:20 |
 | `42-67b`| Byte range (explicit) | Bytes 42 through 67 |
 | `b42-67`| Byte range (explicit) | Bytes 42 through 67 |
 **Default is line range.** The `b` suffix/prefix opts into byte mode for backwards compatibility and agent use.
