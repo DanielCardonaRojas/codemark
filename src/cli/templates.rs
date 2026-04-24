@@ -269,6 +269,24 @@ pub fn templates_dir() -> Option<PathBuf> {
 pub fn default_show_template() -> &'static str {
     r#"# Bookmark: {{short_id}}
 
+{{#if annotations}}
+## Notes
+{{#each annotations}}
+{{#if notes}}
+{{escape_markdown notes}}
+{{/if}}
+
+{{#if context}}
+```
+{{escape_markdown context}}
+```
+{{/if}}
+*— {{added_by}}{{#if source}} ({{source}}){{/if}}, {{added_at}}*
+
+{{/each}}
+---
+{{/if}}
+
 ## Metadata
 | Property | Value |
 |----------|-------|
@@ -291,22 +309,6 @@ pub fn default_show_template() -> &'static str {
 ## Tags
 {{#each tags}}
 - `{{escape_markdown this}}`
-{{/each}}
-{{/if}}
-
-{{#if annotations}}
-## Annotations
-{{#each annotations}}
-### {{added_by}}
-*{{source}}* added: {{added_at}}
-
-{{#if notes}}{{escape_markdown notes}}{{/if}}
-
-{{#if context}}
-```
-{{escape_markdown context}}
-```
-{{/if}}
 {{/each}}
 {{/if}}
 
