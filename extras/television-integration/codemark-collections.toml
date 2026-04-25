@@ -12,6 +12,9 @@ output = "{split:\t:0}"
 command = "codemark collection show {split:\t:0} --format table"
 offset = "0"
 
+[ui]
+layout = "portrait"
+
 [ui.preview_panel]
 size = 55
 
