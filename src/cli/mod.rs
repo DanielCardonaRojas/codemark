@@ -22,11 +22,16 @@ pub fn build_cli() -> clap::Command {
 #[command(name = "codemark", version, about, long_about = None)]
 pub struct Cli {
     /// Database location; repeatable for cross-repo queries
-    #[arg(long, global = true)]
+    #[arg(
+        long,
+        global = true,
+        env = "CODEMARK_DB",
+        value_delimiter = if cfg!(windows) { ';' } else { ':' }
+    )]
     pub db: Vec<PathBuf>,
 
     /// Output format: json (default), table, line, markdown (or a custom template)
-    #[arg(long, global = true)]
+    #[arg(long, global = true, env = "CODEMARK_FORMAT")]
     pub format: Option<String>,
 
     /// Enable debug-level logging to stderr
@@ -246,7 +251,7 @@ pub struct ResolveArgs {
     pub lang: Option<String>,
 
     /// Filter by collection
-    #[arg(long)]
+    #[arg(long, env = "CODEMARK_COLLECTION_FILTER")]
     pub collection: Option<String>,
 
     /// Preview what would be resolved without storing anything
@@ -286,7 +291,7 @@ pub struct HealArgs {
     pub archive_after: u32,
 
     /// Filter by collection
-    #[arg(long)]
+    #[arg(long, env = "CODEMARK_COLLECTION_FILTER")]
     pub collection: Option<String>,
 
     /// Skip recording resolution history (only update status)
@@ -325,7 +330,7 @@ pub struct ListArgs {
     pub limit: Option<usize>,
 
     /// Filter by collection
-    #[arg(long)]
+    #[arg(long, env = "CODEMARK_COLLECTION_FILTER")]
     pub collection: Option<String>,
 
     /// Custom line format template (placeholders: {ID}, {FILE}, {FILENAME}, {LINE}, {OFFSET}, {STATUS}, {TAGS}, {NOTE}, {CONTEXT}, {QUERY})
@@ -385,7 +390,7 @@ pub struct SearchArgs {
     pub author: Option<String>,
 
     /// Filter by collection
-    #[arg(long)]
+    #[arg(long, env = "CODEMARK_COLLECTION_FILTER")]
     pub collection: Option<String>,
 }
 
@@ -396,7 +401,7 @@ pub struct ReindexArgs {
     pub lang: Option<String>,
 
     /// Only reindex this collection
-    #[arg(long)]
+    #[arg(long, env = "CODEMARK_COLLECTION_FILTER")]
     pub collection: Option<String>,
 
     /// Show progress while reindexing

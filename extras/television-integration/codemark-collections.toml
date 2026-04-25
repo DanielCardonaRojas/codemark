@@ -21,5 +21,5 @@ enter = "actions:show"
 
 [actions.show]
 description = "Show bookmarks in this collection (opens television with codemark channel)"
-command = "sh -c 'tv --source-command=\"codemark list --format tv --collection $1 --db .codemark/codemark.db\" codemark' placeholder {split:\t:0}"
+command = "CODEMARK_COLLECTION_FILTER=\"{split:\t:0}\" tv codemark"
 mode = "execute"
