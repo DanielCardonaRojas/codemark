@@ -1567,6 +1567,7 @@ fn handle_list(cli: &Cli, mode: &OutputMode, args: &ListArgs) -> Result<()> {
         language: args.lang.clone(),
         created_by: args.author.clone(),
         collection: args.collection.clone(),
+        collection_id: args.collection_id.clone(),
         limit: args.limit,
     };
 

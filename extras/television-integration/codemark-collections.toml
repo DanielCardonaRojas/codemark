@@ -4,8 +4,8 @@ description = "Codemark collections picker - select a collection to view its boo
 requirements = ["codemark"]
 
 [source]
-command = "codemark collection list --line-format \"{NAME}\t{COUNT}\t{DESCRIPTION}\""
-display = "{split:\t:0}  ({split:\t:1} bookmarks)  {split:\t:2}"
+command = "codemark collection list --line-format \"{ID}\t{NAME}\t{COUNT}\t{DESCRIPTION}\""
+display = "{split:\t:1}  ({split:\t:2} bookmarks)  {split:\t:3}"
 output = "{split:\t:0}"
 
 [preview]
