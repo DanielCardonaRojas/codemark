@@ -96,6 +96,7 @@ impl Database {
     }
 
     /// Delete a collection by name, returning the number of bookmarks that were in it.
+    // Note: API method for future use; currently uses ID-based deletion in CLI.
     #[allow(dead_code)]
     pub fn delete_collection(&self, name: &str) -> Result<usize> {
         if let Some(c) = self.get_collection_by_name(name)? {

@@ -154,6 +154,150 @@ fn generate_embedding_for_bookmark(cli: &Cli, config: &Config, bookmark: &Bookma
     Ok(())
 }
 
+/// Common data for creating a bookmark from various sources.
+struct BookmarkCreationData {
+    query: String,
+    language: String,
+    file_path: String,
+    content_hash: String,
+    commit_hash: Option<String>,
+    byte_range: (usize, usize),
+    line_range: (usize, usize),
+    match_count: i32,
+    created_by: String,
+    note: Option<String>,
+    context: Option<String>,
+    tags: Vec<String>,
+    collection: Option<String>,
+    #[allow(dead_code)]
+    target_node_type: String,
+    #[allow(dead_code)]
+    target_name: Option<String>,
+}
+
+/// Result of creating a bookmark.
+struct BookmarkCreationResult {
+    bookmark_id: String,
+    is_new: bool,
+    bookmark: Bookmark,
+    collection_name: Option<String>,
+}
+
+/// Create a bookmark with its associated metadata (annotations, tags, resolution, embedding).
+/// This is the shared logic for `handle_add`, `handle_add_from_snippet`, and `handle_add_from_query`.
+fn create_bookmark_with_metadata(
+    cli: &Cli,
+    db: &Database,
+    data: BookmarkCreationData,
+) -> Result<BookmarkCreationResult> {
+    let BookmarkCreationData {
+        query,
+        language,
+        file_path,
+        content_hash,
+        commit_hash,
+        byte_range,
+        line_range,
+        match_count,
+        created_by,
+        note,
+        context,
+        tags,
+        collection,
+        target_node_type: _,
+        target_name: _,
+    } = data;
+
+    let bookmark_id = uuid::Uuid::new_v4().to_string();
+    let bookmark = Bookmark {
+        id: bookmark_id.clone(),
+        query: query.clone(),
+        language,
+        file_path: file_path.clone(),
+        content_hash: Some(content_hash.clone()),
+        commit_hash: commit_hash.clone(),
+        status: BookmarkStatus::Active,
+        resolution_method: Some(ResolutionMethod::Exact),
+        last_resolved_at: Some(now_iso()),
+        stale_since: None,
+        created_at: now_iso(),
+        created_by: Some(created_by.clone()),
+        tags: vec![],
+        annotations: vec![],
+    };
+
+    // Insert bookmark - will return existing ID if duplicate
+    let actual_bookmark_id = db.insert_bookmark(&bookmark)?;
+    let is_new = actual_bookmark_id == bookmark_id;
+
+    // Insert annotation with notes and context if provided
+    if note.is_some() || context.is_some() {
+        let annotation = Annotation {
+            id: uuid::Uuid::new_v4().to_string(),
+            bookmark_id: actual_bookmark_id.clone(),
+            added_at: now_iso(),
+            added_by: Some(created_by.clone()),
+            notes: note,
+            context,
+            source: Some("cli".to_string()),
+        };
+        db.insert_annotation(&annotation)?;
+    }
+
+    // Insert tags if provided
+    if !tags.is_empty() {
+        let tags_vec: Vec<Tag> = tags
+            .iter()
+            .map(|t| Tag {
+                bookmark_id: actual_bookmark_id.clone(),
+                tag: t.clone(),
+                added_at: now_iso(),
+                added_by: Some(created_by.clone()),
+            })
+            .collect();
+        db.insert_tags(&tags_vec)?;
+    }
+
+    // For output, we need the full bookmark with metadata
+    let bookmark = db.get_bookmark(&actual_bookmark_id)?.unwrap();
+
+    // Generate embedding for semantic search
+    let config = load_config(cli);
+    // Ignore embedding errors - shouldn't block bookmark creation
+    let _ = generate_embedding_for_bookmark(cli, &config, &bookmark);
+
+    // Record initial resolution as baseline (only if new bookmark)
+    if is_new {
+        let initial_res = Resolution {
+            id: uuid::Uuid::new_v4().to_string(),
+            bookmark_id: actual_bookmark_id.clone(),
+            resolved_at: now_iso(),
+            commit_hash,
+            method: ResolutionMethod::Exact,
+            match_count: Some(match_count),
+            file_path: Some(bookmark.file_path.clone()),
+            byte_range: Some(format!("{}-{}", byte_range.0, byte_range.1)),
+            line_range: Some(format!("{}-{}", line_range.0, line_range.1)),
+            content_hash: Some(content_hash.clone()),
+        };
+        db.insert_resolution_if_changed(&initial_res, config.storage.max_resolutions())?;
+    }
+
+    // Add to collection if specified
+    let collection_name = if let Some(ref coll_name) = collection {
+        add_bookmark_to_collection(db, &actual_bookmark_id, coll_name)?
+    } else {
+        None
+    };
+
+    Ok(BookmarkCreationResult {
+        bookmark_id: actual_bookmark_id,
+        is_new,
+        bookmark,
+        collection_name,
+    })
+}
+
 /// Load the config from the .codemark directory (same location as the primary DB).
 /// Uses layered loading: global config merged with local (per-repo) override.
 fn load_config(cli: &Cli) -> Config {
@@ -596,116 +740,55 @@ fn handle_add(cli: &Cli, mode: &OutputMode, args: &AddArgs) -> Result<()> {
     let cwd = std::env::current_dir()?;
     let commit_hash = git_context::detect_context(&cwd).and_then(|ctx| ctx.head_commit);
 
-    let bookmark_id = uuid::Uuid::new_v4().to_string();
-    let bookmark = Bookmark {
-        id: bookmark_id.clone(),
-        query: generated.query.clone(),
-        language: lang.to_string(),
-        file_path: rel_path.clone(),
-        content_hash: Some(content_hash.clone()),
-        commit_hash: commit_hash.clone(),
-        status: BookmarkStatus::Active,
-        resolution_method: Some(ResolutionMethod::Exact),
-        last_resolved_at: Some(now_iso()),
-        stale_since: None,
-        created_at: now_iso(),
-        created_by: Some(args.created_by.clone()),
-        tags: vec![],
-        annotations: vec![],
-    };
-
-    // Insert bookmark - will return existing ID if duplicate
-    let actual_bookmark_id = db.insert_bookmark(&bookmark)?;
-    let is_new = actual_bookmark_id == bookmark_id;
-
-    // Insert annotation with notes and context if provided
-    if args.note.is_some() || args.context.is_some() {
-        let annotation = Annotation {
-            id: uuid::Uuid::new_v4().to_string(),
-            bookmark_id: actual_bookmark_id.clone(),
-            added_at: now_iso(),
-            added_by: Some(args.created_by.clone()),
-            notes: args.note.clone(),
-            context: args.context.clone(),
-            source: Some("cli".to_string()),
-        };
-        db.insert_annotation(&annotation)?;
-    }
-
-    // Insert tags if provided
-    if !args.tag.is_empty() {
-        let tags: Vec<Tag> = args
-            .tag
-            .iter()
-            .map(|t| Tag {
-                bookmark_id: actual_bookmark_id.clone(),
-                tag: t.clone(),
-                added_at: now_iso(),
-                added_by: Some(args.created_by.clone()),
-            })
-            .collect();
-        db.insert_tags(&tags)?;
-    }
-
-    // For output, we need the full bookmark with metadata
-    let bookmark = db.get_bookmark(&actual_bookmark_id)?.unwrap();
-
-    // Generate embedding for semantic search
-    let config = load_config(cli);
-    // Ignore embedding errors - shouldn't block bookmark creation
-    let _ = generate_embedding_for_bookmark(cli, &config, &bookmark);
-
-    // Record initial resolution as baseline (only if new bookmark)
-    if is_new {
-        let initial_res = Resolution {
-            id: uuid::Uuid::new_v4().to_string(),
-            bookmark_id: actual_bookmark_id.clone(),
-            resolved_at: now_iso(),
+    let result = create_bookmark_with_metadata(
+        cli,
+        &db,
+        BookmarkCreationData {
+            query: generated.query.clone(),
+            language: lang.to_string(),
+            file_path: rel_path.clone(),
+            content_hash: content_hash.clone(),
             commit_hash,
-            method: ResolutionMethod::Exact,
-            match_count: Some(match_count as i32),
-            file_path: Some(bookmark.file_path.clone()),
-            byte_range: Some(format!("{}-{}", generated.byte_range.0, generated.byte_range.1)),
-            line_range: Some(format!("{}-{}", target_start_line, target_end_line)),
-            content_hash: Some(content_hash.clone()),
-        };
-        db.insert_resolution_if_changed(&initial_res, config.storage.max_resolutions())?;
-    }
-
-    // Add to collection if specified
-    let collection_name = if let Some(ref coll_name) = args.collection {
-        add_bookmark_to_collection(&db, &actual_bookmark_id, coll_name)?
-    } else {
-        None
-    };
+            byte_range: generated.byte_range,
+            line_range: (target_start_line, target_end_line),
+            match_count: match_count as i32,
+            created_by: args.created_by.clone(),
+            note: args.note.clone(),
+            context: args.context.clone(),
+            tags: args.tag.clone(),
+            collection: args.collection.clone(),
+            target_node_type: generated.target_node_type.clone(),
+            target_name: generated.target_name.clone(),
+        },
+    )?;
 
     match mode {
         OutputMode::Json => {
             let mut json_data = serde_json::json!({
-                "id": actual_bookmark_id,
+                "id": result.bookmark_id,
                 "query": generated.query,
                 "node_type": generated.target_node_type,
                 "name": generated.target_name,
                 "lines": format!("{target_start_line}-{target_end_line}"),
                 "content_hash": content_hash,
                 "unique": match_count == 1,
-                "created_by": bookmark.created_by,
-                "new": is_new,
+                "created_by": result.bookmark.created_by,
+                "new": result.is_new,
             });
-            if let Some(ref coll) = collection_name {
+            if let Some(ref coll) = result.collection_name {
                 json_data["collection"] = serde_json::json!(coll);
             }
             write_json_success(&json_data)?;
         }
         _ => {
-            let action = if is_new { "created" } else { "updated" };
-            println!("Bookmark {action}: {}", output::short_id(&actual_bookmark_id));
+            let action = if result.is_new { "created" } else { "updated" };
+            println!("Bookmark {action}: {}", output::short_id(&result.bookmark_id));
             println!("  Node type: {}", generated.target_node_type);
             if let Some(ref name) = generated.target_name {
                 println!("  Target: {name}");
             }
             println!("  Lines: {target_start_line}-{target_end_line}");
-            if let Some(ref coll) = collection_name {
+            if let Some(ref coll) = result.collection_name {
                 println!("  Collection: {coll}");
             }
         }
@@ -760,112 +843,51 @@ fn handle_add_from_snippet(cli: &Cli, mode: &OutputMode, args: &AddFromSnippetAr
     let cwd = std::env::current_dir()?;
     let commit_hash = git_context::detect_context(&cwd).and_then(|ctx| ctx.head_commit);
 
-    let bookmark_id = uuid::Uuid::new_v4().to_string();
-    let bookmark = Bookmark {
-        id: bookmark_id.clone(),
-        query: generated.query.clone(),
-        language: lang.to_string(),
-        file_path: rel_path.clone(),
-        content_hash: Some(content_hash.clone()),
-        commit_hash: commit_hash.clone(),
-        status: BookmarkStatus::Active,
-        resolution_method: Some(ResolutionMethod::Exact),
-        last_resolved_at: Some(now_iso()),
-        stale_since: None,
-        created_at: now_iso(),
-        created_by: Some(args.created_by.clone()),
-        tags: vec![],
-        annotations: vec![],
-    };
-
-    // Insert bookmark - will return existing ID if duplicate
-    let actual_bookmark_id = db.insert_bookmark(&bookmark)?;
-    let is_new = actual_bookmark_id == bookmark_id;
-
-    // Insert annotation with notes and context if provided
-    if args.note.is_some() || args.context.is_some() {
-        let annotation = Annotation {
-            id: uuid::Uuid::new_v4().to_string(),
-            bookmark_id: actual_bookmark_id.clone(),
-            added_at: now_iso(),
-            added_by: Some(args.created_by.clone()),
-            notes: args.note.clone(),
-            context: args.context.clone(),
-            source: Some("cli".to_string()),
-        };
-        db.insert_annotation(&annotation)?;
-    }
-
-    // Insert tags if provided
-    if !args.tag.is_empty() {
-        let tags: Vec<Tag> = args
-            .tag
-            .iter()
-            .map(|t| Tag {
-                bookmark_id: actual_bookmark_id.clone(),
-                tag: t.clone(),
-                added_at: now_iso(),
-                added_by: Some(args.created_by.clone()),
-            })
-            .collect();
-        db.insert_tags(&tags)?;
-    }
-
-    // For output, we need the full bookmark with metadata
-    let bookmark = db.get_bookmark(&actual_bookmark_id)?.unwrap();
-
-    // Generate embedding for semantic search
-    let config = load_config(cli);
-    // Ignore embedding errors - shouldn't block bookmark creation
-    let _ = generate_embedding_for_bookmark(cli, &config, &bookmark);
-
-    // Record initial resolution as baseline (only if new bookmark)
-    if is_new {
-        let initial_res = Resolution {
-            id: uuid::Uuid::new_v4().to_string(),
-            bookmark_id: actual_bookmark_id.clone(),
-            resolved_at: now_iso(),
+    let result = create_bookmark_with_metadata(
+        cli,
+        &db,
+        BookmarkCreationData {
+            query: generated.query.clone(),
+            language: lang.to_string(),
+            file_path: rel_path.clone(),
+            content_hash: content_hash.clone(),
             commit_hash,
-            method: ResolutionMethod::Exact,
-            match_count: Some(match_count as i32),
-            file_path: Some(bookmark.file_path.clone()),
-            byte_range: Some(format!("{}-{}", generated.byte_range.0, generated.byte_range.1)),
-            line_range: Some(format!("{}-{}", target_start_line, target_end_line)),
-            content_hash: Some(content_hash.clone()),
-        };
-        db.insert_resolution_if_changed(&initial_res, config.storage.max_resolutions())?;
-    }
-
-    // Add to collection if specified
-    let collection_name = if let Some(ref coll_name) = args.collection {
-        add_bookmark_to_collection(&db, &actual_bookmark_id, coll_name)?
-    } else {
-        None
-    };
+            byte_range: generated.byte_range,
+            line_range: (target_start_line, target_end_line),
+            match_count: match_count as i32,
+            created_by: args.created_by.clone(),
+            note: args.note.clone(),
+            context: args.context.clone(),
+            tags: args.tag.clone(),
+            collection: args.collection.clone(),
+            target_node_type: generated.target_node_type.clone(),
+            target_name: generated.target_name.clone(),
+        },
+    )?;
 
     match mode {
         OutputMode::Json => {
             let mut json_data = serde_json::json!({
-                "id": actual_bookmark_id,
+                "id": result.bookmark_id,
                 "query": generated.query,
                 "node_type": generated.target_node_type,
                 "name": generated.target_name,
                 "content_hash": content_hash,
-                "created_by": bookmark.created_by,
-                "new": is_new,
+                "created_by": result.bookmark.created_by,
+                "new": result.is_new,
             });
-            if let Some(ref coll) = collection_name {
+            if let Some(ref coll) = result.collection_name {
                 json_data["collection"] = serde_json::json!(coll);
             }
             write_json_success(&json_data)?;
         }
         _ => {
-            let action = if is_new { "created" } else { "updated" };
-            println!("Bookmark {action}: {}", output::short_id(&actual_bookmark_id));
+            let action = if result.is_new { "created" } else { "updated" };
+            println!("Bookmark {action}: {}", output::short_id(&result.bookmark_id));
             if let Some(ref name) = generated.target_name {
                 println!("  Target: {name}");
             }
-            if let Some(ref coll) = collection_name {
+            if let Some(ref coll) = result.collection_name {
                 println!("  Collection: {coll}");
             }
         }
@@ -928,112 +950,51 @@ fn handle_add_from_query(cli: &Cli, mode: &OutputMode, args: &AddFromQueryArgs) 
     let cwd = std::env::current_dir()?;
     let commit_hash = git_context::detect_context(&cwd).and_then(|ctx| ctx.head_commit);
 
-    let bookmark_id = uuid::Uuid::new_v4().to_string();
-    let bookmark = Bookmark {
-        id: bookmark_id.clone(),
-        query: args.query.clone(),
-        language: lang.to_string(),
-        file_path: rel_path.clone(),
-        content_hash: Some(content_hash.clone()),
-        commit_hash: commit_hash.clone(),
-        status: BookmarkStatus::Active,
-        resolution_method: Some(ResolutionMethod::Exact),
-        last_resolved_at: Some(now_iso()),
-        stale_since: None,
-        created_at: now_iso(),
-        created_by: Some(args.created_by.clone()),
-        tags: vec![],
-        annotations: vec![],
-    };
-
-    // Insert bookmark - will return existing ID if duplicate
-    let actual_bookmark_id = db.insert_bookmark(&bookmark)?;
-    let is_new = actual_bookmark_id == bookmark_id;
-
-    // Insert annotation with notes and context if provided
-    if args.note.is_some() || args.context.is_some() {
-        let annotation = Annotation {
-            id: uuid::Uuid::new_v4().to_string(),
-            bookmark_id: actual_bookmark_id.clone(),
-            added_at: now_iso(),
-            added_by: Some(args.created_by.clone()),
-            notes: args.note.clone(),
-            context: args.context.clone(),
-            source: Some("cli".to_string()),
-        };
-        db.insert_annotation(&annotation)?;
-    }
-
-    // Insert tags if provided
-    if !args.tag.is_empty() {
-        let tags: Vec<Tag> = args
-            .tag
-            .iter()
-            .map(|t| Tag {
-                bookmark_id: actual_bookmark_id.clone(),
-                tag: t.clone(),
-                added_at: now_iso(),
-                added_by: Some(args.created_by.clone()),
-            })
-            .collect();
-        db.insert_tags(&tags)?;
-    }
-
-    // For output, we need the full bookmark with metadata
-    let bookmark = db.get_bookmark(&actual_bookmark_id)?.unwrap();
-
-    // Generate embedding for semantic search
-    let config = load_config(cli);
-    // Ignore embedding errors - shouldn't block bookmark creation
-    let _ = generate_embedding_for_bookmark(cli, &config, &bookmark);
-
-    // Record initial resolution as baseline (only if new bookmark)
-    if is_new {
-        let initial_res = Resolution {
-            id: uuid::Uuid::new_v4().to_string(),
-            bookmark_id: actual_bookmark_id.clone(),
-            resolved_at: now_iso(),
+    let result = create_bookmark_with_metadata(
+        cli,
+        &db,
+        BookmarkCreationData {
+            query: args.query.clone(),
+            language: lang.to_string(),
+            file_path: rel_path.clone(),
+            content_hash: content_hash.clone(),
             commit_hash,
-            method: ResolutionMethod::Exact,
-            match_count: Some(matches.len() as i32),
-            file_path: Some(bookmark.file_path.clone()),
-            byte_range: Some(format!("{}-{}", byte_range.0, byte_range.1)),
-            line_range: Some(format!("{}-{}", target_start_line, target_end_line)),
-            content_hash: Some(content_hash.clone()),
-        };
-        db.insert_resolution_if_changed(&initial_res, config.storage.max_resolutions())?;
-    }
-
-    // Add to collection if specified
-    let collection_name = if let Some(ref coll_name) = args.collection {
-        add_bookmark_to_collection(&db, &actual_bookmark_id, coll_name)?
-    } else {
-        None
-    };
+            byte_range,
+            line_range: (target_start_line, target_end_line),
+            match_count: matches.len() as i32,
+            created_by: args.created_by.clone(),
+            note: args.note.clone(),
+            context: args.context.clone(),
+            tags: args.tag.clone(),
+            collection: args.collection.clone(),
+            target_node_type: node_type.clone(),
+            target_name: None,
+        },
+    )?;
 
     match mode {
         OutputMode::Json => {
             let mut json_data = serde_json::json!({
-                "id": actual_bookmark_id,
+                "id": result.bookmark_id,
                 "query": args.query,
                 "node_type": node_type,
                 "content_hash": content_hash,
-                "created_by": bookmark.created_by,
-                "new": is_new,
+                "created_by": result.bookmark.created_by,
+                "new": result.is_new,
             });
-            if let Some(ref coll) = collection_name {
+            if let Some(ref coll) = result.collection_name {
                 json_data["collection"] = serde_json::json!(coll);
             }
             write_json_success(&json_data)?;
         }
         _ => {
-            let action = if is_new { "created" } else { "updated" };
-            println!("Bookmark {action}: {}", output::short_id(&actual_bookmark_id));
+            let action = if result.is_new { "created" } else { "updated" };
+            println!("Bookmark {action}: {}", output::short_id(&result.bookmark_id));
             println!("  Node type: {node_type}");
             if matches.len() > 1 {
                 println!("  Warning: query matches {} nodes", matches.len());
             }
-            if let Some(ref coll) = collection_name {
+            if let Some(ref coll) = result.collection_name {
                 println!("  Collection: {coll}");
             }
         }

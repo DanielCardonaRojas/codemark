@@ -1,5 +1,6 @@
 //! Database connection and migrations.
 
+// Allow dead code: some methods are exposed for library users but not used internally.
 #![allow(dead_code)]
 
 use std::path::{Path, PathBuf};

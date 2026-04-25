@@ -23,6 +23,7 @@ pub struct QueryContext<'a> {
 }
 
 /// Semantic information that can distinguish a node from others of the same type.
+/// Reserved for future use in generating more precise queries.
 #[derive(Clone, Debug)]
 #[allow(dead_code)]
 pub enum SemanticInfo {

@@ -1,6 +1,7 @@
 use std::process;
 
 /// Exit codes as defined in the CLI specification.
+// Note: EXIT_SUCCESS is defined for API completeness but currently unused.
 #[allow(dead_code)]
 pub const EXIT_SUCCESS: i32 = 0;
 pub const EXIT_OPERATION_FAILED: i32 = 1;
@@ -8,6 +9,7 @@ pub const EXIT_INPUT_ERROR: i32 = 2;
 pub const EXIT_DATABASE_ERROR: i32 = 3;
 
 #[derive(Debug, thiserror::Error)]
+// Note: NotImplemented variant is reserved for future use.
 #[allow(dead_code)]
 pub enum Error {
     #[error("{0}")]

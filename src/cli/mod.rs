@@ -2,6 +2,14 @@ pub mod handlers;
 pub mod output;
 pub mod templates;
 
+/// Environment variable names used throughout the CLI.
+pub mod env {
+    pub const COLLECTION_FILTER: &str = "CODEMARK_COLLECTION_FILTER";
+    pub const COLLECTION_ID_FILTER: &str = "CODEMARK_COLLECTION_ID_FILTER";
+    pub const DB: &str = "CODEMARK_DB";
+    pub const FORMAT: &str = "CODEMARK_FORMAT";
+}
+
 use std::path::PathBuf;
 
 use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
@@ -25,13 +33,13 @@ pub struct Cli {
     #[arg(
         long,
         global = true,
-        env = "CODEMARK_DB",
+        env = env::DB,
         value_delimiter = if cfg!(windows) { ';' } else { ':' }
     )]
     pub db: Vec<PathBuf>,
 
     /// Output format: json (default), table, line, markdown (or a custom template)
-    #[arg(long, global = true, env = "CODEMARK_FORMAT")]
+    #[arg(long, global = true, env = env::FORMAT)]
     pub format: Option<String>,
 
     /// Enable debug-level logging to stderr
@@ -251,7 +259,7 @@ pub struct ResolveArgs {
     pub lang: Option<String>,
 
     /// Filter by collection
-    #[arg(long, env = "CODEMARK_COLLECTION_FILTER")]
+    #[arg(long, env = env::COLLECTION_FILTER)]
     pub collection: Option<String>,
 
     /// Preview what would be resolved without storing anything
@@ -291,7 +299,7 @@ pub struct HealArgs {
     pub archive_after: u32,
 
     /// Filter by collection
-    #[arg(long, env = "CODEMARK_COLLECTION_FILTER")]
+    #[arg(long, env = env::COLLECTION_FILTER)]
     pub collection: Option<String>,
 
     /// Skip recording resolution history (only update status)
@@ -330,11 +338,11 @@ pub struct ListArgs {
     pub limit: Option<usize>,
 
     /// Filter by collection
-    #[arg(long, env = "CODEMARK_COLLECTION_FILTER")]
+    #[arg(long, env = env::COLLECTION_FILTER)]
     pub collection: Option<String>,
 
     /// Filter by collection ID
-    #[arg(long, env = "CODEMARK_COLLECTION_ID_FILTER")]
+    #[arg(long, env = env::COLLECTION_ID_FILTER)]
     pub collection_id: Option<String>,
 
     /// Custom line format template (placeholders: {ID}, {FILE}, {FILENAME}, {LINE}, {OFFSET}, {STATUS}, {TAGS}, {NOTE}, {CONTEXT}, {QUERY})
@@ -394,7 +402,7 @@ pub struct SearchArgs {
     pub author: Option<String>,
 
     /// Filter by collection
-    #[arg(long, env = "CODEMARK_COLLECTION_FILTER")]
+    #[arg(long, env = env::COLLECTION_FILTER)]
     pub collection: Option<String>,
 }
 
@@ -405,7 +413,7 @@ pub struct ReindexArgs {
     pub lang: Option<String>,
 
     /// Only reindex this collection
-    #[arg(long, env = "CODEMARK_COLLECTION_FILTER")]
+    #[arg(long, env = env::COLLECTION_FILTER)]
     pub collection: Option<String>,
 
     /// Show progress while reindexing

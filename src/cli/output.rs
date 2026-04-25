@@ -1,5 +1,6 @@
 //! Output formatting for codemark commands.
 
+// Allow dead code: some formatters are exposed for library users but not used internally.
 #![allow(dead_code)]
 
 use std::io::{self, Write};

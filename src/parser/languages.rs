@@ -1,5 +1,6 @@
 //! Programming language support for tree-sitter parsing.
 
+// Allow dead code: some language support is exposed for library users but not used internally.
 #![allow(dead_code)]
 
 use std::collections::HashMap;

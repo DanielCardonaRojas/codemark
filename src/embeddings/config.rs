@@ -1,5 +1,6 @@
 //! Configuration for embedding models.
 
+// Allow dead code: some config options are exposed for library users but not used internally.
 #![allow(dead_code)]
 
 use serde::{Deserialize, Serialize};

@@ -3,6 +3,8 @@
 //! This module provides embedding generation and vector similarity search
 //! for finding bookmarks by meaning rather than exact keywords.
 
+// Allow dead code: some embedding providers are exposed for library users but not used internally.
+// Allow unused imports: re-exports may not all be used internally.
 #![allow(dead_code)]
 #![allow(unused_imports)]
 

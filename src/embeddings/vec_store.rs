@@ -3,6 +3,7 @@
 //! This module provides storage for vector embeddings with efficient
 //! similarity search using the sqlite-vec extension.
 
+// Allow dead code: some vector store operations are exposed for library users but not used internally.
 #![allow(dead_code)]
 
 use crate::embeddings::config::DistanceMetric;

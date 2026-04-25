@@ -1,5 +1,6 @@
 //! Embedding provider trait and common types.
 
+// Allow dead code: some provider traits are exposed for library users but not used internally.
 #![allow(dead_code)]
 
 use async_trait::async_trait;

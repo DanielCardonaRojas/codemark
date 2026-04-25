@@ -142,6 +142,7 @@ impl StorageConfig {
 
 impl HealthConfig {
     /// Get the auto-archive days threshold (default: 7).
+    // Note: Used in tests; not yet exposed to CLI commands.
     #[allow(dead_code)]
     pub fn auto_archive_days(&self) -> u32 {
         self.auto_archive_after_days.unwrap_or(7)
@@ -336,6 +337,7 @@ impl Config {
     ///
     /// This loads a local (per-repo) config file only. For the full layered config
     /// (global + local override), use `Config::load_layered()`.
+    // Note: Used in tests; prefer load_layered() in production code.
     #[allow(dead_code)]
     pub fn load(codemark_dir: &Path) -> Self {
         let path = codemark_dir.join("config.toml");

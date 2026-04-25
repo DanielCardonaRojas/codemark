@@ -1,5 +1,6 @@
 //! Git context detection and utilities.
 
+// Allow dead code: some utilities are exposed for library users but not used internally.
 #![allow(dead_code)]
 
 use std::path::{Path, PathBuf};
