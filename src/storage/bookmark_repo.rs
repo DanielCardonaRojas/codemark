@@ -688,7 +688,7 @@ mod tests {
             created_by: None,
         };
         db.insert_collection(&col).unwrap();
-        db.add_to_collection(&col.id, &[bm1.id.clone()]).unwrap();
+        db.add_to_collection(&col.id, std::slice::from_ref(&bm1.id)).unwrap();
 
         // Filter by name
         let filter_name =
@@ -698,7 +698,8 @@ mod tests {
         assert_eq!(results[0].id, bm1.id);
 
         // Filter by ID
-        let filter_id = BookmarkFilter { collection_id: Some("col-1111".into()), ..Default::default() };
+        let filter_id =
+            BookmarkFilter { collection_id: Some("col-1111".into()), ..Default::default() };
         let results = db.list_bookmarks(&filter_id).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].id, bm1.id);
