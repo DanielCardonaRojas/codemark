@@ -2786,6 +2786,13 @@ fn add_with_fine_grained_strategy() {
 
 #[test]
 fn env_variable_filters() {
+    // Isolate from parent environment
+    unsafe {
+        std::env::remove_var("CODEMARK_COLLECTION_FILTER");
+        std::env::remove_var("CODEMARK_FORMAT");
+        std::env::remove_var("CODEMARK_DB");
+    }
+
     let cm = Codemark::new();
 
     // Create a collection
@@ -2819,6 +2826,8 @@ fn env_variable_filters() {
 
     // List with CODEMARK_COLLECTION_FILTER
     let output = Command::new(&cm.binary)
+        .env_remove("CODEMARK_FORMAT")
+        .env_remove("CODEMARK_DB")
         .env("CODEMARK_COLLECTION_FILTER", "test-col")
         .arg("--db")
         .arg(&cm.db_path)
@@ -2834,6 +2843,8 @@ fn env_variable_filters() {
 
     // Test CODEMARK_FORMAT
     let output = Command::new(&cm.binary)
+        .env_remove("CODEMARK_COLLECTION_FILTER")
+        .env_remove("CODEMARK_DB")
         .env("CODEMARK_FORMAT", "json")
         .arg("--db")
         .arg(&cm.db_path)
@@ -2846,6 +2857,8 @@ fn env_variable_filters() {
 
     // Test CODEMARK_DB
     let output = Command::new(&cm.binary)
+        .env_remove("CODEMARK_COLLECTION_FILTER")
+        .env_remove("CODEMARK_FORMAT")
         .env("CODEMARK_DB", cm.db_path.to_str().unwrap())
         .args(["list", "--format", "json"])
         .current_dir(&cm.work_dir)

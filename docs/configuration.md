@@ -66,7 +66,9 @@ batch_size = 32
 
 | Variable | Description |
 |----------|-------------|
-| `CODEMARK_DB` | Override database path |
-| `CODEMARK_LOG` | Log level (error, warn, info, debug, trace) |
-| `NO_COLOR` | Disable colored output |
-| `OPENAI_API_KEY` | Key for OpenAI embedding provider |
+| `CODEMARK_DB` | Path to the database. Supports multiple paths using OS-specific separator (`:` on Unix, `;` on Windows). **Note:** Setting this forces "explicit override" mode, skipping auto-detection and `additional` databases from config. |
+| `CODEMARK_FORMAT` | Default output format (json, table, line, etc.). |
+| `CODEMARK_COLLECTION_FILTER` | Default collection to filter by for list, search, resolve, heal, and reindex commands. |
+| `CODEMARK_LOG` | Log level (error, warn, info, debug, trace). |
+| `NO_COLOR` | Disable colored output. |
+| `OPENAI_API_KEY` | Key for OpenAI embedding provider. |

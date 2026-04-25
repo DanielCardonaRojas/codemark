@@ -22,7 +22,12 @@ pub fn build_cli() -> clap::Command {
 #[command(name = "codemark", version, about, long_about = None)]
 pub struct Cli {
     /// Database location; repeatable for cross-repo queries
-    #[arg(long, global = true, env = "CODEMARK_DB", value_delimiter = ':')]
+    #[arg(
+        long,
+        global = true,
+        env = "CODEMARK_DB",
+        value_delimiter = if cfg!(windows) { ';' } else { ':' }
+    )]
     pub db: Vec<PathBuf>,
 
     /// Output format: json (default), table, line, markdown (or a custom template)
