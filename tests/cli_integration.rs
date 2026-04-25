@@ -2783,3 +2783,75 @@ fn add_with_fine_grained_strategy() {
     assert_eq!(json["data"]["unique"], true, "fine-grained query should identify one node");
     assert_eq!(json["data"]["match_count"], 1);
 }
+
+#[test]
+fn env_variable_filters() {
+    let cm = Codemark::new();
+
+    // Create a collection
+    cm.run_json(&["collection", "create", "test-col"]);
+
+    // Add bookmarks
+    cm.run_json(&[
+        "add",
+        "--file",
+        &cm.fixture("rust/auth_service.rs"),
+        "--range",
+        "108",
+        "--note",
+        "with-col",
+        "--collection",
+        "test-col",
+    ]);
+    cm.run_json(&[
+        "add",
+        "--file",
+        &cm.fixture("rust/auth_service.rs"),
+        "--range",
+        "47",
+        "--note",
+        "without-col",
+    ]);
+
+    // List without env var should show both
+    let json = cm.run_json(&["list"]);
+    assert_eq!(json["data"].as_array().unwrap().len(), 2);
+
+    // List with CODEMARK_COLLECTION_FILTER
+    let output = Command::new(&cm.binary)
+        .env("CODEMARK_COLLECTION_FILTER", "test-col")
+        .arg("--db")
+        .arg(&cm.db_path)
+        .args(["list", "--format", "json"])
+        .current_dir(&cm.work_dir)
+        .output()
+        .expect("failed to run codemark");
+
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let bookmarks = json["data"].as_array().unwrap();
+    assert_eq!(bookmarks.len(), 1);
+    assert!(bookmarks[0]["annotations"][0]["notes"].as_str().unwrap().contains("with-col"));
+
+    // Test CODEMARK_FORMAT
+    let output = Command::new(&cm.binary)
+        .env("CODEMARK_FORMAT", "json")
+        .arg("--db")
+        .arg(&cm.db_path)
+        .args(["list"])
+        .current_dir(&cm.work_dir)
+        .output()
+        .expect("failed to run codemark");
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["success"], true);
+
+    // Test CODEMARK_DB
+    let output = Command::new(&cm.binary)
+        .env("CODEMARK_DB", cm.db_path.to_str().unwrap())
+        .args(["list", "--format", "json"])
+        .current_dir(&cm.work_dir)
+        .output()
+        .expect("failed to run codemark");
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(json["success"], true);
+    assert_eq!(json["data"].as_array().unwrap().len(), 2);
+}
