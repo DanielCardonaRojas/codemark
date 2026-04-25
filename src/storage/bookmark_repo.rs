@@ -483,9 +483,7 @@ mod tests {
     use crate::storage::db::Database;
 
     // Initialize sqlite-vec extension for all tests
-    fn init_test_env() {
-        
-    }
+    fn init_test_env() {}
 
     fn test_bookmark(id: &str) -> Bookmark {
         // Use unique file_path and query to avoid UNIQUE constraint violations

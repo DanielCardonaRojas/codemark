@@ -180,9 +180,7 @@ mod tests {
     }
 
     // Initialize test environment
-    fn init_test_env() {
-        
-    }
+    fn init_test_env() {}
 
     #[test]
     fn insert_and_list_resolutions() {

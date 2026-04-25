@@ -52,7 +52,7 @@ impl VecStore {
         Ok(())
     }
 
-    /// Ensure the extension is loaded. 
+    /// Ensure the extension is loaded.
     pub fn ensure_extension_loaded() {
         let _ = Self::load_extension();
     }

@@ -235,9 +235,7 @@ mod tests {
 
     // Initialize sqlite-vec extension for all tests
     // This must be called before any database operations
-    fn init_test_env() {
-        
-    }
+    fn init_test_env() {}
 
     #[test]
     fn open_in_memory_succeeds() {
