@@ -26,6 +26,7 @@ impl Database {
     /// Open the database at the given path, run migrations.
     /// Returns an error if the parent directory does not exist.
     pub fn open(path: &Path) -> Result<Self> {
+        crate::embeddings::VecStore::load_extension()?;
         let conn = Connection::open(path)?;
         let mut db = Database { conn, path: path.to_path_buf() };
         db.init()?;
@@ -46,6 +47,7 @@ impl Database {
 
     /// Open an in-memory database (for testing).
     pub fn open_in_memory() -> Result<Self> {
+        crate::embeddings::VecStore::load_extension()?;
         let conn = Connection::open_in_memory()?;
         let mut db = Database { conn, path: PathBuf::from(":memory:") };
         db.init()?;
@@ -172,9 +174,6 @@ impl Database {
     fn init_embeddings_table(&mut self) -> Result<()> {
         use crate::embeddings::VecStore;
 
-        // Initialize the sqlite-vec extension once
-        VecStore::init_extension();
-
         // Create the vec0 virtual table with 384 dimensions (all-MiniLM-L6-v2)
         let store = VecStore::new(384);
         store.create_table(&mut self.conn).map_err(|e| {
@@ -188,10 +187,6 @@ impl Database {
     /// This handles the case where the schema version is 5 but the table wasn't created.
     fn ensure_embeddings_table(&mut self) -> Result<()> {
         use crate::embeddings::VecStore;
-
-        // First, ensure the extension is loaded
-        // This is safe to call multiple times
-        VecStore::init_extension();
 
         // Check if table exists by trying to query it
         // vec0 virtual tables don't show up in sqlite_master like regular tables
@@ -241,7 +236,7 @@ mod tests {
     // Initialize sqlite-vec extension for all tests
     // This must be called before any database operations
     fn init_test_env() {
-        crate::embeddings::VecStore::init_extension();
+        
     }
 
     #[test]

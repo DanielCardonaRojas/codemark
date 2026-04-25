@@ -484,7 +484,7 @@ mod tests {
 
     // Initialize sqlite-vec extension for all tests
     fn init_test_env() {
-        crate::embeddings::VecStore::init_extension();
+        
     }
 
     fn test_bookmark(id: &str) -> Bookmark {

@@ -39,9 +39,7 @@ impl VecStore {
     /// This must be called once before creating any connections that will
     /// use vec0 virtual tables. Uses sqlite3_auto_extension to automatically
     /// load the extension for all future connections.
-    ///
-    /// This is safe to call multiple times - subsequent calls will be no-ops.
-    pub fn init_extension() {
+    pub fn load_extension() -> SqliteResult<()> {
         use rusqlite::ffi::sqlite3_auto_extension;
         use sqlite_vec::sqlite3_vec_init;
         use std::sync::Once;
@@ -51,11 +49,12 @@ impl VecStore {
             #[allow(clippy::missing_transmute_annotations)]
             sqlite3_auto_extension(Some(std::mem::transmute(sqlite3_vec_init as *const ())));
         });
+        Ok(())
     }
 
-    /// Ensure the extension is loaded. Call this before any vec0 operations.
+    /// Ensure the extension is loaded. 
     pub fn ensure_extension_loaded() {
-        Self::init_extension();
+        let _ = Self::load_extension();
     }
 
     /// Create a new VecStore with the default distance metric (L2).
@@ -114,6 +113,12 @@ impl VecStore {
     ) -> SqliteResult<()> {
         let tx = conn.unchecked_transaction()?;
         for entry in entries {
+            // Delete existing embedding if any
+            tx.execute(
+                "DELETE FROM bookmark_embeddings WHERE bookmark_id = ?1",
+                [&entry.bookmark_id],
+            )?;
+
             // Inline insert logic for transaction
             let expected_dim = self.dimensions;
             let actual_dim = entry.embedding.len();
@@ -125,15 +130,14 @@ impl VecStore {
             }
 
             tx.execute(
-                "INSERT OR IGNORE INTO bookmark_embeddings (bookmark_id, embedding)
-                 VALUES (?1, ?2)",
+                "INSERT INTO bookmark_embeddings (bookmark_id, embedding)
+                  VALUES (?1, ?2)",
                 (&entry.bookmark_id, entry.embedding.as_bytes()),
             )?;
         }
         tx.commit()?;
         Ok(())
     }
-
     /// Get an embedding for a bookmark.
     ///
     /// Note: This retrieves the raw vector. For similarity search, use search().
@@ -286,7 +290,7 @@ mod tests {
         #[test]
         fn test_vec_store_integration() {
             // Initialize the extension once
-            VecStore::init_extension();
+            VecStore::load_extension().unwrap();
 
             let mut conn = Connection::open_in_memory().unwrap();
             let store = VecStore::new(4);
@@ -332,7 +336,7 @@ mod tests {
 
         #[test]
         fn test_vec_store_get() {
-            VecStore::init_extension();
+            VecStore::load_extension().unwrap();
 
             let mut conn = Connection::open_in_memory().unwrap();
             let store = VecStore::new(3);
@@ -350,7 +354,7 @@ mod tests {
 
         #[test]
         fn test_vec_store_delete() {
-            VecStore::init_extension();
+            VecStore::load_extension().unwrap();
 
             let mut conn = Connection::open_in_memory().unwrap();
             let store = VecStore::new(2);
@@ -369,7 +373,7 @@ mod tests {
 
         #[test]
         fn test_search_with_threshold() {
-            VecStore::init_extension();
+            VecStore::load_extension().unwrap();
 
             let mut conn = Connection::open_in_memory().unwrap();
             let store = VecStore::new(3);

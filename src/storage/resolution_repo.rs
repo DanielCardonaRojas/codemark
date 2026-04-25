@@ -181,7 +181,7 @@ mod tests {
 
     // Initialize test environment
     fn init_test_env() {
-        crate::embeddings::VecStore::init_extension();
+        
     }
 
     #[test]
