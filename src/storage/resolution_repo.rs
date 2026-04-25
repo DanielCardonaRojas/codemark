@@ -180,9 +180,7 @@ mod tests {
     }
 
     // Initialize test environment
-    fn init_test_env() {
-        crate::embeddings::VecStore::init_extension();
-    }
+    fn init_test_env() {}
 
     #[test]
     fn insert_and_list_resolutions() {

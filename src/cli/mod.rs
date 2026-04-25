@@ -333,6 +333,10 @@ pub struct ListArgs {
     #[arg(long, env = "CODEMARK_COLLECTION_FILTER")]
     pub collection: Option<String>,
 
+    /// Filter by collection ID
+    #[arg(long, env = "CODEMARK_COLLECTION_ID_FILTER")]
+    pub collection_id: Option<String>,
+
     /// Custom line format template (placeholders: {ID}, {FILE}, {FILENAME}, {LINE}, {OFFSET}, {STATUS}, {TAGS}, {NOTE}, {CONTEXT}, {QUERY})
     #[arg(long)]
     pub line_format: Option<String>,

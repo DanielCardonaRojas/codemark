@@ -170,7 +170,7 @@ impl Database {
         let mut conditions = Vec::new();
         let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
 
-        if filter.collection.is_some() {
+        if filter.collection.is_some() || filter.collection_id.is_some() {
             sql.push_str(
                 " JOIN collection_bookmarks cb ON b.id = cb.bookmark_id
                  JOIN collections c ON cb.collection_id = c.id",
@@ -212,12 +212,17 @@ impl Database {
             params.push(Box::new(collection_name.clone()));
         }
 
+        if let Some(ref collection_id) = filter.collection_id {
+            conditions.push("c.id LIKE ?".to_string());
+            params.push(Box::new(format!("{}%", collection_id)));
+        }
+
         if !conditions.is_empty() {
             sql.push_str(" WHERE ");
             sql.push_str(&conditions.join(" AND "));
         }
 
-        if filter.collection.is_some() {
+        if filter.collection.is_some() || filter.collection_id.is_some() {
             sql.push_str(" ORDER BY cb.position ASC, b.created_at DESC");
         } else {
             sql.push_str(" ORDER BY b.created_at DESC");
@@ -472,13 +477,13 @@ fn row_to_annotation(row: &rusqlite::Row) -> rusqlite::Result<Annotation> {
 #[cfg(test)]
 mod tests {
     use crate::engine::bookmark::BookmarkFilter;
-    use crate::engine::bookmark::{Annotation, Bookmark, BookmarkStatus, ResolutionMethod, Tag};
+    use crate::engine::bookmark::{
+        Annotation, Bookmark, BookmarkStatus, Collection, ResolutionMethod, Tag,
+    };
     use crate::storage::db::Database;
 
     // Initialize sqlite-vec extension for all tests
-    fn init_test_env() {
-        crate::embeddings::VecStore::init_extension();
-    }
+    fn init_test_env() {}
 
     fn test_bookmark(id: &str) -> Bookmark {
         // Use unique file_path and query to avoid UNIQUE constraint violations
@@ -662,6 +667,53 @@ mod tests {
         let results = db.list_bookmarks(&filter).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].id, "aaaa-0000-0000-0002");
+    }
+
+    #[test]
+    fn list_with_collection_filter() {
+        init_test_env();
+        let db = Database::open_in_memory().unwrap();
+        let bm1 = test_bookmark("aaaa-0000-0000-0001");
+        let bm2 = test_bookmark("aaaa-0000-0000-0002");
+        db.insert_bookmark(&bm1).unwrap();
+        db.insert_bookmark(&bm2).unwrap();
+
+        let col = Collection {
+            id: "col-1111".to_string(),
+            name: "My Collection".to_string(),
+            description: None,
+            created_at: "2026-04-01T00:00:00Z".to_string(),
+            created_by: None,
+        };
+        db.insert_collection(&col).unwrap();
+        db.add_to_collection(&col.id, std::slice::from_ref(&bm1.id)).unwrap();
+
+        // Filter by name
+        let filter_name =
+            BookmarkFilter { collection: Some("My Collection".into()), ..Default::default() };
+        let results = db.list_bookmarks(&filter_name).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, bm1.id);
+
+        // Filter by ID
+        let filter_id =
+            BookmarkFilter { collection_id: Some("col-1111".into()), ..Default::default() };
+        let results = db.list_bookmarks(&filter_id).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, bm1.id);
+
+        // Filter by ID prefix (segment)
+        let filter_prefix =
+            BookmarkFilter { collection_id: Some("col-".into()), ..Default::default() };
+        let results = db.list_bookmarks(&filter_prefix).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, bm1.id);
+
+        // Filter by wrong ID
+        let filter_wrong =
+            BookmarkFilter { collection_id: Some("wrong".into()), ..Default::default() };
+        let results = db.list_bookmarks(&filter_wrong).unwrap();
+        assert_eq!(results.len(), 0);
     }
 
     #[test]

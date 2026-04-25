@@ -915,7 +915,7 @@ fn multi_language_support() {
 fn nonexistent_bookmark_returns_error() {
     let cm = Codemark::new();
 
-    let result = cm.run(&["--json", "resolve", "nonexistent"]);
+    let result = cm.run(&["--format", "json", "resolve", "nonexistent"]);
     assert_ne!(result.status, 0);
 }
 
@@ -923,7 +923,7 @@ fn nonexistent_bookmark_returns_error() {
 fn invalid_file_returns_error() {
     let cm = Codemark::new();
 
-    let result = cm.run(&["--json", "add", "--file", "nonexistent.rs", "--range", "1"]);
+    let result = cm.run(&["--format", "json", "add", "--file", "nonexistent.rs", "--range", "1"]);
     assert_ne!(result.status, 0);
 }
 

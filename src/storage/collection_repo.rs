@@ -30,6 +30,30 @@ impl Database {
         }
     }
 
+    pub fn get_collection_by_id_prefix(&self, prefix: &str) -> Result<Option<Collection>> {
+        if prefix.len() < 4 {
+            return Err(crate::error::Error::Input(
+                "Collection ID prefix must be at least 4 characters".into(),
+            ));
+        }
+        let mut stmt = self.conn().prepare(
+            "SELECT id, name, description, created_at, created_by
+             FROM collections WHERE id LIKE ?1",
+        )?;
+        let pattern = format!("{prefix}%");
+        let results: Vec<Collection> =
+            stmt.query_map([&pattern], row_to_collection)?.filter_map(|r| r.ok()).collect();
+
+        match results.len() {
+            0 => Ok(None),
+            1 => Ok(Some(results.into_iter().next().unwrap())),
+            _ => Err(crate::error::Error::Input(format!(
+                "Ambiguous collection ID prefix '{prefix}': matches {} collections",
+                results.len()
+            ))),
+        }
+    }
+
     /// List all collections with their bookmark counts.
     pub fn list_collections(&self) -> Result<Vec<(Collection, usize)>> {
         let mut stmt = self.conn().prepare(
@@ -56,22 +80,29 @@ impl Database {
         Ok(results)
     }
 
-    /// Delete a collection, returning the number of bookmarks that were in it.
-    pub fn delete_collection(&self, name: &str) -> Result<usize> {
+    /// Delete a collection by ID, returning the number of bookmarks that were in it.
+    pub fn delete_collection_by_id(&self, id: &str) -> Result<usize> {
         let count: usize = self
             .conn()
             .query_row(
-                "SELECT COUNT(*) FROM collection_bookmarks cb
-                 JOIN collections c ON cb.collection_id = c.id
-                 WHERE c.name = ?1",
-                [name],
+                "SELECT COUNT(*) FROM collection_bookmarks WHERE collection_id = ?1",
+                [id],
                 |row| row.get(0),
             )
             .unwrap_or(0);
 
-        self.conn().execute("DELETE FROM collections WHERE name = ?1", [name])?;
-
+        self.conn().execute("DELETE FROM collections WHERE id = ?1", [id])?;
         Ok(count)
+    }
+
+    /// Delete a collection by name, returning the number of bookmarks that were in it.
+    #[allow(dead_code)]
+    pub fn delete_collection(&self, name: &str) -> Result<usize> {
+        if let Some(c) = self.get_collection_by_name(name)? {
+            self.delete_collection_by_id(&c.id)
+        } else {
+            Ok(0)
+        }
     }
 
     /// Add bookmarks to a collection, appending at the end (or at a specific position).
@@ -216,9 +247,7 @@ mod tests {
     }
 
     // Initialize test environment
-    fn init_test_env() {
-        crate::embeddings::VecStore::init_extension();
-    }
+    fn init_test_env() {}
 
     #[test]
     fn create_and_get_collection() {

@@ -148,6 +148,7 @@ pub struct BookmarkFilter {
     pub language: Option<String>,
     pub created_by: Option<String>,
     pub collection: Option<String>,
+    pub collection_id: Option<String>,
     pub limit: Option<usize>,
 }
 
