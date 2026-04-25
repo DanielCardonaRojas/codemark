@@ -2223,10 +2223,18 @@ fn handle_collection_delete(
     args: &CollectionDeleteArgs,
 ) -> Result<()> {
     let db = open_db_for_write(cli)?;
-    let count = db.delete_collection(&args.name)?;
+    // Try by name first, then by ID prefix
+    let collection = if let Some(c) = db.get_collection_by_name(&args.name)? {
+        c
+    } else {
+        db.get_collection_by_id_prefix(&args.name)?
+            .ok_or_else(|| Error::Input(format!("collection '{}' not found", args.name)))?
+    };
+
+    let count = db.delete_collection_by_id(&collection.id)?;
     write_success(
         mode,
-        &format!("Collection '{}' deleted ({count} bookmarks were in it)", args.name),
+        &format!("Collection '{}' deleted ({count} bookmarks were in it)", collection.name),
     )?;
     Ok(())
 }
@@ -2259,13 +2267,18 @@ fn handle_collection_reorder(
     args: &CollectionReorderArgs,
 ) -> Result<()> {
     let db = open_db_for_write(cli)?;
-    let collection = db
-        .get_collection_by_name(&args.name)?
-        .ok_or_else(|| Error::Input(format!("collection '{}' not found", args.name)))?;
+    // Try by name first, then by ID prefix
+    let collection = if let Some(c) = db.get_collection_by_name(&args.name)? {
+        c
+    } else {
+        db.get_collection_by_id_prefix(&args.name)?
+            .ok_or_else(|| Error::Input(format!("collection '{}' not found", args.name)))?
+    };
+
     db.reorder_collection(&collection.id, &args.bookmark_ids)?;
     write_success(
         mode,
-        &format!("Reordered {} bookmarks in '{}'", args.bookmark_ids.len(), args.name),
+        &format!("Reordered {} bookmarks in '{}'", args.bookmark_ids.len(), collection.name),
     )?;
     Ok(())
 }
@@ -2276,11 +2289,16 @@ fn handle_collection_remove(
     args: &CollectionRemoveArgs,
 ) -> Result<()> {
     let db = open_db_for_write(cli)?;
-    let collection = db
-        .get_collection_by_name(&args.name)?
-        .ok_or_else(|| Error::Input(format!("collection '{}' not found", args.name)))?;
+    // Try by name first, then by ID prefix
+    let collection = if let Some(c) = db.get_collection_by_name(&args.name)? {
+        c
+    } else {
+        db.get_collection_by_id_prefix(&args.name)?
+            .ok_or_else(|| Error::Input(format!("collection '{}' not found", args.name)))?
+    };
+
     let removed = db.remove_from_collection(&collection.id, &args.bookmark_ids)?;
-    write_success(mode, &format!("Removed {removed} bookmarks from '{}'", args.name))?;
+    write_success(mode, &format!("Removed {removed} bookmarks from '{}'", collection.name))?;
     Ok(())
 }
 
@@ -2393,7 +2411,15 @@ fn handle_collection_list(cli: &Cli, mode: &OutputMode, args: &CollectionListArg
 
 fn handle_collection_show(cli: &Cli, mode: &OutputMode, args: &CollectionShowArgs) -> Result<()> {
     let db = open_db(cli)?;
-    let filter = BookmarkFilter { collection: Some(args.name.clone()), ..Default::default() };
+    // Try by name first, then by ID prefix
+    let collection = if let Some(c) = db.get_collection_by_name(&args.name)? {
+        c
+    } else {
+        db.get_collection_by_id_prefix(&args.name)?
+            .ok_or_else(|| Error::Input(format!("collection '{}' not found", args.name)))?
+    };
+
+    let filter = BookmarkFilter { collection_id: Some(collection.id), ..Default::default() };
     let bookmarks = db.list_bookmarks(&filter)?;
     output::write_bookmarks(mode, &bookmarks, None)?;
     Ok(())
@@ -2405,8 +2431,16 @@ fn handle_collection_resolve(
     args: &CollectionResolveArgs,
 ) -> Result<()> {
     let db = open_db_for_write(cli)?;
+    // Try by name first, then by ID prefix
+    let collection = if let Some(c) = db.get_collection_by_name(&args.name)? {
+        c
+    } else {
+        db.get_collection_by_id_prefix(&args.name)?
+            .ok_or_else(|| Error::Input(format!("collection '{}' not found", args.name)))?
+    };
+
     let filter = BookmarkFilter {
-        collection: Some(args.name.clone()),
+        collection_id: Some(collection.id),
         status: Some(vec![BookmarkStatus::Active, BookmarkStatus::Drifted]),
         ..Default::default()
     };

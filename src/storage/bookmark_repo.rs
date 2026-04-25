@@ -213,8 +213,8 @@ impl Database {
         }
 
         if let Some(ref collection_id) = filter.collection_id {
-            conditions.push("c.id = ?".to_string());
-            params.push(Box::new(collection_id.clone()));
+            conditions.push("c.id LIKE ?".to_string());
+            params.push(Box::new(format!("{}%", collection_id)));
         }
 
         if !conditions.is_empty() {
@@ -674,7 +674,7 @@ mod tests {
     #[test]
     fn list_with_collection_filter() {
         init_test_env();
-        let mut db = Database::open_in_memory().unwrap();
+        let db = Database::open_in_memory().unwrap();
         let bm1 = test_bookmark("aaaa-0000-0000-0001");
         let bm2 = test_bookmark("aaaa-0000-0000-0002");
         db.insert_bookmark(&bm1).unwrap();
@@ -700,6 +700,13 @@ mod tests {
         // Filter by ID
         let filter_id = BookmarkFilter { collection_id: Some("col-1111".into()), ..Default::default() };
         let results = db.list_bookmarks(&filter_id).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, bm1.id);
+
+        // Filter by ID prefix (segment)
+        let filter_prefix =
+            BookmarkFilter { collection_id: Some("col-".into()), ..Default::default() };
+        let results = db.list_bookmarks(&filter_prefix).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].id, bm1.id);
 
