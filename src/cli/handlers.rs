@@ -182,14 +182,9 @@ fn resolve_identity(config: &Config) -> (String, Option<String>) {
 
     // Try git config first
     if let Some(identity) = git_context::detect_identity(&cwd) {
-        let email = config
-            .identity
-            .email
-            .clone()
-            .or(identity.user_email);
-        let name = config.identity.name.clone().or(identity.user_name);
+        let name = config.identity.name.clone().or(identity.user_name.clone());
         // Synthesize a unique local email if not configured
-        let email = email.or_else(|| {
+        let email = config.identity.email.clone().or(identity.user_email).unwrap_or_else(|| {
             identity
                 .user_name
                 .as_ref()
@@ -201,10 +196,9 @@ fn resolve_identity(config: &Config) -> (String, Option<String>) {
 
     // Fallback to system username
     let fallback = git_context::detect_fallback_identity();
-    let email = config.identity.email.clone().or(fallback.user_email.clone());
-    let name = config.identity.name.clone().or(fallback.user_name);
+    let name = config.identity.name.clone().or(fallback.user_name.clone());
     // Synthesize a unique local email if not configured
-    let email = email.or_else(|| {
+    let email = config.identity.email.clone().or(fallback.user_email).unwrap_or_else(|| {
         fallback
             .user_name
             .as_ref()
@@ -353,7 +347,10 @@ fn open_all_dbs(cli: &Cli) -> Result<Vec<(String, Database)>> {
 /// Returns only databases where the db_owner_email in the repos table matches the given email.
 /// If the email is None, returns all databases.
 /// If the repos table is empty (Ok(None)), keeps the database (allows querying unmigrated DBs).
-fn filter_dbs_by_user_email(dbs: Vec<(String, Database)>, user_email: Option<&str>) -> Vec<(String, Database)> {
+fn filter_dbs_by_user_email(
+    dbs: Vec<(String, Database)>,
+    user_email: Option<&str>,
+) -> Vec<(String, Database)> {
     let Some(email) = user_email else {
         return dbs;
     };
@@ -364,7 +361,10 @@ fn filter_dbs_by_user_email(dbs: Vec<(String, Database)>, user_email: Option<&st
                 Ok(Some(owner)) => owner == email,
                 Ok(None) => true, // Empty repos table - keep the DB
                 Err(e) => {
-                    eprintln!("codemark: warning: failed to query repos table in database '{}': {e}", label);
+                    eprintln!(
+                        "codemark: warning: failed to query repos table in database '{}': {e}",
+                        label
+                    );
                     false // Skip databases with errors
                 }
             }
@@ -375,7 +375,10 @@ fn filter_dbs_by_user_email(dbs: Vec<(String, Database)>, user_email: Option<&st
 /// Filter databases by repository owner (from repos table).
 ///
 /// Returns only databases where any repo has repo_owner matching the given pattern.
-fn filter_dbs_by_repo_owner(dbs: Vec<(String, Database)>, repo_owner: Option<&str>) -> Vec<(String, Database)> {
+fn filter_dbs_by_repo_owner(
+    dbs: Vec<(String, Database)>,
+    repo_owner: Option<&str>,
+) -> Vec<(String, Database)> {
     let Some(pattern) = repo_owner else {
         return dbs;
     };
@@ -388,7 +391,10 @@ fn filter_dbs_by_repo_owner(dbs: Vec<(String, Database)>, repo_owner: Option<&st
                     repos.iter().any(|r| r.repo_owner.contains(pattern))
                 }
                 Err(e) => {
-                    eprintln!("codemark: warning: failed to query repos table in database '{}': {e}", label);
+                    eprintln!(
+                        "codemark: warning: failed to query repos table in database '{}': {e}",
+                        label
+                    );
                     false
                 }
             }
@@ -399,7 +405,10 @@ fn filter_dbs_by_repo_owner(dbs: Vec<(String, Database)>, repo_owner: Option<&st
 /// Open all specified databases for commands that support additional --db flags.
 ///
 /// This extends `open_all_dbs` to include command-specific --db flags (from ListArgs/SearchArgs).
-fn open_all_dbs_with_extra(cli: &Cli, extra_db_paths: &[String]) -> Result<Vec<(String, Database)>> {
+fn open_all_dbs_with_extra(
+    cli: &Cli,
+    extra_db_paths: &[String],
+) -> Result<Vec<(String, Database)>> {
     let mut dbs = open_all_dbs(cli)?;
 
     // Add extra databases from command-specific --db flags
@@ -720,7 +729,12 @@ fn handle_init(cli: &Cli, mode: &OutputMode) -> Result<()> {
         let db = Database::open(path)?;
         let config = load_config(cli);
         let (db_owner_email, db_owner_name) = resolve_identity(&config);
-        let _repo_id = resolve_or_create_repo_metadata(&db, &config, &db_owner_email, db_owner_name.as_deref());
+        let _repo_id = resolve_or_create_repo_metadata(
+            &db,
+            &config,
+            &db_owner_email,
+            db_owner_name.as_deref(),
+        );
 
         write_success(mode, &format!("Initialized codemark database at {}", path.display()))?;
         return Ok(());
@@ -745,7 +759,8 @@ fn handle_init(cli: &Cli, mode: &OutputMode) -> Result<()> {
     let db = Database::open(&db_path)?;
     let config = load_config(cli);
     let (db_owner_email, db_owner_name) = resolve_identity(&config);
-    let _repo_id = resolve_or_create_repo_metadata(&db, &config, &db_owner_email, db_owner_name.as_deref());
+    let _repo_id =
+        resolve_or_create_repo_metadata(&db, &config, &db_owner_email, db_owner_name.as_deref());
 
     write_success(
         mode,
@@ -809,7 +824,8 @@ fn handle_add(cli: &Cli, mode: &OutputMode, args: &AddArgs) -> Result<()> {
     // Resolve identity and create/update repo metadata
     let config = load_config(cli);
     let (db_owner_email, db_owner_name) = resolve_identity(&config);
-    let _repo_id = resolve_or_create_repo_metadata(&db, &config, &db_owner_email, db_owner_name.as_deref());
+    let _repo_id =
+        resolve_or_create_repo_metadata(&db, &config, &db_owner_email, db_owner_name.as_deref());
 
     let bookmark_id = uuid::Uuid::new_v4().to_string();
     let bookmark = Bookmark {
@@ -978,7 +994,8 @@ fn handle_add_from_snippet(cli: &Cli, mode: &OutputMode, args: &AddFromSnippetAr
     // Resolve identity and create/update repo metadata
     let config = load_config(cli);
     let (db_owner_email, db_owner_name) = resolve_identity(&config);
-    let _repo_id = resolve_or_create_repo_metadata(&db, &config, &db_owner_email, db_owner_name.as_deref());
+    let _repo_id =
+        resolve_or_create_repo_metadata(&db, &config, &db_owner_email, db_owner_name.as_deref());
 
     let bookmark_id = uuid::Uuid::new_v4().to_string();
     let bookmark = Bookmark {
@@ -1150,7 +1167,8 @@ fn handle_add_from_query(cli: &Cli, mode: &OutputMode, args: &AddFromQueryArgs) 
     // Resolve identity and create/update repo metadata
     let config = load_config(cli);
     let (db_owner_email, db_owner_name) = resolve_identity(&config);
-    let _repo_id = resolve_or_create_repo_metadata(&db, &config, &db_owner_email, db_owner_name.as_deref());
+    let _repo_id =
+        resolve_or_create_repo_metadata(&db, &config, &db_owner_email, db_owner_name.as_deref());
 
     let bookmark_id = uuid::Uuid::new_v4().to_string();
     let bookmark = Bookmark {

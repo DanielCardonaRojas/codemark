@@ -67,9 +67,7 @@ impl Database {
     /// Get the database owner email from any repo entry.
     /// Returns the first db_owner_email found, or None if repos table is empty.
     pub fn get_db_owner(&self) -> Result<Option<String>> {
-        let mut stmt = self
-            .conn()
-            .prepare("SELECT DISTINCT db_owner_email FROM repos LIMIT 1")?;
+        let mut stmt = self.conn().prepare("SELECT DISTINCT db_owner_email FROM repos LIMIT 1")?;
         let mut rows = stmt.query_map([], |row| row.get(0))?;
         match rows.next() {
             Some(row) => Ok(Some(row?)),
@@ -166,7 +164,8 @@ mod tests {
         repo.db_owner_name = Some("Updated Name".to_string());
         db.upsert_repo(&repo).unwrap();
 
-        let retrieved = db.get_repo_by_origin("https://github.com/testowner/testrepo.git").unwrap().unwrap();
+        let retrieved =
+            db.get_repo_by_origin("https://github.com/testowner/testrepo.git").unwrap().unwrap();
         assert_eq!(retrieved.db_owner_name, Some("Updated Name".to_string()));
         // ID should remain the same
         assert_eq!(retrieved.id, id);
@@ -189,7 +188,8 @@ mod tests {
 
         db.upsert_repo(&repo).unwrap();
 
-        let retrieved = db.get_repo_by_origin("https://github.com/testowner/testrepo.git").unwrap().unwrap();
+        let retrieved =
+            db.get_repo_by_origin("https://github.com/testowner/testrepo.git").unwrap().unwrap();
         assert_eq!(retrieved.repo_owner, "testowner");
 
         // Test non-existent origin

@@ -150,7 +150,8 @@ fn parse_git_url(url: &str) -> (Option<String>, Option<String>) {
     }
 
     // Handle HTTPS format: https://github.com/owner/repo
-    if let Some(rest) = url.strip_prefix("https://")
+    if let Some(rest) = url
+        .strip_prefix("https://")
         .or_else(|| url.strip_prefix("http://"))
         .or_else(|| url.strip_prefix("ssh://"))
     {
@@ -166,11 +167,12 @@ fn parse_git_url(url: &str) -> (Option<String>, Option<String>) {
 }
 
 /// Parse owner/repo from a path string.
+/// Uses the last two path segments to handle nested namespaces (e.g., GitLab groups/subgroups).
 fn parse_git_path(path: &str) -> (Option<String>, Option<String>) {
-    let parts: Vec<&str> = path.split('/').collect();
+    let parts: Vec<&str> = path.split('/').filter(|p| !p.is_empty()).collect();
     if parts.len() >= 2 {
-        let owner = Some(parts[0].to_string());
-        let repo_name = Some(parts[1].to_string());
+        let owner = Some(parts[parts.len() - 2].to_string());
+        let repo_name = Some(parts[parts.len() - 1].to_string());
         (owner, repo_name)
     } else {
         (None, None)
@@ -189,24 +191,6 @@ pub fn detect_fallback_identity() -> GitIdentity {
     let user_email = None;
 
     GitIdentity { user_name, user_email }
-}
-
-/// Get the effective user identity string for use in bookmarks.
-/// Priority: git user.email > git user.name > system username > "user"
-pub fn get_effective_identity(from_path: &Path) -> String {
-    if let Some(identity) = detect_identity(from_path) {
-        if let Some(email) = identity.user_email {
-            return email;
-        }
-        if let Some(name) = identity.user_name {
-            return name;
-        }
-    }
-
-    // Fallback to system username or default
-    detect_fallback_identity()
-        .user_name
-        .unwrap_or_else(|| "user".to_string())
 }
 
 /// Make a path relative to the repo root, normalized (no ./, forward slashes only).
@@ -962,9 +946,9 @@ mod tests {
     #[test]
     fn parse_git_url_with_nested_path() {
         let (owner, repo) = parse_git_url("https://github.com/owner/group/repo.git");
-        // parse_git_path only takes first two parts
-        assert_eq!(owner, Some("owner".to_string()));
-        assert_eq!(repo, Some("group".to_string()));
+        // parse_git_path takes last two parts to handle nested namespaces
+        assert_eq!(owner, Some("group".to_string()));
+        assert_eq!(repo, Some("repo".to_string()));
     }
 
     #[test]

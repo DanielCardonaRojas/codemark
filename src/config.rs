@@ -348,7 +348,6 @@ pub struct IdentityConfig {
     pub force: Option<String>,
 }
 
-
 impl Config {
     /// Load config from a `.codemark/config.toml` file. Returns defaults if the file doesn't exist.
     ///
