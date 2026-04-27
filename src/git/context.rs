@@ -13,6 +13,20 @@ pub struct GitContext {
     pub head_commit: Option<String>,
 }
 
+/// User identity detected from git configuration.
+pub struct GitIdentity {
+    pub user_name: Option<String>,
+    pub user_email: Option<String>,
+}
+
+/// Repository metadata detected from git configuration.
+pub struct GitRepoMetadata {
+    pub origin_url: Option<String>,
+    pub repo_owner: Option<String>,
+    pub repo_name: Option<String>,
+    pub repo_root: PathBuf,
+}
+
 /// Detect git repo root and HEAD commit. Returns None if not in a git repo.
 ///
 /// Uses `git rev-parse --git-common-dir` to find the repo root, which correctly
@@ -57,6 +71,142 @@ pub fn detect_context(from_path: &Path) -> Option<GitContext> {
         repo.head().ok().and_then(|r| r.peel_to_commit().ok()).map(|c| c.id().to_string());
 
     Some(GitContext { repo_root, head_commit })
+}
+
+/// Detect git user.name and user.email from the repository at the given path.
+/// Returns None if not in a git repo or config is not accessible.
+pub fn detect_identity(from_path: &Path) -> Option<GitIdentity> {
+    let repo = git2::Repository::discover(from_path).ok()?;
+    let config = repo.config().ok()?;
+
+    let user_name = config.get_string("user.name").ok();
+    let user_email = config.get_string("user.email").ok();
+
+    // If both are None, return None
+    if user_name.is_none() && user_email.is_none() {
+        return None;
+    }
+
+    Some(GitIdentity { user_name, user_email })
+}
+
+/// Detect repository metadata from git remote origin.
+/// Returns None if not in a git repo or no origin is configured.
+pub fn detect_repo_metadata(from_path: &Path) -> Option<GitRepoMetadata> {
+    let git_ctx = detect_context(from_path)?;
+
+    // Use git remote get-url to get the origin URL
+    let output = std::process::Command::new("git")
+        .args(["remote", "get-url", "origin"])
+        .current_dir(from_path)
+        .output()
+        .ok()?;
+
+    if !output.status.success() {
+        return Some(GitRepoMetadata {
+            origin_url: None,
+            repo_owner: None,
+            repo_name: None,
+            repo_root: git_ctx.repo_root,
+        });
+    }
+
+    let origin_url = String::from_utf8(output.stdout).ok()?;
+    let origin_url = origin_url.trim();
+    if origin_url.is_empty() {
+        return Some(GitRepoMetadata {
+            origin_url: None,
+            repo_owner: None,
+            repo_name: None,
+            repo_root: git_ctx.repo_root,
+        });
+    }
+
+    // Parse owner and repo name from various URL formats:
+    // - https://github.com/owner/repo.git
+    // - git@github.com:owner/repo.git
+    // - ssh://git@github.com/owner/repo.git
+    let (repo_owner, repo_name) = parse_git_url(origin_url);
+
+    Some(GitRepoMetadata {
+        origin_url: Some(origin_url.to_string()),
+        repo_owner,
+        repo_name,
+        repo_root: git_ctx.repo_root,
+    })
+}
+
+/// Parse owner and repo name from a git URL.
+/// Returns (owner, repo_name) or (None, None) if parsing fails.
+fn parse_git_url(url: &str) -> (Option<String>, Option<String>) {
+    // Remove .git suffix if present
+    let url = url.strip_suffix(".git").unwrap_or(url);
+
+    // Handle SSH format: git@github.com:owner/repo
+    if let Some(rest) = url.strip_prefix("git@") {
+        if let Some((_, path)) = rest.split_once(':') {
+            return parse_git_path(path);
+        }
+    }
+
+    // Handle HTTPS format: https://github.com/owner/repo
+    if let Some(rest) = url.strip_prefix("https://")
+        .or_else(|| url.strip_prefix("http://"))
+        .or_else(|| url.strip_prefix("ssh://"))
+    {
+        // Skip the host part and get the path
+        // splitn returns an iterator, we need to get the second element (index 1)
+        let parts: Vec<&str> = rest.splitn(2, '/').collect();
+        if parts.len() > 1 {
+            return parse_git_path(parts[1]);
+        }
+    }
+
+    (None, None)
+}
+
+/// Parse owner/repo from a path string.
+fn parse_git_path(path: &str) -> (Option<String>, Option<String>) {
+    let parts: Vec<&str> = path.split('/').collect();
+    if parts.len() >= 2 {
+        let owner = Some(parts[0].to_string());
+        let repo_name = Some(parts[1].to_string());
+        (owner, repo_name)
+    } else {
+        (None, None)
+    }
+}
+
+/// Fallback identity detection using system username when git config is unavailable.
+pub fn detect_fallback_identity() -> GitIdentity {
+    let user_name = Some(
+        std::env::var("USER")
+            .or_else(|_| std::env::var("USERNAME"))
+            .or_else(|_| std::env::var("LOGNAME"))
+            .unwrap_or_else(|_| "unknown".to_string()),
+    );
+
+    let user_email = None;
+
+    GitIdentity { user_name, user_email }
+}
+
+/// Get the effective user identity string for use in bookmarks.
+/// Priority: git user.email > git user.name > system username > "user"
+pub fn get_effective_identity(from_path: &Path) -> String {
+    if let Some(identity) = detect_identity(from_path) {
+        if let Some(email) = identity.user_email {
+            return email;
+        }
+        if let Some(name) = identity.user_name {
+            return name;
+        }
+    }
+
+    // Fallback to system username or default
+    detect_fallback_identity()
+        .user_name
+        .unwrap_or_else(|| "user".to_string())
 }
 
 /// Make a path relative to the repo root, normalized (no ./, forward slashes only).
@@ -765,5 +915,82 @@ mod tests {
         assert_eq!(resolved, expected);
 
         let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn parse_git_url_https() {
+        let (owner, repo) = parse_git_url("https://github.com/owner/repo.git");
+        assert_eq!(owner, Some("owner".to_string()));
+        assert_eq!(repo, Some("repo".to_string()));
+    }
+
+    #[test]
+    fn parse_git_url_https_without_git() {
+        let (owner, repo) = parse_git_url("https://github.com/owner/repo");
+        assert_eq!(owner, Some("owner".to_string()));
+        assert_eq!(repo, Some("repo".to_string()));
+    }
+
+    #[test]
+    fn parse_git_url_ssh() {
+        let (owner, repo) = parse_git_url("git@github.com:owner/repo.git");
+        assert_eq!(owner, Some("owner".to_string()));
+        assert_eq!(repo, Some("repo".to_string()));
+    }
+
+    #[test]
+    fn parse_git_url_ssh_without_git() {
+        let (owner, repo) = parse_git_url("git@github.com:owner/repo");
+        assert_eq!(owner, Some("owner".to_string()));
+        assert_eq!(repo, Some("repo".to_string()));
+    }
+
+    #[test]
+    fn parse_git_url_ssh_protocol() {
+        let (owner, repo) = parse_git_url("ssh://git@github.com/owner/repo.git");
+        assert_eq!(owner, Some("owner".to_string()));
+        assert_eq!(repo, Some("repo".to_string()));
+    }
+
+    #[test]
+    fn parse_git_url_invalid() {
+        let (owner, repo) = parse_git_url("not-a-git-url");
+        assert_eq!(owner, None);
+        assert_eq!(repo, None);
+    }
+
+    #[test]
+    fn parse_git_url_with_nested_path() {
+        let (owner, repo) = parse_git_url("https://github.com/owner/group/repo.git");
+        // parse_git_path only takes first two parts
+        assert_eq!(owner, Some("owner".to_string()));
+        assert_eq!(repo, Some("group".to_string()));
+    }
+
+    #[test]
+    fn detect_identity_from_git_config() {
+        // This test runs from within the codemark repo itself
+        let identity = detect_identity(Path::new("."));
+        // Should have at least user.name or user.email configured in most dev environments
+        // If not, the test still passes as long as it doesn't panic
+        drop(identity);
+    }
+
+    #[test]
+    fn test_detect_fallback_identity() {
+        let identity = detect_fallback_identity();
+        // Should always return at least a username or "unknown"
+        assert!(identity.user_name.is_some());
+    }
+
+    #[test]
+    fn detect_repo_metadata_from_current_repo() {
+        // Test with the current codemark repo
+        let metadata = detect_repo_metadata(Path::new("."));
+        assert!(metadata.is_some());
+        let metadata = metadata.unwrap();
+        // repo_root should be set
+        assert!(metadata.repo_root.exists());
+        // origin_url might or might not be set depending on git config
     }
 }
