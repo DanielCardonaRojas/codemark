@@ -261,9 +261,12 @@ impl HelperDef for TruncateHelper {
 }
 
 /// Get the templates directory.
+///
+/// Located alongside `config.toml` under the global config directory
+/// (e.g. `$XDG_CONFIG_HOME/codemark/templates` or
+/// `~/Library/Application Support/codemark/templates` on macOS).
 pub fn templates_dir() -> Option<PathBuf> {
-    let project_dir = directories::ProjectDirs::from("", "codemark", "codemark")?;
-    Some(project_dir.config_dir().join("templates"))
+    crate::config::global_config_dir().map(|d| d.join("templates"))
 }
 
 /// Get the default markdown template for the `show` command.

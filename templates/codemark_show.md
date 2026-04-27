@@ -8,7 +8,7 @@
 {{/if}}
 
 {{#if context}}
-```
+```{{language}}
 {{escape_markdown context}}
 ```
 {{/if}}
