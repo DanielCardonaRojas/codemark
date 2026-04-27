@@ -8,7 +8,7 @@ CREATE TABLE IF NOT EXISTS repos (
     repo_owner TEXT NOT NULL,      -- Extracted from origin URL (e.g., "owner" from github.com/owner/repo)
     repo_name TEXT NOT NULL,       -- Repository name
     origin_url TEXT UNIQUE,        -- Full git remote origin URL
-    repo_root TEXT NOT NULL,       -- Absolute path to repository root
+    repo_root TEXT UNIQUE NOT NULL, -- Absolute path to repository root (unique constraint prevents duplicates for local repos)
     db_owner_email TEXT NOT NULL,  -- The owner of this database (git user.email)
     db_owner_name TEXT,            -- The owner of this database (git user.name)
     detected_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))

@@ -76,6 +76,30 @@ impl Database {
             None => Ok(None),
         }
     }
+
+    /// Get repository by repo_root.
+    /// Used for local-only repos (no origin_url) to prevent duplicates.
+    pub fn get_repo_by_root(&self, repo_root: &str) -> Result<Option<Repo>> {
+        let mut stmt = self
+            .conn()
+            .prepare("SELECT id, repo_owner, repo_name, origin_url, repo_root, db_owner_email, db_owner_name, detected_at FROM repos WHERE repo_root = ?1")?;
+        let mut rows = stmt.query_map([repo_root], row_to_repo)?;
+        match rows.next() {
+            Some(row) => Ok(Some(row?)),
+            None => Ok(None),
+        }
+    }
+
+    /// List all repositories.
+    pub fn list_repos(&self) -> Result<Vec<Repo>> {
+        let mut stmt = self.conn().prepare(
+            "SELECT id, repo_owner, repo_name, origin_url, repo_root, db_owner_email, db_owner_name, detected_at
+             FROM repos ORDER BY repo_owner, repo_name",
+        )?;
+        let rows = stmt.query_map([], row_to_repo)?;
+        let results: Vec<Repo> = rows.filter_map(|r| r.ok()).collect();
+        Ok(results)
+    }
 }
 
 fn row_to_repo(row: &Row) -> rusqlite::Result<Repo> {
@@ -170,6 +194,31 @@ mod tests {
 
         // Test non-existent origin
         let not_found = db.get_repo_by_origin("https://example.com/nonexistent.git").unwrap();
+        assert!(not_found.is_none());
+    }
+
+    #[test]
+    fn test_get_repo_by_root() {
+        let db = Database::open_in_memory().unwrap();
+
+        let repo = Repo {
+            id: Uuid::new_v4().to_string(),
+            repo_owner: "testowner".to_string(),
+            repo_name: "testrepo".to_string(),
+            origin_url: None, // Local repo, no origin
+            repo_root: "/tmp/test".to_string(),
+            db_owner_email: "test@example.com".to_string(),
+            db_owner_name: Some("Test User".to_string()),
+            detected_at: "2024-01-01T00:00:00Z".to_string(),
+        };
+
+        db.upsert_repo(&repo).unwrap();
+
+        let retrieved = db.get_repo_by_root("/tmp/test").unwrap().unwrap();
+        assert_eq!(retrieved.db_owner_email, "test@example.com");
+
+        // Test non-existent root
+        let not_found = db.get_repo_by_root("/tmp/nonexistent").unwrap();
         assert!(not_found.is_none());
     }
 

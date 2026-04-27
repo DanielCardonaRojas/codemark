@@ -186,21 +186,31 @@ fn resolve_identity(config: &Config) -> (String, Option<String>) {
             .identity
             .email
             .clone()
-            .or(identity.user_email)
-            .unwrap_or_else(|| "user@example.com".to_string());
+            .or(identity.user_email);
         let name = config.identity.name.clone().or(identity.user_name);
+        // Synthesize a unique local email if not configured
+        let email = email.or_else(|| {
+            identity
+                .user_name
+                .as_ref()
+                .map(|n| format!("{n}@local"))
+                .unwrap_or_else(|| "user@local".to_string())
+        });
         return (email, name);
     }
 
     // Fallback to system username
     let fallback = git_context::detect_fallback_identity();
-    let email = config
-        .identity
-        .email
-        .clone()
-        .or(fallback.user_email)
-        .unwrap_or_else(|| "user@example.com".to_string());
+    let email = config.identity.email.clone().or(fallback.user_email.clone());
     let name = config.identity.name.clone().or(fallback.user_name);
+    // Synthesize a unique local email if not configured
+    let email = email.or_else(|| {
+        fallback
+            .user_name
+            .as_ref()
+            .map(|n| format!("{n}@local"))
+            .unwrap_or_else(|| "user@local".to_string())
+    });
     (email, name)
 }
 
@@ -228,18 +238,34 @@ fn resolve_or_create_repo_metadata(
         return Ok(None);
     };
 
-    // Try to find existing repo by origin URL
+    let new_name = db_owner_name.map(|s| s.to_string());
+
+    // Try to find existing repo by origin URL first
     if let Some(ref origin_url) = repo_metadata.origin_url {
         if let Ok(Some(existing)) = db.get_repo_by_origin(origin_url) {
-            // Update db_owner info if it changed
-            if existing.db_owner_email != db_owner_email {
+            // Update db_owner info if email or name changed
+            if existing.db_owner_email != db_owner_email || existing.db_owner_name != new_name {
                 let mut updated = existing.clone();
                 updated.db_owner_email = db_owner_email.to_string();
-                updated.db_owner_name = db_owner_name.map(|s| s.to_string());
+                updated.db_owner_name = new_name;
                 db.upsert_repo(&updated)?;
             }
             return Ok(Some(existing.id));
         }
+    }
+
+    // For local repos (no origin_url), try to find by repo_root
+    // This prevents duplicate rows when running codemark init multiple times
+    let repo_root_str = git_ctx.repo_root.to_string_lossy().to_string();
+    if let Ok(Some(existing)) = db.get_repo_by_root(&repo_root_str) {
+        // Update db_owner info if email or name changed
+        if existing.db_owner_email != db_owner_email || existing.db_owner_name != new_name {
+            let mut updated = existing.clone();
+            updated.db_owner_email = db_owner_email.to_string();
+            updated.db_owner_name = new_name;
+            db.upsert_repo(&updated)?;
+        }
+        return Ok(Some(existing.id));
     }
 
     // Create new repo entry
@@ -258,9 +284,9 @@ fn resolve_or_create_repo_metadata(
                 .unwrap_or_else(|| "unknown".to_string())
         }),
         origin_url: repo_metadata.origin_url,
-        repo_root: git_ctx.repo_root.to_string_lossy().to_string(),
+        repo_root: repo_root_str,
         db_owner_email: db_owner_email.to_string(),
-        db_owner_name: db_owner_name.map(|s| s.to_string()),
+        db_owner_name: new_name,
         detected_at: now,
     };
 
@@ -325,17 +351,46 @@ fn open_all_dbs(cli: &Cli) -> Result<Vec<(String, Database)>> {
 /// Filter databases by user email (from repos table).
 ///
 /// Returns only databases where the db_owner_email in the repos table matches the given email.
-/// If the repos table is empty or the email is None, returns all databases.
+/// If the email is None, returns all databases.
+/// If the repos table is empty (Ok(None)), keeps the database (allows querying unmigrated DBs).
 fn filter_dbs_by_user_email(dbs: Vec<(String, Database)>, user_email: Option<&str>) -> Vec<(String, Database)> {
     let Some(email) = user_email else {
         return dbs;
     };
 
     dbs.into_iter()
-        .filter(|(_, db)| {
+        .filter(|(label, db)| {
             match db.get_db_owner() {
                 Ok(Some(owner)) => owner == email,
-                _ => false, // Skip databases without owner info
+                Ok(None) => true, // Empty repos table - keep the DB
+                Err(e) => {
+                    eprintln!("codemark: warning: failed to query repos table in database '{}': {e}", label);
+                    false // Skip databases with errors
+                }
+            }
+        })
+        .collect()
+}
+
+/// Filter databases by repository owner (from repos table).
+///
+/// Returns only databases where any repo has repo_owner matching the given pattern.
+fn filter_dbs_by_repo_owner(dbs: Vec<(String, Database)>, repo_owner: Option<&str>) -> Vec<(String, Database)> {
+    let Some(pattern) = repo_owner else {
+        return dbs;
+    };
+
+    dbs.into_iter()
+        .filter(|(label, db)| {
+            match db.list_repos() {
+                Ok(repos) => {
+                    // Keep DB if any repo has a matching owner
+                    repos.iter().any(|r| r.repo_owner.contains(pattern))
+                }
+                Err(e) => {
+                    eprintln!("codemark: warning: failed to query repos table in database '{}': {e}", label);
+                    false
+                }
             }
         })
         .collect()
@@ -1728,6 +1783,7 @@ fn handle_status(cli: &Cli, mode: &OutputMode) -> Result<()> {
 fn handle_list(cli: &Cli, mode: &OutputMode, args: &ListArgs) -> Result<()> {
     let dbs = open_all_dbs_with_extra(cli, &args.add_db)?;
     let dbs = filter_dbs_by_user_email(dbs, args.user_email.as_deref());
+    let dbs = filter_dbs_by_repo_owner(dbs, args.repo_owner.as_deref());
     let filter = BookmarkFilter {
         tag: args.tag.clone(),
         status: parse_status_filter(args.status.as_deref())
@@ -1948,6 +2004,7 @@ fn handle_search(cli: &Cli, mode: &OutputMode, args: &SearchArgs) -> Result<()> 
     // Regular FTS search
     let dbs = open_all_dbs_with_extra(cli, &args.add_db)?;
     let dbs = filter_dbs_by_user_email(dbs, args.user_email.as_deref());
+    let dbs = filter_dbs_by_repo_owner(dbs, args.repo_owner.as_deref());
 
     if dbs.len() == 1 {
         let bookmarks = dbs[0].1.search_bookmarks(
