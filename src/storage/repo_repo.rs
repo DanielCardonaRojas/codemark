@@ -124,7 +124,8 @@ mod tests {
         let repo_id = db.upsert_repo(&repo).unwrap();
         assert_eq!(repo_id, repo.id);
 
-        let retrieved = db.get_repo(&repo_id).unwrap().unwrap();
+        let retrieved =
+            db.get_repo_by_origin("https://github.com/testowner/testrepo.git").unwrap().unwrap();
         assert_eq!(retrieved.repo_owner, "testowner");
         assert_eq!(retrieved.repo_name, "testrepo");
         assert_eq!(retrieved.db_owner_email, "test@example.com");
