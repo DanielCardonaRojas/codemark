@@ -52,18 +52,6 @@ impl Database {
         }
     }
 
-    /// Get repository by ID.
-    pub fn get_repo(&self, id: &str) -> Result<Option<Repo>> {
-        let mut stmt = self
-            .conn()
-            .prepare("SELECT id, repo_owner, repo_name, origin_url, repo_root, db_owner_email, db_owner_name, detected_at FROM repos WHERE id = ?1")?;
-        let mut rows = stmt.query_map([id], row_to_repo)?;
-        match rows.next() {
-            Some(row) => Ok(Some(row?)),
-            None => Ok(None),
-        }
-    }
-
     /// Get the database owner email from any repo entry.
     /// Returns the first db_owner_email found, or None if repos table is empty.
     pub fn get_db_owner(&self) -> Result<Option<String>> {

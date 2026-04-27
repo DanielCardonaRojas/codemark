@@ -143,10 +143,10 @@ fn parse_git_url(url: &str) -> (Option<String>, Option<String>) {
     let url = url.strip_suffix(".git").unwrap_or(url);
 
     // Handle SSH format: git@github.com:owner/repo
-    if let Some(rest) = url.strip_prefix("git@") {
-        if let Some((_, path)) = rest.split_once(':') {
-            return parse_git_path(path);
-        }
+    if let Some(rest) = url.strip_prefix("git@")
+        && let Some((_, path)) = rest.split_once(':')
+    {
+        return parse_git_path(path);
     }
 
     // Handle HTTPS format: https://github.com/owner/repo

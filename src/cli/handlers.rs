@@ -214,7 +214,7 @@ fn resolve_identity(config: &Config) -> (String, Option<String>) {
 /// Returns the repo ID if successful, None if not in a git repo.
 fn resolve_or_create_repo_metadata(
     db: &Database,
-    config: &Config,
+    _config: &Config,
     db_owner_email: &str,
     db_owner_name: Option<&str>,
 ) -> Result<Option<String>> {
@@ -236,14 +236,17 @@ fn resolve_or_create_repo_metadata(
 
     // Try to find existing repo by origin URL first
     if let Some(ref origin_url) = repo_metadata.origin_url {
+        if let Ok(Some(existing)) = db.get_repo_by_origin(origin_url)
+            && (existing.db_owner_email != db_owner_email || existing.db_owner_name != new_name)
+        {
+            let mut updated = existing.clone();
+            updated.db_owner_email = db_owner_email.to_string();
+            updated.db_owner_name = new_name;
+            db.upsert_repo(&updated)?;
+            return Ok(Some(existing.id));
+        }
+
         if let Ok(Some(existing)) = db.get_repo_by_origin(origin_url) {
-            // Update db_owner info if email or name changed
-            if existing.db_owner_email != db_owner_email || existing.db_owner_name != new_name {
-                let mut updated = existing.clone();
-                updated.db_owner_email = db_owner_email.to_string();
-                updated.db_owner_name = new_name;
-                db.upsert_repo(&updated)?;
-            }
             return Ok(Some(existing.id));
         }
     }
@@ -251,14 +254,17 @@ fn resolve_or_create_repo_metadata(
     // For local repos (no origin_url), try to find by repo_root
     // This prevents duplicate rows when running codemark init multiple times
     let repo_root_str = git_ctx.repo_root.to_string_lossy().to_string();
+    if let Ok(Some(existing)) = db.get_repo_by_root(&repo_root_str)
+        && (existing.db_owner_email != db_owner_email || existing.db_owner_name != new_name)
+    {
+        let mut updated = existing.clone();
+        updated.db_owner_email = db_owner_email.to_string();
+        updated.db_owner_name = new_name;
+        db.upsert_repo(&updated)?;
+        return Ok(Some(existing.id));
+    }
+
     if let Ok(Some(existing)) = db.get_repo_by_root(&repo_root_str) {
-        // Update db_owner info if email or name changed
-        if existing.db_owner_email != db_owner_email || existing.db_owner_name != new_name {
-            let mut updated = existing.clone();
-            updated.db_owner_email = db_owner_email.to_string();
-            updated.db_owner_name = new_name;
-            db.upsert_repo(&updated)?;
-        }
         return Ok(Some(existing.id));
     }
 
@@ -417,10 +423,10 @@ fn open_all_dbs_with_extra(
         if path.exists() {
             let label = source_label_from_path(&path);
             // Only add if not already present (avoid duplicates)
-            if !dbs.iter().any(|(l, _)| l == &label) {
-                if let Ok(db) = Database::open(&path) {
-                    dbs.push((label, db));
-                }
+            if !dbs.iter().any(|(l, _)| l == &label)
+                && let Ok(db) = Database::open(&path)
+            {
+                dbs.push((label, db));
             }
         }
     }
