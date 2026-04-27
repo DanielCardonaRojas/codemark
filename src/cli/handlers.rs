@@ -660,6 +660,13 @@ fn handle_init(cli: &Cli, mode: &OutputMode) -> Result<()> {
             return Ok(());
         }
         Database::create(path)?;
+
+        // Populate repos table with identity and repo metadata
+        let db = Database::open(path)?;
+        let config = load_config(cli);
+        let (db_owner_email, db_owner_name) = resolve_identity(&config);
+        let _repo_id = resolve_or_create_repo_metadata(&db, &config, &db_owner_email, db_owner_name.as_deref());
+
         write_success(mode, &format!("Initialized codemark database at {}", path.display()))?;
         return Ok(());
     }
@@ -678,6 +685,13 @@ fn handle_init(cli: &Cli, mode: &OutputMode) -> Result<()> {
     }
 
     Database::create(&db_path)?;
+
+    // Populate repos table with identity and repo metadata
+    let db = Database::open(&db_path)?;
+    let config = load_config(cli);
+    let (db_owner_email, db_owner_name) = resolve_identity(&config);
+    let _repo_id = resolve_or_create_repo_metadata(&db, &config, &db_owner_email, db_owner_name.as_deref());
+
     write_success(
         mode,
         &format!("Initialized codemark repository in {}", db_path.parent().unwrap().display()),
