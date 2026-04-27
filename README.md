@@ -98,11 +98,68 @@ tv codemark
 
 ## 📖 Documentation
 
-- [**Full Command Reference**](./docs/CLI.md) — Detailed flag and subcommand guide.
-- [**Configuration**](./docs/configuration.md) — Editor setup, global/local config, and semantic search.
-- [**Markdown Templates**](./docs/templates.md) — Customize `codemark show` output.
+- [**Full Command Reference**](./dev-docs/CLI.md) — Detailed flag and subcommand guide.
+- [**Configuration**](./dev-docs/configuration.md) — Editor setup, global/local config, and semantic search.
 - [**Neovim Plugin**](./extras/neovim-plugin/README.md) — Setup for `codemark.nvim`.
 - [**Claude Code Plugin**](./extras/claude-code-plugin/) — Power up your AI agent.
+
+---
+
+## 🎨 Customizing Markdown Output
+
+Codemark uses [Handlebars](https://handlebarsjs.com/) templates to format bookmark output. You can customize the `codemark show` command output by providing your own template.
+
+### Template Locations
+
+1. **User config directory** (highest priority): `~/.config/codemark/templates/codemark_show.md`
+   - Create this file to override the default template
+   - The directory is created automatically if it doesn't exist
+
+2. **Project template** (for reference): `./templates/codemark_show.md`
+   - Contains the default template that you can copy and modify
+
+### Copy and Customize
+
+To create your custom template:
+
+```bash
+# Copy the default template to your config directory
+mkdir -p ~/.config/codemark/templates
+cp ./templates/codemark_show.md ~/.config/codemark/templates/
+
+# Edit it to your liking
+nano ~/.config/codemark/templates/codemark_show.md
+```
+
+### Available Template Variables
+
+| Variable | Description |
+|----------|-------------|
+| `{{short_id}}` | First 8 chars of bookmark ID |
+| `{{id}}` | Full bookmark ID |
+| `{{file_path}}` | Path to the file |
+| `{{file_name}}` | Just the filename |
+| `{{language}}` | Programming language |
+| `{{status}}` | `active`, `drifted`, `stale`, or `archived` |
+| `{{query}}` | Tree-sitter query |
+| `{{created_at}}` | Creation timestamp |
+| `{{created_by}}` | Creator (optional) |
+| `{{commit_hash}}` | Git commit hash (optional) |
+| `{{short_commit}}` | First 8 chars of commit (optional) |
+| `{{last_resolved_at}}` | Last resolution time (optional) |
+| `{{resolution_method}}` | Resolution method (optional) |
+| `{{stale_since}}` | When it became stale (optional) |
+
+### Loops and Conditionals
+
+- `{{#each annotations}}` — Loop through annotations
+- `{{#each resolutions}}` — Loop through resolution history
+- `{{#each tags}}` — Loop through tags
+- `{{#if created_by}}` — Conditional content
+- `{{escape_markdown value}}` — Escape special markdown characters
+- `{{truncate value}}` — Truncate string to 8 characters
+
+For the full template specification, see the [templates reference](./dev-docs/templates.md).
 
 ---
 
