@@ -735,12 +735,7 @@ fn handle_init(cli: &Cli, mode: &OutputMode) -> Result<()> {
         let db = Database::open(path)?;
         let config = load_config(cli);
         let (db_owner_email, db_owner_name) = resolve_identity(&config);
-        let _repo_id = resolve_or_create_repo_metadata(
-            &db,
-            &config,
-            &db_owner_email,
-            db_owner_name.as_deref(),
-        );
+        resolve_or_create_repo_metadata(&db, &config, &db_owner_email, db_owner_name.as_deref())?;
 
         write_success(mode, &format!("Initialized codemark database at {}", path.display()))?;
         return Ok(());
@@ -765,8 +760,7 @@ fn handle_init(cli: &Cli, mode: &OutputMode) -> Result<()> {
     let db = Database::open(&db_path)?;
     let config = load_config(cli);
     let (db_owner_email, db_owner_name) = resolve_identity(&config);
-    let _repo_id =
-        resolve_or_create_repo_metadata(&db, &config, &db_owner_email, db_owner_name.as_deref());
+    resolve_or_create_repo_metadata(&db, &config, &db_owner_email, db_owner_name.as_deref())?;
 
     write_success(
         mode,
@@ -830,8 +824,11 @@ fn handle_add(cli: &Cli, mode: &OutputMode, args: &AddArgs) -> Result<()> {
     // Resolve identity and create/update repo metadata
     let config = load_config(cli);
     let (db_owner_email, db_owner_name) = resolve_identity(&config);
-    let _repo_id =
-        resolve_or_create_repo_metadata(&db, &config, &db_owner_email, db_owner_name.as_deref());
+    if let Err(e) =
+        resolve_or_create_repo_metadata(&db, &config, &db_owner_email, db_owner_name.as_deref())
+    {
+        eprintln!("codemark: warning: failed to record repo metadata: {e}");
+    }
 
     let bookmark_id = uuid::Uuid::new_v4().to_string();
     let bookmark = Bookmark {
@@ -1000,8 +997,11 @@ fn handle_add_from_snippet(cli: &Cli, mode: &OutputMode, args: &AddFromSnippetAr
     // Resolve identity and create/update repo metadata
     let config = load_config(cli);
     let (db_owner_email, db_owner_name) = resolve_identity(&config);
-    let _repo_id =
-        resolve_or_create_repo_metadata(&db, &config, &db_owner_email, db_owner_name.as_deref());
+    if let Err(e) =
+        resolve_or_create_repo_metadata(&db, &config, &db_owner_email, db_owner_name.as_deref())
+    {
+        eprintln!("codemark: warning: failed to record repo metadata: {e}");
+    }
 
     let bookmark_id = uuid::Uuid::new_v4().to_string();
     let bookmark = Bookmark {
@@ -1173,8 +1173,11 @@ fn handle_add_from_query(cli: &Cli, mode: &OutputMode, args: &AddFromQueryArgs) 
     // Resolve identity and create/update repo metadata
     let config = load_config(cli);
     let (db_owner_email, db_owner_name) = resolve_identity(&config);
-    let _repo_id =
-        resolve_or_create_repo_metadata(&db, &config, &db_owner_email, db_owner_name.as_deref());
+    if let Err(e) =
+        resolve_or_create_repo_metadata(&db, &config, &db_owner_email, db_owner_name.as_deref())
+    {
+        eprintln!("codemark: warning: failed to record repo metadata: {e}");
+    }
 
     let bookmark_id = uuid::Uuid::new_v4().to_string();
     let bookmark = Bookmark {
