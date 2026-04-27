@@ -381,6 +381,7 @@ fn filter_dbs_by_user_email(
 /// Filter databases by repository owner (from repos table).
 ///
 /// Returns only databases where any repo has repo_owner matching the given pattern.
+/// Empty repos tables are kept (consistent with filter_dbs_by_user_email).
 fn filter_dbs_by_repo_owner(
     dbs: Vec<(String, Database)>,
     repo_owner: Option<&str>,
@@ -393,8 +394,9 @@ fn filter_dbs_by_repo_owner(
         .filter(|(label, db)| {
             match db.list_repos() {
                 Ok(repos) => {
-                    // Keep DB if any repo has a matching owner
-                    repos.iter().any(|r| r.repo_owner.contains(pattern))
+                    // Keep DB if any repo has a matching owner, or if the table is empty
+                    // (consistent with filter_dbs_by_user_email's Ok(None) handling).
+                    repos.is_empty() || repos.iter().any(|r| r.repo_owner.contains(pattern))
                 }
                 Err(e) => {
                     eprintln!(
