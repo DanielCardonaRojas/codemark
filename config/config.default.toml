@@ -95,19 +95,16 @@ enabled = true
 [identity]
 # User identity configuration for database ownership and bookmark attribution.
 # When sharing databases with colleagues, this helps identify whose bookmarks are whose.
-# These settings can also be set via environment variables (see below).
+# These settings override git config detection.
 
 # Override for git user.email.
 # Used as the database owner identifier in the repos table.
-# Can also be set via CODMARK_IDENTITY_EMAIL environment variable.
 # email = "user@example.com"
 
 # Override for git user.name.
 # Stored as the owner's display name in the repos table.
-# Can also be set via CODMARK_IDENTITY_NAME environment variable.
 # name = "Full Name"
 
 # Force a specific identity string (overrides both email and name).
-# Can also be set via CODMARK_IDENTITY environment variable.
 # force = "custom-identity"
 

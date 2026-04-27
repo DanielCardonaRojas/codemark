@@ -378,22 +378,11 @@ impl Config {
         // Start with global config
         let mut config = Self::load_global();
 
-        // Apply environment variable overrides for identity (highest priority)
-        if let Ok(email) = std::env::var("CODMARK_IDENTITY_EMAIL") {
-            config.identity.email = Some(email);
-        }
-        if let Ok(name) = std::env::var("CODMARK_IDENTITY_NAME") {
-            config.identity.name = Some(name);
-        }
-        if let Ok(force) = std::env::var("CODMARK_IDENTITY") {
-            config.identity.force = Some(force);
-        }
-
         // Merge with local config if it exists
         let local_path = codemark_dir.join("config.toml");
         if let Ok(content) = std::fs::read_to_string(&local_path) {
             if let Ok(local) = toml::from_str::<Config>(&content) {
-                // Merge: local values override global ones (but env vars have highest priority)
+                // Merge: local values override global ones
                 config.merge(local);
             } else {
                 eprintln!(
