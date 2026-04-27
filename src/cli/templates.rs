@@ -1,7 +1,8 @@
 //! Handlebars template support for markdown output.
 //!
-//! Templates are stored in `.codemark/templates/` directory and can be customized by users.
-//! Default templates are embedded in the binary.
+//! Templates are stored in `~/.config/codemark/templates/` directory and can be customized by users.
+//! The default template is bundled into the binary at compile time from `templates/codemark_show.md`
+//! in the project root.
 
 use std::path::PathBuf;
 
@@ -266,61 +267,12 @@ pub fn templates_dir() -> Option<PathBuf> {
 }
 
 /// Get the default markdown template for the `show` command.
+///
+/// This template is bundled into the binary at compile time from `templates/codemark_show.md`.
+/// Users can override it by placing a custom template at:
+/// `~/.config/codemark/templates/codemark_show.md`
 pub fn default_show_template() -> &'static str {
-    r#"# Bookmark: {{short_id}}
-
-{{#if annotations}}
-## Notes
-{{#each annotations}}
-{{#if notes}}
-{{escape_markdown notes}}
-{{/if}}
-
-{{#if context}}
-```
-{{escape_markdown context}}
-```
-{{/if}}
-*— {{added_by}}{{#if source}} ({{source}}){{/if}}, {{added_at}}*
-
-{{/each}}
----
-{{/if}}
-
-## Metadata
-| Property | Value |
-|----------|-------|
-| **File** | {{file_path}} |
-| **Language** | {{language}} |
-| **Status** | {{status}} |
-| **Created** | {{created_at}} |
-{{#if created_by}}| **Author** | {{escape_markdown created_by}} |{{/if}}
-{{#if last_resolved_at}}| **Last Resolved** | {{last_resolved_at}} |{{/if}}
-{{#if resolution_method}}| **Resolution Method** | {{resolution_method}} |{{/if}}
-{{#if commit_hash}}| **Commit** | `{{short_commit}}` |{{/if}}
-{{#if stale_since}}| **Stale Since** | {{stale_since}} |{{/if}}
-
-## Tree-sitter Query
-```scheme
-{{query}}
-```
-
-{{#if tags}}
-## Tags
-{{#each tags}}
-- `{{escape_markdown this}}`
-{{/each}}
-{{/if}}
-
-{{#if resolutions}}
-## Resolution History
-| Time | Method | File | Lines | Matches | Commit |
-|------|--------|------|-------|---------|--------|
-{{#each resolutions}}
-| {{resolved_at}} | {{method}} | {{file_path}} | {{line_range}} | {{match_count}} | {{#if commit_hash}}`{{short_commit}}`{{else}}-{{/if}} |
-{{/each}}
-{{/if}}
-"#
+    include_str!("../../templates/codemark_show.md")
 }
 
 /// Create a Handlebars instance with all helpers registered.

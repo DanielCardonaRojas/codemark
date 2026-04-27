@@ -471,7 +471,7 @@ impl Config {
             return Ok(false);
         }
 
-        let default_content = include_str!("../docs/config.default.toml");
+        let default_content = include_str!("../dev-docs/config.default.toml");
         std::fs::write(&path, default_content)?;
         Ok(true)
     }
@@ -491,7 +491,7 @@ impl Config {
             return Ok(false);
         }
 
-        let default_content = include_str!("../docs/config.default.toml");
+        let default_content = include_str!("../dev-docs/config.default.toml");
         std::fs::write(&path, default_content)?;
         Ok(true)
     }
@@ -840,7 +840,7 @@ enabled = true
     #[test]
     fn default_config_template_parses_correctly() {
         // Regression test: ensure the embedded default config template parses correctly
-        let default_content = include_str!("../docs/config.default.toml");
+        let default_content = include_str!("../dev-docs/config.default.toml");
         let config: Config = toml::from_str(default_content)
             .expect("Default config template should parse correctly");
         assert_eq!(config.storage.max_resolutions(), 20);
