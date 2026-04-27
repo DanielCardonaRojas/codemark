@@ -339,7 +339,7 @@ pub struct ListArgs {
 
     /// Additional databases to query (can be specified multiple times)
     #[arg(long, value_name = "PATH")]
-    pub db: Vec<String>,
+    pub add_db: Vec<String>,
 
     /// Filter by database owner email
     #[arg(long)]
@@ -411,7 +411,7 @@ pub struct SearchArgs {
 
     /// Additional databases to query (can be specified multiple times)
     #[arg(long, value_name = "PATH")]
-    pub db: Vec<String>,
+    pub add_db: Vec<String>,
 
     /// Filter by database owner email
     #[arg(long)]

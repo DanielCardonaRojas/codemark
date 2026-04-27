@@ -169,6 +169,105 @@ fn load_config(cli: &Cli) -> Config {
     Config::load_layered(&cwd.join(".codemark"))
 }
 
+/// Resolve the current user identity for bookmark and repo metadata creation.
+///
+/// Returns (db_owner_email, db_owner_name). Uses config override, git config, or system fallback.
+fn resolve_identity(config: &Config) -> (String, Option<String>) {
+    // If force identity is set, use it as both email and name
+    if let Some(ref forced) = config.identity.force {
+        return (forced.clone(), Some(forced.clone()));
+    }
+
+    let cwd = std::env::current_dir().unwrap_or_default();
+
+    // Try git config first
+    if let Some(identity) = git_context::detect_identity(&cwd) {
+        let email = config
+            .identity
+            .email
+            .clone()
+            .or(identity.user_email)
+            .unwrap_or_else(|| "user@example.com".to_string());
+        let name = config.identity.name.clone().or(identity.user_name);
+        return (email, name);
+    }
+
+    // Fallback to system username
+    let fallback = git_context::detect_fallback_identity();
+    let email = config
+        .identity
+        .email
+        .clone()
+        .or(fallback.user_email)
+        .unwrap_or_else(|| "user@example.com".to_string());
+    let name = config.identity.name.clone().or(fallback.user_name);
+    (email, name)
+}
+
+/// Resolve or create repository metadata in the database.
+///
+/// Detects git repo information (origin URL, owner, name) and upserts to the repos table.
+/// Returns the repo ID if successful, None if not in a git repo.
+fn resolve_or_create_repo_metadata(
+    db: &Database,
+    config: &Config,
+    db_owner_email: &str,
+    db_owner_name: Option<&str>,
+) -> Result<Option<String>> {
+    let cwd = std::env::current_dir()?;
+
+    // Get git context
+    let git_ctx = match git_context::detect_context(&cwd) {
+        Some(ctx) => ctx,
+        None => return Ok(None), // Not in a git repo
+    };
+
+    // Detect repo metadata
+    let repo_metadata = git_context::detect_repo_metadata(&cwd);
+    let Some(repo_metadata) = repo_metadata else {
+        return Ok(None);
+    };
+
+    // Try to find existing repo by origin URL
+    if let Some(ref origin_url) = repo_metadata.origin_url {
+        if let Ok(Some(existing)) = db.get_repo_by_origin(origin_url) {
+            // Update db_owner info if it changed
+            if existing.db_owner_email != db_owner_email {
+                let mut updated = existing.clone();
+                updated.db_owner_email = db_owner_email.to_string();
+                updated.db_owner_name = db_owner_name.map(|s| s.to_string());
+                db.upsert_repo(&updated)?;
+            }
+            return Ok(Some(existing.id));
+        }
+    }
+
+    // Create new repo entry
+    use crate::engine::bookmark::Repo;
+    use uuid::Uuid;
+
+    let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+    let repo = Repo {
+        id: Uuid::new_v4().to_string(),
+        repo_owner: repo_metadata.repo_owner.unwrap_or_else(|| "unknown".to_string()),
+        repo_name: repo_metadata.repo_name.unwrap_or_else(|| {
+            git_ctx
+                .repo_root
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| "unknown".to_string())
+        }),
+        origin_url: repo_metadata.origin_url,
+        repo_root: git_ctx.repo_root.to_string_lossy().to_string(),
+        db_owner_email: db_owner_email.to_string(),
+        db_owner_name: db_owner_name.map(|s| s.to_string()),
+        detected_at: now,
+    };
+
+    let repo_id = db.upsert_repo(&repo)?;
+    Ok(Some(repo_id))
+}
+
 /// Open all specified databases (for read commands that support cross-repo queries).
 ///
 /// Returns (source_label, database) pairs. Falls back to single auto-detected db.
@@ -215,6 +314,48 @@ fn open_all_dbs(cli: &Cli) -> Result<Vec<(String, Database)>> {
                     if let Ok(db) = Database::open(&path) {
                         dbs.push((label, db));
                     }
+                }
+            }
+        }
+    }
+
+    Ok(dbs)
+}
+
+/// Filter databases by user email (from repos table).
+///
+/// Returns only databases where the db_owner_email in the repos table matches the given email.
+/// If the repos table is empty or the email is None, returns all databases.
+fn filter_dbs_by_user_email(dbs: Vec<(String, Database)>, user_email: Option<&str>) -> Vec<(String, Database)> {
+    let Some(email) = user_email else {
+        return dbs;
+    };
+
+    dbs.into_iter()
+        .filter(|(_, db)| {
+            match db.get_db_owner() {
+                Ok(Some(owner)) => owner == email,
+                _ => false, // Skip databases without owner info
+            }
+        })
+        .collect()
+}
+
+/// Open all specified databases for commands that support additional --db flags.
+///
+/// This extends `open_all_dbs` to include command-specific --db flags (from ListArgs/SearchArgs).
+fn open_all_dbs_with_extra(cli: &Cli, extra_db_paths: &[String]) -> Result<Vec<(String, Database)>> {
+    let mut dbs = open_all_dbs(cli)?;
+
+    // Add extra databases from command-specific --db flags
+    for path_str in extra_db_paths {
+        let path = std::path::PathBuf::from(path_str);
+        if path.exists() {
+            let label = source_label_from_path(&path);
+            // Only add if not already present (avoid duplicates)
+            if !dbs.iter().any(|(l, _)| l == &label) {
+                if let Ok(db) = Database::open(&path) {
+                    dbs.push((label, db));
                 }
             }
         }
@@ -596,6 +737,11 @@ fn handle_add(cli: &Cli, mode: &OutputMode, args: &AddArgs) -> Result<()> {
     let cwd = std::env::current_dir()?;
     let commit_hash = git_context::detect_context(&cwd).and_then(|ctx| ctx.head_commit);
 
+    // Resolve identity and create/update repo metadata
+    let config = load_config(cli);
+    let (db_owner_email, db_owner_name) = resolve_identity(&config);
+    let _repo_id = resolve_or_create_repo_metadata(&db, &config, &db_owner_email, db_owner_name.as_deref());
+
     let bookmark_id = uuid::Uuid::new_v4().to_string();
     let bookmark = Bookmark {
         id: bookmark_id.clone(),
@@ -760,6 +906,11 @@ fn handle_add_from_snippet(cli: &Cli, mode: &OutputMode, args: &AddFromSnippetAr
     let cwd = std::env::current_dir()?;
     let commit_hash = git_context::detect_context(&cwd).and_then(|ctx| ctx.head_commit);
 
+    // Resolve identity and create/update repo metadata
+    let config = load_config(cli);
+    let (db_owner_email, db_owner_name) = resolve_identity(&config);
+    let _repo_id = resolve_or_create_repo_metadata(&db, &config, &db_owner_email, db_owner_name.as_deref());
+
     let bookmark_id = uuid::Uuid::new_v4().to_string();
     let bookmark = Bookmark {
         id: bookmark_id.clone(),
@@ -815,7 +966,6 @@ fn handle_add_from_snippet(cli: &Cli, mode: &OutputMode, args: &AddFromSnippetAr
     let bookmark = db.get_bookmark(&actual_bookmark_id)?.unwrap();
 
     // Generate embedding for semantic search
-    let config = load_config(cli);
     // Ignore embedding errors - shouldn't block bookmark creation
     let _ = generate_embedding_for_bookmark(cli, &config, &bookmark);
 
@@ -928,6 +1078,11 @@ fn handle_add_from_query(cli: &Cli, mode: &OutputMode, args: &AddFromQueryArgs) 
     let cwd = std::env::current_dir()?;
     let commit_hash = git_context::detect_context(&cwd).and_then(|ctx| ctx.head_commit);
 
+    // Resolve identity and create/update repo metadata
+    let config = load_config(cli);
+    let (db_owner_email, db_owner_name) = resolve_identity(&config);
+    let _repo_id = resolve_or_create_repo_metadata(&db, &config, &db_owner_email, db_owner_name.as_deref());
+
     let bookmark_id = uuid::Uuid::new_v4().to_string();
     let bookmark = Bookmark {
         id: bookmark_id.clone(),
@@ -983,7 +1138,6 @@ fn handle_add_from_query(cli: &Cli, mode: &OutputMode, args: &AddFromQueryArgs) 
     let bookmark = db.get_bookmark(&actual_bookmark_id)?.unwrap();
 
     // Generate embedding for semantic search
-    let config = load_config(cli);
     // Ignore embedding errors - shouldn't block bookmark creation
     let _ = generate_embedding_for_bookmark(cli, &config, &bookmark);
 
@@ -1558,7 +1712,8 @@ fn handle_status(cli: &Cli, mode: &OutputMode) -> Result<()> {
 }
 
 fn handle_list(cli: &Cli, mode: &OutputMode, args: &ListArgs) -> Result<()> {
-    let dbs = open_all_dbs(cli)?;
+    let dbs = open_all_dbs_with_extra(cli, &args.add_db)?;
+    let dbs = filter_dbs_by_user_email(dbs, args.user_email.as_deref());
     let filter = BookmarkFilter {
         tag: args.tag.clone(),
         status: parse_status_filter(args.status.as_deref())
@@ -1777,7 +1932,8 @@ fn handle_search(cli: &Cli, mode: &OutputMode, args: &SearchArgs) -> Result<()> 
     }
 
     // Regular FTS search
-    let dbs = open_all_dbs(cli)?;
+    let dbs = open_all_dbs_with_extra(cli, &args.add_db)?;
+    let dbs = filter_dbs_by_user_email(dbs, args.user_email.as_deref());
 
     if dbs.len() == 1 {
         let bookmarks = dbs[0].1.search_bookmarks(
