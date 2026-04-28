@@ -138,6 +138,18 @@ pub struct Collection {
     pub created_by: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Repo {
+    pub id: String,
+    pub repo_owner: String,
+    pub repo_name: String,
+    pub origin_url: Option<String>,
+    pub repo_root: String,
+    pub db_owner_email: String,
+    pub db_owner_name: Option<String>,
+    pub detected_at: String,
+}
+
 // --- Filter ---
 
 #[derive(Debug, Default)]

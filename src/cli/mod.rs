@@ -337,6 +337,18 @@ pub struct ListArgs {
     #[arg(long, env = "CODEMARK_COLLECTION_ID_FILTER")]
     pub collection_id: Option<String>,
 
+    /// Additional databases to query (can be specified multiple times)
+    #[arg(long, value_name = "PATH")]
+    pub add_db: Vec<String>,
+
+    /// Filter by database owner email
+    #[arg(long)]
+    pub user_email: Option<String>,
+
+    /// Filter by repository owner
+    #[arg(long)]
+    pub repo_owner: Option<String>,
+
     /// Custom line format template (placeholders: {ID}, {FILE}, {FILENAME}, {LINE}, {OFFSET}, {STATUS}, {TAGS}, {NOTE}, {CONTEXT}, {QUERY})
     #[arg(long)]
     pub line_format: Option<String>,
@@ -396,6 +408,18 @@ pub struct SearchArgs {
     /// Filter by collection
     #[arg(long, env = "CODEMARK_COLLECTION_FILTER")]
     pub collection: Option<String>,
+
+    /// Additional databases to query (can be specified multiple times)
+    #[arg(long, value_name = "PATH")]
+    pub add_db: Vec<String>,
+
+    /// Filter by database owner email
+    #[arg(long)]
+    pub user_email: Option<String>,
+
+    /// Filter by repository owner
+    #[arg(long)]
+    pub repo_owner: Option<String>,
 }
 
 #[derive(Debug, clap::Args)]

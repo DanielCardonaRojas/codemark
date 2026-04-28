@@ -64,6 +64,8 @@ pub struct Config {
     pub open: OpenConfig,
     #[serde(default)]
     pub databases: DatabasesConfig,
+    #[serde(default)]
+    pub identity: IdentityConfig,
 }
 
 /// Semantic search configuration wrapper.
@@ -331,6 +333,21 @@ impl OpenConfig {
     }
 }
 
+/// Identity configuration for user attribution.
+#[derive(Debug, Default, Deserialize, Serialize)]
+#[serde(default)]
+pub struct IdentityConfig {
+    /// Override for git user.email.
+    /// Can be set via `CODMARK_IDENTITY_EMAIL` environment variable.
+    pub email: Option<String>,
+    /// Override for git user.name.
+    /// Can be set via `CODMARK_IDENTITY_NAME` environment variable.
+    pub name: Option<String>,
+    /// Force a specific identity string (overrides both).
+    /// Can be set via `CODMARK_IDENTITY` environment variable.
+    pub force: Option<String>,
+}
+
 impl Config {
     /// Load config from a `.codemark/config.toml` file. Returns defaults if the file doesn't exist.
     ///
@@ -450,6 +467,18 @@ impl Config {
         // This is only respected in local config (.codemark/config.toml)
         if !other.databases.additional.is_empty() {
             self.databases.additional = other.databases.additional;
+        }
+
+        // Identity config - override only if explicitly set in local
+        // (but env vars have already been applied, so this is for file-based config)
+        if other.identity.email.is_some() {
+            self.identity.email = other.identity.email;
+        }
+        if other.identity.name.is_some() {
+            self.identity.name = other.identity.name;
+        }
+        if other.identity.force.is_some() {
+            self.identity.force = other.identity.force;
         }
     }
 

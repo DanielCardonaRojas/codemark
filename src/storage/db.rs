@@ -15,6 +15,7 @@ const MIGRATION_004: &str = include_str!("../../migrations/004_add_line_range.sq
 const MIGRATION_005: &str = include_str!("../../migrations/005_add_embeddings.sql");
 const MIGRATION_006: &str = include_str!("../../migrations/006_add_fts_path_tags.sql");
 const MIGRATION_007: &str = include_str!("../../migrations/007_append_only_metadata.sql");
+const MIGRATION_008: &str = include_str!("../../migrations/008_add_identity_and_repo_metadata.sql");
 
 /// SQLite database wrapper with automatic migrations.
 pub struct Database {
@@ -121,6 +122,11 @@ impl Database {
         if current_version < 7 {
             self.migrate_to_v7()?;
             self.set_schema_version(7)?;
+        }
+
+        if current_version < 8 {
+            self.conn.execute_batch(MIGRATION_008)?;
+            self.set_schema_version(8)?;
         }
 
         Ok(())
@@ -242,7 +248,7 @@ mod tests {
         init_test_env();
         let db = Database::open_in_memory().unwrap();
         let version = db.schema_version();
-        assert_eq!(version, 7);
+        assert_eq!(version, 8);
     }
 
     #[test]
@@ -250,7 +256,7 @@ mod tests {
         init_test_env();
         let mut db = Database::open_in_memory().unwrap();
         db.run_migrations().unwrap();
-        assert_eq!(db.schema_version(), 7);
+        assert_eq!(db.schema_version(), 8);
     }
 
     #[test]
