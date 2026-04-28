@@ -448,7 +448,7 @@ pub enum CollectionCommand {
     /// Create a new collection
     Create(CollectionCreateArgs),
 
-    /// Delete a collection
+    /// Delete a collection (bookmarks are kept by default)
     Delete(CollectionDeleteArgs),
 
     /// Add bookmarks to a collection
