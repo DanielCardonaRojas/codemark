@@ -18,6 +18,7 @@ impl Database {
         Ok(())
     }
 
+    /// Get a collection by its exact name.
     pub fn get_collection_by_name(&self, name: &str) -> Result<Option<Collection>> {
         let mut stmt = self.conn().prepare(
             "SELECT id, name, description, created_at, created_by
@@ -30,6 +31,7 @@ impl Database {
         }
     }
 
+    /// Get a collection by its ID prefix (at least 4 characters).
     pub fn get_collection_by_id_prefix(&self, prefix: &str) -> Result<Option<Collection>> {
         if prefix.len() < 4 {
             return Err(crate::error::Error::Input(
@@ -92,6 +94,33 @@ impl Database {
             .unwrap_or(0);
 
         self.conn().execute("DELETE FROM collections WHERE id = ?1", [id])?;
+        Ok(count)
+    }
+
+    /// Delete a collection and all its bookmarks atomically.
+    /// Returns the number of bookmarks deleted.
+    pub fn delete_collection_recursive(&mut self, id: &str) -> Result<usize> {
+        let conn = self.conn_mut();
+        let tx = conn.transaction()?;
+
+        let count: usize = tx
+            .query_row(
+                "SELECT COUNT(*) FROM collection_bookmarks WHERE collection_id = ?1",
+                [id],
+                |row| row.get(0),
+            )
+            .unwrap_or(0);
+
+        // Delete bookmarks that are in this collection
+        tx.execute(
+            "DELETE FROM bookmarks WHERE id IN (SELECT bookmark_id FROM collection_bookmarks WHERE collection_id = ?1)",
+            [id],
+        )?;
+
+        // Delete the collection itself (association records are deleted via ON DELETE CASCADE)
+        tx.execute("DELETE FROM collections WHERE id = ?1", [id])?;
+
+        tx.commit()?;
         Ok(count)
     }
 
@@ -187,6 +216,7 @@ impl Database {
         Ok(removed)
     }
 
+    /// List all collections that contain a specific bookmark.
     pub fn list_collections_for_bookmark(&self, bookmark_id: &str) -> Result<Vec<Collection>> {
         let mut stmt = self.conn().prepare(
             "SELECT c.id, c.name, c.description, c.created_at, c.created_by

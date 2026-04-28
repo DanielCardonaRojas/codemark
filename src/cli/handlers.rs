@@ -2478,7 +2478,7 @@ fn handle_collection_delete(
     mode: &OutputMode,
     args: &CollectionDeleteArgs,
 ) -> Result<()> {
-    let db = open_db_for_write(cli)?;
+    let mut db = open_db_for_write(cli)?;
     // Try by name first, then by ID prefix
     let collection = if let Some(c) = db.get_collection_by_name(&args.name)? {
         c
@@ -2487,43 +2487,26 @@ fn handle_collection_delete(
             .ok_or_else(|| Error::Input(format!("collection '{}' not found", args.name)))?
     };
 
-    let bookmarks_deleted = if args.with_bookmarks {
-        let filter = BookmarkFilter {
-            collection_id: Some(collection.id.clone()),
-            ..Default::default()
-        };
-        let bookmarks = db.list_bookmarks(&filter)?;
-        let count = bookmarks.len();
-        for bm in bookmarks {
-            db.delete_bookmark(&bm.id)?;
-        }
-        Some(count)
+    if args.with_bookmarks {
+        let bm_count = db.delete_collection_recursive(&collection.id)?;
+        write_success(
+            mode,
+            &format!(
+                "Collection '{}' and its {bm_count} bookmarks deleted",
+                collection.name
+            ),
+        )?;
     } else {
-        None
-    };
-
-    let count = db.delete_collection_by_id(&collection.id)?;
-
-    match bookmarks_deleted {
-        Some(bm_count) => {
-            write_success(
-                mode,
-                &format!(
-                    "Collection '{}' and its {bm_count} bookmarks deleted",
-                    collection.name
-                ),
-            )?;
-        }
-        None => {
-            write_success(
-                mode,
-                &format!(
-                    "Collection '{}' deleted ({count} bookmarks were in it)",
-                    collection.name
-                ),
-            )?;
-        }
+        let count = db.delete_collection_by_id(&collection.id)?;
+        write_success(
+            mode,
+            &format!(
+                "Collection '{}' deleted ({count} bookmarks were in it)",
+                collection.name
+            ),
+        )?;
     }
+
     Ok(())
 }
 
