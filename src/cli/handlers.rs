@@ -2491,19 +2491,13 @@ fn handle_collection_delete(
         let bm_count = db.delete_collection_recursive(&collection.id)?;
         write_success(
             mode,
-            &format!(
-                "Collection '{}' and its {bm_count} bookmarks deleted",
-                collection.name
-            ),
+            &format!("Collection '{}' and its {bm_count} bookmarks deleted", collection.name),
         )?;
     } else {
         let count = db.delete_collection_by_id(&collection.id)?;
         write_success(
             mode,
-            &format!(
-                "Collection '{}' deleted ({count} bookmarks were in it)",
-                collection.name
-            ),
+            &format!("Collection '{}' deleted ({count} bookmarks were in it)", collection.name),
         )?;
     }
 
