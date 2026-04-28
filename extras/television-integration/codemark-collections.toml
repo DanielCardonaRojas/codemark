@@ -21,6 +21,8 @@ size = 55
 [keybindings]
 shortcut = "F6"
 enter = "actions:show"
+ctrl-d = "actions:delete"
+ctrl-x = "actions:delete_with_bookmarks"
 
 [actions.show]
 description = "Show bookmarks in this collection (opens television with codemark channel)"
