@@ -676,6 +676,84 @@ fn collections_crud() {
 }
 
 #[test]
+fn delete_collection_with_bookmarks() {
+    let cm = Codemark::new();
+
+    // 1. Create a bookmark and add to collection
+    let json = cm.run_json(&[
+        "add",
+        "--file",
+        &cm.fixture("rust/auth_service.rs"),
+        "--range",
+        "108",
+        "--note",
+        "to be deleted",
+        "--collection",
+        "col-delete",
+    ]);
+    let bm_id = json["data"]["id"].as_str().unwrap().to_string();
+
+    // 2. Delete collection WITH bookmarks
+    let json = cm.run_json(&["collection", "delete", "col-delete", "--with-bookmarks"]);
+    assert_eq!(json["success"], true);
+    assert!(json["data"]["message"].as_str().unwrap().contains("and its 1 bookmarks deleted"));
+
+    // 3. Verify bookmark is gone
+    let result = cm.run(&["show", &bm_id]);
+    assert_ne!(result.status, 0);
+
+    // 4. Test preservation when multiple collections exist
+    // Create bookmark in two collections
+    let json = cm.run_json(&[
+        "add",
+        "--file",
+        &cm.fixture("rust/auth_service.rs"),
+        "--range",
+        "108",
+        "--note",
+        "multi-col",
+        "--collection",
+        "col-a",
+    ]);
+    let bm_id2 = json["data"]["id"].as_str().unwrap().to_string();
+    cm.run_json(&["collection", "create", "col-b"]);
+    cm.run_json(&["collection", "add", "col-b", &bm_id2]);
+
+    // Delete col-a with bookmarks
+    cm.run_json(&["collection", "delete", "col-a", "--with-bookmarks"]);
+
+    // Bookmark should be gone globally, even though it was in col-b
+    let result = cm.run(&["show", &bm_id2]);
+    assert_ne!(result.status, 0);
+
+    // col-b should still exist but be empty
+    let json = cm.run_json(&["collection", "show", "col-b"]);
+    let bookmarks = json["data"].as_array().unwrap();
+    assert_eq!(bookmarks.len(), 0);
+
+    // 5. Verify default behavior (bookmarks are kept)
+    let json = cm.run_json(&[
+        "add",
+        "--file",
+        &cm.fixture("rust/auth_service.rs"),
+        "--range",
+        "47",
+        "--note",
+        "preserved",
+        "--collection",
+        "col-preserved",
+    ]);
+    let bm_id3 = json["data"]["id"].as_str().unwrap().to_string();
+
+    // Delete collection WITHOUT bookmarks
+    cm.run_json(&["collection", "delete", "col-preserved"]);
+
+    // Bookmark should still exist
+    let result = cm.run(&["show", &bm_id3]);
+    assert_eq!(result.status, 0);
+}
+
+#[test]
 fn export_and_import() {
     let cm = Codemark::new();
 

@@ -448,7 +448,7 @@ pub enum CollectionCommand {
     /// Create a new collection
     Create(CollectionCreateArgs),
 
-    /// Delete a collection (bookmarks are kept)
+    /// Delete a collection (bookmarks are kept by default)
     Delete(CollectionDeleteArgs),
 
     /// Add bookmarks to a collection
@@ -484,6 +484,10 @@ pub struct CollectionCreateArgs {
 pub struct CollectionDeleteArgs {
     /// Collection name
     pub name: String,
+
+    /// Delete all bookmarks in the collection as well
+    #[arg(long)]
+    pub with_bookmarks: bool,
 }
 
 #[derive(Debug, clap::Args)]
