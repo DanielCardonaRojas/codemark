@@ -26,3 +26,13 @@ enter = "actions:show"
 description = "Show bookmarks in this collection (opens television with codemark channel)"
 command = "CODEMARK_COLLECTION_ID_FILTER=\"{split:\t:0}\" tv codemark"
 mode = "execute"
+
+[actions.delete]
+description = "Delete collection (keep bookmarks)"
+command = "codemark collection delete {split:\t:0}"
+mode = "execute"
+
+[actions.delete_with_bookmarks]
+description = "Delete collection AND all its bookmarks"
+command = "codemark collection delete {split:\t:0} --with-bookmarks"
+mode = "execute"

@@ -2487,11 +2487,43 @@ fn handle_collection_delete(
             .ok_or_else(|| Error::Input(format!("collection '{}' not found", args.name)))?
     };
 
+    let bookmarks_deleted = if args.with_bookmarks {
+        let filter = BookmarkFilter {
+            collection_id: Some(collection.id.clone()),
+            ..Default::default()
+        };
+        let bookmarks = db.list_bookmarks(&filter)?;
+        let count = bookmarks.len();
+        for bm in bookmarks {
+            db.delete_bookmark(&bm.id)?;
+        }
+        Some(count)
+    } else {
+        None
+    };
+
     let count = db.delete_collection_by_id(&collection.id)?;
-    write_success(
-        mode,
-        &format!("Collection '{}' deleted ({count} bookmarks were in it)", collection.name),
-    )?;
+
+    match bookmarks_deleted {
+        Some(bm_count) => {
+            write_success(
+                mode,
+                &format!(
+                    "Collection '{}' and its {bm_count} bookmarks deleted",
+                    collection.name
+                ),
+            )?;
+        }
+        None => {
+            write_success(
+                mode,
+                &format!(
+                    "Collection '{}' deleted ({count} bookmarks were in it)",
+                    collection.name
+                ),
+            )?;
+        }
+    }
     Ok(())
 }
 
