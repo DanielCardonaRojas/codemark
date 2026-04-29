@@ -1,26 +1,31 @@
-use std::io::{self, Read, Write};
-use std::path::PathBuf;
+//! CLI command handlers and shared utilities.
+//!
+//! This module contains the dispatch function and delegates to specialized submodules:
+//! - [`bookmark`]: add, show, remove, annotate, resolve
+//! - [`collection`]: collection management
+//! - [`search`]: FTS and semantic search, reindex
+//! - [`maintenance`]: heal, status, diff, gc, export, import
 
-use clap::CommandFactory;
-use clap_complete::generate;
+use std::io::Write;
 
-use crate::cli::output::{
-    self, ByteLocation, CollectionWithCount, HealOutput, HealUpdate, OutputMode, short_id,
-    write_bookmark_markdown, write_heal_output, write_json_success, write_success,
-};
+use crate::cli::output::{OutputMode, write_json_success, write_success};
 use crate::cli::*;
 use crate::config::Config;
 use crate::embeddings::config::EmbeddingModel;
 use crate::engine::bookmark::{
-    Annotation, Bookmark, BookmarkFilter, BookmarkStatus, Collection, Resolution, ResolutionMethod,
-    Tag,
+    Bookmark, BookmarkFilter, BookmarkStatus, Collection, Resolution, ResolutionMethod,
 };
-use crate::engine::{hash, health, resolution};
+use crate::engine::{health, resolution};
 use crate::error::{Error, Result};
 use crate::git::context as git_context;
-use crate::parser::languages::{Language, ParseCache};
-use crate::query::generator as qgen;
+use crate::parser::languages::Language;
 use crate::storage::{SemanticRepo, db::Database};
+
+// Handler submodules
+pub mod bookmark;
+pub mod collection;
+pub mod maintenance;
+pub mod search;
 
 /// Dispatch a parsed CLI command to its handler.
 pub fn dispatch(cli: &Cli) -> Result<()> {
@@ -28,49 +33,49 @@ pub fn dispatch(cli: &Cli) -> Result<()> {
     let mode = OutputMode::resolve_with_default(false, cli.format.as_deref(), true);
     match &cli.command {
         Command::Init => handle_init(cli, &mode),
-        Command::Add(args) => handle_add(cli, &mode, args),
-        Command::AddFromSnippet(args) => handle_add_from_snippet(cli, &mode, args),
-        Command::AddFromQuery(args) => handle_add_from_query(cli, &mode, args),
-        Command::Resolve(args) => handle_resolve(cli, &mode, args),
-        Command::Show(args) => handle_show(cli, &mode, args),
-        Command::Remove(args) => handle_remove(cli, &mode, args),
-        Command::Heal(args) => handle_heal(cli, &mode, args),
-        Command::Status => handle_status(cli, &mode),
+        Command::Add(args) => bookmark::handle_add(cli, &mode, args),
+        Command::AddFromSnippet(args) => bookmark::handle_add_from_snippet(cli, &mode, args),
+        Command::AddFromQuery(args) => bookmark::handle_add_from_query(cli, &mode, args),
+        Command::Resolve(args) => bookmark::handle_resolve(cli, &mode, args),
+        Command::Show(args) => bookmark::handle_show(cli, &mode, args),
+        Command::Remove(args) => bookmark::handle_remove(cli, &mode, args),
+        Command::Heal(args) => maintenance::handle_heal(cli, &mode, args),
+        Command::Status => maintenance::handle_status(cli, &mode),
         Command::List(args) => handle_list(cli, &mode, args),
         Command::Preview(args) => handle_preview(cli, args),
-        Command::Search(args) => handle_search(cli, &mode, args),
-        Command::Reindex(args) => handle_reindex(cli, &mode, args),
+        Command::Search(args) => search::handle_search(cli, &mode, args),
+        Command::Reindex(args) => search::handle_reindex(cli, &mode, args),
         Command::Collection(args) => dispatch_collection(cli, &mode, args),
-        Command::Diff(args) => handle_diff(cli, &mode, args),
-        Command::Gc(args) => handle_gc(cli, &mode, args),
-        Command::Export(args) => handle_export(cli, args),
-        Command::Import(args) => handle_import(cli, &mode, args),
+        Command::Diff(args) => maintenance::handle_diff(cli, &mode, args),
+        Command::Gc(args) => maintenance::handle_gc(cli, &mode, args),
+        Command::Export(args) => maintenance::handle_export(cli, args),
+        Command::Import(args) => maintenance::handle_import(cli, &mode, args),
         Command::Completions(args) => handle_completions(args),
-        Command::Annotate(args) => handle_annotate(cli, &mode, args),
+        Command::Annotate(args) => bookmark::handle_annotate(cli, &mode, args),
         Command::Open(args) => handle_open(cli, args),
     }
 }
 
 fn dispatch_collection(cli: &Cli, mode: &OutputMode, args: &CollectionArgs) -> Result<()> {
     match &args.command {
-        CollectionCommand::Create(a) => handle_collection_create(cli, mode, a),
-        CollectionCommand::Delete(a) => handle_collection_delete(cli, mode, a),
-        CollectionCommand::Add(a) => handle_collection_add(cli, mode, a),
-        CollectionCommand::Remove(a) => handle_collection_remove(cli, mode, a),
-        CollectionCommand::List(a) => handle_collection_list(cli, mode, a),
-        CollectionCommand::Show(a) => handle_collection_show(cli, mode, a),
-        CollectionCommand::Resolve(a) => handle_collection_resolve(cli, mode, a),
-        CollectionCommand::Reorder(a) => handle_collection_reorder(cli, mode, a),
+        CollectionCommand::Create(a) => collection::handle_collection_create(cli, mode, a),
+        CollectionCommand::Delete(a) => collection::handle_collection_delete(cli, mode, a),
+        CollectionCommand::Add(a) => collection::handle_collection_add(cli, mode, a),
+        CollectionCommand::Remove(a) => collection::handle_collection_remove(cli, mode, a),
+        CollectionCommand::List(a) => collection::handle_collection_list(cli, mode, a),
+        CollectionCommand::Show(a) => collection::handle_collection_show(cli, mode, a),
+        CollectionCommand::Resolve(a) => collection::handle_collection_resolve(cli, mode, a),
+        CollectionCommand::Reorder(a) => collection::handle_collection_reorder(cli, mode, a),
     }
 }
 
-// --- Helpers ---
+// --- Shared helpers ---
 
 /// Open the primary database for writing.
 ///
 /// If an explicit path is provided, it will be created if it doesn't exist.
 /// For auto-detected paths, it requires the .codemark directory to exist.
-fn open_db_for_write(cli: &Cli) -> Result<Database> {
+pub fn open_db_for_write(cli: &Cli) -> Result<Database> {
     if let Some(path) = cli.db.first() {
         return Database::create(path);
     }
@@ -95,7 +100,7 @@ fn open_db_for_write(cli: &Cli) -> Result<Database> {
 ///
 /// Returns Error::NotInitialized only if an explicit path was provided but it doesn't exist.
 /// For auto-detected paths, if the DB doesn't exist, it returns an in-memory DB (effectively empty).
-fn open_db(cli: &Cli) -> Result<Database> {
+pub fn open_db(cli: &Cli) -> Result<Database> {
     if let Some(path) = cli.db.first() {
         if path.exists() {
             return Database::open(path);
@@ -121,7 +126,11 @@ fn open_db(cli: &Cli) -> Result<Database> {
 
 /// Generate embedding for a bookmark if semantic search is enabled.
 /// Returns Ok(()) even if semantic search is disabled or fails.
-fn generate_embedding_for_bookmark(cli: &Cli, config: &Config, bookmark: &Bookmark) -> Result<()> {
+pub fn generate_embedding_for_bookmark(
+    cli: &Cli,
+    config: &Config,
+    bookmark: &Bookmark,
+) -> Result<()> {
     if !config.semantic.is_enabled() {
         return Ok(());
     }
@@ -156,7 +165,7 @@ fn generate_embedding_for_bookmark(cli: &Cli, config: &Config, bookmark: &Bookma
 
 /// Load the config from the .codemark directory (same location as the primary DB).
 /// Uses layered loading: global config merged with local (per-repo) override.
-fn load_config(cli: &Cli) -> Config {
+pub fn load_config(cli: &Cli) -> Config {
     if let Some(path) = cli.db.first()
         && let Some(parent) = path.parent()
     {
@@ -172,7 +181,7 @@ fn load_config(cli: &Cli) -> Config {
 /// Resolve the current user identity for bookmark and repo metadata creation.
 ///
 /// Returns (db_owner_email, db_owner_name). Uses config override, git config, or system fallback.
-fn resolve_identity(config: &Config) -> (String, Option<String>) {
+pub fn resolve_identity(config: &Config) -> (String, Option<String>) {
     // If force identity is set, use it as both email and name
     if let Some(ref forced) = config.identity.force {
         return (forced.clone(), Some(forced.clone()));
@@ -212,7 +221,7 @@ fn resolve_identity(config: &Config) -> (String, Option<String>) {
 ///
 /// Detects git repo information (origin URL, owner, name) and upserts to the repos table.
 /// Returns the repo ID if successful, None if not in a git repo.
-fn resolve_or_create_repo_metadata(
+pub fn resolve_or_create_repo_metadata(
     db: &Database,
     _config: &Config,
     db_owner_email: &str,
@@ -302,7 +311,7 @@ fn resolve_or_create_repo_metadata(
 /// Database loading strategy:
 /// 1. If CLI `--db` is specified, only those paths are used (override mode)
 /// 2. Otherwise, uses auto-detected primary DB + configured additional databases
-fn open_all_dbs(cli: &Cli) -> Result<Vec<(String, Database)>> {
+pub fn open_all_dbs(cli: &Cli) -> Result<Vec<(String, Database)>> {
     // If CLI specified explicit --db paths, use only those (override mode)
     if !cli.db.is_empty() {
         let mut dbs = Vec::new();
@@ -353,7 +362,7 @@ fn open_all_dbs(cli: &Cli) -> Result<Vec<(String, Database)>> {
 /// Returns only databases where the db_owner_email in the repos table matches the given email.
 /// If the email is None, returns all databases.
 /// If the repos table is empty (Ok(None)), keeps the database (allows querying unmigrated DBs).
-fn filter_dbs_by_user_email(
+pub fn filter_dbs_by_user_email(
     dbs: Vec<(String, Database)>,
     user_email: Option<&str>,
 ) -> Vec<(String, Database)> {
@@ -382,7 +391,7 @@ fn filter_dbs_by_user_email(
 ///
 /// Returns only databases where any repo has repo_owner matching the given pattern.
 /// Empty repos tables are kept (consistent with filter_dbs_by_user_email).
-fn filter_dbs_by_repo_owner(
+pub fn filter_dbs_by_repo_owner(
     dbs: Vec<(String, Database)>,
     repo_owner: Option<&str>,
 ) -> Vec<(String, Database)> {
@@ -413,7 +422,7 @@ fn filter_dbs_by_repo_owner(
 /// Open all specified databases for commands that support additional --db flags.
 ///
 /// This extends `open_all_dbs` to include command-specific --db flags (from ListArgs/SearchArgs).
-fn open_all_dbs_with_extra(
+pub fn open_all_dbs_with_extra(
     cli: &Cli,
     extra_db_paths: &[String],
 ) -> Result<Vec<(String, Database)>> {
@@ -439,7 +448,7 @@ fn open_all_dbs_with_extra(
 /// Derive a source label from a db path.
 ///
 /// Example: /foo/repo-name/.codemark/codemark.db -> "repo-name"
-fn source_label_from_path(path: &std::path::Path) -> String {
+pub fn source_label_from_path(path: &std::path::Path) -> String {
     // Canonicalize to resolve relative paths like .codemark/codemark.db
     let resolved = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
     resolved
@@ -562,7 +571,8 @@ fn parse_point(source: &str, s: &str) -> Result<usize> {
     }
 }
 
-fn byte_to_line(source: &str, byte_offset: usize) -> usize {
+/// Convert byte offset to line number (1-indexed).
+pub fn byte_to_line(source: &str, byte_offset: usize) -> usize {
     let mut current_byte = 0;
     for (i, line_text) in source.split_inclusive('\n').enumerate() {
         current_byte += line_text.len();
@@ -575,7 +585,11 @@ fn byte_to_line(source: &str, byte_offset: usize) -> usize {
 }
 
 /// Convert 1-indexed inclusive line range to byte range.
-fn line_range_to_bytes(source: &str, start_line: usize, end_line: usize) -> Result<(usize, usize)> {
+pub fn line_range_to_bytes(
+    source: &str,
+    start_line: usize,
+    end_line: usize,
+) -> Result<(usize, usize)> {
     if start_line == 0 || end_line == 0 {
         return Err(Error::Input("line numbers are 1-indexed".into()));
     }
@@ -613,7 +627,7 @@ fn line_range_to_bytes(source: &str, start_line: usize, end_line: usize) -> Resu
 
 /// Parse a git diff hunk header to extract the new-side line range.
 /// Format: @@ -old_start[,old_count] +new_start[,new_count] @@ [context]
-fn parse_hunk(hunk: &str) -> Result<(usize, usize)> {
+pub fn parse_hunk(hunk: &str) -> Result<(usize, usize)> {
     let re = regex::Regex::new(r"\+(\d+)(?:,(\d+))?").unwrap();
     let caps =
         re.captures(hunk).ok_or_else(|| Error::Input(format!("invalid hunk format: {hunk}")))?;
@@ -623,44 +637,12 @@ fn parse_hunk(hunk: &str) -> Result<(usize, usize)> {
     Ok((start, end.max(start)))
 }
 
-/// Resolve the language from --lang flag or file extension.
-fn resolve_language(lang_flag: Option<&str>, file: &std::path::Path) -> Result<Language> {
-    if let Some(lang) = lang_flag {
-        return lang.parse();
-    }
-    let ext = file.extension().and_then(|e| e.to_str()).ok_or_else(|| {
-        Error::Input(format!(
-            "cannot infer language from '{}'; use --lang to specify",
-            file.display()
-        ))
-    })?;
-    Language::from_extension(ext).ok_or_else(|| {
-        Error::Input(format!(
-            "cannot infer language from extension '.{ext}'; use --lang to specify"
-        ))
-    })
-}
-
-fn parse_status_filter(status: Option<&str>) -> Option<Vec<BookmarkStatus>> {
+pub fn parse_status_filter(status: Option<&str>) -> Option<Vec<BookmarkStatus>> {
     status.map(|s| s.split(',').filter_map(|part| part.trim().parse().ok()).collect())
 }
 
-fn resolve_file_path(file: &std::path::Path) -> Result<(PathBuf, String)> {
-    let abs =
-        if file.is_absolute() { file.to_path_buf() } else { std::env::current_dir()?.join(file) };
-    if !abs.exists() {
-        return Err(Error::Input(format!("file not found: {}", file.display())));
-    }
-    let cwd = std::env::current_dir()?;
-    let rel = if let Some(ctx) = git_context::detect_context(&cwd) {
-        git_context::relative_to_root(&ctx.repo_root, &abs)?
-    } else {
-        file.to_string_lossy().to_string()
-    };
-    Ok((abs, rel))
-}
-
-fn extract_id(id_or_line: &str) -> &str {
+/// Extract ID from input (handles line-format input).
+pub fn extract_id(id_or_line: &str) -> &str {
     // If it looks like a line-format string (contains tabs), extract the first field
     id_or_line.split('\t').next().unwrap_or(id_or_line)
 }
@@ -668,7 +650,7 @@ fn extract_id(id_or_line: &str) -> &str {
 /// Get the center line number from a bookmark's latest resolution.
 /// Returns the center line number (1-indexed) or None if no resolution exists.
 /// Note: bookmark_id should be the full ID, not a short prefix.
-fn get_bookmark_line(db: &Database, bookmark_id: &str, _file_path: &str) -> Option<usize> {
+pub fn get_bookmark_line(db: &Database, bookmark_id: &str, _file_path: &str) -> Option<usize> {
     // Get the latest resolution (limit 1)
     let resolutions = db.list_resolutions(bookmark_id, 1).ok()?;
     let res = resolutions.first()?;
@@ -687,7 +669,8 @@ fn get_bookmark_line(db: &Database, bookmark_id: &str, _file_path: &str) -> Opti
     Some((start + end) / 2)
 }
 
-fn find_bookmark(db: &Database, id: &str) -> Result<Bookmark> {
+/// Find a bookmark by ID or prefix in a single database.
+pub fn find_bookmark(db: &Database, id: &str) -> Result<Bookmark> {
     let id = extract_id(id);
     // Try exact match first, then prefix
     if let Some(bm) = db.get_bookmark(id)? {
@@ -697,7 +680,7 @@ fn find_bookmark(db: &Database, id: &str) -> Result<Bookmark> {
 }
 
 /// Search for a bookmark across multiple databases. Returns the bookmark and a reference to the DB.
-fn find_bookmark_across<'a>(
+pub fn find_bookmark_across<'a>(
     dbs: &'a [(String, Database)],
     id: &str,
 ) -> Result<(Bookmark, &'a Database)> {
@@ -715,17 +698,231 @@ fn find_bookmark_across<'a>(
     Err(Error::Input(format!("bookmark not found: {id}")))
 }
 
-fn now_iso() -> String {
+/// Get current timestamp in ISO format.
+pub fn now_iso() -> String {
     chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string()
 }
 
-// --- Command handlers ---
+/// Parse duration string (e.g., "30d", "2w", "6m") to days.
+pub fn parse_duration_days(duration: &str) -> Result<i64> {
+    let s = duration.trim();
+    if let Some(d) = s.strip_suffix('d') {
+        return d.parse().map_err(|_| Error::Input("invalid duration".into()));
+    }
+    if let Some(w) = s.strip_suffix('w') {
+        let weeks: i64 = w.parse().map_err(|_| Error::Input("invalid duration".into()))?;
+        return Ok(weeks * 7);
+    }
+    if let Some(m) = s.strip_suffix('m') {
+        let months: i64 = m.parse().map_err(|_| Error::Input("invalid duration".into()))?;
+        return Ok(months * 30);
+    }
+    Err(Error::Input("duration must end with d, w, or m (e.g., 30d, 2w, 6m)".into()))
+}
+
+/// Add a bookmark to a collection, auto-creating the collection if it doesn't exist.
+/// Returns the collection name if the bookmark was added, None otherwise.
+pub fn add_bookmark_to_collection(
+    db: &Database,
+    bookmark_id: &str,
+    collection_name: &str,
+) -> Result<Option<String>> {
+    // Auto-create collection if it doesn't exist (same logic as handle_collection_add)
+    let collection = match db.get_collection_by_name(collection_name)? {
+        Some(c) => c,
+        None => {
+            let c = Collection {
+                id: uuid::Uuid::new_v4().to_string(),
+                name: collection_name.to_string(),
+                description: None,
+                created_at: now_iso(),
+                created_by: None,
+            };
+            db.insert_collection(&c)?;
+            c
+        }
+    };
+    db.add_to_collection(&collection.id, &[bookmark_id.to_string()])?;
+    Ok(Some(collection_name.to_string()))
+}
+
+/// Batch resolve bookmarks and output results.
+pub fn resolve_batch(
+    mode: &OutputMode,
+    db: &Database,
+    bookmarks: &[Bookmark],
+    config: &Config,
+    dry_run: bool,
+) -> Result<()> {
+    use crate::parser::languages::ParseCache;
+
+    let mut results = Vec::new();
+
+    for bm in bookmarks {
+        let Ok(lang) = bm.language.parse::<Language>() else {
+            continue;
+        };
+        let mut cache = ParseCache::new(lang)?;
+        let ts_lang = lang.tree_sitter_language();
+        let result = resolution::resolve(bm, &mut cache, &ts_lang, db.path())?;
+        let new_status = health::transition(bm.status, result.method, result.hash_matches);
+
+        // In dry-run mode, skip database updates
+        if dry_run {
+            write_resolution_output(mode, bm, &result, db.path())?;
+            continue;
+        }
+
+        let stale_since = if new_status == BookmarkStatus::Stale {
+            bm.stale_since.clone().or_else(|| Some(now_iso()))
+        } else {
+            None
+        };
+
+        db.update_bookmark_status(
+            &bm.id,
+            new_status,
+            Some(result.method),
+            Some(&now_iso()),
+            stale_since.as_deref(),
+        )?;
+
+        if let Some(ref new_query) = result.new_query {
+            db.update_bookmark_query(&bm.id, new_query, &result.file_path, &result.content_hash)?;
+        }
+
+        // Record resolution history (deduped)
+        let res = Resolution {
+            id: uuid::Uuid::new_v4().to_string(),
+            bookmark_id: bm.id.clone(),
+            resolved_at: now_iso(),
+            commit_hash: git_context::detect_context(&std::env::current_dir()?)
+                .and_then(|ctx| ctx.head_commit),
+            method: result.method,
+            match_count: Some(1),
+            file_path: Some(result.file_path.clone()),
+            byte_range: Some(format!("{}-{}", result.byte_range.0, result.byte_range.1)),
+            line_range: Some(format!("{}-{}", result.start_line + 1, result.end_line + 1)),
+            content_hash: Some(result.content_hash.clone()),
+        };
+        let _ = db.insert_resolution_if_changed(&res, config.storage.max_resolutions());
+
+        // Resolve relative path to absolute for output
+        let absolute_path = git_context::resolve_bookmark_file_path(&result.file_path, db.path())
+            .unwrap_or_else(|_| std::path::PathBuf::from(&result.file_path));
+
+        results.push(serde_json::json!({
+            "id": crate::cli::output::short_id(&bm.id),
+            "file": absolute_path.to_string_lossy(),
+            "line": result.start_line + 1,
+            "method": result.method.to_string(),
+            "status": new_status.to_string(),
+        }));
+    }
+
+    match mode {
+        OutputMode::Json => write_json_success(&results)?,
+        OutputMode::Table => {
+            let mut table = comfy_table::Table::new();
+            table.set_header(vec!["ID", "File", "Line", "Method", "Status"]);
+            for r in &results {
+                table.add_row(vec![
+                    r["id"].as_str().unwrap_or(""),
+                    r["file"].as_str().unwrap_or(""),
+                    &r["line"].to_string(),
+                    r["method"].as_str().unwrap_or(""),
+                    r["status"].as_str().unwrap_or(""),
+                ]);
+            }
+            println!("{table}");
+        }
+        _ => {
+            let mut stdout = std::io::stdout().lock();
+            for r in &results {
+                writeln!(
+                    stdout,
+                    "{}\t{}:{}\t{}\t{}",
+                    r["id"].as_str().unwrap_or(""),
+                    r["file"].as_str().unwrap_or(""),
+                    r["line"],
+                    r["method"].as_str().unwrap_or(""),
+                    r["status"].as_str().unwrap_or(""),
+                )?;
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Write resolution output for a single bookmark.
+pub fn write_resolution_output(
+    mode: &OutputMode,
+    bm: &Bookmark,
+    result: &resolution::ResolutionResult,
+    db_path: &std::path::Path,
+) -> Result<()> {
+    use crate::cli::output::short_id;
+
+    // Get first annotation's note for display
+    let note = bm.annotations.first().and_then(|a| a.notes.as_deref());
+
+    // Resolve relative path to absolute for output
+    let absolute_path = git_context::resolve_bookmark_file_path(&result.file_path, db_path)?;
+    let absolute_path_str = absolute_path.to_string_lossy();
+
+    match mode {
+        OutputMode::Json => {
+            write_json_success(&serde_json::json!({
+                "id": bm.id,
+                "file": absolute_path_str,
+                "line": result.start_line + 1,
+                "column": result.start_col,
+                "byte_range": format!("{}-{}", result.byte_range.0, result.byte_range.1),
+                "line_range": format!("{}-{}", result.start_line + 1, result.end_line + 1),
+                "line_range_colon": format!("{}:{}", result.start_line + 1, result.end_line + 1),
+                "method": result.method.to_string(),
+                "status": health::transition(bm.status, result.method, result.hash_matches).to_string(),
+                "preview": result.matched_text.lines().next().unwrap_or(""),
+                "note": note,
+                "tags": bm.tags,
+            }))?;
+        }
+        OutputMode::Line => {
+            let mut stdout = std::io::stdout().lock();
+            writeln!(
+                stdout,
+                "{}\t{}:{}\t{}\t{}\t{}",
+                short_id(&bm.id),
+                absolute_path_str,
+                result.start_line + 1,
+                result.method,
+                bm.tags.join(","),
+                note.unwrap_or("")
+            )?;
+        }
+        _ => {
+            println!(
+                "{}  {}:{}  [{}]",
+                short_id(&bm.id),
+                absolute_path_str,
+                result.start_line + 1,
+                result.method
+            );
+            if let Some(preview) = result.matched_text.lines().next() {
+                println!("  {preview}");
+            }
+        }
+    }
+    Ok(())
+}
+
+// --- Individual command handlers ---
 
 /// Initialize a new codemark repository in the current directory or git root.
 ///
 /// Creates the .codemark directory and initializes the database.
 /// If already initialized, prints a message and does nothing.
-fn handle_init(cli: &Cli, mode: &OutputMode) -> Result<()> {
+pub fn handle_init(cli: &Cli, mode: &OutputMode) -> Result<()> {
     if let Some(path) = cli.db.first() {
         if path.exists() {
             write_success(mode, &format!("Codemark already initialized at {}", path.display()))?;
@@ -776,1040 +973,20 @@ fn handle_init(cli: &Cli, mode: &OutputMode) -> Result<()> {
     Ok(())
 }
 
-fn handle_add(cli: &Cli, mode: &OutputMode, args: &AddArgs) -> Result<()> {
-    let lang = resolve_language(args.lang.as_deref(), &args.file)?;
-    let (abs_path, rel_path) = resolve_file_path(&args.file)?;
+/// Generate shell completions for the specified shell.
+pub fn handle_completions(args: &CompletionsArgs) -> Result<()> {
+    use clap::CommandFactory;
+    use clap_complete::generate;
 
-    let mut parser = crate::parser::languages::Parser::new(lang)?;
-    let (tree, source) = parser.parse_file(&abs_path)?;
-    let ts_lang = lang.tree_sitter_language();
-
-    // Resolve byte range from --range or --hunk
-    let byte_range = if let Some(ref hunk) = args.hunk {
-        let (start_line, end_line) = parse_hunk(hunk)?;
-        line_range_to_bytes(&source, start_line, end_line)?
-    } else if let Some(ref range) = args.range {
-        parse_range(range, &source)?
-    } else {
-        return Err(Error::Input("either --range or --hunk is required".into()));
-    };
-
-    let generated = qgen::generate_query(&tree, source.as_bytes(), byte_range, &ts_lang)?;
-    let content_hash = hash::content_hash(&source[generated.byte_range.0..generated.byte_range.1]);
-
-    // Count matches for uniqueness info
-    let match_count =
-        crate::query::matcher::run_query(&generated.query, &tree, source.as_bytes(), &ts_lang)
-            .map(|m| m.len())
-            .unwrap_or(0);
-
-    // Compute the line range of the target for display
-    let target_start_line = byte_to_line(&source, generated.byte_range.0);
-    let target_end_line = byte_to_line(&source, generated.byte_range.1.saturating_sub(1));
-
-    if args.dry_run {
-        return write_dry_run(
-            mode,
-            &generated,
-            &content_hash,
-            &rel_path,
-            target_start_line,
-            target_end_line,
-            match_count,
-        );
-    }
-
-    let db = open_db_for_write(cli)?;
-    let cwd = std::env::current_dir()?;
-    let commit_hash = git_context::detect_context(&cwd).and_then(|ctx| ctx.head_commit);
-
-    // Resolve identity and create/update repo metadata
-    let config = load_config(cli);
-    let (db_owner_email, db_owner_name) = resolve_identity(&config);
-    if let Err(e) =
-        resolve_or_create_repo_metadata(&db, &config, &db_owner_email, db_owner_name.as_deref())
-    {
-        eprintln!("codemark: warning: failed to record repo metadata: {e}");
-    }
-
-    let bookmark_id = uuid::Uuid::new_v4().to_string();
-    let bookmark = Bookmark {
-        id: bookmark_id.clone(),
-        query: generated.query.clone(),
-        language: lang.to_string(),
-        file_path: rel_path.clone(),
-        content_hash: Some(content_hash.clone()),
-        commit_hash: commit_hash.clone(),
-        status: BookmarkStatus::Active,
-        resolution_method: Some(ResolutionMethod::Exact),
-        last_resolved_at: Some(now_iso()),
-        stale_since: None,
-        created_at: now_iso(),
-        created_by: Some(args.created_by.clone()),
-        tags: vec![],
-        annotations: vec![],
-    };
-
-    // Insert bookmark - will return existing ID if duplicate
-    let actual_bookmark_id = db.insert_bookmark(&bookmark)?;
-    let is_new = actual_bookmark_id == bookmark_id;
-
-    // Insert annotation with notes and context if provided
-    if args.note.is_some() || args.context.is_some() {
-        let annotation = Annotation {
-            id: uuid::Uuid::new_v4().to_string(),
-            bookmark_id: actual_bookmark_id.clone(),
-            added_at: now_iso(),
-            added_by: Some(args.created_by.clone()),
-            notes: args.note.clone(),
-            context: args.context.clone(),
-            source: Some("cli".to_string()),
-        };
-        db.insert_annotation(&annotation)?;
-    }
-
-    // Insert tags if provided
-    if !args.tag.is_empty() {
-        let tags: Vec<Tag> = args
-            .tag
-            .iter()
-            .map(|t| Tag {
-                bookmark_id: actual_bookmark_id.clone(),
-                tag: t.clone(),
-                added_at: now_iso(),
-                added_by: Some(args.created_by.clone()),
-            })
-            .collect();
-        db.insert_tags(&tags)?;
-    }
-
-    // For output, we need the full bookmark with metadata
-    let bookmark = db.get_bookmark(&actual_bookmark_id)?.unwrap();
-
-    // Generate embedding for semantic search
-    let config = load_config(cli);
-    // Ignore embedding errors - shouldn't block bookmark creation
-    let _ = generate_embedding_for_bookmark(cli, &config, &bookmark);
-
-    // Record initial resolution as baseline (only if new bookmark)
-    if is_new {
-        let initial_res = Resolution {
-            id: uuid::Uuid::new_v4().to_string(),
-            bookmark_id: actual_bookmark_id.clone(),
-            resolved_at: now_iso(),
-            commit_hash,
-            method: ResolutionMethod::Exact,
-            match_count: Some(match_count as i32),
-            file_path: Some(bookmark.file_path.clone()),
-            byte_range: Some(format!("{}-{}", generated.byte_range.0, generated.byte_range.1)),
-            line_range: Some(format!("{}-{}", target_start_line, target_end_line)),
-            content_hash: Some(content_hash.clone()),
-        };
-        db.insert_resolution_if_changed(&initial_res, config.storage.max_resolutions())?;
-    }
-
-    // Add to collection if specified
-    let collection_name = if let Some(ref coll_name) = args.collection {
-        add_bookmark_to_collection(&db, &actual_bookmark_id, coll_name)?
-    } else {
-        None
-    };
-
-    match mode {
-        OutputMode::Json => {
-            let mut json_data = serde_json::json!({
-                "id": actual_bookmark_id,
-                "query": generated.query,
-                "node_type": generated.target_node_type,
-                "name": generated.target_name,
-                "lines": format!("{target_start_line}-{target_end_line}"),
-                "content_hash": content_hash,
-                "unique": match_count == 1,
-                "created_by": bookmark.created_by,
-                "new": is_new,
-            });
-            if let Some(ref coll) = collection_name {
-                json_data["collection"] = serde_json::json!(coll);
-            }
-            write_json_success(&json_data)?;
-        }
-        _ => {
-            let action = if is_new { "created" } else { "updated" };
-            println!("Bookmark {action}: {}", output::short_id(&actual_bookmark_id));
-            println!("  Node type: {}", generated.target_node_type);
-            if let Some(ref name) = generated.target_name {
-                println!("  Target: {name}");
-            }
-            println!("  Lines: {target_start_line}-{target_end_line}");
-            if let Some(ref coll) = collection_name {
-                println!("  Collection: {coll}");
-            }
-        }
-    }
+    let mut cmd = Cli::command();
+    generate(args.shell, &mut cmd, "codemark", &mut std::io::stdout());
     Ok(())
 }
 
-fn handle_add_from_snippet(cli: &Cli, mode: &OutputMode, args: &AddFromSnippetArgs) -> Result<()> {
-    let lang = resolve_language(args.lang.as_deref(), &args.file)?;
-    let (abs_path, rel_path) = resolve_file_path(&args.file)?;
+/// List bookmarks with optional filters.
+pub fn handle_list(cli: &Cli, mode: &OutputMode, args: &ListArgs) -> Result<()> {
+    use crate::cli::output::template_needs_line;
 
-    // Read snippet from stdin
-    let mut snippet = String::new();
-    io::stdin().read_to_string(&mut snippet)?;
-    let snippet = snippet.trim();
-    if snippet.is_empty() {
-        return Err(Error::Input("no snippet provided on stdin".into()));
-    }
-
-    let mut parser = crate::parser::languages::Parser::new(lang)?;
-    let (tree, source) = parser.parse_file(&abs_path)?;
-    let ts_lang = lang.tree_sitter_language();
-
-    let offset =
-        source.find(snippet).ok_or_else(|| Error::Input("snippet not found in file".into()))?;
-    let byte_range = (offset, offset + snippet.len());
-
-    let generated = qgen::generate_query(&tree, source.as_bytes(), byte_range, &ts_lang)?;
-    let content_hash = hash::content_hash(&source[generated.byte_range.0..generated.byte_range.1]);
-
-    let match_count =
-        crate::query::matcher::run_query(&generated.query, &tree, source.as_bytes(), &ts_lang)
-            .map(|m| m.len())
-            .unwrap_or(0);
-
-    let target_start_line = byte_to_line(&source, generated.byte_range.0);
-    let target_end_line = byte_to_line(&source, generated.byte_range.1.saturating_sub(1));
-
-    if args.dry_run {
-        return write_dry_run(
-            mode,
-            &generated,
-            &content_hash,
-            &rel_path,
-            target_start_line,
-            target_end_line,
-            match_count,
-        );
-    }
-
-    let db = open_db_for_write(cli)?;
-    let cwd = std::env::current_dir()?;
-    let commit_hash = git_context::detect_context(&cwd).and_then(|ctx| ctx.head_commit);
-
-    // Resolve identity and create/update repo metadata
-    let config = load_config(cli);
-    let (db_owner_email, db_owner_name) = resolve_identity(&config);
-    if let Err(e) =
-        resolve_or_create_repo_metadata(&db, &config, &db_owner_email, db_owner_name.as_deref())
-    {
-        eprintln!("codemark: warning: failed to record repo metadata: {e}");
-    }
-
-    let bookmark_id = uuid::Uuid::new_v4().to_string();
-    let bookmark = Bookmark {
-        id: bookmark_id.clone(),
-        query: generated.query.clone(),
-        language: lang.to_string(),
-        file_path: rel_path.clone(),
-        content_hash: Some(content_hash.clone()),
-        commit_hash: commit_hash.clone(),
-        status: BookmarkStatus::Active,
-        resolution_method: Some(ResolutionMethod::Exact),
-        last_resolved_at: Some(now_iso()),
-        stale_since: None,
-        created_at: now_iso(),
-        created_by: Some(args.created_by.clone()),
-        tags: vec![],
-        annotations: vec![],
-    };
-
-    // Insert bookmark - will return existing ID if duplicate
-    let actual_bookmark_id = db.insert_bookmark(&bookmark)?;
-    let is_new = actual_bookmark_id == bookmark_id;
-
-    // Insert annotation with notes and context if provided
-    if args.note.is_some() || args.context.is_some() {
-        let annotation = Annotation {
-            id: uuid::Uuid::new_v4().to_string(),
-            bookmark_id: actual_bookmark_id.clone(),
-            added_at: now_iso(),
-            added_by: Some(args.created_by.clone()),
-            notes: args.note.clone(),
-            context: args.context.clone(),
-            source: Some("cli".to_string()),
-        };
-        db.insert_annotation(&annotation)?;
-    }
-
-    // Insert tags if provided
-    if !args.tag.is_empty() {
-        let tags: Vec<Tag> = args
-            .tag
-            .iter()
-            .map(|t| Tag {
-                bookmark_id: actual_bookmark_id.clone(),
-                tag: t.clone(),
-                added_at: now_iso(),
-                added_by: Some(args.created_by.clone()),
-            })
-            .collect();
-        db.insert_tags(&tags)?;
-    }
-
-    // For output, we need the full bookmark with metadata
-    let bookmark = db.get_bookmark(&actual_bookmark_id)?.unwrap();
-
-    // Generate embedding for semantic search
-    // Ignore embedding errors - shouldn't block bookmark creation
-    let _ = generate_embedding_for_bookmark(cli, &config, &bookmark);
-
-    // Record initial resolution as baseline (only if new bookmark)
-    if is_new {
-        let initial_res = Resolution {
-            id: uuid::Uuid::new_v4().to_string(),
-            bookmark_id: actual_bookmark_id.clone(),
-            resolved_at: now_iso(),
-            commit_hash,
-            method: ResolutionMethod::Exact,
-            match_count: Some(match_count as i32),
-            file_path: Some(bookmark.file_path.clone()),
-            byte_range: Some(format!("{}-{}", generated.byte_range.0, generated.byte_range.1)),
-            line_range: Some(format!("{}-{}", target_start_line, target_end_line)),
-            content_hash: Some(content_hash.clone()),
-        };
-        db.insert_resolution_if_changed(&initial_res, config.storage.max_resolutions())?;
-    }
-
-    // Add to collection if specified
-    let collection_name = if let Some(ref coll_name) = args.collection {
-        add_bookmark_to_collection(&db, &actual_bookmark_id, coll_name)?
-    } else {
-        None
-    };
-
-    match mode {
-        OutputMode::Json => {
-            let mut json_data = serde_json::json!({
-                "id": actual_bookmark_id,
-                "query": generated.query,
-                "node_type": generated.target_node_type,
-                "name": generated.target_name,
-                "content_hash": content_hash,
-                "created_by": bookmark.created_by,
-                "new": is_new,
-            });
-            if let Some(ref coll) = collection_name {
-                json_data["collection"] = serde_json::json!(coll);
-            }
-            write_json_success(&json_data)?;
-        }
-        _ => {
-            let action = if is_new { "created" } else { "updated" };
-            println!("Bookmark {action}: {}", output::short_id(&actual_bookmark_id));
-            if let Some(ref name) = generated.target_name {
-                println!("  Target: {name}");
-            }
-            if let Some(ref coll) = collection_name {
-                println!("  Collection: {coll}");
-            }
-        }
-    }
-    Ok(())
-}
-
-fn handle_add_from_query(cli: &Cli, mode: &OutputMode, args: &AddFromQueryArgs) -> Result<()> {
-    let lang = resolve_language(args.lang.as_deref(), &args.file)?;
-    let (abs_path, rel_path) = resolve_file_path(&args.file)?;
-
-    let mut parser = crate::parser::languages::Parser::new(lang)?;
-    let (tree, source) = parser.parse_file(&abs_path)?;
-    let ts_lang = lang.tree_sitter_language();
-
-    // Validate the query by running it
-    let matches = crate::query::matcher::run_query(&args.query, &tree, source.as_bytes(), &ts_lang)
-        .map_err(|e| Error::Input(format!("invalid tree-sitter query: {e}")))?;
-
-    if matches.is_empty() {
-        return Err(Error::Input("query does not match any nodes in the file".into()));
-    }
-
-    // Use the first match's content for hashing
-    let first_match = &matches[0];
-    let content_hash = hash::content_hash(&first_match.node_text);
-
-    // Get the match info for output
-    let target_start_line = first_match.start_point.0 + 1;
-    let target_end_line = first_match.end_point.0 + 1;
-    let byte_range = first_match.byte_range;
-
-    // Extract node type from the query (first identifier after opening paren)
-    let node_type = args
-        .query
-        .trim()
-        .strip_prefix('(')
-        .and_then(|s| s.split_whitespace().next())
-        .unwrap_or("unknown")
-        .to_string();
-
-    if args.dry_run {
-        return write_dry_run(
-            mode,
-            &crate::query::generator::GeneratedQuery {
-                query: args.query.clone(),
-                byte_range,
-                target_node_type: node_type.clone(),
-                target_name: None,
-            },
-            &content_hash,
-            &rel_path,
-            target_start_line,
-            target_end_line,
-            matches.len(),
-        );
-    }
-
-    let db = open_db_for_write(cli)?;
-    let cwd = std::env::current_dir()?;
-    let commit_hash = git_context::detect_context(&cwd).and_then(|ctx| ctx.head_commit);
-
-    // Resolve identity and create/update repo metadata
-    let config = load_config(cli);
-    let (db_owner_email, db_owner_name) = resolve_identity(&config);
-    if let Err(e) =
-        resolve_or_create_repo_metadata(&db, &config, &db_owner_email, db_owner_name.as_deref())
-    {
-        eprintln!("codemark: warning: failed to record repo metadata: {e}");
-    }
-
-    let bookmark_id = uuid::Uuid::new_v4().to_string();
-    let bookmark = Bookmark {
-        id: bookmark_id.clone(),
-        query: args.query.clone(),
-        language: lang.to_string(),
-        file_path: rel_path.clone(),
-        content_hash: Some(content_hash.clone()),
-        commit_hash: commit_hash.clone(),
-        status: BookmarkStatus::Active,
-        resolution_method: Some(ResolutionMethod::Exact),
-        last_resolved_at: Some(now_iso()),
-        stale_since: None,
-        created_at: now_iso(),
-        created_by: Some(args.created_by.clone()),
-        tags: vec![],
-        annotations: vec![],
-    };
-
-    // Insert bookmark - will return existing ID if duplicate
-    let actual_bookmark_id = db.insert_bookmark(&bookmark)?;
-    let is_new = actual_bookmark_id == bookmark_id;
-
-    // Insert annotation with notes and context if provided
-    if args.note.is_some() || args.context.is_some() {
-        let annotation = Annotation {
-            id: uuid::Uuid::new_v4().to_string(),
-            bookmark_id: actual_bookmark_id.clone(),
-            added_at: now_iso(),
-            added_by: Some(args.created_by.clone()),
-            notes: args.note.clone(),
-            context: args.context.clone(),
-            source: Some("cli".to_string()),
-        };
-        db.insert_annotation(&annotation)?;
-    }
-
-    // Insert tags if provided
-    if !args.tag.is_empty() {
-        let tags: Vec<Tag> = args
-            .tag
-            .iter()
-            .map(|t| Tag {
-                bookmark_id: actual_bookmark_id.clone(),
-                tag: t.clone(),
-                added_at: now_iso(),
-                added_by: Some(args.created_by.clone()),
-            })
-            .collect();
-        db.insert_tags(&tags)?;
-    }
-
-    // For output, we need the full bookmark with metadata
-    let bookmark = db.get_bookmark(&actual_bookmark_id)?.unwrap();
-
-    // Generate embedding for semantic search
-    // Ignore embedding errors - shouldn't block bookmark creation
-    let _ = generate_embedding_for_bookmark(cli, &config, &bookmark);
-
-    // Record initial resolution as baseline (only if new bookmark)
-    if is_new {
-        let initial_res = Resolution {
-            id: uuid::Uuid::new_v4().to_string(),
-            bookmark_id: actual_bookmark_id.clone(),
-            resolved_at: now_iso(),
-            commit_hash,
-            method: ResolutionMethod::Exact,
-            match_count: Some(matches.len() as i32),
-            file_path: Some(bookmark.file_path.clone()),
-            byte_range: Some(format!("{}-{}", byte_range.0, byte_range.1)),
-            line_range: Some(format!("{}-{}", target_start_line, target_end_line)),
-            content_hash: Some(content_hash.clone()),
-        };
-        db.insert_resolution_if_changed(&initial_res, config.storage.max_resolutions())?;
-    }
-
-    // Add to collection if specified
-    let collection_name = if let Some(ref coll_name) = args.collection {
-        add_bookmark_to_collection(&db, &actual_bookmark_id, coll_name)?
-    } else {
-        None
-    };
-
-    match mode {
-        OutputMode::Json => {
-            let mut json_data = serde_json::json!({
-                "id": actual_bookmark_id,
-                "query": args.query,
-                "node_type": node_type,
-                "content_hash": content_hash,
-                "created_by": bookmark.created_by,
-                "new": is_new,
-            });
-            if let Some(ref coll) = collection_name {
-                json_data["collection"] = serde_json::json!(coll);
-            }
-            write_json_success(&json_data)?;
-        }
-        _ => {
-            let action = if is_new { "created" } else { "updated" };
-            println!("Bookmark {action}: {}", output::short_id(&actual_bookmark_id));
-            println!("  Node type: {node_type}");
-            if matches.len() > 1 {
-                println!("  Warning: query matches {} nodes", matches.len());
-            }
-            if let Some(ref coll) = collection_name {
-                println!("  Collection: {coll}");
-            }
-        }
-    }
-    Ok(())
-}
-
-fn write_dry_run(
-    mode: &OutputMode,
-    generated: &qgen::GeneratedQuery,
-    content_hash: &str,
-    file_path: &str,
-    start_line: usize,
-    end_line: usize,
-    match_count: usize,
-) -> Result<()> {
-    match mode {
-        OutputMode::Json => {
-            write_json_success(&serde_json::json!({
-                "dry_run": true,
-                "node_type": generated.target_node_type,
-                "name": generated.target_name,
-                "file": file_path,
-                "lines": format!("{start_line}-{end_line}"),
-                "query": generated.query,
-                "content_hash": content_hash,
-                "unique": match_count == 1,
-                "match_count": match_count,
-            }))?;
-        }
-        _ => {
-            println!("Dry run — bookmark would target:\n");
-            println!("  Node type:  {}", generated.target_node_type);
-            if let Some(ref name) = generated.target_name {
-                println!("  Name:       {name}");
-            }
-            println!("  File:       {file_path}");
-            println!("  Lines:      {start_line}-{end_line}");
-            println!("  Hash:       {content_hash}");
-            println!(
-                "  Unique:     {} ({match_count} match{})",
-                if match_count == 1 { "yes" } else { "no" },
-                if match_count == 1 { "" } else { "es" }
-            );
-            println!("\n  Query:");
-            for line in generated.query.lines() {
-                println!("    {line}");
-            }
-            println!("\nNo bookmark created. Remove --dry-run to save.");
-        }
-    }
-    Ok(())
-}
-
-fn handle_resolve(cli: &Cli, mode: &OutputMode, args: &ResolveArgs) -> Result<()> {
-    let dbs = open_all_dbs(cli)?;
-
-    if let Some(ref id) = args.id {
-        // Single bookmark resolution — search across all DBs
-        let (bm, db) = find_bookmark_across(&dbs, id)?;
-        let lang: Language = bm.language.parse()?;
-        let mut cache = ParseCache::new(lang)?;
-        let ts_lang = lang.tree_sitter_language();
-
-        let result = resolution::resolve(&bm, &mut cache, &ts_lang, db.path())?;
-
-        // In dry-run mode, skip database updates and just show the result
-        if args.dry_run {
-            return write_resolution_output(mode, &bm, &result, db.path());
-        }
-
-        let new_status = health::transition(bm.status, result.method, result.hash_matches);
-
-        let stale_since = if new_status == BookmarkStatus::Stale {
-            bm.stale_since.clone().or_else(|| Some(now_iso()))
-        } else {
-            None
-        };
-
-        db.update_bookmark_status(
-            &bm.id,
-            new_status,
-            Some(result.method),
-            Some(&now_iso()),
-            stale_since.as_deref(),
-        )?;
-
-        if let Some(ref new_query) = result.new_query {
-            db.update_bookmark_query(&bm.id, new_query, &result.file_path, &result.content_hash)?;
-        }
-
-        // Record resolution (deduped — skips if same commit + location + method)
-        let res = Resolution {
-            id: uuid::Uuid::new_v4().to_string(),
-            bookmark_id: bm.id.clone(),
-            resolved_at: now_iso(),
-            commit_hash: git_context::detect_context(&std::env::current_dir()?)
-                .and_then(|ctx| ctx.head_commit),
-            method: result.method,
-            match_count: Some(1),
-            file_path: Some(result.file_path.clone()),
-            byte_range: Some(format!("{}-{}", result.byte_range.0, result.byte_range.1)),
-            line_range: Some(format!("{}-{}", result.start_line + 1, result.end_line + 1)),
-            content_hash: Some(result.content_hash.clone()),
-        };
-        let config = load_config(cli);
-        db.insert_resolution_if_changed(&res, config.storage.max_resolutions())?;
-
-        write_resolution_output(mode, &bm, &result, db.path())?;
-    } else {
-        // Batch resolution — fan out across all DBs
-        let filter = BookmarkFilter {
-            tag: args.tag.clone(),
-            status: parse_status_filter(args.status.as_deref())
-                .or(Some(vec![BookmarkStatus::Active, BookmarkStatus::Drifted])),
-            file_path: args.file.as_ref().map(|p| p.to_string_lossy().to_string()),
-            language: args.lang.clone(),
-            collection: args.collection.clone(),
-            ..Default::default()
-        };
-        let config = load_config(cli);
-        for (_label, db) in &dbs {
-            let bookmarks = db.list_bookmarks(&filter)?;
-            resolve_batch(mode, db, &bookmarks, &config, args.dry_run)?;
-        }
-    }
-    Ok(())
-}
-
-fn handle_show(cli: &Cli, mode: &OutputMode, args: &ShowArgs) -> Result<()> {
-    let dbs = open_all_dbs(cli)?;
-    let (bm, db) = find_bookmark_across(&dbs, &args.id)?;
-    let resolutions = db.list_resolutions(&bm.id, 5)?;
-
-    match mode {
-        OutputMode::Json => {
-            write_json_success(&serde_json::json!({
-                "bookmark": bm,
-                "resolutions": resolutions,
-            }))?;
-        }
-        OutputMode::Markdown => {
-            write_bookmark_markdown(&bm, &resolutions)?;
-        }
-        _ => {
-            println!("ID:          {}", bm.id);
-            println!("File:        {}", bm.file_path);
-            println!("Language:    {}", bm.language);
-            println!("Status:      {}", bm.status);
-            if !bm.tags.is_empty() {
-                println!("Tags:        {}", bm.tags.join(", "));
-            }
-            // Display annotations (notes and context)
-            for ann in &bm.annotations {
-                if let Some(ref note) = ann.notes {
-                    println!("Note:        {note}");
-                }
-                if let Some(ref ctx) = ann.context {
-                    println!("Context:     {ctx}");
-                }
-                if let Some(ref added_by) = ann.added_by {
-                    println!("  (by {added_by}, {})", ann.added_at);
-                }
-            }
-            if let Some(ref method) = bm.resolution_method {
-                println!("Resolution:  {method}");
-            }
-            if let Some(ref resolved) = bm.last_resolved_at {
-                println!("Resolved at: {resolved}");
-            }
-            if let Some(ref commit) = bm.commit_hash {
-                println!("Commit:      {}", &commit[..commit.len().min(8)]);
-            }
-            println!("Created:     {}", bm.created_at);
-            println!("\nQuery:");
-            println!("{}", bm.query);
-
-            if !resolutions.is_empty() {
-                println!("\nResolution history:");
-                for r in &resolutions {
-                    println!(
-                        "  {} | {} | {}",
-                        r.resolved_at,
-                        r.method,
-                        r.file_path.as_deref().unwrap_or("-")
-                    );
-                }
-            }
-        }
-    }
-    Ok(())
-}
-
-fn handle_remove(cli: &Cli, mode: &OutputMode, args: &RemoveArgs) -> Result<()> {
-    let db = open_db_for_write(cli)?;
-    let mut removed = 0;
-    let mut not_found = 0;
-
-    for id_input in &args.ids {
-        let id = extract_id(id_input);
-        match find_bookmark(&db, id) {
-            Ok(bm) => {
-                db.delete_bookmark(&bm.id)?;
-                removed += 1;
-            }
-            Err(_) => {
-                not_found += 1;
-                eprintln!("codemark: bookmark not found: {id}");
-            }
-        }
-    }
-
-    write_success(
-        mode,
-        &format!("Removed {removed} bookmark{}", if removed == 1 { "" } else { "s" }),
-    )?;
-
-    if not_found > 0 {
-        return Err(Error::Input(format!("{not_found} bookmark(s) not found")));
-    }
-    Ok(())
-}
-
-fn handle_annotate(cli: &Cli, mode: &OutputMode, args: &AnnotateArgs) -> Result<()> {
-    let db = open_db_for_write(cli)?;
-
-    // Validate that at least one of note, context, or tag is provided
-    if args.note.is_none() && args.context.is_none() && args.tag.is_empty() {
-        return Err(Error::Input(
-            "At least one of --note, --context, or --tag must be provided".to_string(),
-        ));
-    }
-
-    // Find the bookmark
-    let id = extract_id(&args.id);
-    let mut bm = find_bookmark(&db, id)?;
-
-    // Create annotation if note or context is provided
-    if args.note.is_some() || args.context.is_some() {
-        let annotation = Annotation {
-            id: uuid::Uuid::new_v4().to_string(),
-            bookmark_id: bm.id.clone(),
-            added_at: now_iso(),
-            added_by: Some(args.added_by.clone()),
-            notes: args.note.clone(),
-            context: args.context.clone(),
-            source: Some(args.source.clone()),
-        };
-        db.insert_annotation(&annotation)?;
-
-        // Re-fetch bookmark to get updated annotations
-        bm = find_bookmark(&db, id)?;
-    }
-
-    // Add tags if provided
-    if !args.tag.is_empty() {
-        let tags: Vec<Tag> = args
-            .tag
-            .iter()
-            .map(|t| Tag {
-                bookmark_id: bm.id.clone(),
-                tag: t.clone(),
-                added_at: now_iso(),
-                added_by: Some(args.added_by.clone()),
-            })
-            .collect();
-        db.insert_tags(&tags)?;
-
-        // Re-fetch bookmark to get updated tags
-        bm = find_bookmark(&db, id)?;
-    }
-
-    match mode {
-        OutputMode::Json => {
-            write_json_success(&serde_json::json!({
-                "id": bm.id,
-                "short_id": short_id(&bm.id),
-                "file_path": bm.file_path,
-                "language": bm.language,
-                "status": bm.status,
-                "tags": bm.tags,
-                "annotations": bm.annotations,
-                "created_at": bm.created_at,
-            }))?;
-        }
-        _ => {
-            println!("Annotated bookmark: {}", short_id(&bm.id));
-            println!("  File: {}", bm.file_path);
-            println!("  Language: {}", bm.language);
-            println!("  Status: {}", bm.status);
-            if !bm.tags.is_empty() {
-                println!("  Tags: {}", bm.tags.join(", "));
-            }
-            // Show the newly added annotation
-            let latest_ann = bm.annotations.last();
-            if let Some(ann) = latest_ann {
-                if let Some(ref note) = ann.notes {
-                    println!("  Note: {}", note);
-                }
-                if let Some(ref ctx) = ann.context {
-                    println!("  Context: {}", ctx);
-                }
-                println!("  Added by: {}", ann.added_by.as_deref().unwrap_or("unknown"));
-            }
-            // Show newly added tags
-            let added_tags: Vec<&str> = args.tag.iter().map(|t| t.as_str()).collect();
-            if !added_tags.is_empty() {
-                println!("  Tags: {}", added_tags.join(", "));
-            }
-        }
-    }
-
-    Ok(())
-}
-
-fn handle_heal(cli: &Cli, mode: &OutputMode, args: &HealArgs) -> Result<()> {
-    let db = open_db_for_write(cli)?;
-    let filter = BookmarkFilter {
-        file_path: args.file.as_ref().map(|p| p.to_string_lossy().to_string()),
-        language: args.lang.clone(),
-        status: Some(vec![BookmarkStatus::Active, BookmarkStatus::Drifted, BookmarkStatus::Stale]),
-        collection: args.collection.clone(),
-        ..Default::default()
-    };
-    let bookmarks = db.list_bookmarks(&filter)?;
-    let config = load_config(cli);
-
-    // Get current HEAD once for all bookmarks
-    let cwd = std::env::current_dir()?;
-    let current_head = git_context::detect_context(&cwd).and_then(|ctx| ctx.head_commit);
-
-    let mut updates = Vec::new();
-    let mut skipped = 0usize;
-
-    for bm in &bookmarks {
-        // Get previous resolution for location tracking
-        let previous_resolution = db.list_resolutions(&bm.id, 1).ok();
-        let previous_location = previous_resolution
-            .as_ref()
-            .and_then(|r| r.first())
-            .and_then(|r| r.byte_range.as_ref())
-            .and_then(|s| ByteLocation::from_str(s));
-
-        // Skip heal if HEAD is before latest resolution (unless --force is set)
-        if !args.force
-            && let Some(ref head) = current_head
-            && let Some(res) = previous_resolution.as_ref().and_then(|r| r.first())
-            && let Some(ref res_commit) = res.commit_hash
-        {
-            match git_context::is_ancestor(&cwd, head, res_commit) {
-                Ok(true) => {
-                    // HEAD is ancestor of resolution (resolution is ahead)
-                    skipped += 1;
-                    eprintln!(
-                        "codemark: skipping {} (resolution at {} is ahead of HEAD {})",
-                        short_id(&bm.id),
-                        &res_commit[..8.min(res_commit.len())],
-                        &head[..8.min(head.len())]
-                    );
-                    continue;
-                }
-                Ok(false) => {
-                    // HEAD is ahead or unrelated, proceed with heal
-                }
-                Err(_) => {
-                    // git error, proceed with heal (graceful degradation)
-                }
-            }
-        }
-
-        let Ok(lang) = bm.language.parse::<Language>() else {
-            continue;
-        };
-        let mut cache = ParseCache::new(lang)?;
-        let ts_lang = lang.tree_sitter_language();
-        let result = resolution::resolve(bm, &mut cache, &ts_lang, db.path())?;
-        let new_status = health::transition(bm.status, result.method, result.hash_matches);
-        let previous_status = bm.status;
-
-        let stale_since = if new_status == BookmarkStatus::Stale {
-            bm.stale_since.clone().or_else(|| Some(now_iso()))
-        } else {
-            None
-        };
-
-        // Auto-archive check
-        let final_status = if args.auto_archive
-            && new_status == BookmarkStatus::Stale
-            && bm
-                .stale_since
-                .as_deref()
-                .is_some_and(|s| health::should_auto_archive(s, args.archive_after))
-        {
-            BookmarkStatus::Archived
-        } else {
-            new_status
-        };
-
-        db.update_bookmark_status(
-            &bm.id,
-            final_status,
-            Some(result.method),
-            Some(&now_iso()),
-            stale_since.as_deref(),
-        )?;
-
-        if let Some(ref new_query) = result.new_query {
-            db.update_bookmark_query(&bm.id, new_query, &result.file_path, &result.content_hash)?;
-        }
-
-        // Track the resolution ID that was created (if any)
-        let resolution_id = if !args.validate_only {
-            let res = Resolution {
-                id: uuid::Uuid::new_v4().to_string(),
-                bookmark_id: bm.id.clone(),
-                resolved_at: now_iso(),
-                commit_hash: git_context::detect_context(&std::env::current_dir()?)
-                    .and_then(|ctx| ctx.head_commit),
-                method: result.method,
-                match_count: Some(1),
-                file_path: Some(result.file_path.clone()),
-                byte_range: Some(format!("{}-{}", result.byte_range.0, result.byte_range.1)),
-                line_range: Some(format!("{}-{}", result.start_line + 1, result.end_line + 1)),
-                content_hash: Some(result.content_hash.clone()),
-            };
-            let res_id = res.id.clone();
-            let _ = db.insert_resolution_if_changed(&res, config.storage.max_resolutions());
-            Some(res_id)
-        } else {
-            None
-        };
-
-        // Build the new location (null if failed)
-        let new_location = if result.method != ResolutionMethod::Failed {
-            Some(ByteLocation { start_byte: result.byte_range.0, end_byte: result.byte_range.1 })
-        } else {
-            None
-        };
-
-        // Generate a name for the bookmark (extract from annotations or use file)
-        let name = bm
-            .annotations
-            .first()
-            .and_then(|a| a.notes.as_deref())
-            .or_else(|| {
-                // Try to extract function name from query
-                bm.query.lines().find(|l| l.contains("#eq?")).and_then(|l| l.split('"').nth(1))
-            })
-            .unwrap_or(&bm.file_path)
-            .to_string();
-
-        updates.push(HealUpdate {
-            bookmark_id: bm.id.clone(),
-            resolution_id,
-            name,
-            file_path: bm.file_path.clone(),
-            previous_status: previous_status.to_string(),
-            new_status: final_status.to_string(),
-            resolution_method: result.method.to_string(),
-            previous_location,
-            new_location,
-        });
-    }
-
-    let total_processed = updates.len();
-    let output = HealOutput { total_processed, skipped, updates };
-
-    write_heal_output(mode, &output)?;
-    Ok(())
-}
-
-fn handle_status(cli: &Cli, mode: &OutputMode) -> Result<()> {
-    let dbs = open_all_dbs(cli)?;
-    let multi = dbs.len() > 1;
-
-    let mut total_active = 0usize;
-    let mut total_drifted = 0usize;
-    let mut total_stale = 0usize;
-    let mut total_archived = 0usize;
-
-    for (label, db) in &dbs {
-        let counts = db.count_by_status()?;
-        let a = counts.get(&BookmarkStatus::Active).copied().unwrap_or(0);
-        let d = counts.get(&BookmarkStatus::Drifted).copied().unwrap_or(0);
-        let s = counts.get(&BookmarkStatus::Stale).copied().unwrap_or(0);
-        let r = counts.get(&BookmarkStatus::Archived).copied().unwrap_or(0);
-
-        if multi {
-            match mode {
-                OutputMode::Json => {}
-                _ => {
-                    println!("[{label}] {a} active  |  {d} drifted  |  {s} stale  |  {r} archived")
-                }
-            }
-        }
-
-        total_active += a;
-        total_drifted += d;
-        total_stale += s;
-        total_archived += r;
-    }
-
-    match mode {
-        OutputMode::Json => {
-            write_json_success(&serde_json::json!({
-                "active": total_active,
-                "drifted": total_drifted,
-                "stale": total_stale,
-                "archived": total_archived,
-            }))?;
-        }
-        _ => {
-            if multi {
-                println!("---");
-            }
-            println!(
-                "{total_active} active  |  {total_drifted} drifted  |  {total_stale} stale  |  {total_archived} archived"
-            );
-        }
-    }
-    Ok(())
-}
-
-fn handle_list(cli: &Cli, mode: &OutputMode, args: &ListArgs) -> Result<()> {
     let dbs = open_all_dbs_with_extra(cli, &args.add_db)?;
     let dbs = filter_dbs_by_user_email(dbs, args.user_email.as_deref());
     let dbs = filter_dbs_by_repo_owner(dbs, args.repo_owner.as_deref());
@@ -1827,7 +1004,7 @@ fn handle_list(cli: &Cli, mode: &OutputMode, args: &ListArgs) -> Result<()> {
 
     // Check if we need line numbers
     let needs_line =
-        mode.needs_line() || args.line_format.as_deref().is_some_and(output::template_needs_line);
+        mode.needs_line() || args.line_format.as_deref().is_some_and(template_needs_line);
 
     if dbs.len() == 1 {
         let bookmarks = dbs[0].1.list_bookmarks(&filter)?;
@@ -1837,9 +1014,14 @@ fn handle_list(cli: &Cli, mode: &OutputMode, args: &ListArgs) -> Result<()> {
             // Capture both full IDs and file paths
             let bookmark_data: std::collections::HashMap<String, (String, String)> = bookmarks
                 .iter()
-                .map(|bm| (short_id(&bm.id).to_string(), (bm.id.clone(), bm.file_path.clone())))
+                .map(|bm| {
+                    (
+                        crate::cli::output::short_id(&bm.id).to_string(),
+                        (bm.id.clone(), bm.file_path.clone()),
+                    )
+                })
                 .collect();
-            output::write_bookmarks_with_line(
+            crate::cli::output::write_bookmarks_with_line(
                 mode,
                 &bookmarks,
                 args.line_format.as_deref(),
@@ -1849,7 +1031,7 @@ fn handle_list(cli: &Cli, mode: &OutputMode, args: &ListArgs) -> Result<()> {
                 },
             )?;
         } else {
-            output::write_bookmarks(mode, &bookmarks, args.line_format.as_deref())?;
+            crate::cli::output::write_bookmarks(mode, &bookmarks, args.line_format.as_deref())?;
         }
     } else {
         // Multi-database case with line number support
@@ -1864,9 +1046,12 @@ fn handle_list(cli: &Cli, mode: &OutputMode, args: &ListArgs) -> Result<()> {
                 all.push((label.clone(), bm));
             }
         }
-        let annotated: Vec<output::AnnotatedBookmark> = all
+        let annotated: Vec<crate::cli::output::AnnotatedBookmark> = all
             .iter()
-            .map(|(label, bm)| output::AnnotatedBookmark { source: label, bookmark: bm })
+            .map(|(label, bm)| crate::cli::output::AnnotatedBookmark {
+                source: label,
+                bookmark: bm,
+            })
             .collect();
 
         if needs_line {
@@ -1886,14 +1071,14 @@ fn handle_list(cli: &Cli, mode: &OutputMode, args: &ListArgs) -> Result<()> {
                 get_bookmark_line(db, full_id, file_path)
             };
 
-            output::write_annotated_bookmarks(
+            crate::cli::output::write_annotated_bookmarks(
                 mode,
                 &annotated,
                 args.line_format.as_deref(),
                 Some(&get_line_fn),
             )?;
         } else {
-            output::write_annotated_bookmarks(
+            crate::cli::output::write_annotated_bookmarks(
                 mode,
                 &annotated,
                 args.line_format.as_deref(),
@@ -1904,7 +1089,10 @@ fn handle_list(cli: &Cli, mode: &OutputMode, args: &ListArgs) -> Result<()> {
     Ok(())
 }
 
-fn handle_preview(cli: &Cli, args: &PreviewArgs) -> Result<()> {
+/// Show the current location of a bookmark (file, line, byte range).
+pub fn handle_preview(cli: &Cli, args: &PreviewArgs) -> Result<()> {
+    use crate::cli::output::ByteLocation;
+
     let dbs = open_all_dbs(cli)?;
     let id = extract_id(&args.id);
     let (bm, db) = find_bookmark_across(&dbs, id)?;
@@ -1960,8 +1148,8 @@ fn handle_preview(cli: &Cli, args: &PreviewArgs) -> Result<()> {
                     None => {
                         return Err(Error::Input(format!(
                             "bookmark {} has no resolution history; run `codemark resolve {}` first",
-                            output::short_id(&bm.id),
-                            output::short_id(&bm.id)
+                            crate::cli::output::short_id(&bm.id),
+                            crate::cli::output::short_id(&bm.id)
                         )));
                     }
                 }
@@ -2025,964 +1213,11 @@ fn handle_preview(cli: &Cli, args: &PreviewArgs) -> Result<()> {
     Ok(())
 }
 
-fn handle_search(cli: &Cli, mode: &OutputMode, args: &SearchArgs) -> Result<()> {
-    let config = load_config(cli);
-
-    // Semantic search requires a query
-    if args.semantic {
-        if !config.semantic.is_enabled() {
-            return Err(Error::Input("Semantic search is not enabled in config".to_string()));
-        }
-        let query = args
-            .query
-            .as_ref()
-            .or(args.note.as_ref())
-            .or(args.context.as_ref())
-            .ok_or_else(|| Error::Input("Semantic search requires a query".to_string()))?;
-
-        return handle_semantic_search(cli, mode, query, args);
-    }
-
-    // Regular FTS search
-    let dbs = open_all_dbs_with_extra(cli, &args.add_db)?;
-    let dbs = filter_dbs_by_user_email(dbs, args.user_email.as_deref());
-    let dbs = filter_dbs_by_repo_owner(dbs, args.repo_owner.as_deref());
-
-    if dbs.len() == 1 {
-        let bookmarks = dbs[0].1.search_bookmarks(
-            args.query.as_deref(),
-            args.note.as_deref(),
-            args.context.as_deref(),
-            args.lang.as_deref(),
-            args.author.as_deref(),
-            args.collection.as_deref(),
-        )?;
-        let db = &dbs[0].1;
-
-        // Check if we need line numbers
-        let needs_line = mode.needs_line()
-            || args.line_format.as_deref().is_some_and(output::template_needs_line);
-
-        if needs_line {
-            let get_line_fn = |short_id: &str| -> Option<usize> {
-                for bm in &bookmarks {
-                    if output::short_id(&bm.id) == short_id {
-                        return get_bookmark_line(db, &bm.id, &bm.file_path);
-                    }
-                }
-                None
-            };
-
-            output::write_bookmarks_with_line(
-                mode,
-                &bookmarks,
-                args.line_format.as_deref(),
-                get_line_fn,
-            )?;
-        } else {
-            output::write_bookmarks(mode, &bookmarks, args.line_format.as_deref())?;
-        }
-    } else {
-        let mut all = Vec::new();
-        // Keep track of which database each bookmark belongs to for line resolution
-        let mut db_map: std::collections::HashMap<String, &Database> =
-            std::collections::HashMap::new();
-
-        for (label, db) in &dbs {
-            db_map.insert(label.clone(), db);
-            let bookmarks = db.search_bookmarks(
-                args.query.as_deref(),
-                args.note.as_deref(),
-                args.context.as_deref(),
-                args.lang.as_deref(),
-                args.author.as_deref(),
-                args.collection.as_deref(),
-            )?;
-            for bm in bookmarks {
-                all.push((label.clone(), bm));
-            }
-        }
-        let annotated: Vec<output::AnnotatedBookmark> = all
-            .iter()
-            .map(|(label, bm)| output::AnnotatedBookmark { source: label, bookmark: bm })
-            .collect();
-
-        // Check if we need line numbers
-        let needs_line = mode.needs_line()
-            || args.line_format.as_deref().is_some_and(output::template_needs_line);
-
-        if needs_line {
-            let bookmark_data: std::collections::HashMap<String, (String, String, String)> = all
-                .iter()
-                .map(|(label, bm)| {
-                    (
-                        output::short_id(&bm.id).to_string(),
-                        (label.clone(), bm.id.clone(), bm.file_path.clone()),
-                    )
-                })
-                .collect();
-
-            let get_line_fn = |short_id: &str| -> Option<usize> {
-                let (label, full_id, file_path) = bookmark_data.get(short_id)?;
-                let db = db_map.get(label)?;
-                get_bookmark_line(db, full_id, file_path)
-            };
-
-            output::write_annotated_bookmarks(
-                mode,
-                &annotated,
-                args.line_format.as_deref(),
-                Some(&get_line_fn),
-            )?;
-        } else {
-            output::write_annotated_bookmarks(
-                mode,
-                &annotated,
-                args.line_format.as_deref(),
-                None as Option<&fn(&str) -> Option<usize>>,
-            )?;
-        }
-    }
-    Ok(())
-}
-
-/// Handle semantic search using vector embeddings.
-fn handle_semantic_search(
-    cli: &Cli,
-    mode: &OutputMode,
-    query: &str,
-    args: &SearchArgs,
-) -> Result<()> {
-    use crate::embeddings::config::EmbeddingModel;
-    use crate::storage::SemanticRepo;
-
-    let db = open_db(cli)?;
-    let config = load_config(cli);
-
-    // Parse model from config
-    let model = config
-        .semantic
-        .model
-        .as_deref()
-        .and_then(|m| m.parse::<EmbeddingModel>().ok())
-        .unwrap_or(EmbeddingModel::AllMiniLmL6V2);
-
-    // Get distance metric and threshold from config
-    let distance_metric = config.semantic.get_distance_metric();
-    let threshold = config.semantic.threshold;
-
-    // Get models directory from config (defaults to global cache)
-    let models_dir = config.semantic.get_models_dir();
-
-    let semantic_repo = SemanticRepo::with_config(models_dir, model, distance_metric, threshold);
-
-    // Perform semantic search
-    let results = semantic_repo.search(db.conn(), query, args.limit)?;
-
-    // Fetch full bookmark details for results
-    let mut bookmarks = Vec::new();
-    for result in results {
-        if let Ok(Some(bm)) = db.get_bookmark(&result.bookmark_id) {
-            bookmarks.push((result.distance, bm));
-        }
-    }
-
-    // Output results
-    if matches!(mode, OutputMode::Json) {
-        let data: Vec<serde_json::Value> = bookmarks
-            .into_iter()
-            .map(|(distance, bm)| {
-                // Collect all annotations for JSON output
-                let annotations: Vec<&Annotation> = bm.annotations.iter().collect();
-                serde_json::json!({
-                    "id": bm.id,
-                    "short_id": short_id(&bm.id),
-                    "query": bm.query,
-                    "language": bm.language,
-                    "file_path": bm.file_path,
-                    "status": bm.status,
-                    "tags": bm.tags,
-                    "annotations": annotations,
-                    "created_at": bm.created_at,
-                    "created_by": bm.created_by,
-                    "distance": distance,
-                })
-            })
-            .collect();
-        output::write_json_success(&data)?;
-    } else {
-        // For non-JSON modes, use standard bookmark output functions
-        let bookmarks_only: Vec<Bookmark> = bookmarks.iter().map(|(_, bm)| bm.clone()).collect();
-
-        // Check if we need line numbers
-        let needs_line = mode.needs_line()
-            || args.line_format.as_deref().is_some_and(output::template_needs_line);
-
-        if needs_line {
-            let get_line_fn = |short_id: &str| -> Option<usize> {
-                for bm in &bookmarks_only {
-                    if output::short_id(&bm.id) == short_id {
-                        return get_bookmark_line(&db, &bm.id, &bm.file_path);
-                    }
-                }
-                None
-            };
-
-            output::write_bookmarks_with_line(
-                mode,
-                &bookmarks_only,
-                args.line_format.as_deref(),
-                get_line_fn,
-            )?;
-        } else {
-            output::write_bookmarks(mode, &bookmarks_only, args.line_format.as_deref())?;
-        }
-    }
-
-    Ok(())
-}
-
-/// Handle reindex command to rebuild embeddings.
-fn handle_reindex(cli: &Cli, mode: &OutputMode, args: &ReindexArgs) -> Result<()> {
-    use crate::embeddings::config::EmbeddingModel;
-    use crate::storage::SemanticRepo;
-
-    let config = load_config(cli);
-    if !config.semantic.is_enabled() {
-        return Err(Error::Input("Semantic search is not enabled in config".to_string()));
-    }
-
-    let mut db = open_db(cli)?;
-
-    // Parse model from config
-    let model = config
-        .semantic
-        .model
-        .as_deref()
-        .and_then(|m| m.parse::<EmbeddingModel>().ok())
-        .unwrap_or(EmbeddingModel::AllMiniLmL6V2);
-
-    // Get distance metric and threshold from config
-    let distance_metric = config.semantic.get_distance_metric();
-    let threshold = config.semantic.threshold;
-
-    // Get models directory from config (defaults to global cache)
-    let models_dir = config.semantic.get_models_dir();
-
-    let semantic_repo = SemanticRepo::with_config(models_dir, model, distance_metric, threshold);
-
-    // Get bookmarks to reindex
-    let filter = BookmarkFilter {
-        language: args.lang.as_deref().map(|l| l.to_string()),
-        collection: args.collection.as_deref().map(|c| c.to_string()),
-        ..Default::default()
-    };
-
-    let bookmarks = db.list_bookmarks(&filter)?;
-
-    if bookmarks.is_empty() {
-        write_success(mode, "No bookmarks to reindex")?;
-        return Ok(());
-    }
-
-    if args.verbose {
-        eprintln!("Reindexing {} bookmarks...", bookmarks.len());
-    }
-
-    // Store embeddings
-    let count = {
-        let conn = db.conn_mut();
-        semantic_repo.store_embeddings(conn, &bookmarks)
-    }?;
-
-    let message = format!("Generated embeddings for {count} bookmarks");
-    write_success(mode, &message)?;
-
-    Ok(())
-}
-
-fn handle_diff(cli: &Cli, mode: &OutputMode, args: &DiffArgs) -> Result<()> {
-    let db = open_db(cli)?;
-    let cwd = std::env::current_dir()?;
-
-    let since = args.since.as_deref().unwrap_or("HEAD~1");
-
-    let changed_files = git_context::changed_files_since(&cwd, since)?;
-    if changed_files.is_empty() {
-        write_success(mode, "No files changed.")?;
-        return Ok(());
-    }
-
-    // Find bookmarks that reference changed files
-    let all_bookmarks = db.list_bookmarks(&BookmarkFilter {
-        status: Some(vec![BookmarkStatus::Active, BookmarkStatus::Drifted, BookmarkStatus::Stale]),
-        ..Default::default()
-    })?;
-
-    let affected: Vec<&Bookmark> =
-        all_bookmarks.iter().filter(|bm| changed_files.contains(&bm.file_path)).collect();
-
-    if affected.is_empty() {
-        write_success(
-            mode,
-            &format!("{} files changed since {since}, no bookmarks affected.", changed_files.len()),
-        )?;
-        return Ok(());
-    }
-
-    // Resolve affected bookmarks and report
-    match mode {
-        OutputMode::Json => {
-            let mut results = Vec::new();
-            for bm in &affected {
-                let Ok(lang) = bm.language.parse::<Language>() else { continue };
-                let mut cache = ParseCache::new(lang)?;
-                let ts_lang = lang.tree_sitter_language();
-                let result = resolution::resolve(bm, &mut cache, &ts_lang, db.path())?;
-                let new_status = health::transition(bm.status, result.method, result.hash_matches);
-                results.push(serde_json::json!({
-                    "id": bm.id,
-                    "file": bm.file_path,
-                    "status_before": bm.status.to_string(),
-                    "status_after": new_status.to_string(),
-                    "method": result.method.to_string(),
-                    "line": result.start_line + 1,
-                }));
-            }
-            write_json_success(&results)?;
-        }
-        _ => {
-            println!(
-                "{} files changed since {since}, {} bookmarks affected:\n",
-                changed_files.len(),
-                affected.len()
-            );
-            for bm in &affected {
-                let Ok(lang) = bm.language.parse::<Language>() else { continue };
-                let mut cache = ParseCache::new(lang)?;
-                let ts_lang = lang.tree_sitter_language();
-                let result = resolution::resolve(bm, &mut cache, &ts_lang, db.path())?;
-                let new_status = health::transition(bm.status, result.method, result.hash_matches);
-                let status_change = if new_status != bm.status {
-                    format!("{} -> {}", bm.status, new_status)
-                } else {
-                    new_status.to_string()
-                };
-                println!(
-                    "  {}  {}:{}  [{}]  {}",
-                    output::short_id(&bm.id),
-                    result.file_path,
-                    result.start_line + 1,
-                    result.method,
-                    status_change
-                );
-                // Display first annotation's notes if available
-                if let Some(ann) = bm.annotations.first()
-                    && let Some(ref note) = ann.notes
-                {
-                    println!("    {note}");
-                }
-            }
-        }
-    }
-    Ok(())
-}
-
-fn handle_gc(cli: &Cli, mode: &OutputMode, args: &GcArgs) -> Result<()> {
-    let db = open_db_for_write(cli)?;
-    let days = parse_duration_days(&args.older_than)?;
-    let cutoff = chrono::Utc::now() - chrono::Duration::days(days);
-    let cutoff_str = cutoff.format("%Y-%m-%dT%H:%M:%SZ").to_string();
-
-    if args.dry_run {
-        let filter =
-            BookmarkFilter { status: Some(vec![BookmarkStatus::Archived]), ..Default::default() };
-        let bookmarks = db.list_bookmarks(&filter)?;
-        let would_remove: Vec<_> = bookmarks.iter().filter(|b| b.created_at < cutoff_str).collect();
-        write_success(mode, &format!("Would remove {} archived bookmarks", would_remove.len()))?;
-    } else {
-        let count = db.delete_archived_before(&cutoff_str)?;
-        write_success(mode, &format!("Removed {count} archived bookmarks"))?;
-    }
-    Ok(())
-}
-
-fn handle_export(cli: &Cli, args: &ExportArgs) -> Result<()> {
-    let dbs = open_all_dbs(cli)?;
-    let filter = BookmarkFilter {
-        tag: args.tag.clone(),
-        status: parse_status_filter(args.status.as_deref()),
-        ..Default::default()
-    };
-    let mut bookmarks = Vec::new();
-    for (_label, db) in &dbs {
-        bookmarks.extend(db.list_bookmarks(&filter)?);
-    }
-
-    match args.export_format {
-        ExportFormat::Json => {
-            let json = serde_json::to_string_pretty(&bookmarks)?;
-            println!("{json}");
-        }
-        ExportFormat::Csv => {
-            println!("id,file_path,language,status,tags,notes");
-            for bm in &bookmarks {
-                // For CSV, we use the first annotation's notes
-                let notes = bm.annotations.first().and_then(|a| a.notes.as_deref()).unwrap_or("");
-                println!(
-                    "{},{},{},{},{},{}",
-                    bm.id,
-                    bm.file_path,
-                    bm.language,
-                    bm.status,
-                    serde_json::to_string(&bm.tags).unwrap_or_else(|_| "[]".to_string()),
-                    notes
-                );
-            }
-        }
-    }
-    Ok(())
-}
-
-fn handle_import(cli: &Cli, mode: &OutputMode, args: &ImportArgs) -> Result<()> {
-    let mut db = open_db_for_write(cli)?;
-    let content = std::fs::read_to_string(&args.file)
-        .map_err(|e| Error::Input(format!("cannot read {}: {e}", args.file.display())))?;
-    let bookmarks: Vec<Bookmark> = serde_json::from_str(&content)?;
-
-    let mut imported = 0;
-    let mut skipped = 0;
-    let mut imported_bookmarks = Vec::new();
-    for bm in &bookmarks {
-        if db.get_bookmark(&bm.id)?.is_some() {
-            skipped += 1;
-        } else {
-            // Insert the bookmark (without annotations/tags in the main table)
-            let bookmark_id = db.insert_bookmark(bm)?;
-
-            // Insert annotations if present
-            for ann in &bm.annotations {
-                let mut new_ann = ann.clone();
-                new_ann.bookmark_id = bookmark_id.clone();
-                db.insert_annotation(&new_ann)?;
-            }
-
-            // Insert tags if present
-            if !bm.tags.is_empty() {
-                let tags: Vec<Tag> = bm
-                    .tags
-                    .iter()
-                    .map(|t| Tag {
-                        bookmark_id: bookmark_id.clone(),
-                        tag: t.clone(),
-                        added_at: now_iso(),
-                        added_by: bm.created_by.clone(),
-                    })
-                    .collect();
-                db.insert_tags(&tags)?;
-            }
-
-            // Fetch the full bookmark with metadata for embedding generation
-            if let Ok(Some(full_bm)) = db.get_bookmark(&bookmark_id) {
-                imported_bookmarks.push(full_bm);
-            }
-
-            imported += 1;
-        }
-    }
-
-    // Generate embeddings for imported bookmarks (if semantic search is enabled)
-    if !imported_bookmarks.is_empty() {
-        let config = load_config(cli);
-        if config.semantic.is_enabled() {
-            let models_dir = config.semantic.get_models_dir();
-
-            let model = config
-                .semantic
-                .model
-                .as_deref()
-                .and_then(|m| m.parse::<EmbeddingModel>().ok())
-                .unwrap_or(EmbeddingModel::AllMiniLmL6V2);
-
-            let distance_metric = config.semantic.get_distance_metric();
-            let threshold = config.semantic.threshold;
-
-            let semantic_repo =
-                SemanticRepo::with_config(models_dir, model, distance_metric, threshold);
-            let conn = db.conn_mut();
-            // Ignore errors - embedding generation failure shouldn't block import
-            let _ = semantic_repo.store_embeddings(conn, &imported_bookmarks);
-        }
-    }
-
-    write_success(mode, &format!("Imported {imported} bookmarks ({skipped} duplicates skipped)"))?;
-    Ok(())
-}
-
-fn handle_completions(args: &CompletionsArgs) -> Result<()> {
-    let mut cmd = Cli::command();
-    generate(args.shell, &mut cmd, "codemark", &mut io::stdout());
-    Ok(())
-}
-
-// --- Collection handlers ---
-
-fn handle_collection_create(
-    cli: &Cli,
-    mode: &OutputMode,
-    args: &CollectionCreateArgs,
-) -> Result<()> {
-    let db = open_db_for_write(cli)?;
-    let collection = Collection {
-        id: uuid::Uuid::new_v4().to_string(),
-        name: args.name.clone(),
-        description: args.description.clone(),
-        created_at: now_iso(),
-        created_by: None,
-    };
-    db.insert_collection(&collection)?;
-    write_success(mode, &format!("Collection '{}' created", args.name))?;
-    Ok(())
-}
-
-fn handle_collection_delete(
-    cli: &Cli,
-    mode: &OutputMode,
-    args: &CollectionDeleteArgs,
-) -> Result<()> {
-    let mut db = open_db_for_write(cli)?;
-    // Try by name first, then by ID prefix
-    let collection = if let Some(c) = db.get_collection_by_name(&args.name)? {
-        c
-    } else {
-        db.get_collection_by_id_prefix(&args.name)?
-            .ok_or_else(|| Error::Input(format!("collection '{}' not found", args.name)))?
-    };
-
-    if args.with_bookmarks {
-        let bm_count = db.delete_collection_recursive(&collection.id)?;
-        write_success(
-            mode,
-            &format!("Collection '{}' and its {bm_count} bookmarks deleted", collection.name),
-        )?;
-    } else {
-        let count = db.delete_collection_by_id(&collection.id)?;
-        write_success(
-            mode,
-            &format!("Collection '{}' deleted ({count} bookmarks were in it)", collection.name),
-        )?;
-    }
-
-    Ok(())
-}
-
-fn handle_collection_add(cli: &Cli, mode: &OutputMode, args: &CollectionAddArgs) -> Result<()> {
-    let db = open_db_for_write(cli)?;
-    // Auto-create collection if it doesn't exist
-    let collection = match db.get_collection_by_name(&args.name)? {
-        Some(c) => c,
-        None => {
-            let c = Collection {
-                id: uuid::Uuid::new_v4().to_string(),
-                name: args.name.clone(),
-                description: None,
-                created_at: now_iso(),
-                created_by: None,
-            };
-            db.insert_collection(&c)?;
-            c
-        }
-    };
-    let added = db.add_to_collection_at(&collection.id, &args.bookmark_ids, args.at)?;
-    write_success(mode, &format!("Added {added} bookmarks to '{}'", args.name))?;
-    Ok(())
-}
-
-fn handle_collection_reorder(
-    cli: &Cli,
-    mode: &OutputMode,
-    args: &CollectionReorderArgs,
-) -> Result<()> {
-    let db = open_db_for_write(cli)?;
-    // Try by name first, then by ID prefix
-    let collection = if let Some(c) = db.get_collection_by_name(&args.name)? {
-        c
-    } else {
-        db.get_collection_by_id_prefix(&args.name)?
-            .ok_or_else(|| Error::Input(format!("collection '{}' not found", args.name)))?
-    };
-
-    db.reorder_collection(&collection.id, &args.bookmark_ids)?;
-    write_success(
-        mode,
-        &format!("Reordered {} bookmarks in '{}'", args.bookmark_ids.len(), collection.name),
-    )?;
-    Ok(())
-}
-
-fn handle_collection_remove(
-    cli: &Cli,
-    mode: &OutputMode,
-    args: &CollectionRemoveArgs,
-) -> Result<()> {
-    let db = open_db_for_write(cli)?;
-    // Try by name first, then by ID prefix
-    let collection = if let Some(c) = db.get_collection_by_name(&args.name)? {
-        c
-    } else {
-        db.get_collection_by_id_prefix(&args.name)?
-            .ok_or_else(|| Error::Input(format!("collection '{}' not found", args.name)))?
-    };
-
-    let removed = db.remove_from_collection(&collection.id, &args.bookmark_ids)?;
-    write_success(mode, &format!("Removed {removed} bookmarks from '{}'", collection.name))?;
-    Ok(())
-}
-
-fn handle_collection_list(cli: &Cli, mode: &OutputMode, args: &CollectionListArgs) -> Result<()> {
-    let db = open_db(cli)?;
-
-    if let Some(ref bookmark_id) = args.bookmark {
-        let bm = find_bookmark(&db, bookmark_id)?;
-        let collections = db.list_collections_for_bookmark(&bm.id)?;
-
-        // Custom line format for bookmark's collections
-        if let Some(ref template) = args.line_format {
-            let mut stdout = io::stdout().lock();
-            for c in &collections {
-                let short_id = output::short_id(&c.id);
-                let line = template
-                    .replace("{ID}", short_id)
-                    .replace("{id}", short_id)
-                    .replace("{NAME}", &c.name)
-                    .replace("{name}", &c.name)
-                    .replace("{DESCRIPTION}", c.description.as_deref().unwrap_or(""))
-                    .replace("{description}", c.description.as_deref().unwrap_or(""))
-                    .replace("{CREATED}", &c.created_at)
-                    .replace("{created}", &c.created_at);
-                writeln!(stdout, "{line}")?;
-            }
-            return Ok(());
-        }
-
-        match mode {
-            OutputMode::Json => write_json_success(&collections)?,
-            OutputMode::Table => {
-                let mut table = comfy_table::Table::new();
-                table.set_header(vec!["Name", "Description", "Created"]);
-                for c in &collections {
-                    table.add_row(vec![
-                        &c.name,
-                        c.description.as_deref().unwrap_or(""),
-                        &c.created_at,
-                    ]);
-                }
-                println!("{table}");
-            }
-            _ => {
-                let mut stdout = io::stdout().lock();
-                for c in &collections {
-                    writeln!(stdout, "{}\t{}", c.name, c.description.as_deref().unwrap_or(""))?;
-                }
-            }
-        }
-    } else {
-        let collections = db.list_collections()?;
-
-        // Custom line format for collections with counts
-        if let Some(ref template) = args.line_format {
-            let mut stdout = io::stdout().lock();
-            for (c, count) in &collections {
-                let short_id = output::short_id(&c.id);
-                let line = template
-                    .replace("{ID}", short_id)
-                    .replace("{id}", short_id)
-                    .replace("{NAME}", &c.name)
-                    .replace("{name}", &c.name)
-                    .replace("{COUNT}", &count.to_string())
-                    .replace("{count}", &count.to_string())
-                    .replace("{DESCRIPTION}", c.description.as_deref().unwrap_or(""))
-                    .replace("{description}", c.description.as_deref().unwrap_or(""))
-                    .replace("{CREATED}", &c.created_at)
-                    .replace("{created}", &c.created_at);
-                writeln!(stdout, "{line}")?;
-            }
-            return Ok(());
-        }
-
-        match mode {
-            OutputMode::Json => {
-                let with_counts: Vec<CollectionWithCount> =
-                    collections.iter().map(CollectionWithCount::from).collect();
-                write_json_success(&with_counts)?
-            }
-            OutputMode::Table => {
-                let mut table = comfy_table::Table::new();
-                table.set_header(vec!["Name", "Bookmarks", "Description", "Created"]);
-                for (c, count) in &collections {
-                    table.add_row(vec![
-                        c.name.clone(),
-                        count.to_string(),
-                        c.description.clone().unwrap_or_default(),
-                        c.created_at.clone(),
-                    ]);
-                }
-                println!("{table}");
-            }
-            _ => {
-                let mut stdout = io::stdout().lock();
-                for (c, count) in &collections {
-                    writeln!(
-                        stdout,
-                        "{}\t{}\t{}",
-                        c.name,
-                        count,
-                        c.description.as_deref().unwrap_or("")
-                    )?;
-                }
-            }
-        }
-    }
-    Ok(())
-}
-
-fn handle_collection_show(cli: &Cli, mode: &OutputMode, args: &CollectionShowArgs) -> Result<()> {
-    let db = open_db(cli)?;
-    // Try by name first, then by ID prefix
-    let collection = if let Some(c) = db.get_collection_by_name(&args.name)? {
-        c
-    } else {
-        db.get_collection_by_id_prefix(&args.name)?
-            .ok_or_else(|| Error::Input(format!("collection '{}' not found", args.name)))?
-    };
-
-    let filter = BookmarkFilter { collection_id: Some(collection.id), ..Default::default() };
-    let bookmarks = db.list_bookmarks(&filter)?;
-    output::write_bookmarks(mode, &bookmarks, None)?;
-    Ok(())
-}
-
-fn handle_collection_resolve(
-    cli: &Cli,
-    mode: &OutputMode,
-    args: &CollectionResolveArgs,
-) -> Result<()> {
-    let db = open_db_for_write(cli)?;
-    // Try by name first, then by ID prefix
-    let collection = if let Some(c) = db.get_collection_by_name(&args.name)? {
-        c
-    } else {
-        db.get_collection_by_id_prefix(&args.name)?
-            .ok_or_else(|| Error::Input(format!("collection '{}' not found", args.name)))?
-    };
-
-    let filter = BookmarkFilter {
-        collection_id: Some(collection.id),
-        status: Some(vec![BookmarkStatus::Active, BookmarkStatus::Drifted]),
-        ..Default::default()
-    };
-    let bookmarks = db.list_bookmarks(&filter)?;
-    let config = load_config(cli);
-    resolve_batch(mode, &db, &bookmarks, &config, false)?;
-    Ok(())
-}
-
-// --- Shared helpers ---
-
-/// Add a bookmark to a collection, auto-creating the collection if it doesn't exist.
-/// Returns the collection name if the bookmark was added, None otherwise.
-fn add_bookmark_to_collection(
-    db: &Database,
-    bookmark_id: &str,
-    collection_name: &str,
-) -> Result<Option<String>> {
-    // Auto-create collection if it doesn't exist (same logic as handle_collection_add)
-    let collection = match db.get_collection_by_name(collection_name)? {
-        Some(c) => c,
-        None => {
-            let c = Collection {
-                id: uuid::Uuid::new_v4().to_string(),
-                name: collection_name.to_string(),
-                description: None,
-                created_at: now_iso(),
-                created_by: None,
-            };
-            db.insert_collection(&c)?;
-            c
-        }
-    };
-    db.add_to_collection(&collection.id, &[bookmark_id.to_string()])?;
-    Ok(Some(collection_name.to_string()))
-}
-
-// --- Shared helpers ---
-
-fn resolve_batch(
-    mode: &OutputMode,
-    db: &Database,
-    bookmarks: &[Bookmark],
-    config: &Config,
-    dry_run: bool,
-) -> Result<()> {
-    let mut results = Vec::new();
-
-    for bm in bookmarks {
-        let Ok(lang) = bm.language.parse::<Language>() else {
-            continue;
-        };
-        let mut cache = ParseCache::new(lang)?;
-        let ts_lang = lang.tree_sitter_language();
-        let result = resolution::resolve(bm, &mut cache, &ts_lang, db.path())?;
-        let new_status = health::transition(bm.status, result.method, result.hash_matches);
-
-        // In dry-run mode, skip database updates
-        if dry_run {
-            write_resolution_output(mode, bm, &result, db.path())?;
-            continue;
-        }
-
-        let stale_since = if new_status == BookmarkStatus::Stale {
-            bm.stale_since.clone().or_else(|| Some(now_iso()))
-        } else {
-            None
-        };
-
-        db.update_bookmark_status(
-            &bm.id,
-            new_status,
-            Some(result.method),
-            Some(&now_iso()),
-            stale_since.as_deref(),
-        )?;
-
-        if let Some(ref new_query) = result.new_query {
-            db.update_bookmark_query(&bm.id, new_query, &result.file_path, &result.content_hash)?;
-        }
-
-        // Record resolution history (deduped)
-        let res = Resolution {
-            id: uuid::Uuid::new_v4().to_string(),
-            bookmark_id: bm.id.clone(),
-            resolved_at: now_iso(),
-            commit_hash: git_context::detect_context(&std::env::current_dir()?)
-                .and_then(|ctx| ctx.head_commit),
-            method: result.method,
-            match_count: Some(1),
-            file_path: Some(result.file_path.clone()),
-            byte_range: Some(format!("{}-{}", result.byte_range.0, result.byte_range.1)),
-            line_range: Some(format!("{}-{}", result.start_line + 1, result.end_line + 1)),
-            content_hash: Some(result.content_hash.clone()),
-        };
-        let _ = db.insert_resolution_if_changed(&res, config.storage.max_resolutions());
-
-        // Resolve relative path to absolute for output
-        let absolute_path = git_context::resolve_bookmark_file_path(&result.file_path, db.path())
-            .unwrap_or_else(|_| std::path::PathBuf::from(&result.file_path));
-
-        results.push(serde_json::json!({
-            "id": output::short_id(&bm.id),
-            "file": absolute_path.to_string_lossy(),
-            "line": result.start_line + 1,
-            "method": result.method.to_string(),
-            "status": new_status.to_string(),
-        }));
-    }
-
-    match mode {
-        OutputMode::Json => write_json_success(&results)?,
-        OutputMode::Table => {
-            let mut table = comfy_table::Table::new();
-            table.set_header(vec!["ID", "File", "Line", "Method", "Status"]);
-            for r in &results {
-                table.add_row(vec![
-                    r["id"].as_str().unwrap_or(""),
-                    r["file"].as_str().unwrap_or(""),
-                    &r["line"].to_string(),
-                    r["method"].as_str().unwrap_or(""),
-                    r["status"].as_str().unwrap_or(""),
-                ]);
-            }
-            println!("{table}");
-        }
-        _ => {
-            let mut stdout = io::stdout().lock();
-            for r in &results {
-                writeln!(
-                    stdout,
-                    "{}\t{}:{}\t{}\t{}",
-                    r["id"].as_str().unwrap_or(""),
-                    r["file"].as_str().unwrap_or(""),
-                    r["line"],
-                    r["method"].as_str().unwrap_or(""),
-                    r["status"].as_str().unwrap_or(""),
-                )?;
-            }
-        }
-    }
-    Ok(())
-}
-
-fn write_resolution_output(
-    mode: &OutputMode,
-    bm: &Bookmark,
-    result: &resolution::ResolutionResult,
-    db_path: &std::path::Path,
-) -> Result<()> {
-    // Get first annotation's note for display
-    let note = bm.annotations.first().and_then(|a| a.notes.as_deref());
-
-    // Resolve relative path to absolute for output
-    let absolute_path = git_context::resolve_bookmark_file_path(&result.file_path, db_path)?;
-    let absolute_path_str = absolute_path.to_string_lossy();
-
-    match mode {
-        OutputMode::Json => {
-            write_json_success(&serde_json::json!({
-                "id": bm.id,
-                "file": absolute_path_str,
-                "line": result.start_line + 1,
-                "column": result.start_col,
-                "byte_range": format!("{}-{}", result.byte_range.0, result.byte_range.1),
-                "line_range": format!("{}-{}", result.start_line + 1, result.end_line + 1),
-                "line_range_colon": format!("{}:{}", result.start_line + 1, result.end_line + 1),
-                "method": result.method.to_string(),
-                "status": health::transition(bm.status, result.method, result.hash_matches).to_string(),
-                "preview": result.matched_text.lines().next().unwrap_or(""),
-                "note": note,
-                "tags": bm.tags,
-            }))?;
-        }
-        OutputMode::Line => {
-            let mut stdout = io::stdout().lock();
-            writeln!(
-                stdout,
-                "{}\t{}:{}\t{}\t{}\t{}",
-                output::short_id(&bm.id),
-                absolute_path_str,
-                result.start_line + 1,
-                result.method,
-                bm.tags.join(","),
-                note.unwrap_or("")
-            )?;
-        }
-        _ => {
-            println!(
-                "{}  {}:{}  [{}]",
-                output::short_id(&bm.id),
-                absolute_path_str,
-                result.start_line + 1,
-                result.method
-            );
-            if let Some(preview) = result.matched_text.lines().next() {
-                println!("  {preview}");
-            }
-        }
-    }
-    Ok(())
-}
-
 /// Open a bookmarked file in the configured editor.
-fn handle_open(cli: &Cli, args: &OpenArgs) -> Result<()> {
+pub fn handle_open(cli: &Cli, args: &OpenArgs) -> Result<()> {
+    use crate::cli::output::short_id;
+    use crate::parser::languages::ParseCache;
+
     let db = open_db(cli)?;
     let config = load_config(cli);
 
@@ -3100,20 +1335,4 @@ fn handle_open(cli: &Cli, args: &OpenArgs) -> Result<()> {
     }
 
     Ok(())
-}
-
-fn parse_duration_days(duration: &str) -> Result<i64> {
-    let s = duration.trim();
-    if let Some(d) = s.strip_suffix('d') {
-        return d.parse().map_err(|_| Error::Input("invalid duration".into()));
-    }
-    if let Some(w) = s.strip_suffix('w') {
-        let weeks: i64 = w.parse().map_err(|_| Error::Input("invalid duration".into()))?;
-        return Ok(weeks * 7);
-    }
-    if let Some(m) = s.strip_suffix('m') {
-        let months: i64 = m.parse().map_err(|_| Error::Input("invalid duration".into()))?;
-        return Ok(months * 30);
-    }
-    Err(Error::Input("duration must end with d, w, or m (e.g., 30d, 2w, 6m)".into()))
 }
