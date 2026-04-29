@@ -94,7 +94,7 @@ codemark search "middleware" --tag layer:api --status active
 - **Collections** group related bookmarks (one per feature, bugfix, or investigation).
 - **Status**: active (healthy), drifted (found but moved), stale (lost), archived (cleaned up).
 - **Author**: bookmarks track who created them (`--created-by agent` vs default `user`).
-- **Annotations**: bookmarks can have multiple annotations (notes, context) added by different agents over time, with provenance tracking.
+- **Annotations**: bookmarks can have multiple annotations (notes, context) added by different agents over time, with provenance tracking. Use `--note` multiple times to add several notes at once.
 
 ## Tag Taxonomy
 
@@ -247,17 +247,20 @@ codemark add --file internal/auth/handler.go --range 25 --note "HTTP handler for
 ## Quick Start
 
 ### Creating a collection of bookmarks (recommended for agents)
-Use `--collection` when creating bookmarks to add them directly to a collection. **Always prefer range-based targeting** as the first resource:
+Use `--collection` when creating bookmarks to add them directly to a collection. **Always prefer range-based targeting** as the first resource. You can add multiple notes using `--note` multiple times:
 
 ```bash
 # 1. Preferred: Range-based targeting (Line or Point)
-codemark add --file src/auth.rs --range 42 --note "Core auth entry point" --collection login-flow
+codemark add --file src/auth.rs --range 42 --note "Core auth entry point" --note "Handles JWT validation" --collection login-flow
 
 # 2. Alternative: Snippet-based (if range is unknown)
-echo "func validateToken" | codemark add-from-snippet --file src/auth.swift --collection login-flow
+echo "func validateToken" | codemark add-from-snippet --file src/auth.swift --note "Validates JWT tokens" --note "Critical for security" --collection login-flow
 
 # 3. Last Resort: Raw tree-sitter query (for extreme precision/disambiguation)
-codemark add-from-query --file src/auth.swift --query '(function_declaration) @target' --collection login-flow
+codemark add-from-query --file src/auth.swift --query '(function_declaration) @target' --note "Token validation function" --note "Called by middleware" --collection login-flow
+
+# With context attached to first note
+codemark add --file src/auth.rs --range 42 --note "Auth entry point" --context "Part of login refactor" --note "Needs review" --collection login-flow
 
 codemark collection show login-flow
 ```
@@ -324,8 +327,11 @@ For common query patterns across languages, see:
 # By range (line or byte) — optionally add to collection
 codemark add --file src/auth.rs --range 42-67 --collection my-work
 
+# With multiple notes (each creates a separate annotation entry)
+codemark add --file src/auth.rs --range 42-67 --note "Primary observation" --note "Secondary note" --note "Action item" --collection my-work
+
 # By code snippet (searches for snippet in file) — optionally add to collection
-codemark add-from-snippet --file src/auth.rs --collection my-work
+codemark add-from-snippet --file src/auth.rs --note "Found this function" --note "Needs refactoring" --collection my-work
 
 # By raw tree-sitter query (most precise) — optionally add to collection
 codemark add-from-query --file src/auth.rs --query '(function_declaration) @target' --collection my-work
@@ -374,6 +380,10 @@ codemark diff --since HEAD~3
 codemark annotate <bookmark-id> --note "Additional context discovered during implementation"
 codemark annotate <bookmark-id> --context "Related to auth-refactor feature"
 codemark annotate <bookmark-id> --tag bug-fix --tag priority:high
+
+# Add multiple notes at once (each --note creates a separate annotation)
+codemark annotate <bookmark-id> --note "First observation" --note "Second observation" --note "Third insight"
+codemark annotate <bookmark-id> --note "Performance concern" --context "Investigation details" --note "Follow-up needed"
 
 # Add annotation as an agent with provenance
 codemark annotate <bookmark-id> --note "Found this during debugging the session timeout issue" --added-by agent --source investigation
