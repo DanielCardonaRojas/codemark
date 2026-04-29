@@ -26,10 +26,10 @@ Focus on *why* the code matters and its relationships. Avoid repeating informati
 ### 3. Add the bookmark with tags and multiple notes
 ```bash
 # Single note
-codemark add --file src/auth.rs --range 42 --note "Core auth validator. entry point for all signed requests. Relationships: depends on Claims struct." --tag feature:auth --tag role:entrypoint --tag layer:logic --created-by agent
+codemark add --file src/auth.rs --range 42 --note "Core auth validator. entry point for all signed requests. Relationships: depends on Claims struct." --tag feature:auth --tag role:entrypoint --tag layer:business --created-by agent
 
 # Multiple notes (each creates a separate annotation entry)
-codemark add --file src/auth.rs --range 42 --note "Core auth validator. entry point for all signed requests." --note "Relationships: depends on Claims struct." --note "Performance: O(1) cache hit rate" --tag feature:auth --tag role:entrypoint --tag layer:logic --created-by agent
+codemark add --file src/auth.rs --range 42 --note "Core auth validator. entry point for all signed requests." --note "Relationships: depends on Claims struct." --note "Performance: O(1) cache hit rate" --tag feature:auth --tag role:entrypoint --tag layer:business --created-by agent
 ```
 
 ## Targeting Fine-Grained Execution Logic
@@ -52,7 +52,7 @@ codemark add-from-query --file src/auth.swift --query '(function_declaration nam
 ### 2. Create bookmark with context and multiple notes
 ```bash
 # Context attaches to first note when multiple notes provided
-codemark add-from-query --file src/auth.swift --query '(function_declaration name: (simple_identifier) @name (#eq? @name "validateToken")) @target' --note "Validates JWT tokens. checks expiry and cache." --context "Called by API middleware on all authenticated endpoints" --note "Returns Claims struct on success" --note "Raises AuthenticationError on failure" --tag feature:auth --tag role:validation --created-by agent
+codemark add-from-query --file src/auth.swift --query '(function_declaration name: (simple_identifier) @name (#eq? @name "validateToken")) @target' --note "Validates JWT tokens. checks expiry and cache." --context "Called by API middleware on all authenticated endpoints" --note "Returns Claims struct on success" --note "Raises AuthenticationError on failure" --tag feature:auth --tag role:validator --created-by agent
 ```
 
 ### 3. Cross-language query examples

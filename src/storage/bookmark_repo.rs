@@ -70,6 +70,28 @@ impl Database {
         Ok(())
     }
 
+    /// Insert multiple annotations for a bookmark atomically.
+    pub fn insert_annotations(&self, annotations: &[Annotation]) -> Result<()> {
+        let tx = self.conn().unchecked_transaction()?;
+        for annotation in annotations {
+            tx.execute(
+                "INSERT INTO bookmark_annotations (id, bookmark_id, added_at, added_by, notes, context, source)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                rusqlite::params![
+                    annotation.id,
+                    annotation.bookmark_id,
+                    annotation.added_at,
+                    annotation.added_by,
+                    annotation.notes,
+                    annotation.context,
+                    annotation.source,
+                ],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
     /// Insert a tag for a bookmark.
     pub fn insert_tag(&self, tag: &Tag) -> Result<()> {
         self.conn().execute(

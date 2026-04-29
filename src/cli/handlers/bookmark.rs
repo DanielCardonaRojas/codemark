@@ -101,10 +101,11 @@ pub fn handle_add(cli: &Cli, mode: &OutputMode, args: &AddArgs) -> Result<()> {
 
     // Insert annotations with notes and context if provided
     if !args.note.is_empty() || args.context.is_some() {
+        let mut annotations = Vec::new();
         // If context is provided, attach it to the first note
         let first_note = args.note.first();
         if first_note.is_some() || args.context.is_some() {
-            let annotation = Annotation {
+            annotations.push(Annotation {
                 id: uuid::Uuid::new_v4().to_string(),
                 bookmark_id: actual_bookmark_id.clone(),
                 added_at: now_iso(),
@@ -112,12 +113,11 @@ pub fn handle_add(cli: &Cli, mode: &OutputMode, args: &AddArgs) -> Result<()> {
                 notes: first_note.cloned(),
                 context: args.context.clone(),
                 source: Some("cli".to_string()),
-            };
-            db.insert_annotation(&annotation)?;
+            });
         }
         // Additional notes without context
         for note in args.note.iter().skip(1) {
-            let annotation = Annotation {
+            annotations.push(Annotation {
                 id: uuid::Uuid::new_v4().to_string(),
                 bookmark_id: actual_bookmark_id.clone(),
                 added_at: now_iso(),
@@ -125,9 +125,9 @@ pub fn handle_add(cli: &Cli, mode: &OutputMode, args: &AddArgs) -> Result<()> {
                 notes: Some(note.clone()),
                 context: None,
                 source: Some("cli".to_string()),
-            };
-            db.insert_annotation(&annotation)?;
+            });
         }
+        db.insert_annotations(&annotations)?;
     }
 
     // Insert tags if provided
@@ -295,10 +295,11 @@ pub fn handle_add_from_snippet(
 
     // Insert annotations with notes and context if provided
     if !args.note.is_empty() || args.context.is_some() {
+        let mut annotations = Vec::new();
         // If context is provided, attach it to the first note
         let first_note = args.note.first();
         if first_note.is_some() || args.context.is_some() {
-            let annotation = Annotation {
+            annotations.push(Annotation {
                 id: uuid::Uuid::new_v4().to_string(),
                 bookmark_id: actual_bookmark_id.clone(),
                 added_at: now_iso(),
@@ -306,12 +307,11 @@ pub fn handle_add_from_snippet(
                 notes: first_note.cloned(),
                 context: args.context.clone(),
                 source: Some("cli".to_string()),
-            };
-            db.insert_annotation(&annotation)?;
+            });
         }
         // Additional notes without context
         for note in args.note.iter().skip(1) {
-            let annotation = Annotation {
+            annotations.push(Annotation {
                 id: uuid::Uuid::new_v4().to_string(),
                 bookmark_id: actual_bookmark_id.clone(),
                 added_at: now_iso(),
@@ -319,9 +319,9 @@ pub fn handle_add_from_snippet(
                 notes: Some(note.clone()),
                 context: None,
                 source: Some("cli".to_string()),
-            };
-            db.insert_annotation(&annotation)?;
+            });
         }
+        db.insert_annotations(&annotations)?;
     }
 
     // Insert tags if provided
@@ -488,10 +488,11 @@ pub fn handle_add_from_query(cli: &Cli, mode: &OutputMode, args: &AddFromQueryAr
 
     // Insert annotations with notes and context if provided
     if !args.note.is_empty() || args.context.is_some() {
+        let mut annotations = Vec::new();
         // If context is provided, attach it to the first note
         let first_note = args.note.first();
         if first_note.is_some() || args.context.is_some() {
-            let annotation = Annotation {
+            annotations.push(Annotation {
                 id: uuid::Uuid::new_v4().to_string(),
                 bookmark_id: actual_bookmark_id.clone(),
                 added_at: now_iso(),
@@ -499,12 +500,11 @@ pub fn handle_add_from_query(cli: &Cli, mode: &OutputMode, args: &AddFromQueryAr
                 notes: first_note.cloned(),
                 context: args.context.clone(),
                 source: Some("cli".to_string()),
-            };
-            db.insert_annotation(&annotation)?;
+            });
         }
         // Additional notes without context
         for note in args.note.iter().skip(1) {
-            let annotation = Annotation {
+            annotations.push(Annotation {
                 id: uuid::Uuid::new_v4().to_string(),
                 bookmark_id: actual_bookmark_id.clone(),
                 added_at: now_iso(),
@@ -512,9 +512,9 @@ pub fn handle_add_from_query(cli: &Cli, mode: &OutputMode, args: &AddFromQueryAr
                 notes: Some(note.clone()),
                 context: None,
                 source: Some("cli".to_string()),
-            };
-            db.insert_annotation(&annotation)?;
+            });
         }
+        db.insert_annotations(&annotations)?;
     }
 
     // Insert tags if provided
@@ -823,12 +823,16 @@ pub fn handle_annotate(cli: &Cli, mode: &OutputMode, args: &AnnotateArgs) -> Res
     let id = super::extract_id(&args.id);
     let mut bm = find_bookmark(&db, id)?;
 
+    // Track inserted annotations for output
+    let mut inserted_annotation_count = 0;
+
     // Create annotations if notes or context is provided
     if !args.note.is_empty() || args.context.is_some() {
+        let mut annotations = Vec::new();
         // If context is provided, attach it to the first note
         let first_note = args.note.first();
         if first_note.is_some() || args.context.is_some() {
-            let annotation = Annotation {
+            annotations.push(Annotation {
                 id: uuid::Uuid::new_v4().to_string(),
                 bookmark_id: bm.id.clone(),
                 added_at: now_iso(),
@@ -836,12 +840,11 @@ pub fn handle_annotate(cli: &Cli, mode: &OutputMode, args: &AnnotateArgs) -> Res
                 notes: first_note.cloned(),
                 context: args.context.clone(),
                 source: Some(args.source.clone()),
-            };
-            db.insert_annotation(&annotation)?;
+            });
         }
         // Additional notes without context
         for note in args.note.iter().skip(1) {
-            let annotation = Annotation {
+            annotations.push(Annotation {
                 id: uuid::Uuid::new_v4().to_string(),
                 bookmark_id: bm.id.clone(),
                 added_at: now_iso(),
@@ -849,9 +852,10 @@ pub fn handle_annotate(cli: &Cli, mode: &OutputMode, args: &AnnotateArgs) -> Res
                 notes: Some(note.clone()),
                 context: None,
                 source: Some(args.source.clone()),
-            };
-            db.insert_annotation(&annotation)?;
+            });
         }
+        inserted_annotation_count = annotations.len();
+        db.insert_annotations(&annotations)?;
 
         // Re-fetch bookmark to get updated annotations
         bm = find_bookmark(&db, id)?;
@@ -896,11 +900,19 @@ pub fn handle_annotate(cli: &Cli, mode: &OutputMode, args: &AnnotateArgs) -> Res
             if !bm.tags.is_empty() {
                 println!("  Tags: {}", bm.tags.join(", "));
             }
-            // Show the newly added annotation
+            // Show the count of newly added annotations
+            if inserted_annotation_count > 0 {
+                println!(
+                    "  Added {} annotation{}",
+                    inserted_annotation_count,
+                    if inserted_annotation_count == 1 { "" } else { "s" }
+                );
+            }
+            // Show the newly added annotation (last one)
             let latest_ann = bm.annotations.last();
             if let Some(ann) = latest_ann {
                 if let Some(ref note) = ann.notes {
-                    println!("  Note: {}", note);
+                    println!("  Latest note: {}", note);
                 }
                 if let Some(ref ctx) = ann.context {
                     println!("  Context: {}", ctx);
