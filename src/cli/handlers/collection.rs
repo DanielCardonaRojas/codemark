@@ -2,7 +2,9 @@
 
 use std::io::Write;
 
-use crate::cli::output::{self, CollectionWithCount, OutputMode, write_json_success, write_success};
+use crate::cli::output::{
+    self, CollectionWithCount, OutputMode, write_json_success, write_success,
+};
 use crate::cli::*;
 use crate::engine::bookmark::{BookmarkFilter, BookmarkStatus, Collection};
 use crate::error::{Error, Result};
@@ -121,7 +123,11 @@ pub fn handle_collection_remove(
     Ok(())
 }
 
-pub fn handle_collection_list(cli: &Cli, mode: &OutputMode, args: &CollectionListArgs) -> Result<()> {
+pub fn handle_collection_list(
+    cli: &Cli,
+    mode: &OutputMode,
+    args: &CollectionListArgs,
+) -> Result<()> {
     let db = open_db(cli)?;
 
     if let Some(ref bookmark_id) = args.bookmark {
@@ -228,7 +234,11 @@ pub fn handle_collection_list(cli: &Cli, mode: &OutputMode, args: &CollectionLis
     Ok(())
 }
 
-pub fn handle_collection_show(cli: &Cli, mode: &OutputMode, args: &CollectionShowArgs) -> Result<()> {
+pub fn handle_collection_show(
+    cli: &Cli,
+    mode: &OutputMode,
+    args: &CollectionShowArgs,
+) -> Result<()> {
     let db = open_db(cli)?;
     // Try by name first, then by ID prefix
     let collection = if let Some(c) = db.get_collection_by_name(&args.name)? {

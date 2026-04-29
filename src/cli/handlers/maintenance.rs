@@ -6,16 +6,16 @@ use crate::cli::output::{
 };
 use crate::cli::*;
 use crate::embeddings::config::EmbeddingModel;
-use crate::engine::bookmark::{Bookmark, BookmarkFilter, BookmarkStatus, Resolution, ResolutionMethod, Tag};
+use crate::engine::bookmark::{
+    Bookmark, BookmarkFilter, BookmarkStatus, Resolution, ResolutionMethod, Tag,
+};
 use crate::engine::{health, resolution};
 use crate::error::{Error, Result};
 use crate::git::context as git_context;
 use crate::parser::languages::{Language, ParseCache};
 use crate::storage::SemanticRepo;
 
-use super::{
-    now_iso, open_all_dbs, open_db, open_db_for_write, load_config,
-};
+use super::{load_config, now_iso, open_all_dbs, open_db, open_db_for_write};
 
 pub fn handle_heal(cli: &Cli, mode: &OutputMode, args: &HealArgs) -> Result<()> {
     let db = open_db_for_write(cli)?;

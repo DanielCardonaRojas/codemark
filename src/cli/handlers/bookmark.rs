@@ -2,7 +2,9 @@
 
 use std::io::Read;
 
-use crate::cli::output::{self, OutputMode, short_id, write_bookmark_markdown, write_json_success, write_success};
+use crate::cli::output::{
+    self, OutputMode, short_id, write_bookmark_markdown, write_json_success, write_success,
+};
 use crate::cli::*;
 use crate::engine::bookmark::{
     Annotation, Bookmark, BookmarkFilter, BookmarkStatus, Resolution, ResolutionMethod, Tag,
@@ -14,9 +16,9 @@ use crate::parser::languages::{Language, ParseCache};
 use crate::query::generator as qgen;
 
 use super::{
-    add_bookmark_to_collection, find_bookmark, find_bookmark_across, generate_embedding_for_bookmark,
-    now_iso, open_all_dbs, open_db_for_write, resolve_identity, resolve_or_create_repo_metadata,
-    write_resolution_output, resolve_batch,
+    add_bookmark_to_collection, find_bookmark, find_bookmark_across,
+    generate_embedding_for_bookmark, now_iso, open_all_dbs, open_db_for_write, resolve_batch,
+    resolve_identity, resolve_or_create_repo_metadata, write_resolution_output,
 };
 
 pub fn handle_add(cli: &Cli, mode: &OutputMode, args: &AddArgs) -> Result<()> {
@@ -192,7 +194,11 @@ pub fn handle_add(cli: &Cli, mode: &OutputMode, args: &AddArgs) -> Result<()> {
     Ok(())
 }
 
-pub fn handle_add_from_snippet(cli: &Cli, mode: &OutputMode, args: &AddFromSnippetArgs) -> Result<()> {
+pub fn handle_add_from_snippet(
+    cli: &Cli,
+    mode: &OutputMode,
+    args: &AddFromSnippetArgs,
+) -> Result<()> {
     let lang = resolve_language(args.lang.as_deref(), &args.file)?;
     let (abs_path, rel_path) = resolve_file_path(&args.file)?;
 

@@ -12,7 +12,9 @@ use crate::cli::output::{OutputMode, write_json_success, write_success};
 use crate::cli::*;
 use crate::config::Config;
 use crate::embeddings::config::EmbeddingModel;
-use crate::engine::bookmark::{Bookmark, BookmarkFilter, BookmarkStatus, Collection, Resolution, ResolutionMethod};
+use crate::engine::bookmark::{
+    Bookmark, BookmarkFilter, BookmarkStatus, Collection, Resolution, ResolutionMethod,
+};
 use crate::engine::{health, resolution};
 use crate::error::{Error, Result};
 use crate::git::context as git_context;
@@ -22,8 +24,8 @@ use crate::storage::{SemanticRepo, db::Database};
 // Handler submodules
 pub mod bookmark;
 pub mod collection;
-pub mod search;
 pub mod maintenance;
+pub mod search;
 
 /// Dispatch a parsed CLI command to its handler.
 pub fn dispatch(cli: &Cli) -> Result<()> {
@@ -124,7 +126,11 @@ pub fn open_db(cli: &Cli) -> Result<Database> {
 
 /// Generate embedding for a bookmark if semantic search is enabled.
 /// Returns Ok(()) even if semantic search is disabled or fails.
-pub fn generate_embedding_for_bookmark(cli: &Cli, config: &Config, bookmark: &Bookmark) -> Result<()> {
+pub fn generate_embedding_for_bookmark(
+    cli: &Cli,
+    config: &Config,
+    bookmark: &Bookmark,
+) -> Result<()> {
     if !config.semantic.is_enabled() {
         return Ok(());
     }
@@ -579,7 +585,11 @@ pub fn byte_to_line(source: &str, byte_offset: usize) -> usize {
 }
 
 /// Convert 1-indexed inclusive line range to byte range.
-pub fn line_range_to_bytes(source: &str, start_line: usize, end_line: usize) -> Result<(usize, usize)> {
+pub fn line_range_to_bytes(
+    source: &str,
+    start_line: usize,
+    end_line: usize,
+) -> Result<(usize, usize)> {
     if start_line == 0 || end_line == 0 {
         return Err(Error::Input("line numbers are 1-indexed".into()));
     }
@@ -1004,7 +1014,12 @@ pub fn handle_list(cli: &Cli, mode: &OutputMode, args: &ListArgs) -> Result<()> 
             // Capture both full IDs and file paths
             let bookmark_data: std::collections::HashMap<String, (String, String)> = bookmarks
                 .iter()
-                .map(|bm| (crate::cli::output::short_id(&bm.id).to_string(), (bm.id.clone(), bm.file_path.clone())))
+                .map(|bm| {
+                    (
+                        crate::cli::output::short_id(&bm.id).to_string(),
+                        (bm.id.clone(), bm.file_path.clone()),
+                    )
+                })
                 .collect();
             crate::cli::output::write_bookmarks_with_line(
                 mode,
@@ -1033,7 +1048,10 @@ pub fn handle_list(cli: &Cli, mode: &OutputMode, args: &ListArgs) -> Result<()> 
         }
         let annotated: Vec<crate::cli::output::AnnotatedBookmark> = all
             .iter()
-            .map(|(label, bm)| crate::cli::output::AnnotatedBookmark { source: label, bookmark: bm })
+            .map(|(label, bm)| crate::cli::output::AnnotatedBookmark {
+                source: label,
+                bookmark: bm,
+            })
             .collect();
 
         if needs_line {

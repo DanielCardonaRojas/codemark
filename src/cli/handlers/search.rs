@@ -1,6 +1,8 @@
 //! Search and indexing: FTS search, semantic search, reindex.
 
-use crate::cli::output::{self, OutputMode, short_id, write_bookmarks_with_line, write_json_success, write_success};
+use crate::cli::output::{
+    self, OutputMode, short_id, write_bookmarks_with_line, write_json_success, write_success,
+};
 use crate::cli::*;
 use crate::embeddings::config::EmbeddingModel;
 use crate::engine::bookmark::{Bookmark, BookmarkFilter};
@@ -8,8 +10,8 @@ use crate::error::{Error, Result};
 use crate::storage::{SemanticRepo, db::Database};
 
 use super::{
-    get_bookmark_line, open_all_dbs_with_extra, open_db, filter_dbs_by_user_email,
-    filter_dbs_by_repo_owner, load_config,
+    filter_dbs_by_repo_owner, filter_dbs_by_user_email, get_bookmark_line, load_config,
+    open_all_dbs_with_extra, open_db,
 };
 
 pub fn handle_search(cli: &Cli, mode: &OutputMode, args: &SearchArgs) -> Result<()> {
@@ -60,12 +62,7 @@ pub fn handle_search(cli: &Cli, mode: &OutputMode, args: &SearchArgs) -> Result<
                 None
             };
 
-            write_bookmarks_with_line(
-                mode,
-                &bookmarks,
-                args.line_format.as_deref(),
-                get_line_fn,
-            )?;
+            write_bookmarks_with_line(mode, &bookmarks, args.line_format.as_deref(), get_line_fn)?;
         } else {
             output::write_bookmarks(mode, &bookmarks, args.line_format.as_deref())?;
         }
