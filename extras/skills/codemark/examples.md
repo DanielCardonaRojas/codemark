@@ -23,9 +23,13 @@ Focus on *why* the code matters and its relationships. Avoid repeating informati
 - **Good Note**: `Core auth validator. entry point for all signed requests. Relationships: depends on Claims struct.`
 - **Avoid**: `[Function: validate_token] in auth.rs` (Redundant).
 
-### 3. Add the bookmark with tags
+### 3. Add the bookmark with tags and multiple notes
 ```bash
+# Single note
 codemark add --file src/auth.rs --range 42 --note "Core auth validator. entry point for all signed requests. Relationships: depends on Claims struct." --tag feature:auth --tag role:entrypoint --tag layer:logic --created-by agent
+
+# Multiple notes (each creates a separate annotation entry)
+codemark add --file src/auth.rs --range 42 --note "Core auth validator. entry point for all signed requests." --note "Relationships: depends on Claims struct." --note "Performance: O(1) cache hit rate" --tag feature:auth --tag role:entrypoint --tag layer:logic --created-by agent
 ```
 
 ## Targeting Fine-Grained Execution Logic
@@ -35,13 +39,7 @@ Instead of bookmarking the entire function, target the specific execution point 
 ### Bookmark a specific method call inside a function
 ```bash
 # Target the exact line where the database is updated
-codemark add-from-query \
-  --file src/db/repo.rs \
-  --query '(call_expression function: (member_expression property: (property_identifier) @method (#eq? @method "update_user_balance"))) @target' \
-  --note "Critical: Database update point for user balances. Relationships: triggered after payment verification." \
-  --tag layer:data \
-  --tag role:repository \
-  --created-by agent
+codemark add-from-query --file src/db/repo.rs --query '(call_expression function: (member_expression property: (property_identifier) @method (#eq? @method "update_user_balance"))) @target' --note "Critical: Database update point for user balances. Relationships: triggered after payment verification." --tag layer:data --tag role:repository --created-by agent
 ```
 
 ## Creating Bookmarks with Raw Queries
@@ -51,9 +49,10 @@ codemark add-from-query \
 codemark add-from-query --file src/auth.swift --query '(function_declaration name: (simple_identifier) @name (#eq? @name "validateToken")) @target' --dry-run
 ```
 
-### 2. Create bookmark with context
+### 2. Create bookmark with context and multiple notes
 ```bash
-codemark add-from-query --file src/auth.swift --query '(function_declaration name: (simple_identifier) @name (#eq? @name "validateToken")) @target' --note "Validates JWT tokens. checks expiry and cache." --context "Called by API middleware on all authenticated endpoints" --tag feature:auth --tag role:validation --created-by agent
+# Context attaches to first note when multiple notes provided
+codemark add-from-query --file src/auth.swift --query '(function_declaration name: (simple_identifier) @name (#eq? @name "validateToken")) @target' --note "Validates JWT tokens. checks expiry and cache." --context "Called by API middleware on all authenticated endpoints" --note "Returns Claims struct on success" --note "Raises AuthenticationError on failure" --tag feature:auth --tag role:validation --created-by agent
 ```
 
 ### 3. Cross-language query examples
@@ -78,9 +77,13 @@ For complex call chains, use ordered collections. **Recommended: Use `--collecti
 
 ```bash
 # Add bookmarks directly to a collection (collection is auto-created)
-codemark add --file src/handler.rs --range 10 --note "HTTP request handler" --collection login-flow
-codemark add-from-query --file src/middleware.rs --query '(function_item name: (identifier) @name (#eq? @name "validate")) @target' --note "JWT validation middleware" --collection login-flow
-codemark add-from-query --file src/db.rs --query '(function_item name: (identifier) @name (#eq? @name "lookup_user")) @target' --note "Database query for user lookup" --collection login-flow
+# Each bookmark can have multiple notes
+codemark add --file src/handler.rs --range 10 --note "HTTP request handler" --note "Entry point for login flow" --collection login-flow
+
+codemark add-from-query --file src/middleware.rs --query '(function_item name: (identifier) @name (#eq? @name "validate")) @target' --note "JWT validation middleware" --note "Called before all protected endpoints" --collection login-flow
+
+codemark add-from-query --file src/db.rs --query '(function_item name: (identifier) @name (#eq? @name "lookup_user")) @target' --note "Database query for user lookup" --note "Uses connection pool" --note "Returns User struct or NotFound error" --collection login-flow
+
 codemark collection show login-flow
 ```
 
@@ -108,6 +111,37 @@ codemark search "JWT"
 # List bookmarks created by agents
 codemark list --author agent
 ```
+
+## Working with Multiple Notes
+
+The `--note` flag is repeatable. Each `--note` creates a separate annotation entry, allowing you to document different aspects of the code independently.
+
+### Adding multiple notes when creating a bookmark
+```bash
+codemark add --file src/auth.rs --range 42 --note "Primary function: validates JWT tokens" --note "Performance: O(1) with cache" --note "Security: verifies signature and expiry" --tag feature:auth
+```
+
+### Adding multiple notes via annotate
+```bash
+codemark annotate <bookmark-id> --note "Discovered during debugging: race condition" --note "Fix: added mutex lock" --note "Related to issue #123"
+```
+
+### Combining notes with context
+When `--context` is provided alongside multiple notes, it attaches only to the first note:
+```bash
+codemark add --file src/payment.rs --range 100 --note "Processes payment via Stripe" --context "Part of checkout refactor v2.0" --note "Idempotent: safe to retry" --note "Webhook: handles async confirmation"
+```
+
+This creates three annotations:
+1. "Processes payment via Stripe" + context "Part of checkout refactor v2.0"
+2. "Idempotent: safe to retry" (no context)
+3. "Webhook: handles async confirmation" (no context)
+
+### Use cases for multiple notes
+- **Separate concerns**: Document behavior, performance, and security as separate notes
+- **Progressive discovery**: Add new observations over time without editing previous notes
+- **Multi-aspect analysis**: Document different perspectives (e.g., user-facing vs. implementation details)
+- **Action items**: Combine documentation with TODOs or follow-up tasks
 
 ## Checking Impact After Changes
 
