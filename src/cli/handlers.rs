@@ -1825,8 +1825,9 @@ fn handle_list(cli: &Cli, mode: &OutputMode, args: &ListArgs) -> Result<()> {
         limit: args.limit,
     };
 
-    // Check if we need line numbers (custom line format with {LINE})
-    let needs_line = args.line_format.as_deref().is_some_and(output::template_needs_line);
+    // Check if we need line numbers
+    let needs_line =
+        mode.needs_line() || args.line_format.as_deref().is_some_and(output::template_needs_line);
 
     if dbs.len() == 1 {
         let bookmarks = dbs[0].1.list_bookmarks(&filter)?;
@@ -1868,25 +1869,37 @@ fn handle_list(cli: &Cli, mode: &OutputMode, args: &ListArgs) -> Result<()> {
             .map(|(label, bm)| output::AnnotatedBookmark { source: label, bookmark: bm })
             .collect();
 
-        // Create a line fetcher that looks up the line from the correct database
-        let get_line_fn = |short_id: &str| -> Option<usize> {
-            // Find the bookmark with this short_id
-            for (label, bm) in &all {
-                if crate::cli::output::short_id(&bm.id) == short_id
-                    && let Some(db) = db_map.get(label)
-                {
-                    return get_bookmark_line(db, &bm.id, &bm.file_path);
-                }
-            }
-            None
-        };
+        if needs_line {
+            let bookmark_data: std::collections::HashMap<String, (String, String, String)> = all
+                .iter()
+                .map(|(label, bm)| {
+                    (
+                        crate::cli::output::short_id(&bm.id).to_string(),
+                        (label.clone(), bm.id.clone(), bm.file_path.clone()),
+                    )
+                })
+                .collect();
 
-        output::write_annotated_bookmarks(
-            mode,
-            &annotated,
-            args.line_format.as_deref(),
-            Some(&get_line_fn),
-        )?;
+            let get_line_fn = |short_id: &str| -> Option<usize> {
+                let (label, full_id, file_path) = bookmark_data.get(short_id)?;
+                let db = db_map.get(label)?;
+                get_bookmark_line(db, full_id, file_path)
+            };
+
+            output::write_annotated_bookmarks(
+                mode,
+                &annotated,
+                args.line_format.as_deref(),
+                Some(&get_line_fn),
+            )?;
+        } else {
+            output::write_annotated_bookmarks(
+                mode,
+                &annotated,
+                args.line_format.as_deref(),
+                None as Option<&fn(&str) -> Option<usize>>,
+            )?;
+        }
     }
     Ok(())
 }
@@ -2044,10 +2057,39 @@ fn handle_search(cli: &Cli, mode: &OutputMode, args: &SearchArgs) -> Result<()> 
             args.author.as_deref(),
             args.collection.as_deref(),
         )?;
-        output::write_bookmarks(mode, &bookmarks, None)?;
+        let db = &dbs[0].1;
+
+        // Check if we need line numbers
+        let needs_line = mode.needs_line()
+            || args.line_format.as_deref().is_some_and(output::template_needs_line);
+
+        if needs_line {
+            let get_line_fn = |short_id: &str| -> Option<usize> {
+                for bm in &bookmarks {
+                    if output::short_id(&bm.id) == short_id {
+                        return get_bookmark_line(db, &bm.id, &bm.file_path);
+                    }
+                }
+                None
+            };
+
+            output::write_bookmarks_with_line(
+                mode,
+                &bookmarks,
+                args.line_format.as_deref(),
+                get_line_fn,
+            )?;
+        } else {
+            output::write_bookmarks(mode, &bookmarks, args.line_format.as_deref())?;
+        }
     } else {
         let mut all = Vec::new();
+        // Keep track of which database each bookmark belongs to for line resolution
+        let mut db_map: std::collections::HashMap<String, &Database> =
+            std::collections::HashMap::new();
+
         for (label, db) in &dbs {
+            db_map.insert(label.clone(), db);
             let bookmarks = db.search_bookmarks(
                 args.query.as_deref(),
                 args.note.as_deref(),
@@ -2064,12 +2106,42 @@ fn handle_search(cli: &Cli, mode: &OutputMode, args: &SearchArgs) -> Result<()> 
             .iter()
             .map(|(label, bm)| output::AnnotatedBookmark { source: label, bookmark: bm })
             .collect();
-        output::write_annotated_bookmarks(
-            mode,
-            &annotated,
-            None,
-            None as Option<&fn(&str) -> Option<usize>>,
-        )?;
+
+        // Check if we need line numbers
+        let needs_line = mode.needs_line()
+            || args.line_format.as_deref().is_some_and(output::template_needs_line);
+
+        if needs_line {
+            let bookmark_data: std::collections::HashMap<String, (String, String, String)> = all
+                .iter()
+                .map(|(label, bm)| {
+                    (
+                        output::short_id(&bm.id).to_string(),
+                        (label.clone(), bm.id.clone(), bm.file_path.clone()),
+                    )
+                })
+                .collect();
+
+            let get_line_fn = |short_id: &str| -> Option<usize> {
+                let (label, full_id, file_path) = bookmark_data.get(short_id)?;
+                let db = db_map.get(label)?;
+                get_bookmark_line(db, full_id, file_path)
+            };
+
+            output::write_annotated_bookmarks(
+                mode,
+                &annotated,
+                args.line_format.as_deref(),
+                Some(&get_line_fn),
+            )?;
+        } else {
+            output::write_annotated_bookmarks(
+                mode,
+                &annotated,
+                args.line_format.as_deref(),
+                None as Option<&fn(&str) -> Option<usize>>,
+            )?;
+        }
     }
     Ok(())
 }
@@ -2139,32 +2211,32 @@ fn handle_semantic_search(
             .collect();
         output::write_json_success(&data)?;
     } else {
-        // Table output
-        use comfy_table::Table;
-        use comfy_table::presets::UTF8_FULL;
+        // For non-JSON modes, use standard bookmark output functions
+        let bookmarks_only: Vec<Bookmark> = bookmarks.iter().map(|(_, bm)| bm.clone()).collect();
 
-        let mut table = Table::new();
-        table.load_preset(UTF8_FULL);
-        table.set_header(vec!["ID", "Distance", "Language", "Tags", "Notes", "File"]);
+        // Check if we need line numbers
+        let needs_line = mode.needs_line()
+            || args.line_format.as_deref().is_some_and(output::template_needs_line);
 
-        for (distance, bm) in bookmarks {
-            let tags_str = bm.tags.join(", ");
-            // Get the first annotation's notes, or empty string
-            let notes =
-                bm.annotations.first().and_then(|a| a.notes.as_deref()).unwrap_or("").to_string();
-            let notes_trunc = if notes.len() > 30 { format!("{}...", &notes[..27]) } else { notes };
+        if needs_line {
+            let get_line_fn = |short_id: &str| -> Option<usize> {
+                for bm in &bookmarks_only {
+                    if output::short_id(&bm.id) == short_id {
+                        return get_bookmark_line(&db, &bm.id, &bm.file_path);
+                    }
+                }
+                None
+            };
 
-            table.add_row(vec![
-                short_id(&bm.id).to_string(),
-                format!("{:.4}", distance),
-                bm.language,
-                tags_str,
-                notes_trunc,
-                bm.file_path,
-            ]);
+            output::write_bookmarks_with_line(
+                mode,
+                &bookmarks_only,
+                args.line_format.as_deref(),
+                get_line_fn,
+            )?;
+        } else {
+            output::write_bookmarks(mode, &bookmarks_only, args.line_format.as_deref())?;
         }
-
-        println!("{table}");
     }
 
     Ok(())

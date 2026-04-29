@@ -170,6 +170,14 @@ impl OutputMode {
             }
         }
     }
+
+    /// Check if the output mode uses a template that requires line numbers.
+    pub fn needs_line(&self) -> bool {
+        if let OutputMode::Custom(template) = self {
+            return template_needs_line(template);
+        }
+        false
+    }
 }
 
 /// Standard JSON envelope for all command output.

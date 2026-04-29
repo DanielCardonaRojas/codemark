@@ -420,6 +420,10 @@ pub struct SearchArgs {
     /// Filter by repository owner
     #[arg(long)]
     pub repo_owner: Option<String>,
+
+    /// Custom line format template (placeholders: {ID}, {FILE}, {FILENAME}, {LINE}, {OFFSET}, {STATUS}, {TAGS}, {NOTE}, {CONTEXT}, {QUERY})
+    #[arg(long)]
+    pub line_format: Option<String>,
 }
 
 #[derive(Debug, clap::Args)]
