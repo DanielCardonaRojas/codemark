@@ -14,7 +14,8 @@ use super::{
     open_all_dbs_with_extra, open_db,
 };
 
-pub fn handle_search(cli: &Cli, mode: &OutputMode, args: &SearchArgs) -> Result<()> {
+/// Search for bookmarks using full-text search or semantic search.
+pub async fn handle_search(cli: &Cli, mode: &OutputMode, args: &SearchArgs) -> Result<()> {
     let config = load_config(cli);
 
     // Semantic search requires a query
@@ -29,7 +30,7 @@ pub fn handle_search(cli: &Cli, mode: &OutputMode, args: &SearchArgs) -> Result<
             .or(args.context.as_ref())
             .ok_or_else(|| Error::Input("Semantic search requires a query".to_string()))?;
 
-        return handle_semantic_search(cli, mode, query, args);
+        return handle_semantic_search(cli, mode, query, args).await;
     }
 
     // Regular FTS search
@@ -131,7 +132,7 @@ pub fn handle_search(cli: &Cli, mode: &OutputMode, args: &SearchArgs) -> Result<
 }
 
 /// Handle semantic search using vector embeddings.
-fn handle_semantic_search(
+async fn handle_semantic_search(
     cli: &Cli,
     mode: &OutputMode,
     query: &str,
@@ -158,7 +159,7 @@ fn handle_semantic_search(
     let semantic_repo = SemanticRepo::with_config(models_dir, model, distance_metric, threshold);
 
     // Perform semantic search
-    let results = semantic_repo.search(db.conn(), query, args.limit)?;
+    let results = semantic_repo.search(db.conn(), query, args.limit).await?;
 
     // Fetch full bookmark details for results
     let mut bookmarks = Vec::new();
@@ -193,7 +194,8 @@ fn handle_semantic_search(
         write_json_success(&data)?;
     } else {
         // For non-JSON modes, use standard bookmark output functions
-        let bookmarks_only: Vec<Bookmark> = bookmarks.iter().map(|(_, bm)| bm.clone()).collect();
+        let bookmarks_only: Vec<Bookmark> =
+            bookmarks.iter().map(|(_, bm): &(f64, Bookmark)| bm.clone()).collect();
 
         // Check if we need line numbers
         let needs_line = mode.needs_line()
@@ -224,7 +226,7 @@ fn handle_semantic_search(
 }
 
 /// Handle reindex command to rebuild embeddings.
-pub fn handle_reindex(cli: &Cli, mode: &OutputMode, args: &ReindexArgs) -> Result<()> {
+pub async fn handle_reindex(cli: &Cli, mode: &OutputMode, args: &ReindexArgs) -> Result<()> {
     let config = load_config(cli);
     if !config.semantic.is_enabled() {
         return Err(Error::Input("Semantic search is not enabled in config".to_string()));
@@ -270,7 +272,7 @@ pub fn handle_reindex(cli: &Cli, mode: &OutputMode, args: &ReindexArgs) -> Resul
     // Store embeddings
     let count = {
         let conn = db.conn_mut();
-        semantic_repo.store_embeddings(conn, &bookmarks)
+        semantic_repo.store_embeddings(conn, &bookmarks).await
     }?;
 
     let message = format!("Generated embeddings for {count} bookmarks");

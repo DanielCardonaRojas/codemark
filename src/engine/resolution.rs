@@ -27,15 +27,16 @@ pub struct ResolutionResult {
 
 /// Resolve a single bookmark against the current state of its file.
 #[allow(clippy::collapsible_if)]
-pub fn resolve(
+pub async fn resolve(
     bookmark: &Bookmark,
     cache: &mut ParseCache,
     language: &Language,
     db_path: &Path,
+    provider: &dyn crate::vfs::FileProvider,
 ) -> Result<ResolutionResult> {
     // Resolve relative path to absolute for file reading
     let path = git_context::resolve_bookmark_file_path(&bookmark.file_path, db_path)?;
-    let (tree, source) = cache.get_or_parse(&path)?;
+    let (tree, source) = cache.get_or_parse(&path, provider).await?;
     let source_bytes = source.as_bytes();
 
     // Tier 1: Exact query
@@ -214,12 +215,13 @@ mod tests {
             .join(format!("tests/fixtures/swift/{name}"))
     }
 
-    fn create_bookmark_for_function(file: &str, func_name: &str) -> (Bookmark, ParseCache) {
+    async fn create_bookmark_for_function(file: &str, func_name: &str) -> (Bookmark, ParseCache) {
         let path = fixture_path(file);
         let mut cache = ParseCache::new(CodemarkLang::Swift).unwrap();
         let lang = CodemarkLang::Swift.tree_sitter_language();
 
-        let (tree, source) = cache.get_or_parse(&path).unwrap();
+        let provider = crate::vfs::LocalFileProvider;
+        let (tree, source) = cache.get_or_parse(&path, &provider).await.unwrap();
         let range = find_function_range(tree, source, func_name);
         let generated = qgen::generate_query(tree, source.as_bytes(), range, &lang).unwrap();
         let ch = hash::content_hash(&source[range.0..range.1]);
@@ -263,39 +265,42 @@ mod tests {
         search(tree.root_node(), source, name).unwrap()
     }
 
-    #[test]
-    fn resolve_exact_match() {
-        let (bm, mut cache) = create_bookmark_for_function("auth_service.swift", "validateToken");
+    #[tokio::test]
+    async fn resolve_exact_match() {
+        let (bm, mut cache) =
+            create_bookmark_for_function("auth_service.swift", "validateToken").await;
         let lang = CodemarkLang::Swift.tree_sitter_language();
         // For tests, use a dummy db path - the bookmark stores absolute paths from fixture_path
         let dummy_db =
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(".codemark/codemark.db");
 
-        let result = resolve(&bm, &mut cache, &lang, dummy_db.as_path()).unwrap();
+        let provider = crate::vfs::LocalFileProvider;
+        let result = resolve(&bm, &mut cache, &lang, dummy_db.as_path(), &provider).await.unwrap();
         assert_eq!(result.method, ResolutionMethod::Exact);
         assert!(result.hash_matches);
         assert!(result.matched_text.contains("validateToken"));
     }
 
-    #[test]
-    fn resolve_exact_with_hash_mismatch() {
+    #[tokio::test]
+    async fn resolve_exact_with_hash_mismatch() {
         let (mut bm, mut cache) =
-            create_bookmark_for_function("auth_service.swift", "validateToken");
+            create_bookmark_for_function("auth_service.swift", "validateToken").await;
         // Corrupt the stored hash
         bm.content_hash = Some("sha256:0000000000000000".to_string());
         let lang = CodemarkLang::Swift.tree_sitter_language();
         let dummy_db =
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(".codemark/codemark.db");
 
-        let result = resolve(&bm, &mut cache, &lang, dummy_db.as_path()).unwrap();
+        let provider = crate::vfs::LocalFileProvider;
+        let result = resolve(&bm, &mut cache, &lang, dummy_db.as_path(), &provider).await.unwrap();
         assert_eq!(result.method, ResolutionMethod::Exact);
         assert!(!result.hash_matches);
     }
 
-    #[test]
-    fn resolve_with_wrong_name_falls_through_tiers() {
+    #[tokio::test]
+    async fn resolve_with_wrong_name_falls_through_tiers() {
         let (mut bm, mut cache) =
-            create_bookmark_for_function("auth_service.swift", "validateToken");
+            create_bookmark_for_function("auth_service.swift", "validateToken").await;
         // Break the exact query name so Tier 1 fails, but relaxed (no name predicate)
         // can still match via hash disambiguation
         bm.query = r#"(function_declaration
@@ -306,7 +311,8 @@ mod tests {
         let dummy_db =
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(".codemark/codemark.db");
 
-        let result = resolve(&bm, &mut cache, &lang, dummy_db.as_path()).unwrap();
+        let provider = crate::vfs::LocalFileProvider;
+        let result = resolve(&bm, &mut cache, &lang, dummy_db.as_path(), &provider).await.unwrap();
         // Relaxed strips the predicate, finds multiple functions, disambiguates by hash
         assert!(
             result.method == ResolutionMethod::Relaxed
@@ -318,10 +324,10 @@ mod tests {
         assert!(result.hash_matches);
     }
 
-    #[test]
-    fn resolve_completely_missing_fails() {
+    #[tokio::test]
+    async fn resolve_completely_missing_fails() {
         let (mut bm, mut cache) =
-            create_bookmark_for_function("auth_service.swift", "validateToken");
+            create_bookmark_for_function("auth_service.swift", "validateToken").await;
         bm.query = r#"(function_declaration
   name: (simple_identifier) @fn_name
   (#eq? @fn_name "totallyGone")) @target"#
@@ -331,7 +337,8 @@ mod tests {
         let dummy_db =
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(".codemark/codemark.db");
 
-        let result = resolve(&bm, &mut cache, &lang, dummy_db.as_path()).unwrap();
+        let provider = crate::vfs::LocalFileProvider;
+        let result = resolve(&bm, &mut cache, &lang, dummy_db.as_path(), &provider).await.unwrap();
         assert_eq!(result.method, ResolutionMethod::Failed);
     }
 }

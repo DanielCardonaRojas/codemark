@@ -49,16 +49,11 @@ impl SemanticRepo {
     }
 
     /// Generate an embedding for a bookmark's searchable text.
-    pub fn embed_bookmark(&self, bookmark: &Bookmark) -> Result<Vec<f32>> {
+    pub async fn embed_bookmark(&self, bookmark: &Bookmark) -> Result<Vec<f32>> {
         let text = self.prepare_bookmark_text(bookmark);
         let provider = self.provider()?;
 
-        // Use tokio runtime for async embedding
-        let rt = tokio::runtime::Runtime::new().map_err(|e| {
-            crate::error::Error::Operation(format!("Failed to create runtime: {}", e))
-        })?;
-
-        let embedding = rt.block_on(provider.embed(&text)).map_err(|e| {
+        let embedding = provider.embed(&text).await.map_err(|e| {
             crate::error::Error::Operation(format!("Failed to generate embedding: {}", e))
         })?;
 
@@ -77,7 +72,11 @@ impl SemanticRepo {
     }
 
     /// Store embeddings for multiple bookmarks.
-    pub fn store_embeddings(&self, conn: &mut Connection, bookmarks: &[Bookmark]) -> Result<usize> {
+    pub async fn store_embeddings(
+        &self,
+        conn: &mut Connection,
+        bookmarks: &[Bookmark],
+    ) -> Result<usize> {
         if bookmarks.is_empty() {
             return Ok(0);
         }
@@ -86,15 +85,12 @@ impl SemanticRepo {
         crate::embeddings::VecStore::ensure_extension_loaded();
 
         let provider = self.provider()?;
-        let rt = tokio::runtime::Runtime::new().map_err(|e| {
-            crate::error::Error::Operation(format!("Failed to create runtime: {}", e))
-        })?;
 
         // Prepare texts for batch embedding
         let texts: Vec<String> = bookmarks.iter().map(|b| self.prepare_bookmark_text(b)).collect();
 
         // Generate embeddings in batch
-        let embeddings = rt.block_on(provider.embed_batch(&texts)).map_err(|e| {
+        let embeddings = provider.embed_batch(&texts).await.map_err(|e| {
             crate::error::Error::Operation(format!("Failed to generate embeddings: {}", e))
         })?;
 
@@ -117,17 +113,17 @@ impl SemanticRepo {
     }
 
     /// Search for similar bookmarks by semantic similarity.
-    pub fn search(
+    pub async fn search(
         &self,
         conn: &Connection,
         query: &str,
         limit: usize,
     ) -> Result<Vec<SearchResult>> {
-        self.search_with_threshold(conn, query, limit, self.threshold)
+        self.search_with_threshold(conn, query, limit, self.threshold).await
     }
 
     /// Search for similar bookmarks with optional threshold override.
-    pub fn search_with_threshold(
+    pub async fn search_with_threshold(
         &self,
         conn: &Connection,
         query: &str,
@@ -138,11 +134,8 @@ impl SemanticRepo {
         crate::embeddings::VecStore::ensure_extension_loaded();
 
         let provider = self.provider()?;
-        let rt = tokio::runtime::Runtime::new().map_err(|e| {
-            crate::error::Error::Operation(format!("Failed to create runtime: {}", e))
-        })?;
 
-        let query_embedding = rt.block_on(provider.embed(query)).map_err(|e| {
+        let query_embedding = provider.embed(query).await.map_err(|e| {
             crate::error::Error::Operation(format!("Failed to generate query embedding: {}", e))
         })?;
 

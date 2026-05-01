@@ -28,44 +28,44 @@ pub mod maintenance;
 pub mod search;
 
 /// Dispatch a parsed CLI command to its handler.
-pub fn dispatch(cli: &Cli) -> Result<()> {
+pub async fn dispatch(cli: &Cli) -> Result<()> {
     // JSON is the default output format for all commands
     let mode = OutputMode::resolve_with_default(false, cli.format.as_deref(), true);
     match &cli.command {
-        Command::Init => handle_init(cli, &mode),
-        Command::Add(args) => bookmark::handle_add(cli, &mode, args),
-        Command::AddFromSnippet(args) => bookmark::handle_add_from_snippet(cli, &mode, args),
-        Command::AddFromQuery(args) => bookmark::handle_add_from_query(cli, &mode, args),
-        Command::Resolve(args) => bookmark::handle_resolve(cli, &mode, args),
-        Command::Show(args) => bookmark::handle_show(cli, &mode, args),
-        Command::Remove(args) => bookmark::handle_remove(cli, &mode, args),
-        Command::Heal(args) => maintenance::handle_heal(cli, &mode, args),
-        Command::Status => maintenance::handle_status(cli, &mode),
-        Command::List(args) => handle_list(cli, &mode, args),
-        Command::Preview(args) => handle_preview(cli, args),
-        Command::Search(args) => search::handle_search(cli, &mode, args),
-        Command::Reindex(args) => search::handle_reindex(cli, &mode, args),
-        Command::Collection(args) => dispatch_collection(cli, &mode, args),
-        Command::Diff(args) => maintenance::handle_diff(cli, &mode, args),
-        Command::Gc(args) => maintenance::handle_gc(cli, &mode, args),
-        Command::Export(args) => maintenance::handle_export(cli, args),
-        Command::Import(args) => maintenance::handle_import(cli, &mode, args),
+        Command::Init => handle_init(cli, &mode).await,
+        Command::Add(args) => bookmark::handle_add(cli, &mode, args).await,
+        Command::AddFromSnippet(args) => bookmark::handle_add_from_snippet(cli, &mode, args).await,
+        Command::AddFromQuery(args) => bookmark::handle_add_from_query(cli, &mode, args).await,
+        Command::Resolve(args) => bookmark::handle_resolve(cli, &mode, args).await,
+        Command::Show(args) => bookmark::handle_show(cli, &mode, args).await,
+        Command::Remove(args) => bookmark::handle_remove(cli, &mode, args).await,
+        Command::Heal(args) => maintenance::handle_heal(cli, &mode, args).await,
+        Command::Status => maintenance::handle_status(cli, &mode).await,
+        Command::List(args) => handle_list(cli, &mode, args).await,
+        Command::Preview(args) => handle_preview(cli, args).await,
+        Command::Search(args) => search::handle_search(cli, &mode, args).await,
+        Command::Reindex(args) => search::handle_reindex(cli, &mode, args).await,
+        Command::Collection(args) => dispatch_collection(cli, &mode, args).await,
+        Command::Diff(args) => maintenance::handle_diff(cli, &mode, args).await,
+        Command::Gc(args) => maintenance::handle_gc(cli, &mode, args).await,
+        Command::Export(args) => maintenance::handle_export(cli, args).await,
+        Command::Import(args) => maintenance::handle_import(cli, &mode, args).await,
         Command::Completions(args) => handle_completions(args),
-        Command::Annotate(args) => bookmark::handle_annotate(cli, &mode, args),
-        Command::Open(args) => handle_open(cli, args),
+        Command::Annotate(args) => bookmark::handle_annotate(cli, &mode, args).await,
+        Command::Open(args) => handle_open(cli, args).await,
     }
 }
 
-fn dispatch_collection(cli: &Cli, mode: &OutputMode, args: &CollectionArgs) -> Result<()> {
+async fn dispatch_collection(cli: &Cli, mode: &OutputMode, args: &CollectionArgs) -> Result<()> {
     match &args.command {
-        CollectionCommand::Create(a) => collection::handle_collection_create(cli, mode, a),
-        CollectionCommand::Delete(a) => collection::handle_collection_delete(cli, mode, a),
-        CollectionCommand::Add(a) => collection::handle_collection_add(cli, mode, a),
-        CollectionCommand::Remove(a) => collection::handle_collection_remove(cli, mode, a),
-        CollectionCommand::List(a) => collection::handle_collection_list(cli, mode, a),
-        CollectionCommand::Show(a) => collection::handle_collection_show(cli, mode, a),
-        CollectionCommand::Resolve(a) => collection::handle_collection_resolve(cli, mode, a),
-        CollectionCommand::Reorder(a) => collection::handle_collection_reorder(cli, mode, a),
+        CollectionCommand::Create(a) => collection::handle_collection_create(cli, mode, a).await,
+        CollectionCommand::Delete(a) => collection::handle_collection_delete(cli, mode, a).await,
+        CollectionCommand::Add(a) => collection::handle_collection_add(cli, mode, a).await,
+        CollectionCommand::Remove(a) => collection::handle_collection_remove(cli, mode, a).await,
+        CollectionCommand::List(a) => collection::handle_collection_list(cli, mode, a).await,
+        CollectionCommand::Show(a) => collection::handle_collection_show(cli, mode, a).await,
+        CollectionCommand::Resolve(a) => collection::handle_collection_resolve(cli, mode, a).await,
+        CollectionCommand::Reorder(a) => collection::handle_collection_reorder(cli, mode, a).await,
     }
 }
 
@@ -126,7 +126,7 @@ pub fn open_db(cli: &Cli) -> Result<Database> {
 
 /// Generate embedding for a bookmark if semantic search is enabled.
 /// Returns Ok(()) even if semantic search is disabled or fails.
-pub fn generate_embedding_for_bookmark(
+pub async fn generate_embedding_for_bookmark(
     cli: &Cli,
     config: &Config,
     bookmark: &Bookmark,
@@ -158,7 +158,7 @@ pub fn generate_embedding_for_bookmark(
     // Generate and store the embedding
     let conn = db.conn_mut();
     // Ignore errors - embedding generation failure shouldn't block bookmark creation
-    let _ = semantic_repo.store_embeddings(conn, std::slice::from_ref(bookmark));
+    let _ = semantic_repo.store_embeddings(conn, std::slice::from_ref(bookmark)).await;
 
     Ok(())
 }
@@ -521,6 +521,7 @@ pub fn parse_range(range: &str, source: &str) -> Result<(usize, usize)> {
     }
 }
 
+/// Parse a byte range string (e.g., "100-200" or "100:200").
 fn parse_byte_range(s: &str) -> Result<(usize, usize)> {
     let (start_str, end_str) = s
         .split_once('-')
@@ -533,6 +534,7 @@ fn parse_byte_range(s: &str) -> Result<(usize, usize)> {
     Ok((start, end))
 }
 
+/// Convert a 1-indexed line and column to a 0-indexed byte offset.
 fn line_col_to_byte(source: &str, line: usize, col: usize) -> Result<usize> {
     if line == 0 || col == 0 {
         return Err(Error::Input("line and column numbers are 1-indexed".into()));
@@ -558,6 +560,7 @@ fn line_col_to_byte(source: &str, line: usize, col: usize) -> Result<usize> {
     Err(Error::Input(format!("line {} is out of bounds", line)))
 }
 
+/// Parse a point string (e.g., "42:10" or "42") and return its byte offset.
 fn parse_point(source: &str, s: &str) -> Result<usize> {
     let parts: Vec<&str> = s.split(':').collect();
     if parts.len() == 2 {
@@ -746,17 +749,27 @@ pub fn add_bookmark_to_collection(
     Ok(Some(collection_name.to_string()))
 }
 
-/// Batch resolve bookmarks and output results.
-pub fn resolve_batch(
-    mode: &OutputMode,
+/// A structured result for a single bookmark resolution.
+#[derive(serde::Serialize)]
+pub struct ResolutionRecord {
+    pub id: String,
+    pub file: String,
+    pub line: usize,
+    pub method: String,
+    pub status: String,
+}
+
+/// Batch resolve bookmarks and return structured results.
+pub async fn resolve_batch(
     db: &Database,
     bookmarks: &[Bookmark],
     config: &Config,
     dry_run: bool,
-) -> Result<()> {
+) -> Result<Vec<ResolutionRecord>> {
     use crate::parser::languages::ParseCache;
 
     let mut results = Vec::new();
+    let provider = crate::vfs::LocalFileProvider;
 
     for bm in bookmarks {
         let Ok(lang) = bm.language.parse::<Language>() else {
@@ -764,12 +777,23 @@ pub fn resolve_batch(
         };
         let mut cache = ParseCache::new(lang)?;
         let ts_lang = lang.tree_sitter_language();
-        let result = resolution::resolve(bm, &mut cache, &ts_lang, db.path())?;
+        let result = resolution::resolve(bm, &mut cache, &ts_lang, db.path(), &provider).await?;
         let new_status = health::transition(bm.status, result.method, result.hash_matches);
+
+        // Resolve relative path to absolute for output
+        let absolute_path = git_context::resolve_bookmark_file_path(&result.file_path, db.path())
+            .unwrap_or_else(|_| std::path::PathBuf::from(&result.file_path));
+
+        results.push(ResolutionRecord {
+            id: crate::cli::output::short_id(&bm.id).to_string(),
+            file: absolute_path.to_string_lossy().to_string(),
+            line: result.start_line + 1,
+            method: result.method.to_string(),
+            status: new_status.to_string(),
+        });
 
         // In dry-run mode, skip database updates
         if dry_run {
-            write_resolution_output(mode, bm, &result, db.path())?;
             continue;
         }
 
@@ -806,48 +830,33 @@ pub fn resolve_batch(
             content_hash: Some(result.content_hash.clone()),
         };
         let _ = db.insert_resolution_if_changed(&res, config.storage.max_resolutions());
-
-        // Resolve relative path to absolute for output
-        let absolute_path = git_context::resolve_bookmark_file_path(&result.file_path, db.path())
-            .unwrap_or_else(|_| std::path::PathBuf::from(&result.file_path));
-
-        results.push(serde_json::json!({
-            "id": crate::cli::output::short_id(&bm.id),
-            "file": absolute_path.to_string_lossy(),
-            "line": result.start_line + 1,
-            "method": result.method.to_string(),
-            "status": new_status.to_string(),
-        }));
     }
 
+    Ok(results)
+}
+
+/// Output a batch of resolution results.
+pub fn write_batch_output(mode: &OutputMode, results: &[ResolutionRecord]) -> Result<()> {
     match mode {
         OutputMode::Json => write_json_success(&results)?,
         OutputMode::Table => {
             let mut table = comfy_table::Table::new();
             table.set_header(vec!["ID", "File", "Line", "Method", "Status"]);
-            for r in &results {
+            for r in results {
                 table.add_row(vec![
-                    r["id"].as_str().unwrap_or(""),
-                    r["file"].as_str().unwrap_or(""),
-                    &r["line"].to_string(),
-                    r["method"].as_str().unwrap_or(""),
-                    r["status"].as_str().unwrap_or(""),
+                    r.id.clone(),
+                    r.file.clone(),
+                    r.line.to_string(),
+                    r.method.clone(),
+                    r.status.clone(),
                 ]);
             }
             println!("{table}");
         }
         _ => {
             let mut stdout = std::io::stdout().lock();
-            for r in &results {
-                writeln!(
-                    stdout,
-                    "{}\t{}:{}\t{}\t{}",
-                    r["id"].as_str().unwrap_or(""),
-                    r["file"].as_str().unwrap_or(""),
-                    r["line"],
-                    r["method"].as_str().unwrap_or(""),
-                    r["status"].as_str().unwrap_or(""),
-                )?;
+            for r in results {
+                writeln!(stdout, "{}\t{}:{}\t{}\t{}", r.id, r.file, r.line, r.method, r.status,)?;
             }
         }
     }
@@ -922,7 +931,7 @@ pub fn write_resolution_output(
 ///
 /// Creates the .codemark directory and initializes the database.
 /// If already initialized, prints a message and does nothing.
-pub fn handle_init(cli: &Cli, mode: &OutputMode) -> Result<()> {
+pub async fn handle_init(cli: &Cli, mode: &OutputMode) -> Result<()> {
     if let Some(path) = cli.db.first() {
         if path.exists() {
             write_success(mode, &format!("Codemark already initialized at {}", path.display()))?;
@@ -984,7 +993,7 @@ pub fn handle_completions(args: &CompletionsArgs) -> Result<()> {
 }
 
 /// List bookmarks with optional filters.
-pub fn handle_list(cli: &Cli, mode: &OutputMode, args: &ListArgs) -> Result<()> {
+pub async fn handle_list(cli: &Cli, mode: &OutputMode, args: &ListArgs) -> Result<()> {
     use crate::cli::output::template_needs_line;
 
     let dbs = open_all_dbs_with_extra(cli, &args.add_db)?;
@@ -1090,7 +1099,7 @@ pub fn handle_list(cli: &Cli, mode: &OutputMode, args: &ListArgs) -> Result<()> 
 }
 
 /// Show the current location of a bookmark (file, line, byte range).
-pub fn handle_preview(cli: &Cli, args: &PreviewArgs) -> Result<()> {
+pub async fn handle_preview(cli: &Cli, args: &PreviewArgs) -> Result<()> {
     use crate::cli::output::ByteLocation;
 
     let dbs = open_all_dbs(cli)?;
@@ -1214,7 +1223,7 @@ pub fn handle_preview(cli: &Cli, args: &PreviewArgs) -> Result<()> {
 }
 
 /// Open a bookmarked file in the configured editor.
-pub fn handle_open(cli: &Cli, args: &OpenArgs) -> Result<()> {
+pub async fn handle_open(cli: &Cli, args: &OpenArgs) -> Result<()> {
     use crate::cli::output::short_id;
     use crate::parser::languages::ParseCache;
 
@@ -1243,7 +1252,8 @@ pub fn handle_open(cli: &Cli, args: &OpenArgs) -> Result<()> {
     let ts_lang = lang.tree_sitter_language();
     let mut cache = ParseCache::new(lang)?;
     let db_path = db.path();
-    let result = resolution::resolve(&bookmark, &mut cache, &ts_lang, db_path)?;
+    let provider = crate::vfs::LocalFileProvider;
+    let result = resolution::resolve(&bookmark, &mut cache, &ts_lang, db_path, &provider).await?;
 
     if result.method == ResolutionMethod::Failed {
         return Err(Error::Resolution(format!(
@@ -1300,9 +1310,10 @@ pub fn handle_open(cli: &Cli, args: &OpenArgs) -> Result<()> {
 
     if should_wait {
         // Wait for terminal editors to complete
-        let status = std::process::Command::new(program)
+        let status = tokio::process::Command::new(program)
             .args(args)
             .status()
+            .await
             .map_err(|e| {
                 if e.kind() == std::io::ErrorKind::NotFound {
                     Error::Input(format!(
@@ -1319,7 +1330,7 @@ pub fn handle_open(cli: &Cli, args: &OpenArgs) -> Result<()> {
         }
     } else {
         // Spawn GUI editors in the background
-        std::process::Command::new(program)
+        tokio::process::Command::new(program)
             .args(args)
             .spawn()
             .map_err(|e| {

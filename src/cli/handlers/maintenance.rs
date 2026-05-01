@@ -17,7 +17,7 @@ use crate::storage::SemanticRepo;
 
 use super::{load_config, now_iso, open_all_dbs, open_db, open_db_for_write};
 
-pub fn handle_heal(cli: &Cli, mode: &OutputMode, args: &HealArgs) -> Result<()> {
+pub async fn handle_heal(cli: &Cli, mode: &OutputMode, args: &HealArgs) -> Result<()> {
     let db = open_db_for_write(cli)?;
     let filter = BookmarkFilter {
         file_path: args.file.as_ref().map(|p| p.to_string_lossy().to_string()),
@@ -77,7 +77,8 @@ pub fn handle_heal(cli: &Cli, mode: &OutputMode, args: &HealArgs) -> Result<()> 
         };
         let mut cache = ParseCache::new(lang)?;
         let ts_lang = lang.tree_sitter_language();
-        let result = resolution::resolve(bm, &mut cache, &ts_lang, db.path())?;
+        let provider = crate::vfs::LocalFileProvider;
+        let result = resolution::resolve(bm, &mut cache, &ts_lang, db.path(), &provider).await?;
         let new_status = health::transition(bm.status, result.method, result.hash_matches);
         let previous_status = bm.status;
 
@@ -173,7 +174,7 @@ pub fn handle_heal(cli: &Cli, mode: &OutputMode, args: &HealArgs) -> Result<()> 
     Ok(())
 }
 
-pub fn handle_status(cli: &Cli, mode: &OutputMode) -> Result<()> {
+pub async fn handle_status(cli: &Cli, mode: &OutputMode) -> Result<()> {
     let dbs = open_all_dbs(cli)?;
     let multi = dbs.len() > 1;
 
@@ -225,7 +226,7 @@ pub fn handle_status(cli: &Cli, mode: &OutputMode) -> Result<()> {
     Ok(())
 }
 
-pub fn handle_diff(cli: &Cli, mode: &OutputMode, args: &DiffArgs) -> Result<()> {
+pub async fn handle_diff(cli: &Cli, mode: &OutputMode, args: &DiffArgs) -> Result<()> {
     let db = open_db(cli)?;
     let cwd = std::env::current_dir()?;
 
@@ -262,7 +263,9 @@ pub fn handle_diff(cli: &Cli, mode: &OutputMode, args: &DiffArgs) -> Result<()> 
                 let Ok(lang) = bm.language.parse::<Language>() else { continue };
                 let mut cache = ParseCache::new(lang)?;
                 let ts_lang = lang.tree_sitter_language();
-                let result = resolution::resolve(bm, &mut cache, &ts_lang, db.path())?;
+                let provider = crate::vfs::LocalFileProvider;
+                let result =
+                    resolution::resolve(bm, &mut cache, &ts_lang, db.path(), &provider).await?;
                 let new_status = health::transition(bm.status, result.method, result.hash_matches);
                 results.push(serde_json::json!({
                     "id": bm.id,
@@ -285,7 +288,9 @@ pub fn handle_diff(cli: &Cli, mode: &OutputMode, args: &DiffArgs) -> Result<()> 
                 let Ok(lang) = bm.language.parse::<Language>() else { continue };
                 let mut cache = ParseCache::new(lang)?;
                 let ts_lang = lang.tree_sitter_language();
-                let result = resolution::resolve(bm, &mut cache, &ts_lang, db.path())?;
+                let provider = crate::vfs::LocalFileProvider;
+                let result =
+                    resolution::resolve(bm, &mut cache, &ts_lang, db.path(), &provider).await?;
                 let new_status = health::transition(bm.status, result.method, result.hash_matches);
                 let status_change = if new_status != bm.status {
                     format!("{} -> {}", bm.status, new_status)
@@ -312,7 +317,7 @@ pub fn handle_diff(cli: &Cli, mode: &OutputMode, args: &DiffArgs) -> Result<()> 
     Ok(())
 }
 
-pub fn handle_gc(cli: &Cli, mode: &OutputMode, args: &GcArgs) -> Result<()> {
+pub async fn handle_gc(cli: &Cli, mode: &OutputMode, args: &GcArgs) -> Result<()> {
     let db = open_db_for_write(cli)?;
     let days = super::parse_duration_days(&args.older_than)?;
     let cutoff = chrono::Utc::now() - chrono::Duration::days(days);
@@ -331,7 +336,7 @@ pub fn handle_gc(cli: &Cli, mode: &OutputMode, args: &GcArgs) -> Result<()> {
     Ok(())
 }
 
-pub fn handle_export(cli: &Cli, args: &ExportArgs) -> Result<()> {
+pub async fn handle_export(cli: &Cli, args: &ExportArgs) -> Result<()> {
     let dbs = open_all_dbs(cli)?;
     let filter = BookmarkFilter {
         tag: args.tag.clone(),
@@ -368,7 +373,8 @@ pub fn handle_export(cli: &Cli, args: &ExportArgs) -> Result<()> {
     Ok(())
 }
 
-pub fn handle_import(cli: &Cli, mode: &OutputMode, args: &ImportArgs) -> Result<()> {
+/// Import bookmarks from a JSON file.
+pub async fn handle_import(cli: &Cli, mode: &OutputMode, args: &ImportArgs) -> Result<()> {
     let mut db = open_db_for_write(cli)?;
     let content = std::fs::read_to_string(&args.file)
         .map_err(|e| Error::Input(format!("cannot read {}: {e}", args.file.display())))?;
@@ -435,7 +441,7 @@ pub fn handle_import(cli: &Cli, mode: &OutputMode, args: &ImportArgs) -> Result<
                 SemanticRepo::with_config(models_dir, model, distance_metric, threshold);
             let conn = db.conn_mut();
             // Ignore errors - embedding generation failure shouldn't block import
-            let _ = semantic_repo.store_embeddings(conn, &imported_bookmarks);
+            let _ = semantic_repo.store_embeddings(conn, &imported_bookmarks).await;
         }
     }
 

@@ -21,12 +21,14 @@ use super::{
     resolve_identity, resolve_or_create_repo_metadata, write_resolution_output,
 };
 
-pub fn handle_add(cli: &Cli, mode: &OutputMode, args: &AddArgs) -> Result<()> {
+/// Add a new bookmark from a file range or git hunk.
+pub async fn handle_add(cli: &Cli, mode: &OutputMode, args: &AddArgs) -> Result<()> {
     let lang = resolve_language(args.lang.as_deref(), &args.file)?;
     let (abs_path, rel_path) = resolve_file_path(&args.file)?;
 
     let mut parser = crate::parser::languages::Parser::new(lang)?;
-    let (tree, source) = parser.parse_file(&abs_path)?;
+    let provider = crate::vfs::LocalFileProvider;
+    let (tree, source) = parser.parse_file(&abs_path, &provider).await?;
     let ts_lang = lang.tree_sitter_language();
 
     // Resolve byte range from --range or --hunk
@@ -151,7 +153,7 @@ pub fn handle_add(cli: &Cli, mode: &OutputMode, args: &AddArgs) -> Result<()> {
     // Generate embedding for semantic search
     let config = super::load_config(cli);
     // Ignore embedding errors - shouldn't block bookmark creation
-    let _ = generate_embedding_for_bookmark(cli, &config, &bookmark);
+    let _ = generate_embedding_for_bookmark(cli, &config, &bookmark).await;
 
     // Record initial resolution as baseline (only if new bookmark)
     if is_new {
@@ -211,7 +213,8 @@ pub fn handle_add(cli: &Cli, mode: &OutputMode, args: &AddArgs) -> Result<()> {
     Ok(())
 }
 
-pub fn handle_add_from_snippet(
+/// Add a new bookmark from a text snippet provided on stdin.
+pub async fn handle_add_from_snippet(
     cli: &Cli,
     mode: &OutputMode,
     args: &AddFromSnippetArgs,
@@ -228,7 +231,8 @@ pub fn handle_add_from_snippet(
     }
 
     let mut parser = crate::parser::languages::Parser::new(lang)?;
-    let (tree, source) = parser.parse_file(&abs_path)?;
+    let provider = crate::vfs::LocalFileProvider;
+    let (tree, source) = parser.parse_file(&abs_path, &provider).await?;
     let ts_lang = lang.tree_sitter_language();
 
     let offset =
@@ -344,7 +348,7 @@ pub fn handle_add_from_snippet(
 
     // Generate embedding for semantic search
     // Ignore embedding errors - shouldn't block bookmark creation
-    let _ = generate_embedding_for_bookmark(cli, &config, &bookmark);
+    let _ = generate_embedding_for_bookmark(cli, &config, &bookmark).await;
 
     // Record initial resolution as baseline (only if new bookmark)
     if is_new {
@@ -400,12 +404,18 @@ pub fn handle_add_from_snippet(
     Ok(())
 }
 
-pub fn handle_add_from_query(cli: &Cli, mode: &OutputMode, args: &AddFromQueryArgs) -> Result<()> {
+/// Add a new bookmark using an explicit tree-sitter query.
+pub async fn handle_add_from_query(
+    cli: &Cli,
+    mode: &OutputMode,
+    args: &AddFromQueryArgs,
+) -> Result<()> {
     let lang = resolve_language(args.lang.as_deref(), &args.file)?;
     let (abs_path, rel_path) = resolve_file_path(&args.file)?;
 
     let mut parser = crate::parser::languages::Parser::new(lang)?;
-    let (tree, source) = parser.parse_file(&abs_path)?;
+    let provider = crate::vfs::LocalFileProvider;
+    let (tree, source) = parser.parse_file(&abs_path, &provider).await?;
     let ts_lang = lang.tree_sitter_language();
 
     // Validate the query by running it
@@ -537,7 +547,7 @@ pub fn handle_add_from_query(cli: &Cli, mode: &OutputMode, args: &AddFromQueryAr
 
     // Generate embedding for semantic search
     // Ignore embedding errors - shouldn't block bookmark creation
-    let _ = generate_embedding_for_bookmark(cli, &config, &bookmark);
+    let _ = generate_embedding_for_bookmark(cli, &config, &bookmark).await;
 
     // Record initial resolution as baseline (only if new bookmark)
     if is_new {
@@ -640,7 +650,8 @@ fn write_dry_run(
     Ok(())
 }
 
-pub fn handle_resolve(cli: &Cli, mode: &OutputMode, args: &ResolveArgs) -> Result<()> {
+/// Resolve one or more bookmarks and update their status and location.
+pub async fn handle_resolve(cli: &Cli, mode: &OutputMode, args: &ResolveArgs) -> Result<()> {
     let dbs = open_all_dbs(cli)?;
 
     if let Some(ref id) = args.id {
@@ -649,8 +660,9 @@ pub fn handle_resolve(cli: &Cli, mode: &OutputMode, args: &ResolveArgs) -> Resul
         let lang: Language = bm.language.parse()?;
         let mut cache = ParseCache::new(lang)?;
         let ts_lang = lang.tree_sitter_language();
+        let provider = crate::vfs::LocalFileProvider;
 
-        let result = resolution::resolve(&bm, &mut cache, &ts_lang, db.path())?;
+        let result = resolution::resolve(&bm, &mut cache, &ts_lang, db.path(), &provider).await?;
 
         // In dry-run mode, skip database updates and just show the result
         if args.dry_run {
@@ -707,15 +719,19 @@ pub fn handle_resolve(cli: &Cli, mode: &OutputMode, args: &ResolveArgs) -> Resul
             ..Default::default()
         };
         let config = super::load_config(cli);
+        let mut all_results = Vec::new();
         for (_label, db) in &dbs {
             let bookmarks = db.list_bookmarks(&filter)?;
-            resolve_batch(mode, db, &bookmarks, &config, args.dry_run)?;
+            let results = resolve_batch(db, &bookmarks, &config, args.dry_run).await?;
+            all_results.extend(results);
         }
+        super::write_batch_output(mode, &all_results)?;
     }
     Ok(())
 }
 
-pub fn handle_show(cli: &Cli, mode: &OutputMode, args: &ShowArgs) -> Result<()> {
+/// Show detailed information and resolution history for a bookmark.
+pub async fn handle_show(cli: &Cli, mode: &OutputMode, args: &ShowArgs) -> Result<()> {
     let dbs = open_all_dbs(cli)?;
     let (bm, db) = find_bookmark_across(&dbs, &args.id)?;
     let resolutions = db.list_resolutions(&bm.id, 5)?;
@@ -779,7 +795,8 @@ pub fn handle_show(cli: &Cli, mode: &OutputMode, args: &ShowArgs) -> Result<()> 
     Ok(())
 }
 
-pub fn handle_remove(cli: &Cli, mode: &OutputMode, args: &RemoveArgs) -> Result<()> {
+/// Remove one or more bookmarks from the database.
+pub async fn handle_remove(cli: &Cli, mode: &OutputMode, args: &RemoveArgs) -> Result<()> {
     let db = open_db_for_write(cli)?;
     let mut removed = 0;
     let mut not_found = 0;
@@ -809,7 +826,8 @@ pub fn handle_remove(cli: &Cli, mode: &OutputMode, args: &RemoveArgs) -> Result<
     Ok(())
 }
 
-pub fn handle_annotate(cli: &Cli, mode: &OutputMode, args: &AnnotateArgs) -> Result<()> {
+/// Add notes, context, or tags to an existing bookmark.
+pub async fn handle_annotate(cli: &Cli, mode: &OutputMode, args: &AnnotateArgs) -> Result<()> {
     let db = open_db_for_write(cli)?;
 
     // Validate that at least one of note, context, or tag is provided

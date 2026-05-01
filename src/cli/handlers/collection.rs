@@ -11,7 +11,8 @@ use crate::error::{Error, Result};
 
 use super::{find_bookmark, now_iso, open_db, open_db_for_write, resolve_batch};
 
-pub fn handle_collection_create(
+/// Create a new bookmark collection.
+pub async fn handle_collection_create(
     cli: &Cli,
     mode: &OutputMode,
     args: &CollectionCreateArgs,
@@ -29,7 +30,8 @@ pub fn handle_collection_create(
     Ok(())
 }
 
-pub fn handle_collection_delete(
+/// Delete a bookmark collection and optionally its bookmarks.
+pub async fn handle_collection_delete(
     cli: &Cli,
     mode: &OutputMode,
     args: &CollectionDeleteArgs,
@@ -60,7 +62,12 @@ pub fn handle_collection_delete(
     Ok(())
 }
 
-pub fn handle_collection_add(cli: &Cli, mode: &OutputMode, args: &CollectionAddArgs) -> Result<()> {
+/// Add one or more bookmarks to a collection.
+pub async fn handle_collection_add(
+    cli: &Cli,
+    mode: &OutputMode,
+    args: &CollectionAddArgs,
+) -> Result<()> {
     let db = open_db_for_write(cli)?;
     // Auto-create collection if it doesn't exist
     let collection = match db.get_collection_by_name(&args.name)? {
@@ -82,7 +89,8 @@ pub fn handle_collection_add(cli: &Cli, mode: &OutputMode, args: &CollectionAddA
     Ok(())
 }
 
-pub fn handle_collection_reorder(
+/// Reorder bookmarks within a collection.
+pub async fn handle_collection_reorder(
     cli: &Cli,
     mode: &OutputMode,
     args: &CollectionReorderArgs,
@@ -104,7 +112,8 @@ pub fn handle_collection_reorder(
     Ok(())
 }
 
-pub fn handle_collection_remove(
+/// Remove one or more bookmarks from a collection.
+pub async fn handle_collection_remove(
     cli: &Cli,
     mode: &OutputMode,
     args: &CollectionRemoveArgs,
@@ -123,7 +132,8 @@ pub fn handle_collection_remove(
     Ok(())
 }
 
-pub fn handle_collection_list(
+/// List all bookmark collections.
+pub async fn handle_collection_list(
     cli: &Cli,
     mode: &OutputMode,
     args: &CollectionListArgs,
@@ -234,7 +244,8 @@ pub fn handle_collection_list(
     Ok(())
 }
 
-pub fn handle_collection_show(
+/// Show all bookmarks in a collection.
+pub async fn handle_collection_show(
     cli: &Cli,
     mode: &OutputMode,
     args: &CollectionShowArgs,
@@ -254,7 +265,8 @@ pub fn handle_collection_show(
     Ok(())
 }
 
-pub fn handle_collection_resolve(
+/// Resolve all bookmarks in a collection.
+pub async fn handle_collection_resolve(
     cli: &Cli,
     mode: &OutputMode,
     args: &CollectionResolveArgs,
@@ -275,6 +287,7 @@ pub fn handle_collection_resolve(
     };
     let bookmarks = db.list_bookmarks(&filter)?;
     let config = super::load_config(cli);
-    resolve_batch(mode, &db, &bookmarks, &config, false)?;
+    let results = resolve_batch(&db, &bookmarks, &config, false).await?;
+    super::write_batch_output(mode, &results)?;
     Ok(())
 }
