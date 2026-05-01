@@ -521,6 +521,7 @@ pub fn parse_range(range: &str, source: &str) -> Result<(usize, usize)> {
     }
 }
 
+/// Parse a byte range string (e.g., "100-200" or "100:200").
 fn parse_byte_range(s: &str) -> Result<(usize, usize)> {
     let (start_str, end_str) = s
         .split_once('-')
@@ -533,6 +534,7 @@ fn parse_byte_range(s: &str) -> Result<(usize, usize)> {
     Ok((start, end))
 }
 
+/// Convert a 1-indexed line and column to a 0-indexed byte offset.
 fn line_col_to_byte(source: &str, line: usize, col: usize) -> Result<usize> {
     if line == 0 || col == 0 {
         return Err(Error::Input("line and column numbers are 1-indexed".into()));
@@ -558,6 +560,7 @@ fn line_col_to_byte(source: &str, line: usize, col: usize) -> Result<usize> {
     Err(Error::Input(format!("line {} is out of bounds", line)))
 }
 
+/// Parse a point string (e.g., "42:10" or "42") and return its byte offset.
 fn parse_point(source: &str, s: &str) -> Result<usize> {
     let parts: Vec<&str> = s.split(':').collect();
     if parts.len() == 2 {
@@ -746,13 +749,23 @@ pub fn add_bookmark_to_collection(
     Ok(Some(collection_name.to_string()))
 }
 
+/// A structured result for a single bookmark resolution.
+#[derive(serde::Serialize)]
+pub struct ResolutionRecord {
+    pub id: String,
+    pub file: String,
+    pub line: usize,
+    pub method: String,
+    pub status: String,
+}
+
 /// Batch resolve bookmarks and return structured results.
 pub async fn resolve_batch(
     db: &Database,
     bookmarks: &[Bookmark],
     config: &Config,
     dry_run: bool,
-) -> Result<Vec<serde_json::Value>> {
+) -> Result<Vec<ResolutionRecord>> {
     use crate::parser::languages::ParseCache;
 
     let mut results = Vec::new();
@@ -771,15 +784,13 @@ pub async fn resolve_batch(
         let absolute_path = git_context::resolve_bookmark_file_path(&result.file_path, db.path())
             .unwrap_or_else(|_| std::path::PathBuf::from(&result.file_path));
 
-        let res_value = serde_json::json!({
-            "id": crate::cli::output::short_id(&bm.id),
-            "file": absolute_path.to_string_lossy(),
-            "line": result.start_line + 1,
-            "method": result.method.to_string(),
-            "status": new_status.to_string(),
+        results.push(ResolutionRecord {
+            id: crate::cli::output::short_id(&bm.id).to_string(),
+            file: absolute_path.to_string_lossy().to_string(),
+            line: result.start_line + 1,
+            method: result.method.to_string(),
+            status: new_status.to_string(),
         });
-
-        results.push(res_value);
 
         // In dry-run mode, skip database updates
         if dry_run {
@@ -825,7 +836,7 @@ pub async fn resolve_batch(
 }
 
 /// Output a batch of resolution results.
-pub fn write_batch_output(mode: &OutputMode, results: &[serde_json::Value]) -> Result<()> {
+pub fn write_batch_output(mode: &OutputMode, results: &[ResolutionRecord]) -> Result<()> {
     match mode {
         OutputMode::Json => write_json_success(&results)?,
         OutputMode::Table => {
@@ -833,11 +844,11 @@ pub fn write_batch_output(mode: &OutputMode, results: &[serde_json::Value]) -> R
             table.set_header(vec!["ID", "File", "Line", "Method", "Status"]);
             for r in results {
                 table.add_row(vec![
-                    r["id"].as_str().unwrap_or(""),
-                    r["file"].as_str().unwrap_or(""),
-                    &r["line"].to_string(),
-                    r["method"].as_str().unwrap_or(""),
-                    r["status"].as_str().unwrap_or(""),
+                    r.id.clone(),
+                    r.file.clone(),
+                    r.line.to_string(),
+                    r.method.clone(),
+                    r.status.clone(),
                 ]);
             }
             println!("{table}");
@@ -848,11 +859,7 @@ pub fn write_batch_output(mode: &OutputMode, results: &[serde_json::Value]) -> R
                 writeln!(
                     stdout,
                     "{}\t{}:{}\t{}\t{}",
-                    r["id"].as_str().unwrap_or(""),
-                    r["file"].as_str().unwrap_or(""),
-                    r["line"],
-                    r["method"].as_str().unwrap_or(""),
-                    r["status"].as_str().unwrap_or(""),
+                    r.id, r.file, r.line, r.method, r.status,
                 )?;
             }
         }

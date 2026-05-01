@@ -137,6 +137,8 @@ pub fn detect_repo_metadata(from_path: &Path) -> Option<GitRepoMetadata> {
 }
 
 /// Parse owner and repo name from a git URL.
+///
+/// Supports HTTPS, SSH, and git protocols.
 /// Returns (owner, repo_name) or (None, None) if parsing fails.
 fn parse_git_url(url: &str) -> (Option<String>, Option<String>) {
     // Remove .git suffix if present
@@ -167,6 +169,7 @@ fn parse_git_url(url: &str) -> (Option<String>, Option<String>) {
 }
 
 /// Parse owner/repo from a path string.
+///
 /// Uses the last two path segments to handle nested namespaces (e.g., GitLab groups/subgroups).
 fn parse_git_path(path: &str) -> (Option<String>, Option<String>) {
     let parts: Vec<&str> = path.split('/').filter(|p| !p.is_empty()).collect();
@@ -359,22 +362,6 @@ pub fn find_nearest_ancestor(
         if !repo.graph_descendant_of(head_id, candidate_id).unwrap_or(false) {
             continue;
         }
-        let obj = match repo.revparse_single(candidate_hash) {
-            Ok(o) => o,
-            Err(_) => continue, // Skip commits that don't exist
-        };
-
-        let commit = match obj.peel_to_commit() {
-            Ok(c) => c,
-            Err(_) => continue, // Skip non-commits
-        };
-
-        let candidate_id = commit.id();
-
-        // Check if this candidate is an ancestor of HEAD
-        if !repo.graph_descendant_of(head_id, candidate_id).unwrap_or(false) {
-            continue;
-        }
 
         // Find merge base to determine distance
         let merge_base = repo.merge_base(head_id, candidate_id);
@@ -404,6 +391,7 @@ pub fn find_nearest_ancestor(
 }
 
 /// Count the number of commits from `start` (exclusive) to `end` (inclusive).
+///
 /// Used to determine how "close" an ancestor commit is to HEAD.
 fn count_commits_between(repo: &Repository, start: git2::Oid, end: git2::Oid) -> Result<usize> {
     // Special case: if start == end, there are 0 commits between
@@ -418,7 +406,7 @@ fn count_commits_between(repo: &Repository, start: git2::Oid, end: git2::Oid) ->
     Ok(revwalk.count())
 }
 
-/// Try to canonicalize; fall back to the original path if it doesn't exist yet.
+/// Try to canonicalize a path; fall back to the original path if it doesn't exist yet.
 pub fn canonicalize_best_effort(path: &Path) -> PathBuf {
     std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
 }
@@ -971,6 +959,35 @@ mod tests {
     fn detect_repo_metadata_from_current_repo() {
         // Test with the current codemark repo
         let metadata = detect_repo_metadata(Path::new("."));
+        assert!(metadata.is_some());
+        let metadata = metadata.unwrap();
+        // repo_root should be set
+        assert!(metadata.repo_root.exists());
+        // origin_url might or might not be set depending on git config
+    }
+}
+or might not be set depending on git config
+    }
+}
+));
+        assert!(metadata.is_some());
+        let metadata = metadata.unwrap();
+        // repo_root should be set
+        assert!(metadata.repo_root.exists());
+        // origin_url might or might not be set depending on git config
+    }
+}
+_some());
+        let metadata = metadata.unwrap();
+        // repo_root should be set
+        assert!(metadata.repo_root.exists());
+        // origin_url might or might not be set depending on git config
+    }
+}
+or might not be set depending on git config
+    }
+}
+));
         assert!(metadata.is_some());
         let metadata = metadata.unwrap();
         // repo_root should be set

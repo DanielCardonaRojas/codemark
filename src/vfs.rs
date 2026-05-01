@@ -32,6 +32,6 @@ impl FileProvider for LocalFileProvider {
     }
 
     async fn canonicalize(&self, path: &Path) -> PathBuf {
-        std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
+        tokio::fs::canonicalize(path).await.unwrap_or_else(|_| path.to_path_buf())
     }
 }

@@ -18,13 +18,19 @@ pub struct LocalGitProvider;
 #[async_trait]
 impl GitProvider for LocalGitProvider {
     async fn resolve_ref(&self, repo: &str, reference: &str) -> Result<String> {
-        let output = tokio::process::Command::new("git")
+        let child = tokio::process::Command::new("git")
             .arg("rev-parse")
             .arg(reference)
             .current_dir(repo)
-            .output()
-            .await
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
             .map_err(|e| crate::error::Error::Git(format!("git command failed: {e}")))?;
+
+        let output = tokio::time::timeout(std::time::Duration::from_secs(10), child.wait_with_output())
+            .await
+            .map_err(|_| crate::error::Error::Git("git command timed out".to_string()))?
+            .map_err(|e| crate::error::Error::Git(format!("failed to wait for git: {e}")))?;
 
         if !output.status.success() {
             return Err(crate::error::Error::Git(format!(
@@ -38,15 +44,21 @@ impl GitProvider for LocalGitProvider {
     }
 
     async fn list_files(&self, repo: &str, commit: &str) -> Result<Vec<PathBuf>> {
-        let output = tokio::process::Command::new("git")
+        let child = tokio::process::Command::new("git")
             .arg("ls-tree")
             .arg("-r")
             .arg("--name-only")
             .arg(commit)
             .current_dir(repo)
-            .output()
-            .await
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
             .map_err(|e| crate::error::Error::Git(format!("git command failed: {e}")))?;
+
+        let output = tokio::time::timeout(std::time::Duration::from_secs(10), child.wait_with_output())
+            .await
+            .map_err(|_| crate::error::Error::Git("git command timed out".to_string()))?
+            .map_err(|e| crate::error::Error::Git(format!("failed to wait for git: {e}")))?;
 
         if !output.status.success() {
             return Err(crate::error::Error::Git(format!(

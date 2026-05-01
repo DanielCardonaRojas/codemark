@@ -234,6 +234,7 @@ pub fn handle_collection_list(
     Ok(())
 }
 
+/// Show all bookmarks in a collection.
 pub async fn handle_collection_show(
     cli: &Cli,
     mode: &OutputMode,
@@ -278,4 +279,10 @@ pub async fn handle_collection_resolve(
     let results = resolve_batch(&db, &bookmarks, &config, false).await?;
     super::write_batch_output(mode, &results)?;
     Ok(())
+}
+
+}
+Ok(())
+}
+  Ok(())
 }

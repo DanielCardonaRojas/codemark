@@ -820,6 +820,7 @@ pub fn handle_remove(cli: &Cli, mode: &OutputMode, args: &RemoveArgs) -> Result<
     Ok(())
 }
 
+/// Add notes, context, or tags to an existing bookmark.
 pub fn handle_annotate(cli: &Cli, mode: &OutputMode, args: &AnnotateArgs) -> Result<()> {
     let db = open_db_for_write(cli)?;
 
@@ -973,4 +974,8 @@ fn resolve_file_path(file: &std::path::Path) -> Result<(std::path::PathBuf, Stri
         file.to_string_lossy().to_string()
     };
     Ok((abs, rel))
+}
+))
+}
+, rel))
 }
