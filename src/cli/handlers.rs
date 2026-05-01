@@ -28,43 +28,43 @@ pub mod maintenance;
 pub mod search;
 
 /// Dispatch a parsed CLI command to its handler.
-pub fn dispatch(cli: &Cli) -> Result<()> {
+pub async fn dispatch(cli: &Cli) -> Result<()> {
     // JSON is the default output format for all commands
     let mode = OutputMode::resolve_with_default(false, cli.format.as_deref(), true);
     match &cli.command {
         Command::Init => handle_init(cli, &mode),
-        Command::Add(args) => bookmark::handle_add(cli, &mode, args),
-        Command::AddFromSnippet(args) => bookmark::handle_add_from_snippet(cli, &mode, args),
-        Command::AddFromQuery(args) => bookmark::handle_add_from_query(cli, &mode, args),
-        Command::Resolve(args) => bookmark::handle_resolve(cli, &mode, args),
-        Command::Show(args) => bookmark::handle_show(cli, &mode, args),
+        Command::Add(args) => bookmark::handle_add(cli, &mode, args).await,
+        Command::AddFromSnippet(args) => bookmark::handle_add_from_snippet(cli, &mode, args).await,
+        Command::AddFromQuery(args) => bookmark::handle_add_from_query(cli, &mode, args).await,
+        Command::Resolve(args) => bookmark::handle_resolve(cli, &mode, args).await,
+        Command::Show(args) => bookmark::handle_show(cli, &mode, args).await,
         Command::Remove(args) => bookmark::handle_remove(cli, &mode, args),
-        Command::Heal(args) => maintenance::handle_heal(cli, &mode, args),
+        Command::Heal(args) => maintenance::handle_heal(cli, &mode, args).await,
         Command::Status => maintenance::handle_status(cli, &mode),
         Command::List(args) => handle_list(cli, &mode, args),
         Command::Preview(args) => handle_preview(cli, args),
-        Command::Search(args) => search::handle_search(cli, &mode, args),
-        Command::Reindex(args) => search::handle_reindex(cli, &mode, args),
-        Command::Collection(args) => dispatch_collection(cli, &mode, args),
-        Command::Diff(args) => maintenance::handle_diff(cli, &mode, args),
+        Command::Search(args) => search::handle_search(cli, &mode, args).await,
+        Command::Reindex(args) => search::handle_reindex(cli, &mode, args).await,
+        Command::Collection(args) => dispatch_collection(cli, &mode, args).await,
+        Command::Diff(args) => maintenance::handle_diff(cli, &mode, args).await,
         Command::Gc(args) => maintenance::handle_gc(cli, &mode, args),
         Command::Export(args) => maintenance::handle_export(cli, args),
         Command::Import(args) => maintenance::handle_import(cli, &mode, args),
         Command::Completions(args) => handle_completions(args),
         Command::Annotate(args) => bookmark::handle_annotate(cli, &mode, args),
-        Command::Open(args) => handle_open(cli, args),
+        Command::Open(args) => handle_open(cli, args).await,
     }
 }
 
-fn dispatch_collection(cli: &Cli, mode: &OutputMode, args: &CollectionArgs) -> Result<()> {
+async fn dispatch_collection(cli: &Cli, mode: &OutputMode, args: &CollectionArgs) -> Result<()> {
     match &args.command {
         CollectionCommand::Create(a) => collection::handle_collection_create(cli, mode, a),
         CollectionCommand::Delete(a) => collection::handle_collection_delete(cli, mode, a),
         CollectionCommand::Add(a) => collection::handle_collection_add(cli, mode, a),
         CollectionCommand::Remove(a) => collection::handle_collection_remove(cli, mode, a),
         CollectionCommand::List(a) => collection::handle_collection_list(cli, mode, a),
-        CollectionCommand::Show(a) => collection::handle_collection_show(cli, mode, a),
-        CollectionCommand::Resolve(a) => collection::handle_collection_resolve(cli, mode, a),
+        CollectionCommand::Show(a) => collection::handle_collection_show(cli, mode, a).await,
+        CollectionCommand::Resolve(a) => collection::handle_collection_resolve(cli, mode, a).await,
         CollectionCommand::Reorder(a) => collection::handle_collection_reorder(cli, mode, a),
     }
 }
@@ -747,7 +747,7 @@ pub fn add_bookmark_to_collection(
 }
 
 /// Batch resolve bookmarks and output results.
-pub fn resolve_batch(
+pub async fn resolve_batch(
     mode: &OutputMode,
     db: &Database,
     bookmarks: &[Bookmark],
@@ -757,6 +757,7 @@ pub fn resolve_batch(
     use crate::parser::languages::ParseCache;
 
     let mut results = Vec::new();
+    let provider = crate::vfs::LocalFileProvider;
 
     for bm in bookmarks {
         let Ok(lang) = bm.language.parse::<Language>() else {
@@ -764,7 +765,7 @@ pub fn resolve_batch(
         };
         let mut cache = ParseCache::new(lang)?;
         let ts_lang = lang.tree_sitter_language();
-        let result = resolution::resolve(bm, &mut cache, &ts_lang, db.path())?;
+        let result = resolution::resolve(bm, &mut cache, &ts_lang, db.path(), &provider).await?;
         let new_status = health::transition(bm.status, result.method, result.hash_matches);
 
         // In dry-run mode, skip database updates
@@ -1214,7 +1215,7 @@ pub fn handle_preview(cli: &Cli, args: &PreviewArgs) -> Result<()> {
 }
 
 /// Open a bookmarked file in the configured editor.
-pub fn handle_open(cli: &Cli, args: &OpenArgs) -> Result<()> {
+pub async fn handle_open(cli: &Cli, args: &OpenArgs) -> Result<()> {
     use crate::cli::output::short_id;
     use crate::parser::languages::ParseCache;
 
@@ -1243,7 +1244,8 @@ pub fn handle_open(cli: &Cli, args: &OpenArgs) -> Result<()> {
     let ts_lang = lang.tree_sitter_language();
     let mut cache = ParseCache::new(lang)?;
     let db_path = db.path();
-    let result = resolution::resolve(&bookmark, &mut cache, &ts_lang, db_path)?;
+    let provider = crate::vfs::LocalFileProvider;
+    let result = resolution::resolve(&bookmark, &mut cache, &ts_lang, db_path, &provider).await?;
 
     if result.method == ResolutionMethod::Failed {
         return Err(Error::Resolution(format!(

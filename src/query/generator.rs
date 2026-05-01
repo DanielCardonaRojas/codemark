@@ -887,7 +887,8 @@ mod tests {
         let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join(format!("tests/fixtures/swift/{name}"));
         let mut parser = Parser::new(CodemarkLang::Swift).unwrap();
-        parser.parse_file(&fixture).unwrap()
+        let provider = crate::vfs::LocalFileProvider;
+        tokio::runtime::Runtime::new().unwrap().block_on(parser.parse_file(&fixture, &provider)).unwrap()
     }
 
     fn find_function_byte_range(tree: &Tree, source: &str, func_name: &str) -> (usize, usize) {
@@ -1012,7 +1013,8 @@ mod tests {
         let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join(format!("tests/fixtures/rust/{name}"));
         let mut parser = Parser::new(CodemarkLang::Rust).unwrap();
-        parser.parse_file(&fixture).unwrap()
+        let provider = crate::vfs::LocalFileProvider;
+        tokio::runtime::Runtime::new().unwrap().block_on(parser.parse_file(&fixture, &provider)).unwrap()
     }
 
     fn find_rust_function_byte_range(tree: &Tree, source: &str, func_name: &str) -> (usize, usize) {
@@ -1123,7 +1125,8 @@ mod tests {
         let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join(format!("tests/fixtures/typescript/{name}"));
         let mut parser = Parser::new(CodemarkLang::TypeScript).unwrap();
-        parser.parse_file(&fixture).unwrap()
+        let provider = crate::vfs::LocalFileProvider;
+        tokio::runtime::Runtime::new().unwrap().block_on(parser.parse_file(&fixture, &provider)).unwrap()
     }
 
     fn find_ts_function_byte_range(tree: &Tree, source: &str, func_name: &str) -> (usize, usize) {
@@ -1192,7 +1195,8 @@ mod tests {
         let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join(format!("tests/fixtures/python/{name}"));
         let mut parser = Parser::new(CodemarkLang::Python).unwrap();
-        parser.parse_file(&fixture).unwrap()
+        let provider = crate::vfs::LocalFileProvider;
+        tokio::runtime::Runtime::new().unwrap().block_on(parser.parse_file(&fixture, &provider)).unwrap()
     }
 
     fn find_py_function_byte_range(tree: &Tree, source: &str, func_name: &str) -> (usize, usize) {
@@ -1274,7 +1278,8 @@ mod tests {
         let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join(format!("tests/fixtures/go/{name}"));
         let mut parser = Parser::new(CodemarkLang::Go).unwrap();
-        parser.parse_file(&fixture).unwrap()
+        let provider = crate::vfs::LocalFileProvider;
+        tokio::runtime::Runtime::new().unwrap().block_on(parser.parse_file(&fixture, &provider)).unwrap()
     }
 
     fn find_go_function_range(tree: &Tree, source: &str, func_name: &str) -> (usize, usize) {
@@ -1336,7 +1341,8 @@ mod tests {
         let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join(format!("tests/fixtures/java/{name}"));
         let mut parser = Parser::new(CodemarkLang::Java).unwrap();
-        parser.parse_file(&fixture).unwrap()
+        let provider = crate::vfs::LocalFileProvider;
+        tokio::runtime::Runtime::new().unwrap().block_on(parser.parse_file(&fixture, &provider)).unwrap()
     }
 
     fn find_java_range(tree: &Tree, source: &str, method_name: &str) -> (usize, usize) {
@@ -1398,7 +1404,8 @@ mod tests {
         let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join(format!("tests/fixtures/csharp/{name}"));
         let mut parser = Parser::new(CodemarkLang::CSharp).unwrap();
-        parser.parse_file(&fixture).unwrap()
+        let provider = crate::vfs::LocalFileProvider;
+        tokio::runtime::Runtime::new().unwrap().block_on(parser.parse_file(&fixture, &provider)).unwrap()
     }
 
     fn find_csharp_range(tree: &Tree, source: &str, method_name: &str) -> (usize, usize) {
@@ -1460,7 +1467,8 @@ mod tests {
         let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join(format!("tests/fixtures/dart/{name}"));
         let mut parser = Parser::new(CodemarkLang::Dart).unwrap();
-        parser.parse_file(&fixture).unwrap()
+        let provider = crate::vfs::LocalFileProvider;
+        tokio::runtime::Runtime::new().unwrap().block_on(parser.parse_file(&fixture, &provider)).unwrap()
     }
 
     #[test]

@@ -21,12 +21,13 @@ use super::{
     resolve_identity, resolve_or_create_repo_metadata, write_resolution_output,
 };
 
-pub fn handle_add(cli: &Cli, mode: &OutputMode, args: &AddArgs) -> Result<()> {
+pub async fn handle_add(cli: &Cli, mode: &OutputMode, args: &AddArgs) -> Result<()> {
     let lang = resolve_language(args.lang.as_deref(), &args.file)?;
     let (abs_path, rel_path) = resolve_file_path(&args.file)?;
 
     let mut parser = crate::parser::languages::Parser::new(lang)?;
-    let (tree, source) = parser.parse_file(&abs_path)?;
+    let provider = crate::vfs::LocalFileProvider;
+    let (tree, source) = parser.parse_file(&abs_path, &provider).await?;
     let ts_lang = lang.tree_sitter_language();
 
     // Resolve byte range from --range or --hunk
@@ -211,7 +212,7 @@ pub fn handle_add(cli: &Cli, mode: &OutputMode, args: &AddArgs) -> Result<()> {
     Ok(())
 }
 
-pub fn handle_add_from_snippet(
+pub async fn handle_add_from_snippet(
     cli: &Cli,
     mode: &OutputMode,
     args: &AddFromSnippetArgs,
@@ -228,7 +229,8 @@ pub fn handle_add_from_snippet(
     }
 
     let mut parser = crate::parser::languages::Parser::new(lang)?;
-    let (tree, source) = parser.parse_file(&abs_path)?;
+    let provider = crate::vfs::LocalFileProvider;
+    let (tree, source) = parser.parse_file(&abs_path, &provider).await?;
     let ts_lang = lang.tree_sitter_language();
 
     let offset =
@@ -400,12 +402,13 @@ pub fn handle_add_from_snippet(
     Ok(())
 }
 
-pub fn handle_add_from_query(cli: &Cli, mode: &OutputMode, args: &AddFromQueryArgs) -> Result<()> {
+pub async fn handle_add_from_query(cli: &Cli, mode: &OutputMode, args: &AddFromQueryArgs) -> Result<()> {
     let lang = resolve_language(args.lang.as_deref(), &args.file)?;
     let (abs_path, rel_path) = resolve_file_path(&args.file)?;
 
     let mut parser = crate::parser::languages::Parser::new(lang)?;
-    let (tree, source) = parser.parse_file(&abs_path)?;
+    let provider = crate::vfs::LocalFileProvider;
+    let (tree, source) = parser.parse_file(&abs_path, &provider).await?;
     let ts_lang = lang.tree_sitter_language();
 
     // Validate the query by running it
@@ -640,7 +643,7 @@ fn write_dry_run(
     Ok(())
 }
 
-pub fn handle_resolve(cli: &Cli, mode: &OutputMode, args: &ResolveArgs) -> Result<()> {
+pub async fn handle_resolve(cli: &Cli, mode: &OutputMode, args: &ResolveArgs) -> Result<()> {
     let dbs = open_all_dbs(cli)?;
 
     if let Some(ref id) = args.id {
@@ -649,8 +652,9 @@ pub fn handle_resolve(cli: &Cli, mode: &OutputMode, args: &ResolveArgs) -> Resul
         let lang: Language = bm.language.parse()?;
         let mut cache = ParseCache::new(lang)?;
         let ts_lang = lang.tree_sitter_language();
+        let provider = crate::vfs::LocalFileProvider;
 
-        let result = resolution::resolve(&bm, &mut cache, &ts_lang, db.path())?;
+        let result = resolution::resolve(&bm, &mut cache, &ts_lang, db.path(), &provider).await?;
 
         // In dry-run mode, skip database updates and just show the result
         if args.dry_run {
@@ -709,13 +713,13 @@ pub fn handle_resolve(cli: &Cli, mode: &OutputMode, args: &ResolveArgs) -> Resul
         let config = super::load_config(cli);
         for (_label, db) in &dbs {
             let bookmarks = db.list_bookmarks(&filter)?;
-            resolve_batch(mode, db, &bookmarks, &config, args.dry_run)?;
+            resolve_batch(mode, db, &bookmarks, &config, args.dry_run).await?;
         }
     }
     Ok(())
 }
 
-pub fn handle_show(cli: &Cli, mode: &OutputMode, args: &ShowArgs) -> Result<()> {
+pub async fn handle_show(cli: &Cli, mode: &OutputMode, args: &ShowArgs) -> Result<()> {
     let dbs = open_all_dbs(cli)?;
     let (bm, db) = find_bookmark_across(&dbs, &args.id)?;
     let resolutions = db.list_resolutions(&bm.id, 5)?;

@@ -3,11 +3,11 @@ use codemark::query::generator;
 use std::fs;
 use std::path::Path;
 
-fn get_fixture_content(name: &str) -> (String, tree_sitter::Tree) {
+async fn get_fixture_content(name: &str) -> (String, tree_sitter::Tree) {
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/swift").join(name);
-    let source = fs::read_to_string(&path).unwrap();
     let mut parser = Parser::new(CodemarkLang::Swift).unwrap();
-    let (tree, _) = parser.parse_file(&path).unwrap();
+    let provider = codemark::vfs::LocalFileProvider;
+    let (tree, source) = parser.parse_file(&path, &provider).await.unwrap();
     (source, tree)
 }
 
@@ -68,10 +68,10 @@ fn line_col_to_byte(source: &str, line: usize, col: usize) -> usize {
     panic!("Line {} out of bounds", line);
 }
 
-#[test]
-fn test_swift_complex_query_snapshots() {
+#[tokio::test]
+async fn test_swift_complex_query_snapshots() {
     let fixture_name = "complex_scenarios.swift";
-    let (source, tree) = get_fixture_content(fixture_name);
+    let (source, tree) = get_fixture_content(fixture_name).await;
     let language = CodemarkLang::Swift.tree_sitter_language();
 
     let scenarios = [

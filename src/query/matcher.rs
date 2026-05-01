@@ -123,68 +123,73 @@ mod tests {
     }
 
     /// Dump AST for Swift fixture to discover actual node type names.
-    #[test]
-    fn dump_swift_ast_structure() {
+    #[tokio::test]
+    async fn dump_swift_ast_structure() {
         let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("tests/fixtures/swift/complex_scenarios.swift");
         if !fixture.exists() {
             return;
         }
         let mut parser = Parser::new(CodemarkLang::Swift).unwrap();
-        let (tree, source) = parser.parse_file(&fixture).unwrap();
+        let provider = crate::vfs::LocalFileProvider;
+        let (tree, source) = parser.parse_file(&fixture, &provider).await.unwrap();
 
         dump_ast_with_limit(tree.root_node(), &source, 0, 10, None);
     }
 
     /// Dump AST for Rust fixture to discover node type names.
-    #[test]
-    fn dump_rust_ast_structure() {
+    #[tokio::test]
+    async fn dump_rust_ast_structure() {
         let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("tests/fixtures/rust/auth_service.rs");
         if !fixture.exists() {
             return;
         }
         let mut parser = Parser::new(CodemarkLang::Rust).unwrap();
-        let (tree, source) = parser.parse_file(&fixture).unwrap();
+        let provider = crate::vfs::LocalFileProvider;
+        let (tree, source) = parser.parse_file(&fixture, &provider).await.unwrap();
 
         dump_ast_with_limit(tree.root_node(), &source, 0, 10, None);
     }
 
-    #[test]
-    fn dump_typescript_ast_structure() {
+    #[tokio::test]
+    async fn dump_typescript_ast_structure() {
         let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("tests/fixtures/typescript/auth_service.ts");
         if !fixture.exists() {
             return;
         }
         let mut parser = Parser::new(CodemarkLang::TypeScript).unwrap();
-        let (tree, source) = parser.parse_file(&fixture).unwrap();
+        let provider = crate::vfs::LocalFileProvider;
+        let (tree, source) = parser.parse_file(&fixture, &provider).await.unwrap();
         dump_ast_with_limit(tree.root_node(), &source, 0, 10, None);
     }
 
-    #[test]
-    fn dump_python_ast_structure() {
+    #[tokio::test]
+    async fn dump_python_ast_structure() {
         let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("tests/fixtures/python/auth_service.py");
         if !fixture.exists() {
             return;
         }
         let mut parser = Parser::new(CodemarkLang::Python).unwrap();
-        let (tree, source) = parser.parse_file(&fixture).unwrap();
+        let provider = crate::vfs::LocalFileProvider;
+        let (tree, source) = parser.parse_file(&fixture, &provider).await.unwrap();
         dump_ast_with_limit(tree.root_node(), &source, 0, 10, None);
     }
 
     // Macro to generate AST dump tests for any language/fixture pair
     macro_rules! dump_ast_test {
         ($name:ident, $lang:expr, $fixture:expr) => {
-            #[test]
-            fn $name() {
+            #[tokio::test]
+            async fn $name() {
                 let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join($fixture);
                 if !fixture.exists() {
                     return;
                 }
                 let mut parser = Parser::new($lang).unwrap();
-                let (tree, source) = parser.parse_file(&fixture).unwrap();
+                let provider = crate::vfs::LocalFileProvider;
+                let (tree, source) = parser.parse_file(&fixture, &provider).await.unwrap();
                 fn dump(
                     node: tree_sitter::Node,
                     source: &str,

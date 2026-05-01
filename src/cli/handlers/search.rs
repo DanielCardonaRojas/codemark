@@ -14,7 +14,7 @@ use super::{
     open_all_dbs_with_extra, open_db,
 };
 
-pub fn handle_search(cli: &Cli, mode: &OutputMode, args: &SearchArgs) -> Result<()> {
+pub async fn handle_search(cli: &Cli, mode: &OutputMode, args: &SearchArgs) -> Result<()> {
     let config = load_config(cli);
 
     // Semantic search requires a query
@@ -29,7 +29,7 @@ pub fn handle_search(cli: &Cli, mode: &OutputMode, args: &SearchArgs) -> Result<
             .or(args.context.as_ref())
             .ok_or_else(|| Error::Input("Semantic search requires a query".to_string()))?;
 
-        return handle_semantic_search(cli, mode, query, args);
+        return handle_semantic_search(cli, mode, query, args).await;
     }
 
     // Regular FTS search
@@ -131,7 +131,7 @@ pub fn handle_search(cli: &Cli, mode: &OutputMode, args: &SearchArgs) -> Result<
 }
 
 /// Handle semantic search using vector embeddings.
-fn handle_semantic_search(
+async fn handle_semantic_search(
     cli: &Cli,
     mode: &OutputMode,
     query: &str,
@@ -224,7 +224,7 @@ fn handle_semantic_search(
 }
 
 /// Handle reindex command to rebuild embeddings.
-pub fn handle_reindex(cli: &Cli, mode: &OutputMode, args: &ReindexArgs) -> Result<()> {
+pub async fn handle_reindex(cli: &Cli, mode: &OutputMode, args: &ReindexArgs) -> Result<()> {
     let config = load_config(cli);
     if !config.semantic.is_enabled() {
         return Err(Error::Input("Semantic search is not enabled in config".to_string()));

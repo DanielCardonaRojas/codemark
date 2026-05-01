@@ -234,7 +234,7 @@ pub fn handle_collection_list(
     Ok(())
 }
 
-pub fn handle_collection_show(
+pub async fn handle_collection_show(
     cli: &Cli,
     mode: &OutputMode,
     args: &CollectionShowArgs,
@@ -254,7 +254,7 @@ pub fn handle_collection_show(
     Ok(())
 }
 
-pub fn handle_collection_resolve(
+pub async fn handle_collection_resolve(
     cli: &Cli,
     mode: &OutputMode,
     args: &CollectionResolveArgs,
@@ -275,6 +275,6 @@ pub fn handle_collection_resolve(
     };
     let bookmarks = db.list_bookmarks(&filter)?;
     let config = super::load_config(cli);
-    resolve_batch(mode, &db, &bookmarks, &config, false)?;
+    resolve_batch(mode, &db, &bookmarks, &config, false).await?;
     Ok(())
 }

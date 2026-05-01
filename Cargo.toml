@@ -30,7 +30,7 @@ insta = { version = "1.39", features = ["yaml"] }
 async-trait = "0.1"
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4", features = ["derive", "env"] }
-tokio = { version = "1", features = ["rt"] }
+tokio = { version = "1", features = ["full"] }
 clap_complete = "4"
 clap_mangen = { version = "0.2", optional = true }
 comfy-table = "7"
