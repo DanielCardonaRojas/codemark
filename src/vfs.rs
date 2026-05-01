@@ -10,6 +10,9 @@ pub trait FileProvider: Send + Sync {
     
     /// Checks if a file exists at a specific point in time.
     async fn exists(&self, path: &Path, commit: Option<&str>) -> bool;
+
+    /// Canonicalizes a path if possible.
+    async fn canonicalize(&self, path: &Path) -> PathBuf;
 }
 
 pub struct LocalFileProvider;
@@ -19,11 +22,16 @@ impl FileProvider for LocalFileProvider {
     async fn read_file(&self, path: &Path, _commit: Option<&str>) -> Result<String> {
         // For LocalFileProvider, we ignore the commit for now as it's intended to work on the local disk.
         // Later we could use git2 to read from a specific commit if needed.
-        std::fs::read_to_string(path)
+        tokio::fs::read_to_string(path)
+            .await
             .map_err(|e| crate::error::Error::Input(format!("cannot read {}: {e}", path.display())))
     }
 
     async fn exists(&self, path: &Path, _commit: Option<&str>) -> bool {
-        path.exists()
+        tokio::fs::try_exists(path).await.unwrap_or(false)
+    }
+
+    async fn canonicalize(&self, path: &Path) -> PathBuf {
+        std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
     }
 }

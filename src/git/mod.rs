@@ -17,12 +17,13 @@ pub struct LocalGitProvider;
 
 #[async_trait]
 impl GitProvider for LocalGitProvider {
-    async fn resolve_ref(&self, _repo: &str, reference: &str) -> Result<String> {
-        // Implementation using git2 or shell command
-        let output = std::process::Command::new("git")
+    async fn resolve_ref(&self, repo: &str, reference: &str) -> Result<String> {
+        let output = tokio::process::Command::new("git")
             .arg("rev-parse")
             .arg(reference)
+            .current_dir(repo)
             .output()
+            .await
             .map_err(|e| crate::error::Error::Git(format!("git command failed: {e}")))?;
 
         if !output.status.success() {
@@ -36,13 +37,15 @@ impl GitProvider for LocalGitProvider {
         Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
     }
 
-    async fn list_files(&self, _repo: &str, commit: &str) -> Result<Vec<PathBuf>> {
-        let output = std::process::Command::new("git")
+    async fn list_files(&self, repo: &str, commit: &str) -> Result<Vec<PathBuf>> {
+        let output = tokio::process::Command::new("git")
             .arg("ls-tree")
             .arg("-r")
             .arg("--name-only")
             .arg(commit)
+            .current_dir(repo)
             .output()
+            .await
             .map_err(|e| crate::error::Error::Git(format!("git command failed: {e}")))?;
 
         if !output.status.success() {

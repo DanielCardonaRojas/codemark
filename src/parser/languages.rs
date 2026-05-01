@@ -142,12 +142,7 @@ impl ParseCache {
 
     /// Get the parsed tree and source for a file, parsing it if not already cached.
     pub async fn get_or_parse(&mut self, path: &Path, provider: &dyn crate::vfs::FileProvider) -> Result<&(tree_sitter::Tree, String)> {
-        let canonical = if provider.exists(path, None).await {
-            // For local provider we can still canonicalize if it exists on disk
-            std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf())
-        } else {
-            path.to_path_buf()
-        };
+        let canonical = provider.canonicalize(path).await;
 
         if !self.trees.contains_key(&canonical) {
             let (tree, source) = self.parser.parse_file(path, provider).await?;
