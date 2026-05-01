@@ -402,7 +402,11 @@ pub async fn handle_add_from_snippet(
     Ok(())
 }
 
-pub async fn handle_add_from_query(cli: &Cli, mode: &OutputMode, args: &AddFromQueryArgs) -> Result<()> {
+pub async fn handle_add_from_query(
+    cli: &Cli,
+    mode: &OutputMode,
+    args: &AddFromQueryArgs,
+) -> Result<()> {
     let lang = resolve_language(args.lang.as_deref(), &args.file)?;
     let (abs_path, rel_path) = resolve_file_path(&args.file)?;
 
@@ -711,10 +715,13 @@ pub async fn handle_resolve(cli: &Cli, mode: &OutputMode, args: &ResolveArgs) ->
             ..Default::default()
         };
         let config = super::load_config(cli);
+        let mut all_results = Vec::new();
         for (_label, db) in &dbs {
             let bookmarks = db.list_bookmarks(&filter)?;
-            resolve_batch(mode, db, &bookmarks, &config, args.dry_run).await?;
+            let results = resolve_batch(db, &bookmarks, &config, args.dry_run).await?;
+            all_results.extend(results);
         }
+        super::write_batch_output(mode, &all_results)?;
     }
     Ok(())
 }

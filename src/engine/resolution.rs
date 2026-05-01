@@ -267,7 +267,8 @@ mod tests {
 
     #[tokio::test]
     async fn resolve_exact_match() {
-        let (bm, mut cache) = create_bookmark_for_function("auth_service.swift", "validateToken").await;
+        let (bm, mut cache) =
+            create_bookmark_for_function("auth_service.swift", "validateToken").await;
         let lang = CodemarkLang::Swift.tree_sitter_language();
         // For tests, use a dummy db path - the bookmark stores absolute paths from fixture_path
         let dummy_db =

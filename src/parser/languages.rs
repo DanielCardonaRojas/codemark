@@ -122,7 +122,11 @@ impl Parser {
             .ok_or_else(|| Error::TreeSitter("failed to parse source".into()))
     }
 
-    pub async fn parse_file(&mut self, path: &Path, provider: &dyn crate::vfs::FileProvider) -> Result<(tree_sitter::Tree, String)> {
+    pub async fn parse_file(
+        &mut self,
+        path: &Path,
+        provider: &dyn crate::vfs::FileProvider,
+    ) -> Result<(tree_sitter::Tree, String)> {
         let source = provider.read_file(path, None).await?;
         let tree = self.parse(source.as_bytes())?;
         Ok((tree, source))
@@ -141,8 +145,12 @@ impl ParseCache {
     }
 
     /// Get the parsed tree and source for a file, parsing it if not already cached.
-    pub async fn get_or_parse(&mut self, path: &Path, provider: &dyn crate::vfs::FileProvider) -> Result<&(tree_sitter::Tree, String)> {
-        let canonical = provider.canonicalize(path).await;
+    pub async fn get_or_parse(
+        &mut self,
+        path: &Path,
+        provider: &dyn crate::vfs::FileProvider,
+    ) -> Result<&(tree_sitter::Tree, String)> {
+        let canonical: std::path::PathBuf = provider.canonicalize(path).await;
 
         if !self.trees.contains_key(&canonical) {
             let (tree, source) = self.parser.parse_file(path, provider).await?;

@@ -1,14 +1,14 @@
 pub mod context;
 
-use async_trait::async_trait;
 use crate::error::Result;
+use async_trait::async_trait;
 use std::path::PathBuf;
 
 #[async_trait]
 pub trait GitProvider: Send + Sync {
     /// Resolves a reference (branch, tag, HEAD) to a full 40-char SHA.
     async fn resolve_ref(&self, repo: &str, reference: &str) -> Result<String>;
-    
+
     /// Lists files in a tree at a specific commit.
     async fn list_files(&self, repo: &str, commit: &str) -> Result<Vec<PathBuf>>;
 }
@@ -56,10 +56,7 @@ impl GitProvider for LocalGitProvider {
             )));
         }
 
-        let files = String::from_utf8_lossy(&output.stdout)
-            .lines()
-            .map(PathBuf::from)
-            .collect();
+        let files = String::from_utf8_lossy(&output.stdout).lines().map(PathBuf::from).collect();
 
         Ok(files)
     }

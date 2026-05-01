@@ -264,7 +264,8 @@ pub async fn handle_diff(cli: &Cli, mode: &OutputMode, args: &DiffArgs) -> Resul
                 let mut cache = ParseCache::new(lang)?;
                 let ts_lang = lang.tree_sitter_language();
                 let provider = crate::vfs::LocalFileProvider;
-                let result = resolution::resolve(bm, &mut cache, &ts_lang, db.path(), &provider).await?;
+                let result =
+                    resolution::resolve(bm, &mut cache, &ts_lang, db.path(), &provider).await?;
                 let new_status = health::transition(bm.status, result.method, result.hash_matches);
                 results.push(serde_json::json!({
                     "id": bm.id,
@@ -288,7 +289,8 @@ pub async fn handle_diff(cli: &Cli, mode: &OutputMode, args: &DiffArgs) -> Resul
                 let mut cache = ParseCache::new(lang)?;
                 let ts_lang = lang.tree_sitter_language();
                 let provider = crate::vfs::LocalFileProvider;
-                let result = resolution::resolve(bm, &mut cache, &ts_lang, db.path(), &provider).await?;
+                let result =
+                    resolution::resolve(bm, &mut cache, &ts_lang, db.path(), &provider).await?;
                 let new_status = health::transition(bm.status, result.method, result.hash_matches);
                 let status_change = if new_status != bm.status {
                     format!("{} -> {}", bm.status, new_status)

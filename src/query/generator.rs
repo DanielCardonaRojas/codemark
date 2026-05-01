@@ -883,12 +883,12 @@ mod tests {
     use super::*;
     use crate::parser::languages::{Language as CodemarkLang, Parser};
 
-    fn parse_fixture(name: &str) -> (Tree, String) {
+    async fn parse_fixture(name: &str) -> (Tree, String) {
         let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join(format!("tests/fixtures/swift/{name}"));
         let mut parser = Parser::new(CodemarkLang::Swift).unwrap();
         let provider = crate::vfs::LocalFileProvider;
-        tokio::runtime::Runtime::new().unwrap().block_on(parser.parse_file(&fixture, &provider)).unwrap()
+        parser.parse_file(&fixture, &provider).await.unwrap()
     }
 
     fn find_function_byte_range(tree: &Tree, source: &str, func_name: &str) -> (usize, usize) {
@@ -913,9 +913,9 @@ mod tests {
             .unwrap_or_else(|| panic!("function '{func_name}' not found in fixture"))
     }
 
-    #[test]
-    fn generate_query_for_top_level_function() {
-        let (tree, source) = parse_fixture("auth_service.swift");
+    #[tokio::test]
+    async fn generate_query_for_top_level_function() {
+        let (tree, source) = parse_fixture("auth_service.swift").await;
         let range = find_function_byte_range(&tree, &source, "createDefaultAuthService");
         let lang = CodemarkLang::Swift.tree_sitter_language();
 
@@ -929,9 +929,9 @@ mod tests {
         assert!(matches[0].node_text.contains("createDefaultAuthService"));
     }
 
-    #[test]
-    fn generate_query_for_class_method() {
-        let (tree, source) = parse_fixture("auth_service.swift");
+    #[tokio::test]
+    async fn generate_query_for_class_method() {
+        let (tree, source) = parse_fixture("auth_service.swift").await;
         let range = find_function_byte_range(&tree, &source, "validateToken");
         let lang = CodemarkLang::Swift.tree_sitter_language();
 
@@ -944,9 +944,9 @@ mod tests {
         assert!(matches[0].node_text.contains("validateToken"));
     }
 
-    #[test]
-    fn generate_query_for_private_method() {
-        let (tree, source) = parse_fixture("auth_service.swift");
+    #[tokio::test]
+    async fn generate_query_for_private_method() {
+        let (tree, source) = parse_fixture("auth_service.swift").await;
         let range = find_function_byte_range(&tree, &source, "decode");
         let lang = CodemarkLang::Swift.tree_sitter_language();
 
@@ -957,9 +957,9 @@ mod tests {
         assert_eq!(matches.len(), 1);
     }
 
-    #[test]
-    fn generate_query_for_extension_method() {
-        let (tree, source) = parse_fixture("auth_service.swift");
+    #[tokio::test]
+    async fn generate_query_for_extension_method() {
+        let (tree, source) = parse_fixture("auth_service.swift").await;
         let range = find_function_byte_range(&tree, &source, "invalidateCache");
         let lang = CodemarkLang::Swift.tree_sitter_language();
 
@@ -970,9 +970,9 @@ mod tests {
         assert_eq!(matches.len(), 1);
     }
 
-    #[test]
-    fn generated_query_round_trips() {
-        let (tree, source) = parse_fixture("auth_service.swift");
+    #[tokio::test]
+    async fn generated_query_round_trips() {
+        let (tree, source) = parse_fixture("auth_service.swift").await;
         let lang = CodemarkLang::Swift.tree_sitter_language();
 
         // For each function in the fixture, generate a query and verify it matches
@@ -1009,12 +1009,12 @@ mod tests {
 
     // --- Rust tests ---
 
-    fn parse_rust_fixture(name: &str) -> (Tree, String) {
+    async fn parse_rust_fixture(name: &str) -> (Tree, String) {
         let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join(format!("tests/fixtures/rust/{name}"));
         let mut parser = Parser::new(CodemarkLang::Rust).unwrap();
         let provider = crate::vfs::LocalFileProvider;
-        tokio::runtime::Runtime::new().unwrap().block_on(parser.parse_file(&fixture, &provider)).unwrap()
+        parser.parse_file(&fixture, &provider).await.unwrap()
     }
 
     fn find_rust_function_byte_range(tree: &Tree, source: &str, func_name: &str) -> (usize, usize) {
@@ -1037,9 +1037,9 @@ mod tests {
             .unwrap_or_else(|| panic!("function '{func_name}' not found in Rust fixture"))
     }
 
-    #[test]
-    fn rust_top_level_function() {
-        let (tree, source) = parse_rust_fixture("auth_service.rs");
+    #[tokio::test]
+    async fn rust_top_level_function() {
+        let (tree, source) = parse_rust_fixture("auth_service.rs").await;
         let range = find_rust_function_byte_range(&tree, &source, "create_default_auth_service");
         let lang = CodemarkLang::Rust.tree_sitter_language();
 
@@ -1051,9 +1051,9 @@ mod tests {
         assert_eq!(matches.len(), 1, "query:\n{}", result.query);
     }
 
-    #[test]
-    fn rust_impl_method() {
-        let (tree, source) = parse_rust_fixture("auth_service.rs");
+    #[tokio::test]
+    async fn rust_impl_method() {
+        let (tree, source) = parse_rust_fixture("auth_service.rs").await;
         let range = find_rust_function_byte_range(&tree, &source, "decode");
         let lang = CodemarkLang::Rust.tree_sitter_language();
 
@@ -1065,9 +1065,9 @@ mod tests {
         assert!(matches[0].node_text.contains("fn decode"));
     }
 
-    #[test]
-    fn rust_trait_impl_method() {
-        let (tree, source) = parse_rust_fixture("auth_service.rs");
+    #[tokio::test]
+    async fn rust_trait_impl_method() {
+        let (tree, source) = parse_rust_fixture("auth_service.rs").await;
         // validate_token appears both in the trait and in the impl
         let range = find_rust_function_byte_range(&tree, &source, "validate_token");
         let lang = CodemarkLang::Rust.tree_sitter_language();
@@ -1078,9 +1078,9 @@ mod tests {
         assert!(!matches.is_empty(), "query:\n{}", result.query);
     }
 
-    #[test]
-    fn rust_generic_function() {
-        let (tree, source) = parse_rust_fixture("auth_service.rs");
+    #[tokio::test]
+    async fn rust_generic_function() {
+        let (tree, source) = parse_rust_fixture("auth_service.rs").await;
         let range = find_rust_function_byte_range(&tree, &source, "validate_and_check");
         let lang = CodemarkLang::Rust.tree_sitter_language();
 
@@ -1091,9 +1091,9 @@ mod tests {
         assert_eq!(matches.len(), 1, "query:\n{}", result.query);
     }
 
-    #[test]
-    fn rust_round_trips() {
-        let (tree, source) = parse_rust_fixture("auth_service.rs");
+    #[tokio::test]
+    async fn rust_round_trips() {
+        let (tree, source) = parse_rust_fixture("auth_service.rs").await;
         let lang = CodemarkLang::Rust.tree_sitter_language();
 
         let functions = [
@@ -1121,12 +1121,12 @@ mod tests {
 
     // --- TypeScript tests ---
 
-    fn parse_ts_fixture(name: &str) -> (Tree, String) {
+    async fn parse_ts_fixture(name: &str) -> (Tree, String) {
         let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join(format!("tests/fixtures/typescript/{name}"));
         let mut parser = Parser::new(CodemarkLang::TypeScript).unwrap();
         let provider = crate::vfs::LocalFileProvider;
-        tokio::runtime::Runtime::new().unwrap().block_on(parser.parse_file(&fixture, &provider)).unwrap()
+        parser.parse_file(&fixture, &provider).await.unwrap()
     }
 
     fn find_ts_function_byte_range(tree: &Tree, source: &str, func_name: &str) -> (usize, usize) {
@@ -1150,9 +1150,9 @@ mod tests {
             .unwrap_or_else(|| panic!("function '{func_name}' not found in TS fixture"))
     }
 
-    #[test]
-    fn ts_top_level_function() {
-        let (tree, source) = parse_ts_fixture("auth_service.ts");
+    #[tokio::test]
+    async fn ts_top_level_function() {
+        let (tree, source) = parse_ts_fixture("auth_service.ts").await;
         let range = find_ts_function_byte_range(&tree, &source, "validateAndCheck");
         let lang = CodemarkLang::TypeScript.tree_sitter_language();
 
@@ -1163,9 +1163,9 @@ mod tests {
         assert_eq!(matches.len(), 1, "query:\n{}", result.query);
     }
 
-    #[test]
-    fn ts_class_method() {
-        let (tree, source) = parse_ts_fixture("auth_service.ts");
+    #[tokio::test]
+    async fn ts_class_method() {
+        let (tree, source) = parse_ts_fixture("auth_service.ts").await;
         let range = find_ts_function_byte_range(&tree, &source, "validateToken");
         let lang = CodemarkLang::TypeScript.tree_sitter_language();
 
@@ -1176,9 +1176,9 @@ mod tests {
         assert_eq!(matches.len(), 1, "query:\n{}", result.query);
     }
 
-    #[test]
-    fn ts_private_method() {
-        let (tree, source) = parse_ts_fixture("auth_service.ts");
+    #[tokio::test]
+    async fn ts_private_method() {
+        let (tree, source) = parse_ts_fixture("auth_service.ts").await;
         let range = find_ts_function_byte_range(&tree, &source, "decode");
         let lang = CodemarkLang::TypeScript.tree_sitter_language();
 
@@ -1191,12 +1191,12 @@ mod tests {
 
     // --- Python tests ---
 
-    fn parse_py_fixture(name: &str) -> (Tree, String) {
+    async fn parse_py_fixture(name: &str) -> (Tree, String) {
         let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join(format!("tests/fixtures/python/{name}"));
         let mut parser = Parser::new(CodemarkLang::Python).unwrap();
         let provider = crate::vfs::LocalFileProvider;
-        tokio::runtime::Runtime::new().unwrap().block_on(parser.parse_file(&fixture, &provider)).unwrap()
+        parser.parse_file(&fixture, &provider).await.unwrap()
     }
 
     fn find_py_function_byte_range(tree: &Tree, source: &str, func_name: &str) -> (usize, usize) {
@@ -1220,9 +1220,9 @@ mod tests {
             .unwrap_or_else(|| panic!("function '{func_name}' not found in Python fixture"))
     }
 
-    #[test]
-    fn py_top_level_function() {
-        let (tree, source) = parse_py_fixture("auth_service.py");
+    #[tokio::test]
+    async fn py_top_level_function() {
+        let (tree, source) = parse_py_fixture("auth_service.py").await;
         let range = find_py_function_byte_range(&tree, &source, "create_default_auth_service");
         let lang = CodemarkLang::Python.tree_sitter_language();
 
@@ -1233,9 +1233,9 @@ mod tests {
         assert_eq!(matches.len(), 1, "query:\n{}", result.query);
     }
 
-    #[test]
-    fn py_class_method() {
-        let (tree, source) = parse_py_fixture("auth_service.py");
+    #[tokio::test]
+    async fn py_class_method() {
+        let (tree, source) = parse_py_fixture("auth_service.py").await;
         let range = find_py_function_byte_range(&tree, &source, "validate_token");
         let lang = CodemarkLang::Python.tree_sitter_language();
 
@@ -1246,9 +1246,9 @@ mod tests {
         assert!(!matches.is_empty(), "query:\n{}", result.query);
     }
 
-    #[test]
-    fn py_private_method() {
-        let (tree, source) = parse_py_fixture("auth_service.py");
+    #[tokio::test]
+    async fn py_private_method() {
+        let (tree, source) = parse_py_fixture("auth_service.py").await;
         let range = find_py_function_byte_range(&tree, &source, "_decode");
         let lang = CodemarkLang::Python.tree_sitter_language();
 
@@ -1259,9 +1259,9 @@ mod tests {
         assert!(!matches.is_empty(), "query:\n{}", result.query);
     }
 
-    #[test]
-    fn py_decorated_function() {
-        let (tree, source) = parse_py_fixture("auth_service.py");
+    #[tokio::test]
+    async fn py_decorated_function() {
+        let (tree, source) = parse_py_fixture("auth_service.py").await;
         let range = find_py_function_byte_range(&tree, &source, "require_auth");
         let lang = CodemarkLang::Python.tree_sitter_language();
 
@@ -1274,12 +1274,12 @@ mod tests {
 
     // --- Go tests ---
 
-    fn parse_go_fixture(name: &str) -> (Tree, String) {
+    async fn parse_go_fixture(name: &str) -> (Tree, String) {
         let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join(format!("tests/fixtures/go/{name}"));
         let mut parser = Parser::new(CodemarkLang::Go).unwrap();
         let provider = crate::vfs::LocalFileProvider;
-        tokio::runtime::Runtime::new().unwrap().block_on(parser.parse_file(&fixture, &provider)).unwrap()
+        parser.parse_file(&fixture, &provider).await.unwrap()
     }
 
     fn find_go_function_range(tree: &Tree, source: &str, func_name: &str) -> (usize, usize) {
@@ -1303,9 +1303,9 @@ mod tests {
             .unwrap_or_else(|| panic!("function '{func_name}' not found in Go fixture"))
     }
 
-    #[test]
-    fn go_free_function() {
-        let (tree, source) = parse_go_fixture("auth_service.go");
+    #[tokio::test]
+    async fn go_free_function() {
+        let (tree, source) = parse_go_fixture("auth_service.go").await;
         let range = find_go_function_range(&tree, &source, "CreateDefaultAuthService");
         let lang = CodemarkLang::Go.tree_sitter_language();
         let result = generate_query(&tree, source.as_bytes(), range, &lang).unwrap();
@@ -1314,9 +1314,9 @@ mod tests {
         assert_eq!(matches.len(), 1, "query:\n{}", result.query);
     }
 
-    #[test]
-    fn go_method() {
-        let (tree, source) = parse_go_fixture("auth_service.go");
+    #[tokio::test]
+    async fn go_method() {
+        let (tree, source) = parse_go_fixture("auth_service.go").await;
         let range = find_go_function_range(&tree, &source, "ValidateToken");
         let lang = CodemarkLang::Go.tree_sitter_language();
         let result = generate_query(&tree, source.as_bytes(), range, &lang).unwrap();
@@ -1324,9 +1324,9 @@ mod tests {
         assert!(!matches.is_empty(), "query:\n{}", result.query);
     }
 
-    #[test]
-    fn go_private_method() {
-        let (tree, source) = parse_go_fixture("auth_service.go");
+    #[tokio::test]
+    async fn go_private_method() {
+        let (tree, source) = parse_go_fixture("auth_service.go").await;
         let range = find_go_function_range(&tree, &source, "decode");
         let lang = CodemarkLang::Go.tree_sitter_language();
         let result = generate_query(&tree, source.as_bytes(), range, &lang).unwrap();
@@ -1337,12 +1337,12 @@ mod tests {
 
     // --- Java tests ---
 
-    fn parse_java_fixture(name: &str) -> (Tree, String) {
+    async fn parse_java_fixture(name: &str) -> (Tree, String) {
         let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join(format!("tests/fixtures/java/{name}"));
         let mut parser = Parser::new(CodemarkLang::Java).unwrap();
         let provider = crate::vfs::LocalFileProvider;
-        tokio::runtime::Runtime::new().unwrap().block_on(parser.parse_file(&fixture, &provider)).unwrap()
+        parser.parse_file(&fixture, &provider).await.unwrap()
     }
 
     fn find_java_range(tree: &Tree, source: &str, method_name: &str) -> (usize, usize) {
@@ -1365,9 +1365,9 @@ mod tests {
             .unwrap_or_else(|| panic!("method '{method_name}' not found in Java fixture"))
     }
 
-    #[test]
-    fn java_method() {
-        let (tree, source) = parse_java_fixture("AuthService.java");
+    #[tokio::test]
+    async fn java_method() {
+        let (tree, source) = parse_java_fixture("AuthService.java").await;
         let range = find_java_range(&tree, &source, "validateToken");
         let lang = CodemarkLang::Java.tree_sitter_language();
         let result = generate_query(&tree, source.as_bytes(), range, &lang).unwrap();
@@ -1376,9 +1376,9 @@ mod tests {
         assert_eq!(matches.len(), 1, "query:\n{}", result.query);
     }
 
-    #[test]
-    fn java_private_method() {
-        let (tree, source) = parse_java_fixture("AuthService.java");
+    #[tokio::test]
+    async fn java_private_method() {
+        let (tree, source) = parse_java_fixture("AuthService.java").await;
         let range = find_java_range(&tree, &source, "decode");
         let lang = CodemarkLang::Java.tree_sitter_language();
         let result = generate_query(&tree, source.as_bytes(), range, &lang).unwrap();
@@ -1387,9 +1387,9 @@ mod tests {
         assert_eq!(matches.len(), 1, "query:\n{}", result.query);
     }
 
-    #[test]
-    fn java_static_method() {
-        let (tree, source) = parse_java_fixture("AuthService.java");
+    #[tokio::test]
+    async fn java_static_method() {
+        let (tree, source) = parse_java_fixture("AuthService.java").await;
         let range = find_java_range(&tree, &source, "createDefault");
         let lang = CodemarkLang::Java.tree_sitter_language();
         let result = generate_query(&tree, source.as_bytes(), range, &lang).unwrap();
@@ -1400,12 +1400,12 @@ mod tests {
 
     // --- C# tests ---
 
-    fn parse_csharp_fixture(name: &str) -> (Tree, String) {
+    async fn parse_csharp_fixture(name: &str) -> (Tree, String) {
         let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join(format!("tests/fixtures/csharp/{name}"));
         let mut parser = Parser::new(CodemarkLang::CSharp).unwrap();
         let provider = crate::vfs::LocalFileProvider;
-        tokio::runtime::Runtime::new().unwrap().block_on(parser.parse_file(&fixture, &provider)).unwrap()
+        parser.parse_file(&fixture, &provider).await.unwrap()
     }
 
     fn find_csharp_range(tree: &Tree, source: &str, method_name: &str) -> (usize, usize) {
@@ -1428,9 +1428,9 @@ mod tests {
             .unwrap_or_else(|| panic!("method '{method_name}' not found in C# fixture"))
     }
 
-    #[test]
-    fn csharp_method() {
-        let (tree, source) = parse_csharp_fixture("AuthService.cs");
+    #[tokio::test]
+    async fn csharp_method() {
+        let (tree, source) = parse_csharp_fixture("AuthService.cs").await;
         let range = find_csharp_range(&tree, &source, "ValidateToken");
         let lang = CodemarkLang::CSharp.tree_sitter_language();
         let result = generate_query(&tree, source.as_bytes(), range, &lang).unwrap();
@@ -1439,9 +1439,9 @@ mod tests {
         assert_eq!(matches.len(), 1, "query:\n{}", result.query);
     }
 
-    #[test]
-    fn csharp_private_method() {
-        let (tree, source) = parse_csharp_fixture("AuthService.cs");
+    #[tokio::test]
+    async fn csharp_private_method() {
+        let (tree, source) = parse_csharp_fixture("AuthService.cs").await;
         let range = find_csharp_range(&tree, &source, "Decode");
         let lang = CodemarkLang::CSharp.tree_sitter_language();
         let result = generate_query(&tree, source.as_bytes(), range, &lang).unwrap();
@@ -1450,9 +1450,9 @@ mod tests {
         assert_eq!(matches.len(), 1, "query:\n{}", result.query);
     }
 
-    #[test]
-    fn csharp_static_method() {
-        let (tree, source) = parse_csharp_fixture("AuthService.cs");
+    #[tokio::test]
+    async fn csharp_static_method() {
+        let (tree, source) = parse_csharp_fixture("AuthService.cs").await;
         let range = find_csharp_range(&tree, &source, "CreateDefault");
         let lang = CodemarkLang::CSharp.tree_sitter_language();
         let result = generate_query(&tree, source.as_bytes(), range, &lang).unwrap();
@@ -1463,17 +1463,17 @@ mod tests {
 
     // --- Dart tests ---
 
-    fn parse_dart_fixture(name: &str) -> (Tree, String) {
+    async fn parse_dart_fixture(name: &str) -> (Tree, String) {
         let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join(format!("tests/fixtures/dart/{name}"));
         let mut parser = Parser::new(CodemarkLang::Dart).unwrap();
         let provider = crate::vfs::LocalFileProvider;
-        tokio::runtime::Runtime::new().unwrap().block_on(parser.parse_file(&fixture, &provider)).unwrap()
+        parser.parse_file(&fixture, &provider).await.unwrap()
     }
 
-    #[test]
-    fn dart_top_level_function() {
-        let (tree, source) = parse_dart_fixture("auth_service.dart");
+    #[tokio::test]
+    async fn dart_top_level_function() {
+        let (tree, source) = parse_dart_fixture("auth_service.dart").await;
         // function_signature has the name
         let offset = source.find("createDefaultAuthService").unwrap();
         let range = (offset, offset + 10);
@@ -1484,9 +1484,9 @@ mod tests {
         assert_eq!(matches.len(), 1, "query:\n{}", result.query);
     }
 
-    #[test]
-    fn dart_class_method() {
-        let (tree, source) = parse_dart_fixture("auth_service.dart");
+    #[tokio::test]
+    async fn dart_class_method() {
+        let (tree, source) = parse_dart_fixture("auth_service.dart").await;
         let offset = source.find("Claims _decode").unwrap();
         let range = (offset, offset + 10);
         let lang = CodemarkLang::Dart.tree_sitter_language();
@@ -1495,9 +1495,9 @@ mod tests {
         assert!(!matches.is_empty(), "query:\n{}", result.query);
     }
 
-    #[test]
-    fn dart_enum() {
-        let (tree, source) = parse_dart_fixture("auth_service.dart");
+    #[tokio::test]
+    async fn dart_enum() {
+        let (tree, source) = parse_dart_fixture("auth_service.dart").await;
         let offset = source.find("enum AuthError").unwrap();
         let range = (offset, offset + 10);
         let lang = CodemarkLang::Dart.tree_sitter_language();
@@ -1509,9 +1509,9 @@ mod tests {
 
     // --- Range precision tests: method range should target method, not class ---
 
-    #[test]
-    fn swift_exact_range_targets_method_not_class() {
-        let (tree, source) = parse_fixture("auth_service.swift");
+    #[tokio::test]
+    async fn swift_exact_range_targets_method_not_class() {
+        let (tree, source) = parse_fixture("auth_service.swift").await;
         let lang = CodemarkLang::Swift.tree_sitter_language();
 
         // Get the exact byte range of validateToken
@@ -1525,9 +1525,9 @@ mod tests {
         assert_eq!(result.target_name.as_deref(), Some("validateToken"));
     }
 
-    #[test]
-    fn rust_exact_range_targets_method_not_impl() {
-        let (tree, source) = parse_rust_fixture("auth_service.rs");
+    #[tokio::test]
+    async fn rust_exact_range_targets_method_not_impl() {
+        let (tree, source) = parse_rust_fixture("auth_service.rs").await;
         let lang = CodemarkLang::Rust.tree_sitter_language();
 
         let range = find_rust_function_byte_range(&tree, &source, "decode");
@@ -1540,9 +1540,9 @@ mod tests {
         assert_eq!(result.target_name.as_deref(), Some("decode"));
     }
 
-    #[test]
-    fn ts_exact_range_targets_method_not_class() {
-        let (tree, source) = parse_ts_fixture("auth_service.ts");
+    #[tokio::test]
+    async fn ts_exact_range_targets_method_not_class() {
+        let (tree, source) = parse_ts_fixture("auth_service.ts").await;
         let lang = CodemarkLang::TypeScript.tree_sitter_language();
 
         let range = find_ts_function_byte_range(&tree, &source, "validateToken");
@@ -1555,9 +1555,9 @@ mod tests {
         assert_eq!(result.target_name.as_deref(), Some("validateToken"));
     }
 
-    #[test]
-    fn py_exact_range_targets_method_not_class() {
-        let (tree, source) = parse_py_fixture("auth_service.py");
+    #[tokio::test]
+    async fn py_exact_range_targets_method_not_class() {
+        let (tree, source) = parse_py_fixture("auth_service.py").await;
         let lang = CodemarkLang::Python.tree_sitter_language();
 
         let range = find_py_function_byte_range(&tree, &source, "validate_token");
@@ -1570,9 +1570,9 @@ mod tests {
         assert_eq!(result.target_name.as_deref(), Some("validate_token"));
     }
 
-    #[test]
-    fn go_exact_range_targets_method() {
-        let (tree, source) = parse_go_fixture("auth_service.go");
+    #[tokio::test]
+    async fn go_exact_range_targets_method() {
+        let (tree, source) = parse_go_fixture("auth_service.go").await;
         let lang = CodemarkLang::Go.tree_sitter_language();
 
         let range = find_go_function_range(&tree, &source, "ValidateToken");
@@ -1584,9 +1584,9 @@ mod tests {
         );
     }
 
-    #[test]
-    fn java_exact_range_targets_method_not_class() {
-        let (tree, source) = parse_java_fixture("AuthService.java");
+    #[tokio::test]
+    async fn java_exact_range_targets_method_not_class() {
+        let (tree, source) = parse_java_fixture("AuthService.java").await;
         let lang = CodemarkLang::Java.tree_sitter_language();
 
         let range = find_java_range(&tree, &source, "validateToken");
@@ -1599,14 +1599,15 @@ mod tests {
         assert_eq!(result.target_name.as_deref(), Some("validateToken"));
     }
 
-    #[test]
-    fn single_line_inside_method_targets_anchored_declaration() {
+    #[tokio::test]
+    async fn single_line_inside_method_targets_anchored_declaration() {
         // A single line inside a method should target the enclosing method
-        let (tree, source) = parse_rust_fixture("auth_service.rs");
+        let (tree, source) = parse_rust_fixture("auth_service.rs").await;
         let lang = CodemarkLang::Rust.tree_sitter_language();
 
         // Line 50 is inside the decode function body
-        let line_50_start = source.lines().take(49).map(|l| l.len() + 1).sum::<usize>();
+        let line_50_start =
+            source.lines().take(49).map(|l: &str| l.len() + 1).sum::<usize>();
         let line_50_end = line_50_start + source.lines().nth(49).unwrap_or("").len();
 
         let result =

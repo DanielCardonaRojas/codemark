@@ -275,6 +275,7 @@ pub async fn handle_collection_resolve(
     };
     let bookmarks = db.list_bookmarks(&filter)?;
     let config = super::load_config(cli);
-    resolve_batch(mode, &db, &bookmarks, &config, false).await?;
+    let results = resolve_batch(&db, &bookmarks, &config, false).await?;
+    super::write_batch_output(mode, &results)?;
     Ok(())
 }

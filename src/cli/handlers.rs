@@ -746,14 +746,13 @@ pub fn add_bookmark_to_collection(
     Ok(Some(collection_name.to_string()))
 }
 
-/// Batch resolve bookmarks and output results.
+/// Batch resolve bookmarks and return structured results.
 pub async fn resolve_batch(
-    mode: &OutputMode,
     db: &Database,
     bookmarks: &[Bookmark],
     config: &Config,
     dry_run: bool,
-) -> Result<()> {
+) -> Result<Vec<serde_json::Value>> {
     use crate::parser::languages::ParseCache;
 
     let mut results = Vec::new();
@@ -768,9 +767,22 @@ pub async fn resolve_batch(
         let result = resolution::resolve(bm, &mut cache, &ts_lang, db.path(), &provider).await?;
         let new_status = health::transition(bm.status, result.method, result.hash_matches);
 
+        // Resolve relative path to absolute for output
+        let absolute_path = git_context::resolve_bookmark_file_path(&result.file_path, db.path())
+            .unwrap_or_else(|_| std::path::PathBuf::from(&result.file_path));
+
+        let res_value = serde_json::json!({
+            "id": crate::cli::output::short_id(&bm.id),
+            "file": absolute_path.to_string_lossy(),
+            "line": result.start_line + 1,
+            "method": result.method.to_string(),
+            "status": new_status.to_string(),
+        });
+
+        results.push(res_value);
+
         // In dry-run mode, skip database updates
         if dry_run {
-            write_resolution_output(mode, bm, &result, db.path())?;
             continue;
         }
 
@@ -807,26 +819,19 @@ pub async fn resolve_batch(
             content_hash: Some(result.content_hash.clone()),
         };
         let _ = db.insert_resolution_if_changed(&res, config.storage.max_resolutions());
-
-        // Resolve relative path to absolute for output
-        let absolute_path = git_context::resolve_bookmark_file_path(&result.file_path, db.path())
-            .unwrap_or_else(|_| std::path::PathBuf::from(&result.file_path));
-
-        results.push(serde_json::json!({
-            "id": crate::cli::output::short_id(&bm.id),
-            "file": absolute_path.to_string_lossy(),
-            "line": result.start_line + 1,
-            "method": result.method.to_string(),
-            "status": new_status.to_string(),
-        }));
     }
 
+    Ok(results)
+}
+
+/// Output a batch of resolution results.
+pub fn write_batch_output(mode: &OutputMode, results: &[serde_json::Value]) -> Result<()> {
     match mode {
         OutputMode::Json => write_json_success(&results)?,
         OutputMode::Table => {
             let mut table = comfy_table::Table::new();
             table.set_header(vec!["ID", "File", "Line", "Method", "Status"]);
-            for r in &results {
+            for r in results {
                 table.add_row(vec![
                     r["id"].as_str().unwrap_or(""),
                     r["file"].as_str().unwrap_or(""),
@@ -839,7 +844,7 @@ pub async fn resolve_batch(
         }
         _ => {
             let mut stdout = std::io::stdout().lock();
-            for r in &results {
+            for r in results {
                 writeln!(
                     stdout,
                     "{}\t{}:{}\t{}\t{}",
@@ -1302,9 +1307,10 @@ pub async fn handle_open(cli: &Cli, args: &OpenArgs) -> Result<()> {
 
     if should_wait {
         // Wait for terminal editors to complete
-        let status = std::process::Command::new(program)
+        let status = tokio::process::Command::new(program)
             .args(args)
             .status()
+            .await
             .map_err(|e| {
                 if e.kind() == std::io::ErrorKind::NotFound {
                     Error::Input(format!(
@@ -1321,7 +1327,7 @@ pub async fn handle_open(cli: &Cli, args: &OpenArgs) -> Result<()> {
         }
     } else {
         // Spawn GUI editors in the background
-        std::process::Command::new(program)
+        tokio::process::Command::new(program)
             .args(args)
             .spawn()
             .map_err(|e| {
