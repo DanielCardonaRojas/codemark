@@ -7,7 +7,7 @@ fn main() -> Result<()> {
     let man_dir = out_dir.join("man");
     create_dir_all(&man_dir)?;
 
-    let cmd = codemark::cli::build_cli();
+    let cmd = codemark_cli::cli::build_cli();
 
     // Generate main man page
     let man = clap_mangen::Man::new(cmd.clone());

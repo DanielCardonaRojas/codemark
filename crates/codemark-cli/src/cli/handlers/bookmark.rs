@@ -6,14 +6,14 @@ use crate::cli::output::{
     self, OutputMode, short_id, write_bookmark_markdown, write_json_success, write_success,
 };
 use crate::cli::*;
-use crate::engine::bookmark::{
+use codemark_core::engine::bookmark::{
     Annotation, Bookmark, BookmarkFilter, BookmarkStatus, Resolution, ResolutionMethod, Tag,
 };
-use crate::engine::{hash, health, resolution};
-use crate::error::{Error, Result};
-use crate::git::context as git_context;
-use crate::parser::languages::{Language, ParseCache};
-use crate::query::generator as qgen;
+use codemark_core::engine::{hash, health, resolution};
+use codemark_core::error::{Error, Result};
+use codemark_core::git::context as git_context;
+use codemark_core::parser::languages::{Language, ParseCache};
+use codemark_core::query::generator as qgen;
 
 use super::{
     add_bookmark_to_collection, find_bookmark, find_bookmark_across,
@@ -26,8 +26,8 @@ pub async fn handle_add(cli: &Cli, mode: &OutputMode, args: &AddArgs) -> Result<
     let lang = resolve_language(args.lang.as_deref(), &args.file)?;
     let (abs_path, rel_path) = resolve_file_path(&args.file)?;
 
-    let mut parser = crate::parser::languages::Parser::new(lang)?;
-    let provider = crate::vfs::LocalFileProvider;
+    let mut parser = codemark_core::parser::languages::Parser::new(lang)?;
+    let provider = codemark_core::vfs::LocalFileProvider;
     let (tree, source) = parser.parse_file(&abs_path, &provider).await?;
     let ts_lang = lang.tree_sitter_language();
 
@@ -46,7 +46,7 @@ pub async fn handle_add(cli: &Cli, mode: &OutputMode, args: &AddArgs) -> Result<
 
     // Count matches for uniqueness info
     let match_count =
-        crate::query::matcher::run_query(&generated.query, &tree, source.as_bytes(), &ts_lang)
+        codemark_core::query::matcher::run_query(&generated.query, &tree, source.as_bytes(), &ts_lang)
             .map(|m| m.len())
             .unwrap_or(0);
 
@@ -230,8 +230,8 @@ pub async fn handle_add_from_snippet(
         return Err(Error::Input("no snippet provided on stdin".into()));
     }
 
-    let mut parser = crate::parser::languages::Parser::new(lang)?;
-    let provider = crate::vfs::LocalFileProvider;
+    let mut parser = codemark_core::parser::languages::Parser::new(lang)?;
+    let provider = codemark_core::vfs::LocalFileProvider;
     let (tree, source) = parser.parse_file(&abs_path, &provider).await?;
     let ts_lang = lang.tree_sitter_language();
 
@@ -243,7 +243,7 @@ pub async fn handle_add_from_snippet(
     let content_hash = hash::content_hash(&source[generated.byte_range.0..generated.byte_range.1]);
 
     let match_count =
-        crate::query::matcher::run_query(&generated.query, &tree, source.as_bytes(), &ts_lang)
+        codemark_core::query::matcher::run_query(&generated.query, &tree, source.as_bytes(), &ts_lang)
             .map(|m| m.len())
             .unwrap_or(0);
 
@@ -413,13 +413,13 @@ pub async fn handle_add_from_query(
     let lang = resolve_language(args.lang.as_deref(), &args.file)?;
     let (abs_path, rel_path) = resolve_file_path(&args.file)?;
 
-    let mut parser = crate::parser::languages::Parser::new(lang)?;
-    let provider = crate::vfs::LocalFileProvider;
+    let mut parser = codemark_core::parser::languages::Parser::new(lang)?;
+    let provider = codemark_core::vfs::LocalFileProvider;
     let (tree, source) = parser.parse_file(&abs_path, &provider).await?;
     let ts_lang = lang.tree_sitter_language();
 
     // Validate the query by running it
-    let matches = crate::query::matcher::run_query(&args.query, &tree, source.as_bytes(), &ts_lang)
+    let matches = codemark_core::query::matcher::run_query(&args.query, &tree, source.as_bytes(), &ts_lang)
         .map_err(|e| Error::Input(format!("invalid tree-sitter query: {e}")))?;
 
     if matches.is_empty() {
@@ -447,7 +447,7 @@ pub async fn handle_add_from_query(
     if args.dry_run {
         return write_dry_run(
             mode,
-            &crate::query::generator::GeneratedQuery {
+            &codemark_core::query::generator::GeneratedQuery {
                 query: args.query.clone(),
                 byte_range,
                 target_node_type: node_type.clone(),
@@ -660,7 +660,7 @@ pub async fn handle_resolve(cli: &Cli, mode: &OutputMode, args: &ResolveArgs) ->
         let lang: Language = bm.language.parse()?;
         let mut cache = ParseCache::new(lang)?;
         let ts_lang = lang.tree_sitter_language();
-        let provider = crate::vfs::LocalFileProvider;
+        let provider = codemark_core::vfs::LocalFileProvider;
 
         let result = resolution::resolve(&bm, &mut cache, &ts_lang, db.path(), &provider).await?;
 

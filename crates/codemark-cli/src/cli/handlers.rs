@@ -10,16 +10,16 @@ use std::io::Write;
 
 use crate::cli::output::{OutputMode, write_json_success, write_success};
 use crate::cli::*;
-use crate::config::Config;
-use crate::embeddings::config::EmbeddingModel;
-use crate::engine::bookmark::{
+use codemark_core::config::Config;
+use codemark_core::embeddings::config::EmbeddingModel;
+use codemark_core::engine::bookmark::{
     Bookmark, BookmarkFilter, BookmarkStatus, Collection, Resolution, ResolutionMethod,
 };
-use crate::engine::{health, resolution};
-use crate::error::{Error, Result};
-use crate::git::context as git_context;
-use crate::parser::languages::Language;
-use crate::storage::{SemanticRepo, db::Database};
+use codemark_core::engine::{health, resolution};
+use codemark_core::error::{Error, Result};
+use codemark_core::git::context as git_context;
+use codemark_core::parser::languages::Language;
+use codemark_core::storage::{SemanticRepo, db::Database};
 
 // Handler submodules
 pub mod bookmark;
@@ -278,7 +278,7 @@ pub fn resolve_or_create_repo_metadata(
     }
 
     // Create new repo entry
-    use crate::engine::bookmark::Repo;
+    use codemark_core::engine::bookmark::Repo;
     use uuid::Uuid;
 
     let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
@@ -771,10 +771,10 @@ pub async fn resolve_batch(
     config: &Config,
     dry_run: bool,
 ) -> Result<Vec<ResolutionRecord>> {
-    use crate::parser::languages::ParseCache;
+    use codemark_core::parser::languages::ParseCache;
 
     let mut results = Vec::new();
-    let provider = crate::vfs::LocalFileProvider;
+    let provider = codemark_core::vfs::LocalFileProvider;
 
     for bm in bookmarks {
         let Ok(lang) = bm.language.parse::<Language>() else {
@@ -1230,7 +1230,7 @@ pub async fn handle_preview(cli: &Cli, args: &PreviewArgs) -> Result<()> {
 /// Open a bookmarked file in the configured editor.
 pub async fn handle_open(cli: &Cli, args: &OpenArgs) -> Result<()> {
     use crate::cli::output::short_id;
-    use crate::parser::languages::ParseCache;
+    use codemark_core::parser::languages::ParseCache;
 
     let db = open_db(cli)?;
     let config = load_config(cli);
@@ -1257,7 +1257,7 @@ pub async fn handle_open(cli: &Cli, args: &OpenArgs) -> Result<()> {
     let ts_lang = lang.tree_sitter_language();
     let mut cache = ParseCache::new(lang)?;
     let db_path = db.path();
-    let provider = crate::vfs::LocalFileProvider;
+    let provider = codemark_core::vfs::LocalFileProvider;
     let result = resolution::resolve(&bookmark, &mut cache, &ts_lang, db_path, &provider).await?;
 
     if result.method == ResolutionMethod::Failed {

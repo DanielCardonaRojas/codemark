@@ -5,15 +5,16 @@ use crate::cli::output::{
     write_success,
 };
 use crate::cli::*;
-use crate::embeddings::config::EmbeddingModel;
-use crate::engine::bookmark::{
-    Bookmark, BookmarkFilter, BookmarkStatus, Resolution, ResolutionMethod, Tag,
+use codemark_core::embeddings::config::EmbeddingModel;
+use codemark_core::engine::bookmark::{
+    Bookmark, BookmarkFilter, BookmarkStatus, Collection, Repo, ResolutionMethod,
 };
-use crate::engine::{health, resolution};
-use crate::error::{Error, Result};
-use crate::git::context as git_context;
-use crate::parser::languages::{Language, ParseCache};
-use crate::storage::SemanticRepo;
+use codemark_core::engine::{health, resolution};
+use codemark_core::error::{Error, Result};
+use codemark_core::git::context as git_context;
+use codemark_core::parser::languages::{Language, ParseCache};
+use codemark_core::storage::SemanticRepo;
+
 
 use super::{load_config, now_iso, open_all_dbs, open_db, open_db_for_write};
 

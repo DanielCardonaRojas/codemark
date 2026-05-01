@@ -266,7 +266,7 @@ impl HelperDef for TruncateHelper {
 /// (e.g. `$XDG_CONFIG_HOME/codemark/templates` or
 /// `~/Library/Application Support/codemark/templates` on macOS).
 pub fn templates_dir() -> Option<PathBuf> {
-    crate::config::global_config_dir().map(|d| d.join("templates"))
+    codemark_core::config::global_config_dir().map(|d| d.join("templates"))
 }
 
 /// Get the default markdown template for the `show` command.

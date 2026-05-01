@@ -6,8 +6,8 @@ use crate::cli::output::{
     self, CollectionWithCount, OutputMode, write_json_success, write_success,
 };
 use crate::cli::*;
-use crate::engine::bookmark::{BookmarkFilter, BookmarkStatus, Collection};
-use crate::error::{Error, Result};
+use codemark_core::engine::bookmark::{BookmarkFilter, BookmarkStatus, Collection};
+use codemark_core::error::{Error, Result};
 
 use super::{find_bookmark, now_iso, open_db, open_db_for_write, resolve_batch};
 
@@ -20,7 +20,7 @@ pub async fn handle_collection_create(
     let db = open_db_for_write(cli)?;
 
     let cwd = std::env::current_dir()?;
-    let git_ctx = crate::git::context::detect_context(&cwd);
+    let git_ctx = codemark_core::git::context::detect_context(&cwd);
     let created_branch = git_ctx.and_then(|ctx| ctx.branch_name);
 
     let collection = Collection {
@@ -80,7 +80,7 @@ pub async fn handle_collection_add(
         Some(c) => c,
         None => {
             let cwd = std::env::current_dir()?;
-            let git_ctx = crate::git::context::detect_context(&cwd);
+            let git_ctx = codemark_core::git::context::detect_context(&cwd);
             let created_branch = git_ctx.and_then(|ctx| ctx.branch_name);
 
             let c = Collection {

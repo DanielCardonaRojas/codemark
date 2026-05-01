@@ -1,6 +1,6 @@
 use clap::Parser;
-use codemark::cli::{Cli, handlers, templates};
-use codemark::error::exit_with_error;
+use codemark_cli::cli::{Cli, handlers, templates};
+use codemark_core::error::exit_with_error;
 
 #[tokio::main]
 async fn main() {
