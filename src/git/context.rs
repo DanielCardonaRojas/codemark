@@ -11,6 +11,7 @@ use git2::Repository;
 pub struct GitContext {
     pub repo_root: PathBuf,
     pub head_commit: Option<String>,
+    pub branch_name: Option<String>,
 }
 
 /// User identity detected from git configuration.
@@ -65,12 +66,13 @@ pub fn detect_context(from_path: &Path) -> Option<GitContext> {
     // For a worktree, this points to the main repo's .git, whose parent is the main repo root
     let repo_root = git_path.parent()?.to_path_buf();
 
-    // Get HEAD commit using git2 (still reliable for this purpose)
+    // Get HEAD commit and branch name using git2 (still reliable for this purpose)
     let repo = git2::Repository::discover(from_path).ok()?;
-    let head_commit =
-        repo.head().ok().and_then(|r| r.peel_to_commit().ok()).map(|c| c.id().to_string());
+    let head = repo.head().ok();
+    let head_commit = head.as_ref().and_then(|r| r.peel_to_commit().ok()).map(|c| c.id().to_string());
+    let branch_name = head.as_ref().and_then(|r| r.shorthand()).map(|s| s.to_string());
 
-    Some(GitContext { repo_root, head_commit })
+    Some(GitContext { repo_root, head_commit, branch_name })
 }
 
 /// Detect git user.name and user.email from the repository at the given path.
@@ -496,6 +498,8 @@ mod tests {
         assert!(ctx.head_commit.is_some());
         let commit = ctx.head_commit.unwrap();
         assert_eq!(commit.len(), 40); // full SHA hex
+        // Branch name should also exist
+        assert!(ctx.branch_name.is_some());
     }
 
     #[test]

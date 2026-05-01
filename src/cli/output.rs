@@ -22,6 +22,8 @@ pub struct CollectionWithCount {
     pub created_at: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub created_by: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub created_branch: Option<String>,
     pub bookmark_count: usize,
 }
 
@@ -33,6 +35,7 @@ impl From<&(Collection, usize)> for CollectionWithCount {
             description: collection.description.clone(),
             created_at: collection.created_at.clone(),
             created_by: collection.created_by.clone(),
+            created_branch: collection.created_branch.clone(),
             bookmark_count: *count,
         }
     }
@@ -46,6 +49,7 @@ impl From<(Collection, usize)> for CollectionWithCount {
             description: collection.description,
             created_at: collection.created_at,
             created_by: collection.created_by,
+            created_branch: collection.created_branch,
             bookmark_count: count,
         }
     }

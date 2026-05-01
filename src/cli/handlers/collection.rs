@@ -18,12 +18,18 @@ pub async fn handle_collection_create(
     args: &CollectionCreateArgs,
 ) -> Result<()> {
     let db = open_db_for_write(cli)?;
+
+    let cwd = std::env::current_dir()?;
+    let git_ctx = crate::git::context::detect_context(&cwd);
+    let created_branch = git_ctx.and_then(|ctx| ctx.branch_name);
+
     let collection = Collection {
         id: uuid::Uuid::new_v4().to_string(),
         name: args.name.clone(),
         description: args.description.clone(),
         created_at: now_iso(),
         created_by: None,
+        created_branch,
     };
     db.insert_collection(&collection)?;
     write_success(mode, &format!("Collection '{}' created", args.name))?;
@@ -73,12 +79,17 @@ pub async fn handle_collection_add(
     let collection = match db.get_collection_by_name(&args.name)? {
         Some(c) => c,
         None => {
+            let cwd = std::env::current_dir()?;
+            let git_ctx = crate::git::context::detect_context(&cwd);
+            let created_branch = git_ctx.and_then(|ctx| ctx.branch_name);
+
             let c = Collection {
                 id: uuid::Uuid::new_v4().to_string(),
                 name: args.name.clone(),
                 description: None,
                 created_at: now_iso(),
                 created_by: None,
+                created_branch,
             };
             db.insert_collection(&c)?;
             c
@@ -157,7 +168,9 @@ pub async fn handle_collection_list(
                     .replace("{DESCRIPTION}", c.description.as_deref().unwrap_or(""))
                     .replace("{description}", c.description.as_deref().unwrap_or(""))
                     .replace("{CREATED}", &c.created_at)
-                    .replace("{created}", &c.created_at);
+                    .replace("{created}", &c.created_at)
+                    .replace("{BRANCH}", c.created_branch.as_deref().unwrap_or(""))
+                    .replace("{branch}", c.created_branch.as_deref().unwrap_or(""));
                 writeln!(stdout, "{line}")?;
             }
             return Ok(());
@@ -167,10 +180,11 @@ pub async fn handle_collection_list(
             OutputMode::Json => write_json_success(&collections)?,
             OutputMode::Table => {
                 let mut table = comfy_table::Table::new();
-                table.set_header(vec!["Name", "Description", "Created"]);
+                table.set_header(vec!["Name", "Branch", "Description", "Created"]);
                 for c in &collections {
                     table.add_row(vec![
                         &c.name,
+                        c.created_branch.as_deref().unwrap_or(""),
                         c.description.as_deref().unwrap_or(""),
                         &c.created_at,
                     ]);
@@ -180,7 +194,13 @@ pub async fn handle_collection_list(
             _ => {
                 let mut stdout = std::io::stdout().lock();
                 for c in &collections {
-                    writeln!(stdout, "{}\t{}", c.name, c.description.as_deref().unwrap_or(""))?;
+                    writeln!(
+                        stdout,
+                        "{}\t{}\t{}",
+                        c.name,
+                        c.created_branch.as_deref().unwrap_or(""),
+                        c.description.as_deref().unwrap_or("")
+                    )?;
                 }
             }
         }
@@ -202,7 +222,9 @@ pub async fn handle_collection_list(
                     .replace("{DESCRIPTION}", c.description.as_deref().unwrap_or(""))
                     .replace("{description}", c.description.as_deref().unwrap_or(""))
                     .replace("{CREATED}", &c.created_at)
-                    .replace("{created}", &c.created_at);
+                    .replace("{created}", &c.created_at)
+                    .replace("{BRANCH}", c.created_branch.as_deref().unwrap_or(""))
+                    .replace("{branch}", c.created_branch.as_deref().unwrap_or(""));
                 writeln!(stdout, "{line}")?;
             }
             return Ok(());
@@ -216,11 +238,12 @@ pub async fn handle_collection_list(
             }
             OutputMode::Table => {
                 let mut table = comfy_table::Table::new();
-                table.set_header(vec!["Name", "Bookmarks", "Description", "Created"]);
+                table.set_header(vec!["Name", "Bookmarks", "Branch", "Description", "Created"]);
                 for (c, count) in &collections {
                     table.add_row(vec![
                         c.name.clone(),
                         count.to_string(),
+                        c.created_branch.clone().unwrap_or_default(),
                         c.description.clone().unwrap_or_default(),
                         c.created_at.clone(),
                     ]);
@@ -232,9 +255,10 @@ pub async fn handle_collection_list(
                 for (c, count) in &collections {
                     writeln!(
                         stdout,
-                        "{}\t{}\t{}",
+                        "{}\t{}\t{}\t{}",
                         c.name,
                         count,
+                        c.created_branch.as_deref().unwrap_or(""),
                         c.description.as_deref().unwrap_or("")
                     )?;
                 }

@@ -136,6 +136,7 @@ pub struct Collection {
     pub description: Option<String>,
     pub created_at: String,
     pub created_by: Option<String>,
+    pub created_branch: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
