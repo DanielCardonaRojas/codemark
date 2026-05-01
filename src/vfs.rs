@@ -1,7 +1,12 @@
+//! Virtual File System (VFS) abstraction for file access.
+//!
+//! Provides a unified interface for reading files from local disk or git commits.
+
 use crate::error::Result;
 use async_trait::async_trait;
 use std::path::{Path, PathBuf};
 
+/// Trait for file operations, supporting both local and versioned file access.
 #[async_trait]
 pub trait FileProvider: Send + Sync {
     /// Fetches the content of a file at a specific point in time (commit SHA).
@@ -15,6 +20,7 @@ pub trait FileProvider: Send + Sync {
     async fn canonicalize(&self, path: &Path) -> PathBuf;
 }
 
+/// A file provider that reads from the local filesystem.
 pub struct LocalFileProvider;
 
 #[async_trait]

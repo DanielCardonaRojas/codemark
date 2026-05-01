@@ -14,6 +14,7 @@ use super::{
     open_all_dbs_with_extra, open_db,
 };
 
+/// Search for bookmarks using full-text search or semantic search.
 pub async fn handle_search(cli: &Cli, mode: &OutputMode, args: &SearchArgs) -> Result<()> {
     let config = load_config(cli);
 
@@ -158,7 +159,7 @@ async fn handle_semantic_search(
     let semantic_repo = SemanticRepo::with_config(models_dir, model, distance_metric, threshold);
 
     // Perform semantic search
-    let results = semantic_repo.search(db.conn(), query, args.limit)?;
+    let results = semantic_repo.search(db.conn(), query, args.limit).await?;
 
     // Fetch full bookmark details for results
     let mut bookmarks = Vec::new();
@@ -193,7 +194,8 @@ async fn handle_semantic_search(
         write_json_success(&data)?;
     } else {
         // For non-JSON modes, use standard bookmark output functions
-        let bookmarks_only: Vec<Bookmark> = bookmarks.iter().map(|(_, bm)| bm.clone()).collect();
+        let bookmarks_only: Vec<Bookmark> =
+            bookmarks.iter().map(|(_, bm): &(f64, Bookmark)| bm.clone()).collect();
 
         // Check if we need line numbers
         let needs_line = mode.needs_line()
@@ -270,7 +272,7 @@ pub async fn handle_reindex(cli: &Cli, mode: &OutputMode, args: &ReindexArgs) ->
     // Store embeddings
     let count = {
         let conn = db.conn_mut();
-        semantic_repo.store_embeddings(conn, &bookmarks)
+        semantic_repo.store_embeddings(conn, &bookmarks).await
     }?;
 
     let message = format!("Generated embeddings for {count} bookmarks");

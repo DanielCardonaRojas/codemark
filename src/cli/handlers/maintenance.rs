@@ -174,7 +174,7 @@ pub async fn handle_heal(cli: &Cli, mode: &OutputMode, args: &HealArgs) -> Resul
     Ok(())
 }
 
-pub fn handle_status(cli: &Cli, mode: &OutputMode) -> Result<()> {
+pub async fn handle_status(cli: &Cli, mode: &OutputMode) -> Result<()> {
     let dbs = open_all_dbs(cli)?;
     let multi = dbs.len() > 1;
 
@@ -317,7 +317,7 @@ pub async fn handle_diff(cli: &Cli, mode: &OutputMode, args: &DiffArgs) -> Resul
     Ok(())
 }
 
-pub fn handle_gc(cli: &Cli, mode: &OutputMode, args: &GcArgs) -> Result<()> {
+pub async fn handle_gc(cli: &Cli, mode: &OutputMode, args: &GcArgs) -> Result<()> {
     let db = open_db_for_write(cli)?;
     let days = super::parse_duration_days(&args.older_than)?;
     let cutoff = chrono::Utc::now() - chrono::Duration::days(days);
@@ -336,7 +336,7 @@ pub fn handle_gc(cli: &Cli, mode: &OutputMode, args: &GcArgs) -> Result<()> {
     Ok(())
 }
 
-pub fn handle_export(cli: &Cli, args: &ExportArgs) -> Result<()> {
+pub async fn handle_export(cli: &Cli, args: &ExportArgs) -> Result<()> {
     let dbs = open_all_dbs(cli)?;
     let filter = BookmarkFilter {
         tag: args.tag.clone(),
@@ -373,7 +373,8 @@ pub fn handle_export(cli: &Cli, args: &ExportArgs) -> Result<()> {
     Ok(())
 }
 
-pub fn handle_import(cli: &Cli, mode: &OutputMode, args: &ImportArgs) -> Result<()> {
+/// Import bookmarks from a JSON file.
+pub async fn handle_import(cli: &Cli, mode: &OutputMode, args: &ImportArgs) -> Result<()> {
     let mut db = open_db_for_write(cli)?;
     let content = std::fs::read_to_string(&args.file)
         .map_err(|e| Error::Input(format!("cannot read {}: {e}", args.file.display())))?;
@@ -440,7 +441,7 @@ pub fn handle_import(cli: &Cli, mode: &OutputMode, args: &ImportArgs) -> Result<
                 SemanticRepo::with_config(models_dir, model, distance_metric, threshold);
             let conn = db.conn_mut();
             // Ignore errors - embedding generation failure shouldn't block import
-            let _ = semantic_repo.store_embeddings(conn, &imported_bookmarks);
+            let _ = semantic_repo.store_embeddings(conn, &imported_bookmarks).await;
         }
     }
 

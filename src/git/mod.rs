@@ -27,10 +27,11 @@ impl GitProvider for LocalGitProvider {
             .spawn()
             .map_err(|e| crate::error::Error::Git(format!("git command failed: {e}")))?;
 
-        let output = tokio::time::timeout(std::time::Duration::from_secs(10), child.wait_with_output())
-            .await
-            .map_err(|_| crate::error::Error::Git("git command timed out".to_string()))?
-            .map_err(|e| crate::error::Error::Git(format!("failed to wait for git: {e}")))?;
+        let output =
+            tokio::time::timeout(std::time::Duration::from_secs(10), child.wait_with_output())
+                .await
+                .map_err(|_| crate::error::Error::Git("git command timed out".to_string()))?
+                .map_err(|e| crate::error::Error::Git(format!("failed to wait for git: {e}")))?;
 
         if !output.status.success() {
             return Err(crate::error::Error::Git(format!(
@@ -55,10 +56,11 @@ impl GitProvider for LocalGitProvider {
             .spawn()
             .map_err(|e| crate::error::Error::Git(format!("git command failed: {e}")))?;
 
-        let output = tokio::time::timeout(std::time::Duration::from_secs(10), child.wait_with_output())
-            .await
-            .map_err(|_| crate::error::Error::Git("git command timed out".to_string()))?
-            .map_err(|e| crate::error::Error::Git(format!("failed to wait for git: {e}")))?;
+        let output =
+            tokio::time::timeout(std::time::Duration::from_secs(10), child.wait_with_output())
+                .await
+                .map_err(|_| crate::error::Error::Git("git command timed out".to_string()))?
+                .map_err(|e| crate::error::Error::Git(format!("failed to wait for git: {e}")))?;
 
         if !output.status.success() {
             return Err(crate::error::Error::Git(format!(

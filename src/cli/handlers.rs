@@ -32,40 +32,40 @@ pub async fn dispatch(cli: &Cli) -> Result<()> {
     // JSON is the default output format for all commands
     let mode = OutputMode::resolve_with_default(false, cli.format.as_deref(), true);
     match &cli.command {
-        Command::Init => handle_init(cli, &mode),
+        Command::Init => handle_init(cli, &mode).await,
         Command::Add(args) => bookmark::handle_add(cli, &mode, args).await,
         Command::AddFromSnippet(args) => bookmark::handle_add_from_snippet(cli, &mode, args).await,
         Command::AddFromQuery(args) => bookmark::handle_add_from_query(cli, &mode, args).await,
         Command::Resolve(args) => bookmark::handle_resolve(cli, &mode, args).await,
         Command::Show(args) => bookmark::handle_show(cli, &mode, args).await,
-        Command::Remove(args) => bookmark::handle_remove(cli, &mode, args),
+        Command::Remove(args) => bookmark::handle_remove(cli, &mode, args).await,
         Command::Heal(args) => maintenance::handle_heal(cli, &mode, args).await,
-        Command::Status => maintenance::handle_status(cli, &mode),
-        Command::List(args) => handle_list(cli, &mode, args),
-        Command::Preview(args) => handle_preview(cli, args),
+        Command::Status => maintenance::handle_status(cli, &mode).await,
+        Command::List(args) => handle_list(cli, &mode, args).await,
+        Command::Preview(args) => handle_preview(cli, args).await,
         Command::Search(args) => search::handle_search(cli, &mode, args).await,
         Command::Reindex(args) => search::handle_reindex(cli, &mode, args).await,
         Command::Collection(args) => dispatch_collection(cli, &mode, args).await,
         Command::Diff(args) => maintenance::handle_diff(cli, &mode, args).await,
-        Command::Gc(args) => maintenance::handle_gc(cli, &mode, args),
-        Command::Export(args) => maintenance::handle_export(cli, args),
-        Command::Import(args) => maintenance::handle_import(cli, &mode, args),
+        Command::Gc(args) => maintenance::handle_gc(cli, &mode, args).await,
+        Command::Export(args) => maintenance::handle_export(cli, args).await,
+        Command::Import(args) => maintenance::handle_import(cli, &mode, args).await,
         Command::Completions(args) => handle_completions(args),
-        Command::Annotate(args) => bookmark::handle_annotate(cli, &mode, args),
+        Command::Annotate(args) => bookmark::handle_annotate(cli, &mode, args).await,
         Command::Open(args) => handle_open(cli, args).await,
     }
 }
 
 async fn dispatch_collection(cli: &Cli, mode: &OutputMode, args: &CollectionArgs) -> Result<()> {
     match &args.command {
-        CollectionCommand::Create(a) => collection::handle_collection_create(cli, mode, a),
-        CollectionCommand::Delete(a) => collection::handle_collection_delete(cli, mode, a),
-        CollectionCommand::Add(a) => collection::handle_collection_add(cli, mode, a),
-        CollectionCommand::Remove(a) => collection::handle_collection_remove(cli, mode, a),
-        CollectionCommand::List(a) => collection::handle_collection_list(cli, mode, a),
+        CollectionCommand::Create(a) => collection::handle_collection_create(cli, mode, a).await,
+        CollectionCommand::Delete(a) => collection::handle_collection_delete(cli, mode, a).await,
+        CollectionCommand::Add(a) => collection::handle_collection_add(cli, mode, a).await,
+        CollectionCommand::Remove(a) => collection::handle_collection_remove(cli, mode, a).await,
+        CollectionCommand::List(a) => collection::handle_collection_list(cli, mode, a).await,
         CollectionCommand::Show(a) => collection::handle_collection_show(cli, mode, a).await,
         CollectionCommand::Resolve(a) => collection::handle_collection_resolve(cli, mode, a).await,
-        CollectionCommand::Reorder(a) => collection::handle_collection_reorder(cli, mode, a),
+        CollectionCommand::Reorder(a) => collection::handle_collection_reorder(cli, mode, a).await,
     }
 }
 
@@ -126,7 +126,7 @@ pub fn open_db(cli: &Cli) -> Result<Database> {
 
 /// Generate embedding for a bookmark if semantic search is enabled.
 /// Returns Ok(()) even if semantic search is disabled or fails.
-pub fn generate_embedding_for_bookmark(
+pub async fn generate_embedding_for_bookmark(
     cli: &Cli,
     config: &Config,
     bookmark: &Bookmark,
@@ -158,7 +158,7 @@ pub fn generate_embedding_for_bookmark(
     // Generate and store the embedding
     let conn = db.conn_mut();
     // Ignore errors - embedding generation failure shouldn't block bookmark creation
-    let _ = semantic_repo.store_embeddings(conn, std::slice::from_ref(bookmark));
+    let _ = semantic_repo.store_embeddings(conn, std::slice::from_ref(bookmark)).await;
 
     Ok(())
 }
@@ -856,11 +856,7 @@ pub fn write_batch_output(mode: &OutputMode, results: &[ResolutionRecord]) -> Re
         _ => {
             let mut stdout = std::io::stdout().lock();
             for r in results {
-                writeln!(
-                    stdout,
-                    "{}\t{}:{}\t{}\t{}",
-                    r.id, r.file, r.line, r.method, r.status,
-                )?;
+                writeln!(stdout, "{}\t{}:{}\t{}\t{}", r.id, r.file, r.line, r.method, r.status,)?;
             }
         }
     }
@@ -935,7 +931,7 @@ pub fn write_resolution_output(
 ///
 /// Creates the .codemark directory and initializes the database.
 /// If already initialized, prints a message and does nothing.
-pub fn handle_init(cli: &Cli, mode: &OutputMode) -> Result<()> {
+pub async fn handle_init(cli: &Cli, mode: &OutputMode) -> Result<()> {
     if let Some(path) = cli.db.first() {
         if path.exists() {
             write_success(mode, &format!("Codemark already initialized at {}", path.display()))?;
@@ -997,7 +993,7 @@ pub fn handle_completions(args: &CompletionsArgs) -> Result<()> {
 }
 
 /// List bookmarks with optional filters.
-pub fn handle_list(cli: &Cli, mode: &OutputMode, args: &ListArgs) -> Result<()> {
+pub async fn handle_list(cli: &Cli, mode: &OutputMode, args: &ListArgs) -> Result<()> {
     use crate::cli::output::template_needs_line;
 
     let dbs = open_all_dbs_with_extra(cli, &args.add_db)?;
@@ -1103,7 +1099,7 @@ pub fn handle_list(cli: &Cli, mode: &OutputMode, args: &ListArgs) -> Result<()> 
 }
 
 /// Show the current location of a bookmark (file, line, byte range).
-pub fn handle_preview(cli: &Cli, args: &PreviewArgs) -> Result<()> {
+pub async fn handle_preview(cli: &Cli, args: &PreviewArgs) -> Result<()> {
     use crate::cli::output::ByteLocation;
 
     let dbs = open_all_dbs(cli)?;

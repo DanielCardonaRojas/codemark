@@ -1,3 +1,5 @@
+//! Error handling and exit codes for the codemark CLI.
+
 use std::process;
 
 /// Exit codes as defined in the CLI specification.
@@ -7,41 +9,53 @@ pub const EXIT_OPERATION_FAILED: i32 = 1;
 pub const EXIT_INPUT_ERROR: i32 = 2;
 pub const EXIT_DATABASE_ERROR: i32 = 3;
 
+/// Core error type for the codemark project.
 #[derive(Debug, thiserror::Error)]
 #[allow(dead_code)]
 pub enum Error {
+    /// Command or feature not yet implemented.
     #[error("{0}")]
     NotImplemented(String),
 
+    /// Generic operation failure.
     #[error("operation failed: {0}")]
     Operation(String),
 
+    /// Invalid user input or CLI arguments.
     #[error("input error: {0}")]
     Input(String),
 
+    /// SQLite database error.
     #[error("database error: {0}")]
     Database(String),
 
+    /// Thrown when the .codemark directory is missing.
     #[error(
         "not a codemark repository (or any of the parent directories): .codemark. Run 'codemark init' to initialize."
     )]
     NotInitialized,
 
+    /// Error during tree-sitter parsing or query execution.
     #[error("tree-sitter error: {0}")]
     TreeSitter(String),
 
+    /// Git command or git2 library error.
     #[error("git error: {0}")]
     Git(String),
 
+    /// Bookmark resolution failed.
     #[error("resolution error: {0}")]
     Resolution(String),
 
+    /// Query matched multiple distinct nodes.
     #[error("ambiguous query: {0}")]
     AmbiguousQuery(String),
 
+    /// Standard I/O error.
     #[error(transparent)]
     Io(#[from] std::io::Error),
 
+    /// JSON serialization/deserialization error.
     #[error(transparent)]
     Json(#[from] serde_json::Error),
 }

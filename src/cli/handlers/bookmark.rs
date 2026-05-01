@@ -21,6 +21,7 @@ use super::{
     resolve_identity, resolve_or_create_repo_metadata, write_resolution_output,
 };
 
+/// Add a new bookmark from a file range or git hunk.
 pub async fn handle_add(cli: &Cli, mode: &OutputMode, args: &AddArgs) -> Result<()> {
     let lang = resolve_language(args.lang.as_deref(), &args.file)?;
     let (abs_path, rel_path) = resolve_file_path(&args.file)?;
@@ -152,7 +153,7 @@ pub async fn handle_add(cli: &Cli, mode: &OutputMode, args: &AddArgs) -> Result<
     // Generate embedding for semantic search
     let config = super::load_config(cli);
     // Ignore embedding errors - shouldn't block bookmark creation
-    let _ = generate_embedding_for_bookmark(cli, &config, &bookmark);
+    let _ = generate_embedding_for_bookmark(cli, &config, &bookmark).await;
 
     // Record initial resolution as baseline (only if new bookmark)
     if is_new {
@@ -212,6 +213,7 @@ pub async fn handle_add(cli: &Cli, mode: &OutputMode, args: &AddArgs) -> Result<
     Ok(())
 }
 
+/// Add a new bookmark from a text snippet provided on stdin.
 pub async fn handle_add_from_snippet(
     cli: &Cli,
     mode: &OutputMode,
@@ -346,7 +348,7 @@ pub async fn handle_add_from_snippet(
 
     // Generate embedding for semantic search
     // Ignore embedding errors - shouldn't block bookmark creation
-    let _ = generate_embedding_for_bookmark(cli, &config, &bookmark);
+    let _ = generate_embedding_for_bookmark(cli, &config, &bookmark).await;
 
     // Record initial resolution as baseline (only if new bookmark)
     if is_new {
@@ -402,6 +404,7 @@ pub async fn handle_add_from_snippet(
     Ok(())
 }
 
+/// Add a new bookmark using an explicit tree-sitter query.
 pub async fn handle_add_from_query(
     cli: &Cli,
     mode: &OutputMode,
@@ -544,7 +547,7 @@ pub async fn handle_add_from_query(
 
     // Generate embedding for semantic search
     // Ignore embedding errors - shouldn't block bookmark creation
-    let _ = generate_embedding_for_bookmark(cli, &config, &bookmark);
+    let _ = generate_embedding_for_bookmark(cli, &config, &bookmark).await;
 
     // Record initial resolution as baseline (only if new bookmark)
     if is_new {
@@ -647,6 +650,7 @@ fn write_dry_run(
     Ok(())
 }
 
+/// Resolve one or more bookmarks and update their status and location.
 pub async fn handle_resolve(cli: &Cli, mode: &OutputMode, args: &ResolveArgs) -> Result<()> {
     let dbs = open_all_dbs(cli)?;
 
@@ -726,6 +730,7 @@ pub async fn handle_resolve(cli: &Cli, mode: &OutputMode, args: &ResolveArgs) ->
     Ok(())
 }
 
+/// Show detailed information and resolution history for a bookmark.
 pub async fn handle_show(cli: &Cli, mode: &OutputMode, args: &ShowArgs) -> Result<()> {
     let dbs = open_all_dbs(cli)?;
     let (bm, db) = find_bookmark_across(&dbs, &args.id)?;
@@ -790,7 +795,8 @@ pub async fn handle_show(cli: &Cli, mode: &OutputMode, args: &ShowArgs) -> Resul
     Ok(())
 }
 
-pub fn handle_remove(cli: &Cli, mode: &OutputMode, args: &RemoveArgs) -> Result<()> {
+/// Remove one or more bookmarks from the database.
+pub async fn handle_remove(cli: &Cli, mode: &OutputMode, args: &RemoveArgs) -> Result<()> {
     let db = open_db_for_write(cli)?;
     let mut removed = 0;
     let mut not_found = 0;
@@ -821,7 +827,7 @@ pub fn handle_remove(cli: &Cli, mode: &OutputMode, args: &RemoveArgs) -> Result<
 }
 
 /// Add notes, context, or tags to an existing bookmark.
-pub fn handle_annotate(cli: &Cli, mode: &OutputMode, args: &AnnotateArgs) -> Result<()> {
+pub async fn handle_annotate(cli: &Cli, mode: &OutputMode, args: &AnnotateArgs) -> Result<()> {
     let db = open_db_for_write(cli)?;
 
     // Validate that at least one of note, context, or tag is provided
@@ -974,8 +980,4 @@ fn resolve_file_path(file: &std::path::Path) -> Result<(std::path::PathBuf, Stri
         file.to_string_lossy().to_string()
     };
     Ok((abs, rel))
-}
-))
-}
-, rel))
 }

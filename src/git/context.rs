@@ -966,32 +966,3 @@ mod tests {
         // origin_url might or might not be set depending on git config
     }
 }
-or might not be set depending on git config
-    }
-}
-));
-        assert!(metadata.is_some());
-        let metadata = metadata.unwrap();
-        // repo_root should be set
-        assert!(metadata.repo_root.exists());
-        // origin_url might or might not be set depending on git config
-    }
-}
-_some());
-        let metadata = metadata.unwrap();
-        // repo_root should be set
-        assert!(metadata.repo_root.exists());
-        // origin_url might or might not be set depending on git config
-    }
-}
-or might not be set depending on git config
-    }
-}
-));
-        assert!(metadata.is_some());
-        let metadata = metadata.unwrap();
-        // repo_root should be set
-        assert!(metadata.repo_root.exists());
-        // origin_url might or might not be set depending on git config
-    }
-}

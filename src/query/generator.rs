@@ -1606,8 +1606,7 @@ mod tests {
         let lang = CodemarkLang::Rust.tree_sitter_language();
 
         // Line 50 is inside the decode function body
-        let line_50_start =
-            source.lines().take(49).map(|l: &str| l.len() + 1).sum::<usize>();
+        let line_50_start = source.lines().take(49).map(|l: &str| l.len() + 1).sum::<usize>();
         let line_50_end = line_50_start + source.lines().nth(49).unwrap_or("").len();
 
         let result =
