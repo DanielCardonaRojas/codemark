@@ -734,12 +734,17 @@ pub fn add_bookmark_to_collection(
     let collection = match db.get_collection_by_name(collection_name)? {
         Some(c) => c,
         None => {
+            let cwd = std::env::current_dir().unwrap_or_default();
+            let git_ctx = git_context::detect_context(&cwd);
+            let created_branch = git_ctx.and_then(|ctx| ctx.branch_name);
+
             let c = Collection {
                 id: uuid::Uuid::new_v4().to_string(),
                 name: collection_name.to_string(),
                 description: None,
                 created_at: now_iso(),
                 created_by: None,
+                created_branch,
             };
             db.insert_collection(&c)?;
             c

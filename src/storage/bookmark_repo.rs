@@ -706,6 +706,7 @@ mod tests {
             description: None,
             created_at: "2026-04-01T00:00:00Z".to_string(),
             created_by: None,
+            created_branch: Some("main".to_string()),
         };
         db.insert_collection(&col).unwrap();
         db.add_to_collection(&col.id, std::slice::from_ref(&bm1.id)).unwrap();
