@@ -69,7 +69,8 @@ pub fn detect_context(from_path: &Path) -> Option<GitContext> {
     // Get HEAD commit and branch name using git2 (still reliable for this purpose)
     let repo = git2::Repository::discover(from_path).ok()?;
     let head = repo.head().ok();
-    let head_commit = head.as_ref().and_then(|r| r.peel_to_commit().ok()).map(|c| c.id().to_string());
+    let head_commit =
+        head.as_ref().and_then(|r| r.peel_to_commit().ok()).map(|c| c.id().to_string());
     let branch_name = head.as_ref().and_then(|r| r.shorthand()).map(|s| s.to_string());
 
     Some(GitContext { repo_root, head_commit, branch_name })
