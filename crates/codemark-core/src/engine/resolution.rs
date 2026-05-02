@@ -212,7 +212,7 @@ mod tests {
 
     fn fixture_path(name: &str) -> std::path::PathBuf {
         std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join(format!("tests/fixtures/swift/{name}"))
+            .join(format!("../../tests/fixtures/swift/{name}"))
     }
 
     async fn create_bookmark_for_function(file: &str, func_name: &str) -> (Bookmark, ParseCache) {

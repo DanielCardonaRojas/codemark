@@ -8,7 +8,7 @@ use comfy_table::{Cell, Table};
 use is_terminal::IsTerminal;
 use serde::Serialize;
 
-use crate::engine::bookmark::{Bookmark, Collection, Resolution};
+use codemark_core::engine::bookmark::{Bookmark, Collection, Resolution};
 
 // --- Collection output formatting ---
 

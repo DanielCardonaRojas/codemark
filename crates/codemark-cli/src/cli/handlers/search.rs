@@ -4,10 +4,10 @@ use crate::cli::output::{
     self, OutputMode, short_id, write_bookmarks_with_line, write_json_success, write_success,
 };
 use crate::cli::*;
-use crate::embeddings::config::EmbeddingModel;
-use crate::engine::bookmark::{Bookmark, BookmarkFilter};
-use crate::error::{Error, Result};
-use crate::storage::{SemanticRepo, db::Database};
+use codemark_core::embeddings::config::EmbeddingModel;
+use codemark_core::engine::bookmark::{Bookmark, BookmarkFilter};
+use codemark_core::error::{Error, Result};
+use codemark_core::storage::{SemanticRepo, db::Database};
 
 use super::{
     filter_dbs_by_repo_owner, filter_dbs_by_user_email, get_bookmark_line, load_config,

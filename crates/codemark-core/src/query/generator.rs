@@ -885,7 +885,7 @@ mod tests {
 
     async fn parse_fixture(name: &str) -> (Tree, String) {
         let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join(format!("tests/fixtures/swift/{name}"));
+            .join(format!("../../tests/fixtures/swift/{name}"));
         let mut parser = Parser::new(CodemarkLang::Swift).unwrap();
         let provider = crate::vfs::LocalFileProvider;
         parser.parse_file(&fixture, &provider).await.unwrap()
@@ -1011,7 +1011,7 @@ mod tests {
 
     async fn parse_rust_fixture(name: &str) -> (Tree, String) {
         let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join(format!("tests/fixtures/rust/{name}"));
+            .join(format!("../../tests/fixtures/rust/{name}"));
         let mut parser = Parser::new(CodemarkLang::Rust).unwrap();
         let provider = crate::vfs::LocalFileProvider;
         parser.parse_file(&fixture, &provider).await.unwrap()
@@ -1123,7 +1123,7 @@ mod tests {
 
     async fn parse_ts_fixture(name: &str) -> (Tree, String) {
         let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join(format!("tests/fixtures/typescript/{name}"));
+            .join(format!("../../tests/fixtures/typescript/{name}"));
         let mut parser = Parser::new(CodemarkLang::TypeScript).unwrap();
         let provider = crate::vfs::LocalFileProvider;
         parser.parse_file(&fixture, &provider).await.unwrap()
@@ -1193,7 +1193,7 @@ mod tests {
 
     async fn parse_py_fixture(name: &str) -> (Tree, String) {
         let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join(format!("tests/fixtures/python/{name}"));
+            .join(format!("../../tests/fixtures/python/{name}"));
         let mut parser = Parser::new(CodemarkLang::Python).unwrap();
         let provider = crate::vfs::LocalFileProvider;
         parser.parse_file(&fixture, &provider).await.unwrap()
@@ -1276,7 +1276,7 @@ mod tests {
 
     async fn parse_go_fixture(name: &str) -> (Tree, String) {
         let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join(format!("tests/fixtures/go/{name}"));
+            .join(format!("../../tests/fixtures/go/{name}"));
         let mut parser = Parser::new(CodemarkLang::Go).unwrap();
         let provider = crate::vfs::LocalFileProvider;
         parser.parse_file(&fixture, &provider).await.unwrap()
@@ -1339,7 +1339,7 @@ mod tests {
 
     async fn parse_java_fixture(name: &str) -> (Tree, String) {
         let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join(format!("tests/fixtures/java/{name}"));
+            .join(format!("../../tests/fixtures/java/{name}"));
         let mut parser = Parser::new(CodemarkLang::Java).unwrap();
         let provider = crate::vfs::LocalFileProvider;
         parser.parse_file(&fixture, &provider).await.unwrap()
@@ -1402,7 +1402,7 @@ mod tests {
 
     async fn parse_csharp_fixture(name: &str) -> (Tree, String) {
         let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join(format!("tests/fixtures/csharp/{name}"));
+            .join(format!("../../tests/fixtures/csharp/{name}"));
         let mut parser = Parser::new(CodemarkLang::CSharp).unwrap();
         let provider = crate::vfs::LocalFileProvider;
         parser.parse_file(&fixture, &provider).await.unwrap()
@@ -1465,7 +1465,7 @@ mod tests {
 
     async fn parse_dart_fixture(name: &str) -> (Tree, String) {
         let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join(format!("tests/fixtures/dart/{name}"));
+            .join(format!("../../tests/fixtures/dart/{name}"));
         let mut parser = Parser::new(CodemarkLang::Dart).unwrap();
         let provider = crate::vfs::LocalFileProvider;
         parser.parse_file(&fixture, &provider).await.unwrap()

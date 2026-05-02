@@ -232,7 +232,7 @@ mod tests {
     #[tokio::test]
     async fn parse_swift_fixture() {
         let fixture =
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/swift/auth_service.swift");
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/swift/auth_service.swift");
         if !fixture.exists() {
             return;
         }
@@ -247,7 +247,7 @@ mod tests {
     #[tokio::test]
     async fn parse_cache_reuses_tree() {
         let fixture =
-            Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/swift/auth_service.swift");
+            Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/swift/auth_service.swift");
         if !fixture.exists() {
             return;
         }

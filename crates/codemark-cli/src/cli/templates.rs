@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use handlebars::{Handlebars, HelperDef, HelperResult, Output, RenderContext, RenderErrorReason};
 use serde::Serialize;
 
-use crate::engine::bookmark::{Annotation, Bookmark, Resolution};
+use codemark_core::engine::bookmark::{Annotation, Bookmark, Resolution};
 
 /// Template context for rendering a single bookmark with its resolutions.
 #[derive(Debug, Serialize)]
@@ -275,7 +275,7 @@ pub fn templates_dir() -> Option<PathBuf> {
 /// Users can override it by placing a custom template at:
 /// `~/.config/codemark/templates/codemark_show.md`
 pub fn default_show_template() -> &'static str {
-    include_str!("../../templates/codemark_show.md")
+    include_str!("../../../../templates/codemark_show.md")
 }
 
 /// Create a Handlebars instance with all helpers registered.
@@ -349,7 +349,7 @@ pub fn render_show_template(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engine::bookmark::{BookmarkStatus, ResolutionMethod};
+    use codemark_core::engine::bookmark::{BookmarkStatus, ResolutionMethod};
 
     #[test]
     fn test_escape_markdown() {

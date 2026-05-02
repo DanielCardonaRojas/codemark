@@ -1,12 +1,11 @@
-use codemark::parser::languages::{Language as CodemarkLang, Parser};
-use codemark::query::generator;
-use std::fs;
+use codemark_core::parser::languages::{Language as CodemarkLang, Parser};
+use codemark_core::query::generator;
 use std::path::Path;
 
 async fn get_fixture_content(name: &str) -> (String, tree_sitter::Tree) {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/swift").join(name);
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/swift").join(name);
     let mut parser = Parser::new(CodemarkLang::Swift).unwrap();
-    let provider = codemark::vfs::LocalFileProvider;
+    let provider = codemark_core::vfs::LocalFileProvider;
     let (tree, source) = parser.parse_file(&path, &provider).await.unwrap();
     (source, tree)
 }
@@ -71,7 +70,7 @@ fn line_col_to_byte(source: &str, line: usize, col: usize) -> usize {
 #[tokio::test]
 async fn test_swift_complex_query_snapshots() {
     let fixture_name = "complex_scenarios.swift";
-    let (source, tree) = get_fixture_content(fixture_name).await;
+    let (source, tree): (String, tree_sitter::Tree) = get_fixture_content(fixture_name).await;
     let language = CodemarkLang::Swift.tree_sitter_language();
 
     let scenarios = [

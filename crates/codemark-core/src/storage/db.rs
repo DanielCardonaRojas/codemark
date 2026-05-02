@@ -8,15 +8,15 @@ use rusqlite::Connection;
 
 use crate::error::Result;
 
-const MIGRATION_001: &str = include_str!("../../migrations/001_initial.sql");
-const MIGRATION_002: &str = include_str!("../../migrations/002_add_fts.sql");
-const MIGRATION_003: &str = include_str!("../../migrations/003_collection_ordering.sql");
-const MIGRATION_004: &str = include_str!("../../migrations/004_add_line_range.sql");
-const MIGRATION_005: &str = include_str!("../../migrations/005_add_embeddings.sql");
-const MIGRATION_006: &str = include_str!("../../migrations/006_add_fts_path_tags.sql");
-const MIGRATION_007: &str = include_str!("../../migrations/007_append_only_metadata.sql");
-const MIGRATION_008: &str = include_str!("../../migrations/008_add_identity_and_repo_metadata.sql");
-const MIGRATION_009: &str = include_str!("../../migrations/009_add_collection_branch.sql");
+const MIGRATION_001: &str = include_str!("../../../../migrations/001_initial.sql");
+const MIGRATION_002: &str = include_str!("../../../../migrations/002_add_fts.sql");
+const MIGRATION_003: &str = include_str!("../../../../migrations/003_collection_ordering.sql");
+const MIGRATION_004: &str = include_str!("../../../../migrations/004_add_line_range.sql");
+const MIGRATION_005: &str = include_str!("../../../../migrations/005_add_embeddings.sql");
+const MIGRATION_006: &str = include_str!("../../../../migrations/006_add_fts_path_tags.sql");
+const MIGRATION_007: &str = include_str!("../../../../migrations/007_append_only_metadata.sql");
+const MIGRATION_008: &str = include_str!("../../../../migrations/008_add_identity_and_repo_metadata.sql");
+const MIGRATION_009: &str = include_str!("../../../../migrations/009_add_collection_branch.sql");
 
 /// SQLite database wrapper with automatic migrations.
 pub struct Database {

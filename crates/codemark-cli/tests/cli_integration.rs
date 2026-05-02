@@ -28,7 +28,7 @@ impl Codemark {
             db_path,
             binary,
             temp_dir: None,
-            work_dir: PathBuf::from(env!("CARGO_MANIFEST_DIR")),
+            work_dir: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..").canonicalize().unwrap(),
         }
     }
 
@@ -85,7 +85,7 @@ impl Codemark {
         // Get HEAD commit or create initial commit
         let head_oid = match repo.head() {
             Ok(head) => {
-                let head_commit = head.peel_to_commit().unwrap();
+                let head_commit: git2::Commit = head.peel_to_commit().unwrap();
                 let head_oid = head_commit.id();
                 Some(head_oid)
             }
@@ -212,7 +212,13 @@ impl Codemark {
 
     /// Fixture path relative to the project root (only works for non-git-repo tests).
     fn fixture(&self, name: &str) -> String {
-        format!("tests/fixtures/{name}")
+        PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../tests/fixtures")
+            .join(name)
+            .canonicalize()
+            .unwrap()
+            .to_string_lossy()
+            .to_string()
     }
 }
 
@@ -1405,7 +1411,7 @@ fn preview_uses_nearest_ancestor_resolution() {
             current_head.clone(), // Current HEAD is definitely an ancestor of itself
             "exact".to_string(),
             1i32,
-            "tests/fixtures/rust/auth_service.rs".to_string(),
+            "../../tests/fixtures/rust/auth_service.rs".to_string(),
             "108-200".to_string(),
             "108-109".to_string(),
             "hash_at_head".to_string(),

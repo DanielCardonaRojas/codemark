@@ -7,7 +7,7 @@ use crate::cli::output::{
 use crate::cli::*;
 use codemark_core::embeddings::config::EmbeddingModel;
 use codemark_core::engine::bookmark::{
-    Bookmark, BookmarkFilter, BookmarkStatus, Collection, Repo, ResolutionMethod,
+    Bookmark, BookmarkFilter, BookmarkStatus, Resolution, ResolutionMethod, Tag,
 };
 use codemark_core::engine::{health, resolution};
 use codemark_core::error::{Error, Result};
@@ -78,7 +78,7 @@ pub async fn handle_heal(cli: &Cli, mode: &OutputMode, args: &HealArgs) -> Resul
         };
         let mut cache = ParseCache::new(lang)?;
         let ts_lang = lang.tree_sitter_language();
-        let provider = crate::vfs::LocalFileProvider;
+        let provider = codemark_core::vfs::LocalFileProvider;
         let result = resolution::resolve(bm, &mut cache, &ts_lang, db.path(), &provider).await?;
         let new_status = health::transition(bm.status, result.method, result.hash_matches);
         let previous_status = bm.status;
@@ -264,7 +264,7 @@ pub async fn handle_diff(cli: &Cli, mode: &OutputMode, args: &DiffArgs) -> Resul
                 let Ok(lang) = bm.language.parse::<Language>() else { continue };
                 let mut cache = ParseCache::new(lang)?;
                 let ts_lang = lang.tree_sitter_language();
-                let provider = crate::vfs::LocalFileProvider;
+                let provider = codemark_core::vfs::LocalFileProvider;
                 let result =
                     resolution::resolve(bm, &mut cache, &ts_lang, db.path(), &provider).await?;
                 let new_status = health::transition(bm.status, result.method, result.hash_matches);
@@ -289,7 +289,7 @@ pub async fn handle_diff(cli: &Cli, mode: &OutputMode, args: &DiffArgs) -> Resul
                 let Ok(lang) = bm.language.parse::<Language>() else { continue };
                 let mut cache = ParseCache::new(lang)?;
                 let ts_lang = lang.tree_sitter_language();
-                let provider = crate::vfs::LocalFileProvider;
+                let provider = codemark_core::vfs::LocalFileProvider;
                 let result =
                     resolution::resolve(bm, &mut cache, &ts_lang, db.path(), &provider).await?;
                 let new_status = health::transition(bm.status, result.method, result.hash_matches);

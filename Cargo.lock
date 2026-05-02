@@ -371,7 +371,34 @@ dependencies = [
 ]
 
 [[package]]
-name = "codemark"
+name = "codemark-cli"
+version = "0.5.4"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "clap",
+ "clap_complete",
+ "clap_mangen",
+ "codemark-core",
+ "comfy-table",
+ "git2",
+ "handlebars",
+ "insta",
+ "is-terminal",
+ "regex",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "shlex",
+ "tempfile",
+ "thiserror 2.0.18",
+ "tokio",
+ "tree-sitter",
+ "uuid",
+]
+
+[[package]]
+name = "codemark-core"
 version = "0.5.4"
 dependencies = [
  "async-trait",
@@ -379,25 +406,16 @@ dependencies = [
  "candle-nn",
  "candle-transformers",
  "chrono",
- "clap",
- "clap_complete",
- "clap_mangen",
- "comfy-table",
  "directories",
  "git2",
- "handlebars",
  "hf-hub",
- "insta",
- "is-terminal",
  "regex",
  "rusqlite",
  "serde",
  "serde_json",
  "sha2",
  "shellexpand",
- "shlex",
  "sqlite-vec",
- "tempfile",
  "thiserror 2.0.18",
  "tokenizers",
  "tokio",

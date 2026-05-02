@@ -126,7 +126,7 @@ mod tests {
     #[tokio::test]
     async fn dump_swift_ast_structure() {
         let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/swift/complex_scenarios.swift");
+            .join("../../tests/fixtures/swift/complex_scenarios.swift");
         if !fixture.exists() {
             return;
         }
@@ -141,7 +141,7 @@ mod tests {
     #[tokio::test]
     async fn dump_rust_ast_structure() {
         let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/rust/auth_service.rs");
+            .join("../../tests/fixtures/rust/auth_service.rs");
         if !fixture.exists() {
             return;
         }
@@ -155,7 +155,7 @@ mod tests {
     #[tokio::test]
     async fn dump_typescript_ast_structure() {
         let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/typescript/auth_service.ts");
+            .join("../../tests/fixtures/typescript/auth_service.ts");
         if !fixture.exists() {
             return;
         }
@@ -168,7 +168,7 @@ mod tests {
     #[tokio::test]
     async fn dump_python_ast_structure() {
         let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("tests/fixtures/python/auth_service.py");
+            .join("../../tests/fixtures/python/auth_service.py");
         if !fixture.exists() {
             return;
         }
@@ -232,8 +232,8 @@ mod tests {
         };
     }
 
-    dump_ast_test!(dump_go_ast, CodemarkLang::Go, "tests/fixtures/go/auth_service.go");
-    dump_ast_test!(dump_java_ast, CodemarkLang::Java, "tests/fixtures/java/AuthService.java");
-    dump_ast_test!(dump_csharp_ast, CodemarkLang::CSharp, "tests/fixtures/csharp/AuthService.cs");
-    dump_ast_test!(dump_dart_ast, CodemarkLang::Dart, "tests/fixtures/dart/auth_service.dart");
+    dump_ast_test!(dump_go_ast, CodemarkLang::Go, "../../tests/fixtures/go/auth_service.go");
+    dump_ast_test!(dump_java_ast, CodemarkLang::Java, "../../tests/fixtures/java/AuthService.java");
+    dump_ast_test!(dump_csharp_ast, CodemarkLang::CSharp, "../../tests/fixtures/csharp/AuthService.cs");
+    dump_ast_test!(dump_dart_ast, CodemarkLang::Dart, "../../tests/fixtures/dart/auth_service.dart");
 }

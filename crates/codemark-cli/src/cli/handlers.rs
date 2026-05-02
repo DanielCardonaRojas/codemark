@@ -635,7 +635,7 @@ pub fn parse_hunk(hunk: &str) -> Result<(usize, usize)> {
     let caps =
         re.captures(hunk).ok_or_else(|| Error::Input(format!("invalid hunk format: {hunk}")))?;
     let start: usize = caps[1].parse().map_err(|_| Error::Input("invalid hunk start".into()))?;
-    let count: usize = caps.get(2).map(|m| m.as_str().parse().unwrap_or(1)).unwrap_or(1);
+    let count: usize = caps.get(2).map(|m: regex::Match| m.as_str().parse().unwrap_or(1)).unwrap_or(1);
     let end = start + count.saturating_sub(1);
     Ok((start, end.max(start)))
 }
