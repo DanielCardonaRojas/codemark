@@ -13,7 +13,7 @@ use crate::cli::*;
 use codemark_core::config::Config;
 use codemark_core::embeddings::config::EmbeddingModel;
 use codemark_core::engine::bookmark::{
-    Bookmark, BookmarkFilter, BookmarkStatus, Collection, Resolution, ResolutionMethod,
+    Bookmark, BookmarkFilter, BookmarkStatus, Collection, Resolution, ResolutionMethod, Visibility,
 };
 use codemark_core::engine::{health, resolution};
 use codemark_core::error::{Error, Result};
@@ -742,6 +742,7 @@ pub fn add_bookmark_to_collection(
                 id: uuid::Uuid::new_v4().to_string(),
                 name: collection_name.to_string(),
                 description: None,
+                visibility: Visibility::Private,
                 created_at: now_iso(),
                 created_by: None,
                 created_branch,

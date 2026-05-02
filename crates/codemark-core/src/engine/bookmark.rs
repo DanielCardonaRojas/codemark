@@ -73,7 +73,45 @@ impl FromStr for ResolutionMethod {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Visibility {
+    Public,
+    Private,
+}
+
+impl fmt::Display for Visibility {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Visibility::Public => write!(f, "public"),
+            Visibility::Private => write!(f, "private"),
+        }
+    }
+}
+
+impl FromStr for Visibility {
+    type Err = crate::error::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "public" => Ok(Visibility::Public),
+            "private" => Ok(Visibility::Private),
+            _ => Err(crate::error::Error::Input(format!("invalid visibility: {s}"))),
+        }
+    }
+}
+
 // --- Domain structs ---
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BookmarkComment {
+    pub id: String,
+    pub bookmark_id: String,
+    pub author: String,
+    pub body: String,
+    pub created_at: String,
+    pub parent_id: Option<String>,
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Annotation {
@@ -113,6 +151,8 @@ pub struct Bookmark {
     pub tags: Vec<String>,
     #[serde(default)]
     pub annotations: Vec<Annotation>,
+    #[serde(default)]
+    pub comments: Vec<BookmarkComment>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -134,6 +174,7 @@ pub struct Collection {
     pub id: String,
     pub name: String,
     pub description: Option<String>,
+    pub visibility: Visibility,
     pub created_at: String,
     pub created_by: Option<String>,
     pub created_branch: Option<String>,
@@ -219,6 +260,7 @@ mod tests {
             created_by: None,
             tags: vec!["auth".into()],
             annotations: vec![],
+            comments: vec![],
         };
         let json = serde_json::to_string(&bookmark).unwrap();
         let parsed: Bookmark = serde_json::from_str(&json).unwrap();

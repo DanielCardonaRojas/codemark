@@ -241,6 +241,7 @@ mod tests {
             created_by: None,
             tags: vec![],
             annotations: vec![],
+            comments: vec![],
         };
 
         (bm, cache)

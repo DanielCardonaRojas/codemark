@@ -207,6 +207,7 @@ mod tests {
                 context: Some("Testing utilities".to_string()),
                 source: None,
             }],
+            comments: vec![],
         };
 
         let text = repo.prepare_bookmark_text(&bookmark);

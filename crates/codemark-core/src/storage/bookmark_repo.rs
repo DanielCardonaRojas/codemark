@@ -458,6 +458,9 @@ impl Database {
             .collect();
         bm.tags = tags;
 
+        // Load comments
+        bm.comments = self.list_comments_for_bookmark(&bm.id)?;
+
         Ok(())
     }
 }
@@ -481,6 +484,7 @@ fn row_to_bookmark_base(row: &rusqlite::Row) -> rusqlite::Result<Bookmark> {
         created_by: row.get(11)?,
         tags: Vec::new(),        // Loaded separately
         annotations: Vec::new(), // Loaded separately
+        comments: Vec::new(),    // Loaded separately
     })
 }
 
@@ -524,6 +528,7 @@ mod tests {
             created_by: None,
             tags: vec![],
             annotations: vec![],
+            comments: vec![],
         }
     }
 
@@ -704,6 +709,7 @@ mod tests {
             id: "col-1111".to_string(),
             name: "My Collection".to_string(),
             description: None,
+            visibility: crate::engine::bookmark::Visibility::Private,
             created_at: "2026-04-01T00:00:00Z".to_string(),
             created_by: None,
             created_branch: Some("main".to_string()),

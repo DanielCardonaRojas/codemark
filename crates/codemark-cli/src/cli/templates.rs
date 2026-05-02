@@ -385,6 +385,7 @@ mod tests {
             created_by: Some("user".to_string()),
             tags: vec!["tag1".to_string(), "tag2".to_string()],
             annotations: vec![],
+            comments: vec![],
         };
 
         let resolutions = vec![Resolution {

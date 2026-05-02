@@ -17,6 +17,7 @@ const MIGRATION_006: &str = include_str!("../../../../migrations/006_add_fts_pat
 const MIGRATION_007: &str = include_str!("../../../../migrations/007_append_only_metadata.sql");
 const MIGRATION_008: &str = include_str!("../../../../migrations/008_add_identity_and_repo_metadata.sql");
 const MIGRATION_009: &str = include_str!("../../../../migrations/009_add_collection_branch.sql");
+const MIGRATION_010: &str = include_str!("../../../../migrations/010_add_comments_and_visibility.sql");
 
 /// SQLite database wrapper with automatic migrations.
 pub struct Database {
@@ -133,6 +134,11 @@ impl Database {
         if current_version < 9 {
             self.conn.execute_batch(MIGRATION_009)?;
             self.set_schema_version(9)?;
+        }
+
+        if current_version < 10 {
+            self.conn.execute_batch(MIGRATION_010)?;
+            self.set_schema_version(10)?;
         }
 
         Ok(())
@@ -254,7 +260,7 @@ mod tests {
         init_test_env();
         let db = Database::open_in_memory().unwrap();
         let version = db.schema_version();
-        assert_eq!(version, 9);
+        assert_eq!(version, 10);
     }
 
     #[test]
@@ -262,7 +268,7 @@ mod tests {
         init_test_env();
         let mut db = Database::open_in_memory().unwrap();
         db.run_migrations().unwrap();
-        assert_eq!(db.schema_version(), 9);
+        assert_eq!(db.schema_version(), 10);
     }
 
     #[test]
@@ -281,6 +287,7 @@ mod tests {
         assert!(tables.contains(&"resolutions".to_string()));
         assert!(tables.contains(&"collections".to_string()));
         assert!(tables.contains(&"collection_bookmarks".to_string()));
+        assert!(tables.contains(&"bookmark_comments".to_string()));
         assert!(tables.contains(&"schema_meta".to_string()));
     }
 

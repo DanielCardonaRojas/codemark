@@ -160,12 +160,12 @@ mod tests {
     use crate::engine::bookmark::{Bookmark, BookmarkStatus, Resolution, ResolutionMethod};
     use crate::storage::db::Database;
 
-    fn test_bookmark() -> Bookmark {
+    fn test_bookmark(id: &str) -> Bookmark {
         Bookmark {
-            id: "bm-0001".to_string(),
-            query: "(function_declaration) @target".to_string(),
+            id: id.to_string(),
+            query: format!("(function_declaration) @{} /* {} */", "target", id),
             language: "swift".to_string(),
-            file_path: "src/main.swift".to_string(),
+            file_path: format!("src/main_{}.swift", id),
             content_hash: None,
             commit_hash: None,
             status: BookmarkStatus::Active,
@@ -176,8 +176,10 @@ mod tests {
             created_by: None,
             tags: vec![],
             annotations: vec![],
+            comments: vec![],
         }
     }
+
 
     // Initialize test environment
     fn init_test_env() {}
@@ -186,7 +188,7 @@ mod tests {
     fn insert_and_list_resolutions() {
         init_test_env();
         let db = Database::open_in_memory().unwrap();
-        db.insert_bookmark(&test_bookmark()).unwrap();
+        db.insert_bookmark(&test_bookmark("bm-0001")).unwrap();
 
         let res = Resolution {
             id: "res-0001".to_string(),
@@ -212,7 +214,7 @@ mod tests {
     fn insert_if_changed_deduplicates() {
         init_test_env();
         let db = Database::open_in_memory().unwrap();
-        db.insert_bookmark(&test_bookmark()).unwrap();
+        db.insert_bookmark(&test_bookmark("bm-0001")).unwrap();
 
         let res = Resolution {
             id: "res-0001".to_string(),
@@ -292,7 +294,7 @@ mod tests {
     fn pruning_keeps_only_max_entries() {
         init_test_env();
         let db = Database::open_in_memory().unwrap();
-        db.insert_bookmark(&test_bookmark()).unwrap();
+        db.insert_bookmark(&test_bookmark("bm-0001")).unwrap();
 
         // Insert 5 resolutions with max_per_bookmark = 3
         // Each with different byte_ranges so they create distinct entries
@@ -328,7 +330,7 @@ mod tests {
     fn resolution_cascade_on_bookmark_delete() {
         init_test_env();
         let db = Database::open_in_memory().unwrap();
-        db.insert_bookmark(&test_bookmark()).unwrap();
+        db.insert_bookmark(&test_bookmark("bm-0001")).unwrap();
 
         let res = Resolution {
             id: "res-0001".to_string(),

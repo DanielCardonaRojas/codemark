@@ -6,7 +6,7 @@ use crate::cli::output::{
     self, CollectionWithCount, OutputMode, write_json_success, write_success,
 };
 use crate::cli::*;
-use codemark_core::engine::bookmark::{BookmarkFilter, BookmarkStatus, Collection};
+use codemark_core::engine::bookmark::{BookmarkFilter, BookmarkStatus, Collection, Visibility};
 use codemark_core::error::{Error, Result};
 
 use super::{find_bookmark, now_iso, open_db, open_db_for_write, resolve_batch};
@@ -27,6 +27,7 @@ pub async fn handle_collection_create(
         id: uuid::Uuid::new_v4().to_string(),
         name: args.name.clone(),
         description: args.description.clone(),
+        visibility: Visibility::Private,
         created_at: now_iso(),
         created_by: None,
         created_branch,
@@ -87,6 +88,7 @@ pub async fn handle_collection_add(
                 id: uuid::Uuid::new_v4().to_string(),
                 name: args.name.clone(),
                 description: None,
+                visibility: Visibility::Private,
                 created_at: now_iso(),
                 created_by: None,
                 created_branch,

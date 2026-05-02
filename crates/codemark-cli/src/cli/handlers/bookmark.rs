@@ -95,6 +95,7 @@ pub async fn handle_add(cli: &Cli, mode: &OutputMode, args: &AddArgs) -> Result<
         created_by: Some(args.created_by.clone()),
         tags: vec![],
         annotations: vec![],
+        comments: vec![],
     };
 
     // Insert bookmark - will return existing ID if duplicate
@@ -291,6 +292,7 @@ pub async fn handle_add_from_snippet(
         created_by: Some(args.created_by.clone()),
         tags: vec![],
         annotations: vec![],
+        comments: vec![],
     };
 
     // Insert bookmark - will return existing ID if duplicate
@@ -490,6 +492,7 @@ pub async fn handle_add_from_query(
         created_by: Some(args.created_by.clone()),
         tags: vec![],
         annotations: vec![],
+        comments: vec![],
     };
 
     // Insert bookmark - will return existing ID if duplicate

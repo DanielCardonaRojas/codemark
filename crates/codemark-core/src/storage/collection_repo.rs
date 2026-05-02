@@ -5,12 +5,13 @@ use crate::storage::db::Database;
 impl Database {
     pub fn insert_collection(&self, collection: &Collection) -> Result<()> {
         self.conn().execute(
-            "INSERT INTO collections (id, name, description, created_at, created_by, created_branch)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            "INSERT INTO collections (id, name, description, visibility, created_at, created_by, created_branch)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             rusqlite::params![
                 collection.id,
                 collection.name,
                 collection.description,
+                collection.visibility.to_string(),
                 collection.created_at,
                 collection.created_by,
                 collection.created_branch,
@@ -22,7 +23,7 @@ impl Database {
     /// Get a collection by its exact name.
     pub fn get_collection_by_name(&self, name: &str) -> Result<Option<Collection>> {
         let mut stmt = self.conn().prepare(
-            "SELECT id, name, description, created_at, created_by, created_branch
+            "SELECT id, name, description, visibility, created_at, created_by, created_branch
              FROM collections WHERE name = ?1",
         )?;
         let mut rows = stmt.query_map([name], row_to_collection)?;
@@ -40,7 +41,7 @@ impl Database {
             ));
         }
         let mut stmt = self.conn().prepare(
-            "SELECT id, name, description, created_at, created_by, created_branch
+            "SELECT id, name, description, visibility, created_at, created_by, created_branch
              FROM collections WHERE id LIKE ?1",
         )?;
         let pattern = format!("{prefix}%");
@@ -60,7 +61,7 @@ impl Database {
     /// List all collections with their bookmark counts.
     pub fn list_collections(&self) -> Result<Vec<(Collection, usize)>> {
         let mut stmt = self.conn().prepare(
-            "SELECT c.id, c.name, c.description, c.created_at, c.created_by, c.created_branch,
+            "SELECT c.id, c.name, c.description, c.visibility, c.created_at, c.created_by, c.created_branch,
              COUNT(cb.bookmark_id) AS bookmark_count
              FROM collections c
              LEFT JOIN collection_bookmarks cb ON c.id = cb.collection_id
@@ -72,11 +73,14 @@ impl Database {
                 id: row.get(0)?,
                 name: row.get(1)?,
                 description: row.get(2)?,
-                created_at: row.get(3)?,
-                created_by: row.get(4)?,
-                created_branch: row.get(5)?,
+                visibility: row.get::<_, String>(3)?.parse().map_err(|e| {
+                    rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(e))
+                })?,
+                created_at: row.get(4)?,
+                created_by: row.get(5)?,
+                created_branch: row.get(6)?,
             };
-            let count: usize = row.get(6)?;
+            let count: usize = row.get(7)?;
             Ok((collection, count))
         })?;
 
@@ -221,7 +225,7 @@ impl Database {
     /// List all collections that contain a specific bookmark.
     pub fn list_collections_for_bookmark(&self, bookmark_id: &str) -> Result<Vec<Collection>> {
         let mut stmt = self.conn().prepare(
-            "SELECT c.id, c.name, c.description, c.created_at, c.created_by, c.created_branch
+            "SELECT c.id, c.name, c.description, c.visibility, c.created_at, c.created_by, c.created_branch
              FROM collections c
              JOIN collection_bookmarks cb ON c.id = cb.collection_id
              WHERE cb.bookmark_id = ?1
@@ -238,9 +242,12 @@ fn row_to_collection(row: &rusqlite::Row) -> rusqlite::Result<Collection> {
         id: row.get(0)?,
         name: row.get(1)?,
         description: row.get(2)?,
-        created_at: row.get(3)?,
-        created_by: row.get(4)?,
-        created_branch: row.get(5)?,
+        visibility: row.get::<_, String>(3)?.parse().map_err(|e| {
+            rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(e))
+        })?,
+        created_at: row.get(4)?,
+        created_by: row.get(5)?,
+        created_branch: row.get(6)?,
     })
 }
 
@@ -266,6 +273,7 @@ mod tests {
             created_by: None,
             tags: vec![],
             annotations: vec![],
+            comments: vec![],
         }
     }
 
@@ -274,6 +282,7 @@ mod tests {
             id: format!("col-{name}"),
             name: name.to_string(),
             description: Some(format!("Test collection {name}")),
+            visibility: crate::engine::bookmark::Visibility::Private,
             created_at: "2026-04-01T00:00:00Z".to_string(),
             created_by: None,
             created_branch: Some("main".to_string()),
