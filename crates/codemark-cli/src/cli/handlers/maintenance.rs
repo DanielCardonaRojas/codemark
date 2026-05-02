@@ -15,7 +15,6 @@ use codemark_core::git::context as git_context;
 use codemark_core::parser::languages::{Language, ParseCache};
 use codemark_core::storage::SemanticRepo;
 
-
 use super::{load_config, now_iso, open_all_dbs, open_db, open_db_for_write};
 
 pub async fn handle_heal(cli: &Cli, mode: &OutputMode, args: &HealArgs) -> Result<()> {

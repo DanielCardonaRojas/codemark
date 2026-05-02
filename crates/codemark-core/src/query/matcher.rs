@@ -234,6 +234,14 @@ mod tests {
 
     dump_ast_test!(dump_go_ast, CodemarkLang::Go, "../../tests/fixtures/go/auth_service.go");
     dump_ast_test!(dump_java_ast, CodemarkLang::Java, "../../tests/fixtures/java/AuthService.java");
-    dump_ast_test!(dump_csharp_ast, CodemarkLang::CSharp, "../../tests/fixtures/csharp/AuthService.cs");
-    dump_ast_test!(dump_dart_ast, CodemarkLang::Dart, "../../tests/fixtures/dart/auth_service.dart");
+    dump_ast_test!(
+        dump_csharp_ast,
+        CodemarkLang::CSharp,
+        "../../tests/fixtures/csharp/AuthService.cs"
+    );
+    dump_ast_test!(
+        dump_dart_ast,
+        CodemarkLang::Dart,
+        "../../tests/fixtures/dart/auth_service.dart"
+    );
 }

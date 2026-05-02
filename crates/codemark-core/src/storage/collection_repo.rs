@@ -74,7 +74,11 @@ impl Database {
                 name: row.get(1)?,
                 description: row.get(2)?,
                 visibility: row.get::<_, String>(3)?.parse().map_err(|e| {
-                    rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(e))
+                    rusqlite::Error::FromSqlConversionFailure(
+                        0,
+                        rusqlite::types::Type::Text,
+                        Box::new(e),
+                    )
                 })?,
                 created_at: row.get(4)?,
                 created_by: row.get(5)?,

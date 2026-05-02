@@ -76,7 +76,7 @@ impl Database {
 
 #[cfg(test)]
 mod tests {
-    use crate::engine::bookmark::{Bookmark, BookmarkStatus, BookmarkComment};
+    use crate::engine::bookmark::{Bookmark, BookmarkComment, BookmarkStatus};
     use crate::storage::db::Database;
 
     fn test_bookmark(id: &str) -> Bookmark {

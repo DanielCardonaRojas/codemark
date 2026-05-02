@@ -28,7 +28,7 @@ impl<'a> Packer<'a> {
         // 1. Create a temporary SQLite file for the pack
         let temp_dir = std::env::temp_dir();
         let pack_db_path = temp_dir.join(format!("pack-{}.db", Uuid::new_v4()));
-        
+
         // Ensure parent directory exists
         if let Some(parent) = pack_db_path.parent() {
             std::fs::create_dir_all(parent)?;
@@ -38,19 +38,19 @@ impl<'a> Packer<'a> {
             // 2. Open the pack database and run migrations
             // We use Database::create to ensure it's a fresh, migrated database
             let pack_db = Database::create(&pack_db_path)?;
-            
+
             // 3. Attach the pack database to the main connection
             // We use a separate connection from the main DB to perform the ATTACH
             let conn = self.db.conn();
-            let pack_path_str = pack_db_path.to_str().ok_or_else(|| {
-                Error::Operation("Invalid pack database path".to_string())
-            })?;
-            
+            let pack_path_str = pack_db_path
+                .to_str()
+                .ok_or_else(|| Error::Operation("Invalid pack database path".to_string()))?;
+
             conn.execute(&format!("ATTACH DATABASE '{}' AS pack", pack_path_str), [])?;
 
             // 4. Surgically copy data using INSERT INTO ... SELECT
             let result = self.copy_collection_data(conn, &collection_id_str);
-            
+
             // 5. Detach the pack database regardless of success
             conn.execute("DETACH DATABASE pack", [])?;
             result?;
@@ -64,7 +64,7 @@ impl<'a> Packer<'a> {
             let _ = pack_db.conn().execute("DROP TABLE IF EXISTS bookmark_embeddings", []);
             // Drop FTS tables too to be really "thin"
             let _ = pack_db.conn().execute("DROP TABLE IF EXISTS bookmarks_fts", []);
-            
+
             // Drop FTS triggers to avoid errors when modifying bookmarks in the pack
             let _ = pack_db.conn().execute("DROP TRIGGER IF EXISTS bookmarks_ai", []);
             let _ = pack_db.conn().execute("DROP TRIGGER IF EXISTS bookmarks_ad", []);
@@ -86,7 +86,7 @@ impl<'a> Packer<'a> {
     /// Add _pack_meta table and a single row describing this pack.
     fn add_pack_meta(&self, pack_db: &Database, purpose: &str) -> Result<()> {
         let conn = pack_db.conn();
-        
+
         conn.execute(
             "CREATE TABLE IF NOT EXISTS _pack_meta (
                 pack_id TEXT PRIMARY KEY,
@@ -160,10 +160,7 @@ impl<'a> Packer<'a> {
         )?;
 
         // Copy repos metadata (added in migration 8)
-        conn.execute(
-            "INSERT INTO pack.repos SELECT * FROM main.repos",
-            [],
-        )?;
+        conn.execute("INSERT INTO pack.repos SELECT * FROM main.repos", [])?;
 
         // Copy LATEST resolutions per bookmark
         conn.execute(
@@ -186,11 +183,11 @@ impl<'a> Packer<'a> {
     fn compress_file(&self, source: &Path, destination: &Path) -> Result<()> {
         let mut source_file = File::open(source)?;
         let destination_file = File::create(destination)?;
-        
+
         let mut encoder = zstd::stream::write::Encoder::new(destination_file, 0)?;
         std::io::copy(&mut source_file, &mut encoder)?;
         encoder.finish()?;
-        
+
         Ok(())
     }
 }
@@ -259,58 +256,67 @@ mod tests {
 
         // Use raw rusqlite connection to verify WITHOUT running migrations/init_embeddings
         let pack_conn = rusqlite::Connection::open(&decompressed_db_path).unwrap();
-        
-        let count: i64 = pack_conn.query_row(
-            "SELECT COUNT(*) FROM collections WHERE id = ?1",
-            params![collection_id_str],
-            |row| row.get(0),
-        ).unwrap();
+
+        let count: i64 = pack_conn
+            .query_row(
+                "SELECT COUNT(*) FROM collections WHERE id = ?1",
+                params![collection_id_str],
+                |row| row.get(0),
+            )
+            .unwrap();
         assert_eq!(count, 1);
 
-        let bookmark_count: i64 = pack_conn.query_row(
-            "SELECT COUNT(*) FROM bookmarks WHERE id = ?1",
-            params![bookmark_id],
-            |row| row.get(0),
-        ).unwrap();
+        let bookmark_count: i64 = pack_conn
+            .query_row(
+                "SELECT COUNT(*) FROM bookmarks WHERE id = ?1",
+                params![bookmark_id],
+                |row| row.get(0),
+            )
+            .unwrap();
         assert_eq!(bookmark_count, 1);
 
-        let annotation_count: i64 = pack_conn.query_row(
-            "SELECT COUNT(*) FROM bookmark_annotations WHERE bookmark_id = ?1",
-            params![bookmark_id],
-            |row| row.get(0),
-        ).unwrap();
+        let annotation_count: i64 = pack_conn
+            .query_row(
+                "SELECT COUNT(*) FROM bookmark_annotations WHERE bookmark_id = ?1",
+                params![bookmark_id],
+                |row| row.get(0),
+            )
+            .unwrap();
         assert_eq!(annotation_count, 1);
 
-        let repo_count: i64 = pack_conn.query_row(
-            "SELECT COUNT(*) FROM repos",
-            [],
-            |row| row.get(0),
-        ).unwrap();
+        let repo_count: i64 =
+            pack_conn.query_row("SELECT COUNT(*) FROM repos", [], |row| row.get(0)).unwrap();
         assert_eq!(repo_count, 1);
 
         // Verify _pack_meta
-        let meta_count: i64 = pack_conn.query_row(
-            "SELECT COUNT(*) FROM _pack_meta",
-            [],
-            |row| row.get(0),
-        ).unwrap();
+        let meta_count: i64 =
+            pack_conn.query_row("SELECT COUNT(*) FROM _pack_meta", [], |row| row.get(0)).unwrap();
         assert_eq!(meta_count, 1);
 
-        let purpose: String = pack_conn.query_row(
-            "SELECT purpose FROM _pack_meta",
-            [],
-            |row| row.get(0),
-        ).unwrap();
+        let purpose: String =
+            pack_conn.query_row("SELECT purpose FROM _pack_meta", [], |row| row.get(0)).unwrap();
         assert_eq!(purpose, "publish");
 
         // Verify thinning
-        let tables: Vec<String> = pack_conn.prepare("SELECT name FROM sqlite_master WHERE type='table'").unwrap()
-            .query_map([], |row| row.get(0)).unwrap()
-            .filter_map(|r| r.ok()).collect();
-        
-        assert!(!tables.contains(&"bookmark_embeddings".to_string()), "Found bookmark_embeddings in tables: {:?}", tables);
-        assert!(!tables.contains(&"bookmarks_fts".to_string()), "Found bookmarks_fts in tables: {:?}", tables);
-        
+        let tables: Vec<String> = pack_conn
+            .prepare("SELECT name FROM sqlite_master WHERE type='table'")
+            .unwrap()
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .filter_map(|r| r.ok())
+            .collect();
+
+        assert!(
+            !tables.contains(&"bookmark_embeddings".to_string()),
+            "Found bookmark_embeddings in tables: {:?}",
+            tables
+        );
+        assert!(
+            !tables.contains(&"bookmarks_fts".to_string()),
+            "Found bookmarks_fts in tables: {:?}",
+            tables
+        );
+
         // Verify no shadow tables
         for table in &tables {
             assert!(!table.starts_with("bookmark_embeddings_"), "Found shadow table: {}", table);

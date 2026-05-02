@@ -28,7 +28,10 @@ impl Codemark {
             db_path,
             binary,
             temp_dir: None,
-            work_dir: PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..").canonicalize().unwrap(),
+            work_dir: PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("../..")
+                .canonicalize()
+                .unwrap(),
         }
     }
 

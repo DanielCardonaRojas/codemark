@@ -45,10 +45,14 @@ pub async fn handle_add(cli: &Cli, mode: &OutputMode, args: &AddArgs) -> Result<
     let content_hash = hash::content_hash(&source[generated.byte_range.0..generated.byte_range.1]);
 
     // Count matches for uniqueness info
-    let match_count =
-        codemark_core::query::matcher::run_query(&generated.query, &tree, source.as_bytes(), &ts_lang)
-            .map(|m| m.len())
-            .unwrap_or(0);
+    let match_count = codemark_core::query::matcher::run_query(
+        &generated.query,
+        &tree,
+        source.as_bytes(),
+        &ts_lang,
+    )
+    .map(|m| m.len())
+    .unwrap_or(0);
 
     // Compute the line range of the target for display
     let target_start_line = super::byte_to_line(&source, generated.byte_range.0);
@@ -243,10 +247,14 @@ pub async fn handle_add_from_snippet(
     let generated = qgen::generate_query(&tree, source.as_bytes(), byte_range, &ts_lang)?;
     let content_hash = hash::content_hash(&source[generated.byte_range.0..generated.byte_range.1]);
 
-    let match_count =
-        codemark_core::query::matcher::run_query(&generated.query, &tree, source.as_bytes(), &ts_lang)
-            .map(|m| m.len())
-            .unwrap_or(0);
+    let match_count = codemark_core::query::matcher::run_query(
+        &generated.query,
+        &tree,
+        source.as_bytes(),
+        &ts_lang,
+    )
+    .map(|m| m.len())
+    .unwrap_or(0);
 
     let target_start_line = super::byte_to_line(&source, generated.byte_range.0);
     let target_end_line = super::byte_to_line(&source, generated.byte_range.1.saturating_sub(1));
@@ -421,8 +429,9 @@ pub async fn handle_add_from_query(
     let ts_lang = lang.tree_sitter_language();
 
     // Validate the query by running it
-    let matches = codemark_core::query::matcher::run_query(&args.query, &tree, source.as_bytes(), &ts_lang)
-        .map_err(|e| Error::Input(format!("invalid tree-sitter query: {e}")))?;
+    let matches =
+        codemark_core::query::matcher::run_query(&args.query, &tree, source.as_bytes(), &ts_lang)
+            .map_err(|e| Error::Input(format!("invalid tree-sitter query: {e}")))?;
 
     if matches.is_empty() {
         return Err(Error::Input("query does not match any nodes in the file".into()));
