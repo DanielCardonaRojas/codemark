@@ -1,0 +1,478 @@
+use crate::engine::bookmark::Collection;
+use crate::error::Result;
+use crate::storage::db::Database;
+
+impl Database {
+    pub fn insert_collection(&self, collection: &Collection) -> Result<()> {
+        self.conn().execute(
+            "INSERT INTO collections (id, name, description, visibility, created_at, created_by, created_branch)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            rusqlite::params![
+                collection.id,
+                collection.name,
+                collection.description,
+                collection.visibility.to_string(),
+                collection.created_at,
+                collection.created_by,
+                collection.created_branch,
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Get a collection by its exact name.
+    pub fn get_collection_by_name(&self, name: &str) -> Result<Option<Collection>> {
+        let mut stmt = self.conn().prepare(
+            "SELECT id, name, description, visibility, created_at, created_by, created_branch
+             FROM collections WHERE name = ?1",
+        )?;
+        let mut rows = stmt.query_map([name], row_to_collection)?;
+        match rows.next() {
+            Some(row) => Ok(Some(row?)),
+            None => Ok(None),
+        }
+    }
+
+    /// Get a collection by its ID prefix (at least 4 characters).
+    pub fn get_collection_by_id_prefix(&self, prefix: &str) -> Result<Option<Collection>> {
+        if prefix.len() < 4 {
+            return Err(crate::error::Error::Input(
+                "Collection ID prefix must be at least 4 characters".into(),
+            ));
+        }
+        let mut stmt = self.conn().prepare(
+            "SELECT id, name, description, visibility, created_at, created_by, created_branch
+             FROM collections WHERE id LIKE ?1",
+        )?;
+        let pattern = format!("{prefix}%");
+        let results: Vec<Collection> =
+            stmt.query_map([&pattern], row_to_collection)?.filter_map(|r| r.ok()).collect();
+
+        match results.len() {
+            0 => Ok(None),
+            1 => Ok(Some(results.into_iter().next().unwrap())),
+            _ => Err(crate::error::Error::Input(format!(
+                "Ambiguous collection ID prefix '{prefix}': matches {} collections",
+                results.len()
+            ))),
+        }
+    }
+
+    /// List all collections with their bookmark counts.
+    pub fn list_collections(&self) -> Result<Vec<(Collection, usize)>> {
+        let mut stmt = self.conn().prepare(
+            "SELECT c.id, c.name, c.description, c.visibility, c.created_at, c.created_by, c.created_branch,
+             COUNT(cb.bookmark_id) AS bookmark_count
+             FROM collections c
+             LEFT JOIN collection_bookmarks cb ON c.id = cb.collection_id
+             GROUP BY c.id
+             ORDER BY c.name",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            let collection = Collection {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                description: row.get(2)?,
+                visibility: row.get::<_, String>(3)?.parse().map_err(|e| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        0,
+                        rusqlite::types::Type::Text,
+                        Box::new(e),
+                    )
+                })?,
+                created_at: row.get(4)?,
+                created_by: row.get(5)?,
+                created_branch: row.get(6)?,
+            };
+            let count: usize = row.get(7)?;
+            Ok((collection, count))
+        })?;
+
+        let results: Vec<(Collection, usize)> = rows.filter_map(|r| r.ok()).collect();
+        Ok(results)
+    }
+
+    /// Delete a collection by ID, returning the number of bookmarks that were in it.
+    pub fn delete_collection_by_id(&self, id: &str) -> Result<usize> {
+        let count: usize = self
+            .conn()
+            .query_row(
+                "SELECT COUNT(*) FROM collection_bookmarks WHERE collection_id = ?1",
+                [id],
+                |row| row.get(0),
+            )
+            .unwrap_or(0);
+
+        self.conn().execute("DELETE FROM collections WHERE id = ?1", [id])?;
+        Ok(count)
+    }
+
+    /// Delete a collection and all its bookmarks atomically.
+    /// Returns the number of bookmarks deleted.
+    pub fn delete_collection_recursive(&mut self, id: &str) -> Result<usize> {
+        let conn = self.conn_mut();
+        let tx = conn.transaction()?;
+
+        let count: usize = tx
+            .query_row(
+                "SELECT COUNT(*) FROM collection_bookmarks WHERE collection_id = ?1",
+                [id],
+                |row| row.get(0),
+            )
+            .unwrap_or(0);
+
+        // Delete bookmarks that are in this collection
+        tx.execute(
+            "DELETE FROM bookmarks WHERE id IN (SELECT bookmark_id FROM collection_bookmarks WHERE collection_id = ?1)",
+            [id],
+        )?;
+
+        // Delete the collection itself (association records are deleted via ON DELETE CASCADE)
+        tx.execute("DELETE FROM collections WHERE id = ?1", [id])?;
+
+        tx.commit()?;
+        Ok(count)
+    }
+
+    /// Delete a collection by name, returning the number of bookmarks that were in it.
+    #[allow(dead_code)]
+    pub fn delete_collection(&self, name: &str) -> Result<usize> {
+        if let Some(c) = self.get_collection_by_name(name)? {
+            self.delete_collection_by_id(&c.id)
+        } else {
+            Ok(0)
+        }
+    }
+
+    /// Add bookmarks to a collection, appending at the end (or at a specific position).
+    /// Returns the number actually added (skips duplicates).
+    pub fn add_to_collection(&self, collection_id: &str, bookmark_ids: &[String]) -> Result<usize> {
+        self.add_to_collection_at(collection_id, bookmark_ids, None)
+    }
+
+    /// Add bookmarks at a specific position (0-indexed). Existing items at >= position are shifted.
+    /// If `at` is None, appends at the end.
+    pub fn add_to_collection_at(
+        &self,
+        collection_id: &str,
+        bookmark_ids: &[String],
+        at: Option<usize>,
+    ) -> Result<usize> {
+        let now = chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string();
+
+        let insert_pos = if let Some(pos) = at {
+            // Shift existing items to make room
+            self.conn().execute(
+                "UPDATE collection_bookmarks SET position = position + ?1
+                 WHERE collection_id = ?2 AND position >= ?3",
+                rusqlite::params![bookmark_ids.len() as i64, collection_id, pos as i64],
+            )?;
+            pos
+        } else {
+            // Append: get current max position + 1
+            let max_pos: i64 = self
+                .conn()
+                .query_row(
+                    "SELECT COALESCE(MAX(position), -1) FROM collection_bookmarks WHERE collection_id = ?1",
+                    [collection_id],
+                    |row| row.get(0),
+                )
+                .unwrap_or(-1);
+            (max_pos + 1) as usize
+        };
+
+        let mut added = 0;
+        for (i, bm_id) in bookmark_ids.iter().enumerate() {
+            let result = self.conn().execute(
+                "INSERT OR IGNORE INTO collection_bookmarks (collection_id, bookmark_id, added_at, position)
+                 VALUES (?1, ?2, ?3, ?4)",
+                rusqlite::params![collection_id, bm_id, now, (insert_pos + i) as i64],
+            );
+            if let Ok(n) = result {
+                added += n;
+            }
+        }
+        Ok(added)
+    }
+
+    /// Reorder bookmarks in a collection. The `ordered_ids` list defines the new order.
+    /// Bookmarks not in the list keep their relative order after the listed ones.
+    pub fn reorder_collection(&self, collection_id: &str, ordered_ids: &[String]) -> Result<()> {
+        for (i, bm_id) in ordered_ids.iter().enumerate() {
+            self.conn().execute(
+                "UPDATE collection_bookmarks SET position = ?1
+                 WHERE collection_id = ?2 AND bookmark_id = ?3",
+                rusqlite::params![i as i64, collection_id, bm_id],
+            )?;
+        }
+        Ok(())
+    }
+
+    /// Remove bookmarks from a collection. Returns the number actually removed.
+    pub fn remove_from_collection(
+        &self,
+        collection_id: &str,
+        bookmark_ids: &[String],
+    ) -> Result<usize> {
+        let mut removed = 0;
+        for bm_id in bookmark_ids {
+            let n = self.conn().execute(
+                "DELETE FROM collection_bookmarks
+                 WHERE collection_id = ?1 AND bookmark_id = ?2",
+                rusqlite::params![collection_id, bm_id],
+            )?;
+            removed += n;
+        }
+        Ok(removed)
+    }
+
+    /// List all collections that contain a specific bookmark.
+    pub fn list_collections_for_bookmark(&self, bookmark_id: &str) -> Result<Vec<Collection>> {
+        let mut stmt = self.conn().prepare(
+            "SELECT c.id, c.name, c.description, c.visibility, c.created_at, c.created_by, c.created_branch
+             FROM collections c
+             JOIN collection_bookmarks cb ON c.id = cb.collection_id
+             WHERE cb.bookmark_id = ?1
+             ORDER BY c.name",
+        )?;
+        let rows = stmt.query_map([bookmark_id], row_to_collection)?;
+        let results: Vec<Collection> = rows.filter_map(|r| r.ok()).collect();
+        Ok(results)
+    }
+}
+
+fn row_to_collection(row: &rusqlite::Row) -> rusqlite::Result<Collection> {
+    Ok(Collection {
+        id: row.get(0)?,
+        name: row.get(1)?,
+        description: row.get(2)?,
+        visibility: row.get::<_, String>(3)?.parse().map_err(|e| {
+            rusqlite::Error::FromSqlConversionFailure(0, rusqlite::types::Type::Text, Box::new(e))
+        })?,
+        created_at: row.get(4)?,
+        created_by: row.get(5)?,
+        created_branch: row.get(6)?,
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::engine::bookmark::{Bookmark, BookmarkStatus, Collection};
+    use crate::storage::db::Database;
+
+    fn test_bookmark(id: &str) -> Bookmark {
+        // Use unique file_path and query to avoid UNIQUE constraint violations
+        Bookmark {
+            id: id.to_string(),
+            query: format!("(function_declaration) @{} /* {} */", "target", id),
+            language: "swift".to_string(),
+            file_path: format!("src/main_{}.swift", id),
+            content_hash: None,
+            commit_hash: None,
+            status: BookmarkStatus::Active,
+            resolution_method: None,
+            last_resolved_at: None,
+            stale_since: None,
+            created_at: "2026-04-01T00:00:00Z".to_string(),
+            created_by: None,
+            tags: vec![],
+            annotations: vec![],
+            comments: vec![],
+        }
+    }
+
+    fn test_collection(name: &str) -> Collection {
+        Collection {
+            id: format!("col-{name}"),
+            name: name.to_string(),
+            description: Some(format!("Test collection {name}")),
+            visibility: crate::engine::bookmark::Visibility::Private,
+            created_at: "2026-04-01T00:00:00Z".to_string(),
+            created_by: None,
+            created_branch: Some("main".to_string()),
+        }
+    }
+
+    // Initialize test environment
+    fn init_test_env() {}
+
+    #[test]
+    fn create_and_get_collection() {
+        init_test_env();
+        let db = Database::open_in_memory().unwrap();
+        let col = test_collection("bugfix-auth");
+        db.insert_collection(&col).unwrap();
+
+        let fetched = db.get_collection_by_name("bugfix-auth").unwrap().unwrap();
+        assert_eq!(fetched.name, "bugfix-auth");
+        assert_eq!(fetched.description, Some("Test collection bugfix-auth".to_string()));
+    }
+
+    #[test]
+    fn add_bookmarks_to_collection() {
+        init_test_env();
+        let db = Database::open_in_memory().unwrap();
+        db.insert_bookmark(&test_bookmark("bm-0001")).unwrap();
+        db.insert_bookmark(&test_bookmark("bm-0002")).unwrap();
+        let col = test_collection("sprint-1");
+        db.insert_collection(&col).unwrap();
+
+        let added =
+            db.add_to_collection("col-sprint-1", &["bm-0001".into(), "bm-0002".into()]).unwrap();
+        assert_eq!(added, 2);
+
+        // Duplicate add is silently skipped
+        let added = db.add_to_collection("col-sprint-1", &["bm-0001".into()]).unwrap();
+        assert_eq!(added, 0);
+    }
+
+    #[test]
+    fn list_collections_with_counts() {
+        init_test_env();
+        let db = Database::open_in_memory().unwrap();
+        db.insert_bookmark(&test_bookmark("bm-0001")).unwrap();
+        db.insert_collection(&test_collection("col-a")).unwrap();
+        db.insert_collection(&test_collection("col-b")).unwrap();
+        db.add_to_collection("col-col-a", &["bm-0001".into()]).unwrap();
+
+        let collections = db.list_collections().unwrap();
+        assert_eq!(collections.len(), 2);
+        // col-a has 1 bookmark, col-b has 0
+        let (col_a, count_a) = collections.iter().find(|(c, _)| c.name == "col-a").unwrap();
+        assert_eq!(*count_a, 1);
+        assert_eq!(col_a.name, "col-a");
+        let (_, count_b) = collections.iter().find(|(c, _)| c.name == "col-b").unwrap();
+        assert_eq!(*count_b, 0);
+    }
+
+    #[test]
+    fn delete_collection_preserves_bookmarks() {
+        init_test_env();
+        let db = Database::open_in_memory().unwrap();
+        db.insert_bookmark(&test_bookmark("bm-0001")).unwrap();
+        db.insert_collection(&test_collection("temp")).unwrap();
+        db.add_to_collection("col-temp", &["bm-0001".into()]).unwrap();
+
+        let removed_count = db.delete_collection("temp").unwrap();
+        assert_eq!(removed_count, 1);
+
+        // Collection is gone
+        assert!(db.get_collection_by_name("temp").unwrap().is_none());
+        // Bookmark still exists
+        assert!(db.get_bookmark("bm-0001").unwrap().is_some());
+    }
+
+    #[test]
+    fn remove_from_collection() {
+        init_test_env();
+        let db = Database::open_in_memory().unwrap();
+        db.insert_bookmark(&test_bookmark("bm-0001")).unwrap();
+        db.insert_collection(&test_collection("sprint-1")).unwrap();
+        db.add_to_collection("col-sprint-1", &["bm-0001".into()]).unwrap();
+
+        let removed = db.remove_from_collection("col-sprint-1", &["bm-0001".into()]).unwrap();
+        assert_eq!(removed, 1);
+
+        let collections = db.list_collections_for_bookmark("bm-0001").unwrap();
+        assert!(collections.is_empty());
+    }
+
+    #[test]
+    fn list_collections_for_bookmark() {
+        init_test_env();
+        let db = Database::open_in_memory().unwrap();
+        db.insert_bookmark(&test_bookmark("bm-0001")).unwrap();
+        db.insert_collection(&test_collection("col-a")).unwrap();
+        db.insert_collection(&test_collection("col-b")).unwrap();
+        db.add_to_collection("col-col-a", &["bm-0001".into()]).unwrap();
+        db.add_to_collection("col-col-b", &["bm-0001".into()]).unwrap();
+
+        let collections = db.list_collections_for_bookmark("bm-0001").unwrap();
+        assert_eq!(collections.len(), 2);
+    }
+
+    #[test]
+    fn add_preserves_insertion_order() {
+        init_test_env();
+        let db = Database::open_in_memory().unwrap();
+        db.insert_bookmark(&test_bookmark("bm-0001")).unwrap();
+        db.insert_bookmark(&test_bookmark("bm-0002")).unwrap();
+        db.insert_bookmark(&test_bookmark("bm-0003")).unwrap();
+        db.insert_collection(&test_collection("ordered")).unwrap();
+
+        db.add_to_collection(
+            "col-ordered",
+            &["bm-0001".into(), "bm-0002".into(), "bm-0003".into()],
+        )
+        .unwrap();
+
+        let filter = crate::engine::bookmark::BookmarkFilter {
+            collection: Some("ordered".to_string()),
+            ..Default::default()
+        };
+        let bookmarks = db.list_bookmarks(&filter).unwrap();
+        assert_eq!(bookmarks.len(), 3);
+        assert_eq!(bookmarks[0].id, "bm-0001");
+        assert_eq!(bookmarks[1].id, "bm-0002");
+        assert_eq!(bookmarks[2].id, "bm-0003");
+    }
+
+    #[test]
+    fn reorder_changes_order() {
+        init_test_env();
+        let db = Database::open_in_memory().unwrap();
+        db.insert_bookmark(&test_bookmark("bm-0001")).unwrap();
+        db.insert_bookmark(&test_bookmark("bm-0002")).unwrap();
+        db.insert_bookmark(&test_bookmark("bm-0003")).unwrap();
+        db.insert_collection(&test_collection("reorder")).unwrap();
+
+        db.add_to_collection(
+            "col-reorder",
+            &["bm-0001".into(), "bm-0002".into(), "bm-0003".into()],
+        )
+        .unwrap();
+
+        // Reorder: 3, 1, 2
+        db.reorder_collection(
+            "col-reorder",
+            &["bm-0003".into(), "bm-0001".into(), "bm-0002".into()],
+        )
+        .unwrap();
+
+        let filter = crate::engine::bookmark::BookmarkFilter {
+            collection: Some("reorder".to_string()),
+            ..Default::default()
+        };
+        let bookmarks = db.list_bookmarks(&filter).unwrap();
+        assert_eq!(bookmarks.len(), 3);
+        assert_eq!(bookmarks[0].id, "bm-0003");
+        assert_eq!(bookmarks[1].id, "bm-0001");
+        assert_eq!(bookmarks[2].id, "bm-0002");
+    }
+
+    #[test]
+    fn add_at_position_inserts_and_shifts() {
+        init_test_env();
+        let db = Database::open_in_memory().unwrap();
+        db.insert_bookmark(&test_bookmark("bm-0001")).unwrap();
+        db.insert_bookmark(&test_bookmark("bm-0002")).unwrap();
+        db.insert_bookmark(&test_bookmark("bm-0003")).unwrap();
+        db.insert_collection(&test_collection("insert")).unwrap();
+
+        // Add first two
+        db.add_to_collection("col-insert", &["bm-0001".into(), "bm-0002".into()]).unwrap();
+
+        // Insert bm-0003 at position 1 (between bm-0001 and bm-0002)
+        db.add_to_collection_at("col-insert", &["bm-0003".into()], Some(1)).unwrap();
+
+        let filter = crate::engine::bookmark::BookmarkFilter {
+            collection: Some("insert".to_string()),
+            ..Default::default()
+        };
+        let bookmarks = db.list_bookmarks(&filter).unwrap();
+        assert_eq!(bookmarks.len(), 3);
+        assert_eq!(bookmarks[0].id, "bm-0001");
+        assert_eq!(bookmarks[1].id, "bm-0003");
+        assert_eq!(bookmarks[2].id, "bm-0002");
+    }
+}
