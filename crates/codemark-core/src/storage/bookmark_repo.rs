@@ -713,6 +713,11 @@ mod tests {
             created_at: "2026-04-01T00:00:00Z".to_string(),
             created_by: None,
             created_branch: Some("main".to_string()),
+            published_at: None,
+            published_commit_sha: None,
+            repo_url: None,
+            status: None,
+            updated_at: None,
         };
         db.insert_collection(&col).unwrap();
         db.add_to_collection(&col.id, std::slice::from_ref(&bm1.id)).unwrap();

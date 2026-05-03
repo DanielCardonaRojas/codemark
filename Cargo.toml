@@ -23,6 +23,7 @@ uuid = { version = "1", features = ["v4"] }
 chrono = { version = "0.4", features = ["serde"] }
 regex = "1"
 git2 = "0.19"
-rusqlite = { version = "0.33", features = ["bundled"] }
+rusqlite = { version = "0.37", features = ["bundled"] }
 tree-sitter = "0.25"
 tempfile = "3"
+deadpool-sqlite = "0.12"

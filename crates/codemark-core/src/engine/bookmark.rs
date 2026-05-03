@@ -167,6 +167,8 @@ pub struct Resolution {
     pub byte_range: Option<String>,
     pub line_range: Option<String>,
     pub content_hash: Option<String>,
+    pub headline: Option<String>,
+    pub preview_lines: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -178,6 +180,11 @@ pub struct Collection {
     pub created_at: String,
     pub created_by: Option<String>,
     pub created_branch: Option<String>,
+    pub published_at: Option<String>,
+    pub published_commit_sha: Option<String>,
+    pub repo_url: Option<String>,
+    pub status: Option<String>,
+    pub updated_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

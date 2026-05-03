@@ -10,6 +10,7 @@ name = "codetours"
 path = "src/main.rs"
 
 [dependencies]
+codemark-core = { path = "../codemark-core" }
 axum = { workspace = true }
 tokio = { workspace = true }
 tower = { workspace = true }
@@ -24,7 +25,8 @@ anyhow = { workspace = true }
 thiserror = { workspace = true }
 uuid = { workspace = true }
 chrono = { workspace = true }
-codemark-core = { path = "../codemark-core" }
+rusqlite = { workspace = true }
+deadpool-sqlite = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

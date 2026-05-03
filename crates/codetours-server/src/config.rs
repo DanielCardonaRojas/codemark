@@ -14,7 +14,15 @@ pub struct Config {
     #[serde(default = "default_max_open_tenants")]
     pub max_open_tenants: usize,
     #[serde(default)]
+    pub storage: StorageConfig,
+    #[serde(default)]
     pub auth: AuthConfig,
+}
+
+#[derive(Deserialize, Debug, Clone)]
+pub struct StorageConfig {
+    #[serde(default = "default_pool_size")]
+    pub pool_size: u32,
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -45,6 +53,10 @@ fn default_max_open_tenants() -> usize {
     256
 }
 
+fn default_pool_size() -> u32 {
+    8
+}
+
 fn default_auth_mode() -> String {
     "stub".to_string()
 }
@@ -57,7 +69,16 @@ impl Default for Config {
             data_dir: default_data_dir(),
             log_level: default_log_level(),
             max_open_tenants: default_max_open_tenants(),
+            storage: StorageConfig::default(),
             auth: AuthConfig::default(),
+        }
+    }
+}
+
+impl Default for StorageConfig {
+    fn default() -> Self {
+        Self {
+            pool_size: default_pool_size(),
         }
     }
 }
@@ -98,6 +119,7 @@ mod tests {
         assert_eq!(config.data_dir, PathBuf::from("./data"));
         assert_eq!(config.log_level, "info");
         assert_eq!(config.max_open_tenants, 256);
+        assert_eq!(config.storage.pool_size, 8);
         assert_eq!(config.auth.mode, "stub");
     }
 

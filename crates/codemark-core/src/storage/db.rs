@@ -8,18 +8,20 @@ use rusqlite::Connection;
 
 use crate::error::Result;
 
-const MIGRATION_001: &str = include_str!("../../../../migrations/001_initial.sql");
-const MIGRATION_002: &str = include_str!("../../../../migrations/002_add_fts.sql");
-const MIGRATION_003: &str = include_str!("../../../../migrations/003_collection_ordering.sql");
-const MIGRATION_004: &str = include_str!("../../../../migrations/004_add_line_range.sql");
-const MIGRATION_005: &str = include_str!("../../../../migrations/005_add_embeddings.sql");
-const MIGRATION_006: &str = include_str!("../../../../migrations/006_add_fts_path_tags.sql");
-const MIGRATION_007: &str = include_str!("../../../../migrations/007_append_only_metadata.sql");
+const MIGRATION_001: &str = include_str!("../../../../migrations/V1__initial.sql");
+const MIGRATION_002: &str = include_str!("../../../../migrations/V2__add_fts.sql");
+const MIGRATION_003: &str = include_str!("../../../../migrations/V3__collection_ordering.sql");
+const MIGRATION_004: &str = include_str!("../../../../migrations/V4__add_line_range.sql");
+const MIGRATION_005: &str = include_str!("../../../../migrations/V5__add_embeddings.sql");
+const MIGRATION_006: &str = include_str!("../../../../migrations/V6__add_fts_path_tags.sql");
+const MIGRATION_007: &str = include_str!("../../../../migrations/V7__append_only_metadata.sql");
 const MIGRATION_008: &str =
-    include_str!("../../../../migrations/008_add_identity_and_repo_metadata.sql");
-const MIGRATION_009: &str = include_str!("../../../../migrations/009_add_collection_branch.sql");
+    include_str!("../../../../migrations/V8__add_identity_and_repo_metadata.sql");
+const MIGRATION_009: &str = include_str!("../../../../migrations/V9__add_collection_branch.sql");
 const MIGRATION_010: &str =
-    include_str!("../../../../migrations/010_add_comments_and_visibility.sql");
+    include_str!("../../../../migrations/V10__add_comments_and_visibility.sql");
+const MIGRATION_011: &str = include_str!("../../../../migrations/V11__add_publish_metadata.sql");
+const MIGRATION_012: &str = include_str!("../../../../migrations/V12__add_resolution_display_fields.sql");
 
 /// SQLite database wrapper with automatic migrations.
 pub struct Database {
@@ -86,61 +88,75 @@ impl Database {
     }
 
     fn run_migrations(&mut self) -> Result<()> {
-        let current_version = self.schema_version();
+        Self::run_migrations_on(&mut self.conn)
+    }
+
+    pub fn run_migrations_on(conn: &mut Connection) -> Result<()> {
+        let current_version = Self::get_schema_version(conn);
 
         if current_version < 1 {
-            self.conn.execute_batch(MIGRATION_001)?;
-            self.set_schema_version(1)?;
+            conn.execute_batch(MIGRATION_001)?;
+            Self::set_schema_version(conn, 1)?;
         }
 
         if current_version < 2 {
-            self.conn.execute_batch(MIGRATION_002)?;
-            self.set_schema_version(2)?;
+            conn.execute_batch(MIGRATION_002)?;
+            Self::set_schema_version(conn, 2)?;
         }
 
         if current_version < 3 {
-            self.conn.execute_batch(MIGRATION_003)?;
-            self.set_schema_version(3)?;
+            conn.execute_batch(MIGRATION_003)?;
+            Self::set_schema_version(conn, 3)?;
         }
 
         if current_version < 4 {
-            self.conn.execute_batch(MIGRATION_004)?;
-            self.set_schema_version(4)?;
+            conn.execute_batch(MIGRATION_004)?;
+            Self::set_schema_version(conn, 4)?;
         }
 
         if current_version < 5 {
-            self.conn.execute_batch(MIGRATION_005)?;
-            self.set_schema_version(5)?;
+            conn.execute_batch(MIGRATION_005)?;
+            Self::set_schema_version(conn, 5)?;
             // Initialize sqlite-vec extension and create embeddings table
-            self.init_embeddings_table()?;
+            Self::init_embeddings_table_on(conn)?;
         } else if current_version >= 5 {
             // Ensure embeddings table exists even if migration was already run
-            self.ensure_embeddings_table()?;
+            Self::ensure_embeddings_table_on(conn)?;
         }
 
         if current_version < 6 {
-            self.conn.execute_batch(MIGRATION_006)?;
-            self.set_schema_version(6)?;
+            conn.execute_batch(MIGRATION_006)?;
+            Self::set_schema_version(conn, 6)?;
         }
 
         if current_version < 7 {
-            self.migrate_to_v7()?;
-            self.set_schema_version(7)?;
+            Self::migrate_to_v7_on(conn)?;
+            Self::set_schema_version(conn, 7)?;
         }
 
         if current_version < 8 {
-            self.conn.execute_batch(MIGRATION_008)?;
-            self.set_schema_version(8)?;
+            conn.execute_batch(MIGRATION_008)?;
+            Self::set_schema_version(conn, 8)?;
         }
 
         if current_version < 9 {
-            self.conn.execute_batch(MIGRATION_009)?;
-            self.set_schema_version(9)?;
+            conn.execute_batch(MIGRATION_009)?;
+            Self::set_schema_version(conn, 9)?;
         }
 
         if current_version < 10 {
-            self.conn.execute_batch(MIGRATION_010)?;
-            self.set_schema_version(10)?;
+            conn.execute_batch(MIGRATION_010)?;
+            Self::set_schema_version(conn, 10)?;
+        }
+
+        if current_version < 11 {
+            conn.execute_batch(MIGRATION_011)?;
+            Self::set_schema_version(conn, 11)?;
+        }
+
+        if current_version < 12 {
+            conn.execute_batch(MIGRATION_012)?;
+            Self::set_schema_version(conn, 12)?;
         }
 
         Ok(())
@@ -148,9 +164,9 @@ impl Database {
 
     /// Migrate to schema version 7: append-only metadata model
     /// This handles migrating existing data from the old schema to the new one.
-    fn migrate_to_v7(&mut self) -> Result<()> {
+    fn migrate_to_v7_on(conn: &mut Connection) -> Result<()> {
         // First run the base migration which creates new tables and recreates bookmarks
-        self.conn.execute_batch(MIGRATION_007)?;
+        conn.execute_batch(MIGRATION_007)?;
 
         // Now migrate existing data if we're coming from schema 6
         // Check if the old bookmarks table had data (we can tell by checking if annotations are empty)
@@ -160,7 +176,7 @@ impl Database {
         // Try to migrate annotations from old schema
         // This will fail if the old columns don't exist (fresh install), so we ignore errors
         let migrate_annotations = || -> Result<()> {
-            self.conn.execute(
+            conn.execute(
                 "INSERT INTO bookmark_annotations (id, bookmark_id, added_at, added_by, notes, context, source)
                  SELECT lower(hex(randomblob(16))), id, created_at, created_by, notes, context, 'migration'
                  FROM (SELECT id, created_at, created_by, notes, context FROM bookmarks WHERE notes IS NOT NULL OR context IS NOT NULL LIMIT 1)
@@ -172,7 +188,7 @@ impl Database {
 
         // Try to migrate tags from old schema
         let migrate_tags = || -> Result<()> {
-            self.conn.execute(
+            conn.execute(
                 "INSERT INTO bookmark_tags (bookmark_id, tag, added_at, added_by)
                  SELECT bm.id, TRIM(json_each.value), bm.created_at, bm.created_by
                  FROM bookmarks bm, json_each(bm.tags)
@@ -191,12 +207,12 @@ impl Database {
 
     /// Initialize the sqlite-vec extension and create the embeddings table.
     /// This is called during migration 005.
-    fn init_embeddings_table(&mut self) -> Result<()> {
+    fn init_embeddings_table_on(conn: &mut Connection) -> Result<()> {
         use crate::embeddings::VecStore;
 
         // Create the vec0 virtual table with 384 dimensions (all-MiniLM-L6-v2)
         let store = VecStore::new(384);
-        store.create_table(&mut self.conn).map_err(|e| {
+        store.create_table(conn).map_err(|e| {
             crate::error::Error::Operation(format!("Failed to create embeddings table: {}", e))
         })?;
 
@@ -205,13 +221,12 @@ impl Database {
 
     /// Ensure the embeddings table exists, create it if it doesn't.
     /// This handles the case where the schema version is 5 but the table wasn't created.
-    fn ensure_embeddings_table(&mut self) -> Result<()> {
+    fn ensure_embeddings_table_on(conn: &mut Connection) -> Result<()> {
         use crate::embeddings::VecStore;
 
         // Check if table exists by trying to query it
         // vec0 virtual tables don't show up in sqlite_master like regular tables
-        let exists = self
-            .conn
+        let exists = conn
             .query_row("SELECT COUNT(*) FROM bookmark_embeddings LIMIT 1", [], |row| {
                 row.get::<_, i64>(0)
             })
@@ -220,7 +235,7 @@ impl Database {
         if !exists {
             // Create the vec0 virtual table with 384 dimensions (all-MiniLM-L6-v2)
             let store = VecStore::new(384);
-            store.create_table(&mut self.conn).map_err(|e| {
+            store.create_table(conn).map_err(|e| {
                 crate::error::Error::Operation(format!("Failed to create embeddings table: {}", e))
             })?;
         }
@@ -229,19 +244,22 @@ impl Database {
     }
 
     fn schema_version(&self) -> i64 {
-        self.conn
-            .query_row(
-                "SELECT value FROM schema_meta WHERE key = 'schema_version'",
-                [],
-                |row: &rusqlite::Row| row.get::<_, String>(0),
-            )
-            .ok()
-            .and_then(|v: String| v.parse().ok())
-            .unwrap_or(0)
+        Self::get_schema_version(&self.conn)
     }
 
-    fn set_schema_version(&mut self, version: i64) -> Result<()> {
-        self.conn.execute(
+    fn get_schema_version(conn: &Connection) -> i64 {
+        conn.query_row(
+            "SELECT value FROM schema_meta WHERE key = 'schema_version'",
+            [],
+            |row: &rusqlite::Row| row.get::<_, String>(0),
+        )
+        .ok()
+        .and_then(|v: String| v.parse().ok())
+        .unwrap_or(0)
+    }
+
+    fn set_schema_version(conn: &mut Connection, version: i64) -> Result<()> {
+        conn.execute(
             "INSERT OR REPLACE INTO schema_meta (key, value) VALUES ('schema_version', ?1)",
             [version.to_string()],
         )?;
@@ -262,7 +280,7 @@ mod tests {
         init_test_env();
         let db = Database::open_in_memory().unwrap();
         let version = db.schema_version();
-        assert_eq!(version, 10);
+        assert_eq!(version, 12);
     }
 
     #[test]
@@ -270,7 +288,7 @@ mod tests {
         init_test_env();
         let mut db = Database::open_in_memory().unwrap();
         db.run_migrations().unwrap();
-        assert_eq!(db.schema_version(), 10);
+        assert_eq!(db.schema_version(), 12);
     }
 
     #[test]

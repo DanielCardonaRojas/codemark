@@ -6,8 +6,8 @@ impl Database {
     pub fn insert_resolution(&self, resolution: &Resolution) -> Result<()> {
         self.conn().execute(
             "INSERT INTO resolutions (id, bookmark_id, resolved_at, commit_hash,
-             method, match_count, file_path, byte_range, line_range, content_hash)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+             method, match_count, file_path, byte_range, line_range, content_hash, headline, preview_lines)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
             rusqlite::params![
                 resolution.id,
                 resolution.bookmark_id,
@@ -19,6 +19,8 @@ impl Database {
                 resolution.byte_range,
                 resolution.line_range,
                 resolution.content_hash,
+                resolution.headline,
+                resolution.preview_lines,
             ],
         )?;
         Ok(())
@@ -96,7 +98,7 @@ impl Database {
     pub fn list_resolutions(&self, bookmark_id: &str, limit: usize) -> Result<Vec<Resolution>> {
         let mut stmt = self.conn().prepare(
             "SELECT id, bookmark_id, resolved_at, commit_hash, method,
-             match_count, file_path, byte_range, line_range, content_hash
+             match_count, file_path, byte_range, line_range, content_hash, headline, preview_lines
              FROM resolutions WHERE bookmark_id = ?1
              ORDER BY resolved_at DESC LIMIT ?2",
         )?;
@@ -113,6 +115,8 @@ impl Database {
                 byte_range: row.get(7)?,
                 line_range: row.get(8)?,
                 content_hash: row.get(9)?,
+                headline: row.get(10)?,
+                preview_lines: row.get(11)?,
             })
         })?;
 
@@ -124,7 +128,7 @@ impl Database {
     pub fn get_resolution(&self, id: &str) -> Result<Option<Resolution>> {
         let mut stmt = self.conn().prepare(
             "SELECT id, bookmark_id, resolved_at, commit_hash, method,
-             match_count, file_path, byte_range, line_range, content_hash
+             match_count, file_path, byte_range, line_range, content_hash, headline, preview_lines
              FROM resolutions WHERE id LIKE ?1 LIMIT 2",
         )?;
         let pattern = format!("{id}%");
@@ -142,6 +146,8 @@ impl Database {
                     byte_range: row.get(7)?,
                     line_range: row.get(8)?,
                     content_hash: row.get(9)?,
+                    headline: row.get(10)?,
+                    preview_lines: row.get(11)?,
                 })
             })?
             .filter_map(|r| r.ok())
@@ -200,6 +206,8 @@ mod tests {
             byte_range: Some("100:200".to_string()),
             line_range: Some("10:20".to_string()),
             content_hash: Some("sha256:abcd1234abcd1234".to_string()),
+            headline: None,
+            preview_lines: None,
         };
         db.insert_resolution(&res).unwrap();
 
@@ -226,6 +234,8 @@ mod tests {
             byte_range: Some("100:200".to_string()),
             line_range: Some("10:20".to_string()),
             content_hash: Some("sha256:abcd1234abcd1234".to_string()),
+            headline: None,
+            preview_lines: None,
         };
         let inserted = db.insert_resolution_if_changed(&res, 20).unwrap();
         assert!(inserted);
@@ -242,6 +252,8 @@ mod tests {
             byte_range: Some("100:200".to_string()),
             line_range: Some("10:20".to_string()),
             content_hash: Some("sha256:abcd1234abcd1234".to_string()),
+            headline: None,
+            preview_lines: None,
         };
         let inserted = db.insert_resolution_if_changed(&res2, 20).unwrap();
         assert!(!inserted); // Should return false (updated, not inserted)
@@ -265,6 +277,8 @@ mod tests {
             byte_range: Some("150:250".to_string()),
             line_range: Some("15:25".to_string()),
             content_hash: Some("sha256:abcd1234abcd1234".to_string()),
+            headline: None,
+            preview_lines: None,
         };
         let inserted = db.insert_resolution_if_changed(&res3, 20).unwrap();
         assert!(inserted);
@@ -281,6 +295,8 @@ mod tests {
             byte_range: Some("150:250".to_string()),
             line_range: Some("15:25".to_string()),
             content_hash: Some("sha256:abcd1234abcd1234".to_string()),
+            headline: None,
+            preview_lines: None,
         };
         let inserted = db.insert_resolution_if_changed(&res4, 20).unwrap();
         assert!(inserted);
@@ -313,6 +329,8 @@ mod tests {
                 byte_range: Some(format!("{byte_start}:{byte_end}")),
                 line_range: Some(format!("{line_start}:{line_end}")),
                 content_hash: None,
+                headline: None,
+                preview_lines: None,
             };
             db.insert_resolution_if_changed(&res, 3).unwrap();
         }
@@ -342,6 +360,8 @@ mod tests {
             byte_range: None,
             line_range: None,
             content_hash: None,
+            headline: None,
+            preview_lines: None,
         };
         db.insert_resolution(&res).unwrap();
         db.delete_bookmark("bm-0001").unwrap();

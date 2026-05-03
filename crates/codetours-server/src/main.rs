@@ -1,11 +1,12 @@
 use clap::Parser;
 use codetours_server::{
-    cli::Cli,
+    cli::{Cli, Command},
     config::Config,
     handlers::health::BOOT_TIME,
     observability::init_tracing,
     router::{router, AppState},
     shutdown::shutdown_signal,
+    storage::StorageManager,
 };
 use std::sync::Arc;
 use tokio::net::TcpListener;
@@ -19,9 +20,17 @@ async fn main() -> anyhow::Result<()> {
     let config = Config::load(cli.config.as_deref())?;
     
     init_tracing(&config, cli.json_logs);
+
+    let storage = StorageManager::new(config.data_dir.clone(), config.storage.clone())?;
+
+    if let Some(Command::Migrate) = cli.command {
+        tracing::info!("migrations complete");
+        return Ok(());
+    }
     
     let state = AppState {
         config: Arc::new(config.clone()),
+        storage: Arc::new(storage),
     };
     
     let app = router(state);

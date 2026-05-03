@@ -399,6 +399,8 @@ mod tests {
             byte_range: None,
             line_range: Some("10-20".to_string()),
             content_hash: None,
+            headline: None,
+            preview_lines: None,
         }];
 
         let result = render_show_template(&bm, &resolutions);

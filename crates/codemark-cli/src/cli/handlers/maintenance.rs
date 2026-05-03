@@ -127,6 +127,8 @@ pub async fn handle_heal(cli: &Cli, mode: &OutputMode, args: &HealArgs) -> Resul
                 byte_range: Some(format!("{}-{}", result.byte_range.0, result.byte_range.1)),
                 line_range: Some(format!("{}-{}", result.start_line + 1, result.end_line + 1)),
                 content_hash: Some(result.content_hash.clone()),
+                headline: None,
+                preview_lines: None,
             };
             let res_id = res.id.clone();
             let _ = db.insert_resolution_if_changed(&res, config.storage.max_resolutions());
