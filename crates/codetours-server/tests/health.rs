@@ -5,15 +5,26 @@ use axum::{
 use codetours_server::{
     config::Config,
     router::{router, AppState},
+    storage::StorageManager,
 };
 use std::sync::Arc;
+use tempfile::tempdir;
 use tower::ServiceExt; // for oneshot
 use serde_json::Value;
 
 async fn setup_app() -> axum::Router {
     let config = Config::default();
+    let temp_data = tempdir().unwrap();
+    let storage = StorageManager::new(temp_data.path().to_path_buf(), config.storage.clone()).unwrap();
+    
+    // Note: In a real test we might want to keep temp_data alive, 
+    // but for simple health checks it's fine if it's dropped after setup 
+    // as long as the pool is initialized. 
+    // Actually, StorageManager owns the pool which owns the file path.
+    
     let state = AppState {
         config: Arc::new(config),
+        storage: Arc::new(storage),
     };
     router(state)
 }
