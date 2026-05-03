@@ -31,6 +31,11 @@ pub async fn handle_collection_create(
         created_at: now_iso(),
         created_by: None,
         created_branch,
+        published_at: None,
+        published_commit_sha: None,
+        repo_url: None,
+        status: None,
+        updated_at: None,
     };
     db.insert_collection(&collection)?;
     write_success(mode, &format!("Collection '{}' created", args.name))?;
@@ -92,6 +97,11 @@ pub async fn handle_collection_add(
                 created_at: now_iso(),
                 created_by: None,
                 created_branch,
+                published_at: None,
+                published_commit_sha: None,
+                repo_url: None,
+                status: None,
+                updated_at: None,
             };
             db.insert_collection(&c)?;
             c

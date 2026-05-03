@@ -173,6 +173,8 @@ pub async fn handle_add(cli: &Cli, mode: &OutputMode, args: &AddArgs) -> Result<
             byte_range: Some(format!("{}-{}", generated.byte_range.0, generated.byte_range.1)),
             line_range: Some(format!("{}-{}", target_start_line, target_end_line)),
             content_hash: Some(content_hash.clone()),
+            headline: None,
+            preview_lines: None,
         };
         db.insert_resolution_if_changed(&initial_res, config.storage.max_resolutions())?;
     }
@@ -373,6 +375,8 @@ pub async fn handle_add_from_snippet(
             byte_range: Some(format!("{}-{}", generated.byte_range.0, generated.byte_range.1)),
             line_range: Some(format!("{}-{}", target_start_line, target_end_line)),
             content_hash: Some(content_hash.clone()),
+            headline: None,
+            preview_lines: None,
         };
         db.insert_resolution_if_changed(&initial_res, config.storage.max_resolutions())?;
     }
@@ -574,6 +578,8 @@ pub async fn handle_add_from_query(
             byte_range: Some(format!("{}-{}", byte_range.0, byte_range.1)),
             line_range: Some(format!("{}-{}", target_start_line, target_end_line)),
             content_hash: Some(content_hash.clone()),
+            headline: None,
+            preview_lines: None,
         };
         db.insert_resolution_if_changed(&initial_res, config.storage.max_resolutions())?;
     }
@@ -714,6 +720,8 @@ pub async fn handle_resolve(cli: &Cli, mode: &OutputMode, args: &ResolveArgs) ->
             byte_range: Some(format!("{}-{}", result.byte_range.0, result.byte_range.1)),
             line_range: Some(format!("{}-{}", result.start_line + 1, result.end_line + 1)),
             content_hash: Some(result.content_hash.clone()),
+            headline: None,
+            preview_lines: None,
         };
         let config = super::load_config(cli);
         db.insert_resolution_if_changed(&res, config.storage.max_resolutions())?;

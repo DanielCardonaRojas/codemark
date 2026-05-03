@@ -1,0 +1,23 @@
+# Codetours Server Configuration Example
+
+# The host to bind to. Default: "127.0.0.1"
+host = "127.0.0.1"
+
+# The port to listen on. Default: 8080
+port = 8080
+
+# Directory where tenant databases and packs are stored. Default: "./data"
+data_dir = "./data"
+
+# Log level (debug, info, warn, error). Default: "info"
+log_level = "info"
+
+# Maximum number of concurrently open tenant databases. Default: 256
+max_open_tenants = 256
+
+[auth]
+# Authentication mode ("stub" or "github-oauth"). Default: "stub"
+mode = "stub"
+
+# Token used for development/stub authentication.
+dev_token = "dev-secret-token"

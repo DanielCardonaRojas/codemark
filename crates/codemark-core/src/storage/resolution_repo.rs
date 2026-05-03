@@ -1,4 +1,4 @@
-use crate::engine::bookmark::{Resolution, ResolutionMethod};
+use crate::engine::bookmark::Resolution;
 use crate::error::Result;
 use crate::storage::db::Database;
 
@@ -6,8 +6,8 @@ impl Database {
     pub fn insert_resolution(&self, resolution: &Resolution) -> Result<()> {
         self.conn().execute(
             "INSERT INTO resolutions (id, bookmark_id, resolved_at, commit_hash,
-             method, match_count, file_path, byte_range, line_range, content_hash)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+             method, match_count, file_path, byte_range, line_range, content_hash, headline, preview_lines)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
             rusqlite::params![
                 resolution.id,
                 resolution.bookmark_id,
@@ -19,6 +19,8 @@ impl Database {
                 resolution.byte_range,
                 resolution.line_range,
                 resolution.content_hash,
+                resolution.headline,
+                resolution.preview_lines,
             ],
         )?;
         Ok(())
@@ -66,10 +68,16 @@ impl Database {
             .unwrap_or((None, None));
 
         if let Some(id) = existing_id {
-            // Duplicate detected — update the existing resolution with new commit_hash and resolved_at
+            // Duplicate detected — update the existing resolution with new metadata
             self.conn().execute(
-                "UPDATE resolutions SET commit_hash = ?1, resolved_at = ?2 WHERE id = ?3",
-                rusqlite::params![resolution.commit_hash, resolution.resolved_at, id,],
+                "UPDATE resolutions SET commit_hash = ?1, resolved_at = ?2, headline = ?3, preview_lines = ?4 WHERE id = ?5",
+                rusqlite::params![
+                    resolution.commit_hash,
+                    resolution.resolved_at,
+                    resolution.headline,
+                    resolution.preview_lines,
+                    id,
+                ],
             )?;
             return Ok(false); // false = no new resolution created
         }
@@ -96,27 +104,36 @@ impl Database {
     pub fn list_resolutions(&self, bookmark_id: &str, limit: usize) -> Result<Vec<Resolution>> {
         let mut stmt = self.conn().prepare(
             "SELECT id, bookmark_id, resolved_at, commit_hash, method,
-             match_count, file_path, byte_range, line_range, content_hash
+             match_count, file_path, byte_range, line_range, content_hash, headline, preview_lines
              FROM resolutions WHERE bookmark_id = ?1
              ORDER BY resolved_at DESC LIMIT ?2",
         )?;
         let rows = stmt.query_map(rusqlite::params![bookmark_id, limit], |row| {
             let method_str: String = row.get(4)?;
+            let method = method_str.parse().map_err(|e| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    4,
+                    rusqlite::types::Type::Text,
+                    Box::new(e),
+                )
+            })?;
             Ok(Resolution {
                 id: row.get(0)?,
                 bookmark_id: row.get(1)?,
                 resolved_at: row.get(2)?,
                 commit_hash: row.get(3)?,
-                method: method_str.parse().unwrap_or(ResolutionMethod::Failed),
+                method,
                 match_count: row.get(5)?,
                 file_path: row.get(6)?,
                 byte_range: row.get(7)?,
                 line_range: row.get(8)?,
                 content_hash: row.get(9)?,
+                headline: row.get(10)?,
+                preview_lines: row.get(11)?,
             })
         })?;
 
-        let results: Vec<Resolution> = rows.filter_map(|r| r.ok()).collect();
+        let results: Vec<Resolution> = rows.collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(results)
     }
 
@@ -124,28 +141,36 @@ impl Database {
     pub fn get_resolution(&self, id: &str) -> Result<Option<Resolution>> {
         let mut stmt = self.conn().prepare(
             "SELECT id, bookmark_id, resolved_at, commit_hash, method,
-             match_count, file_path, byte_range, line_range, content_hash
+             match_count, file_path, byte_range, line_range, content_hash, headline, preview_lines
              FROM resolutions WHERE id LIKE ?1 LIMIT 2",
         )?;
         let pattern = format!("{id}%");
         let results: Vec<Resolution> = stmt
             .query_map([&pattern], |row| {
                 let method_str: String = row.get(4)?;
+                let method = method_str.parse().map_err(|e| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        4,
+                        rusqlite::types::Type::Text,
+                        Box::new(e),
+                    )
+                })?;
                 Ok(Resolution {
                     id: row.get(0)?,
                     bookmark_id: row.get(1)?,
                     resolved_at: row.get(2)?,
                     commit_hash: row.get(3)?,
-                    method: method_str.parse().unwrap_or(ResolutionMethod::Failed),
+                    method,
                     match_count: row.get(5)?,
                     file_path: row.get(6)?,
                     byte_range: row.get(7)?,
                     line_range: row.get(8)?,
                     content_hash: row.get(9)?,
+                    headline: row.get(10)?,
+                    preview_lines: row.get(11)?,
                 })
             })?
-            .filter_map(|r| r.ok())
-            .collect();
+            .collect::<rusqlite::Result<Vec<_>>>()?;
 
         match results.len() {
             0 => Ok(None),
@@ -200,6 +225,8 @@ mod tests {
             byte_range: Some("100:200".to_string()),
             line_range: Some("10:20".to_string()),
             content_hash: Some("sha256:abcd1234abcd1234".to_string()),
+            headline: None,
+            preview_lines: None,
         };
         db.insert_resolution(&res).unwrap();
 
@@ -207,6 +234,57 @@ mod tests {
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].method, ResolutionMethod::Exact);
         assert_eq!(results[0].match_count, Some(1));
+    }
+
+    #[test]
+    fn resolution_metadata_roundtrip() {
+        init_test_env();
+        let db = Database::open_in_memory().unwrap();
+        db.insert_bookmark(&test_bookmark("bm-0001")).unwrap();
+
+        let res = Resolution {
+            id: "res-0001".to_string(),
+            bookmark_id: "bm-0001".to_string(),
+            resolved_at: "2026-04-01T01:00:00Z".to_string(),
+            commit_hash: Some("abc123".to_string()),
+            method: ResolutionMethod::Exact,
+            match_count: Some(1),
+            file_path: Some("src/main.swift".to_string()),
+            byte_range: Some("100:200".to_string()),
+            line_range: Some("10:20".to_string()),
+            content_hash: Some("sha256:abcd1234abcd1234".to_string()),
+            headline: Some("func test()".to_string()),
+            preview_lines: Some("line 1\nline 2".to_string()),
+        };
+        db.insert_resolution(&res).unwrap();
+
+        let results = db.list_resolutions("bm-0001", 10).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].headline.as_deref(), Some("func test()"));
+        assert_eq!(results[0].preview_lines.as_deref(), Some("line 1\nline 2"));
+
+        // Test update in insert_resolution_if_changed
+        let res_update = Resolution {
+            id: "res-0002".to_string(),
+            bookmark_id: "bm-0001".to_string(),
+            resolved_at: "2026-04-01T02:00:00Z".to_string(),
+            commit_hash: Some("def456".to_string()),
+            method: ResolutionMethod::Exact,
+            match_count: Some(1),
+            file_path: Some("src/main.swift".to_string()),
+            byte_range: Some("100:200".to_string()),
+            line_range: Some("10:20".to_string()),
+            content_hash: Some("sha256:abcd1234abcd1234".to_string()),
+            headline: Some("func test_updated()".to_string()),
+            preview_lines: Some("line 1 updated\nline 2 updated".to_string()),
+        };
+        db.insert_resolution_if_changed(&res_update, 10).unwrap();
+
+        let results = db.list_resolutions("bm-0001", 10).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].headline.as_deref(), Some("func test_updated()"));
+        assert_eq!(results[0].preview_lines.as_deref(), Some("line 1 updated\nline 2 updated"));
+        assert_eq!(results[0].commit_hash.as_deref(), Some("def456"));
     }
 
     #[test]
@@ -226,6 +304,8 @@ mod tests {
             byte_range: Some("100:200".to_string()),
             line_range: Some("10:20".to_string()),
             content_hash: Some("sha256:abcd1234abcd1234".to_string()),
+            headline: None,
+            preview_lines: None,
         };
         let inserted = db.insert_resolution_if_changed(&res, 20).unwrap();
         assert!(inserted);
@@ -242,6 +322,8 @@ mod tests {
             byte_range: Some("100:200".to_string()),
             line_range: Some("10:20".to_string()),
             content_hash: Some("sha256:abcd1234abcd1234".to_string()),
+            headline: None,
+            preview_lines: None,
         };
         let inserted = db.insert_resolution_if_changed(&res2, 20).unwrap();
         assert!(!inserted); // Should return false (updated, not inserted)
@@ -265,6 +347,8 @@ mod tests {
             byte_range: Some("150:250".to_string()),
             line_range: Some("15:25".to_string()),
             content_hash: Some("sha256:abcd1234abcd1234".to_string()),
+            headline: None,
+            preview_lines: None,
         };
         let inserted = db.insert_resolution_if_changed(&res3, 20).unwrap();
         assert!(inserted);
@@ -281,6 +365,8 @@ mod tests {
             byte_range: Some("150:250".to_string()),
             line_range: Some("15:25".to_string()),
             content_hash: Some("sha256:abcd1234abcd1234".to_string()),
+            headline: None,
+            preview_lines: None,
         };
         let inserted = db.insert_resolution_if_changed(&res4, 20).unwrap();
         assert!(inserted);
@@ -313,6 +399,8 @@ mod tests {
                 byte_range: Some(format!("{byte_start}:{byte_end}")),
                 line_range: Some(format!("{line_start}:{line_end}")),
                 content_hash: None,
+                headline: None,
+                preview_lines: None,
             };
             db.insert_resolution_if_changed(&res, 3).unwrap();
         }
@@ -342,6 +430,8 @@ mod tests {
             byte_range: None,
             line_range: None,
             content_hash: None,
+            headline: None,
+            preview_lines: None,
         };
         db.insert_resolution(&res).unwrap();
         db.delete_bookmark("bm-0001").unwrap();

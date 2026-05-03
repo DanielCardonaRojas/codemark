@@ -747,6 +747,11 @@ pub fn add_bookmark_to_collection(
                 created_at: now_iso(),
                 created_by: None,
                 created_branch,
+                published_at: None,
+                published_commit_sha: None,
+                repo_url: None,
+                status: None,
+                updated_at: None,
             };
             db.insert_collection(&c)?;
             c
@@ -835,6 +840,8 @@ pub async fn resolve_batch(
             byte_range: Some(format!("{}-{}", result.byte_range.0, result.byte_range.1)),
             line_range: Some(format!("{}-{}", result.start_line + 1, result.end_line + 1)),
             content_hash: Some(result.content_hash.clone()),
+            headline: None,
+            preview_lines: None,
         };
         let _ = db.insert_resolution_if_changed(&res, config.storage.max_resolutions());
     }
