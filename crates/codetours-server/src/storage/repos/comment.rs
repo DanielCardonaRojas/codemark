@@ -1,6 +1,6 @@
-use deadpool_sqlite::Pool;
-use codemark_core::engine::bookmark::BookmarkComment;
 use anyhow::{Context, Result};
+use codemark_core::engine::bookmark::BookmarkComment;
+use deadpool_sqlite::Pool;
 
 pub struct CommentRepo {
     pool: Pool,

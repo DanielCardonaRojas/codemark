@@ -1,6 +1,6 @@
-use deadpool_sqlite::Pool;
-use codemark_core::engine::bookmark::Bookmark;
 use anyhow::{Context, Result};
+use codemark_core::engine::bookmark::Bookmark;
+use deadpool_sqlite::Pool;
 
 pub struct BookmarkRepo {
     pool: Pool,

@@ -21,7 +21,8 @@ const MIGRATION_009: &str = include_str!("../../../../migrations/V9__add_collect
 const MIGRATION_010: &str =
     include_str!("../../../../migrations/V10__add_comments_and_visibility.sql");
 const MIGRATION_011: &str = include_str!("../../../../migrations/V11__add_publish_metadata.sql");
-const MIGRATION_012: &str = include_str!("../../../../migrations/V12__add_resolution_display_fields.sql");
+const MIGRATION_012: &str =
+    include_str!("../../../../migrations/V12__add_resolution_display_fields.sql");
 
 /// SQLite database wrapper with automatic migrations.
 pub struct Database {

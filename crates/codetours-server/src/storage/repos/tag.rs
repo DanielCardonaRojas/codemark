@@ -1,6 +1,6 @@
-use deadpool_sqlite::Pool;
-use codemark_core::engine::bookmark::Tag;
 use anyhow::{Context, Result};
+use codemark_core::engine::bookmark::Tag;
+use deadpool_sqlite::Pool;
 
 pub struct TagRepo {
     pool: Pool,

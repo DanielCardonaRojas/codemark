@@ -1,5 +1,5 @@
-use deadpool_sqlite::Pool;
 use anyhow::{Context, Result};
+use deadpool_sqlite::Pool;
 
 #[derive(Debug, Clone)]
 pub struct CollectionBookmark {
@@ -18,7 +18,10 @@ impl CollectionBookmarkRepo {
         Self { pool }
     }
 
-    pub async fn list_by_collection(&self, collection_id: String) -> Result<Vec<CollectionBookmark>> {
+    pub async fn list_by_collection(
+        &self,
+        collection_id: String,
+    ) -> Result<Vec<CollectionBookmark>> {
         let conn = self.pool.get().await?;
         conn.interact(move |conn| {
             let mut stmt = conn.prepare(
@@ -46,7 +49,10 @@ impl CollectionBookmarkRepo {
     pub async fn delete_by_collection(&self, collection_id: String) -> Result<()> {
         let conn = self.pool.get().await?;
         conn.interact(move |conn| {
-            conn.execute("DELETE FROM collection_bookmarks WHERE collection_id = ?1", [collection_id])?;
+            conn.execute(
+                "DELETE FROM collection_bookmarks WHERE collection_id = ?1",
+                [collection_id],
+            )?;
             Ok::<_, rusqlite::Error>(())
         })
         .await

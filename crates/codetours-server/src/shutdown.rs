@@ -1,21 +1,16 @@
 use tokio::signal;
 
 #[cfg(unix)]
-use tokio::signal::unix::{signal, SignalKind};
+use tokio::signal::unix::{SignalKind, signal};
 
 pub async fn shutdown_signal() {
     let ctrl_c = async {
-        signal::ctrl_c()
-            .await
-            .expect("failed to install Ctrl+C handler");
+        signal::ctrl_c().await.expect("failed to install Ctrl+C handler");
     };
 
     #[cfg(unix)]
     let terminate = async {
-        signal(SignalKind::terminate())
-            .expect("failed to install signal handler")
-            .recv()
-            .await;
+        signal(SignalKind::terminate()).expect("failed to install signal handler").recv().await;
     };
 
     #[cfg(not(unix))]

@@ -1,6 +1,6 @@
 use axum::Json;
-use serde::Serialize;
 use chrono::{DateTime, Utc};
+use serde::Serialize;
 use std::sync::OnceLock;
 
 pub static BOOT_TIME: OnceLock<DateTime<Utc>> = OnceLock::new();

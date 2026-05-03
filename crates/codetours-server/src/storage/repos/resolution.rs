@@ -1,6 +1,6 @@
-use deadpool_sqlite::Pool;
-use codemark_core::engine::bookmark::Resolution;
 use anyhow::{Context, Result};
+use codemark_core::engine::bookmark::Resolution;
+use deadpool_sqlite::Pool;
 
 pub struct ResolutionRepo {
     pool: Pool,

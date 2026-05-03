@@ -1,6 +1,6 @@
-use deadpool_sqlite::Pool;
-use codemark_core::engine::bookmark::Annotation;
 use anyhow::{Context, Result};
+use codemark_core::engine::bookmark::Annotation;
+use deadpool_sqlite::Pool;
 
 pub struct AnnotationRepo {
     pool: Pool,

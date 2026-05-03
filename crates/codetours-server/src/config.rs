@@ -77,18 +77,13 @@ impl Default for Config {
 
 impl Default for StorageConfig {
     fn default() -> Self {
-        Self {
-            pool_size: default_pool_size(),
-        }
+        Self { pool_size: default_pool_size() }
     }
 }
 
 impl Default for AuthConfig {
     fn default() -> Self {
-        Self {
-            mode: default_auth_mode(),
-            dev_token: String::new(),
-        }
+        Self { mode: default_auth_mode(), dev_token: String::new() }
     }
 }
 
@@ -108,8 +103,8 @@ impl Config {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use tempfile::NamedTempFile;
     use std::io::Write;
+    use tempfile::NamedTempFile;
 
     #[test]
     fn test_default_config() {
@@ -127,7 +122,7 @@ mod tests {
     fn test_load_partial_config() -> anyhow::Result<()> {
         let mut file = NamedTempFile::new()?;
         writeln!(file, "port = 9090")?;
-        
+
         let config = Config::load(Some(file.path()))?;
         assert_eq!(config.port, 9090);
         assert_eq!(config.host, "127.0.0.1"); // remains default
@@ -146,7 +141,7 @@ mod tests {
     fn test_load_invalid_toml() -> anyhow::Result<()> {
         let mut file = NamedTempFile::new()?;
         writeln!(file, "port = \"not a number\"")?;
-        
+
         let result = Config::load(Some(file.path()));
         assert!(result.is_err());
         Ok(())

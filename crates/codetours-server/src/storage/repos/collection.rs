@@ -1,6 +1,6 @@
-use deadpool_sqlite::Pool;
-use codemark_core::engine::bookmark::Collection;
 use anyhow::{Context, Result};
+use codemark_core::engine::bookmark::Collection;
+use deadpool_sqlite::Pool;
 
 pub struct CollectionRepo {
     pool: Pool,
@@ -99,9 +99,9 @@ fn row_to_collection(row: &rusqlite::Row) -> rusqlite::Result<Collection> {
         id: row.get(0)?,
         name: row.get(1)?,
         description: row.get(2)?,
-        visibility: row.get::<_, String>(3)?
-            .parse()
-            .map_err(|e| rusqlite::Error::FromSqlConversionFailure(3, rusqlite::types::Type::Text, Box::new(e)))?,
+        visibility: row.get::<_, String>(3)?.parse().map_err(|e| {
+            rusqlite::Error::FromSqlConversionFailure(3, rusqlite::types::Type::Text, Box::new(e))
+        })?,
         created_at: row.get(4)?,
         created_by: row.get(5)?,
         created_branch: row.get(6)?,

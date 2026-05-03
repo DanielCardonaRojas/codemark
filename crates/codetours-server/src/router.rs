@@ -1,14 +1,10 @@
-use axum::{
-    routing::get,
-    Router,
-    middleware,
-};
-use tower_http::trace::TraceLayer;
+use crate::config::Config;
 use crate::handlers;
 use crate::observability::request_id_middleware;
-use crate::config::Config;
 use crate::storage::StorageManager;
+use axum::{Router, middleware, routing::get};
 use std::sync::Arc;
+use tower_http::trace::TraceLayer;
 
 #[derive(Clone)]
 pub struct AppState {
