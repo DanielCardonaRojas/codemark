@@ -111,7 +111,11 @@ impl Database {
         let rows = stmt.query_map(rusqlite::params![bookmark_id, limit], |row| {
             let method_str: String = row.get(4)?;
             let method = method_str.parse().map_err(|e| {
-                rusqlite::Error::FromSqlConversionFailure(4, rusqlite::types::Type::Text, Box::new(e))
+                rusqlite::Error::FromSqlConversionFailure(
+                    4,
+                    rusqlite::types::Type::Text,
+                    Box::new(e),
+                )
             })?;
             Ok(Resolution {
                 id: row.get(0)?,

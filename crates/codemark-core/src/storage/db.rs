@@ -132,7 +132,10 @@ impl Database {
 
                     // Restore foreign keys state
                     let _ = conn.execute(
-                        &format!("PRAGMA foreign_keys = {}", if original_state != 0 { "ON" } else { "OFF" }),
+                        &format!(
+                            "PRAGMA foreign_keys = {}",
+                            if original_state != 0 { "ON" } else { "OFF" }
+                        ),
                         [],
                     );
                     res?;
