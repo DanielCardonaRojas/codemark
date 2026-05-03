@@ -19,9 +19,10 @@ impl CollectionRepo {
                         published_at, published_commit_sha, repo_url, status, updated_at
                  FROM collections WHERE id = ?1",
             )?;
-            let mut rows = stmt.query_map([id], row_to_collection)?;
-            match rows.next() {
-                Some(row) => Ok::<_, rusqlite::Error>(Some(row?)),
+            let rows = stmt.query_map([id], row_to_collection)?;
+            let results: Vec<Collection> = rows.collect::<rusqlite::Result<Vec<_>>>()?;
+            match results.into_iter().next() {
+                Some(collection) => Ok::<_, rusqlite::Error>(Some(collection)),
                 None => Ok::<_, rusqlite::Error>(None),
             }
         })
@@ -30,7 +31,7 @@ impl CollectionRepo {
         .context("Database error")
     }
 
-    pub async fn get_by_name(&self, name: String) -> Result<Option<Collection>> {
+    pub async fn get_by_name(&self, name: String) -> Result<Vec<Collection>> {
         let conn = self.pool.get().await?;
         conn.interact(move |conn| {
             let mut stmt = conn.prepare(
@@ -38,11 +39,9 @@ impl CollectionRepo {
                         published_at, published_commit_sha, repo_url, status, updated_at
                  FROM collections WHERE name = ?1",
             )?;
-            let mut rows = stmt.query_map([name], row_to_collection)?;
-            match rows.next() {
-                Some(row) => Ok::<_, rusqlite::Error>(Some(row?)),
-                None => Ok::<_, rusqlite::Error>(None),
-            }
+            let rows = stmt.query_map([name], row_to_collection)?;
+            let results: Vec<Collection> = rows.collect::<rusqlite::Result<Vec<_>>>()?;
+            Ok::<_, rusqlite::Error>(results)
         })
         .await
         .map_err(|e| anyhow::anyhow!("Interaction error: {}", e))?
@@ -57,10 +56,12 @@ impl CollectionRepo {
                         published_at, published_commit_sha, repo_url, status, updated_at
                  FROM collections 
                  WHERE visibility IS NOT NULL AND visibility != 'private'
+                   AND published_at IS NOT NULL
+                   AND status = 'ready'
                  ORDER BY published_at DESC",
             )?;
             let rows = stmt.query_map([], row_to_collection)?;
-            let results: Vec<Collection> = rows.filter_map(|r| r.ok()).collect();
+            let results: Vec<Collection> = rows.collect::<rusqlite::Result<Vec<_>>>()?;
             Ok::<_, rusqlite::Error>(results)
         })
         .await

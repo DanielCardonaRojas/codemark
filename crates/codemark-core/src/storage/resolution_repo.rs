@@ -1,4 +1,4 @@
-use crate::engine::bookmark::{Resolution, ResolutionMethod};
+use crate::engine::bookmark::Resolution;
 use crate::error::Result;
 use crate::storage::db::Database;
 
@@ -68,10 +68,16 @@ impl Database {
             .unwrap_or((None, None));
 
         if let Some(id) = existing_id {
-            // Duplicate detected — update the existing resolution with new commit_hash and resolved_at
+            // Duplicate detected — update the existing resolution with new metadata
             self.conn().execute(
-                "UPDATE resolutions SET commit_hash = ?1, resolved_at = ?2 WHERE id = ?3",
-                rusqlite::params![resolution.commit_hash, resolution.resolved_at, id,],
+                "UPDATE resolutions SET commit_hash = ?1, resolved_at = ?2, headline = ?3, preview_lines = ?4 WHERE id = ?5",
+                rusqlite::params![
+                    resolution.commit_hash,
+                    resolution.resolved_at,
+                    resolution.headline,
+                    resolution.preview_lines,
+                    id,
+                ],
             )?;
             return Ok(false); // false = no new resolution created
         }
@@ -104,12 +110,15 @@ impl Database {
         )?;
         let rows = stmt.query_map(rusqlite::params![bookmark_id, limit], |row| {
             let method_str: String = row.get(4)?;
+            let method = method_str.parse().map_err(|e| {
+                rusqlite::Error::FromSqlConversionFailure(4, rusqlite::types::Type::Text, Box::new(e))
+            })?;
             Ok(Resolution {
                 id: row.get(0)?,
                 bookmark_id: row.get(1)?,
                 resolved_at: row.get(2)?,
                 commit_hash: row.get(3)?,
-                method: method_str.parse().unwrap_or(ResolutionMethod::Failed),
+                method,
                 match_count: row.get(5)?,
                 file_path: row.get(6)?,
                 byte_range: row.get(7)?,
@@ -120,7 +129,7 @@ impl Database {
             })
         })?;
 
-        let results: Vec<Resolution> = rows.filter_map(|r| r.ok()).collect();
+        let results: Vec<Resolution> = rows.collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(results)
     }
 
@@ -135,12 +144,19 @@ impl Database {
         let results: Vec<Resolution> = stmt
             .query_map([&pattern], |row| {
                 let method_str: String = row.get(4)?;
+                let method = method_str.parse().map_err(|e| {
+                    rusqlite::Error::FromSqlConversionFailure(
+                        4,
+                        rusqlite::types::Type::Text,
+                        Box::new(e),
+                    )
+                })?;
                 Ok(Resolution {
                     id: row.get(0)?,
                     bookmark_id: row.get(1)?,
                     resolved_at: row.get(2)?,
                     commit_hash: row.get(3)?,
-                    method: method_str.parse().unwrap_or(ResolutionMethod::Failed),
+                    method,
                     match_count: row.get(5)?,
                     file_path: row.get(6)?,
                     byte_range: row.get(7)?,
@@ -150,8 +166,7 @@ impl Database {
                     preview_lines: row.get(11)?,
                 })
             })?
-            .filter_map(|r| r.ok())
-            .collect();
+            .collect::<rusqlite::Result<Vec<_>>>()?;
 
         match results.len() {
             0 => Ok(None),

@@ -2,8 +2,6 @@
 -- Migration 011: Add publish metadata and relax collection name uniqueness
 -- This requires a table rebuild for the collections table to remove the UNIQUE constraint.
 
-PRAGMA foreign_keys=OFF;
-
 -- 1. Create the new collections table with the new columns and without the UNIQUE constraint on name
 CREATE TABLE collections_new (
     id          TEXT PRIMARY KEY,
@@ -16,7 +14,7 @@ CREATE TABLE collections_new (
     published_at         TEXT,
     published_commit_sha TEXT,
     repo_url             TEXT,
-    status               TEXT CHECK (status IS NULL OR status IN ('processing', 'active', 'error')),
+    status               TEXT CHECK (status IS NULL OR status IN ('processing', 'ready', 'error')),
     updated_at           TEXT
 );
 
@@ -30,5 +28,3 @@ ALTER TABLE collections_new RENAME TO collections;
 
 -- 4. Recreate indices
 CREATE INDEX idx_collections_name ON collections(name);
-
-PRAGMA foreign_keys=ON;

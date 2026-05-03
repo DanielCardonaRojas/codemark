@@ -23,9 +23,10 @@ impl ResolutionRepo {
                  ORDER BY resolved_at DESC
                  LIMIT 1",
             )?;
-            let mut rows = stmt.query_map([bookmark_id], row_to_resolution)?;
-            match rows.next() {
-                Some(row) => Ok::<_, rusqlite::Error>(Some(row?)),
+            let rows = stmt.query_map([bookmark_id], row_to_resolution)?;
+            let results: Vec<Resolution> = rows.collect::<rusqlite::Result<Vec<_>>>()?;
+            match results.into_iter().next() {
+                Some(res) => Ok::<_, rusqlite::Error>(Some(res)),
                 None => Ok::<_, rusqlite::Error>(None),
             }
         })
@@ -46,7 +47,7 @@ impl ResolutionRepo {
                  ORDER BY resolved_at DESC",
             )?;
             let rows = stmt.query_map([bookmark_id], row_to_resolution)?;
-            let results: Vec<Resolution> = rows.filter_map(|r| r.ok()).collect();
+            let results: Vec<Resolution> = rows.collect::<rusqlite::Result<Vec<_>>>()?;
             Ok::<_, rusqlite::Error>(results)
         })
         .await
@@ -56,16 +57,17 @@ impl ResolutionRepo {
 }
 
 fn row_to_resolution(row: &rusqlite::Row) -> rusqlite::Result<Resolution> {
-    use codemark_core::engine::bookmark::ResolutionMethod;
-
     let method_str: String = row.get(4)?;
+    let method = method_str.parse().map_err(|e| {
+        rusqlite::Error::FromSqlConversionFailure(4, rusqlite::types::Type::Text, Box::new(e))
+    })?;
 
     Ok(Resolution {
         id: row.get(0)?,
         bookmark_id: row.get(1)?,
         resolved_at: row.get(2)?,
         commit_hash: row.get(3)?,
-        method: method_str.parse().unwrap_or(ResolutionMethod::Failed),
+        method,
         match_count: row.get(5)?,
         file_path: row.get(6)?,
         byte_range: row.get(7)?,

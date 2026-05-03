@@ -44,7 +44,7 @@ impl BookmarkRepo {
                  ORDER BY cb.position ASC",
             )?;
             let rows = stmt.query_map([collection_id], row_to_bookmark)?;
-            let results: Vec<Bookmark> = rows.filter_map(|r| r.ok()).collect();
+            let results: Vec<Bookmark> = rows.collect::<rusqlite::Result<Vec<_>>>()?;
             Ok::<_, rusqlite::Error>(results)
         })
         .await
@@ -71,6 +71,17 @@ fn row_to_bookmark(row: &rusqlite::Row) -> rusqlite::Result<Bookmark> {
     let status_str: String = row.get(6)?;
     let method_str: Option<String> = row.get(7)?;
 
+    let status = status_str.parse().map_err(|e| {
+        rusqlite::Error::FromSqlConversionFailure(6, rusqlite::types::Type::Text, Box::new(e))
+    })?;
+
+    let resolution_method = match method_str {
+        Some(s) => Some(s.parse().map_err(|e| {
+            rusqlite::Error::FromSqlConversionFailure(7, rusqlite::types::Type::Text, Box::new(e))
+        })?),
+        None => None,
+    };
+
     Ok(Bookmark {
         id: row.get(0)?,
         query: row.get(1)?,
@@ -78,10 +89,8 @@ fn row_to_bookmark(row: &rusqlite::Row) -> rusqlite::Result<Bookmark> {
         file_path: row.get(3)?,
         content_hash: row.get(4)?,
         commit_hash: row.get(5)?,
-        status: status_str.parse().map_err(|e| {
-            rusqlite::Error::FromSqlConversionFailure(6, rusqlite::types::Type::Text, Box::new(e))
-        })?,
-        resolution_method: method_str.and_then(|s| s.parse().ok()),
+        status,
+        resolution_method,
         last_resolved_at: row.get(8)?,
         stale_since: row.get(9)?,
         created_at: row.get(10)?,

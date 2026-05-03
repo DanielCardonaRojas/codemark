@@ -95,69 +95,64 @@ impl Database {
     pub fn run_migrations_on(conn: &mut Connection) -> Result<()> {
         let current_version = Self::get_schema_version(conn);
 
-        if current_version < 1 {
-            conn.execute_batch(MIGRATION_001)?;
-            Self::set_schema_version(conn, 1)?;
+        let migrations = [
+            (1, MIGRATION_001),
+            (2, MIGRATION_002),
+            (3, MIGRATION_003),
+            (4, MIGRATION_004),
+            (5, MIGRATION_005),
+            (6, MIGRATION_006),
+            (7, MIGRATION_007),
+            (8, MIGRATION_008),
+            (9, MIGRATION_009),
+            (10, MIGRATION_010),
+            (11, MIGRATION_011),
+            (12, MIGRATION_012),
+        ];
+
+        for (version, sql) in migrations {
+            if current_version < version {
+                if version == 7 {
+                    // Special case for migration 7 which has complex logic
+                    Self::migrate_to_v7_on(conn)?;
+                    Self::set_schema_version(conn, 7)?;
+                } else if version == 11 {
+                    // Special case for migration 11 which requires disabling foreign keys
+                    let original_state: i64 =
+                        conn.query_row("PRAGMA foreign_keys", [], |row| row.get(0))?;
+                    conn.execute("PRAGMA foreign_keys = OFF", [])?;
+
+                    let res = (|| -> Result<()> {
+                        let tx = conn.transaction()?;
+                        tx.execute_batch(sql)?;
+                        Self::set_schema_version(&tx, 11)?;
+                        tx.commit()?;
+                        Ok(())
+                    })();
+
+                    // Restore foreign keys state
+                    let _ = conn.execute(
+                        &format!("PRAGMA foreign_keys = {}", if original_state != 0 { "ON" } else { "OFF" }),
+                        [],
+                    );
+                    res?;
+                } else {
+                    let tx = conn.transaction()?;
+                    tx.execute_batch(sql)?;
+                    Self::set_schema_version(&tx, version)?;
+                    tx.commit()?;
+                }
+
+                // Post-migration hooks
+                if version == 5 {
+                    Self::init_embeddings_table_on(conn)?;
+                }
+            }
         }
 
-        if current_version < 2 {
-            conn.execute_batch(MIGRATION_002)?;
-            Self::set_schema_version(conn, 2)?;
-        }
-
-        if current_version < 3 {
-            conn.execute_batch(MIGRATION_003)?;
-            Self::set_schema_version(conn, 3)?;
-        }
-
-        if current_version < 4 {
-            conn.execute_batch(MIGRATION_004)?;
-            Self::set_schema_version(conn, 4)?;
-        }
-
-        if current_version < 5 {
-            conn.execute_batch(MIGRATION_005)?;
-            Self::set_schema_version(conn, 5)?;
-            // Initialize sqlite-vec extension and create embeddings table
-            Self::init_embeddings_table_on(conn)?;
-        } else if current_version >= 5 {
-            // Ensure embeddings table exists even if migration was already run
+        // Ensure embeddings table exists if we're at or past version 5
+        if Self::get_schema_version(conn) >= 5 {
             Self::ensure_embeddings_table_on(conn)?;
-        }
-
-        if current_version < 6 {
-            conn.execute_batch(MIGRATION_006)?;
-            Self::set_schema_version(conn, 6)?;
-        }
-
-        if current_version < 7 {
-            Self::migrate_to_v7_on(conn)?;
-            Self::set_schema_version(conn, 7)?;
-        }
-
-        if current_version < 8 {
-            conn.execute_batch(MIGRATION_008)?;
-            Self::set_schema_version(conn, 8)?;
-        }
-
-        if current_version < 9 {
-            conn.execute_batch(MIGRATION_009)?;
-            Self::set_schema_version(conn, 9)?;
-        }
-
-        if current_version < 10 {
-            conn.execute_batch(MIGRATION_010)?;
-            Self::set_schema_version(conn, 10)?;
-        }
-
-        if current_version < 11 {
-            conn.execute_batch(MIGRATION_011)?;
-            Self::set_schema_version(conn, 11)?;
-        }
-
-        if current_version < 12 {
-            conn.execute_batch(MIGRATION_012)?;
-            Self::set_schema_version(conn, 12)?;
         }
 
         Ok(())
@@ -166,8 +161,11 @@ impl Database {
     /// Migrate to schema version 7: append-only metadata model
     /// This handles migrating existing data from the old schema to the new one.
     fn migrate_to_v7_on(conn: &mut Connection) -> Result<()> {
+        // Run in a transaction for atomicity
+        let tx = conn.transaction()?;
+
         // First run the base migration which creates new tables and recreates bookmarks
-        conn.execute_batch(MIGRATION_007)?;
+        tx.execute_batch(MIGRATION_007)?;
 
         // Now migrate existing data if we're coming from schema 6
         // Check if the old bookmarks table had data (we can tell by checking if annotations are empty)
@@ -176,11 +174,11 @@ impl Database {
 
         // Try to migrate annotations from old schema
         // This will fail if the old columns don't exist (fresh install), so we ignore errors
-        let migrate_annotations = || -> Result<()> {
-            conn.execute(
+        let migrate_annotations = |tx: &rusqlite::Transaction| -> Result<()> {
+            tx.execute(
                 "INSERT INTO bookmark_annotations (id, bookmark_id, added_at, added_by, notes, context, source)
                  SELECT lower(hex(randomblob(16))), id, created_at, created_by, notes, context, 'migration'
-                 FROM (SELECT id, created_at, created_by, notes, context FROM bookmarks WHERE notes IS NOT NULL OR context IS NOT NULL LIMIT 1)
+                 FROM (SELECT id, created_at, created_by, notes, context FROM bookmarks WHERE notes IS NOT NULL OR context IS NOT NULL)
                  WHERE notes IS NOT NULL OR context IS NOT NULL",
                 [],
             )?;
@@ -188,8 +186,8 @@ impl Database {
         };
 
         // Try to migrate tags from old schema
-        let migrate_tags = || -> Result<()> {
-            conn.execute(
+        let migrate_tags = |tx: &rusqlite::Transaction| -> Result<()> {
+            tx.execute(
                 "INSERT INTO bookmark_tags (bookmark_id, tag, added_at, added_by)
                  SELECT bm.id, TRIM(json_each.value), bm.created_at, bm.created_by
                  FROM bookmarks bm, json_each(bm.tags)
@@ -199,10 +197,11 @@ impl Database {
             Ok(())
         };
 
-        // Ignore migration errors - they just mean we're on a fresh install
-        let _ = migrate_annotations();
-        let _ = migrate_tags();
+        // Ignore migration errors - they just mean we're on a fresh install or data already migrated
+        let _ = migrate_annotations(&tx);
+        let _ = migrate_tags(&tx);
 
+        tx.commit()?;
         Ok(())
     }
 
@@ -259,7 +258,7 @@ impl Database {
         .unwrap_or(0)
     }
 
-    fn set_schema_version(conn: &mut Connection, version: i64) -> Result<()> {
+    fn set_schema_version(conn: &Connection, version: i64) -> Result<()> {
         conn.execute(
             "INSERT OR REPLACE INTO schema_meta (key, value) VALUES ('schema_version', ?1)",
             [version.to_string()],

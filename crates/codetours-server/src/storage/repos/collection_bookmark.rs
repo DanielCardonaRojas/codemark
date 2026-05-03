@@ -38,7 +38,7 @@ impl CollectionBookmarkRepo {
                     position: row.get(3)?,
                 })
             })?;
-            let results: Vec<CollectionBookmark> = rows.filter_map(|r| r.ok()).collect();
+            let results: Vec<CollectionBookmark> = rows.collect::<rusqlite::Result<Vec<_>>>()?;
             Ok::<_, rusqlite::Error>(results)
         })
         .await

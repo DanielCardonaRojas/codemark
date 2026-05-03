@@ -31,7 +31,7 @@ impl AnnotationRepo {
                     source: row.get(6)?,
                 })
             })?;
-            let results: Vec<Annotation> = rows.filter_map(|r| r.ok()).collect();
+            let results: Vec<Annotation> = rows.collect::<rusqlite::Result<Vec<_>>>()?;
             Ok::<_, rusqlite::Error>(results)
         })
         .await

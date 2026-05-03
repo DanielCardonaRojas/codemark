@@ -32,6 +32,21 @@ impl StorageManager {
         let pool = pool_config
             .builder(Runtime::Tokio1)?
             .max_size(config.pool_size as usize)
+            .post_create(deadpool_sqlite::Hook::AsyncFn(Box::new(|conn, _| {
+                Box::pin(async move {
+                    conn.interact(|conn| {
+                        conn.execute_batch(
+                            "PRAGMA journal_mode=WAL;
+                             PRAGMA synchronous=NORMAL;
+                             PRAGMA foreign_keys=ON;",
+                        )
+                    })
+                    .await
+                    .map_err(|e| deadpool_sqlite::HookError::message(e.to_string()))?
+                    .map_err(|e| deadpool_sqlite::HookError::message(e.to_string()))?;
+                    Ok(())
+                })
+            })))
             .build()
             .context("Failed to build connection pool")?;
 

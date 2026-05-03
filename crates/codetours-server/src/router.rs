@@ -15,7 +15,7 @@ pub struct AppState {
 pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/health", get(handlers::health::handler))
-        .layer(middleware::from_fn(request_id_middleware))
         .layer(TraceLayer::new_for_http())
+        .layer(middleware::from_fn(request_id_middleware))
         .with_state(state)
 }

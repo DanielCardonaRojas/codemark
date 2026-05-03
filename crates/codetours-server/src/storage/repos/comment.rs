@@ -30,7 +30,7 @@ impl CommentRepo {
                     parent_id: row.get(5)?,
                 })
             })?;
-            let results: Vec<BookmarkComment> = rows.filter_map(|r| r.ok()).collect();
+            let results: Vec<BookmarkComment> = rows.collect::<rusqlite::Result<Vec<_>>>()?;
             Ok::<_, rusqlite::Error>(results)
         })
         .await

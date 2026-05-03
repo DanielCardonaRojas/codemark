@@ -13,7 +13,7 @@ pub struct HealthResponse {
 }
 
 pub async fn handler() -> Json<HealthResponse> {
-    let boot_time = BOOT_TIME.get_or_init(Utc::now);
+    let boot_time = BOOT_TIME.get().cloned().unwrap_or_else(Utc::now);
     Json(HealthResponse {
         status: "ok",
         version: env!("CARGO_PKG_VERSION"),
