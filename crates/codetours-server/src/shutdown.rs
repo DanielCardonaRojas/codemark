@@ -1,7 +1,7 @@
 use tokio::signal;
 
 #[cfg(unix)]
-use tokio::signal::unix::{SignalKind, signal};
+use tokio::signal::unix::{SignalKind, signal as unix_signal};
 
 pub async fn shutdown_signal() {
     let ctrl_c = async {
@@ -10,7 +10,11 @@ pub async fn shutdown_signal() {
 
     #[cfg(unix)]
     let terminate = async {
-        signal(SignalKind::terminate()).expect("failed to install signal handler").recv().await;
+        let mut sig =
+            unix_signal(SignalKind::terminate()).expect("failed to install signal handler");
+        if sig.recv().await.is_none() {
+            tracing::warn!("SIGTERM signal stream closed");
+        }
     };
 
     #[cfg(not(unix))]

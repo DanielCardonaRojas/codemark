@@ -237,6 +237,57 @@ mod tests {
     }
 
     #[test]
+    fn resolution_metadata_roundtrip() {
+        init_test_env();
+        let db = Database::open_in_memory().unwrap();
+        db.insert_bookmark(&test_bookmark("bm-0001")).unwrap();
+
+        let res = Resolution {
+            id: "res-0001".to_string(),
+            bookmark_id: "bm-0001".to_string(),
+            resolved_at: "2026-04-01T01:00:00Z".to_string(),
+            commit_hash: Some("abc123".to_string()),
+            method: ResolutionMethod::Exact,
+            match_count: Some(1),
+            file_path: Some("src/main.swift".to_string()),
+            byte_range: Some("100:200".to_string()),
+            line_range: Some("10:20".to_string()),
+            content_hash: Some("sha256:abcd1234abcd1234".to_string()),
+            headline: Some("func test()".to_string()),
+            preview_lines: Some("line 1\nline 2".to_string()),
+        };
+        db.insert_resolution(&res).unwrap();
+
+        let results = db.list_resolutions("bm-0001", 10).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].headline.as_deref(), Some("func test()"));
+        assert_eq!(results[0].preview_lines.as_deref(), Some("line 1\nline 2"));
+
+        // Test update in insert_resolution_if_changed
+        let res_update = Resolution {
+            id: "res-0002".to_string(),
+            bookmark_id: "bm-0001".to_string(),
+            resolved_at: "2026-04-01T02:00:00Z".to_string(),
+            commit_hash: Some("def456".to_string()),
+            method: ResolutionMethod::Exact,
+            match_count: Some(1),
+            file_path: Some("src/main.swift".to_string()),
+            byte_range: Some("100:200".to_string()),
+            line_range: Some("10:20".to_string()),
+            content_hash: Some("sha256:abcd1234abcd1234".to_string()),
+            headline: Some("func test_updated()".to_string()),
+            preview_lines: Some("line 1 updated\nline 2 updated".to_string()),
+        };
+        db.insert_resolution_if_changed(&res_update, 10).unwrap();
+
+        let results = db.list_resolutions("bm-0001", 10).unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].headline.as_deref(), Some("func test_updated()"));
+        assert_eq!(results[0].preview_lines.as_deref(), Some("line 1 updated\nline 2 updated"));
+        assert_eq!(results[0].commit_hash.as_deref(), Some("def456"));
+    }
+
+    #[test]
     fn insert_if_changed_deduplicates() {
         init_test_env();
         let db = Database::open_in_memory().unwrap();

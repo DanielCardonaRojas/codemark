@@ -115,7 +115,6 @@ impl Database {
                 if version == 7 {
                     // Special case for migration 7 which has complex logic
                     Self::migrate_to_v7_on(conn)?;
-                    Self::set_schema_version(conn, 7)?;
                 } else if version == 11 {
                     // Special case for migration 11 which requires disabling foreign keys
                     let original_state: i64 =
@@ -203,6 +202,8 @@ impl Database {
         // Ignore migration errors - they just mean we're on a fresh install or data already migrated
         let _ = migrate_annotations(&tx);
         let _ = migrate_tags(&tx);
+
+        Self::set_schema_version(&tx, 7)?;
 
         tx.commit()?;
         Ok(())

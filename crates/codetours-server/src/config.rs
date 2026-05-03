@@ -2,6 +2,7 @@ use serde::Deserialize;
 use std::path::{Path, PathBuf};
 
 #[derive(Deserialize, Debug, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct Config {
     #[serde(default = "default_host")]
     pub host: String,
@@ -20,12 +21,14 @@ pub struct Config {
 }
 
 #[derive(Deserialize, Debug, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct StorageConfig {
     #[serde(default = "default_pool_size")]
     pub pool_size: u32,
 }
 
 #[derive(Deserialize, Debug, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct AuthConfig {
     #[serde(default = "default_auth_mode")]
     pub mode: String,

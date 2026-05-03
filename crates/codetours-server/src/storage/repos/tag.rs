@@ -28,7 +28,7 @@ impl TagRepo {
                     added_by: row.get(3)?,
                 })
             })?;
-            let results: Vec<Tag> = rows.filter_map(|r| r.ok()).collect();
+            let results: Vec<Tag> = rows.collect::<rusqlite::Result<Vec<_>>>()?;
             Ok::<_, rusqlite::Error>(results)
         })
         .await

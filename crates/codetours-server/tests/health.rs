@@ -43,6 +43,7 @@ async fn test_health() {
 
     assert_eq!(body["status"], "ok");
     assert!(!body["version"].as_str().unwrap().is_empty());
+    assert!(body["boot_time"].as_str().is_some());
 }
 
 #[tokio::test]
