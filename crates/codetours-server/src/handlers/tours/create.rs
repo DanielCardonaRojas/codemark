@@ -16,25 +16,38 @@ use crate::observability::RequestId;
 use crate::pack::{inspect, PackError};
 use crate::pack_cache::PackCache;
 
+/// Successful response body for tour creation.
 #[derive(Debug, Serialize)]
 pub struct CreateTourResponse {
+    /// Unique identifier for the created tour.
     pub tour_id: String,
+    /// Relative API URL for the tour.
     pub url: String,
+    /// Status of the tour (e.g., 'ready').
     pub status: String,
+    /// Visibility of the tour (public/private).
     pub visibility: String,
+    /// ISO 8601 timestamp of publication.
     pub published_at: String,
+    /// ISO 8601 timestamp of creation.
     pub created_at: String,
+    /// ISO 8601 timestamp of last update.
     pub updated_at: String,
 }
 
+/// Error response body for the tours API.
 #[derive(Debug, Serialize)]
 pub struct ErrorResponse {
+    /// Short machine-readable error code.
     pub error: String,
+    /// Human-readable explanation of the error.
     pub reason: Option<String>,
+    /// Request ID for tracing.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub request_id: Option<String>,
 }
 
+/// Handler for POST /tours. Uploads a SQLite pack and merges it into the database.
 pub async fn handler(
     State(state): State<AppState>,
     auth: AuthContext,
@@ -147,7 +160,7 @@ pub async fn handler(
             .into_response();
     }
 
-    // 2. Check for zstd compression and decompress if needed
+    // 4. Check for zstd compression and decompress if needed
     let is_zstd = {
         let f = std::fs::File::open(&temp_path);
         match f {
@@ -165,13 +178,25 @@ pub async fn handler(
 
     if is_zstd {
         let decompressed_path = temp_path.with_extension("decompressed");
-        let res = (|| {
-            let compressed_file = std::fs::File::open(&temp_path)?;
+        let temp_path_blocking = temp_path.clone();
+        let decompressed_path_blocking = decompressed_path.clone();
+
+        let res = tokio::task::spawn_blocking(move || {
+            let compressed_file = std::fs::File::open(&temp_path_blocking)?;
             let mut decoder = zstd::stream::read::Decoder::new(compressed_file)?;
-            let mut decompressed_file = std::fs::File::create(&decompressed_path)?;
+            let mut decompressed_file = std::fs::File::create(&decompressed_path_blocking)?;
             std::io::copy(&mut decoder, &mut decompressed_file)?;
             Ok::<_, std::io::Error>(())
-        })();
+        })
+        .await;
+
+        let res = match res {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::error!("Blocking task panicked during decompression: {}", e);
+                return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+            }
+        };
 
         if let Err(e) = res {
             tracing::error!("Failed to decompress pack: {}", e);
@@ -209,14 +234,23 @@ pub async fn handler(
 
     // 4. Handle migrations
     if user_version < crate::pack::CURRENT_SERVER_VERSION {
-        let mut conn = match rusqlite::Connection::open(&temp_path) {
-            Ok(c) => c,
+        let temp_path_blocking = temp_path.clone();
+        let res = tokio::task::spawn_blocking(move || {
+            let mut conn = rusqlite::Connection::open(&temp_path_blocking)?;
+            crate::pack::migrate_pack_forward(&mut conn)?;
+            Ok::<_, anyhow::Error>(())
+        })
+        .await;
+
+        let res = match res {
+            Ok(r) => r,
             Err(e) => {
-                tracing::error!("Failed to open pack for migration: {}", e);
+                tracing::error!("Blocking task panicked during migration: {}", e);
                 return StatusCode::INTERNAL_SERVER_ERROR.into_response();
             }
         };
-        if let Err(e) = crate::pack::migrate_pack_forward(&mut conn) {
+
+        if let Err(e) = res {
             tracing::error!("Failed to migrate pack forward: {}", e);
             let _ = fs::remove_file(&temp_path).await;
             return (
@@ -258,13 +292,36 @@ pub async fn handler(
     // 6. Merge into single tenant DB
     let storage = state.storage.clone();
     let temp_path_clone = temp_path.clone();
-    
-    let result = storage.get_conn().await.unwrap().interact(move |conn| {
-        // ATTACH the pack BEFORE transaction
-        let pack_path_str = temp_path_clone.to_str().ok_or_else(|| rusqlite::Error::InvalidPath(temp_path_clone.clone()))?;
-        conn.execute(&format!("ATTACH DATABASE '{}' AS pack", pack_path_str), [])?;
 
-        let res = (|| -> rusqlite::Result<(CreateTourResponse, bool)> {
+    let conn = match storage.get_conn().await {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::error!("Failed to acquire DB connection: {}", e);
+            let _ = fs::remove_file(&temp_path).await;
+            return (
+                StatusCode::SERVICE_UNAVAILABLE,
+                Json(ErrorResponse {
+                    error: "internal".to_string(),
+                    reason: Some("Database pool exhausted".to_string()),
+                    request_id: Some(request_id),
+                }),
+            )
+                .into_response();
+        }
+    };
+
+    let result = conn
+        .interact(move |conn| {
+            // ATTACH the pack BEFORE transaction
+            let pack_path_str = temp_path_clone
+                .to_str()
+                .ok_or_else(|| rusqlite::Error::InvalidPath(temp_path_clone.clone()))?;
+
+            // Security: Escape single quotes to prevent SQL injection in ATTACH
+            let escaped_path = pack_path_str.replace('\'', "''");
+            conn.execute(&format!("ATTACH DATABASE '{}' AS pack", escaped_path), [])?;
+
+            let res = (|| -> rusqlite::Result<(CreateTourResponse, bool)> {
             // Get the collection ID from the pack
             let collection_id: String = conn.query_row(
                 "SELECT id FROM pack.collections WHERE visibility IS NOT NULL LIMIT 1",
@@ -393,11 +450,38 @@ pub async fn handler(
         }
     };
 
-    // 5. Save to pack cache
+    // 7. Save to pack cache
     let cache = PackCache::new(state.config.data_dir.clone());
     if let Err(e) = cache.save_pack(&response.tour_id, &temp_path).await {
-        tracing::error!("Failed to save pack to cache: {}", e);
-        // We still return success as the DB merge happened
+        tracing::error!(
+            "Failed to save pack to cache: {}. Performing compensating deletion.",
+            e
+        );
+
+        // Compensating deletion in DB to maintain consistency
+        let storage = state.storage.clone();
+        let tour_id = response.tour_id.clone();
+        if let Ok(conn) = storage.get_conn().await {
+            let _ = conn
+                .interact(move |conn| {
+                    conn.execute("DELETE FROM collection_bookmarks WHERE collection_id = ?1", [
+                        &tour_id,
+                    ])?;
+                    conn.execute("DELETE FROM collections WHERE id = ?1", [&tour_id])?;
+                    Ok::<_, rusqlite::Error>(())
+                })
+                .await;
+        }
+
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ErrorResponse {
+                error: "internal".to_string(),
+                reason: Some("Failed to persist pack artifact".to_string()),
+                request_id: Some(request_id),
+            }),
+        )
+            .into_response();
     }
 
     let status = if is_republish {

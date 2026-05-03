@@ -7,6 +7,7 @@ use crate::auth::AuthContext;
 use crate::router::AppState;
 use crate::pack_cache::PackCache;
 
+/// Handler for DELETE /tours/:id. Deletes a tour and its orphaned bookmarks.
 pub async fn handler(
     State(state): State<AppState>,
     auth: AuthContext,
@@ -17,20 +18,29 @@ pub async fn handler(
     }
     let storage = state.storage.clone();
     let id_clone = id.clone();
-    
-    let result = storage.get_conn().await.unwrap().interact(move |conn| {
-        let tx = conn.transaction()?;
 
-        // 1. Check if it exists
-        let exists: bool = tx.query_row(
-            "SELECT EXISTS(SELECT 1 FROM collections WHERE id = ?1)",
-            [&id_clone],
-            |row| row.get(0)
-        )?;
-
-        if !exists {
-            return Ok::<_, rusqlite::Error>(false);
+    let conn = match storage.get_conn().await {
+        Ok(c) => c,
+        Err(e) => {
+            tracing::error!("Failed to acquire DB connection: {}", e);
+            return StatusCode::SERVICE_UNAVAILABLE.into_response();
         }
+    };
+
+    let result = conn
+        .interact(move |conn| {
+            let tx = conn.transaction()?;
+
+            // 1. Check if it exists
+            let exists: bool = tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM collections WHERE id = ?1)",
+                [&id_clone],
+                |row| row.get(0),
+            )?;
+
+            if !exists {
+                return Ok::<_, rusqlite::Error>(false);
+            }
 
         // 2. Capture orphan candidates (bookmark IDs from this collection)
         // We'll use a temp table to avoid borrow checker issues with stmt
