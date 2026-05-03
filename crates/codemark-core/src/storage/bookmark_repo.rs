@@ -338,6 +338,16 @@ impl Database {
         Ok(count)
     }
 
+    /// Delete bookmarks that are not referenced by any collection.
+    pub fn delete_orphans(&self) -> Result<usize> {
+        let count = self.conn().execute(
+            "DELETE FROM bookmarks 
+             WHERE id NOT IN (SELECT bookmark_id FROM collection_bookmarks)",
+            [],
+        )?;
+        Ok(count)
+    }
+
     /// Search bookmarks by text in notes and/or context fields.
     pub fn search_bookmarks(
         &self,

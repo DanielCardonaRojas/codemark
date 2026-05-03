@@ -14,6 +14,8 @@ pub struct Config {
     pub log_level: String,
     #[serde(default = "default_max_open_tenants")]
     pub max_open_tenants: usize,
+    #[serde(default = "default_max_pack_size")]
+    pub max_pack_size: usize,
     #[serde(default)]
     pub storage: StorageConfig,
     #[serde(default)]
@@ -56,6 +58,10 @@ fn default_max_open_tenants() -> usize {
     256
 }
 
+fn default_max_pack_size() -> usize {
+    5 * 1024 * 1024 // 5MB
+}
+
 fn default_pool_size() -> u32 {
     8
 }
@@ -72,6 +78,7 @@ impl Default for Config {
             data_dir: default_data_dir(),
             log_level: default_log_level(),
             max_open_tenants: default_max_open_tenants(),
+            max_pack_size: default_max_pack_size(),
             storage: StorageConfig::default(),
             auth: AuthConfig::default(),
         }

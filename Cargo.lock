@@ -500,6 +500,7 @@ dependencies = [
  "clap",
  "codemark-core",
  "deadpool-sqlite",
+ "futures-util",
  "rusqlite",
  "serde",
  "serde_json",
@@ -512,6 +513,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
+ "zstd",
 ]
 
 [[package]]
