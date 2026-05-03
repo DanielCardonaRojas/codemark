@@ -12,3 +12,6 @@ site/
 lat.md/
 graphify-out/
 dev-docs/
+
+# Codetours Server
+codetours.toml
