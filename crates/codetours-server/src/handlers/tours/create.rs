@@ -236,15 +236,25 @@ pub async fn handler(
     }
 
     // 3. Run pack pre-inspector (safety check)
-    let user_version = match crate::pack::pre_inspect(&temp_path) {
-        Ok(v) => v,
-        Err(e) => {
+    let pack_path_blocking = temp_path.clone();
+    let user_version_res =
+        tokio::task::spawn_blocking(move || crate::pack::pre_inspect(&pack_path_blocking)).await;
+
+    let user_version = match user_version_res {
+        Ok(Ok(v)) => v,
+        Ok(Err(e)) => {
+            tracing::error!("Pack pre-inspection failed: {}", e);
             let _ = fs::remove_file(&temp_path).await;
             let status = match e {
                 PackError::NotSqlite => StatusCode::BAD_REQUEST,
                 _ => StatusCode::UNPROCESSABLE_ENTITY,
             };
             return (status, Json(e)).into_response();
+        }
+        Err(e) => {
+            tracing::error!("Blocking task panicked during pre-inspection: {}", e);
+            let _ = fs::remove_file(&temp_path).await;
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
         }
     };
 
@@ -297,11 +307,19 @@ pub async fn handler(
     }
 
     // 5. Run full pack inspector (schema check)
-    let _pack_info = match inspect(&temp_path) {
-        Ok(info) => info,
-        Err(e) => {
+    let pack_path_blocking = temp_path.clone();
+    let pack_info_res = tokio::task::spawn_blocking(move || inspect(&pack_path_blocking)).await;
+
+    let _pack_info = match pack_info_res {
+        Ok(Ok(info)) => info,
+        Ok(Err(e)) => {
             let _ = fs::remove_file(&temp_path).await;
             return (StatusCode::UNPROCESSABLE_ENTITY, Json(e)).into_response();
+        }
+        Err(e) => {
+            tracing::error!("Blocking task panicked during full inspection: {}", e);
+            let _ = fs::remove_file(&temp_path).await;
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
         }
     };
 
@@ -364,9 +382,14 @@ pub async fn handler(
 
             // 2. Merge SQL
             // Use explicit columns to be safe against schema drift
-            tx.execute("INSERT INTO main.bookmarks (id, query, language, file_path, content_hash, commit_hash, status, resolution_method, last_resolved_at, stale_since, created_at, created_by)
-                        SELECT id, query, language, file_path, content_hash, commit_hash, status, resolution_method, last_resolved_at, stale_since, created_at, created_by
-                        FROM pack.bookmarks WHERE id NOT IN (SELECT id FROM main.bookmarks)", [])?;
+            tx.execute(
+                "INSERT INTO main.bookmarks (id, query, language, file_path, content_hash, commit_hash, status, resolution_method, last_resolved_at, stale_since, created_at, created_by)
+                 SELECT id, query, language, file_path, content_hash, commit_hash, status, resolution_method, last_resolved_at, stale_since, created_at, created_by
+                 FROM pack.bookmarks 
+                 WHERE id IN (SELECT bookmark_id FROM pack.collection_bookmarks WHERE collection_id = ?1)
+                 AND id NOT IN (SELECT id FROM main.bookmarks)",
+                [&collection_id]
+            )?;
 
             tx.execute(
                 "INSERT INTO main.collections (
@@ -381,23 +404,43 @@ pub async fn handler(
                     COALESCE(p.created_at, strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
                     strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
                 FROM pack.collections AS p
-                WHERE p.visibility IS NOT NULL",
-                []
+                WHERE p.id = ?1 AND p.visibility IS NOT NULL",
+                [&collection_id]
             )?;
 
-            tx.execute("INSERT INTO main.collection_bookmarks (collection_id, bookmark_id, position, added_at)
-                        SELECT collection_id, bookmark_id, position, added_at FROM pack.collection_bookmarks", [])?;
+            tx.execute(
+                "INSERT INTO main.collection_bookmarks (collection_id, bookmark_id, position, added_at)
+                 SELECT collection_id, bookmark_id, position, added_at 
+                 FROM pack.collection_bookmarks
+                 WHERE collection_id = ?1",
+                [&collection_id]
+            )?;
 
-            tx.execute("INSERT INTO main.resolutions (id, bookmark_id, resolved_at, commit_hash, method, match_count, file_path, byte_range, line_range, content_hash, headline, preview_lines)
-                        SELECT id, bookmark_id, resolved_at, commit_hash, method, match_count, file_path, byte_range, line_range, content_hash, headline, preview_lines
-                        FROM pack.resolutions WHERE id NOT IN (SELECT id FROM main.resolutions)", [])?;
+            tx.execute(
+                "INSERT INTO main.resolutions (id, bookmark_id, resolved_at, commit_hash, method, match_count, file_path, byte_range, line_range, content_hash, headline, preview_lines)
+                 SELECT id, bookmark_id, resolved_at, commit_hash, method, match_count, file_path, byte_range, line_range, content_hash, headline, preview_lines
+                 FROM pack.resolutions 
+                 WHERE bookmark_id IN (SELECT bookmark_id FROM pack.collection_bookmarks WHERE collection_id = ?1)
+                 AND id NOT IN (SELECT id FROM main.resolutions)",
+                [&collection_id]
+            )?;
 
-            tx.execute("INSERT INTO main.bookmark_annotations (id, bookmark_id, added_at, added_by, notes, context, source)
-                        SELECT id, bookmark_id, added_at, added_by, notes, context, source
-                        FROM pack.bookmark_annotations WHERE id NOT IN (SELECT id FROM main.bookmark_annotations)", [])?;
+            tx.execute(
+                "INSERT INTO main.bookmark_annotations (id, bookmark_id, added_at, added_by, notes, context, source)
+                 SELECT id, bookmark_id, added_at, added_by, notes, context, source
+                 FROM pack.bookmark_annotations 
+                 WHERE bookmark_id IN (SELECT bookmark_id FROM pack.collection_bookmarks WHERE collection_id = ?1)
+                 AND id NOT IN (SELECT id FROM main.bookmark_annotations)",
+                [&collection_id]
+            )?;
 
-            tx.execute("INSERT OR IGNORE INTO main.bookmark_tags (bookmark_id, tag, added_at, added_by)
-                        SELECT bookmark_id, tag, added_at, added_by FROM pack.bookmark_tags", [])?;
+            tx.execute(
+                "INSERT OR IGNORE INTO main.bookmark_tags (bookmark_id, tag, added_at, added_by)
+                 SELECT bookmark_id, tag, added_at, added_by 
+                 FROM pack.bookmark_tags
+                 WHERE bookmark_id IN (SELECT bookmark_id FROM pack.collection_bookmarks WHERE collection_id = ?1)",
+                [&collection_id]
+            )?;
 
             // Optional bookmark_comments
             let has_comments: bool = tx.query_row(
@@ -406,9 +449,14 @@ pub async fn handler(
                 |row| Ok(row.get::<_, i64>(0)? > 0)
             )?;
             if has_comments {
-                tx.execute("INSERT INTO main.bookmark_comments (id, bookmark_id, author, body, created_at, parent_id)
-                            SELECT id, bookmark_id, author, body, created_at, parent_id
-                            FROM pack.bookmark_comments WHERE id NOT IN (SELECT id FROM main.bookmark_comments)", [])?;
+                tx.execute(
+                    "INSERT INTO main.bookmark_comments (id, bookmark_id, author, body, created_at, parent_id)
+                     SELECT id, bookmark_id, author, body, created_at, parent_id 
+                     FROM pack.bookmark_comments
+                     WHERE bookmark_id IN (SELECT bookmark_id FROM pack.collection_bookmarks WHERE collection_id = ?1)
+                     AND id NOT IN (SELECT id FROM main.bookmark_comments)",
+                    [&collection_id]
+                )?;
             }
 
             // Get the final collection row to return
@@ -477,18 +525,38 @@ pub async fn handler(
         let storage = state.storage.clone();
         let tour_id = response.tour_id.clone();
         if let Ok(conn) = storage.get_conn().await {
-            let _ = conn
+            let tour_id_for_move = tour_id.clone();
+            let res = conn
                 .interact(move |conn| {
                     let tx = conn.transaction()?;
-                    tx.execute("CREATE TEMP TABLE IF NOT EXISTS _comp_delete_candidates AS SELECT bookmark_id FROM main.collection_bookmarks WHERE collection_id = ?1", [&tour_id])?;
-                    tx.execute("DELETE FROM main.collection_bookmarks WHERE collection_id = ?1", [&tour_id])?;
-                    tx.execute("DELETE FROM main.collections WHERE id = ?1", [&tour_id])?;
+                    tx.execute("CREATE TEMP TABLE IF NOT EXISTS _comp_delete_candidates AS SELECT bookmark_id FROM main.collection_bookmarks WHERE collection_id = ?1", [&tour_id_for_move])?;
+                    tx.execute("DELETE FROM main.collection_bookmarks WHERE collection_id = ?1", [&tour_id_for_move])?;
+                    tx.execute("DELETE FROM main.collections WHERE id = ?1", [&tour_id_for_move])?;
                     tx.execute("DELETE FROM main.bookmarks WHERE id IN (SELECT bookmark_id FROM _comp_delete_candidates) AND id NOT IN (SELECT bookmark_id FROM main.collection_bookmarks)", [])?;
                     tx.execute("DROP TABLE IF EXISTS _comp_delete_candidates", [])?;
                     tx.commit()?;
                     Ok::<_, rusqlite::Error>(())
                 })
                 .await;
+
+            if let Err(e) = res {
+                tracing::error!(
+                    "Compensating deletion failed to run: {}. DB state may be inconsistent for tour {}",
+                    e,
+                    tour_id
+                );
+            } else if let Ok(Err(e)) = res {
+                tracing::error!(
+                    "Compensating deletion failed: {}. DB state may be inconsistent for tour {}",
+                    e,
+                    tour_id
+                );
+            }
+        } else {
+            tracing::error!(
+                "Failed to acquire DB connection for compensating deletion of tour {}",
+                tour_id
+            );
         }
 
         return (

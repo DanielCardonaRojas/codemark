@@ -56,28 +56,24 @@ impl PackReader {
             "SELECT id, query, language, file_path, content_hash, commit_hash, status, resolution_method, last_resolved_at, stale_since, created_at, created_by 
              FROM bookmarks"
         )?;
-        let rows = stmt.query_map([], |row| {
-            let status_str: String = row.get(6)?;
-            let method_str: Option<String> = row.get(7)?;
-            Ok(Bookmark {
-                id: row.get(0)?,
-                query: row.get(1)?,
-                language: row.get(2)?,
-                file_path: row.get(3)?,
-                content_hash: row.get(4)?,
-                commit_hash: row.get(5)?,
-                status: crate::engine::bookmark::BookmarkStatus::from_str(&status_str)
-                    .unwrap_or(crate::engine::bookmark::BookmarkStatus::Active),
-                resolution_method: method_str.and_then(|s| ResolutionMethod::from_str(&s).ok()),
-                last_resolved_at: row.get(8)?,
-                stale_since: row.get(9)?,
-                created_at: row.get(10)?,
-                created_by: row.get(11)?,
-                tags: Vec::new(),
-                annotations: Vec::new(),
-                comments: Vec::new(),
-            })
-        })?;
+        let rows = stmt.query_map([], row_to_bookmark)?;
+
+        let mut bookmarks = Vec::new();
+        for row in rows {
+            bookmarks.push(row?);
+        }
+        Ok(bookmarks)
+    }
+
+    pub fn bookmarks_for_collection(&self, collection_id: &str) -> Result<Vec<Bookmark>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT b.id, b.query, b.language, b.file_path, b.content_hash, b.commit_hash, b.status, b.resolution_method, b.last_resolved_at, b.stale_since, b.created_at, b.created_by 
+             FROM bookmarks b
+             JOIN collection_bookmarks cb ON b.id = cb.bookmark_id
+             WHERE cb.collection_id = ?1
+             ORDER BY cb.position ASC"
+        )?;
+        let rows = stmt.query_map([collection_id], row_to_bookmark)?;
 
         let mut bookmarks = Vec::new();
         for row in rows {
@@ -115,4 +111,27 @@ impl PackReader {
         }
         Ok(resolutions)
     }
+}
+
+fn row_to_bookmark(row: &rusqlite::Row) -> rusqlite::Result<Bookmark> {
+    let status_str: String = row.get(6)?;
+    let method_str: Option<String> = row.get(7)?;
+    Ok(Bookmark {
+        id: row.get(0)?,
+        query: row.get(1)?,
+        language: row.get(2)?,
+        file_path: row.get(3)?,
+        content_hash: row.get(4)?,
+        commit_hash: row.get(5)?,
+        status: crate::engine::bookmark::BookmarkStatus::from_str(&status_str)
+            .unwrap_or(crate::engine::bookmark::BookmarkStatus::Active),
+        resolution_method: method_str.and_then(|s| ResolutionMethod::from_str(&s).ok()),
+        last_resolved_at: row.get(8)?,
+        stale_since: row.get(9)?,
+        created_at: row.get(10)?,
+        created_by: row.get(11)?,
+        tags: Vec::new(),
+        annotations: Vec::new(),
+        comments: Vec::new(),
+    })
 }

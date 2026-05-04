@@ -6,6 +6,16 @@ use codemark_core::storage::pack::{PackReader, inspect, pre_inspect};
 use comfy_table::Table;
 use reqwest::header::{ACCEPT, HeaderMap, HeaderValue};
 use std::collections::HashMap;
+use std::time::Duration;
+
+/// Builds a reqwest client with reasonable timeouts for pulling tours.
+fn build_pull_http_client() -> Result<reqwest::Client> {
+    reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(10))
+        .timeout(Duration::from_secs(30))
+        .build()
+        .map_err(|e| Error::Operation(format!("failed to build HTTP client: {e}")))
+}
 
 pub async fn handle_pull(cli: &Cli, mode: &OutputMode, args: &PullArgs) -> Result<()> {
     let config = super::load_config(cli);
@@ -15,7 +25,7 @@ pub async fn handle_pull(cli: &Cli, mode: &OutputMode, args: &PullArgs) -> Resul
 
     // 2. Short ID resolution
     if uuid::Uuid::parse_str(&tour_id).is_err() {
-        let client = reqwest::Client::new();
+        let client = build_pull_http_client()?;
         let response = client
             .get(format!("{}/tours", server_url))
             .send()
@@ -61,7 +71,7 @@ pub async fn handle_pull(cli: &Cli, mode: &OutputMode, args: &PullArgs) -> Resul
     let pack_path = temp_dir.join(format!("codemark-pull-{}.sqlite", uuid::Uuid::new_v4()));
 
     let res = async {
-        let client = reqwest::Client::new();
+        let client = build_pull_http_client()?;
         let mut headers = HeaderMap::new();
         if let Some(t) = token {
             headers.insert(
@@ -168,8 +178,15 @@ async fn handle_save_pulled(
     let reader = PackReader::open(pack_path)?;
 
     let tours = reader.tours()?;
-    if tours.is_empty() {
-        return Err(Error::Operation("pack contains no tours".to_string()));
+    match tours.len() {
+        0 => return Err(Error::Operation("pack contains no tours".to_string())),
+        1 => (),
+        _ => {
+            return Err(Error::Operation(
+                "pack contains multiple tours; only single-tour packs are supported for pull"
+                    .to_string(),
+            ));
+        }
     }
     let tour = &tours[0];
 
@@ -188,8 +205,8 @@ async fn handle_save_pulled(
     db.insert_collection(&collection)?;
     let final_name = collection.name.clone();
 
-    // Merge bookmarks
-    let bookmarks = reader.bookmarks()?;
+    // Merge bookmarks for this specific collection
+    let bookmarks = reader.bookmarks_for_collection(&tour.id)?;
     for mut bm in bookmarks {
         let old_id = bm.id.clone();
         bm.id = uuid::Uuid::new_v4().to_string();
@@ -297,7 +314,7 @@ async fn handle_display_pulled(_mode: &OutputMode, pack_path: &std::path::Path) 
         }
         println!();
 
-        let bookmarks = reader.bookmarks()?;
+        let bookmarks = reader.bookmarks_for_collection(&tour.id)?;
         let mut table = Table::new();
         table.set_header(vec!["File", "Line", "Headline"]);
 
