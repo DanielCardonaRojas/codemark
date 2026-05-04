@@ -2,9 +2,10 @@ use crate::cli::output::{OutputMode, write_success};
 use crate::cli::*;
 use codemark_core::config::Config;
 use codemark_core::error::{Error, Result};
-use codemark_core::storage::pack::{PackReader, pre_inspect};
+use codemark_core::storage::pack::{PackReader, pre_inspect, inspect};
 use comfy_table::Table;
 use reqwest::header::{ACCEPT, HeaderMap, HeaderValue};
+use std::collections::HashMap;
 
 pub async fn handle_pull(cli: &Cli, mode: &OutputMode, args: &PullArgs) -> Result<()> {
     let config = super::load_config(cli);
@@ -58,90 +59,96 @@ pub async fn handle_pull(cli: &Cli, mode: &OutputMode, args: &PullArgs) -> Resul
     let temp_dir = std::env::temp_dir();
     let pack_path = temp_dir.join(format!("codemark-pull-{}.sqlite", uuid::Uuid::new_v4()));
 
-    let client = reqwest::Client::new();
-    let mut headers = HeaderMap::new();
-    if let Some(t) = token {
-        headers.insert(
-            "X-Tour-Token",
-            HeaderValue::from_str(&t).map_err(|_| Error::Operation("Invalid token".to_string()))?,
-        );
-    }
-    headers.insert(ACCEPT, HeaderValue::from_static("application/vnd.codetours.pack+sqlite"));
+    let res = async {
+        let client = reqwest::Client::new();
+        let mut headers = HeaderMap::new();
+        if let Some(t) = token {
+            headers.insert(
+                "X-Tour-Token",
+                HeaderValue::from_str(&t).map_err(|_| Error::Operation("Invalid token".to_string()))?,
+            );
+        }
+        headers.insert(ACCEPT, HeaderValue::from_static("application/vnd.codetours.pack+sqlite"));
 
-    let response = client
-        .get(format!("{}/tours/{}", server_url, tour_id))
-        .headers(headers)
-        .send()
-        .await
-        .map_err(|e| Error::Operation(format!("download failed: {e}")))?;
+        let response = client
+            .get(format!("{}/tours/{}", server_url, tour_id))
+            .headers(headers)
+            .send()
+            .await
+            .map_err(|e| Error::Operation(format!("download failed: {e}")))?;
 
-    if !response.status().is_success() {
-        let status = response.status();
-        return Err(Error::Operation(format!("server returned {status}")));
-    }
+        if !response.status().is_success() {
+            let status = response.status();
+            return Err(Error::Operation(format!("server returned {status}")));
+        }
 
-    let bytes = response
-        .bytes()
-        .await
-        .map_err(|e| Error::Operation(format!("failed to read response: {e}")))?;
+        let bytes = response
+            .bytes()
+            .await
+            .map_err(|e| Error::Operation(format!("failed to read response: {e}")))?;
 
-    // Check if it is zstd compressed
-    let is_zstd = bytes.starts_with(&[0x28, 0xB5, 0x2F, 0xFD]);
-    let decompressed_bytes = if is_zstd {
-        tokio::task::spawn_blocking(move || {
-            let mut decoder = zstd::stream::read::Decoder::new(&bytes[..])
-                .map_err(|e| Error::Operation(format!("zstd decoder failed: {e}")))?;
-            let mut out = Vec::new();
-            std::io::copy(&mut decoder, &mut out)
-                .map_err(|e| Error::Operation(format!("decompression failed: {e}")))?;
-            Ok::<_, Error>(out)
-        })
-        .await
-        .map_err(|_| {
-            Error::Operation("Blocking task panicked during decompression".to_string())
-        })??
-    } else {
-        bytes.to_vec()
-    };
+        // Check if it is zstd compressed
+        let is_zstd = bytes.starts_with(&[0x28, 0xB5, 0x2F, 0xFD]);
+        let decompressed_bytes = if is_zstd {
+            tokio::task::spawn_blocking(move || {
+                let mut decoder = zstd::stream::read::Decoder::new(&bytes[..])
+                    .map_err(|e| Error::Operation(format!("zstd decoder failed: {e}")))?;
+                let mut out = Vec::new();
+                std::io::copy(&mut decoder, &mut out)
+                    .map_err(|e| Error::Operation(format!("decompression failed: {e}")))?;
+                Ok::<_, Error>(out)
+            })
+            .await
+            .map_err(|_| {
+                Error::Operation("Blocking task panicked during decompression".to_string())
+            })??
+        } else {
+            bytes.to_vec()
+        };
 
-    tokio::fs::write(&pack_path, decompressed_bytes)
-        .await
-        .map_err(|e| Error::Operation(format!("failed to write pack: {e}")))?;
+        tokio::fs::write(&pack_path, decompressed_bytes)
+            .await
+            .map_err(|e| Error::Operation(format!("failed to write pack: {e}")))?;
 
-    // 3. Inspect and Migrate pack
-    let user_version = pre_inspect(&pack_path)
-        .map_err(|e| Error::Operation(format!("pre-inspection failed: {e}")))?;
+        // 4. Inspect and Migrate pack
+        let user_version = pre_inspect(&pack_path)
+            .map_err(|e| Error::Operation(format!("pre-inspection failed: {e}")))?;
 
-    if user_version < codemark_core::storage::db::Database::CURRENT_VERSION {
-        let pack_path_clone = pack_path.clone();
-        tokio::task::spawn_blocking(move || {
-            let mut conn = rusqlite::Connection::open(&pack_path_clone)
-                .map_err(|e| Error::Database(e.to_string()))?;
-            codemark_core::storage::db::Database::run_migrations_on(&mut conn)
-                .map_err(|e| Error::Database(e.to_string()))?;
-            Ok::<_, Error>(())
-        })
-        .await
-        .map_err(|_| Error::Operation("Blocking task panicked during migration".to_string()))??;
-    }
+        if user_version < codemark_core::storage::db::Database::CURRENT_VERSION {
+            let pack_path_clone = pack_path.clone();
+            tokio::task::spawn_blocking(move || {
+                let mut conn = rusqlite::Connection::open(&pack_path_clone)
+                    .map_err(|e| Error::Database(e.to_string()))?;
+                codemark_core::storage::db::Database::run_migrations_on(&mut conn)
+                    .map_err(|e| Error::Database(e.to_string()))?;
+                Ok::<_, Error>(())
+            })
+            .await
+            .map_err(|_| Error::Operation("Blocking task panicked during migration".to_string()))??;
+        }
 
-    if let Some(save_name) = &args.save {
-        let name_override = if save_name.is_empty() { None } else { Some(save_name.as_str()) };
-        handle_save_pulled(
-            cli,
-            mode,
-            &pack_path,
-            name_override,
-            &format!("{}/tours/{}", server_url, tour_id),
-        )
-        .await?;
-    } else {
-        handle_display_pulled(mode, &pack_path).await?;
-    }
+        // Full inspection after potential migration
+        inspect(&pack_path).map_err(|e| Error::Operation(format!("pack inspection failed: {e}")))?;
+
+        if let Some(save_name) = &args.save {
+            let name_override = if save_name.is_empty() { None } else { Some(save_name.as_str()) };
+            handle_save_pulled(
+                cli,
+                mode,
+                &pack_path,
+                name_override,
+                &format!("{}/tours/{}", server_url, tour_id),
+            )
+            .await?;
+        } else {
+            handle_display_pulled(mode, &pack_path).await?;
+        }
+        Ok(())
+    }.await;
 
     // cleanup
-    let _ = std::fs::remove_file(&pack_path);
-    Ok(())
+    let _ = tokio::fs::remove_file(&pack_path).await;
+    res
 }
 
 async fn handle_save_pulled(
@@ -219,22 +226,41 @@ async fn handle_save_pulled(
             db.insert_tag(&tag?)?;
         }
 
-        // Import comments
+        // Import comments with ID mapping to preserve threading
         let mut com_stmt = reader.conn().prepare(
             "SELECT id, bookmark_id, author, body, created_at, parent_id FROM bookmark_comments WHERE bookmark_id = ?1",
         )?;
-        let comments = com_stmt.query_map([&old_id], |row: &rusqlite::Row| {
-            Ok(codemark_core::engine::bookmark::BookmarkComment {
-                id: row.get(0)?,
-                bookmark_id: bookmark_id.clone(),
-                author: row.get(2)?,
-                body: row.get(3)?,
-                created_at: row.get(4)?,
-                parent_id: row.get(5)?,
-            })
+        let rows = com_stmt.query_map([&old_id], |row: &rusqlite::Row| {
+            Ok((
+                row.get::<_, String>(0)?, // old_id
+                row.get::<_, String>(2)?, // author
+                row.get::<_, String>(3)?, // body
+                row.get::<_, String>(4)?, // created_at
+                row.get::<_, Option<String>>(5)?, // parent_id
+            ))
         })?;
-        for com in comments {
-            db.insert_comment(&com?)?;
+        
+        let mut comment_id_map = HashMap::new();
+        let mut pending_comments = Vec::new();
+
+        for row in rows {
+            let (old_comment_id, author, body, created_at, parent_id) = row?;
+            let new_comment_id = uuid::Uuid::new_v4().to_string();
+            comment_id_map.insert(old_comment_id, new_comment_id.clone());
+            
+            pending_comments.push((new_comment_id, author, body, created_at, parent_id));
+        }
+
+        for (new_id, author, body, created_at, old_parent_id) in pending_comments {
+            let new_parent_id = old_parent_id.and_then(|id| comment_id_map.get(&id).cloned());
+            db.insert_comment(&codemark_core::engine::bookmark::BookmarkComment {
+                id: new_id,
+                bookmark_id: bookmark_id.clone(),
+                author,
+                body,
+                created_at,
+                parent_id: new_parent_id,
+            })?;
         }
 
         // Import resolutions

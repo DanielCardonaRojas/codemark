@@ -158,6 +158,8 @@ pub async fn handler(
         )
             .into_response();
     }
+    // Explicitly drop file handle to allow rename/move on all platforms
+    drop(file);
 
     // 4. Check for zstd compression and decompress if needed
     let is_zstd = {
@@ -179,12 +181,29 @@ pub async fn handler(
         let decompressed_path = temp_path.with_extension("decompressed");
         let temp_path_blocking = temp_path.clone();
         let decompressed_path_blocking = decompressed_path.clone();
+        let max_size_blocking = max_size;
 
         let res = tokio::task::spawn_blocking(move || {
             let compressed_file = std::fs::File::open(&temp_path_blocking)?;
             let mut decoder = zstd::stream::read::Decoder::new(compressed_file)?;
             let mut decompressed_file = std::fs::File::create(&decompressed_path_blocking)?;
-            std::io::copy(&mut decoder, &mut decompressed_file)?;
+
+            // Limit decompression to max_pack_size to prevent decompression bombs
+            use std::io::Read;
+            let mut limited = (&mut decoder).take(max_size_blocking as u64);
+            let written = std::io::copy(&mut limited, &mut decompressed_file)?;
+
+            // If we reached the limit, check if there's more data
+            if written >= max_size_blocking as u64 {
+                let mut buf = [0u8; 1];
+                if decoder.read(&mut buf)? > 0 {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::Other,
+                        "Decompressed size exceeds limit",
+                    ));
+                }
+            }
+
             Ok::<_, std::io::Error>(())
         })
         .await;

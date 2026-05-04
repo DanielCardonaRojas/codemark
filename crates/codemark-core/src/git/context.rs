@@ -441,7 +441,7 @@ pub fn resolve_bookmark_file_path(file_path: &str, db_path: &Path) -> Result<Pat
     } else {
         // Fallback: try to detect git context starting from the database location
         // This handles cases where the db is in a non-standard location (e.g., temp dirs in tests)
-        if let Some(ctx) = detect_context(db_path) {
+        if let Some(ctx) = detect_context(db_path.parent().unwrap_or(db_path)) {
             ctx.repo_root
         } else {
             // Last resort: use current directory
