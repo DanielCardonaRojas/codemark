@@ -20,6 +20,14 @@ pub struct Config {
     pub storage: StorageConfig,
     #[serde(default)]
     pub auth: AuthConfig,
+    #[serde(default)]
+    pub ui: UiConfig,
+}
+
+#[derive(Deserialize, Debug, Clone, Default)]
+#[serde(deny_unknown_fields)]
+pub struct UiConfig {
+    pub theme_css: Option<String>,
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -36,6 +44,8 @@ pub struct AuthConfig {
     pub mode: String,
     #[serde(default)]
     pub dev_token: String,
+    #[serde(default = "default_stub_user")]
+    pub stub_user: String,
 }
 
 fn default_host() -> String {
@@ -70,6 +80,10 @@ fn default_auth_mode() -> String {
     "stub".to_string()
 }
 
+fn default_stub_user() -> String {
+    "local-dev".to_string()
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
@@ -81,6 +95,7 @@ impl Default for Config {
             max_pack_size: default_max_pack_size(),
             storage: StorageConfig::default(),
             auth: AuthConfig::default(),
+            ui: UiConfig::default(),
         }
     }
 }
@@ -93,7 +108,7 @@ impl Default for StorageConfig {
 
 impl Default for AuthConfig {
     fn default() -> Self {
-        Self { mode: default_auth_mode(), dev_token: String::new() }
+        Self { mode: default_auth_mode(), dev_token: String::new(), stub_user: default_stub_user() }
     }
 }
 

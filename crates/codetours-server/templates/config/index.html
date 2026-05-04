@@ -1,0 +1,161 @@
+{% extends "base.html" %}
+{% import "partials/icon.html" as icons %}
+
+{% block title %}Configuration - Codetours{% endblock %}
+
+{% block content %}
+<div class="flex flex-col h-screen overflow-hidden">
+    <header class="h-14 border-b border-border bg-bg-secondary flex items-center justify-between px-4 shrink-0">
+        <div class="flex flex-col">
+            <h1 class="text-sm font-semibold text-text-primary">Configuration</h1>
+            <span class="text-[10px] text-text-secondary">Workspace & Preferences</span>
+        </div>
+    </header>
+
+    <main class="flex-1 overflow-y-auto custom-scrollbar p-8">
+        <div class="max-w-5xl mx-auto config-grid grid grid-cols-1 lg:grid-cols-[1fr_320px] gap-8">
+            <!-- Main Column -->
+            <div class="space-y-8">
+                
+                <!-- Connected Repositories -->
+                <section class="config-section">
+                    <header class="mb-4 flex items-center justify-between">
+                        <div>
+                            <h2 class="text-sm font-bold text-text-primary">Connected Repositories</h2>
+                            <p class="text-xs text-text-secondary">Repositories auto-discovered from published tours</p>
+                        </div>
+                        <button class="secondary-button !py-1 text-xs opacity-50 cursor-not-allowed" title="Repos are auto-discovered from publish events in M2">
+                            {% call icons::icon("plus", 14) %}
+                            Connect
+                        </button>
+                    </header>
+                    <div class="settings-card rounded-xl border border-border bg-bg-secondary/30 overflow-hidden">
+                        {% if repos.is_empty() %}
+                        <div class="p-8 text-center text-xs text-text-secondary">No repositories connected yet.</div>
+                        {% else %}
+                        <ul class="repo-list divide-y divide-border/50">
+                            {% for repo in repos %}
+                            <li class="repo-item p-4 flex items-center justify-between hover:bg-bg-tertiary/20 transition-colors">
+                                <div class="flex items-center gap-3">
+                                    <div class="w-8 h-8 rounded-md bg-bg-tertiary flex items-center justify-center text-text-secondary">
+                                        {% call icons::icon("github", 16) %}
+                                    </div>
+                                    <div>
+                                        <div class="text-sm font-medium text-text-primary">{{ repo.name }}</div>
+                                        <div class="text-xs text-text-secondary font-mono mt-0.5">{{ repo.path }}</div>
+                                    </div>
+                                </div>
+                                <span class="status-pill inline-flex items-center gap-1.5 px-2 py-1 rounded text-[10px] font-medium bg-status-healthy/10 text-status-healthy border border-status-healthy/20">
+                                    <span class="status-dot dot-healthy"></span> Connected
+                                </span>
+                            </li>
+                            {% endfor %}
+                        </ul>
+                        {% endif %}
+                    </div>
+                </section>
+
+                <!-- User Preferences -->
+                <section class="config-section">
+                    <header class="mb-4">
+                        <h2 class="text-sm font-bold text-text-primary">User Preferences</h2>
+                        <p class="text-xs text-text-secondary">Local editor and display settings</p>
+                    </header>
+                    <div class="settings-card rounded-xl border border-border bg-bg-secondary/30 overflow-hidden divide-y divide-border/50">
+                        <form hx-post="/config/prefs" hx-trigger="change" hx-swap="none">
+                            <div class="setting-row p-4 flex items-start justify-between gap-4">
+                                <div class="setting-info flex-1">
+                                    <div class="text-sm font-medium text-text-primary">Code Theme</div>
+                                    <div class="text-xs text-text-secondary mt-1">Theme used for syntax highlighting in tours</div>
+                                </div>
+                                <select name="theme" class="setting-select bg-bg-tertiary border border-border rounded-md px-3 py-1.5 text-sm text-text-primary focus:outline-none focus:border-accent">
+                                    <option value="atom-one-dark">Atom One Dark</option>
+                                    <option value="dracula">Dracula</option>
+                                    <option value="github-dark">GitHub Dark</option>
+                                    <option value="monokai">Monokai</option>
+                                </select>
+                            </div>
+                            <div class="setting-row p-4 flex items-start justify-between gap-4">
+                                <div class="setting-info flex-1">
+                                    <div class="text-sm font-medium text-text-primary">Font Family</div>
+                                    <div class="text-xs text-text-secondary mt-1">Monospace font for code previews</div>
+                                </div>
+                                <select name="font" class="setting-select bg-bg-tertiary border border-border rounded-md px-3 py-1.5 text-sm text-text-primary focus:outline-none focus:border-accent">
+                                    <option value="Fira Code">Fira Code</option>
+                                    <option value="JetBrains Mono">JetBrains Mono</option>
+                                    <option value="Source Code Pro">Source Code Pro</option>
+                                </select>
+                            </div>
+                        </form>
+                    </div>
+                </section>
+            </div>
+
+            <!-- Sidebar Column -->
+            <div class="space-y-8">
+                <!-- Scheduled Tasks -->
+                <section class="config-section">
+                    <header class="mb-4">
+                        <h2 class="text-sm font-bold text-text-primary">Scheduled Tasks</h2>
+                    </header>
+                    <div class="settings-card rounded-xl border border-border bg-bg-secondary/30 p-4 space-y-4">
+                        <form hx-post="/config/heal" hx-swap="none">
+                            <div class="setting-row vertical space-y-3 mb-4">
+                                <label class="flex items-center gap-3">
+                                    <input type="checkbox" name="auto_heal" class="rounded border-border bg-bg-tertiary text-accent focus:ring-accent focus:ring-offset-bg-primary">
+                                    <span class="text-sm font-medium">Auto-Heal Tours</span>
+                                </label>
+                                <p class="text-xs text-text-secondary ml-7">Periodically validate and update drifted tours against the main branch.</p>
+                            </div>
+                            <button type="submit" class="secondary-button full-width w-full justify-center text-xs" title="Phase 10 Feature">
+                                Run Full Validation Now
+                            </button>
+                        </form>
+                    </div>
+                </section>
+
+                <!-- Maintenance -->
+                <section class="config-section">
+                    <header class="mb-4">
+                        <h2 class="text-sm font-bold text-text-primary">Maintenance</h2>
+                    </header>
+                    <div class="settings-card rounded-xl border border-border bg-bg-secondary/30 p-4">
+                        <form hx-post="/config/maintenance" hx-swap="none">
+                            <div class="setting-row vertical space-y-3">
+                                <label class="flex items-center gap-3">
+                                    <input type="checkbox" name="auto_delete" class="rounded border-border bg-bg-tertiary text-accent focus:ring-accent focus:ring-offset-bg-primary">
+                                    <span class="text-sm font-medium">Delete Stale Tours</span>
+                                </label>
+                                <p class="text-xs text-text-secondary ml-7 mb-3">Remove tours that have been stale for more than the threshold.</p>
+                                <div class="ml-7 flex items-center gap-2">
+                                    <input type="number" name="days" value="30" class="w-20 bg-bg-tertiary border border-border rounded-md px-2 py-1 text-xs focus:outline-none focus:border-accent">
+                                    <span class="text-xs text-text-secondary">days</span>
+                                </div>
+                            </div>
+                        </form>
+                    </div>
+                </section>
+
+                <!-- Security -->
+                <section class="config-section">
+                    <header class="mb-4">
+                        <h2 class="text-sm font-bold text-text-primary">Security</h2>
+                    </header>
+                    <div class="cloud-card-compact rounded-xl border border-border bg-gradient-to-br from-bg-secondary to-bg-tertiary p-5 flex flex-col items-center text-center space-y-3">
+                        <div class="w-10 h-10 rounded-full bg-accent/10 flex items-center justify-center text-accent">
+                            {% call icons::icon("shield", 20) %}
+                        </div>
+                        <div>
+                            <h3 class="text-sm font-bold text-text-primary">Codemark Cloud</h3>
+                            <p class="text-xs text-text-secondary mt-1">Sign in to manage team access and private tours.</p>
+                        </div>
+                        <a href="/auth/sign-in" class="primary-button full-width w-full justify-center text-xs mt-2" title="Phase 6 Feature">
+                            Sign In
+                        </a>
+                    </div>
+                </section>
+            </div>
+        </div>
+    </main>
+</div>
+{% endblock %}

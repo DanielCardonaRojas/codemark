@@ -1,0 +1,81 @@
+@import "tailwindcss";
+
+@theme {
+  /* Ported from dashboard-ui/src/index.css :root */
+  --color-bg-primary: #0d1117;
+  --color-bg-secondary: #161b22;
+  --color-bg-tertiary: #1f242c;
+  --color-text-primary: #e6edf3;
+  --color-text-secondary: #8b949e;
+  --color-accent: #58a6ff;
+  --color-accent-hover: #79b8ff;
+  --color-border: #30363d;
+  --color-status-healthy: #3fb950;
+  --color-status-drifted: #d29922;
+  --color-status-stale: #f85149;
+  --color-status-archived: #6e7681;
+  --width-sidebar: 240px;
+  --width-sidebar-collapsed: 72px;
+}
+
+@layer components {
+  .nav-item       { @apply flex items-center gap-2 px-3 py-2 rounded-md text-text-secondary hover:bg-bg-tertiary hover:text-text-primary transition-colors; }
+  .nav-item.active{ @apply bg-bg-tertiary text-text-primary; }
+  .status-dot     { @apply inline-block w-2 h-2 rounded-full; }
+  .dot-healthy    { @apply bg-status-healthy; }
+  .dot-drifted    { @apply bg-status-drifted; }
+  .dot-stale      { @apply bg-status-stale; }
+  .dot-archived   { @apply bg-status-archived; }
+  .status-badge   { @apply inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-xs font-medium; }
+  .primary-button { @apply inline-flex items-center gap-2 px-3 py-2 rounded-md bg-accent text-white hover:bg-accent-hover transition-colors; }
+  .secondary-button { @apply inline-flex items-center gap-2 px-3 py-2 rounded-md border border-border text-text-primary hover:bg-bg-tertiary transition-colors; }
+
+  /* Sidebar geometry */
+  .sidebar {
+    @apply fixed left-0 top-0 h-full bg-bg-secondary border-r border-border z-30 transition-[width] duration-300;
+    width: var(--width-sidebar);
+  }
+  
+  html[data-sidebar-collapsed="1"] .sidebar {
+    width: var(--width-sidebar-collapsed);
+  }
+
+  .main-content {
+    @apply min-h-screen bg-bg-primary text-text-primary transition-[padding-left] duration-300;
+    padding-left: var(--width-sidebar);
+  }
+
+  html[data-sidebar-collapsed="1"] .main-content {
+    padding-left: var(--width-sidebar-collapsed);
+  }
+
+  /* Tour Detail Components */
+  .step-item { @apply w-full flex items-start gap-3 p-3 rounded-md text-left transition-colors text-text-secondary hover:bg-bg-tertiary/50 hover:text-text-primary; }
+  .step-item.active { @apply bg-bg-tertiary text-text-primary; }
+  .metadata-sidebar { @apply w-80 border-l border-border bg-bg-secondary/50 flex flex-col shrink-0 overflow-hidden; }
+  .step-block { @apply space-y-6 pt-8 border-t border-border/40; }
+
+  @keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+  }
+  
+  .htmx-request .heal-spinner svg {
+    animation: spin 1s linear infinite;
+  }
+
+  /* Custom scrollbar for steps sidebar and metadata sidebar */
+  .custom-scrollbar::-webkit-scrollbar {
+    width: 4px;
+  }
+  .custom-scrollbar::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .custom-scrollbar::-webkit-scrollbar-thumb {
+    background: var(--color-border);
+    border-radius: 10px;
+  }
+  .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+    background: var(--color-text-secondary);
+  }
+}

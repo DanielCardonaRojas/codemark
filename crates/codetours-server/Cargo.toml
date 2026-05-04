@@ -27,8 +27,18 @@ uuid = { workspace = true }
 chrono = { workspace = true }
 rusqlite = { workspace = true }
 deadpool-sqlite = { workspace = true }
+rinja = { workspace = true }
+rinja_axum = { workspace = true }
+syntect = { workspace = true }
 futures-util = "0.3"
 zstd = "0.13"
+quick_cache = "0.6.21"
+xxhash-rust = { version = "0.8.15", features = ["xxh3"] }
 
 [dev-dependencies]
+criterion = "0.8.2"
 tempfile = { workspace = true }
+
+[[bench]]
+name = "highlight"
+harness = false

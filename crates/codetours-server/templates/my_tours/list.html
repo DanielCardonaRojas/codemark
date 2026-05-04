@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% import "partials/icon.html" as icons %}
+
+{% block title %}My Tours - Codetours{% endblock %}
+
+{% block content %}
+<div class="flex flex-col h-screen overflow-hidden">
+    <!-- Header -->
+    <header class="h-14 border-b border-border bg-bg-secondary flex items-center justify-between px-4 shrink-0">
+        <div class="flex flex-col">
+            <h1 class="text-sm font-semibold text-text-primary">My Tours</h1>
+            <span class="text-[10px] text-text-secondary">Manage your created tours</span>
+        </div>
+        <button class="primary-button !py-1 text-xs opacity-50 cursor-not-allowed" title="Phase 4 CLI is the source of truth for publishing">
+            {% call icons::icon("plus", 14) %}
+            New Tour
+        </button>
+    </header>
+
+    <!-- Main Content -->
+    <main class="flex-1 overflow-y-auto custom-scrollbar p-8">
+        <div class="max-w-4xl mx-auto space-y-6">
+            <!-- Tabs -->
+            <div class="flex items-center gap-1 border-b border-border/50 pb-px">
+                <a href="/my-tours?tab=published" class="nav-item !px-4 !py-2.5 !rounded-b-none border-b-2 {% if active_tab == "published" %}active !border-accent{% else %}border-transparent{% endif %}">
+                    Published
+                    <span class="count-pill ml-2 px-1.5 py-0.5 rounded-full bg-bg-tertiary text-[10px]">{{ published_count }}</span>
+                </a>
+                <a href="/my-tours?tab=draft" class="nav-item !px-4 !py-2.5 !rounded-b-none border-b-2 {% if active_tab == "draft" %}active !border-accent{% else %}border-transparent{% endif %}">
+                    Drafts
+                    <span class="count-pill ml-2 px-1.5 py-0.5 rounded-full bg-bg-tertiary text-[10px]">{{ draft_count }}</span>
+                </a>
+            </div>
+
+            <!-- List -->
+            {% if tours.is_empty() %}
+            <div class="py-20 flex flex-col items-center justify-center text-center border border-border border-dashed rounded-xl bg-bg-secondary/20">
+                <div class="w-12 h-12 rounded-full bg-bg-tertiary flex items-center justify-center text-text-secondary mb-4">
+                    {% call icons::icon("folder", 24) %}
+                </div>
+                <h3 class="text-sm font-bold text-text-primary mb-1">No tours found</h3>
+                <p class="text-xs text-text-secondary max-w-sm">You haven't {% if active_tab == "published" %}published any tours{% else %}created any drafts{% endif %} yet.</p>
+            </div>
+            {% else %}
+            <div class="grid grid-cols-1 gap-4">
+                {% for tour in tours %}
+                    {% include "my_tours/_card.html" %}
+                {% endfor %}
+            </div>
+            {% endif %}
+        </div>
+    </main>
+</div>
+{% endblock %}

@@ -1,0 +1,46 @@
+<div class="my-tour-card flex flex-col p-4 rounded-xl border border-border bg-bg-secondary/30 hover:bg-bg-secondary/50 hover:border-border/80 transition-colors">
+    <div class="flex items-start justify-between gap-4 mb-3">
+        <div class="flex-1 min-w-0">
+            <div class="flex items-center gap-2 mb-1.5">
+                {% if tour.is_published %}
+                <span class="status-badge bg-status-healthy/10 text-status-healthy border border-status-healthy/20">
+                    <span class="status-dot dot-healthy"></span> Published
+                </span>
+                {% else %}
+                <span class="status-badge bg-status-archived/10 text-status-archived border border-status-archived/20">
+                    <span class="status-dot dot-archived"></span> Draft
+                </span>
+                {% endif %}
+                <span class="text-[10px] text-text-secondary">Updated {{ tour.updated_at }}</span>
+            </div>
+            <a href="/tours/{{ tour.id }}" class="text-sm font-bold text-accent hover:underline block truncate">{{ tour.title }}</a>
+        </div>
+        <div class="flex gap-2 shrink-0">
+            {% if !tour.is_published %}
+            <button hx-post="/tours/{{ tour.id }}/publish" hx-confirm="Publish this draft?" class="primary-button !py-1 !px-2 text-xs">
+                Publish
+            </button>
+            {% endif %}
+            <button class="p-1.5 rounded-md hover:bg-bg-tertiary text-text-secondary transition-colors" title="Actions">
+                {% call icons::icon("more-vertical", 14) %}
+            </button>
+        </div>
+    </div>
+    
+    {% if let Some(desc) = tour.description %}
+    <p class="text-xs text-text-secondary line-clamp-2 mb-4">{{ desc }}</p>
+    {% endif %}
+
+    <div class="mt-auto flex items-center justify-between pt-3 border-t border-border/40 text-[10px] text-text-secondary">
+        <div class="flex gap-3">
+            <div class="flex items-center gap-1">
+                {% call icons::icon("git-branch", 12) %}
+                {% if let Some(repo) = tour.repo %}{{ repo }}{% else %}Local{% endif %}
+            </div>
+        </div>
+        <div class="flex items-center gap-1 font-mono">
+            {% call icons::icon("hash", 12) %}
+            {{ tour.step_count }} steps
+        </div>
+    </div>
+</div>
