@@ -300,8 +300,11 @@ pub async fn handler(
                     } else {
                         let bookmarks = bookmarks_data.into_iter().map(|(bid, file, range, head, preview, notes, lang, q, tags, comments, ordinal)| {
                             let line_parsed = range.as_ref()
-                                .and_then(|r| r.split(|c: char| !c.is_numeric()).filter(|s| !s.is_empty()).next())
-                                .and_then(|s| s.parse::<usize>().ok())
+                                .and_then(|r| {
+                                    r.split('-')
+                                        .next()
+                                        .and_then(|s| s.parse::<usize>().ok())
+                                })
                                 .unwrap_or(1);
                                 
                             let raw_preview = preview.unwrap_or_default();

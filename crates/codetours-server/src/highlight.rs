@@ -40,6 +40,7 @@ pub fn highlight(language: &str, content: &str) -> Arc<String> {
 
     let syntax = syntax_set
         .find_syntax_by_extension(language)
+        .or_else(|| syntax_set.find_syntax_by_token(language))
         .or_else(|| syntax_set.find_syntax_by_name(language))
         .unwrap_or_else(|| syntax_set.find_syntax_plain_text());
 
