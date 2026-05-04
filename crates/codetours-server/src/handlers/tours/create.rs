@@ -197,10 +197,7 @@ pub async fn handler(
             if written >= max_size_blocking as u64 {
                 let mut buf = [0u8; 1];
                 if decoder.read(&mut buf)? > 0 {
-                    return Err(std::io::Error::new(
-                        std::io::ErrorKind::Other,
-                        "Decompressed size exceeds limit",
-                    ));
+                    return Err(std::io::Error::other("Decompressed size exceeds limit"));
                 }
             }
 
