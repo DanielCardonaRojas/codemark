@@ -108,20 +108,18 @@ pub async fn handler(
         let cache = PackCache::new(state.config.data_dir.clone());
         let pack_path = cache.get_pack_path(&id);
 
-        if let Some(path) = pack_path {
-            if path.exists() {
-                match fs::read(&path).await {
-                    Ok(bytes) => {
-                        return (
-                            [(header::CONTENT_TYPE, "application/vnd.codetours.pack+sqlite")],
-                            bytes,
-                        )
-                            .into_response();
-                    }
-                    Err(e) => {
-                        tracing::error!("Failed to read pack from cache: {}", e);
-                        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
-                    }
+        if let Some(path) = pack_path.filter(|p| p.exists()) {
+            match fs::read(&path).await {
+                Ok(bytes) => {
+                    return (
+                        [(header::CONTENT_TYPE, "application/vnd.codetours.pack+sqlite")],
+                        bytes,
+                    )
+                        .into_response();
+                }
+                Err(e) => {
+                    tracing::error!("Failed to read pack from cache: {}", e);
+                    return StatusCode::INTERNAL_SERVER_ERROR.into_response();
                 }
             }
         }
