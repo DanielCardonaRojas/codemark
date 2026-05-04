@@ -15,9 +15,30 @@ log_level = "info"
 # Maximum number of concurrently open tenant databases. Default: 256
 max_open_tenants = 256
 
+# Maximum allowed size for a SQLite pack upload in bytes. Default: 5MB
+max_pack_size = 5242880
+
+[storage]
+# Number of SQLite connections in the pool per tenant. Default: 8
+pool_size = 8
+
 [auth]
 # Authentication mode ("stub" or "github-oauth"). Default: "stub"
 mode = "stub"
 
-# Token used for development/stub authentication.
-dev_token = "dev-secret-token"
+# Token used for development/stub authentication. 
+# Clients must provide this in the 'X-Tour-Token' header.
+dev_token = "dev-token"
+
+
+# ------------------------------------------------------------------------------
+# Codemark CLI Client Configuration (~/.codemark/config.toml)
+# ------------------------------------------------------------------------------
+#
+# [codetours]
+# default_server = "local"
+#
+# [[codetours.servers]]
+# name = "local"
+# url = "http://localhost:8080"
+# token = "dev-token"
