@@ -509,11 +509,8 @@ impl Config {
             self.codetours.default_server = other.codetours.default_server.clone();
         }
         for server in &other.codetours.servers {
-            if let Some(existing) = self
-                .codetours
-                .servers
-                .iter_mut()
-                .find(|s| s.name == server.name)
+            if let Some(existing) =
+                self.codetours.servers.iter_mut().find(|s| s.name == server.name)
             {
                 *existing = server.clone();
             } else {

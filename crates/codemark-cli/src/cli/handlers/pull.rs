@@ -55,7 +55,9 @@ pub async fn handle_pull(cli: &Cli, mode: &OutputMode, args: &PullArgs) -> Resul
             Ok::<_, Error>(out)
         })
         .await
-        .map_err(|_| Error::Operation("Blocking task panicked during decompression".to_string()))??
+        .map_err(|_| {
+            Error::Operation("Blocking task panicked during decompression".to_string())
+        })??
     } else {
         bytes.to_vec()
     };
@@ -65,8 +67,8 @@ pub async fn handle_pull(cli: &Cli, mode: &OutputMode, args: &PullArgs) -> Resul
         .map_err(|e| Error::Operation(format!("failed to write pack: {e}")))?;
 
     // 3. Inspect and Migrate pack
-    let user_version =
-        pre_inspect(&pack_path).map_err(|e| Error::Operation(format!("pre-inspection failed: {e}")))?;
+    let user_version = pre_inspect(&pack_path)
+        .map_err(|e| Error::Operation(format!("pre-inspection failed: {e}")))?;
 
     if user_version < codemark_core::storage::db::Database::CURRENT_VERSION {
         let pack_path_clone = pack_path.clone();

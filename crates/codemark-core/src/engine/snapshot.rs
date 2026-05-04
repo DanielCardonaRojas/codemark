@@ -9,8 +9,8 @@ use crate::git::context as git_context;
 use crate::parser::languages::{Language, ParseCache};
 use crate::storage::db::Database;
 use crate::vfs::FileProvider;
-use std::path::Path;
 use chrono::Utc;
+use std::path::Path;
 
 /// A bundle of resolved bookmarks and metadata for a collection.
 pub struct SnapshotPayload {
@@ -28,14 +28,12 @@ pub async fn build_snapshot(
     project_root: &Path,
     padding: usize,
 ) -> Result<SnapshotPayload> {
-    let collection = db
-        .get_collection_by_id(collection_id)?
-        .ok_or_else(|| crate::error::Error::Input(format!("collection {collection_id} not found")))?;
+    let collection = db.get_collection_by_id(collection_id)?.ok_or_else(|| {
+        crate::error::Error::Input(format!("collection {collection_id} not found"))
+    })?;
 
-    let filter = BookmarkFilter {
-        collection_id: Some(collection_id.to_string()),
-        ..Default::default()
-    };
+    let filter =
+        BookmarkFilter { collection_id: Some(collection_id.to_string()), ..Default::default() };
     let bookmarks = db.list_bookmarks(&filter)?;
     let mut resolved_bookmarks = Vec::new();
     let mut resolutions = Vec::new();
@@ -53,7 +51,8 @@ pub async fn build_snapshot(
         let mut cache = ParseCache::new(lang)?;
         let ts_lang = lang.tree_sitter_language();
 
-        let result = resolution::resolve(&bm, &mut cache, &ts_lang, project_root, &provider).await?;
+        let result =
+            resolution::resolve(&bm, &mut cache, &ts_lang, project_root, &provider).await?;
 
         // Capture preview lines
         let abs_path = git_context::resolve_bookmark_file_path(&bm.file_path, project_root)?;
