@@ -13,14 +13,14 @@
     {% block head %}{% endblock %}
 </head>
 <body class="bg-bg-primary text-text-primary">
-    <aside class="sidebar group">
+    <aside class="sidebar group" data-sidebar-collapsed="false">
         <div class="flex flex-col h-full">
             <div class="p-4 flex items-center justify-between">
                 <div class="flex items-center gap-2 font-bold text-xl overflow-hidden whitespace-nowrap">
                     <div class="bg-accent p-1.5 rounded text-white">
                         {% call icons::icon("layers", 20) %}
                     </div>
-                    <span class="group-data-[sidebar-collapsed]:hidden">Codetours</span>
+                    <span class="group-data-[sidebar-collapsed=true]:hidden">Codetours</span>
                 </div>
                 <button data-sidebar-toggle class="p-2 rounded-md hover:bg-bg-tertiary text-text-secondary opacity-0 group-hover:opacity-100 transition-opacity">
                     {% call icons::icon("menu", 20) %}
@@ -30,15 +30,15 @@
             <nav class="flex-1 px-2 py-4 space-y-1">
                 <a href="/tours" class="nav-item {% if nav == NavItem::Tours %}active{% endif %}">
                     {% call icons::icon("compass", 20) %}
-                    <span class="group-data-[sidebar-collapsed]:hidden">Browse Tours</span>
+                    <span class="group-data-[sidebar-collapsed=true]:hidden">Browse Tours</span>
                 </a>
                 <a href="/my-tours" class="nav-item {% if nav == NavItem::MyTours %}active{% endif %}">
                     {% call icons::icon("user-circle", 20) %}
-                    <span class="group-data-[sidebar-collapsed]:hidden">My Tours</span>
+                    <span class="group-data-[sidebar-collapsed=true]:hidden">My Tours</span>
                 </a>
                 <a href="/config" class="nav-item {% if nav == NavItem::Config %}active{% endif %}">
                     {% call icons::icon("settings", 20) %}
-                    <span class="group-data-[sidebar-collapsed]:hidden">Configuration</span>
+                    <span class="group-data-[sidebar-collapsed=true]:hidden">Configuration</span>
                 </a>
             </nav>
         </div>

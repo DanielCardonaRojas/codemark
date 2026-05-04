@@ -10,14 +10,11 @@
   document.addEventListener('DOMContentLoaded', () => {
     // Sidebar toggle
     const toggle = document.querySelector('[data-sidebar-toggle]');
-    if (toggle) {
+    const sidebar = document.querySelector('.sidebar');
+    if (toggle && sidebar) {
       toggle.addEventListener('click', () => {
-        const collapsed = root.dataset.sidebarCollapsed === '1';
-        if (collapsed) {
-          delete root.dataset.sidebarCollapsed;
-        } else {
-          root.dataset.sidebarCollapsed = '1';
-        }
+        const collapsed = sidebar.dataset.sidebarCollapsed === 'true';
+        sidebar.dataset.sidebarCollapsed = collapsed ? 'false' : 'true';
         localStorage.setItem(SB_KEY, collapsed ? '0' : '1');
       });
     }

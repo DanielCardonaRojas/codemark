@@ -36,7 +36,7 @@
     width: var(--width-sidebar);
   }
   
-  html[data-sidebar-collapsed="1"] .sidebar {
+  .sidebar[data-sidebar-collapsed="true"] {
     width: var(--width-sidebar-collapsed);
   }
 
@@ -45,7 +45,7 @@
     padding-left: var(--width-sidebar);
   }
 
-  html[data-sidebar-collapsed="1"] .main-content {
+  .sidebar[data-sidebar-collapsed="true"] ~ .main-content {
     padding-left: var(--width-sidebar-collapsed);
   }
 
