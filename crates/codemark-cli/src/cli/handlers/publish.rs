@@ -4,15 +4,11 @@ use codemark_core::config::Config;
 use codemark_core::engine::snapshot::build_snapshot;
 use codemark_core::error::{Error, Result};
 use codemark_core::storage::pack::Packer;
-use reqwest::header::{HeaderMap, HeaderValue, CONTENT_TYPE};
+use reqwest::header::{CONTENT_TYPE, HeaderMap, HeaderValue};
 use rusqlite::params;
 use serde_json::Value;
 
-pub async fn handle_publish(
-    cli: &Cli,
-    mode: &OutputMode,
-    args: &PublishArgs,
-) -> Result<()> {
+pub async fn handle_publish(cli: &Cli, mode: &OutputMode, args: &PublishArgs) -> Result<()> {
     let db = super::open_db_for_write(cli)?;
     let config = super::load_config(cli);
 
@@ -40,10 +36,10 @@ pub async fn handle_publish(
     if let Some(desc) = &args.description {
         payload.collection.description = Some(desc.clone());
     }
-    
+
     // Honor visibility flag
-    payload.collection.visibility = args.visibility.parse()
-        .map_err(|e| Error::Input(format!("invalid visibility: {e}")))?;
+    payload.collection.visibility =
+        args.visibility.parse().map_err(|e| Error::Input(format!("invalid visibility: {e}")))?;
 
     // 5. Create pack
     let temp_dir = std::env::temp_dir();
@@ -101,19 +97,29 @@ pub async fn handle_publish(
 }
 
 fn resolve_server_and_token(config: &Config, args: &PublishArgs) -> Result<(String, String)> {
-    let server_name = args.server.as_deref().or(config.codetours.default_server.as_deref()).unwrap_or("default");
-    
+    let server_name =
+        args.server.as_deref().or(config.codetours.default_server.as_deref()).unwrap_or("default");
+
     // Check if it's a URL
     if server_name.starts_with("http://") || server_name.starts_with("https://") {
-        let token = args.token.clone().ok_or_else(|| Error::Input("token is required when using a direct server URL".to_string()))?;
+        let token = args.token.clone().ok_or_else(|| {
+            Error::Input("token is required when using a direct server URL".to_string())
+        })?;
         return Ok((server_name.to_string(), token));
     }
 
     // Lookup in config
-    let server_cfg = config.codetours.servers.iter().find(|s| s.name == server_name)
+    let server_cfg = config
+        .codetours
+        .servers
+        .iter()
+        .find(|s| s.name == server_name)
         .ok_or_else(|| Error::Input(format!("server '{}' not found in config", server_name)))?;
 
-    let token = args.token.clone().or(server_cfg.token.clone())
+    let token = args
+        .token
+        .clone()
+        .or(server_cfg.token.clone())
         .ok_or_else(|| Error::Input(format!("token not found for server '{}'", server_name)))?;
 
     Ok((server_cfg.url.clone(), token))

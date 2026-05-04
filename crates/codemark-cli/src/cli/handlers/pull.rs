@@ -2,7 +2,7 @@ use crate::cli::output::{OutputMode, write_success};
 use crate::cli::*;
 use codemark_core::config::Config;
 use codemark_core::error::{Error, Result};
-use codemark_core::storage::pack::{PackReader, pre_inspect, inspect};
+use codemark_core::storage::pack::{PackReader, inspect, pre_inspect};
 use comfy_table::Table;
 use reqwest::header::{ACCEPT, HeaderMap, HeaderValue};
 use std::collections::HashMap;
@@ -23,9 +23,10 @@ pub async fn handle_pull(cli: &Cli, mode: &OutputMode, args: &PullArgs) -> Resul
             .map_err(|e| Error::Operation(format!("failed to query tours list: {e}")))?;
 
         if response.status().is_success() {
-            let list: serde_json::Value = response.json().await.map_err(|e| {
-                Error::Operation(format!("failed to parse tours list: {e}"))
-            })?;
+            let list: serde_json::Value = response
+                .json()
+                .await
+                .map_err(|e| Error::Operation(format!("failed to parse tours list: {e}")))?;
             if let Some(tours) = list["tours"].as_array() {
                 let matches: Vec<&str> = tours
                     .iter()
@@ -65,7 +66,8 @@ pub async fn handle_pull(cli: &Cli, mode: &OutputMode, args: &PullArgs) -> Resul
         if let Some(t) = token {
             headers.insert(
                 "X-Tour-Token",
-                HeaderValue::from_str(&t).map_err(|_| Error::Operation("Invalid token".to_string()))?,
+                HeaderValue::from_str(&t)
+                    .map_err(|_| Error::Operation("Invalid token".to_string()))?,
             );
         }
         headers.insert(ACCEPT, HeaderValue::from_static("application/vnd.codetours.pack+sqlite"));
@@ -124,11 +126,14 @@ pub async fn handle_pull(cli: &Cli, mode: &OutputMode, args: &PullArgs) -> Resul
                 Ok::<_, Error>(())
             })
             .await
-            .map_err(|_| Error::Operation("Blocking task panicked during migration".to_string()))??;
+            .map_err(|_| {
+                Error::Operation("Blocking task panicked during migration".to_string())
+            })??;
         }
 
         // Full inspection after potential migration
-        inspect(&pack_path).map_err(|e| Error::Operation(format!("pack inspection failed: {e}")))?;
+        inspect(&pack_path)
+            .map_err(|e| Error::Operation(format!("pack inspection failed: {e}")))?;
 
         if let Some(save_name) = &args.save {
             let name_override = if save_name.is_empty() { None } else { Some(save_name.as_str()) };
@@ -144,7 +149,8 @@ pub async fn handle_pull(cli: &Cli, mode: &OutputMode, args: &PullArgs) -> Resul
             handle_display_pulled(mode, &pack_path).await?;
         }
         Ok(())
-    }.await;
+    }
+    .await;
 
     // cleanup
     let _ = tokio::fs::remove_file(&pack_path).await;
@@ -232,14 +238,14 @@ async fn handle_save_pulled(
         )?;
         let rows = com_stmt.query_map([&old_id], |row: &rusqlite::Row| {
             Ok((
-                row.get::<_, String>(0)?, // old_id
-                row.get::<_, String>(2)?, // author
-                row.get::<_, String>(3)?, // body
-                row.get::<_, String>(4)?, // created_at
+                row.get::<_, String>(0)?,         // old_id
+                row.get::<_, String>(2)?,         // author
+                row.get::<_, String>(3)?,         // body
+                row.get::<_, String>(4)?,         // created_at
                 row.get::<_, Option<String>>(5)?, // parent_id
             ))
         })?;
-        
+
         let mut comment_id_map = HashMap::new();
         let mut pending_comments = Vec::new();
 
@@ -247,7 +253,7 @@ async fn handle_save_pulled(
             let (old_comment_id, author, body, created_at, parent_id) = row?;
             let new_comment_id = uuid::Uuid::new_v4().to_string();
             comment_id_map.insert(old_comment_id, new_comment_id.clone());
-            
+
             pending_comments.push((new_comment_id, author, body, created_at, parent_id));
         }
 
