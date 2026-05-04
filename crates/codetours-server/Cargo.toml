@@ -27,6 +27,8 @@ uuid = { workspace = true }
 chrono = { workspace = true }
 rusqlite = { workspace = true }
 deadpool-sqlite = { workspace = true }
+futures-util = "0.3"
+zstd = "0.13"
 
 [dev-dependencies]
 tempfile = { workspace = true }

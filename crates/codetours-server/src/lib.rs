@@ -1,7 +1,10 @@
+pub mod auth;
 pub mod cli;
 pub mod config;
 pub mod handlers;
 pub mod observability;
+pub mod pack;
+pub mod pack_cache;
 pub mod router;
 pub mod shutdown;
 pub mod storage;

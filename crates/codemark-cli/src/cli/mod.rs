@@ -108,6 +108,15 @@ pub enum Command {
 
     /// Open a bookmarked file in your editor
     Open(OpenArgs),
+
+    /// Publish a local collection to a Codetours server
+    Publish(PublishArgs),
+
+    /// Pull a tour from a Codetours server
+    Pull(PullArgs),
+
+    /// Manage remote tours
+    Tour(TourArgs),
 }
 
 // --- Subcommand argument structs ---
@@ -632,4 +641,83 @@ pub struct AnnotateArgs {
 pub struct OpenArgs {
     /// Bookmark ID (full UUID or unambiguous prefix)
     pub id: String,
+}
+
+#[derive(Debug, clap::Args)]
+pub struct PublishArgs {
+    /// Local collection name to publish
+    pub collection: String,
+
+    /// Server URL or name from config
+    #[arg(long)]
+    pub server: Option<String>,
+
+    /// API token (overrides config)
+    #[arg(long)]
+    pub token: Option<String>,
+
+    /// Visibility of the tour (public or private)
+    #[arg(long, default_value = "private")]
+    pub visibility: String,
+
+    /// Title of the tour (defaults to collection name)
+    #[arg(long)]
+    pub title: Option<String>,
+
+    /// Description of the tour
+    #[arg(long)]
+    pub description: Option<String>,
+
+    /// Build the pack and print its path, but do not upload
+    #[arg(long)]
+    pub dry_run: bool,
+}
+
+#[derive(Debug, clap::Args)]
+pub struct PullArgs {
+    /// Tour URL or ID
+    pub tour: String,
+
+    /// Server URL or name (required if tour is a bare ID)
+    #[arg(long)]
+    pub server: Option<String>,
+
+    /// API token
+    #[arg(long)]
+    pub token: Option<String>,
+
+    /// Save the tour locally as a collection. If no name is provided, uses the tour's title.
+    #[arg(long, num_args = 0..=1, default_missing_value = "")]
+    pub save: Option<String>,
+}
+
+#[derive(Debug, clap::Args)]
+pub struct TourArgs {
+    #[command(subcommand)]
+    pub command: TourCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum TourCommand {
+    /// List tours on a server
+    List(TourListArgs),
+}
+
+#[derive(Debug, clap::Args)]
+pub struct TourListArgs {
+    /// Server URL or name
+    #[arg(long)]
+    pub server: Option<String>,
+
+    /// Filter by repository URL
+    #[arg(long)]
+    pub repo: Option<String>,
+
+    /// Maximum results to return
+    #[arg(long, default_value = "50")]
+    pub limit: usize,
+
+    /// Offset for pagination
+    #[arg(long, default_value = "0")]
+    pub offset: usize,
 }

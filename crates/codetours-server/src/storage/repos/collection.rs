@@ -16,7 +16,7 @@ impl CollectionRepo {
         conn.interact(move |conn| {
             let mut stmt = conn.prepare(
                 "SELECT id, name, description, visibility, created_at, created_by, created_branch, 
-                        published_at, published_commit_sha, repo_url, status, updated_at
+                        published_at, published_commit_sha, repo_url, status, updated_at, imported_from_url
                  FROM collections WHERE id = ?1",
             )?;
             let rows = stmt.query_map([id], row_to_collection)?;
@@ -36,7 +36,7 @@ impl CollectionRepo {
         conn.interact(move |conn| {
             let mut stmt = conn.prepare(
                 "SELECT id, name, description, visibility, created_at, created_by, created_branch, 
-                        published_at, published_commit_sha, repo_url, status, updated_at
+                        published_at, published_commit_sha, repo_url, status, updated_at, imported_from_url
                  FROM collections WHERE name = ?1",
             )?;
             let rows = stmt.query_map([name], row_to_collection)?;
@@ -53,7 +53,7 @@ impl CollectionRepo {
         conn.interact(move |conn| {
             let mut stmt = conn.prepare(
                 "SELECT id, name, description, visibility, created_at, created_by, created_branch, 
-                        published_at, published_commit_sha, repo_url, status, updated_at
+                        published_at, published_commit_sha, repo_url, status, updated_at, imported_from_url
                  FROM collections 
                  WHERE visibility IS NOT NULL AND visibility != 'private'
                    AND published_at IS NOT NULL
@@ -111,5 +111,6 @@ fn row_to_collection(row: &rusqlite::Row) -> rusqlite::Result<Collection> {
         repo_url: row.get(9)?,
         status: row.get(10)?,
         updated_at: row.get(11)?,
+        imported_from_url: row.get(12)?,
     })
 }

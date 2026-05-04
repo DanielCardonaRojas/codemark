@@ -23,6 +23,8 @@ const MIGRATION_010: &str =
 const MIGRATION_011: &str = include_str!("../../../../migrations/V11__add_publish_metadata.sql");
 const MIGRATION_012: &str =
     include_str!("../../../../migrations/V12__add_resolution_display_fields.sql");
+const MIGRATION_013: &str = include_str!("../../../../migrations/V13__add_published_tours.sql");
+const MIGRATION_014: &str = include_str!("../../../../migrations/V14__add_imported_from_url.sql");
 
 /// SQLite database wrapper with automatic migrations.
 pub struct Database {
@@ -31,6 +33,9 @@ pub struct Database {
 }
 
 impl Database {
+    /// Current schema version supported by this crate.
+    pub const CURRENT_VERSION: i64 = 14;
+
     /// Open the database at the given path, run migrations.
     /// Returns an error if the parent directory does not exist.
     pub fn open(path: &Path) -> Result<Self> {
@@ -108,6 +113,8 @@ impl Database {
             (10, MIGRATION_010),
             (11, MIGRATION_011),
             (12, MIGRATION_012),
+            (13, MIGRATION_013),
+            (14, MIGRATION_014),
         ];
 
         for (version, sql) in migrations {
@@ -252,6 +259,12 @@ impl Database {
     }
 
     fn get_schema_version(conn: &Connection) -> i64 {
+        // First try PRAGMA user_version as it's the standard way
+        if let Ok(v @ 1..) = conn.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0)) {
+            return v;
+        }
+
+        // Fallback to schema_meta table (internal bookkeeping)
         conn.query_row(
             "SELECT value FROM schema_meta WHERE key = 'schema_version'",
             [],
@@ -267,6 +280,7 @@ impl Database {
             "INSERT OR REPLACE INTO schema_meta (key, value) VALUES ('schema_version', ?1)",
             [version.to_string()],
         )?;
+        conn.execute(&format!("PRAGMA user_version = {version}"), [])?;
         Ok(())
     }
 }
@@ -284,7 +298,7 @@ mod tests {
         init_test_env();
         let db = Database::open_in_memory().unwrap();
         let version = db.schema_version();
-        assert_eq!(version, 12);
+        assert_eq!(version, 14);
     }
 
     #[test]
@@ -292,7 +306,7 @@ mod tests {
         init_test_env();
         let mut db = Database::open_in_memory().unwrap();
         db.run_migrations().unwrap();
-        assert_eq!(db.schema_version(), 12);
+        assert_eq!(db.schema_version(), 14);
     }
 
     #[test]
@@ -312,6 +326,7 @@ mod tests {
         assert!(tables.contains(&"collections".to_string()));
         assert!(tables.contains(&"collection_bookmarks".to_string()));
         assert!(tables.contains(&"bookmark_comments".to_string()));
+        assert!(tables.contains(&"published_tours".to_string()));
         assert!(tables.contains(&"schema_meta".to_string()));
     }
 

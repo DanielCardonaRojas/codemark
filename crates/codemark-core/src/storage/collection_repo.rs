@@ -5,8 +5,8 @@ use crate::storage::db::Database;
 impl Database {
     pub fn insert_collection(&self, collection: &Collection) -> Result<()> {
         self.conn().execute(
-            "INSERT INTO collections (id, name, description, visibility, created_at, created_by, created_branch, published_at, published_commit_sha, repo_url, status, updated_at)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+            "INSERT INTO collections (id, name, description, visibility, created_at, created_by, created_branch, published_at, published_commit_sha, repo_url, status, updated_at, imported_from_url)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
             rusqlite::params![
                 collection.id,
                 collection.name,
@@ -20,6 +20,7 @@ impl Database {
                 collection.repo_url,
                 collection.status,
                 collection.updated_at,
+                collection.imported_from_url,
             ],
         )?;
         Ok(())
@@ -28,10 +29,23 @@ impl Database {
     /// Get a collection by its exact name.
     pub fn get_collection_by_name(&self, name: &str) -> Result<Option<Collection>> {
         let mut stmt = self.conn().prepare(
-            "SELECT id, name, description, visibility, created_at, created_by, created_branch, published_at, published_commit_sha, repo_url, status, updated_at
+            "SELECT id, name, description, visibility, created_at, created_by, created_branch, published_at, published_commit_sha, repo_url, status, updated_at, imported_from_url
              FROM collections WHERE name = ?1",
         )?;
         let mut rows = stmt.query_map([name], row_to_collection)?;
+        match rows.next() {
+            Some(row) => Ok(Some(row?)),
+            None => Ok(None),
+        }
+    }
+
+    /// Get a collection by its unique ID.
+    pub fn get_collection_by_id(&self, id: &str) -> Result<Option<Collection>> {
+        let mut stmt = self.conn().prepare(
+            "SELECT id, name, description, visibility, created_at, created_by, created_branch, published_at, published_commit_sha, repo_url, status, updated_at, imported_from_url
+             FROM collections WHERE id = ?1",
+        )?;
+        let mut rows = stmt.query_map([id], row_to_collection)?;
         match rows.next() {
             Some(row) => Ok(Some(row?)),
             None => Ok(None),
@@ -46,7 +60,7 @@ impl Database {
             ));
         }
         let mut stmt = self.conn().prepare(
-            "SELECT id, name, description, visibility, created_at, created_by, created_branch, published_at, published_commit_sha, repo_url, status, updated_at
+            "SELECT id, name, description, visibility, created_at, created_by, created_branch, published_at, published_commit_sha, repo_url, status, updated_at, imported_from_url
              FROM collections WHERE id LIKE ?1",
         )?;
         let pattern = format!("{prefix}%");
@@ -67,7 +81,7 @@ impl Database {
     pub fn list_collections(&self) -> Result<Vec<(Collection, usize)>> {
         let mut stmt = self.conn().prepare(
             "SELECT c.id, c.name, c.description, c.visibility, c.created_at, c.created_by, c.created_branch,
-             c.published_at, c.published_commit_sha, c.repo_url, c.status, c.updated_at,
+             c.published_at, c.published_commit_sha, c.repo_url, c.status, c.updated_at, c.imported_from_url,
              COUNT(cb.bookmark_id) AS bookmark_count
              FROM collections c
              LEFT JOIN collection_bookmarks cb ON c.id = cb.collection_id
@@ -94,8 +108,9 @@ impl Database {
                 repo_url: row.get(9)?,
                 status: row.get(10)?,
                 updated_at: row.get(11)?,
+                imported_from_url: row.get(12)?,
             };
-            let count: usize = row.get(12)?;
+            let count: usize = row.get(13)?;
             Ok((collection, count))
         })?;
 
@@ -241,7 +256,7 @@ impl Database {
     pub fn list_collections_for_bookmark(&self, bookmark_id: &str) -> Result<Vec<Collection>> {
         let mut stmt = self.conn().prepare(
             "SELECT c.id, c.name, c.description, c.visibility, c.created_at, c.created_by, c.created_branch,
-             c.published_at, c.published_commit_sha, c.repo_url, c.status, c.updated_at
+             c.published_at, c.published_commit_sha, c.repo_url, c.status, c.updated_at, c.imported_from_url
              FROM collections c
              JOIN collection_bookmarks cb ON c.id = cb.collection_id
              WHERE cb.bookmark_id = ?1
@@ -269,6 +284,7 @@ fn row_to_collection(row: &rusqlite::Row) -> rusqlite::Result<Collection> {
         repo_url: row.get(9)?,
         status: row.get(10)?,
         updated_at: row.get(11)?,
+        imported_from_url: row.get(12)?,
     })
 }
 
@@ -312,6 +328,7 @@ mod tests {
             repo_url: None,
             status: None,
             updated_at: None,
+            imported_from_url: None,
         }
     }
 

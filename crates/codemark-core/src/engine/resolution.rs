@@ -25,6 +25,26 @@ pub struct ResolutionResult {
     pub new_query: Option<String>,
 }
 
+impl ResolutionResult {
+    /// Capture preview lines around the resolved range.
+    /// default: 5 above and 5 below.
+    pub fn capture_preview(&self, source: &str, padding: usize) -> String {
+        let lines: Vec<&str> = source.lines().collect();
+        let total_lines = lines.len();
+        if total_lines == 0 {
+            return String::new();
+        }
+
+        let start_line = self.start_line;
+        let end_line = self.end_line;
+
+        let context_start = start_line.saturating_sub(padding);
+        let context_end = (end_line + padding).min(total_lines.saturating_sub(1));
+
+        lines[context_start..=context_end].join("\n")
+    }
+}
+
 /// Resolve a single bookmark against the current state of its file.
 #[allow(clippy::collapsible_if)]
 pub async fn resolve(

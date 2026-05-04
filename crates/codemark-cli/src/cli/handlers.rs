@@ -25,7 +25,10 @@ use codemark_core::storage::{SemanticRepo, db::Database};
 pub mod bookmark;
 pub mod collection;
 pub mod maintenance;
+pub mod publish;
+pub mod pull;
 pub mod search;
+pub mod tour;
 
 /// Dispatch a parsed CLI command to its handler.
 pub async fn dispatch(cli: &Cli) -> Result<()> {
@@ -53,6 +56,9 @@ pub async fn dispatch(cli: &Cli) -> Result<()> {
         Command::Completions(args) => handle_completions(args),
         Command::Annotate(args) => bookmark::handle_annotate(cli, &mode, args).await,
         Command::Open(args) => handle_open(cli, args).await,
+        Command::Publish(args) => publish::handle_publish(cli, &mode, args).await,
+        Command::Pull(args) => pull::handle_pull(cli, &mode, args).await,
+        Command::Tour(args) => dispatch_tour(cli, &mode, args).await,
     }
 }
 
@@ -66,6 +72,12 @@ async fn dispatch_collection(cli: &Cli, mode: &OutputMode, args: &CollectionArgs
         CollectionCommand::Show(a) => collection::handle_collection_show(cli, mode, a).await,
         CollectionCommand::Resolve(a) => collection::handle_collection_resolve(cli, mode, a).await,
         CollectionCommand::Reorder(a) => collection::handle_collection_reorder(cli, mode, a).await,
+    }
+}
+
+async fn dispatch_tour(cli: &Cli, mode: &OutputMode, args: &TourArgs) -> Result<()> {
+    match &args.command {
+        TourCommand::List(a) => tour::handle_tour_list(cli, mode, a).await,
     }
 }
 
@@ -94,6 +106,18 @@ pub fn open_db_for_write(cli: &Cli) -> Result<Database> {
         return Err(Error::NotInitialized);
     }
     Database::create(&db_path)
+}
+
+/// Returns the project root (parent of .codemark) for a given database.
+pub fn get_project_root(db: &Database) -> std::path::PathBuf {
+    let db_path = db.path();
+    if let Some(parent) = db_path.parent() {
+        if parent.ends_with(".codemark") {
+            return parent.parent().unwrap_or(parent).to_path_buf();
+        }
+        return parent.to_path_buf();
+    }
+    std::env::current_dir().unwrap_or_default()
 }
 
 /// Open the primary database (for single-db reads).
@@ -752,6 +776,7 @@ pub fn add_bookmark_to_collection(
                 repo_url: None,
                 status: None,
                 updated_at: None,
+                imported_from_url: None,
             };
             db.insert_collection(&c)?;
             c
