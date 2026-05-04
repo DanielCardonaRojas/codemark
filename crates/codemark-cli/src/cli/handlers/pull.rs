@@ -10,9 +10,51 @@ pub async fn handle_pull(cli: &Cli, mode: &OutputMode, args: &PullArgs) -> Resul
     let config = super::load_config(cli);
 
     // 1. Resolve server and token
-    let (server_url, token, tour_id) = resolve_pull_params(&config, args)?;
+    let (server_url, token, mut tour_id) = resolve_pull_params(&config, args)?;
 
-    // 2. Download pack
+    // 2. Short ID resolution
+    if uuid::Uuid::parse_str(&tour_id).is_err() {
+        let client = reqwest::Client::new();
+        let response = client
+            .get(format!("{}/tours", server_url))
+            .send()
+            .await
+            .map_err(|e| Error::Operation(format!("failed to query tours list: {e}")))?;
+
+        if response.status().is_success() {
+            let list: serde_json::Value = response.json().await.map_err(|e| {
+                Error::Operation(format!("failed to parse tours list: {e}"))
+            })?;
+            if let Some(tours) = list["tours"].as_array() {
+                let matches: Vec<&str> = tours
+                    .iter()
+                    .filter_map(|t| t["tour_id"].as_str())
+                    .filter(|id| id.starts_with(&tour_id))
+                    .collect();
+
+                match matches.len() {
+                    1 => {
+                        tour_id = matches[0].to_string();
+                    }
+                    0 => {
+                        return Err(Error::Input(format!(
+                            "tour ID '{}' not found on server",
+                            tour_id
+                        )));
+                    }
+                    _ => {
+                        return Err(Error::Input(format!(
+                            "tour ID '{}' is ambiguous (matches: {})",
+                            tour_id,
+                            matches.join(", ")
+                        )));
+                    }
+                }
+            }
+        }
+    }
+
+    // 3. Download pack
     let temp_dir = std::env::temp_dir();
     let pack_path = temp_dir.join(format!("codemark-pull-{}.sqlite", uuid::Uuid::new_v4()));
 
