@@ -439,6 +439,23 @@ impl Database {
         Ok(results)
     }
 
+    /// List all tags for a specific bookmark.
+    pub fn list_tags_for_bookmark(&self, bookmark_id: &str) -> Result<Vec<Tag>> {
+        let mut stmt = self.conn().prepare(
+            "SELECT bookmark_id, tag, added_at, added_by FROM bookmark_tags WHERE bookmark_id = ?1 ORDER BY tag ASC"
+        )?;
+        let rows = stmt.query_map([bookmark_id], |row| {
+            Ok(Tag {
+                bookmark_id: row.get(0)?,
+                tag: row.get(1)?,
+                added_at: row.get(2)?,
+                added_by: row.get(3)?,
+            })
+        })?;
+        let results: Vec<Tag> = rows.filter_map(|r| r.ok()).collect();
+        Ok(results)
+    }
+
     /// Load annotations and tags for a bookmark.
     fn load_bookmark_metadata(&self, bm: &mut Bookmark) -> Result<()> {
         // Load annotations
@@ -472,6 +489,13 @@ impl Database {
         bm.comments = self.list_comments_for_bookmark(&bm.id)?;
 
         Ok(())
+    }
+
+    /// List all bookmarks in a specific collection.
+    pub fn list_bookmarks_in_collection(&self, collection_id: &str) -> Result<Vec<Bookmark>> {
+        let filter =
+            BookmarkFilter { collection_id: Some(collection_id.to_string()), ..Default::default() };
+        self.list_bookmarks(&filter)
     }
 }
 
@@ -728,6 +752,7 @@ mod tests {
             repo_url: None,
             status: None,
             updated_at: None,
+            imported_from_url: None,
         };
         db.insert_collection(&col).unwrap();
         db.add_to_collection(&col.id, std::slice::from_ref(&bm1.id)).unwrap();

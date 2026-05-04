@@ -430,17 +430,20 @@ name = "codemark-cli"
 version = "0.5.4"
 dependencies = [
  "anyhow",
+ "axum",
  "chrono",
  "clap",
  "clap_complete",
  "clap_mangen",
  "codemark-core",
+ "codetours-server",
  "comfy-table",
  "git2",
  "handlebars",
  "insta",
  "is-terminal",
  "regex",
+ "reqwest",
  "rusqlite",
  "serde",
  "serde_json",
@@ -450,6 +453,7 @@ dependencies = [
  "tokio",
  "tree-sitter",
  "uuid",
+ "zstd",
 ]
 
 [[package]]

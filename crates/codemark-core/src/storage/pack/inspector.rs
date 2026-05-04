@@ -1,7 +1,7 @@
-use std::path::Path;
 use rusqlite::{Connection, OpenFlags};
-use thiserror::Error;
 use serde::Serialize;
+use std::path::Path;
+use thiserror::Error;
 
 #[derive(Error, Debug, Serialize)]
 #[serde(tag = "error", content = "reason", rename_all = "snake_case")]
@@ -58,10 +58,10 @@ pub fn pre_inspect(pack_path: &Path) -> Result<i64, PackError> {
     let mut stmt = conn.prepare(
         "SELECT type, name, sql FROM sqlite_schema 
          WHERE type IN ('table', 'view', 'trigger', 'index') 
-         AND name NOT LIKE 'sqlite_%'"
+         AND name NOT LIKE 'sqlite_%'",
     )?;
     let mut rows = stmt.query([])?;
-    
+
     let allowed_tables = [
         "collections",
         "collection_bookmarks",
@@ -78,13 +78,13 @@ pub fn pre_inspect(pack_path: &Path) -> Result<i64, PackError> {
     while let Some(row) = rows.next()? {
         let item_type: String = row.get(0)?;
         let name: String = row.get(1)?;
-        
+
         if item_type != "table" && item_type != "index" {
             return Err(PackError::DisallowedSchemaItem(name, item_type));
         }
-        
+
         if item_type == "table" && !allowed_tables.contains(&name.as_str()) {
-             return Err(PackError::DisallowedSchemaItem(name, item_type));
+            return Err(PackError::DisallowedSchemaItem(name, item_type));
         }
     }
 
@@ -99,11 +99,11 @@ pub fn inspect(pack_path: &Path) -> Result<PackInfo, PackError> {
     let user_version: i64 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
 
     // 1. Metadata check
-    let (source_client, purpose): (String, String) = conn.query_row(
-        "SELECT source_client, purpose FROM _pack_meta LIMIT 1",
-        [],
-        |row| Ok((row.get(0)?, row.get(1)?))
-    ).map_err(|e| PackError::InvalidMetadata(e.to_string()))?;
+    let (source_client, purpose): (String, String) = conn
+        .query_row("SELECT source_client, purpose FROM _pack_meta LIMIT 1", [], |row| {
+            Ok((row.get(0)?, row.get(1)?))
+        })
+        .map_err(|e| PackError::InvalidMetadata(e.to_string()))?;
 
     if purpose != "publish" && purpose != "mirror" && purpose != "export" {
         return Err(PackError::InvalidMetadata(format!("Invalid purpose: {}", purpose)));
@@ -113,7 +113,7 @@ pub fn inspect(pack_path: &Path) -> Result<PackInfo, PackError> {
     let tour_count: usize = conn.query_row(
         "SELECT COUNT(*) FROM collections WHERE visibility IS NOT NULL",
         [],
-        |row| row.get(0)
+        |row| row.get(0),
     )?;
 
     if purpose == "publish" && tour_count != 1 {
@@ -123,11 +123,8 @@ pub fn inspect(pack_path: &Path) -> Result<PackInfo, PackError> {
         return Err(PackError::TourCountOutOfRange(tour_count));
     }
 
-    let bookmark_count: usize = conn.query_row(
-        "SELECT COUNT(*) FROM bookmarks",
-        [],
-        |row| row.get(0)
-    )?;
+    let bookmark_count: usize =
+        conn.query_row("SELECT COUNT(*) FROM bookmarks", [], |row| row.get(0))?;
 
     if bookmark_count > 500 {
         return Err(PackError::BookmarkLimitExceeded(bookmark_count));
@@ -138,16 +135,14 @@ pub fn inspect(pack_path: &Path) -> Result<PackInfo, PackError> {
         "SELECT COUNT(*) FROM collection_bookmarks 
          WHERE bookmark_id NOT IN (SELECT id FROM bookmarks)",
         [],
-        |row| row.get(0)
+        |row| row.get(0),
     )?;
     if dangling_bookmarks > 0 {
-        return Err(PackError::DanglingBookmarkRef(format!("{} dangling bookmarks", dangling_bookmarks)));
+        return Err(PackError::DanglingBookmarkRef(format!(
+            "{} dangling bookmarks",
+            dangling_bookmarks
+        )));
     }
 
-    Ok(PackInfo {
-        user_version,
-        tour_count,
-        bookmark_count,
-        source_client,
-    })
+    Ok(PackInfo { user_version, tour_count, bookmark_count, source_client })
 }

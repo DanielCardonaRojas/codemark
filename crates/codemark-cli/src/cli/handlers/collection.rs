@@ -36,6 +36,7 @@ pub async fn handle_collection_create(
         repo_url: None,
         status: None,
         updated_at: None,
+        imported_from_url: None,
     };
     db.insert_collection(&collection)?;
     write_success(mode, &format!("Collection '{}' created", args.name))?;
@@ -102,6 +103,7 @@ pub async fn handle_collection_add(
                 repo_url: None,
                 status: None,
                 updated_at: None,
+                imported_from_url: None,
             };
             db.insert_collection(&c)?;
             c

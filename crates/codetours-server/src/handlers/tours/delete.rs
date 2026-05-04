@@ -1,11 +1,11 @@
+use crate::auth::AuthContext;
+use crate::pack_cache::PackCache;
+use crate::router::AppState;
 use axum::{
     extract::{Path, State},
     http::StatusCode,
     response::IntoResponse,
 };
-use crate::auth::AuthContext;
-use crate::router::AppState;
-use crate::pack_cache::PackCache;
 
 /// Handler for DELETE /tours/:id. Deletes a tour and its orphaned bookmarks.
 pub async fn handler(

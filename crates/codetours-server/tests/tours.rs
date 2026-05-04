@@ -1,6 +1,6 @@
 use axum::{
     body::Body,
-    http::{header, Request, StatusCode},
+    http::{Request, StatusCode, header},
 };
 use codetours_server::{
     config::Config,
@@ -37,6 +37,8 @@ async fn test_publish_list_get_delete_flow() {
     {
         let conn = rusqlite::Connection::open(&pack_path).unwrap();
         let sql = "PRAGMA user_version = 12;
+             CREATE TABLE schema_meta (key TEXT PRIMARY KEY, value TEXT);
+             INSERT INTO schema_meta (key, value) VALUES ('schema_version', '12');
              CREATE TABLE collections (id TEXT PRIMARY KEY, name TEXT, visibility TEXT, created_at TEXT, description TEXT, repo_url TEXT, created_branch TEXT, published_commit_sha TEXT, status TEXT, published_at TEXT, updated_at TEXT, created_by TEXT);
              CREATE TABLE bookmarks (id TEXT PRIMARY KEY, file_path TEXT, query TEXT, language TEXT, created_at TEXT, content_hash TEXT, commit_hash TEXT, status TEXT, resolution_method TEXT, last_resolved_at TEXT, stale_since TEXT, created_by TEXT);
              CREATE TABLE collection_bookmarks (collection_id TEXT, bookmark_id TEXT, position INTEGER, added_at TEXT);
@@ -68,16 +70,12 @@ async fn test_publish_list_get_delete_flow() {
     let response = app.clone().oneshot(req).await.unwrap();
     let status = response.status();
     let body = ax_body_to_json(response).await;
-    
+
     assert_eq!(status, StatusCode::CREATED, "Response body: {:?}", body);
     assert_eq!(body["tour_id"], collection_id);
 
     // 3. GET /tours (List)
-    let req = Request::builder()
-        .method("GET")
-        .uri("/tours")
-        .body(Body::empty())
-        .unwrap();
+    let req = Request::builder().method("GET").uri("/tours").body(Body::empty()).unwrap();
 
     let response = app.clone().oneshot(req).await.unwrap();
     let status = response.status();
@@ -96,7 +94,7 @@ async fn test_publish_list_get_delete_flow() {
 
     let response = app.clone().oneshot(req).await.unwrap();
     assert_eq!(response.status(), StatusCode::OK);
-    
+
     let body = ax_body_to_json(response).await;
     assert_eq!(body["tour_id"], collection_id);
     assert_eq!(body["bookmarks"].as_array().unwrap().len(), 1);
@@ -112,7 +110,10 @@ async fn test_publish_list_get_delete_flow() {
 
     let response = app.clone().oneshot(req).await.unwrap();
     assert_eq!(response.status(), StatusCode::OK);
-    assert_eq!(response.headers().get(header::CONTENT_TYPE).unwrap(), "application/vnd.codetours.pack+sqlite");
+    assert_eq!(
+        response.headers().get(header::CONTENT_TYPE).unwrap(),
+        "application/vnd.codetours.pack+sqlite"
+    );
 
     // 6. Test Migration (Upload a pack with user_version = 1)
     let migration_collection_id = Uuid::new_v4().to_string();
@@ -192,7 +193,7 @@ async fn test_publish_unauthorized() {
 #[tokio::test]
 async fn test_publish_malicious_pack() {
     let (app, _tmp) = setup_app().await;
-    
+
     // Create pack with a view (disallowed)
     let pack_path = _tmp.path().join("malicious.pack.sqlite");
     {
@@ -205,7 +206,7 @@ async fn test_publish_malicious_pack() {
              INSERT INTO _pack_meta VALUES ('P_MAL', 12, 'publish', 'C', 'T');"
         ).unwrap();
     }
-    
+
     let pack_bytes = std::fs::read(&pack_path).unwrap();
     let req = Request::builder()
         .method("POST")
@@ -217,7 +218,7 @@ async fn test_publish_malicious_pack() {
 
     let response = app.oneshot(req).await.unwrap();
     assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
-    
+
     let body = ax_body_to_json(response).await;
     assert_eq!(body["error"], "disallowed_schema_item");
 }
@@ -226,10 +227,10 @@ async fn test_publish_malicious_pack() {
 #[tokio::test]
 async fn test_publish_too_large() {
     let (app, _tmp) = setup_app().await;
-    
+
     // 6MB payload (limit is 5MB)
     let large_body = vec![0u8; 6 * 1024 * 1024];
-    
+
     let req = Request::builder()
         .method("POST")
         .uri("/tours")

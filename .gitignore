@@ -6,6 +6,7 @@ man/
 node_modules/
 site/
 pack-cache/
+data/
 
 .claude
 .mcp.json

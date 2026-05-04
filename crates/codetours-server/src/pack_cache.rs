@@ -37,9 +37,7 @@ impl PackCache {
         if let Err(e) = fs::rename(temp_path, &dest_path).await {
             // Fallback for cross-filesystem move (e.g. /tmp to /data)
             tracing::debug!("Rename failed ({}), falling back to copy and remove", e);
-            fs::copy(temp_path, &dest_path)
-                .await
-                .context("Failed to copy pack to cache")?;
+            fs::copy(temp_path, &dest_path).await.context("Failed to copy pack to cache")?;
             fs::remove_file(temp_path)
                 .await
                 .context("Failed to remove temporary pack file after copy")?;
@@ -51,17 +49,13 @@ impl PackCache {
     pub async fn delete_pack(&self, tour_id: &str) -> Result<()> {
         let path = self.get_pack_path(tour_id);
         if fs::try_exists(&path).await.unwrap_or(false) {
-            fs::remove_file(path)
-                .await
-                .context("Failed to delete pack from cache")?;
+            fs::remove_file(path).await.context("Failed to delete pack from cache")?;
         }
         Ok(())
     }
 
     /// Returns true if a pack file for the given tour ID exists in the cache.
     pub async fn exists(&self, tour_id: &str) -> bool {
-        fs::try_exists(self.get_pack_path(tour_id))
-            .await
-            .unwrap_or(false)
+        fs::try_exists(self.get_pack_path(tour_id)).await.unwrap_or(false)
     }
 }

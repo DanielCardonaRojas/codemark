@@ -1,12 +1,12 @@
+use crate::handlers::tours::create::ErrorResponse;
+use crate::router::AppState;
 use axum::{
+    Json,
     extract::{Query, State},
     http::StatusCode,
     response::IntoResponse,
-    Json,
 };
 use serde::{Deserialize, Serialize};
-use crate::router::AppState;
-use crate::handlers::tours::create::ErrorResponse;
 
 /// Request parameters for listing tours.
 #[derive(Debug, Deserialize)]

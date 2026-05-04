@@ -1,12 +1,11 @@
+use crate::router::AppState;
 use axum::{
-    async_trait,
+    Json, async_trait,
     extract::{FromRef, FromRequestParts},
-    http::{request::Parts, StatusCode},
+    http::{StatusCode, request::Parts},
     response::{IntoResponse, Response},
-    Json,
 };
 use serde::{Deserialize, Serialize};
-use crate::router::AppState;
 
 /// Scope represents a permission granted to an authenticated user.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -76,11 +75,9 @@ pub enum AuthError {
 impl IntoResponse for AuthError {
     fn into_response(self) -> Response {
         let (status, error_code, message) = match self {
-            AuthError::InvalidToken => (
-                StatusCode::UNAUTHORIZED,
-                "invalid_token",
-                "X-Tour-Token header is invalid",
-            ),
+            AuthError::InvalidToken => {
+                (StatusCode::UNAUTHORIZED, "invalid_token", "X-Tour-Token header is invalid")
+            }
             AuthError::ServerMisconfigured => (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "internal",
@@ -88,10 +85,8 @@ impl IntoResponse for AuthError {
             ),
         };
 
-        let body = Json(AuthErrorResponse {
-            error: error_code.to_string(),
-            message: message.to_string(),
-        });
+        let body =
+            Json(AuthErrorResponse { error: error_code.to_string(), message: message.to_string() });
 
         (status, body).into_response()
     }

@@ -66,6 +66,29 @@ pub struct Config {
     pub databases: DatabasesConfig,
     #[serde(default)]
     pub identity: IdentityConfig,
+    #[serde(default)]
+    pub codetours: CodetoursConfig,
+}
+
+/// Codetours configuration.
+#[derive(Debug, Default, Deserialize, Serialize)]
+#[serde(default)]
+pub struct CodetoursConfig {
+    /// Name of the default server to use for publish/pull.
+    pub default_server: Option<String>,
+    /// List of configured Codetours servers.
+    pub servers: Vec<CodetoursServerConfig>,
+}
+
+/// Configuration for a single Codetours server.
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct CodetoursServerConfig {
+    /// Friendly name for the server.
+    pub name: String,
+    /// Base URL of the server.
+    pub url: String,
+    /// API token for authentication.
+    pub token: Option<String>,
 }
 
 /// Semantic search configuration wrapper.
@@ -479,6 +502,15 @@ impl Config {
         }
         if other.identity.force.is_some() {
             self.identity.force = other.identity.force;
+        }
+
+        // Codetours config
+        if other.codetours.default_server.is_some() {
+            self.codetours.default_server = other.codetours.default_server;
+        }
+        if !other.codetours.servers.is_empty() {
+            // Append or replace? Let's replace for now as it is simpler
+            self.codetours.servers = other.codetours.servers;
         }
     }
 

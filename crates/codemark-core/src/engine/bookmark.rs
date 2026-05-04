@@ -185,6 +185,7 @@ pub struct Collection {
     pub repo_url: Option<String>,
     pub status: Option<String>,
     pub updated_at: Option<String>,
+    pub imported_from_url: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -1,20 +1,20 @@
 use axum::{
-    extract::{State, Request},
+    Json,
+    extract::{Request, State},
     http::StatusCode,
     response::IntoResponse,
-    Json,
 };
-use tokio::fs::{self, File};
-use tokio::io::AsyncWriteExt;
 use futures_util::StreamExt;
 use serde::Serialize;
+use tokio::fs::{self, File};
+use tokio::io::AsyncWriteExt;
 use uuid::Uuid;
 
 use crate::auth::AuthContext;
-use crate::router::AppState;
 use crate::observability::RequestId;
-use crate::pack::{inspect, PackError};
+use crate::pack::{PackError, inspect};
 use crate::pack_cache::PackCache;
+use crate::router::AppState;
 
 /// Successful response body for tour creation.
 #[derive(Debug, Serialize)]
@@ -129,7 +129,6 @@ pub async fn handler(
             )
                 .into_response();
         }
-
 
         if let Err(e) = file.write_all(&chunk).await {
             tracing::error!("Failed to write to temp file: {}", e);
@@ -434,10 +433,11 @@ pub async fn handler(
                     reason: Some(e.to_string()),
                     request_id: Some(request_id),
                 }),
-            ).into_response();
+            )
+                .into_response();
         }
         Err(e) => {
-             tracing::error!("Interaction error during merge: {}", e);
+            tracing::error!("Interaction error during merge: {}", e);
             let _ = fs::remove_file(&temp_path).await;
             return (
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -446,17 +446,15 @@ pub async fn handler(
                     reason: Some(e.to_string()),
                     request_id: Some(request_id),
                 }),
-            ).into_response();
+            )
+                .into_response();
         }
     };
 
     // 7. Save to pack cache
     let cache = PackCache::new(state.config.data_dir.clone());
     if let Err(e) = cache.save_pack(&response.tour_id, &temp_path).await {
-        tracing::error!(
-            "Failed to save pack to cache: {}. Performing compensating deletion.",
-            e
-        );
+        tracing::error!("Failed to save pack to cache: {}. Performing compensating deletion.", e);
 
         // Compensating deletion in DB to maintain consistency
         let storage = state.storage.clone();
@@ -464,9 +462,10 @@ pub async fn handler(
         if let Ok(conn) = storage.get_conn().await {
             let _ = conn
                 .interact(move |conn| {
-                    conn.execute("DELETE FROM collection_bookmarks WHERE collection_id = ?1", [
-                        &tour_id,
-                    ])?;
+                    conn.execute(
+                        "DELETE FROM collection_bookmarks WHERE collection_id = ?1",
+                        [&tour_id],
+                    )?;
                     conn.execute("DELETE FROM collections WHERE id = ?1", [&tour_id])?;
                     Ok::<_, rusqlite::Error>(())
                 })
@@ -484,11 +483,7 @@ pub async fn handler(
             .into_response();
     }
 
-    let status = if is_republish {
-        StatusCode::OK
-    } else {
-        StatusCode::CREATED
-    };
+    let status = if is_republish { StatusCode::OK } else { StatusCode::CREATED };
 
     (status, Json(response)).into_response()
 }

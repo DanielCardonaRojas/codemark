@@ -1,8 +1,8 @@
 use axum::{
-    extract::{Path, Query, State},
-    http::{header, HeaderMap, StatusCode},
-    response::IntoResponse,
     Json,
+    extract::{Path, Query, State},
+    http::{HeaderMap, StatusCode, header},
+    response::IntoResponse,
 };
 use serde::{Deserialize, Serialize};
 use tokio::fs;
@@ -65,10 +65,8 @@ pub async fn handler(
     Path(id): Path<String>,
     Query(params): Query<GetTourParams>,
 ) -> impl IntoResponse {
-    let accept = headers
-        .get(header::ACCEPT)
-        .and_then(|v| v.to_str().ok())
-        .unwrap_or("application/json");
+    let accept =
+        headers.get(header::ACCEPT).and_then(|v| v.to_str().ok()).unwrap_or("application/json");
 
     let is_pack_request = params.format.as_deref() == Some("pack")
         || accept == "application/vnd.codetours.pack+sqlite";
@@ -113,7 +111,10 @@ pub async fn handler(
         if pack_path.exists() {
             match fs::read(&pack_path).await {
                 Ok(bytes) => {
-                    return ([(header::CONTENT_TYPE, "application/vnd.codetours.pack+sqlite")], bytes)
+                    return (
+                        [(header::CONTENT_TYPE, "application/vnd.codetours.pack+sqlite")],
+                        bytes,
+                    )
                         .into_response();
                 }
                 Err(e) => {
