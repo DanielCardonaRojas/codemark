@@ -161,12 +161,12 @@ pub async fn handler(
 
     // 4. Check for zstd compression and decompress if needed
     let is_zstd = {
-        let f = std::fs::File::open(&temp_path);
+        let f = fs::File::open(&temp_path).await;
         match f {
             Ok(mut f) => {
                 let mut magic = [0u8; 4];
-                use std::io::Read;
-                f.read_exact(&mut magic).is_ok() && magic == [0x28, 0xB5, 0x2F, 0xFD]
+                use tokio::io::AsyncReadExt;
+                f.read_exact(&mut magic).await.is_ok() && magic == [0x28, 0xB5, 0x2F, 0xFD]
             }
             Err(e) => {
                 tracing::error!("Failed to open temp file for magic check: {}", e);
@@ -214,6 +214,7 @@ pub async fn handler(
         let _ = fs::remove_file(&temp_path).await;
         if let Err(e) = fs::rename(&decompressed_path, &temp_path).await {
             tracing::error!("Failed to rename decompressed pack: {}", e);
+            let _ = fs::remove_file(&decompressed_path).await;
             return StatusCode::INTERNAL_SERVER_ERROR.into_response();
         }
     }
@@ -323,7 +324,7 @@ pub async fn handler(
             let res = (|| -> rusqlite::Result<(CreateTourResponse, bool)> {
             // Get the collection ID from the pack
             let collection_id: String = conn.query_row(
-                "SELECT id FROM pack.collections WHERE visibility IS NOT NULL LIMIT 1",
+                "SELECT id FROM pack.collections WHERE visibility IS NOT NULL ORDER BY created_at DESC LIMIT 1",
                 [],
                 |row| row.get(0)
             )?;
@@ -338,11 +339,11 @@ pub async fn handler(
             )?;
 
             if exists {
-                tx.execute("CREATE TEMP TABLE _republish_orphan_candidates AS SELECT bookmark_id FROM main.collection_bookmarks WHERE collection_id = ?1", [&collection_id])?;
+                tx.execute("CREATE TEMP TABLE IF NOT EXISTS _republish_orphan_candidates AS SELECT bookmark_id FROM main.collection_bookmarks WHERE collection_id = ?1", [&collection_id])?;
                 tx.execute("DELETE FROM main.collection_bookmarks WHERE collection_id = ?1", [&collection_id])?;
                 tx.execute("DELETE FROM main.collections WHERE id = ?1", [&collection_id])?;
                 tx.execute("DELETE FROM main.bookmarks WHERE id IN (SELECT bookmark_id FROM _republish_orphan_candidates) AND id NOT IN (SELECT bookmark_id FROM main.collection_bookmarks)", [])?;
-                tx.execute("DROP TABLE _republish_orphan_candidates", [])?;
+                tx.execute("DROP TABLE IF EXISTS _republish_orphan_candidates", [])?;
             }
 
             // 2. Merge SQL
@@ -379,7 +380,7 @@ pub async fn handler(
                         SELECT id, bookmark_id, added_at, added_by, notes, context, source
                         FROM pack.bookmark_annotations WHERE id NOT IN (SELECT id FROM main.bookmark_annotations)", [])?;
 
-            tx.execute("INSERT INTO main.bookmark_tags (bookmark_id, tag, added_at, added_by)
+            tx.execute("INSERT OR IGNORE INTO main.bookmark_tags (bookmark_id, tag, added_at, added_by)
                         SELECT bookmark_id, tag, added_at, added_by FROM pack.bookmark_tags", [])?;
 
             // Optional bookmark_comments
@@ -456,17 +457,19 @@ pub async fn handler(
     if let Err(e) = cache.save_pack(&response.tour_id, &temp_path).await {
         tracing::error!("Failed to save pack to cache: {}. Performing compensating deletion.", e);
 
-        // Compensating deletion in DB to maintain consistency
+        // Compensating deletion in DB to maintain consistency (Full cleanup including orphans)
         let storage = state.storage.clone();
         let tour_id = response.tour_id.clone();
         if let Ok(conn) = storage.get_conn().await {
             let _ = conn
                 .interact(move |conn| {
-                    conn.execute(
-                        "DELETE FROM collection_bookmarks WHERE collection_id = ?1",
-                        [&tour_id],
-                    )?;
-                    conn.execute("DELETE FROM collections WHERE id = ?1", [&tour_id])?;
+                    let tx = conn.transaction()?;
+                    tx.execute("CREATE TEMP TABLE IF NOT EXISTS _comp_delete_candidates AS SELECT bookmark_id FROM main.collection_bookmarks WHERE collection_id = ?1", [&tour_id])?;
+                    tx.execute("DELETE FROM main.collection_bookmarks WHERE collection_id = ?1", [&tour_id])?;
+                    tx.execute("DELETE FROM main.collections WHERE id = ?1", [&tour_id])?;
+                    tx.execute("DELETE FROM main.bookmarks WHERE id IN (SELECT bookmark_id FROM _comp_delete_candidates) AND id NOT IN (SELECT bookmark_id FROM main.collection_bookmarks)", [])?;
+                    tx.execute("DROP TABLE IF EXISTS _comp_delete_candidates", [])?;
+                    tx.commit()?;
                     Ok::<_, rusqlite::Error>(())
                 })
                 .await;

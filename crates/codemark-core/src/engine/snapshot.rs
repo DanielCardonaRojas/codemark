@@ -9,6 +9,7 @@ use crate::git::context as git_context;
 use crate::parser::languages::{Language, ParseCache};
 use crate::storage::db::Database;
 use crate::vfs::FileProvider;
+use std::path::Path;
 use chrono::Utc;
 
 /// A bundle of resolved bookmarks and metadata for a collection.
@@ -24,14 +25,17 @@ pub struct SnapshotPayload {
 pub async fn build_snapshot(
     db: &Database,
     collection_id: &str,
+    project_root: &Path,
     padding: usize,
 ) -> Result<SnapshotPayload> {
-    let collection = db.get_collection_by_id(collection_id)?.ok_or_else(|| {
-        crate::error::Error::Input(format!("collection {collection_id} not found"))
-    })?;
+    let collection = db
+        .get_collection_by_id(collection_id)?
+        .ok_or_else(|| crate::error::Error::Input(format!("collection {collection_id} not found")))?;
 
-    let filter =
-        BookmarkFilter { collection_id: Some(collection_id.to_string()), ..Default::default() };
+    let filter = BookmarkFilter {
+        collection_id: Some(collection_id.to_string()),
+        ..Default::default()
+    };
     let bookmarks = db.list_bookmarks(&filter)?;
     let mut resolved_bookmarks = Vec::new();
     let mut resolutions = Vec::new();
@@ -39,8 +43,7 @@ pub async fn build_snapshot(
     let mut all_comments = Vec::new();
 
     let provider = crate::vfs::LocalFileProvider;
-    let head_commit =
-        git_context::detect_context(&std::env::current_dir()?).and_then(|ctx| ctx.head_commit);
+    let head_commit = git_context::detect_context(project_root).and_then(|ctx| ctx.head_commit);
 
     for bm in bookmarks {
         let lang = bm
@@ -50,10 +53,10 @@ pub async fn build_snapshot(
         let mut cache = ParseCache::new(lang)?;
         let ts_lang = lang.tree_sitter_language();
 
-        let result = resolution::resolve(&bm, &mut cache, &ts_lang, db.path(), &provider).await?;
+        let result = resolution::resolve(&bm, &mut cache, &ts_lang, project_root, &provider).await?;
 
         // Capture preview lines
-        let abs_path = git_context::resolve_bookmark_file_path(&bm.file_path, db.path())?;
+        let abs_path = git_context::resolve_bookmark_file_path(&bm.file_path, project_root)?;
         let source = provider.read_file(&abs_path, None).await?;
         let preview = result.capture_preview(&source, padding);
 

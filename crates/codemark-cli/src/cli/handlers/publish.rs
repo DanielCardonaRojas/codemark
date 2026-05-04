@@ -4,11 +4,15 @@ use codemark_core::config::Config;
 use codemark_core::engine::snapshot::build_snapshot;
 use codemark_core::error::{Error, Result};
 use codemark_core::storage::pack::Packer;
-use reqwest::header::{CONTENT_TYPE, HeaderMap, HeaderValue};
+use reqwest::header::{HeaderMap, HeaderValue, CONTENT_TYPE};
 use rusqlite::params;
 use serde_json::Value;
 
-pub async fn handle_publish(cli: &Cli, mode: &OutputMode, args: &PublishArgs) -> Result<()> {
+pub async fn handle_publish(
+    cli: &Cli,
+    mode: &OutputMode,
+    args: &PublishArgs,
+) -> Result<()> {
     let db = super::open_db_for_write(cli)?;
     let config = super::load_config(cli);
 
@@ -16,16 +20,32 @@ pub async fn handle_publish(cli: &Cli, mode: &OutputMode, args: &PublishArgs) ->
     let (server_url, token) = resolve_server_and_token(&config, args)?;
 
     // 2. Find collection
-    let collection = db
-        .get_collection_by_name(&args.collection)?
-        .or_else(|| db.get_collection_by_id_prefix(&args.collection).ok().flatten())
-        .ok_or_else(|| Error::Input(format!("collection '{}' not found", args.collection)))?;
+    let collection = if let Some(col) = db.get_collection_by_name(&args.collection)? {
+        col
+    } else if let Some(col) = db.get_collection_by_id_prefix(&args.collection)? {
+        col
+    } else {
+        return Err(Error::Input(format!("collection '{}' not found", args.collection)));
+    };
 
     // 3. Build snapshot
+    let project_root = super::get_project_root(&db);
     // TODO: support --allow-stale
-    let payload = build_snapshot(&db, &collection.id, 5).await?;
+    let mut payload = build_snapshot(&db, &collection.id, &project_root, 5).await?;
 
-    // 4. Create pack
+    // 4. Override metadata if flags provided
+    if let Some(title) = &args.title {
+        payload.collection.name = title.clone();
+    }
+    if let Some(desc) = &args.description {
+        payload.collection.description = Some(desc.clone());
+    }
+    
+    // Honor visibility flag
+    payload.collection.visibility = args.visibility.parse()
+        .map_err(|e| Error::Input(format!("invalid visibility: {e}")))?;
+
+    // 5. Create pack
     let temp_dir = std::env::temp_dir();
     let pack_path = temp_dir.join(format!("codemark-publish-{}.sqlite", uuid::Uuid::new_v4()));
     let packer = Packer::new(&db);
@@ -39,18 +59,12 @@ pub async fn handle_publish(cli: &Cli, mode: &OutputMode, args: &PublishArgs) ->
     // 5. Upload pack
     let client = reqwest::Client::new();
     let mut headers = HeaderMap::new();
-    headers.insert(
-        "X-Tour-Token",
-        HeaderValue::from_str(&token).map_err(|_| Error::Operation("Invalid token".to_string()))?,
-    );
+    headers.insert("X-Tour-Token", HeaderValue::from_str(&token).map_err(|_| Error::Operation("Invalid token".to_string()))?);
     headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/vnd.codetours.pack+sqlite"));
 
-    let pack_bytes = tokio::fs::read(&result_path)
-        .await
-        .map_err(|e| Error::Operation(format!("failed to read pack: {e}")))?;
+    let pack_bytes = tokio::fs::read(&result_path).await.map_err(|e| Error::Operation(format!("failed to read pack: {e}")))?;
 
-    let response = client
-        .post(format!("{}/tours", server_url))
+    let response = client.post(format!("{}/tours", server_url))
         .headers(headers)
         .body(pack_bytes)
         .send()
@@ -63,13 +77,8 @@ pub async fn handle_publish(cli: &Cli, mode: &OutputMode, args: &PublishArgs) ->
         return Err(Error::Operation(format!("server returned {status}: {body}")));
     }
 
-    let tour_info: Value = response
-        .json()
-        .await
-        .map_err(|e| Error::Operation(format!("failed to parse server response: {e}")))?;
-    let tour_id = tour_info["tour_id"]
-        .as_str()
-        .ok_or_else(|| Error::Operation("missing tour_id in response".to_string()))?;
+    let tour_info: Value = response.json().await.map_err(|e| Error::Operation(format!("failed to parse server response: {e}")))?;
+    let tour_id = tour_info["tour_id"].as_str().ok_or_else(|| Error::Operation("missing tour_id in response".to_string()))?;
 
     // 6. Record in local DB
     db.conn().execute(
@@ -89,29 +98,19 @@ pub async fn handle_publish(cli: &Cli, mode: &OutputMode, args: &PublishArgs) ->
 }
 
 fn resolve_server_and_token(config: &Config, args: &PublishArgs) -> Result<(String, String)> {
-    let server_name =
-        args.server.as_deref().or(config.codetours.default_server.as_deref()).unwrap_or("default");
-
+    let server_name = args.server.as_deref().or(config.codetours.default_server.as_deref()).unwrap_or("default");
+    
     // Check if it's a URL
     if server_name.starts_with("http://") || server_name.starts_with("https://") {
-        let token = args.token.clone().ok_or_else(|| {
-            Error::Input("token is required when using a direct server URL".to_string())
-        })?;
+        let token = args.token.clone().ok_or_else(|| Error::Input("token is required when using a direct server URL".to_string()))?;
         return Ok((server_name.to_string(), token));
     }
 
     // Lookup in config
-    let server_cfg = config
-        .codetours
-        .servers
-        .iter()
-        .find(|s| s.name == server_name)
+    let server_cfg = config.codetours.servers.iter().find(|s| s.name == server_name)
         .ok_or_else(|| Error::Input(format!("server '{}' not found in config", server_name)))?;
 
-    let token = args
-        .token
-        .clone()
-        .or(server_cfg.token.clone())
+    let token = args.token.clone().or(server_cfg.token.clone())
         .ok_or_else(|| Error::Input(format!("token not found for server '{}'", server_name)))?;
 
     Ok((server_cfg.url.clone(), token))

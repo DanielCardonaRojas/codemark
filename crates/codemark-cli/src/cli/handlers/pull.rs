@@ -46,12 +46,16 @@ pub async fn handle_pull(cli: &Cli, mode: &OutputMode, args: &PullArgs) -> Resul
     // Check if it is zstd compressed
     let is_zstd = bytes.starts_with(&[0x28, 0xB5, 0x2F, 0xFD]);
     let decompressed_bytes = if is_zstd {
-        let mut decoder = zstd::stream::read::Decoder::new(&bytes[..])
-            .map_err(|e| Error::Operation(format!("zstd decoder failed: {e}")))?;
-        let mut out = Vec::new();
-        std::io::copy(&mut decoder, &mut out)
-            .map_err(|e| Error::Operation(format!("decompression failed: {e}")))?;
-        out
+        tokio::task::spawn_blocking(move || {
+            let mut decoder = zstd::stream::read::Decoder::new(&bytes[..])
+                .map_err(|e| Error::Operation(format!("zstd decoder failed: {e}")))?;
+            let mut out = Vec::new();
+            std::io::copy(&mut decoder, &mut out)
+                .map_err(|e| Error::Operation(format!("decompression failed: {e}")))?;
+            Ok::<_, Error>(out)
+        })
+        .await
+        .map_err(|_| Error::Operation("Blocking task panicked during decompression".to_string()))??
     } else {
         bytes.to_vec()
     };
@@ -60,9 +64,22 @@ pub async fn handle_pull(cli: &Cli, mode: &OutputMode, args: &PullArgs) -> Resul
         .await
         .map_err(|e| Error::Operation(format!("failed to write pack: {e}")))?;
 
-    // 3. Inspect pack
-    pre_inspect(&pack_path).map_err(|e| Error::Operation(format!("pre-inspection failed: {e}")))?;
-    // Full inspection after potential migration would be here, but let's assume it's good for now or migrate it.
+    // 3. Inspect and Migrate pack
+    let user_version =
+        pre_inspect(&pack_path).map_err(|e| Error::Operation(format!("pre-inspection failed: {e}")))?;
+
+    if user_version < codemark_core::storage::db::Database::CURRENT_VERSION {
+        let pack_path_clone = pack_path.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut conn = rusqlite::Connection::open(&pack_path_clone)
+                .map_err(|e| Error::Database(e.to_string()))?;
+            codemark_core::storage::db::Database::run_migrations_on(&mut conn)
+                .map_err(|e| Error::Database(e.to_string()))?;
+            Ok::<_, Error>(())
+        })
+        .await
+        .map_err(|_| Error::Operation("Blocking task panicked during migration".to_string()))??;
+    }
 
     if let Some(save_as) = &args.save_as_collection {
         handle_save_pulled(
@@ -151,6 +168,24 @@ async fn handle_save_pulled(
             db.insert_tag(&tag?)?;
         }
 
+        // Import comments
+        let mut com_stmt = reader.conn().prepare(
+            "SELECT id, bookmark_id, author, body, created_at, parent_id FROM bookmark_comments WHERE bookmark_id = ?1",
+        )?;
+        let comments = com_stmt.query_map([&old_id], |row: &rusqlite::Row| {
+            Ok(codemark_core::engine::bookmark::BookmarkComment {
+                id: row.get(0)?,
+                bookmark_id: bookmark_id.clone(),
+                author: row.get(2)?,
+                body: row.get(3)?,
+                created_at: row.get(4)?,
+                parent_id: row.get(5)?,
+            })
+        })?;
+        for com in comments {
+            db.insert_comment(&com?)?;
+        }
+
         // Import resolutions
         let resolutions = reader.resolutions(&old_id)?;
         for mut res in resolutions {
@@ -210,17 +245,18 @@ fn resolve_pull_params(
         let server_url = parts[1].to_string();
         let tour_id = parts[0].to_string();
 
-        // Find token in config if available
-        let token = config
-            .codetours
-            .servers
-            .iter()
-            .find(|s| {
-                s.url == server_url
-                    || s.url.trim_end_matches('/') == server_url.trim_end_matches('/')
-            })
-            .and_then(|s| s.token.clone())
-            .or(args.token.clone());
+        // Find token in config if available, but OVERRIDE with --token flag
+        let token = args.token.clone().or_else(|| {
+            config
+                .codetours
+                .servers
+                .iter()
+                .find(|s| {
+                    s.url == server_url
+                        || s.url.trim_end_matches('/') == server_url.trim_end_matches('/')
+                })
+                .and_then(|s| s.token.clone())
+        });
 
         return Ok((server_url, token, tour_id));
     }
@@ -239,6 +275,7 @@ fn resolve_pull_params(
             config.codetours.servers.iter().find(|s| s.name == server_name).ok_or_else(|| {
                 Error::Input(format!("server '{}' not found in config", server_name))
             })?;
+        // Priority: CLI flag > Server config
         (s.url.clone(), args.token.clone().or(s.token.clone()))
     };
 

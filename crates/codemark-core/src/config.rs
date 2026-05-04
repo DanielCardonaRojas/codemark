@@ -506,11 +506,19 @@ impl Config {
 
         // Codetours config
         if other.codetours.default_server.is_some() {
-            self.codetours.default_server = other.codetours.default_server;
+            self.codetours.default_server = other.codetours.default_server.clone();
         }
-        if !other.codetours.servers.is_empty() {
-            // Append or replace? Let's replace for now as it is simpler
-            self.codetours.servers = other.codetours.servers;
+        for server in &other.codetours.servers {
+            if let Some(existing) = self
+                .codetours
+                .servers
+                .iter_mut()
+                .find(|s| s.name == server.name)
+            {
+                *existing = server.clone();
+            } else {
+                self.codetours.servers.push(server.clone());
+            }
         }
     }
 

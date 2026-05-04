@@ -108,6 +108,18 @@ pub fn open_db_for_write(cli: &Cli) -> Result<Database> {
     Database::create(&db_path)
 }
 
+/// Returns the project root (parent of .codemark) for a given database.
+pub fn get_project_root(db: &Database) -> std::path::PathBuf {
+    let db_path = db.path();
+    if let Some(parent) = db_path.parent() {
+        if parent.ends_with(".codemark") {
+            return parent.parent().unwrap_or(parent).to_path_buf();
+        }
+        return parent.to_path_buf();
+    }
+    std::env::current_dir().unwrap_or_default()
+}
+
 /// Open the primary database (for single-db reads).
 ///
 /// Returns Error::NotInitialized only if an explicit path was provided but it doesn't exist.

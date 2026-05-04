@@ -44,7 +44,7 @@ pub async fn handler(
 
         // 2. Capture orphan candidates (bookmark IDs from this collection)
         // We'll use a temp table to avoid borrow checker issues with stmt
-        tx.execute("CREATE TEMP TABLE _delete_candidates AS SELECT bookmark_id FROM collection_bookmarks WHERE collection_id = ?1", [&id_clone])?;
+        tx.execute("CREATE TEMP TABLE IF NOT EXISTS _delete_candidates AS SELECT bookmark_id FROM collection_bookmarks WHERE collection_id = ?1", [&id_clone])?;
 
         // 3. Delete membership rows
         tx.execute("DELETE FROM collection_bookmarks WHERE collection_id = ?1", [&id_clone])?;
@@ -60,7 +60,7 @@ pub async fn handler(
             []
         )?;
 
-        tx.execute("DROP TABLE _delete_candidates", [])?;
+        tx.execute("DROP TABLE IF EXISTS _delete_candidates", [])?;
         tx.commit()?;
         Ok(true)
     }).await;
@@ -73,6 +73,13 @@ pub async fn handler(
             StatusCode::NO_CONTENT.into_response()
         }
         Ok(Ok(false)) => StatusCode::NOT_FOUND.into_response(),
-        _ => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+        Ok(Err(e)) => {
+            tracing::error!("Database error during tour deletion ({}): {}", id, e);
+            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+        }
+        Err(e) => {
+            tracing::error!("Interaction error during tour deletion ({}): {}", id, e);
+            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+        }
     }
 }

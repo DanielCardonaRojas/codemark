@@ -88,10 +88,6 @@ async fn test_cli_publish_pull_roundtrip() {
     std::fs::create_dir_all(&src_dir).unwrap();
     std::fs::write(src_dir.join("main.rs"), "fn main() {\n    println!(\"Hello\");\n}\n").unwrap();
 
-    // Set CWD to cli_dir for resolution to work
-    let original_cwd = std::env::current_dir().unwrap();
-    std::env::set_current_dir(cli_dir.path()).unwrap();
-
     // 3. Run Publish
     let cli = Cli {
         db: vec![db_path.clone()],
@@ -140,9 +136,6 @@ async fn test_cli_publish_pull_roundtrip() {
         }),
     };
     handlers::dispatch(&pull_cli).await.unwrap();
-
-    // Restore CWD
-    std::env::set_current_dir(original_cwd).unwrap();
 
     // 6. Verify pulled collection
     let pulled_col = db

@@ -33,6 +33,9 @@ pub struct Database {
 }
 
 impl Database {
+    /// Current schema version supported by this crate.
+    pub const CURRENT_VERSION: i64 = 14;
+
     /// Open the database at the given path, run migrations.
     /// Returns an error if the parent directory does not exist.
     pub fn open(path: &Path) -> Result<Self> {

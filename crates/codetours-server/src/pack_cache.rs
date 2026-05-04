@@ -23,21 +23,30 @@ impl PackCache {
     }
 
     /// Returns the expected path on disk for a given tour's pack file.
-    pub fn get_pack_path(&self, tour_id: &str) -> PathBuf {
-        self.base_dir.join(format!("{}.sqlite", tour_id))
+    /// Sanitizes the tour_id to prevent path traversal attacks.
+    pub fn get_pack_path(&self, tour_id: &str) -> Option<PathBuf> {
+        // Basic sanitization: no ".." or path separators
+        if tour_id.contains('/') || tour_id.contains('\\') || tour_id.contains("..") {
+            return None;
+        }
+        Some(self.base_dir.join(format!("{}.sqlite", tour_id)))
     }
 
     /// Moves a pack file from a temporary location into the cache.
     /// Handles cross-filesystem renames by falling back to copy-and-remove.
     pub async fn save_pack(&self, tour_id: &str, temp_path: &Path) -> Result<()> {
         self.ensure_dirs().await?;
-        let dest_path = self.get_pack_path(tour_id);
+        let dest_path = self
+            .get_pack_path(tour_id)
+            .ok_or_else(|| anyhow::anyhow!("Invalid tour ID format"))?;
 
         // Attempt to rename (fast if on same filesystem)
         if let Err(e) = fs::rename(temp_path, &dest_path).await {
             // Fallback for cross-filesystem move (e.g. /tmp to /data)
             tracing::debug!("Rename failed ({}), falling back to copy and remove", e);
-            fs::copy(temp_path, &dest_path).await.context("Failed to copy pack to cache")?;
+            fs::copy(temp_path, &dest_path)
+                .await
+                .context("Failed to copy pack to cache")?;
             fs::remove_file(temp_path)
                 .await
                 .context("Failed to remove temporary pack file after copy")?;
@@ -47,15 +56,22 @@ impl PackCache {
 
     /// Removes a pack file from the cache.
     pub async fn delete_pack(&self, tour_id: &str) -> Result<()> {
-        let path = self.get_pack_path(tour_id);
-        if fs::try_exists(&path).await.unwrap_or(false) {
-            fs::remove_file(path).await.context("Failed to delete pack from cache")?;
+        let path = self
+            .get_pack_path(tour_id)
+            .ok_or_else(|| anyhow::anyhow!("Invalid tour ID format"))?;
+        if fs::metadata(&path).await.is_ok() {
+            fs::remove_file(path)
+                .await
+                .context("Failed to delete pack from cache")?;
         }
         Ok(())
     }
 
     /// Returns true if a pack file for the given tour ID exists in the cache.
     pub async fn exists(&self, tour_id: &str) -> bool {
-        fs::try_exists(self.get_pack_path(tour_id)).await.unwrap_or(false)
+        match self.get_pack_path(tour_id) {
+            Some(path) => fs::metadata(path).await.is_ok(),
+            None => false,
+        }
     }
 }
