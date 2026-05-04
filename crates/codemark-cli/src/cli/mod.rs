@@ -686,9 +686,9 @@ pub struct PullArgs {
     #[arg(long)]
     pub token: Option<String>,
 
-    /// Merge into local DB as a collection with this name
-    #[arg(long)]
-    pub save_as_collection: Option<String>,
+    /// Save the tour locally as a collection. If no name is provided, uses the tour's title.
+    #[arg(long, num_args = 0..=1, default_missing_value = "")]
+    pub save: Option<String>,
 }
 
 #[derive(Debug, clap::Args)]

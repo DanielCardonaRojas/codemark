@@ -125,12 +125,13 @@ pub async fn handle_pull(cli: &Cli, mode: &OutputMode, args: &PullArgs) -> Resul
         .map_err(|_| Error::Operation("Blocking task panicked during migration".to_string()))??;
     }
 
-    if let Some(save_as) = &args.save_as_collection {
+    if let Some(save_name) = &args.save {
+        let name_override = if save_name.is_empty() { None } else { Some(save_name.as_str()) };
         handle_save_pulled(
             cli,
             mode,
             &pack_path,
-            save_as,
+            name_override,
             &format!("{}/tours/{}", server_url, tour_id),
         )
         .await?;
@@ -147,7 +148,7 @@ async fn handle_save_pulled(
     cli: &Cli,
     mode: &OutputMode,
     pack_path: &std::path::Path,
-    collection_name: &str,
+    collection_name: Option<&str>,
     source_url: &str,
 ) -> Result<()> {
     let db = super::open_db_for_write(cli)?;
@@ -163,10 +164,16 @@ async fn handle_save_pulled(
     let collection_id = uuid::Uuid::new_v4().to_string();
     let mut collection = tour.clone();
     collection.id = collection_id.clone();
-    collection.name = collection_name.to_string();
+
+    // Inherit original name if none provided
+    if let Some(name) = collection_name {
+        collection.name = name.to_string();
+    }
+
     collection.imported_from_url = Some(source_url.to_string());
 
     db.insert_collection(&collection)?;
+    let final_name = collection.name.clone();
 
     // Merge bookmarks
     let bookmarks = reader.bookmarks()?;
@@ -239,7 +246,7 @@ async fn handle_save_pulled(
         }
     }
 
-    write_success(mode, &format!("Saved tour as collection '{}'", collection_name))?;
+    write_success(mode, &format!("Saved tour as collection '{}'", final_name))?;
     Ok(())
 }
 

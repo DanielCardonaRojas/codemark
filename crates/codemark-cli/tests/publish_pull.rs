@@ -132,7 +132,7 @@ async fn test_cli_publish_pull_roundtrip() {
             tour: format!("{}/tours/{}", server_url, col_id),
             server: None,
             token: Some("test-token".to_string()),
-            save_as_collection: Some("pulled-collection".to_string()),
+            save: Some("pulled-collection".to_string()),
         }),
     };
     handlers::dispatch(&pull_cli).await.unwrap();
