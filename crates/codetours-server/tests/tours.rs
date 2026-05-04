@@ -82,7 +82,7 @@ async fn test_publish_list_get_delete_flow() {
     let body = ax_body_to_json(response).await;
 
     assert_eq!(status, StatusCode::OK);
-    assert!(body["tours"].as_array().unwrap().len() >= 1);
+    assert!(!body["tours"].as_array().unwrap().is_empty());
     assert_eq!(body["tours"][0]["tour_id"], collection_id);
 
     // 4. GET /tours/:id (Detail JSON)

@@ -166,7 +166,7 @@ pub async fn handler(
             Ok(mut f) => {
                 let mut magic = [0u8; 4];
                 use std::io::Read;
-                f.read_exact(&mut magic).is_ok() && &magic == &[0x28, 0xB5, 0x2F, 0xFD]
+                f.read_exact(&mut magic).is_ok() && magic == [0x28, 0xB5, 0x2F, 0xFD]
             }
             Err(e) => {
                 tracing::error!("Failed to open temp file for magic check: {}", e);
@@ -348,7 +348,7 @@ pub async fn handler(
             // 2. Merge SQL
             // Use explicit columns to be safe against schema drift
             tx.execute("INSERT INTO main.bookmarks (id, query, language, file_path, content_hash, commit_hash, status, resolution_method, last_resolved_at, stale_since, created_at, created_by)
-                        SELECT id, query, language, file_path, content_hash, commit_hash, status, resolution_method, last_resolved_at, stale_since, created_at, created_by 
+                        SELECT id, query, language, file_path, content_hash, commit_hash, status, resolution_method, last_resolved_at, stale_since, created_at, created_by
                         FROM pack.bookmarks WHERE id NOT IN (SELECT id FROM main.bookmarks)", [])?;
 
             tx.execute(
@@ -370,18 +370,18 @@ pub async fn handler(
 
             tx.execute("INSERT INTO main.collection_bookmarks (collection_id, bookmark_id, position, added_at)
                         SELECT collection_id, bookmark_id, position, added_at FROM pack.collection_bookmarks", [])?;
-            
+
             tx.execute("INSERT INTO main.resolutions (id, bookmark_id, resolved_at, commit_hash, method, match_count, file_path, byte_range, line_range, content_hash, headline, preview_lines)
-                        SELECT id, bookmark_id, resolved_at, commit_hash, method, match_count, file_path, byte_range, line_range, content_hash, headline, preview_lines 
+                        SELECT id, bookmark_id, resolved_at, commit_hash, method, match_count, file_path, byte_range, line_range, content_hash, headline, preview_lines
                         FROM pack.resolutions WHERE id NOT IN (SELECT id FROM main.resolutions)", [])?;
 
             tx.execute("INSERT INTO main.bookmark_annotations (id, bookmark_id, added_at, added_by, notes, context, source)
-                        SELECT id, bookmark_id, added_at, added_by, notes, context, source 
+                        SELECT id, bookmark_id, added_at, added_by, notes, context, source
                         FROM pack.bookmark_annotations WHERE id NOT IN (SELECT id FROM main.bookmark_annotations)", [])?;
 
             tx.execute("INSERT INTO main.bookmark_tags (bookmark_id, tag, added_at, added_by)
                         SELECT bookmark_id, tag, added_at, added_by FROM pack.bookmark_tags", [])?;
-            
+
             // Optional bookmark_comments
             let has_comments: bool = tx.query_row(
                 "SELECT count(*) FROM pack.sqlite_master WHERE type='table' AND name='bookmark_comments'",
@@ -390,7 +390,7 @@ pub async fn handler(
             )?;
             if has_comments {
                 tx.execute("INSERT INTO main.bookmark_comments (id, bookmark_id, author, body, created_at, parent_id)
-                            SELECT id, bookmark_id, author, body, created_at, parent_id 
+                            SELECT id, bookmark_id, author, body, created_at, parent_id
                             FROM pack.bookmark_comments WHERE id NOT IN (SELECT id FROM main.bookmark_comments)", [])?;
             }
 

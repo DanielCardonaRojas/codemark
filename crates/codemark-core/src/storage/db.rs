@@ -257,10 +257,8 @@ impl Database {
 
     fn get_schema_version(conn: &Connection) -> i64 {
         // First try PRAGMA user_version as it's the standard way
-        if let Ok(v) = conn.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0)) {
-            if v > 0 {
-                return v;
-            }
+        if let Ok(v @ 1..) = conn.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0)) {
+            return v;
         }
 
         // Fallback to schema_meta table (internal bookkeeping)

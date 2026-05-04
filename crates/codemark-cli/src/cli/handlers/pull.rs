@@ -116,7 +116,7 @@ async fn handle_save_pulled(
         bm.tags.push(format!("imported:{}", source_url));
 
         let bookmark_id = db.insert_bookmark(&bm)?;
-        db.add_to_collection(&collection_id, &[bookmark_id.clone()])?;
+        db.add_to_collection(&collection_id, std::slice::from_ref(&bookmark_id))?;
 
         // Import annotations
         let mut ann_stmt = reader.conn().prepare("SELECT id, bookmark_id, added_at, added_by, notes, context, source FROM bookmark_annotations WHERE bookmark_id = ?1")?;
