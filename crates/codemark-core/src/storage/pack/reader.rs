@@ -127,8 +127,7 @@ fn row_to_bookmark(row: &rusqlite::Row) -> rusqlite::Result<Bookmark> {
         file_path: row.get(3)?,
         content_hash: row.get(4)?,
         commit_hash: row.get(5)?,
-        health: BookmarkHealth::from_str(&health_str)
-            .unwrap_or(BookmarkHealth::Active),
+        health: BookmarkHealth::from_str(&health_str).unwrap_or(BookmarkHealth::Active),
         resolution_method: method_str.and_then(|s| ResolutionMethod::from_str(&s).ok()),
         last_resolved_at: row.get(8)?,
         stale_since: row.get(9)?,

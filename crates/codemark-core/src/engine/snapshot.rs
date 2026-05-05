@@ -68,7 +68,8 @@ pub async fn build_snapshot(
 
         // Update bookmark health based on resolution
         let hash_matches = bm.content_hash.as_ref() == Some(&result.content_hash);
-        bm.health = crate::engine::health::transition(bm.health, result.method, hash_matches, 0, 30);
+        bm.health =
+            crate::engine::health::transition(bm.health, result.method, hash_matches, 0, 30);
         bm.resolution_method = Some(result.method);
         bm.last_resolved_at = Some(Utc::now().to_rfc3339());
 
@@ -109,7 +110,8 @@ pub async fn build_snapshot(
 
     // Collection tags with auto-populate logic
     let mut collection_tags = db.list_tags_for_collection(collection_id)?;
-    let has_authored_tags = collection_tags.iter().any(|t| t.added_by.as_deref() != Some("__auto__"));
+    let has_authored_tags =
+        collection_tags.iter().any(|t| t.added_by.as_deref() != Some("__auto__"));
 
     if !has_authored_tags {
         // Auto-populate from top-3 bookmark tags
@@ -119,7 +121,7 @@ pub async fn build_snapshot(
         }
         let mut sorted_tags: Vec<(&String, i32)> = tag_counts.into_iter().collect();
         sorted_tags.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(b.0)));
-        
+
         let now = Utc::now().to_rfc3339();
         for (tag_name, _) in sorted_tags.into_iter().take(3) {
             collection_tags.push(CollectionTag {

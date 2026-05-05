@@ -157,7 +157,10 @@ pub fn inspect(pack_path: &Path) -> Result<PackInfo, PackError> {
         |row| row.get(0),
     )?;
     if dangling_tags > 0 {
-        return Err(PackError::DanglingCollectionRef(format!("{} dangling collection tags", dangling_tags)));
+        return Err(PackError::DanglingCollectionRef(format!(
+            "{} dangling collection tags",
+            dangling_tags
+        )));
     }
 
     let dangling_links: usize = conn.query_row(
@@ -166,7 +169,10 @@ pub fn inspect(pack_path: &Path) -> Result<PackInfo, PackError> {
         |row| row.get(0),
     )?;
     if dangling_links > 0 {
-        return Err(PackError::DanglingCollectionRef(format!("{} dangling collection links", dangling_links)));
+        return Err(PackError::DanglingCollectionRef(format!(
+            "{} dangling collection links",
+            dangling_links
+        )));
     }
 
     // Kind integrity for collection_links

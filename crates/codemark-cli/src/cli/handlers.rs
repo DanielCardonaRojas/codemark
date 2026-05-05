@@ -14,8 +14,7 @@ use crate::cli::*;
 use codemark_core::config::Config;
 use codemark_core::embeddings::config::EmbeddingModel;
 use codemark_core::engine::bookmark::{
-    Bookmark, BookmarkFilter, BookmarkHealth, Collection, Resolution, ResolutionMethod,
-    Visibility,
+    Bookmark, BookmarkFilter, BookmarkHealth, Collection, Resolution, ResolutionMethod, Visibility,
 };
 use codemark_core::engine::{health, resolution};
 use codemark_core::error::{Error, Result};

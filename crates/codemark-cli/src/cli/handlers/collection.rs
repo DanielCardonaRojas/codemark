@@ -7,8 +7,8 @@ use crate::cli::output::{
 };
 use crate::cli::*;
 use codemark_core::engine::bookmark::{
-    BookmarkFilter, BookmarkHealth, Collection, CollectionLink, CollectionLinkKind,
-    CollectionTag, Visibility,
+    BookmarkFilter, BookmarkHealth, Collection, CollectionLink, CollectionLinkKind, CollectionTag,
+    Visibility,
 };
 use codemark_core::error::{Error, Result};
 
@@ -186,8 +186,20 @@ pub async fn handle_collection_list(
                     .replace("{id}", short_id)
                     .replace("{NAME}", &c.name)
                     .replace("{name}", &c.name)
-                    .replace("{HEALTH}", &c.health.as_ref().map(|h| h.to_string()).unwrap_or_else(|| "-".to_string()))
-                    .replace("{health}", &c.health.as_ref().map(|h| h.to_string()).unwrap_or_else(|| "-".to_string()))
+                    .replace(
+                        "{HEALTH}",
+                        &c.health
+                            .as_ref()
+                            .map(|h| h.to_string())
+                            .unwrap_or_else(|| "-".to_string()),
+                    )
+                    .replace(
+                        "{health}",
+                        &c.health
+                            .as_ref()
+                            .map(|h| h.to_string())
+                            .unwrap_or_else(|| "-".to_string()),
+                    )
                     .replace("{DESCRIPTION}", c.description.as_deref().unwrap_or(""))
                     .replace("{description}", c.description.as_deref().unwrap_or(""))
                     .replace("{CREATED}", &c.created_at)
@@ -207,7 +219,10 @@ pub async fn handle_collection_list(
                 for c in &collections {
                     table.add_row(vec![
                         &c.name,
-                        &c.health.as_ref().map(|h| h.to_string()).unwrap_or_else(|| "-".to_string()),
+                        &c.health
+                            .as_ref()
+                            .map(|h| h.to_string())
+                            .unwrap_or_else(|| "-".to_string()),
                         c.created_branch.as_deref().unwrap_or(""),
                         c.description.as_deref().unwrap_or(""),
                         &c.created_at,
@@ -241,8 +256,20 @@ pub async fn handle_collection_list(
                     .replace("{id}", short_id)
                     .replace("{NAME}", &c.name)
                     .replace("{name}", &c.name)
-                    .replace("{HEALTH}", &c.health.as_ref().map(|h| h.to_string()).unwrap_or_else(|| "-".to_string()))
-                    .replace("{health}", &c.health.as_ref().map(|h| h.to_string()).unwrap_or_else(|| "-".to_string()))
+                    .replace(
+                        "{HEALTH}",
+                        &c.health
+                            .as_ref()
+                            .map(|h| h.to_string())
+                            .unwrap_or_else(|| "-".to_string()),
+                    )
+                    .replace(
+                        "{health}",
+                        &c.health
+                            .as_ref()
+                            .map(|h| h.to_string())
+                            .unwrap_or_else(|| "-".to_string()),
+                    )
                     .replace("{COUNT}", &count.to_string())
                     .replace("{count}", &count.to_string())
                     .replace("{DESCRIPTION}", c.description.as_deref().unwrap_or(""))
@@ -397,9 +424,9 @@ pub async fn handle_collection_tag(
         }
         CollectionTagCommand::List(list_args) => {
             let db = open_db(cli)?;
-            let collection = db
-                .get_collection_by_name(&list_args.name)?
-                .ok_or_else(|| Error::Input(format!("collection '{}' not found", list_args.name)))?;
+            let collection = db.get_collection_by_name(&list_args.name)?.ok_or_else(|| {
+                Error::Input(format!("collection '{}' not found", list_args.name))
+            })?;
 
             let tags = db.list_tags_for_collection(&collection.id)?;
             let filtered_tags: Vec<_> = if list_args.include_auto {
@@ -439,9 +466,10 @@ pub async fn handle_collection_link(
                 .get_collection_by_name(&add_args.name)?
                 .ok_or_else(|| Error::Input(format!("collection '{}' not found", add_args.name)))?;
 
-            let kind: CollectionLinkKind = add_args.kind.parse().map_err(|_| {
-                Error::Input(format!("invalid link kind: {}", add_args.kind))
-            })?;
+            let kind: CollectionLinkKind = add_args
+                .kind
+                .parse()
+                .map_err(|_| Error::Input(format!("invalid link kind: {}", add_args.kind)))?;
 
             let link = CollectionLink {
                 id: uuid::Uuid::new_v4().to_string(),
@@ -457,7 +485,11 @@ pub async fn handle_collection_link(
             db.insert_collection_link(&link)?;
             write_success(
                 mode,
-                &format!("Added link to collection '{}' (ID: {})", add_args.name, output::short_id(&link.id)),
+                &format!(
+                    "Added link to collection '{}' (ID: {})",
+                    add_args.name,
+                    output::short_id(&link.id)
+                ),
             )?;
         }
         CollectionLinkCommand::Rm(rm_args) => {
@@ -467,9 +499,9 @@ pub async fn handle_collection_link(
         }
         CollectionLinkCommand::List(list_args) => {
             let db = open_db(cli)?;
-            let collection = db
-                .get_collection_by_name(&list_args.name)?
-                .ok_or_else(|| Error::Input(format!("collection '{}' not found", list_args.name)))?;
+            let collection = db.get_collection_by_name(&list_args.name)?.ok_or_else(|| {
+                Error::Input(format!("collection '{}' not found", list_args.name))
+            })?;
 
             let links = db.list_links_for_collection(&collection.id)?;
             match mode {
@@ -504,9 +536,9 @@ pub async fn handle_collection_link(
         }
         CollectionLinkCommand::Reorder(reorder_args) => {
             let db = open_db_for_write(cli)?;
-            let collection = db
-                .get_collection_by_name(&reorder_args.name)?
-                .ok_or_else(|| Error::Input(format!("collection '{}' not found", reorder_args.name)))?;
+            let collection = db.get_collection_by_name(&reorder_args.name)?.ok_or_else(|| {
+                Error::Input(format!("collection '{}' not found", reorder_args.name))
+            })?;
 
             db.reorder_collection_links(&collection.id, &reorder_args.ids)?;
             write_success(mode, &format!("Reordered links in collection '{}'", reorder_args.name))?;

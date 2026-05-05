@@ -349,6 +349,7 @@ impl Database {
     }
 
     /// Search bookmarks by text in notes and/or context fields.
+    #[allow(clippy::too_many_arguments)]
     pub fn search_bookmarks(
         &self,
         query: Option<&str>,

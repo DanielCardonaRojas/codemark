@@ -308,9 +308,9 @@ impl Database {
 
     /// List IDs of collections that contain a specific bookmark.
     pub fn list_collection_ids_for_bookmark(&self, bookmark_id: &str) -> Result<Vec<String>> {
-        let mut stmt = self.conn().prepare(
-            "SELECT collection_id FROM collection_bookmarks WHERE bookmark_id = ?1",
-        )?;
+        let mut stmt = self
+            .conn()
+            .prepare("SELECT collection_id FROM collection_bookmarks WHERE bookmark_id = ?1")?;
         let rows = stmt.query_map([bookmark_id], |row| row.get(0))?;
         let results: Vec<String> = rows.filter_map(|r| r.ok()).collect();
         Ok(results)

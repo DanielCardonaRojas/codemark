@@ -686,7 +686,13 @@ pub async fn handle_resolve(cli: &Cli, mode: &OutputMode, args: &ResolveArgs) ->
         let config = super::load_config(cli);
         // In dry-run mode, skip database updates and just show the result
         if args.dry_run {
-            return write_resolution_output(mode, &bm, &result, db.path(), config.health.stale_days());
+            return write_resolution_output(
+                mode,
+                &bm,
+                &result,
+                db.path(),
+                config.health.stale_days(),
+            );
         }
 
         let new_status = health::transition(

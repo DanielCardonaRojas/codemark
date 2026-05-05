@@ -140,7 +140,8 @@ nano ~/.config/codemark/templates/codemark_show.md
 | `{{file_path}}` | Path to the file |
 | `{{file_name}}` | Just the filename |
 | `{{language}}` | Programming language |
-| `{{status}}` | `active`, `drifted`, `stale`, or `archived` |
+| `{{health}}` | `active`, `drifted`, `stale`, or `archived` |
+| `{{status}}` | Alias for `{{health}}` (deprecated) |
 | `{{query}}` | Tree-sitter query |
 | `{{created_at}}` | Creation timestamp |
 | `{{created_by}}` | Creator (optional) |

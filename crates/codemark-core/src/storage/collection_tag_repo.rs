@@ -35,7 +35,7 @@ impl Database {
             "SELECT collection_id, tag, added_at, added_by 
              FROM collection_tags 
              WHERE collection_id = ?1 
-             ORDER BY added_at ASC"
+             ORDER BY added_at ASC",
         )?;
         let rows = stmt.query_map([collection_id], |row| {
             Ok(CollectionTag {
@@ -60,10 +60,8 @@ impl Database {
 
     /// Delete all tags for a collection.
     pub fn delete_all_tags_for_collection(&self, collection_id: &str) -> Result<()> {
-        self.conn().execute(
-            "DELETE FROM collection_tags WHERE collection_id = ?1",
-            [collection_id],
-        )?;
+        self.conn()
+            .execute("DELETE FROM collection_tags WHERE collection_id = ?1", [collection_id])?;
         Ok(())
     }
 }

@@ -24,8 +24,11 @@ pub async fn handle_heal(cli: &Cli, mode: &OutputMode, args: &HealArgs) -> Resul
     let filter = BookmarkFilter {
         file_path: args.file.as_ref().map(|p| p.to_string_lossy().to_string()),
         language: args.lang.clone(),
-        health: super::parse_status_filter(health_input)
-            .or(Some(vec![BookmarkHealth::Active, BookmarkHealth::Drifted, BookmarkHealth::Stale])),
+        health: super::parse_status_filter(health_input).or(Some(vec![
+            BookmarkHealth::Active,
+            BookmarkHealth::Drifted,
+            BookmarkHealth::Stale,
+        ])),
         collection: args.collection.clone(),
         ..Default::default()
     };

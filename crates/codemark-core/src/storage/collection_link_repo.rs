@@ -31,14 +31,15 @@ impl Database {
             "SELECT id, collection_id, kind, label, url, sort_order, added_at, added_by 
              FROM collection_links 
              WHERE collection_id = ?1 
-             ORDER BY sort_order ASC, added_at ASC"
+             ORDER BY sort_order ASC, added_at ASC",
         )?;
         let rows = stmt.query_map([collection_id], |row| {
             let kind_str: String = row.get(2)?;
             Ok(CollectionLink {
                 id: row.get(0)?,
                 collection_id: row.get(1)?,
-                kind: crate::engine::bookmark::CollectionLinkKind::from_str(&kind_str).unwrap_or(crate::engine::bookmark::CollectionLinkKind::Other),
+                kind: crate::engine::bookmark::CollectionLinkKind::from_str(&kind_str)
+                    .unwrap_or(crate::engine::bookmark::CollectionLinkKind::Other),
                 label: row.get(3)?,
                 url: row.get(4)?,
                 sort_order: row.get(5)?,
@@ -52,15 +53,16 @@ impl Database {
 
     /// Delete a link from a collection.
     pub fn delete_collection_link(&self, id: &str) -> Result<bool> {
-        let count = self.conn().execute(
-            "DELETE FROM collection_links WHERE id = ?1",
-            [id],
-        )?;
+        let count = self.conn().execute("DELETE FROM collection_links WHERE id = ?1", [id])?;
         Ok(count > 0)
     }
 
     /// Reorder links in a collection.
-    pub fn reorder_collection_links(&self, collection_id: &str, ordered_ids: &[String]) -> Result<()> {
+    pub fn reorder_collection_links(
+        &self,
+        collection_id: &str,
+        ordered_ids: &[String],
+    ) -> Result<()> {
         let tx = self.conn().unchecked_transaction()?;
         for (i, id) in ordered_ids.iter().enumerate() {
             tx.execute(
