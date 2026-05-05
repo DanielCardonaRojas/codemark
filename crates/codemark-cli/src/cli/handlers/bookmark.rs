@@ -7,7 +7,7 @@ use crate::cli::output::{
 };
 use crate::cli::*;
 use codemark_core::engine::bookmark::{
-    Annotation, Bookmark, BookmarkFilter, BookmarkStatus, Resolution, ResolutionMethod, Tag,
+    Annotation, Bookmark, BookmarkFilter, BookmarkHealth, Resolution, ResolutionMethod, Tag,
 };
 use codemark_core::engine::{hash, health, resolution};
 use codemark_core::error::{Error, Result};
@@ -91,7 +91,7 @@ pub async fn handle_add(cli: &Cli, mode: &OutputMode, args: &AddArgs) -> Result<
         file_path: rel_path.clone(),
         content_hash: Some(content_hash.clone()),
         commit_hash: commit_hash.clone(),
-        status: BookmarkStatus::Active,
+        health: BookmarkHealth::Active,
         resolution_method: Some(ResolutionMethod::Exact),
         last_resolved_at: Some(now_iso()),
         stale_since: None,
@@ -294,7 +294,7 @@ pub async fn handle_add_from_snippet(
         file_path: rel_path.clone(),
         content_hash: Some(content_hash.clone()),
         commit_hash: commit_hash.clone(),
-        status: BookmarkStatus::Active,
+        health: BookmarkHealth::Active,
         resolution_method: Some(ResolutionMethod::Exact),
         last_resolved_at: Some(now_iso()),
         stale_since: None,
@@ -497,7 +497,7 @@ pub async fn handle_add_from_query(
         file_path: rel_path.clone(),
         content_hash: Some(content_hash.clone()),
         commit_hash: commit_hash.clone(),
-        status: BookmarkStatus::Active,
+        health: BookmarkHealth::Active,
         resolution_method: Some(ResolutionMethod::Exact),
         last_resolved_at: Some(now_iso()),
         stale_since: None,
@@ -668,8 +668,9 @@ fn write_dry_run(
     Ok(())
 }
 
-/// Resolve one or more bookmarks and update their status and location.
+/// Resolve one or more bookmarks and update their health and location.
 pub async fn handle_resolve(cli: &Cli, mode: &OutputMode, args: &ResolveArgs) -> Result<()> {
+    super::check_deprecated_status(&args.health, &args.status);
     let dbs = open_all_dbs(cli)?;
 
     if let Some(ref id) = args.id {
@@ -687,15 +688,15 @@ pub async fn handle_resolve(cli: &Cli, mode: &OutputMode, args: &ResolveArgs) ->
             return write_resolution_output(mode, &bm, &result, db.path());
         }
 
-        let new_status = health::transition(bm.status, result.method, result.hash_matches);
+        let new_status = health::transition(bm.health, result.method, result.hash_matches);
 
-        let stale_since = if new_status == BookmarkStatus::Stale {
+        let stale_since = if new_status == BookmarkHealth::Stale {
             bm.stale_since.clone().or_else(|| Some(now_iso()))
         } else {
             None
         };
 
-        db.update_bookmark_status(
+        db.update_bookmark_health(
             &bm.id,
             new_status,
             Some(result.method),
@@ -729,10 +730,11 @@ pub async fn handle_resolve(cli: &Cli, mode: &OutputMode, args: &ResolveArgs) ->
         write_resolution_output(mode, &bm, &result, db.path())?;
     } else {
         // Batch resolution — fan out across all DBs
+        let health_input = args.health.as_deref().or(args.status.as_deref());
         let filter = BookmarkFilter {
             tag: args.tag.clone(),
-            status: super::parse_status_filter(args.status.as_deref())
-                .or(Some(vec![BookmarkStatus::Active, BookmarkStatus::Drifted])),
+            health: super::parse_status_filter(health_input)
+                .or(Some(vec![BookmarkHealth::Active, BookmarkHealth::Drifted])),
             file_path: args.file.as_ref().map(|p| p.to_string_lossy().to_string()),
             language: args.lang.clone(),
             collection: args.collection.clone(),
@@ -770,7 +772,7 @@ pub async fn handle_show(cli: &Cli, mode: &OutputMode, args: &ShowArgs) -> Resul
             println!("ID:          {}", bm.id);
             println!("File:        {}", bm.file_path);
             println!("Language:    {}", bm.language);
-            println!("Status:      {}", bm.status);
+            println!("Status:      {}", bm.health);
             if !bm.tags.is_empty() {
                 println!("Tags:        {}", bm.tags.join(", "));
             }
@@ -924,7 +926,7 @@ pub async fn handle_annotate(cli: &Cli, mode: &OutputMode, args: &AnnotateArgs) 
                 "short_id": short_id(&bm.id),
                 "file_path": bm.file_path,
                 "language": bm.language,
-                "status": bm.status,
+                "status": bm.health,
                 "tags": bm.tags,
                 "annotations": bm.annotations,
                 "created_at": bm.created_at,
@@ -934,7 +936,7 @@ pub async fn handle_annotate(cli: &Cli, mode: &OutputMode, args: &AnnotateArgs) 
             println!("Annotated bookmark: {}", short_id(&bm.id));
             println!("  File: {}", bm.file_path);
             println!("  Language: {}", bm.language);
-            println!("  Status: {}", bm.status);
+            println!("  Status: {}", bm.health);
             if !bm.tags.is_empty() {
                 println!("  Tags: {}", bm.tags.join(", "));
             }

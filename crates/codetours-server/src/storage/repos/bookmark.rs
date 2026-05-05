@@ -68,10 +68,10 @@ impl BookmarkRepo {
 }
 
 fn row_to_bookmark(row: &rusqlite::Row) -> rusqlite::Result<Bookmark> {
-    let status_str: String = row.get(6)?;
+    let health_str: String = row.get(6)?;
     let method_str: Option<String> = row.get(7)?;
 
-    let status = status_str.parse().map_err(|e| {
+    let health = health_str.parse().map_err(|e| {
         rusqlite::Error::FromSqlConversionFailure(6, rusqlite::types::Type::Text, Box::new(e))
     })?;
 
@@ -89,7 +89,7 @@ fn row_to_bookmark(row: &rusqlite::Row) -> rusqlite::Result<Bookmark> {
         file_path: row.get(3)?,
         content_hash: row.get(4)?,
         commit_hash: row.get(5)?,
-        status,
+        health,
         resolution_method,
         last_resolved_at: row.get(8)?,
         stale_since: row.get(9)?,

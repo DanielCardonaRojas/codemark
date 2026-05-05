@@ -247,8 +247,12 @@ pub struct ResolveArgs {
     #[arg(long)]
     pub tag: Option<String>,
 
-    /// Filter by status (default: active,drifted)
+    /// Filter by health (default: active,drifted)
     #[arg(long)]
+    pub health: Option<String>,
+
+    /// Deprecated: use --health
+    #[arg(long, hide = true)]
     pub status: Option<String>,
 
     /// Filter by file path
@@ -291,6 +295,14 @@ pub struct HealArgs {
     #[arg(long)]
     pub lang: Option<String>,
 
+    /// Filter by health (active,drifted,stale,archived)
+    #[arg(long)]
+    pub health: Option<String>,
+
+    /// Deprecated: use --health
+    #[arg(long, hide = true)]
+    pub status: Option<String>,
+
     /// Archive bookmarks stale beyond grace period
     #[arg(long)]
     pub auto_archive: bool,
@@ -318,8 +330,12 @@ pub struct ListArgs {
     #[arg(long)]
     pub tag: Option<String>,
 
-    /// Filter by status (default: active,drifted)
+    /// Filter by health (default: active,drifted)
     #[arg(long)]
+    pub health: Option<String>,
+
+    /// Deprecated: use --health
+    #[arg(long, hide = true)]
     pub status: Option<String>,
 
     /// Filter by file path
@@ -410,6 +426,14 @@ pub struct SearchArgs {
     #[arg(long)]
     pub lang: Option<String>,
 
+    /// Filter by health (active,drifted,stale,archived)
+    #[arg(long)]
+    pub health: Option<String>,
+
+    /// Deprecated: use --health
+    #[arg(long, hide = true)]
+    pub status: Option<String>,
+
     /// Filter by author (user, agent, or any identifier)
     #[arg(long)]
     pub author: Option<String>,
@@ -481,6 +505,12 @@ pub enum CollectionCommand {
 
     /// Reorder bookmarks in a collection
     Reorder(CollectionReorderArgs),
+
+    /// Manage tags for a collection
+    Tag(CollectionTagArgs),
+
+    /// Manage links for a collection
+    Link(CollectionLinkArgs),
 }
 
 #[derive(Debug, clap::Args)]
@@ -561,6 +591,123 @@ pub struct CollectionResolveArgs {
 }
 
 #[derive(Debug, clap::Args)]
+pub struct CollectionTagArgs {
+    #[command(subcommand)]
+    pub command: CollectionTagCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum CollectionTagCommand {
+    /// Add tags to a collection
+    Add(CollectionTagAddArgs),
+
+    /// Remove tags from a collection
+    Rm(CollectionTagRmArgs),
+
+    /// List tags for a collection
+    List(CollectionTagListArgs),
+}
+
+#[derive(Debug, clap::Args)]
+pub struct CollectionTagAddArgs {
+    /// Collection name
+    pub name: String,
+
+    /// Tag labels to add
+    #[arg(required = true)]
+    pub tags: Vec<String>,
+}
+
+#[derive(Debug, clap::Args)]
+pub struct CollectionTagRmArgs {
+    /// Collection name
+    pub name: String,
+
+    /// Tag labels to remove
+    #[arg(required = true)]
+    pub tags: Vec<String>,
+}
+
+#[derive(Debug, clap::Args)]
+pub struct CollectionTagListArgs {
+    /// Collection name
+    pub name: String,
+
+    /// Include auto-populated tags (default: hide)
+    #[arg(long)]
+    pub include_auto: bool,
+}
+
+#[derive(Debug, clap::Args)]
+pub struct CollectionLinkArgs {
+    #[command(subcommand)]
+    pub command: CollectionLinkCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum CollectionLinkCommand {
+    /// Add a link to a collection
+    Add(CollectionLinkAddArgs),
+
+    /// Remove a link from a collection
+    Rm(CollectionLinkRmArgs),
+
+    /// List links for a collection
+    List(CollectionLinkListArgs),
+
+    /// Reorder links for a collection
+    Reorder(CollectionLinkReorderArgs),
+}
+
+#[derive(Debug, clap::Args)]
+pub struct CollectionLinkAddArgs {
+    /// Collection name
+    pub name: String,
+
+    /// Link URL
+    #[arg(long)]
+    pub url: String,
+
+    /// Link label
+    #[arg(long)]
+    pub label: String,
+
+    /// Link kind (pr, issue, doc, discussion, dashboard, repo, tour, other)
+    #[arg(long, default_value = "other")]
+    pub kind: String,
+
+    /// Position to insert at (0-indexed)
+    #[arg(long)]
+    pub position: Option<i32>,
+}
+
+#[derive(Debug, clap::Args)]
+pub struct CollectionLinkRmArgs {
+    /// Collection name
+    pub name: String,
+
+    /// Link ID to remove
+    #[arg(long)]
+    pub id: String,
+}
+
+#[derive(Debug, clap::Args)]
+pub struct CollectionLinkListArgs {
+    /// Collection name
+    pub name: String,
+}
+
+#[derive(Debug, clap::Args)]
+pub struct CollectionLinkReorderArgs {
+    /// Collection name
+    pub name: String,
+
+    /// Ordered list of link IDs
+    #[arg(required = true)]
+    pub ids: Vec<String>,
+}
+
+#[derive(Debug, clap::Args)]
 pub struct DiffArgs {
     /// Show bookmarks affected since this commit
     #[arg(long)]
@@ -588,8 +735,12 @@ pub struct ExportArgs {
     #[arg(long)]
     pub tag: Option<String>,
 
-    /// Filter by status
+    /// Filter by health
     #[arg(long)]
+    pub health: Option<String>,
+
+    /// Deprecated: use --health
+    #[arg(long, hide = true)]
     pub status: Option<String>,
 }
 

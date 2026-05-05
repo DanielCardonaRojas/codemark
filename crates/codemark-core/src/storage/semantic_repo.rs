@@ -191,7 +191,7 @@ mod tests {
             file_path: "/test.rs".to_string(),
             content_hash: Some("hash".to_string()),
             commit_hash: None,
-            status: crate::engine::bookmark::BookmarkStatus::Active,
+            health: crate::engine::bookmark::BookmarkHealth::Active,
             resolution_method: Some(crate::engine::bookmark::ResolutionMethod::Exact),
             last_resolved_at: None,
             stale_since: None,

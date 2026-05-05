@@ -1,18 +1,18 @@
-use crate::engine::bookmark::{BookmarkStatus, ResolutionMethod};
+use crate::engine::bookmark::{BookmarkHealth, ResolutionMethod};
 
-/// Determine the new bookmark status based on resolution outcome and whether
+/// Determine the new bookmark health based on resolution outcome and whether
 /// the content hash matches.
 pub fn transition(
-    _current: BookmarkStatus,
+    _current: BookmarkHealth,
     method: ResolutionMethod,
     hash_matches: bool,
-) -> BookmarkStatus {
+) -> BookmarkHealth {
     match method {
-        ResolutionMethod::Exact if hash_matches => BookmarkStatus::Active,
-        ResolutionMethod::Exact => BookmarkStatus::Drifted,
-        ResolutionMethod::Relaxed => BookmarkStatus::Drifted,
-        ResolutionMethod::HashFallback => BookmarkStatus::Drifted,
-        ResolutionMethod::Failed => BookmarkStatus::Stale,
+        ResolutionMethod::Exact if hash_matches => BookmarkHealth::Active,
+        ResolutionMethod::Exact => BookmarkHealth::Drifted,
+        ResolutionMethod::Relaxed => BookmarkHealth::Drifted,
+        ResolutionMethod::HashFallback => BookmarkHealth::Drifted,
+        ResolutionMethod::Failed => BookmarkHealth::Stale,
     }
 }
 
@@ -33,44 +33,44 @@ mod tests {
     #[test]
     fn exact_with_hash_match_returns_active() {
         assert_eq!(
-            transition(BookmarkStatus::Drifted, ResolutionMethod::Exact, true),
-            BookmarkStatus::Active
+            transition(BookmarkHealth::Drifted, ResolutionMethod::Exact, true),
+            BookmarkHealth::Active
         );
         assert_eq!(
-            transition(BookmarkStatus::Stale, ResolutionMethod::Exact, true),
-            BookmarkStatus::Active
+            transition(BookmarkHealth::Stale, ResolutionMethod::Exact, true),
+            BookmarkHealth::Active
         );
     }
 
     #[test]
     fn exact_without_hash_match_returns_drifted() {
         assert_eq!(
-            transition(BookmarkStatus::Active, ResolutionMethod::Exact, false),
-            BookmarkStatus::Drifted
+            transition(BookmarkHealth::Active, ResolutionMethod::Exact, false),
+            BookmarkHealth::Drifted
         );
     }
 
     #[test]
     fn relaxed_returns_drifted() {
         assert_eq!(
-            transition(BookmarkStatus::Active, ResolutionMethod::Relaxed, true),
-            BookmarkStatus::Drifted
+            transition(BookmarkHealth::Active, ResolutionMethod::Relaxed, true),
+            BookmarkHealth::Drifted
         );
     }
 
     #[test]
     fn hash_fallback_returns_drifted() {
         assert_eq!(
-            transition(BookmarkStatus::Active, ResolutionMethod::HashFallback, false),
-            BookmarkStatus::Drifted
+            transition(BookmarkHealth::Active, ResolutionMethod::HashFallback, false),
+            BookmarkHealth::Drifted
         );
     }
 
     #[test]
     fn failed_returns_stale() {
         assert_eq!(
-            transition(BookmarkStatus::Active, ResolutionMethod::Failed, false),
-            BookmarkStatus::Stale
+            transition(BookmarkHealth::Active, ResolutionMethod::Failed, false),
+            BookmarkHealth::Stale
         );
     }
 

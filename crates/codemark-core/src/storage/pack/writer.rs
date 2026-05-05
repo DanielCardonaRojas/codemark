@@ -75,17 +75,33 @@ impl Packer {
         // 1. Insert collection
         let c = &payload.collection;
         conn.execute(
-            "INSERT INTO collections (id, name, description, visibility, created_at, created_by, created_branch, published_at, published_commit_sha, repo_url, status, updated_at) 
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
-            params![c.id, c.name, c.description, c.visibility.to_string(), c.created_at, c.created_by, c.created_branch, c.published_at, c.published_commit_sha, c.repo_url, c.status, c.updated_at],
+            "INSERT INTO collections (id, name, description, visibility, created_at, created_by, created_branch, published_at, published_commit_sha, repo_url, status, health, health_computed_at, updated_at, imported_from_url) 
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+            params![
+                c.id, 
+                c.name, 
+                c.description, 
+                c.visibility.to_string(), 
+                c.created_at, 
+                c.created_by, 
+                c.created_branch, 
+                c.published_at, 
+                c.published_commit_sha, 
+                c.repo_url, 
+                c.status, 
+                c.health.as_ref().map(|h| h.to_string()),
+                c.health_computed_at,
+                c.updated_at,
+                c.imported_from_url
+            ],
         )?;
 
         // 2. Insert bookmarks
         for bm in &payload.bookmarks {
             conn.execute(
-                "INSERT INTO bookmarks (id, query, language, file_path, content_hash, commit_hash, status, resolution_method, last_resolved_at, stale_since, created_at, created_by)
+                "INSERT INTO bookmarks (id, query, language, file_path, content_hash, commit_hash, health, resolution_method, last_resolved_at, stale_since, created_at, created_by)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
-                params![bm.id, bm.query, bm.language, bm.file_path, bm.content_hash, bm.commit_hash, bm.status.to_string(), bm.resolution_method.map(|m| m.to_string()), bm.last_resolved_at, bm.stale_since, bm.created_at, bm.created_by],
+                params![bm.id, bm.query, bm.language, bm.file_path, bm.content_hash, bm.commit_hash, bm.health.to_string(), bm.resolution_method.map(|m| m.to_string()), bm.last_resolved_at, bm.stale_since, bm.created_at, bm.created_by],
             )?;
 
             // Insert membership
@@ -127,6 +143,23 @@ impl Packer {
                 "INSERT INTO resolutions (id, bookmark_id, resolved_at, commit_hash, method, match_count, file_path, byte_range, line_range, content_hash, headline, preview_lines)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
                 params![res.id, res.bookmark_id, res.resolved_at, res.commit_hash, res.method.to_string(), res.match_count, res.file_path, res.byte_range, res.line_range, res.content_hash, res.headline, res.preview_lines],
+            )?;
+        }
+
+        // 6. Insert collection tags
+        for t in &payload.collection_tags {
+            conn.execute(
+                "INSERT INTO collection_tags (collection_id, tag, added_at, added_by) VALUES (?1, ?2, ?3, ?4)",
+                params![t.collection_id, t.tag, t.added_at, t.added_by],
+            )?;
+        }
+
+        // 7. Insert collection links
+        for l in &payload.collection_links {
+            conn.execute(
+                "INSERT INTO collection_links (id, collection_id, kind, label, url, sort_order, added_at, added_by)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                params![l.id, l.collection_id, l.kind.to_string(), l.label, l.url, l.sort_order, l.added_at, l.added_by],
             )?;
         }
 

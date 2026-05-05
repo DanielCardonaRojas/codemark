@@ -7,34 +7,115 @@ use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
-pub enum BookmarkStatus {
+pub enum BookmarkHealth {
     Active,
     Drifted,
     Stale,
     Archived,
 }
 
-impl fmt::Display for BookmarkStatus {
+impl fmt::Display for BookmarkHealth {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            BookmarkStatus::Active => write!(f, "active"),
-            BookmarkStatus::Drifted => write!(f, "drifted"),
-            BookmarkStatus::Stale => write!(f, "stale"),
-            BookmarkStatus::Archived => write!(f, "archived"),
+            BookmarkHealth::Active => write!(f, "active"),
+            BookmarkHealth::Drifted => write!(f, "drifted"),
+            BookmarkHealth::Stale => write!(f, "stale"),
+            BookmarkHealth::Archived => write!(f, "archived"),
         }
     }
 }
 
-impl FromStr for BookmarkStatus {
+impl FromStr for BookmarkHealth {
     type Err = crate::error::Error;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s {
-            "active" => Ok(BookmarkStatus::Active),
-            "drifted" => Ok(BookmarkStatus::Drifted),
-            "stale" => Ok(BookmarkStatus::Stale),
-            "archived" => Ok(BookmarkStatus::Archived),
-            _ => Err(crate::error::Error::Input(format!("invalid bookmark status: {s}"))),
+            "active" => Ok(BookmarkHealth::Active),
+            "drifted" => Ok(BookmarkHealth::Drifted),
+            "stale" => Ok(BookmarkHealth::Stale),
+            "archived" => Ok(BookmarkHealth::Archived),
+            _ => Err(crate::error::Error::Input(format!("invalid bookmark health: {s}"))),
+        }
+    }
+}
+
+// Keep a temporary alias for smoother transition if needed, 
+// but we'll try to update all occurrences.
+pub type BookmarkStatus = BookmarkHealth;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CollectionHealth {
+    Active,
+    Drifted,
+    Stale,
+}
+
+impl fmt::Display for CollectionHealth {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            CollectionHealth::Active => write!(f, "active"),
+            CollectionHealth::Drifted => write!(f, "drifted"),
+            CollectionHealth::Stale => write!(f, "stale"),
+        }
+    }
+}
+
+impl FromStr for CollectionHealth {
+    type Err = crate::error::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "active" => Ok(CollectionHealth::Active),
+            "drifted" => Ok(CollectionHealth::Drifted),
+            "stale" => Ok(CollectionHealth::Stale),
+            _ => Err(crate::error::Error::Input(format!("invalid collection health: {s}"))),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CollectionLinkKind {
+    Pr,
+    Issue,
+    Doc,
+    Discussion,
+    Dashboard,
+    Repo,
+    Tour,
+    Other,
+}
+
+impl fmt::Display for CollectionLinkKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            CollectionLinkKind::Pr => write!(f, "pr"),
+            CollectionLinkKind::Issue => write!(f, "issue"),
+            CollectionLinkKind::Doc => write!(f, "doc"),
+            CollectionLinkKind::Discussion => write!(f, "discussion"),
+            CollectionLinkKind::Dashboard => write!(f, "dashboard"),
+            CollectionLinkKind::Repo => write!(f, "repo"),
+            CollectionLinkKind::Tour => write!(f, "tour"),
+            CollectionLinkKind::Other => write!(f, "other"),
+        }
+    }
+}
+
+impl FromStr for CollectionLinkKind {
+    type Err = crate::error::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "pr" => Ok(CollectionLinkKind::Pr),
+            "issue" => Ok(CollectionLinkKind::Issue),
+            "doc" => Ok(CollectionLinkKind::Doc),
+            "discussion" => Ok(CollectionLinkKind::Discussion),
+            "dashboard" => Ok(CollectionLinkKind::Dashboard),
+            "repo" => Ok(CollectionLinkKind::Repo),
+            "tour" => Ok(CollectionLinkKind::Tour),
+            "other" => Ok(CollectionLinkKind::Other),
+            _ => Err(crate::error::Error::Input(format!("invalid collection link kind: {s}"))),
         }
     }
 }
@@ -133,6 +214,26 @@ pub struct Tag {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CollectionTag {
+    pub collection_id: String,
+    pub tag: String,
+    pub added_at: String,
+    pub added_by: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CollectionLink {
+    pub id: String,
+    pub collection_id: String,
+    pub kind: CollectionLinkKind,
+    pub label: String,
+    pub url: String,
+    pub sort_order: i32,
+    pub added_at: String,
+    pub added_by: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Bookmark {
     pub id: String,
     pub query: String,
@@ -140,7 +241,7 @@ pub struct Bookmark {
     pub file_path: String,
     pub content_hash: Option<String>,
     pub commit_hash: Option<String>,
-    pub status: BookmarkStatus,
+    pub health: BookmarkHealth,
     pub resolution_method: Option<ResolutionMethod>,
     pub last_resolved_at: Option<String>,
     pub stale_since: Option<String>,
@@ -184,6 +285,8 @@ pub struct Collection {
     pub published_commit_sha: Option<String>,
     pub repo_url: Option<String>,
     pub status: Option<String>,
+    pub health: Option<CollectionHealth>,
+    pub health_computed_at: Option<String>,
     pub updated_at: Option<String>,
     pub imported_from_url: Option<String>,
 }
@@ -205,7 +308,7 @@ pub struct Repo {
 #[derive(Debug, Default)]
 pub struct BookmarkFilter {
     pub tag: Option<String>,
-    pub status: Option<Vec<BookmarkStatus>>,
+    pub health: Option<Vec<BookmarkHealth>>,
     pub file_path: Option<String>,
     pub language: Option<String>,
     pub created_by: Option<String>,
@@ -214,21 +317,28 @@ pub struct BookmarkFilter {
     pub limit: Option<usize>,
 }
 
+impl BookmarkFilter {
+    pub fn health(mut self, health: Vec<BookmarkHealth>) -> Self {
+        self.health = Some(health);
+        self
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn bookmark_status_round_trip() {
-        for status in [
-            BookmarkStatus::Active,
-            BookmarkStatus::Drifted,
-            BookmarkStatus::Stale,
-            BookmarkStatus::Archived,
+    fn bookmark_health_round_trip() {
+        for health in [
+            BookmarkHealth::Active,
+            BookmarkHealth::Drifted,
+            BookmarkHealth::Stale,
+            BookmarkHealth::Archived,
         ] {
-            let s = status.to_string();
-            let parsed: BookmarkStatus = s.parse().unwrap();
-            assert_eq!(status, parsed);
+            let s = health.to_string();
+            let parsed: BookmarkHealth = s.parse().unwrap();
+            assert_eq!(health, parsed);
         }
     }
 
@@ -247,8 +357,8 @@ mod tests {
     }
 
     #[test]
-    fn invalid_status_returns_error() {
-        assert!("bogus".parse::<BookmarkStatus>().is_err());
+    fn invalid_health_returns_error() {
+        assert!("bogus".parse::<BookmarkHealth>().is_err());
     }
 
     #[test]
@@ -260,7 +370,7 @@ mod tests {
             file_path: "src/main.swift".into(),
             content_hash: Some("sha256:abcd1234abcd1234".into()),
             commit_hash: None,
-            status: BookmarkStatus::Active,
+            health: BookmarkHealth::Active,
             resolution_method: Some(ResolutionMethod::Exact),
             last_resolved_at: None,
             stale_since: None,
@@ -273,6 +383,6 @@ mod tests {
         let json = serde_json::to_string(&bookmark).unwrap();
         let parsed: Bookmark = serde_json::from_str(&json).unwrap();
         assert_eq!(parsed.id, "test-id");
-        assert_eq!(parsed.status, BookmarkStatus::Active);
+        assert_eq!(parsed.health, BookmarkHealth::Active);
     }
 }

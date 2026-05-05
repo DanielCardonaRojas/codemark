@@ -383,8 +383,8 @@ pub async fn handler(
             // 2. Merge SQL
             // Use explicit columns to be safe against schema drift
             tx.execute(
-                "INSERT INTO main.bookmarks (id, query, language, file_path, content_hash, commit_hash, status, resolution_method, last_resolved_at, stale_since, created_at, created_by)
-                 SELECT id, query, language, file_path, content_hash, commit_hash, status, resolution_method, last_resolved_at, stale_since, created_at, created_by
+                "INSERT INTO main.bookmarks (id, query, language, file_path, content_hash, commit_hash, health, resolution_method, last_resolved_at, stale_since, created_at, created_by)
+                 SELECT id, query, language, file_path, content_hash, commit_hash, health, resolution_method, last_resolved_at, stale_since, created_at, created_by
                  FROM pack.bookmarks 
                  WHERE id IN (SELECT bookmark_id FROM pack.collection_bookmarks WHERE collection_id = ?1)
                  AND id NOT IN (SELECT id FROM main.bookmarks)",
@@ -395,12 +395,12 @@ pub async fn handler(
                 "INSERT INTO main.collections (
                     id, name, description, visibility,
                     repo_url, created_branch, published_commit_sha,
-                    status, published_at, created_at, updated_at
+                    status, health, health_computed_at, published_at, created_at, updated_at
                 )
                 SELECT
                     p.id, p.name, p.description, p.visibility,
                     p.repo_url, p.created_branch, p.published_commit_sha,
-                    'ready', strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+                    'ready', p.health, p.health_computed_at, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
                     COALESCE(p.created_at, strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
                     strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
                 FROM pack.collections AS p
@@ -412,6 +412,22 @@ pub async fn handler(
                 "INSERT INTO main.collection_bookmarks (collection_id, bookmark_id, position, added_at)
                  SELECT collection_id, bookmark_id, position, added_at 
                  FROM pack.collection_bookmarks
+                 WHERE collection_id = ?1",
+                [&collection_id]
+            )?;
+
+            tx.execute(
+                "INSERT INTO main.collection_tags (collection_id, tag, added_at, added_by)
+                 SELECT collection_id, tag, added_at, added_by 
+                 FROM pack.collection_tags
+                 WHERE collection_id = ?1",
+                [&collection_id]
+            )?;
+
+            tx.execute(
+                "INSERT INTO main.collection_links (id, collection_id, kind, label, url, sort_order, added_at, added_by)
+                 SELECT id, collection_id, kind, label, url, sort_order, added_at, added_by 
+                 FROM pack.collection_links
                  WHERE collection_id = ?1",
                 [&collection_id]
             )?;

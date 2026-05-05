@@ -110,7 +110,9 @@ fn row_to_collection(row: &rusqlite::Row) -> rusqlite::Result<Collection> {
         published_commit_sha: row.get(8)?,
         repo_url: row.get(9)?,
         status: row.get(10)?,
-        updated_at: row.get(11)?,
-        imported_from_url: row.get(12)?,
+        health: row.get::<_, Option<String>>(11)?.and_then(|h| h.parse().ok()),
+        health_computed_at: row.get(12)?,
+        updated_at: row.get(13)?,
+        imported_from_url: row.get(14)?,
     })
 }

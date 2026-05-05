@@ -78,6 +78,7 @@ pub struct LineFormatContext<'a> {
     pub filename: &'a str,
     pub line: usize,
     pub offset: usize,
+    pub health: &'a str,
     pub status: &'a str,
     pub tags: &'a str,
     pub note: &'a str,
@@ -98,6 +99,7 @@ pub fn format_line(template: &str, ctx: &LineFormatContext) -> String {
         .replace("{FILENAME}", ctx.filename)
         .replace("{LINE}", &ctx.line.to_string())
         .replace("{OFFSET}", &ctx.offset.to_string())
+        .replace("{HEALTH}", ctx.health)
         .replace("{STATUS}", ctx.status)
         .replace("{TAGS}", ctx.tags)
         .replace("{NOTE}", ctx.note)
@@ -110,6 +112,7 @@ pub fn format_line(template: &str, ctx: &LineFormatContext) -> String {
         .replace("{filename}", ctx.filename)
         .replace("{line}", &ctx.line.to_string())
         .replace("{offset}", &ctx.offset.to_string())
+        .replace("{health}", ctx.health)
         .replace("{status}", ctx.status)
         .replace("{tags}", ctx.tags)
         .replace("{note}", ctx.note)
@@ -304,7 +307,7 @@ fn write_bookmarks_table(bookmarks: &[Bookmark]) -> io::Result<()> {
         table.add_row(vec![
             Cell::new(short_id(&bm.id)),
             Cell::new(&bm.file_path),
-            Cell::new(bm.status.to_string()),
+            Cell::new(bm.health.to_string()),
             Cell::new(tags),
             Cell::new(note),
             Cell::new(resolved),
@@ -326,7 +329,7 @@ fn write_bookmarks_line(bookmarks: &[Bookmark]) -> io::Result<()> {
             "{}\t{}\t{}\t{}\t{}",
             short_id(&bm.id),
             bm.file_path,
-            bm.status,
+            bm.health,
             tags,
             note
         )?;
@@ -358,7 +361,7 @@ where
         let context = get_first_context(bm);
         let line =
             if let Some(ref fn_line) = get_line_fn { fn_line(short).unwrap_or(0) } else { 0 };
-        let status = bm.status.to_string();
+        let health = bm.health.to_string();
 
         let ctx = LineFormatContext {
             id: short,
@@ -366,7 +369,8 @@ where
             filename,
             line,
             offset: line,
-            status: status.as_str(),
+            health: health.as_str(),
+            status: health.as_str(),
             tags: &tags,
             note,
             context,
@@ -408,7 +412,7 @@ where
         let context = get_first_context(bm);
         let line =
             if let Some(ref fn_line) = get_line_fn { fn_line(short).unwrap_or(0) } else { 0 };
-        let status = bm.status.to_string();
+        let health = bm.health.to_string();
 
         let ctx = LineFormatContext {
             id: short,
@@ -416,7 +420,8 @@ where
             filename,
             line,
             offset: line,
-            status: status.as_str(),
+            health: health.as_str(),
+            status: health.as_str(),
             tags: &tags,
             note,
             context,
@@ -469,7 +474,7 @@ where
                     Cell::new(ab.source),
                     Cell::new(short_id(&bm.id)),
                     Cell::new(&bm.file_path),
-                    Cell::new(bm.status.to_string()),
+                    Cell::new(bm.health.to_string()),
                     Cell::new(tags),
                     Cell::new(note),
                 ]);
@@ -493,7 +498,7 @@ where
                         ab.source,
                         short_id(&bm.id),
                         bm.file_path,
-                        bm.status,
+                        bm.health,
                         tags,
                         note
                     )?;
@@ -516,7 +521,7 @@ where
                     Cell::new(ab.source),
                     Cell::new(short_id(&bm.id)),
                     Cell::new(&bm.file_path),
-                    Cell::new(bm.status.to_string()),
+                    Cell::new(bm.health.to_string()),
                     Cell::new(tags),
                     Cell::new(note),
                 ]);
@@ -575,7 +580,7 @@ fn write_bookmark_markdown_fallback(bm: &Bookmark, resolutions: &[Resolution]) -
     writeln!(stdout, "|----------|-------|")?;
     writeln!(stdout, "| **File** | {} |", escape_markdown(&bm.file_path))?;
     writeln!(stdout, "| **Language** | {} |", bm.language)?;
-    writeln!(stdout, "| **Status** | {} |", bm.status)?;
+    writeln!(stdout, "| **Status** | {} |", bm.health)?;
     writeln!(stdout, "| **Created** | {} |", bm.created_at)?;
     if let Some(ref created_by) = bm.created_by {
         writeln!(stdout, "| **Author** | {} |", escape_markdown(created_by))?;

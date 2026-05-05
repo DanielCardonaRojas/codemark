@@ -58,6 +58,8 @@ async fn test_cli_publish_pull_roundtrip() {
         published_commit_sha: None,
         repo_url: None,
         status: None,
+        health: None,
+        health_computed_at: None,
         updated_at: None,
         imported_from_url: None,
     };
@@ -70,7 +72,7 @@ async fn test_cli_publish_pull_roundtrip() {
         file_path: "src/main.rs".to_string(),
         content_hash: None,
         commit_hash: None,
-        status: BookmarkStatus::Active,
+        health: codemark_core::engine::bookmark::BookmarkHealth::Active,
         resolution_method: None,
         last_resolved_at: None,
         stale_since: None,

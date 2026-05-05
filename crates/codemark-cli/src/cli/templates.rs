@@ -124,7 +124,7 @@ impl BookmarkTemplateContext {
             file_path: bm.file_path.clone(),
             file_name,
             language: bm.language.clone(),
-            status: bm.status.to_string(),
+            status: bm.health.to_string(),
             query: bm.query.clone(),
             created_at: bm.created_at.clone(),
             created_by: bm.created_by.clone(),
@@ -349,7 +349,7 @@ pub fn render_show_template(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use codemark_core::engine::bookmark::{BookmarkStatus, ResolutionMethod};
+    use codemark_core::engine::bookmark::{BookmarkHealth, ResolutionMethod};
 
     #[test]
     fn test_escape_markdown() {
@@ -377,7 +377,7 @@ mod tests {
             file_path: "/path/to/file.rs".to_string(),
             content_hash: None,
             commit_hash: Some("commit1234567890".to_string()),
-            status: BookmarkStatus::Active,
+            health: BookmarkHealth::Active,
             resolution_method: Some(ResolutionMethod::Exact),
             last_resolved_at: Some("2024-01-01T00:00:00Z".to_string()),
             stale_since: None,

@@ -5,7 +5,7 @@
 use std::collections::HashMap;
 
 use crate::engine::bookmark::{
-    Annotation, Bookmark, BookmarkFilter, BookmarkStatus, ResolutionMethod, Tag,
+    Annotation, Bookmark, BookmarkFilter, BookmarkHealth, ResolutionMethod, Tag, Collection, CollectionHealth
 };
 use crate::error::{Error, Result};
 use crate::storage::db::Database;
@@ -17,7 +17,7 @@ impl Database {
         // Try to insert with OR FAIL to check for uniqueness constraint
         let result = self.conn().execute(
             "INSERT INTO bookmarks (id, query, language, file_path, content_hash, commit_hash,
-             status, resolution_method, last_resolved_at, stale_since, created_at, created_by)
+             health, resolution_method, last_resolved_at, stale_since, created_at, created_by)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
             rusqlite::params![
                 bookmark.id,
@@ -26,7 +26,7 @@ impl Database {
                 bookmark.file_path,
                 bookmark.content_hash,
                 bookmark.commit_hash,
-                bookmark.status.to_string(),
+                bookmark.health.to_string(),
                 bookmark.resolution_method.map(|m| m.to_string()),
                 bookmark.last_resolved_at,
                 bookmark.stale_since,
@@ -119,7 +119,7 @@ impl Database {
     pub fn get_bookmark(&self, id: &str) -> Result<Option<Bookmark>> {
         let mut stmt = self.conn().prepare(
             "SELECT id, query, language, file_path, content_hash, commit_hash,
-             status, resolution_method, last_resolved_at, stale_since, created_at, created_by
+             health, resolution_method, last_resolved_at, stale_since, created_at, created_by
              FROM bookmarks WHERE id = ?1",
         )?;
         let mut rows = stmt.query_map([id], row_to_bookmark_base)?;
@@ -140,7 +140,7 @@ impl Database {
         let pattern = format!("{prefix}%");
         let mut stmt = self.conn().prepare(
             "SELECT id, query, language, file_path, content_hash, commit_hash,
-             status, resolution_method, last_resolved_at, stale_since, created_at, created_by
+             health, resolution_method, last_resolved_at, stale_since, created_at, created_by
              FROM bookmarks WHERE id LIKE ?1",
         )?;
         let mut results: Vec<Bookmark> =
@@ -169,7 +169,7 @@ impl Database {
     ) -> Result<Option<Bookmark>> {
         let mut stmt = self.conn().prepare(
             "SELECT id, query, language, file_path, content_hash, commit_hash,
-             status, resolution_method, last_resolved_at, stale_since, created_at, created_by
+             health, resolution_method, last_resolved_at, stale_since, created_at, created_by
              FROM bookmarks WHERE file_path = ?1 AND query = ?2",
         )?;
         let mut rows = stmt.query_map(rusqlite::params![file_path, query], row_to_bookmark_base)?;
@@ -186,7 +186,7 @@ impl Database {
     pub fn list_bookmarks(&self, filter: &BookmarkFilter) -> Result<Vec<Bookmark>> {
         let mut sql = String::from(
             "SELECT DISTINCT b.id, b.query, b.language, b.file_path, b.content_hash, b.commit_hash,
-             b.status, b.resolution_method, b.last_resolved_at, b.stale_since, b.created_at, b.created_by
+             b.health, b.resolution_method, b.last_resolved_at, b.stale_since, b.created_at, b.created_by
              FROM bookmarks b",
         );
         let mut conditions = Vec::new();
@@ -205,12 +205,12 @@ impl Database {
             params.push(Box::new(tag.clone()));
         }
 
-        if let Some(ref statuses) = filter.status {
+        if let Some(ref healths) = filter.health {
             let placeholders: Vec<String> =
-                statuses.iter().enumerate().map(|_| "?".to_string()).collect();
-            conditions.push(format!("b.status IN ({})", placeholders.join(", ")));
-            for s in statuses {
-                params.push(Box::new(s.to_string()));
+                healths.iter().enumerate().map(|_| "?".to_string()).collect();
+            conditions.push(format!("b.health IN ({})", placeholders.join(", ")));
+            for h in healths {
+                params.push(Box::new(h.to_string()));
             }
         }
 
@@ -270,19 +270,19 @@ impl Database {
         Ok(results)
     }
 
-    pub fn update_bookmark_status(
+    pub fn update_bookmark_health(
         &self,
         id: &str,
-        status: BookmarkStatus,
+        health: BookmarkHealth,
         method: Option<ResolutionMethod>,
         last_resolved_at: Option<&str>,
         stale_since: Option<&str>,
     ) -> Result<()> {
         self.conn().execute(
-            "UPDATE bookmarks SET status = ?1, resolution_method = ?2,
+            "UPDATE bookmarks SET health = ?1, resolution_method = ?2,
              last_resolved_at = ?3, stale_since = ?4 WHERE id = ?5",
             rusqlite::params![
-                status.to_string(),
+                health.to_string(),
                 method.map(|m| m.to_string()),
                 last_resolved_at,
                 stale_since,
@@ -311,20 +311,20 @@ impl Database {
         Ok(count > 0)
     }
 
-    pub fn count_by_status(&self) -> Result<HashMap<BookmarkStatus, usize>> {
+    pub fn count_by_health(&self) -> Result<HashMap<BookmarkHealth, usize>> {
         let mut stmt =
-            self.conn().prepare("SELECT status, COUNT(*) FROM bookmarks GROUP BY status")?;
+            self.conn().prepare("SELECT health, COUNT(*) FROM bookmarks GROUP BY health")?;
         let rows = stmt.query_map([], |row| {
-            let status: String = row.get(0)?;
+            let health: String = row.get(0)?;
             let count: usize = row.get(1)?;
-            Ok((status, count))
+            Ok((health, count))
         })?;
 
         let mut map = HashMap::new();
         for row in rows {
-            let (status_str, count) = row?;
-            if let Ok(status) = status_str.parse::<BookmarkStatus>() {
-                map.insert(status, count);
+            let (health_str, count) = row?;
+            if let Ok(health) = health_str.parse::<BookmarkHealth>() {
+                map.insert(health, count);
             }
         }
         Ok(map)
@@ -332,7 +332,7 @@ impl Database {
 
     pub fn delete_archived_before(&self, before: &str) -> Result<usize> {
         let count = self.conn().execute(
-            "DELETE FROM bookmarks WHERE status = 'archived' AND created_at < ?1",
+            "DELETE FROM bookmarks WHERE health = 'archived' AND created_at < ?1",
             [before],
         )?;
         Ok(count)
@@ -357,12 +357,13 @@ impl Database {
         language: Option<&str>,
         created_by: Option<&str>,
         collection: Option<&str>,
+        health: Option<Vec<BookmarkHealth>>,
     ) -> Result<Vec<Bookmark>> {
         // Always need annotation join for general search
         // Always need tag join for tag search
         let mut sql = String::from(
             "SELECT DISTINCT b.id, b.query, b.language, b.file_path, b.content_hash, b.commit_hash,
-             b.status, b.resolution_method, b.last_resolved_at, b.stale_since, b.created_at, b.created_by
+             b.health, b.resolution_method, b.last_resolved_at, b.stale_since, b.created_at, b.created_by
              FROM bookmarks b
              LEFT JOIN bookmark_annotations ba ON b.id = ba.bookmark_id
              LEFT JOIN bookmark_tags bt ON b.id = bt.bookmark_id",
@@ -413,8 +414,17 @@ impl Database {
             params.push(Box::new(col_name.to_string()));
         }
 
-        // Exclude archived by default
-        conditions.push("b.status != 'archived'".to_string());
+        if let Some(ref healths) = health {
+            let placeholders: Vec<String> =
+                healths.iter().enumerate().map(|_| "?".to_string()).collect();
+            conditions.push(format!("b.health IN ({})", placeholders.join(", ")));
+            for h in healths {
+                params.push(Box::new(h.to_string()));
+            }
+        } else {
+            // Exclude archived by default
+            conditions.push("b.health != 'archived'".to_string());
+        }
 
         if !conditions.is_empty() {
             sql.push_str(" WHERE ");
@@ -500,7 +510,7 @@ impl Database {
 }
 
 fn row_to_bookmark_base(row: &rusqlite::Row) -> rusqlite::Result<Bookmark> {
-    let status_str: String = row.get(6)?;
+    let health_str: String = row.get(6)?;
     let method_str: Option<String> = row.get(7)?;
 
     Ok(Bookmark {
@@ -510,7 +520,7 @@ fn row_to_bookmark_base(row: &rusqlite::Row) -> rusqlite::Result<Bookmark> {
         file_path: row.get(3)?,
         content_hash: row.get(4)?,
         commit_hash: row.get(5)?,
-        status: status_str.parse().unwrap_or(BookmarkStatus::Active),
+        health: health_str.parse().unwrap_or(BookmarkHealth::Active),
         resolution_method: method_str.and_then(|s| s.parse().ok()),
         last_resolved_at: row.get(8)?,
         stale_since: row.get(9)?,
@@ -538,7 +548,7 @@ fn row_to_annotation(row: &rusqlite::Row) -> rusqlite::Result<Annotation> {
 mod tests {
     use crate::engine::bookmark::BookmarkFilter;
     use crate::engine::bookmark::{
-        Annotation, Bookmark, BookmarkStatus, Collection, ResolutionMethod, Tag,
+        Annotation, Bookmark, BookmarkHealth, Collection, ResolutionMethod, Tag,
     };
     use crate::storage::db::Database;
 
@@ -554,7 +564,7 @@ mod tests {
             file_path: format!("src/main_{}.swift", id),
             content_hash: Some("sha256:abcd1234abcd1234".to_string()),
             commit_hash: Some("abc123".to_string()),
-            status: BookmarkStatus::Active,
+            health: BookmarkHealth::Active,
             resolution_method: Some(ResolutionMethod::Exact),
             last_resolved_at: None,
             stale_since: None,
@@ -576,7 +586,7 @@ mod tests {
         let fetched = db.get_bookmark("aaaa-bbbb-cccc-dddd").unwrap().unwrap();
         assert_eq!(fetched.id, bm.id);
         assert_eq!(fetched.query, bm.query);
-        assert_eq!(fetched.status, BookmarkStatus::Active);
+        assert_eq!(fetched.health, BookmarkHealth::Active);
         assert!(fetched.tags.is_empty());
         assert!(fetched.annotations.is_empty());
     }
@@ -713,18 +723,18 @@ mod tests {
     }
 
     #[test]
-    fn list_with_status_filter() {
+    fn list_with_health_filter() {
         init_test_env();
         let db = Database::open_in_memory().unwrap();
         let mut bm1 = test_bookmark("aaaa-0000-0000-0001");
-        bm1.status = BookmarkStatus::Active;
+        bm1.health = BookmarkHealth::Active;
         let mut bm2 = test_bookmark("aaaa-0000-0000-0002");
-        bm2.status = BookmarkStatus::Stale;
+        bm2.health = BookmarkHealth::Stale;
         db.insert_bookmark(&bm1).unwrap();
         db.insert_bookmark(&bm2).unwrap();
 
         let filter =
-            BookmarkFilter { status: Some(vec![BookmarkStatus::Stale]), ..Default::default() };
+            BookmarkFilter { health: Some(vec![BookmarkHealth::Stale]), ..Default::default() };
         let results = db.list_bookmarks(&filter).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].id, "aaaa-0000-0000-0002");
@@ -751,6 +761,8 @@ mod tests {
             published_commit_sha: None,
             repo_url: None,
             status: None,
+            health: None,
+            health_computed_at: None,
             updated_at: None,
             imported_from_url: None,
         };
@@ -786,14 +798,14 @@ mod tests {
     }
 
     #[test]
-    fn update_status() {
+    fn update_health() {
         init_test_env();
         let db = Database::open_in_memory().unwrap();
         db.insert_bookmark(&test_bookmark("aaaa-0000-0000-0001")).unwrap();
 
-        db.update_bookmark_status(
+        db.update_bookmark_health(
             "aaaa-0000-0000-0001",
-            BookmarkStatus::Drifted,
+            BookmarkHealth::Drifted,
             Some(ResolutionMethod::Relaxed),
             Some("2026-04-01T01:00:00Z"),
             None,
@@ -801,7 +813,7 @@ mod tests {
         .unwrap();
 
         let bm = db.get_bookmark("aaaa-0000-0000-0001").unwrap().unwrap();
-        assert_eq!(bm.status, BookmarkStatus::Drifted);
+        assert_eq!(bm.health, BookmarkHealth::Drifted);
         assert_eq!(bm.resolution_method, Some(ResolutionMethod::Relaxed));
     }
 
@@ -836,19 +848,19 @@ mod tests {
     }
 
     #[test]
-    fn count_by_status() {
+    fn count_by_health() {
         init_test_env();
         let db = Database::open_in_memory().unwrap();
         let mut bm1 = test_bookmark("aaaa-0000-0000-0001");
-        bm1.status = BookmarkStatus::Active;
+        bm1.health = BookmarkHealth::Active;
         let mut bm2 = test_bookmark("aaaa-0000-0000-0002");
-        bm2.status = BookmarkStatus::Stale;
+        bm2.health = BookmarkHealth::Stale;
         db.insert_bookmark(&bm1).unwrap();
         db.insert_bookmark(&bm2).unwrap();
 
-        let counts = db.count_by_status().unwrap();
-        assert_eq!(counts.get(&BookmarkStatus::Active), Some(&1));
-        assert_eq!(counts.get(&BookmarkStatus::Stale), Some(&1));
+        let counts = db.count_by_health().unwrap();
+        assert_eq!(counts.get(&BookmarkHealth::Active), Some(&1));
+        assert_eq!(counts.get(&BookmarkHealth::Stale), Some(&1));
     }
 
     #[test]

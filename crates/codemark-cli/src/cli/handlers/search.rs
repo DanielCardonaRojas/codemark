@@ -16,6 +16,7 @@ use super::{
 
 /// Search for bookmarks using full-text search or semantic search.
 pub async fn handle_search(cli: &Cli, mode: &OutputMode, args: &SearchArgs) -> Result<()> {
+    super::check_deprecated_status(&args.health, &args.status);
     let config = load_config(cli);
 
     // Semantic search requires a query
@@ -38,6 +39,9 @@ pub async fn handle_search(cli: &Cli, mode: &OutputMode, args: &SearchArgs) -> R
     let dbs = filter_dbs_by_user_email(dbs, args.user_email.as_deref());
     let dbs = filter_dbs_by_repo_owner(dbs, args.repo_owner.as_deref());
 
+    let health_input = args.health.as_deref().or(args.status.as_deref());
+    let health_filter = super::parse_status_filter(health_input);
+
     if dbs.len() == 1 {
         let bookmarks = dbs[0].1.search_bookmarks(
             args.query.as_deref(),
@@ -46,6 +50,7 @@ pub async fn handle_search(cli: &Cli, mode: &OutputMode, args: &SearchArgs) -> R
             args.lang.as_deref(),
             args.author.as_deref(),
             args.collection.as_deref(),
+            health_filter.clone(),
         )?;
         let db = &dbs[0].1;
 
@@ -82,6 +87,7 @@ pub async fn handle_search(cli: &Cli, mode: &OutputMode, args: &SearchArgs) -> R
                 args.lang.as_deref(),
                 args.author.as_deref(),
                 args.collection.as_deref(),
+                health_filter.clone(),
             )?;
             for bm in bookmarks {
                 all.push((label.clone(), bm));
@@ -182,7 +188,7 @@ async fn handle_semantic_search(
                     "query": bm.query,
                     "language": bm.language,
                     "file_path": bm.file_path,
-                    "status": bm.status,
+                    "status": bm.health,
                     "tags": bm.tags,
                     "annotations": annotations,
                     "created_at": bm.created_at,

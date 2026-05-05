@@ -6,7 +6,10 @@ use crate::cli::output::{
     self, CollectionWithCount, OutputMode, write_json_success, write_success,
 };
 use crate::cli::*;
-use codemark_core::engine::bookmark::{BookmarkFilter, BookmarkStatus, Collection, Visibility};
+use codemark_core::engine::bookmark::{
+    BookmarkFilter, BookmarkHealth, BookmarkStatus, Collection, CollectionLink, CollectionLinkKind,
+    CollectionTag, Visibility,
+};
 use codemark_core::error::{Error, Result};
 
 use super::{find_bookmark, now_iso, open_db, open_db_for_write, resolve_batch};
@@ -35,6 +38,8 @@ pub async fn handle_collection_create(
         published_commit_sha: None,
         repo_url: None,
         status: None,
+        health: None,
+        health_computed_at: None,
         updated_at: None,
         imported_from_url: None,
     };
@@ -102,6 +107,8 @@ pub async fn handle_collection_add(
                 published_commit_sha: None,
                 repo_url: None,
                 status: None,
+                health: None,
+                health_computed_at: None,
                 updated_at: None,
                 imported_from_url: None,
             };
@@ -320,12 +327,177 @@ pub async fn handle_collection_resolve(
 
     let filter = BookmarkFilter {
         collection_id: Some(collection.id),
-        status: Some(vec![BookmarkStatus::Active, BookmarkStatus::Drifted]),
+        health: Some(vec![BookmarkHealth::Active, BookmarkHealth::Drifted]),
         ..Default::default()
     };
     let bookmarks = db.list_bookmarks(&filter)?;
     let config = super::load_config(cli);
     let results = resolve_batch(&db, &bookmarks, &config, false).await?;
     super::write_batch_output(mode, &results)?;
+    Ok(())
+}
+
+/// Handle collection tag subcommands.
+pub async fn handle_collection_tag(
+    cli: &Cli,
+    mode: &OutputMode,
+    args: &CollectionTagArgs,
+) -> Result<()> {
+    match &args.command {
+        CollectionTagCommand::Add(add_args) => {
+            let db = open_db_for_write(cli)?;
+            let collection = db
+                .get_collection_by_name(&add_args.name)?
+                .ok_or_else(|| Error::Input(format!("collection '{}' not found", add_args.name)))?;
+
+            let now = now_iso();
+            let tags: Vec<CollectionTag> = add_args
+                .tags
+                .iter()
+                .map(|t| CollectionTag {
+                    collection_id: collection.id.clone(),
+                    tag: t.clone(),
+                    added_at: now.clone(),
+                    added_by: None,
+                })
+                .collect();
+
+            db.insert_collection_tags(&tags)?;
+            write_success(
+                mode,
+                &format!("Added {} tags to collection '{}'", add_args.tags.len(), add_args.name),
+            )?;
+        }
+        CollectionTagCommand::Rm(rm_args) => {
+            let db = open_db_for_write(cli)?;
+            let collection = db
+                .get_collection_by_name(&rm_args.name)?
+                .ok_or_else(|| Error::Input(format!("collection '{}' not found", rm_args.name)))?;
+
+            for tag in &rm_args.tags {
+                db.delete_collection_tag(&collection.id, tag)?;
+            }
+            write_success(
+                mode,
+                &format!("Removed {} tags from collection '{}'", rm_args.tags.len(), rm_args.name),
+            )?;
+        }
+        CollectionTagCommand::List(list_args) => {
+            let db = open_db(cli)?;
+            let collection = db
+                .get_collection_by_name(&list_args.name)?
+                .ok_or_else(|| Error::Input(format!("collection '{}' not found", list_args.name)))?;
+
+            let tags = db.list_tags_for_collection(&collection.id)?;
+            let filtered_tags: Vec<_> = if list_args.include_auto {
+                tags
+            } else {
+                tags.into_iter().filter(|t| t.added_by.as_deref() != Some("__auto__")).collect()
+            };
+
+            match mode {
+                OutputMode::Json => write_json_success(&filtered_tags)?,
+                _ => {
+                    let mut stdout = std::io::stdout().lock();
+                    for t in filtered_tags {
+                        if list_args.include_auto {
+                            writeln!(stdout, "{}\t{}", t.tag, t.added_by.as_deref().unwrap_or(""))?;
+                        } else {
+                            writeln!(stdout, "{}", t.tag)?;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Handle collection link subcommands.
+pub async fn handle_collection_link(
+    cli: &Cli,
+    mode: &OutputMode,
+    args: &CollectionLinkArgs,
+) -> Result<()> {
+    match &args.command {
+        CollectionLinkCommand::Add(add_args) => {
+            let db = open_db_for_write(cli)?;
+            let collection = db
+                .get_collection_by_name(&add_args.name)?
+                .ok_or_else(|| Error::Input(format!("collection '{}' not found", add_args.name)))?;
+
+            let kind: CollectionLinkKind = add_args.kind.parse().map_err(|_| {
+                Error::Input(format!("invalid link kind: {}", add_args.kind))
+            })?;
+
+            let link = CollectionLink {
+                id: uuid::Uuid::new_v4().to_string(),
+                collection_id: collection.id.clone(),
+                kind,
+                label: add_args.label.clone(),
+                url: add_args.url.clone(),
+                sort_order: add_args.position.unwrap_or(0),
+                added_at: now_iso(),
+                added_by: None,
+            };
+
+            db.insert_collection_link(&link)?;
+            write_success(
+                mode,
+                &format!("Added link to collection '{}' (ID: {})", add_args.name, output::short_id(&link.id)),
+            )?;
+        }
+        CollectionLinkCommand::Rm(rm_args) => {
+            let db = open_db_for_write(cli)?;
+            db.delete_collection_link(&rm_args.id)?;
+            write_success(mode, &format!("Removed link from collection '{}'", rm_args.name))?;
+        }
+        CollectionLinkCommand::List(list_args) => {
+            let db = open_db(cli)?;
+            let collection = db
+                .get_collection_by_name(&list_args.name)?
+                .ok_or_else(|| Error::Input(format!("collection '{}' not found", list_args.name)))?;
+
+            let links = db.list_links_for_collection(&collection.id)?;
+            match mode {
+                OutputMode::Json => write_json_success(&links)?,
+                OutputMode::Table => {
+                    let mut table = comfy_table::Table::new();
+                    table.set_header(vec!["ID", "Kind", "Label", "URL"]);
+                    for l in links {
+                        table.add_row(vec![
+                            output::short_id(&l.id),
+                            &l.kind.to_string(),
+                            &l.label,
+                            &l.url,
+                        ]);
+                    }
+                    println!("{table}");
+                }
+                _ => {
+                    let mut stdout = std::io::stdout().lock();
+                    for l in links {
+                        writeln!(
+                            stdout,
+                            "{}\t{}\t{}\t{}",
+                            output::short_id(&l.id),
+                            l.kind,
+                            l.label,
+                            l.url
+                        )?;
+                    }
+                }
+            }
+        }
+        CollectionLinkCommand::Reorder(reorder_args) => {
+            let db = open_db_for_write(cli)?;
+            let collection = db
+                .get_collection_by_name(&reorder_args.name)?
+                .ok_or_else(|| Error::Input(format!("collection '{}' not found", reorder_args.name)))?;
+
+            db.reorder_collection_links(&collection.id, &reorder_args.ids)?;
+            write_success(mode, &format!("Reordered links in collection '{}'", reorder_args.name))?;
+        }
+    }
     Ok(())
 }
