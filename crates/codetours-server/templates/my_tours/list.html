@@ -6,15 +6,11 @@
 {% block content %}
 <div class="flex flex-col h-screen overflow-hidden">
     <!-- Header -->
-    <header class="h-14 border-b border-border bg-bg-secondary flex items-center justify-between px-4 shrink-0">
+    <header class="h-14 border-b border-border bg-bg-secondary flex items-center px-4 shrink-0">
         <div class="flex flex-col">
             <h1 class="text-sm font-semibold text-text-primary">My Tours</h1>
             <span class="text-[10px] text-text-secondary">Manage your created tours</span>
         </div>
-        <button class="primary-button !py-1 text-xs opacity-50 cursor-not-allowed" title="Phase 4 CLI is the source of truth for publishing">
-            {% call icons::icon("plus", 14) %}
-            New Tour
-        </button>
     </header>
 
     <!-- Main Content -->

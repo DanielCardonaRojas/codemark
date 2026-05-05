@@ -43,9 +43,8 @@ pub async fn handler(
     auth: AuthContext,
     Query(query): Query<MyToursQuery>,
 ) -> impl IntoResponse {
-    let user_id = auth.current_user(&state.config).unwrap_or_default();
-    
-    // In M2: we query the single tenant db directly
+    // In M2: single-tenant mode, show all tours for "My Tours"
+    // Phase 6: filter by authenticated user_id
     let db = match state.storage.get_conn().await {
         Ok(t) => t,
         Err(_) => return axum::http::StatusCode::INTERNAL_SERVER_ERROR.into_response(),
@@ -54,38 +53,39 @@ pub async fn handler(
     let is_published_filter = query.tab == "published";
 
     let result = db.interact(move |conn| {
+        // Count all collections (single-tenant mode)
         let published_count: usize = conn.query_row(
-            "SELECT COUNT(*) FROM collections WHERE created_by = ? AND visibility IS NOT NULL",
-            [&user_id],
+            "SELECT COUNT(*) FROM collections WHERE visibility IS NOT NULL",
+            [],
             |row: &rusqlite::Row| row.get(0),
         ).unwrap_or(0);
 
         let draft_count: usize = conn.query_row(
-            "SELECT COUNT(*) FROM collections WHERE created_by = ? AND visibility IS NULL",
-            [&user_id],
+            "SELECT COUNT(*) FROM collections WHERE visibility IS NULL",
+            [],
             |row: &rusqlite::Row| row.get(0),
         ).unwrap_or(0);
 
         let sql = if is_published_filter {
-            "SELECT id, name, description, created_at, created_at, repo_url, 
+            "SELECT id, name, description, created_at, created_at, repo_url,
             (SELECT COUNT(*) FROM collection_bookmarks WHERE collection_id = collections.id) as step_count
-            FROM collections 
-            WHERE created_by = ? AND visibility IS NOT NULL
+            FROM collections
+            WHERE visibility IS NOT NULL
             ORDER BY created_at DESC"
         } else {
-            "SELECT id, name, description, created_at, created_at, repo_url, 
+            "SELECT id, name, description, created_at, created_at, repo_url,
             (SELECT COUNT(*) FROM collection_bookmarks WHERE collection_id = collections.id) as step_count
-            FROM collections 
-            WHERE created_by = ? AND visibility IS NULL
+            FROM collections
+            WHERE visibility IS NULL
             ORDER BY created_at DESC"
         };
 
         let mut stmt = conn.prepare(sql).map_err(|_| axum::http::StatusCode::INTERNAL_SERVER_ERROR)?;
-        
-        let tours = stmt.query_map([&user_id], |row: &rusqlite::Row| {
+
+        let tours = stmt.query_map([], |row: &rusqlite::Row| {
             let repo_url: Option<String> = row.get(5)?;
             let repo = repo_url.as_ref().and_then(|u| u.split('/').last().map(|s| s.to_string()));
-            
+
             Ok(MyTourCard {
                 id: row.get(0)?,
                 title: row.get(1)?,
