@@ -1309,6 +1309,8 @@ pub async fn handle_preview(cli: &Cli, args: &PreviewArgs) -> Result<()> {
 
     // Output JSON with resolution data (using standard envelope)
     let line_range_colon = resolution.line_range.as_ref().map(|r| r.replace('-', ":"));
+    // The "drifted" boolean includes both Drifted and Stale for backward compatibility.
+    // Clients should check the "health" field for the precise tri-state (Active/Drifted/Stale).
     let data = serde_json::json!({
         "bookmark_id": bm.id,
         "file_path": absolute_path.to_string_lossy(),

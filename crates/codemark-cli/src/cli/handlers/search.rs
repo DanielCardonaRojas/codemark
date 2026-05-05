@@ -176,10 +176,10 @@ async fn handle_semantic_search(
     for result in results {
         if let Ok(Some(bm)) = db.get_bookmark(&result.bookmark_id) {
             // Apply health filter if specified
-            if let Some(ref filter) = health_filter {
-                if !filter.contains(&bm.health) {
-                    continue;
-                }
+            if let Some(ref filter) = health_filter
+                && !filter.contains(&bm.health)
+            {
+                continue;
             }
             bookmarks.push((result.distance, bm));
         }

@@ -3,15 +3,15 @@ use crate::engine::bookmark::{BookmarkHealth, ResolutionMethod};
 /// Determine the new bookmark health based on resolution outcome and whether
 /// the content hash matches.
 ///
-/// The stale threshold only applies when resolution fails. For any successful
-/// resolution (Exact, Relaxed, HashFallback), the bookmark's health reflects
-/// the current resolution result, not its age.
+/// For any successful resolution (Exact, Relaxed, HashFallback), the bookmark's
+/// health reflects the current resolution result. Failed resolutions always
+/// result in Stale.
 pub fn transition(
     _current: BookmarkHealth,
     method: ResolutionMethod,
     hash_matches: bool,
-    days_since_resolution: u32,
-    stale_threshold: u32,
+    _days_since_resolution: u32,
+    _stale_threshold: u32,
 ) -> BookmarkHealth {
     match method {
         // Successful resolutions: return health based on resolution result
@@ -19,14 +19,8 @@ pub fn transition(
         ResolutionMethod::Exact => BookmarkHealth::Drifted,
         ResolutionMethod::Relaxed => BookmarkHealth::Drifted,
         ResolutionMethod::HashFallback => BookmarkHealth::Drifted,
-        // Failed resolution: apply stale age rule
-        ResolutionMethod::Failed => {
-            if days_since_resolution > stale_threshold {
-                BookmarkHealth::Stale
-            } else {
-                BookmarkHealth::Stale
-            }
-        }
+        // Failed resolution: always stale (couldn't be resolved)
+        ResolutionMethod::Failed => BookmarkHealth::Stale,
     }
 }
 

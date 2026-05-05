@@ -33,7 +33,11 @@ impl PackReader {
             // Validate health value if present
             let health_parsed = if let Some(h) = &health {
                 Some(h.parse::<crate::engine::bookmark::CollectionHealth>().map_err(|_| {
-                    rusqlite::Error::InvalidColumnType(11, "invalid collection health value".into(), rusqlite::types::Type::Text)
+                    rusqlite::Error::InvalidColumnType(
+                        11,
+                        "invalid collection health value".into(),
+                        rusqlite::types::Type::Text,
+                    )
                 })?)
             } else {
                 None
@@ -132,7 +136,11 @@ fn row_to_bookmark(row: &rusqlite::Row) -> rusqlite::Result<Bookmark> {
     // Parse and validate health - reject invalid values
     let health = if let Some(s) = health_str {
         Some(s.parse::<BookmarkHealth>().map_err(|_| {
-            rusqlite::Error::InvalidColumnType(6, "invalid bookmark health value".into(), rusqlite::types::Type::Text)
+            rusqlite::Error::InvalidColumnType(
+                6,
+                "invalid bookmark health value".into(),
+                rusqlite::types::Type::Text,
+            )
         })?)
     } else {
         None
