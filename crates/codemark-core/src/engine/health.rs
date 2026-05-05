@@ -6,7 +6,14 @@ pub fn transition(
     _current: BookmarkHealth,
     method: ResolutionMethod,
     hash_matches: bool,
+    days_since_resolution: u32,
+    stale_threshold: u32,
 ) -> BookmarkHealth {
+    // If we've exceeded the stale threshold, it's stale regardless of resolution method
+    if days_since_resolution > stale_threshold {
+        return BookmarkHealth::Stale;
+    }
+
     match method {
         ResolutionMethod::Exact if hash_matches => BookmarkHealth::Active,
         ResolutionMethod::Exact => BookmarkHealth::Drifted,
@@ -33,11 +40,11 @@ mod tests {
     #[test]
     fn exact_with_hash_match_returns_active() {
         assert_eq!(
-            transition(BookmarkHealth::Drifted, ResolutionMethod::Exact, true),
+            transition(BookmarkHealth::Drifted, ResolutionMethod::Exact, true, 0, 30),
             BookmarkHealth::Active
         );
         assert_eq!(
-            transition(BookmarkHealth::Stale, ResolutionMethod::Exact, true),
+            transition(BookmarkHealth::Stale, ResolutionMethod::Exact, true, 0, 30),
             BookmarkHealth::Active
         );
     }
@@ -45,7 +52,7 @@ mod tests {
     #[test]
     fn exact_without_hash_match_returns_drifted() {
         assert_eq!(
-            transition(BookmarkHealth::Active, ResolutionMethod::Exact, false),
+            transition(BookmarkHealth::Active, ResolutionMethod::Exact, false, 0, 30),
             BookmarkHealth::Drifted
         );
     }
@@ -53,7 +60,7 @@ mod tests {
     #[test]
     fn relaxed_returns_drifted() {
         assert_eq!(
-            transition(BookmarkHealth::Active, ResolutionMethod::Relaxed, true),
+            transition(BookmarkHealth::Active, ResolutionMethod::Relaxed, true, 0, 30),
             BookmarkHealth::Drifted
         );
     }
@@ -61,7 +68,7 @@ mod tests {
     #[test]
     fn hash_fallback_returns_drifted() {
         assert_eq!(
-            transition(BookmarkHealth::Active, ResolutionMethod::HashFallback, false),
+            transition(BookmarkHealth::Active, ResolutionMethod::HashFallback, false, 0, 30),
             BookmarkHealth::Drifted
         );
     }
@@ -69,7 +76,15 @@ mod tests {
     #[test]
     fn failed_returns_stale() {
         assert_eq!(
-            transition(BookmarkHealth::Active, ResolutionMethod::Failed, false),
+            transition(BookmarkHealth::Active, ResolutionMethod::Failed, false, 0, 30),
+            BookmarkHealth::Stale
+        );
+    }
+
+    #[test]
+    fn exceeded_threshold_returns_stale() {
+        assert_eq!(
+            transition(BookmarkHealth::Active, ResolutionMethod::Exact, true, 31, 30),
             BookmarkHealth::Stale
         );
     }

@@ -83,7 +83,13 @@ pub async fn handle_heal(cli: &Cli, mode: &OutputMode, args: &HealArgs) -> Resul
         let ts_lang = lang.tree_sitter_language();
         let provider = codemark_core::vfs::LocalFileProvider;
         let result = resolution::resolve(bm, &mut cache, &ts_lang, db.path(), &provider).await?;
-        let new_status = health::transition(bm.health, result.method, result.hash_matches);
+        let new_status = health::transition(
+            bm.health,
+            result.method,
+            result.hash_matches,
+            0,
+            config.health.stale_days(),
+        );
         let previous_status = bm.health;
 
         let stale_since = if new_status == BookmarkHealth::Stale {
@@ -172,12 +178,19 @@ pub async fn handle_heal(cli: &Cli, mode: &OutputMode, args: &HealArgs) -> Resul
             resolution_id,
             name,
             file_path: bm.file_path.clone(),
-            previous_status: previous_status.to_string(),
-            new_status: final_status.to_string(),
+            previous_health: previous_status.to_string(),
+            new_health: final_status.to_string(),
+            previous_health_alias: previous_status.to_string(),
+            new_health_alias: final_status.to_string(),
             resolution_method: result.method.to_string(),
             previous_location,
             new_location,
         });
+    }
+
+    // Recompute health for all affected collections
+    for collection_id in affected_collections {
+        let _ = db.recompute_collection_health(&collection_id);
     }
 
     let total_processed = updates.len();
@@ -241,6 +254,7 @@ pub async fn handle_status(cli: &Cli, mode: &OutputMode) -> Result<()> {
 
 pub async fn handle_diff(cli: &Cli, mode: &OutputMode, args: &DiffArgs) -> Result<()> {
     let db = open_db(cli)?;
+    let config = super::load_config(cli);
     let cwd = std::env::current_dir()?;
 
     let since = args.since.as_deref().unwrap_or("HEAD~1");
@@ -279,7 +293,13 @@ pub async fn handle_diff(cli: &Cli, mode: &OutputMode, args: &DiffArgs) -> Resul
                 let provider = codemark_core::vfs::LocalFileProvider;
                 let result =
                     resolution::resolve(bm, &mut cache, &ts_lang, db.path(), &provider).await?;
-                let new_status = health::transition(bm.health, result.method, result.hash_matches);
+                let new_status = health::transition(
+                    bm.health,
+                    result.method,
+                    result.hash_matches,
+                    0,
+                    config.health.stale_days(),
+                );
                 results.push(serde_json::json!({
                     "id": bm.id,
                     "file": bm.file_path,
@@ -304,7 +324,13 @@ pub async fn handle_diff(cli: &Cli, mode: &OutputMode, args: &DiffArgs) -> Resul
                 let provider = codemark_core::vfs::LocalFileProvider;
                 let result =
                     resolution::resolve(bm, &mut cache, &ts_lang, db.path(), &provider).await?;
-                let new_status = health::transition(bm.health, result.method, result.hash_matches);
+                let new_status = health::transition(
+                    bm.health,
+                    result.method,
+                    result.hash_matches,
+                    0,
+                    config.health.stale_days(),
+                );
                 let status_change = if new_status != bm.health {
                     format!("{} -> {}", bm.health, new_status)
                 } else {

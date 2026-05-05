@@ -7,7 +7,7 @@ use crate::cli::output::{
 };
 use crate::cli::*;
 use codemark_core::engine::bookmark::{
-    BookmarkFilter, BookmarkHealth, BookmarkStatus, Collection, CollectionLink, CollectionLinkKind,
+    BookmarkFilter, BookmarkHealth, Collection, CollectionLink, CollectionLinkKind,
     CollectionTag, Visibility,
 };
 use codemark_core::error::{Error, Result};
@@ -186,6 +186,8 @@ pub async fn handle_collection_list(
                     .replace("{id}", short_id)
                     .replace("{NAME}", &c.name)
                     .replace("{name}", &c.name)
+                    .replace("{HEALTH}", &c.health.as_ref().map(|h| h.to_string()).unwrap_or_else(|| "-".to_string()))
+                    .replace("{health}", &c.health.as_ref().map(|h| h.to_string()).unwrap_or_else(|| "-".to_string()))
                     .replace("{DESCRIPTION}", c.description.as_deref().unwrap_or(""))
                     .replace("{description}", c.description.as_deref().unwrap_or(""))
                     .replace("{CREATED}", &c.created_at)
@@ -201,10 +203,11 @@ pub async fn handle_collection_list(
             OutputMode::Json => write_json_success(&collections)?,
             OutputMode::Table => {
                 let mut table = comfy_table::Table::new();
-                table.set_header(vec!["Name", "Branch", "Description", "Created"]);
+                table.set_header(vec!["Name", "Health", "Branch", "Description", "Created"]);
                 for c in &collections {
                     table.add_row(vec![
                         &c.name,
+                        &c.health.as_ref().map(|h| h.to_string()).unwrap_or_else(|| "-".to_string()),
                         c.created_branch.as_deref().unwrap_or(""),
                         c.description.as_deref().unwrap_or(""),
                         &c.created_at,
@@ -238,6 +241,8 @@ pub async fn handle_collection_list(
                     .replace("{id}", short_id)
                     .replace("{NAME}", &c.name)
                     .replace("{name}", &c.name)
+                    .replace("{HEALTH}", &c.health.as_ref().map(|h| h.to_string()).unwrap_or_else(|| "-".to_string()))
+                    .replace("{health}", &c.health.as_ref().map(|h| h.to_string()).unwrap_or_else(|| "-".to_string()))
                     .replace("{COUNT}", &count.to_string())
                     .replace("{count}", &count.to_string())
                     .replace("{DESCRIPTION}", c.description.as_deref().unwrap_or(""))
@@ -259,10 +264,18 @@ pub async fn handle_collection_list(
             }
             OutputMode::Table => {
                 let mut table = comfy_table::Table::new();
-                table.set_header(vec!["Name", "Bookmarks", "Branch", "Description", "Created"]);
+                table.set_header(vec![
+                    "Name",
+                    "Health",
+                    "Bookmarks",
+                    "Branch",
+                    "Description",
+                    "Created",
+                ]);
                 for (c, count) in &collections {
                     table.add_row(vec![
                         c.name.clone(),
+                        c.health.as_ref().map(|h| h.to_string()).unwrap_or_else(|| "-".to_string()),
                         count.to_string(),
                         c.created_branch.clone().unwrap_or_default(),
                         c.description.clone().unwrap_or_default(),

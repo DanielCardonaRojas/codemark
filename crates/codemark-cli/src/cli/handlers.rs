@@ -14,12 +14,13 @@ use crate::cli::*;
 use codemark_core::config::Config;
 use codemark_core::embeddings::config::EmbeddingModel;
 use codemark_core::engine::bookmark::{
-    Bookmark, BookmarkFilter, BookmarkHealth, Collection, CollectionHealth, Resolution, ResolutionMethod, Visibility,
+    Bookmark, BookmarkFilter, BookmarkHealth, Collection, Resolution, ResolutionMethod,
+    Visibility,
 };
 use codemark_core::engine::{health, resolution};
 use codemark_core::error::{Error, Result};
 use codemark_core::git::context as git_context;
-use codemark_core::parser::languages::{Language, ParseCache};
+use codemark_core::parser::languages::Language;
 use codemark_core::storage::{SemanticRepo, db::Database};
 
 // Handler submodules
@@ -832,7 +833,13 @@ pub async fn resolve_batch(
         let mut cache = ParseCache::new(lang)?;
         let ts_lang = lang.tree_sitter_language();
         let result = resolution::resolve(bm, &mut cache, &ts_lang, db.path(), &provider).await?;
-        let new_status = health::transition(bm.health, result.method, result.hash_matches);
+        let new_status = health::transition(
+            bm.health,
+            result.method,
+            result.hash_matches,
+            0,
+            config.health.stale_days(),
+        );
 
         // Resolve relative path to absolute for output
         let absolute_path = git_context::resolve_bookmark_file_path(&result.file_path, db.path())
@@ -849,6 +856,13 @@ pub async fn resolve_batch(
         // In dry-run mode, skip database updates
         if dry_run {
             continue;
+        }
+
+        // Track affected collections for health recompute
+        if let Ok(ids) = db.list_collection_ids_for_bookmark(&bm.id) {
+            for id in ids {
+                affected_collections.insert(id);
+            }
         }
 
         let stale_since = if new_status == BookmarkHealth::Stale {
@@ -888,6 +902,11 @@ pub async fn resolve_batch(
         let _ = db.insert_resolution_if_changed(&res, config.storage.max_resolutions());
     }
 
+    // Recompute health for all affected collections
+    for collection_id in affected_collections {
+        let _ = db.recompute_collection_health(&collection_id);
+    }
+
     Ok(results)
 }
 
@@ -925,6 +944,7 @@ pub fn write_resolution_output(
     bm: &Bookmark,
     result: &resolution::ResolutionResult,
     db_path: &std::path::Path,
+    stale_threshold: u32,
 ) -> Result<()> {
     use crate::cli::output::short_id;
 
@@ -946,7 +966,8 @@ pub fn write_resolution_output(
                 "line_range": format!("{}-{}", result.start_line + 1, result.end_line + 1),
                 "line_range_colon": format!("{}:{}", result.start_line + 1, result.end_line + 1),
                 "method": result.method.to_string(),
-                "status": health::transition(bm.health, result.method, result.hash_matches).to_string(),
+                "health": health::transition(bm.health, result.method, result.hash_matches, 0, stale_threshold).to_string(),
+                "status": health::transition(bm.health, result.method, result.hash_matches, 0, stale_threshold).to_string(),
                 "preview": result.matched_text.lines().next().unwrap_or(""),
                 "note": note,
                 "tags": bm.tags,
@@ -1270,6 +1291,7 @@ pub async fn handle_preview(cli: &Cli, args: &PreviewArgs) -> Result<()> {
         "line_range": resolution.line_range,
         "line_range_colon": line_range_colon,
         "byte_range": resolution.byte_range,
+        "health": bm.health,
         "status": bm.health,
         "resolution_method": resolution.method,
         "resolved_at": resolution.resolved_at,

@@ -35,10 +35,20 @@ gui = ["xed", "code", "idea", "subl", "typora"]
 max_resolutions_per_bookmark = 20
 
 [health]
+# Number of days before an active or drifted bookmark is considered stale
+# if it hasn't been re-resolved.
+# Default: 30
+stale_after_days = 30
+
 # Number of days before a stale bookmark is considered for auto-archiving.
 # Used by the `codemark heal --auto-archive` command.
 # Default: 7
 auto_archive_after_days = 7
+
+# Maximum age in hours for cached collection health before a recompute
+# is recommended. (Primarily used by the web UI).
+# Default: 24
+read_max_age_hours = 24
 
 [semantic]
 # Enable semantic search using vector embeddings.

@@ -5,7 +5,7 @@
 use std::collections::HashMap;
 
 use crate::engine::bookmark::{
-    Annotation, Bookmark, BookmarkFilter, BookmarkHealth, ResolutionMethod, Tag, Collection, CollectionHealth
+    Annotation, Bookmark, BookmarkFilter, BookmarkHealth, ResolutionMethod, Tag,
 };
 use crate::error::{Error, Result};
 use crate::storage::db::Database;

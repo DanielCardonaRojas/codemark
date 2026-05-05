@@ -1,5 +1,5 @@
 use codemark_cli::cli::{Cli, Command, PublishArgs, PullArgs, handlers};
-use codemark_core::engine::bookmark::{Bookmark, BookmarkStatus, Collection, Visibility};
+use codemark_core::engine::bookmark::{Bookmark, Collection, Visibility};
 use codemark_core::storage::db::Database;
 use codetours_server::{
     config::Config as ServerConfig,

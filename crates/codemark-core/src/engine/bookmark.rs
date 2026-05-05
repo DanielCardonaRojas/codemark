@@ -39,10 +39,6 @@ impl FromStr for BookmarkHealth {
     }
 }
 
-// Keep a temporary alias for smoother transition if needed, 
-// but we'll try to update all occurrences.
-pub type BookmarkStatus = BookmarkHealth;
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CollectionHealth {

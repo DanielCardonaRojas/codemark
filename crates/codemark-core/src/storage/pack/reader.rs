@@ -1,6 +1,8 @@
 //! Logic for reading portable SQLite "packs".
 
-use crate::engine::bookmark::{Bookmark, BookmarkHealth, Collection, CollectionHealth, Resolution, ResolutionMethod, Visibility};
+use crate::engine::bookmark::{
+    Bookmark, BookmarkHealth, Collection, Resolution, ResolutionMethod, Visibility,
+};
 use crate::error::Result;
 use rusqlite::{Connection, OpenFlags};
 use std::path::Path;

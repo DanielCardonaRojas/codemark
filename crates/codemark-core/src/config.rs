@@ -153,9 +153,15 @@ pub struct StorageConfig {
 #[serde(default)]
 #[derive(Default)]
 pub struct HealthConfig {
+    /// Days before a bookmark is considered stale if not re-resolved.
+    /// Default: 30
+    pub stale_after_days: Option<u32>,
     /// Days before stale bookmarks are auto-archived (used by `heal --auto-archive`).
     /// Use `auto_archive_days()` to get the resolved value (default: 7).
     pub auto_archive_after_days: Option<u32>,
+    /// Maximum age in hours for cached collection health before a recompute is needed.
+    /// Default: 24
+    pub read_max_age_hours: Option<u32>,
 }
 
 impl StorageConfig {
@@ -166,8 +172,12 @@ impl StorageConfig {
 }
 
 impl HealthConfig {
+    /// Get the stale threshold in days (default: 30).
+    pub fn stale_days(&self) -> u32 {
+        self.stale_after_days.unwrap_or(30)
+    }
+
     /// Get the auto-archive days threshold (default: 7).
-    #[allow(dead_code)]
     pub fn auto_archive_days(&self) -> u32 {
         self.auto_archive_after_days.unwrap_or(7)
     }
@@ -442,8 +452,14 @@ impl Config {
             self.storage.max_resolutions_per_bookmark = other.storage.max_resolutions_per_bookmark;
         }
         // Health config - override only if explicitly set in local
+        if other.health.stale_after_days.is_some() {
+            self.health.stale_after_days = other.health.stale_after_days;
+        }
         if other.health.auto_archive_after_days.is_some() {
             self.health.auto_archive_after_days = other.health.auto_archive_after_days;
+        }
+        if other.health.read_max_age_hours.is_some() {
+            self.health.read_max_age_hours = other.health.read_max_age_hours;
         }
 
         // Semantic config - override only if explicitly set in local

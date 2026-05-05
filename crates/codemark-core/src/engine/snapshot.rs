@@ -1,7 +1,7 @@
 //! Logic for creating snapshots of a collection for publishing.
-
 use crate::engine::bookmark::{
-    Bookmark, BookmarkComment, BookmarkFilter, BookmarkHealth, Collection, CollectionHealth, CollectionLink, CollectionTag, Resolution, Tag
+    Bookmark, BookmarkComment, BookmarkFilter, Collection, CollectionHealth, CollectionLink,
+    CollectionTag, Resolution, Tag,
 };
 use crate::engine::resolution;
 use crate::error::Result;
@@ -68,7 +68,7 @@ pub async fn build_snapshot(
 
         // Update bookmark health based on resolution
         let hash_matches = bm.content_hash.as_ref() == Some(&result.content_hash);
-        bm.health = crate::engine::health::transition(bm.health, result.method, hash_matches);
+        bm.health = crate::engine::health::transition(bm.health, result.method, hash_matches, 0, 30);
         bm.resolution_method = Some(result.method);
         bm.last_resolved_at = Some(Utc::now().to_rfc3339());
 

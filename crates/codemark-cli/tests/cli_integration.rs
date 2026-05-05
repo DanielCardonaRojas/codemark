@@ -886,7 +886,7 @@ fn preview_shows_drifted_status() {
     let result = cm.run_json(&["preview", &id[..8]]);
     assert_eq!(result["success"], true);
     // Should show the bookmark status
-    assert!(result["data"]["status"].is_string());
+    assert!(result["data"]["health"].is_string());
 }
 
 #[test]
@@ -1764,7 +1764,7 @@ fn git_repo_resolve_fails_when_function_deleted() {
     // Show should indicate the problem status
     let show_json = cm.run_json(&["show", &id[..8]]);
     let bookmark = &show_json["data"]["bookmark"];
-    let status = bookmark["status"].as_str().unwrap();
+    let status = bookmark["health"].as_str().unwrap();
     assert!(
         status == "drifted" || status == "stale",
         "bookmark should be drifted or stale after heal: got {}",
@@ -1794,7 +1794,7 @@ fn git_repo_bookmark_goes_stale_when_code_completely_changed() {
 
     // Verify it's active initially
     let show_json = cm.run_json(&["show", &id[..8]]);
-    assert_eq!(show_json["data"]["bookmark"]["status"], "active");
+    assert_eq!(show_json["data"]["bookmark"]["health"], "active");
 
     // Completely remove the function and make the file empty
     // This should cause resolution to fail entirely (stale, not drifted)
@@ -1821,7 +1821,7 @@ fn git_repo_bookmark_goes_stale_when_code_completely_changed() {
 
     // Verify the status in show command
     let show_json = cm.run_json(&["show", &id[..8]]);
-    let status = show_json["data"]["bookmark"]["status"].as_str().unwrap();
+    let status = show_json["data"]["bookmark"]["health"].as_str().unwrap();
     assert_eq!(status, "stale", "bookmark status should be stale: got {}", status);
 }
 
@@ -1882,7 +1882,7 @@ fn git_repo_resolve_fails_when_file_deleted() {
     // Show should indicate the problem status
     let show_json = cm.run_json(&["show", &id[..8]]);
     let bookmark = &show_json["data"]["bookmark"];
-    let status = bookmark["status"].as_str().unwrap();
+    let status = bookmark["health"].as_str().unwrap();
     assert_eq!(status, "stale", "bookmark should be stale after heal: got {}", status);
 }
 
@@ -2027,7 +2027,7 @@ fn resolve_dry_run_after_code_change() {
 
     // Get initial status - bookmark should be Active
     let show_json = cm.run_json(&["show", &id[..8]]);
-    assert_eq!(show_json["data"]["bookmark"]["status"], "active");
+    assert_eq!(show_json["data"]["bookmark"]["health"], "active");
     let initial_resolutions = show_json["data"]["resolutions"].as_array().unwrap().len();
 
     // Change the code
@@ -2042,7 +2042,7 @@ fn resolve_dry_run_after_code_change() {
 
     // Verify status hasn't changed (still active) and no new resolution was stored
     let show_json_after = cm.run_json(&["show", &id[..8]]);
-    assert_eq!(show_json_after["data"]["bookmark"]["status"], "active");
+    assert_eq!(show_json_after["data"]["bookmark"]["health"], "active");
     let after_resolutions = show_json_after["data"]["resolutions"].as_array().unwrap().len();
     assert_eq!(initial_resolutions, after_resolutions, "dry-run should not store new resolution");
 

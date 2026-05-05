@@ -683,12 +683,19 @@ pub async fn handle_resolve(cli: &Cli, mode: &OutputMode, args: &ResolveArgs) ->
 
         let result = resolution::resolve(&bm, &mut cache, &ts_lang, db.path(), &provider).await?;
 
+        let config = super::load_config(cli);
         // In dry-run mode, skip database updates and just show the result
         if args.dry_run {
-            return write_resolution_output(mode, &bm, &result, db.path());
+            return write_resolution_output(mode, &bm, &result, db.path(), config.health.stale_days());
         }
 
-        let new_status = health::transition(bm.health, result.method, result.hash_matches);
+        let new_status = health::transition(
+            bm.health,
+            result.method,
+            result.hash_matches,
+            0,
+            config.health.stale_days(),
+        );
 
         let stale_since = if new_status == BookmarkHealth::Stale {
             bm.stale_since.clone().or_else(|| Some(now_iso()))
@@ -703,6 +710,13 @@ pub async fn handle_resolve(cli: &Cli, mode: &OutputMode, args: &ResolveArgs) ->
             Some(&now_iso()),
             stale_since.as_deref(),
         )?;
+
+        // Recompute health for affected collections
+        if let Ok(ids) = db.list_collection_ids_for_bookmark(&bm.id) {
+            for id in ids {
+                let _ = db.recompute_collection_health(&id);
+            }
+        }
 
         if let Some(ref new_query) = result.new_query {
             db.update_bookmark_query(&bm.id, new_query, &result.file_path, &result.content_hash)?;
@@ -727,7 +741,7 @@ pub async fn handle_resolve(cli: &Cli, mode: &OutputMode, args: &ResolveArgs) ->
         let config = super::load_config(cli);
         db.insert_resolution_if_changed(&res, config.storage.max_resolutions())?;
 
-        write_resolution_output(mode, &bm, &result, db.path())?;
+        write_resolution_output(mode, &bm, &result, db.path(), config.health.stale_days())?;
     } else {
         // Batch resolution — fan out across all DBs
         let health_input = args.health.as_deref().or(args.status.as_deref());

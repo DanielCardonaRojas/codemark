@@ -298,7 +298,7 @@ fn write_bookmarks_table(bookmarks: &[Bookmark]) -> io::Result<()> {
         return Ok(());
     }
     let mut table = Table::new();
-    table.set_header(vec!["ID", "File", "Status", "Tags", "Note", "Last Resolved"]);
+    table.set_header(vec!["ID", "File", "Health", "Tags", "Note", "Last Resolved"]);
 
     for bm in bookmarks {
         let tags = bm.tags.join(", ");
@@ -465,7 +465,7 @@ where
                 return Ok(());
             }
             let mut table = Table::new();
-            table.set_header(vec!["Source", "ID", "File", "Status", "Tags", "Note"]);
+            table.set_header(vec!["Source", "ID", "File", "Health", "Tags", "Note"]);
             for ab in bookmarks {
                 let bm = ab.bookmark;
                 let tags = bm.tags.join(", ");
@@ -512,7 +512,7 @@ where
         OutputMode::Markdown => {
             // For multi-db markdown output, fall back to table format
             let mut table = Table::new();
-            table.set_header(vec!["Source", "ID", "File", "Status", "Tags", "Note"]);
+            table.set_header(vec!["Source", "ID", "File", "Health", "Tags", "Note"]);
             for ab in bookmarks {
                 let bm = ab.bookmark;
                 let tags = bm.tags.join(", ");
@@ -682,8 +682,12 @@ pub struct HealUpdate {
     pub resolution_id: Option<String>,
     pub name: String,
     pub file_path: String,
-    pub previous_status: String,
-    pub new_status: String,
+    pub previous_health: String,
+    pub new_health: String,
+    #[serde(rename = "previous_status")]
+    pub previous_health_alias: String,
+    #[serde(rename = "new_status")]
+    pub new_health_alias: String,
     pub resolution_method: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub previous_location: Option<ByteLocation>,
@@ -731,9 +735,9 @@ pub fn write_heal_output(mode: &OutputMode, output: &HealOutput) -> io::Result<(
 }
 
 fn write_heal_table(output: &HealOutput) -> io::Result<()> {
-    let updated_count = output.updates.iter().filter(|u| u.previous_status != u.new_status).count();
+    let updated_count = output.updates.iter().filter(|u| u.previous_health != u.new_health).count();
     let unchanged_count =
-        output.updates.iter().filter(|u| u.previous_status == u.new_status).count();
+        output.updates.iter().filter(|u| u.previous_health == u.new_health).count();
 
     println!(
         "Healed {} bookmarks: {} updated, {} unchanged, {} skipped",
@@ -743,9 +747,9 @@ fn write_heal_table(output: &HealOutput) -> io::Result<()> {
 }
 
 fn write_heal_line(output: &HealOutput) -> io::Result<()> {
-    let updated_count = output.updates.iter().filter(|u| u.previous_status != u.new_status).count();
+    let updated_count = output.updates.iter().filter(|u| u.previous_health != u.new_health).count();
     let unchanged_count =
-        output.updates.iter().filter(|u| u.previous_status == u.new_status).count();
+        output.updates.iter().filter(|u| u.previous_health == u.new_health).count();
 
     let mut stdout = io::stdout().lock();
     writeln!(
