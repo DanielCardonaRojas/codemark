@@ -493,7 +493,7 @@ mod tests {
 
         // Initial recompute should be 'drifted' (bm2 is drifted)
         let health = db.recompute_collection_health(&col.id).unwrap();
-        assert_eq!(health, CollectionHealth::Drifted);
+        assert_eq!(health, Some(CollectionHealth::Drifted));
 
         // Add a stale bookmark
         let mut bm3 = test_bookmark("bm3");
@@ -502,12 +502,12 @@ mod tests {
         db.add_to_collection(&col.id, &["bm3".into()]).unwrap();
 
         let health = db.recompute_collection_health(&col.id).unwrap();
-        assert_eq!(health, CollectionHealth::Stale);
+        assert_eq!(health, Some(CollectionHealth::Stale));
 
         // Archive the stale one, health should return to drifted
         db.update_bookmark_health("bm3", BookmarkHealth::Archived, None, None, None).unwrap();
         let health = db.recompute_collection_health(&col.id).unwrap();
-        assert_eq!(health, CollectionHealth::Drifted);
+        assert_eq!(health, Some(CollectionHealth::Drifted));
     }
 
     #[test]
@@ -518,6 +518,6 @@ mod tests {
         db.insert_collection(&col).unwrap();
 
         let health = db.recompute_collection_health(&col.id).unwrap();
-        assert_eq!(health, CollectionHealth::Active);
+        assert_eq!(health, None);
     }
 }
