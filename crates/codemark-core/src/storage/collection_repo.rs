@@ -271,19 +271,23 @@ impl Database {
         Ok(results)
     }
 
-    pub fn update_collection_health(&self, id: &str, health: CollectionHealth) -> Result<()> {
+    pub fn update_collection_health(
+        &self,
+        id: &str,
+        health: Option<CollectionHealth>,
+    ) -> Result<()> {
         let now = chrono::Utc::now().to_rfc3339();
         self.conn().execute(
             "UPDATE collections SET health = ?1, health_computed_at = ?2 WHERE id = ?3",
-            rusqlite::params![health.to_string(), now, id],
+            rusqlite::params![health.map(|h| h.to_string()), now, id],
         )?;
         Ok(())
     }
 
     /// Recompute the health of a collection based on its bookmarks' health.
     /// Rule: stale > drifted > active. Archived bookmarks are excluded.
-    pub fn recompute_collection_health(&self, id: &str) -> Result<CollectionHealth> {
-        let health_str: String = self.conn().query_row(
+    pub fn recompute_collection_health(&self, id: &str) -> Result<Option<CollectionHealth>> {
+        let health_str: Option<String> = self.conn().query_row(
             "WITH bookmark_health AS (
               SELECT b.health
               FROM collection_bookmarks cb
@@ -292,6 +296,7 @@ impl Database {
             )
             SELECT 
                    CASE
+                     WHEN COUNT(*) = 0 THEN NULL
                      WHEN MAX(CASE WHEN health = 'stale'   THEN 1 ELSE 0 END) = 1 THEN 'stale'
                      WHEN MAX(CASE WHEN health = 'drifted' THEN 1 ELSE 0 END) = 1 THEN 'drifted'
                      ELSE 'active'
@@ -301,7 +306,7 @@ impl Database {
             |row| row.get(0),
         )?;
 
-        let health = health_str.parse().unwrap_or(CollectionHealth::Active);
+        let health = health_str.and_then(|s| s.parse().ok());
         self.update_collection_health(id, health)?;
         Ok(health)
     }
@@ -503,5 +508,16 @@ mod tests {
         db.update_bookmark_health("bm3", BookmarkHealth::Archived, None, None, None).unwrap();
         let health = db.recompute_collection_health(&col.id).unwrap();
         assert_eq!(health, CollectionHealth::Drifted);
+    }
+
+    #[test]
+    fn test_empty_collection_health() {
+        init_test_env();
+        let db = Database::open_in_memory().unwrap();
+        let col = test_collection("empty");
+        db.insert_collection(&col).unwrap();
+
+        let health = db.recompute_collection_health(&col.id).unwrap();
+        assert_eq!(health, CollectionHealth::Active);
     }
 }

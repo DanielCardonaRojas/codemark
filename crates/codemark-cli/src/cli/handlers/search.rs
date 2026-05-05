@@ -40,7 +40,7 @@ pub async fn handle_search(cli: &Cli, mode: &OutputMode, args: &SearchArgs) -> R
     let dbs = filter_dbs_by_repo_owner(dbs, args.repo_owner.as_deref());
 
     let health_input = args.health.as_deref().or(args.status.as_deref());
-    let health_filter = super::parse_status_filter(health_input);
+    let health_filter = super::parse_status_filter(health_input)?;
 
     if dbs.len() == 1 {
         let bookmarks = dbs[0].1.search_bookmarks(
@@ -188,6 +188,7 @@ async fn handle_semantic_search(
                     "query": bm.query,
                     "language": bm.language,
                     "file_path": bm.file_path,
+                    "health": bm.health,
                     "status": bm.health,
                     "tags": bm.tags,
                     "annotations": annotations,

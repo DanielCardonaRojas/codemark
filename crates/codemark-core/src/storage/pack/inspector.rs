@@ -176,11 +176,14 @@ pub fn inspect(pack_path: &Path) -> Result<PackInfo, PackError> {
     }
 
     // Kind integrity for collection_links
-    let invalid_kinds: usize = conn.query_row(
-        "SELECT COUNT(*) FROM collection_links WHERE kind NOT IN ('pr', 'issue', 'doc', 'discussion', 'dashboard', 'repo', 'tour', 'other')",
-        [],
-        |row| row.get(0),
-    )?;
+    let kinds_list = crate::engine::bookmark::CollectionLinkKind::ALL_VARIANTS
+        .iter()
+        .map(|s| format!("'{}'", s))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let query = format!("SELECT COUNT(*) FROM collection_links WHERE kind NOT IN ({})", kinds_list);
+    let invalid_kinds: usize = conn.query_row(&query, [], |row| row.get(0))?;
+
     if invalid_kinds > 0 {
         return Err(PackError::InvalidValue(format!("{} invalid link kinds", invalid_kinds)));
     }

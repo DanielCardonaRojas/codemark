@@ -546,6 +546,8 @@ pub async fn handler(
                 .interact(move |conn| {
                     let tx = conn.transaction()?;
                     tx.execute("CREATE TEMP TABLE IF NOT EXISTS _comp_delete_candidates AS SELECT bookmark_id FROM main.collection_bookmarks WHERE collection_id = ?1", [&tour_id_for_move])?;
+                    tx.execute("DELETE FROM main.collection_tags WHERE collection_id = ?1", [&tour_id_for_move])?;
+                    tx.execute("DELETE FROM main.collection_links WHERE collection_id = ?1", [&tour_id_for_move])?;
                     tx.execute("DELETE FROM main.collection_bookmarks WHERE collection_id = ?1", [&tour_id_for_move])?;
                     tx.execute("DELETE FROM main.collections WHERE id = ?1", [&tour_id_for_move])?;
                     tx.execute("DELETE FROM main.bookmarks WHERE id IN (SELECT bookmark_id FROM _comp_delete_candidates) AND id NOT IN (SELECT bookmark_id FROM main.collection_bookmarks)", [])?;

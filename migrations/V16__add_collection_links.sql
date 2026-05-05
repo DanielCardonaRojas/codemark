@@ -1,7 +1,7 @@
 -- V16__add_collection_links.sql
 
 CREATE TABLE collection_links (
-    id            TEXT PRIMARY KEY,                -- ULID or UUID
+    id            TEXT PRIMARY KEY NOT NULL,       -- ULID or UUID
     collection_id TEXT NOT NULL,
     kind          TEXT NOT NULL,
     label         TEXT NOT NULL,

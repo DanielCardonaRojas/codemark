@@ -695,11 +695,12 @@ pub async fn handle_resolve(cli: &Cli, mode: &OutputMode, args: &ResolveArgs) ->
             );
         }
 
+        let days_since = health::days_since_resolution(bm.last_resolved_at.as_deref());
         let new_status = health::transition(
             bm.health,
             result.method,
             result.hash_matches,
-            0,
+            days_since,
             config.health.stale_days(),
         );
 
@@ -720,7 +721,12 @@ pub async fn handle_resolve(cli: &Cli, mode: &OutputMode, args: &ResolveArgs) ->
         // Recompute health for affected collections
         if let Ok(ids) = db.list_collection_ids_for_bookmark(&bm.id) {
             for id in ids {
-                let _ = db.recompute_collection_health(&id);
+                if let Err(e) = db.recompute_collection_health(&id) {
+                    eprintln!(
+                        "codemark: warning: failed to recompute health for collection {}: {}",
+                        id, e
+                    );
+                }
             }
         }
 
@@ -753,7 +759,7 @@ pub async fn handle_resolve(cli: &Cli, mode: &OutputMode, args: &ResolveArgs) ->
         let health_input = args.health.as_deref().or(args.status.as_deref());
         let filter = BookmarkFilter {
             tag: args.tag.clone(),
-            health: super::parse_status_filter(health_input)
+            health: super::parse_status_filter(health_input)?
                 .or(Some(vec![BookmarkHealth::Active, BookmarkHealth::Drifted])),
             file_path: args.file.as_ref().map(|p| p.to_string_lossy().to_string()),
             language: args.lang.clone(),
@@ -956,7 +962,7 @@ pub async fn handle_annotate(cli: &Cli, mode: &OutputMode, args: &AnnotateArgs) 
             println!("Annotated bookmark: {}", short_id(&bm.id));
             println!("  File: {}", bm.file_path);
             println!("  Language: {}", bm.language);
-            println!("  Status: {}", bm.health);
+            println!("  Health: {}", bm.health);
             if !bm.tags.is_empty() {
                 println!("  Tags: {}", bm.tags.join(", "));
             }

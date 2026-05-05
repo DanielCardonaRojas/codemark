@@ -580,7 +580,7 @@ fn write_bookmark_markdown_fallback(bm: &Bookmark, resolutions: &[Resolution]) -
     writeln!(stdout, "|----------|-------|")?;
     writeln!(stdout, "| **File** | {} |", escape_markdown(&bm.file_path))?;
     writeln!(stdout, "| **Language** | {} |", bm.language)?;
-    writeln!(stdout, "| **Status** | {} |", bm.health)?;
+    writeln!(stdout, "| **Health** | {} |", bm.health)?;
     writeln!(stdout, "| **Created** | {} |", bm.created_at)?;
     if let Some(ref created_by) = bm.created_by {
         writeln!(stdout, "| **Author** | {} |", escape_markdown(created_by))?;

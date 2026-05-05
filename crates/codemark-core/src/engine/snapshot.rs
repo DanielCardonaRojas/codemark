@@ -1,4 +1,5 @@
 //! Logic for creating snapshots of a collection for publishing.
+use crate::config::Config;
 use crate::engine::bookmark::{
     Bookmark, BookmarkComment, BookmarkFilter, Collection, CollectionHealth, CollectionLink,
     CollectionTag, Resolution, Tag,
@@ -30,6 +31,7 @@ pub async fn build_snapshot(
     collection_id: &str,
     project_root: &Path,
     padding: usize,
+    config: &Config,
 ) -> Result<SnapshotPayload> {
     let mut collection = db.get_collection_by_id(collection_id)?.ok_or_else(|| {
         crate::error::Error::Input(format!("collection {collection_id} not found"))
@@ -68,8 +70,15 @@ pub async fn build_snapshot(
 
         // Update bookmark health based on resolution
         let hash_matches = bm.content_hash.as_ref() == Some(&result.content_hash);
-        bm.health =
-            crate::engine::health::transition(bm.health, result.method, hash_matches, 0, 30);
+        let days_since =
+            crate::engine::health::days_since_resolution(bm.last_resolved_at.as_deref());
+        bm.health = crate::engine::health::transition(
+            bm.health,
+            result.method,
+            hash_matches,
+            days_since,
+            30,
+        );
         bm.resolution_method = Some(result.method);
         bm.last_resolved_at = Some(Utc::now().to_rfc3339());
 
@@ -123,7 +132,8 @@ pub async fn build_snapshot(
         sorted_tags.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(b.0)));
 
         let now = Utc::now().to_rfc3339();
-        for (tag_name, _) in sorted_tags.into_iter().take(3) {
+        let take_n = config.publish.autopopulate_tags_count();
+        for (tag_name, _) in sorted_tags.into_iter().take(take_n) {
             collection_tags.push(CollectionTag {
                 collection_id: collection_id.to_string(),
                 tag: tag_name.clone(),
@@ -132,6 +142,11 @@ pub async fn build_snapshot(
             });
         }
     }
+
+    // Recompute and update collection health in database
+    let health = db.recompute_collection_health(collection_id)?;
+    collection.health = health;
+    collection.health_computed_at = Some(Utc::now().to_rfc3339());
 
     Ok(SnapshotPayload {
         collection,

@@ -15,8 +15,8 @@ impl CollectionRepo {
         let conn = self.pool.get().await?;
         conn.interact(move |conn| {
             let mut stmt = conn.prepare(
-                "SELECT id, name, description, visibility, created_at, created_by, created_branch, 
-                        published_at, published_commit_sha, repo_url, status, updated_at, imported_from_url
+                "SELECT id, name, description, visibility, created_at, created_by, created_branch,
+                        published_at, published_commit_sha, repo_url, status, health, health_computed_at, updated_at, imported_from_url
                  FROM collections WHERE id = ?1",
             )?;
             let rows = stmt.query_map([id], row_to_collection)?;
@@ -35,8 +35,8 @@ impl CollectionRepo {
         let conn = self.pool.get().await?;
         conn.interact(move |conn| {
             let mut stmt = conn.prepare(
-                "SELECT id, name, description, visibility, created_at, created_by, created_branch, 
-                        published_at, published_commit_sha, repo_url, status, updated_at, imported_from_url
+                "SELECT id, name, description, visibility, created_at, created_by, created_branch,
+                        published_at, published_commit_sha, repo_url, status, health, health_computed_at, updated_at, imported_from_url
                  FROM collections WHERE name = ?1",
             )?;
             let rows = stmt.query_map([name], row_to_collection)?;
@@ -52,8 +52,8 @@ impl CollectionRepo {
         let conn = self.pool.get().await?;
         conn.interact(move |conn| {
             let mut stmt = conn.prepare(
-                "SELECT id, name, description, visibility, created_at, created_by, created_branch, 
-                        published_at, published_commit_sha, repo_url, status, updated_at, imported_from_url
+                "SELECT id, name, description, visibility, created_at, created_by, created_branch,
+                        published_at, published_commit_sha, repo_url, status, health, health_computed_at, updated_at, imported_from_url
                  FROM collections 
                  WHERE visibility IS NOT NULL AND visibility != 'private'
                    AND published_at IS NOT NULL

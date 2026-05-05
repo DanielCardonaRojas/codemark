@@ -160,6 +160,12 @@ pub async fn handle_collection_remove(
     };
 
     let removed = db.remove_from_collection(&collection.id, &args.bookmark_ids)?;
+    if let Err(e) = db.recompute_collection_health(&collection.id) {
+        eprintln!(
+            "codemark: warning: failed to recompute health for collection {}: {}",
+            collection.id, e
+        );
+    }
     write_success(mode, &format!("Removed {removed} bookmarks from '{}'", collection.name))?;
     Ok(())
 }
@@ -494,8 +500,19 @@ pub async fn handle_collection_link(
         }
         CollectionLinkCommand::Rm(rm_args) => {
             let db = open_db_for_write(cli)?;
-            db.delete_collection_link(&rm_args.id)?;
-            write_success(mode, &format!("Removed link from collection '{}'", rm_args.name))?;
+            let collection = db
+                .get_collection_by_name(&rm_args.name)?
+                .ok_or_else(|| Error::Input(format!("collection '{}' not found", rm_args.name)))?;
+
+            let deleted = db.delete_collection_link(&rm_args.id, &collection.id)?;
+            if deleted {
+                write_success(mode, &format!("Removed link from collection '{}'", rm_args.name))?;
+            } else {
+                return Err(Error::Input(format!(
+                    "link '{}' not found in collection '{}'",
+                    rm_args.id, rm_args.name
+                )));
+            }
         }
         CollectionLinkCommand::List(list_args) => {
             let db = open_db(cli)?;

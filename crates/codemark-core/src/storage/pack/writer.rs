@@ -149,7 +149,7 @@ impl Packer {
         // 6. Insert collection tags
         for t in &payload.collection_tags {
             conn.execute(
-                "INSERT INTO collection_tags (collection_id, tag, added_at, added_by) VALUES (?1, ?2, ?3, ?4)",
+                "INSERT OR IGNORE INTO collection_tags (collection_id, tag, added_at, added_by) VALUES (?1, ?2, ?3, ?4)",
                 params![t.collection_id, t.tag, t.added_at, t.added_by],
             )?;
         }
@@ -157,7 +157,7 @@ impl Packer {
         // 7. Insert collection links
         for l in &payload.collection_links {
             conn.execute(
-                "INSERT INTO collection_links (id, collection_id, kind, label, url, sort_order, added_at, added_by)
+                "INSERT OR IGNORE INTO collection_links (id, collection_id, kind, label, url, sort_order, added_at, added_by)
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
                 params![l.id, l.collection_id, l.kind.to_string(), l.label, l.url, l.sort_order, l.added_at, l.added_by],
             )?;

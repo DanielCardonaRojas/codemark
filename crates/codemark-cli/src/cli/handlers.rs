@@ -668,8 +668,20 @@ pub fn parse_hunk(hunk: &str) -> Result<(usize, usize)> {
     Ok((start, end.max(start)))
 }
 
-pub fn parse_status_filter(status: Option<&str>) -> Option<Vec<BookmarkHealth>> {
-    status.map(|s| s.split(',').filter_map(|part| part.trim().parse().ok()).collect())
+pub fn parse_status_filter(status: Option<&str>) -> Result<Option<Vec<BookmarkHealth>>> {
+    match status {
+        Some(s) => {
+            let mut result = Vec::new();
+            for part in s.split(',') {
+                let parsed = part.trim().parse::<BookmarkHealth>().map_err(|_| {
+                    Error::Input(format!("invalid health filter: '{}'", part.trim()))
+                })?;
+                result.push(parsed);
+            }
+            Ok(Some(result))
+        }
+        None => Ok(None),
+    }
 }
 
 /// Emit a one-time deprecation warning for --status.
@@ -799,6 +811,12 @@ pub fn add_bookmark_to_collection(
         }
     };
     db.add_to_collection(&collection.id, &[bookmark_id.to_string()])?;
+    if let Err(e) = db.recompute_collection_health(&collection.id) {
+        eprintln!(
+            "codemark: warning: failed to recompute health for collection {}: {}",
+            collection.id, e
+        );
+    }
     Ok(Some(collection_name.to_string()))
 }
 
@@ -832,11 +850,12 @@ pub async fn resolve_batch(
         let mut cache = ParseCache::new(lang)?;
         let ts_lang = lang.tree_sitter_language();
         let result = resolution::resolve(bm, &mut cache, &ts_lang, db.path(), &provider).await?;
+        let days_since = health::days_since_resolution(bm.last_resolved_at.as_deref());
         let new_status = health::transition(
             bm.health,
             result.method,
             result.hash_matches,
-            0,
+            days_since,
             config.health.stale_days(),
         );
 
@@ -903,7 +922,12 @@ pub async fn resolve_batch(
 
     // Recompute health for all affected collections
     for collection_id in affected_collections {
-        let _ = db.recompute_collection_health(&collection_id);
+        if let Err(e) = db.recompute_collection_health(&collection_id) {
+            eprintln!(
+                "codemark: warning: failed to recompute health for collection {}: {}",
+                collection_id, e
+            );
+        }
     }
 
     Ok(results)
@@ -956,6 +980,7 @@ pub fn write_resolution_output(
 
     match mode {
         OutputMode::Json => {
+            let days_since = health::days_since_resolution(bm.last_resolved_at.as_deref());
             write_json_success(&serde_json::json!({
                 "id": bm.id,
                 "file": absolute_path_str,
@@ -965,8 +990,8 @@ pub fn write_resolution_output(
                 "line_range": format!("{}-{}", result.start_line + 1, result.end_line + 1),
                 "line_range_colon": format!("{}:{}", result.start_line + 1, result.end_line + 1),
                 "method": result.method.to_string(),
-                "health": health::transition(bm.health, result.method, result.hash_matches, 0, stale_threshold).to_string(),
-                "status": health::transition(bm.health, result.method, result.hash_matches, 0, stale_threshold).to_string(),
+                "health": health::transition(bm.health, result.method, result.hash_matches, days_since, stale_threshold).to_string(),
+                "status": health::transition(bm.health, result.method, result.hash_matches, days_since, stale_threshold).to_string(),
                 "preview": result.matched_text.lines().next().unwrap_or(""),
                 "note": note,
                 "tags": bm.tags,
@@ -1081,7 +1106,7 @@ pub async fn handle_list(cli: &Cli, mode: &OutputMode, args: &ListArgs) -> Resul
     let health_input = args.health.as_deref().or(args.status.as_deref());
     let filter = BookmarkFilter {
         tag: args.tag.clone(),
-        health: parse_status_filter(health_input)
+        health: parse_status_filter(health_input)?
             .or(Some(vec![BookmarkHealth::Active, BookmarkHealth::Drifted])),
         file_path: args.file.as_ref().map(|p| p.to_string_lossy().to_string()),
         language: args.lang.clone(),

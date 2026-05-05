@@ -47,13 +47,16 @@ impl Database {
                 added_by: row.get(7)?,
             })
         })?;
-        let results: Vec<CollectionLink> = rows.filter_map(|r| r.ok()).collect();
+        let results: Vec<CollectionLink> = rows.collect::<rusqlite::Result<Vec<_>>>()?;
         Ok(results)
     }
 
     /// Delete a link from a collection.
-    pub fn delete_collection_link(&self, id: &str) -> Result<bool> {
-        let count = self.conn().execute("DELETE FROM collection_links WHERE id = ?1", [id])?;
+    pub fn delete_collection_link(&self, id: &str, collection_id: &str) -> Result<bool> {
+        let count = self.conn().execute(
+            "DELETE FROM collection_links WHERE id = ?1 AND collection_id = ?2",
+            [id, collection_id],
+        )?;
         Ok(count > 0)
     }
 

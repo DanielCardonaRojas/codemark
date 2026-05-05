@@ -118,7 +118,7 @@ impl PackReader {
 }
 
 fn row_to_bookmark(row: &rusqlite::Row) -> rusqlite::Result<Bookmark> {
-    let health_str: String = row.get(6)?;
+    let health_str: Option<String> = row.get(6)?;
     let method_str: Option<String> = row.get(7)?;
     Ok(Bookmark {
         id: row.get(0)?,
@@ -127,7 +127,9 @@ fn row_to_bookmark(row: &rusqlite::Row) -> rusqlite::Result<Bookmark> {
         file_path: row.get(3)?,
         content_hash: row.get(4)?,
         commit_hash: row.get(5)?,
-        health: BookmarkHealth::from_str(&health_str).unwrap_or(BookmarkHealth::Active),
+        health: health_str
+            .and_then(|s| BookmarkHealth::from_str(&s).ok())
+            .unwrap_or(BookmarkHealth::Active),
         resolution_method: method_str.and_then(|s| ResolutionMethod::from_str(&s).ok()),
         last_resolved_at: row.get(8)?,
         stale_since: row.get(9)?,

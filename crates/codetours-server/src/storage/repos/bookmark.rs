@@ -35,11 +35,12 @@ impl BookmarkRepo {
         let conn = self.pool.get().await?;
         conn.interact(move |conn| {
             let mut stmt = conn.prepare(
-                "SELECT b.id, b.query, b.language, b.file_path, b.content_hash, b.commit_hash, 
-                        b.status, b.resolution_method, b.last_resolved_at, b.stale_since, 
+                "SELECT b.id, b.query, b.language, b.file_path, b.content_hash, b.commit_hash,
+                        b.health, b.resolution_method, b.last_resolved_at, b.stale_since,
                         b.created_at, b.created_by
                  FROM bookmarks b
                  JOIN collection_bookmarks cb ON b.id = cb.bookmark_id
+
                  WHERE cb.collection_id = ?1
                  ORDER BY cb.position ASC",
             )?;

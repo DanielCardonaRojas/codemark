@@ -23,6 +23,21 @@ pub fn transition(
     }
 }
 
+/// Calculate the number of days since the last resolution.
+pub fn days_since_resolution(last_resolved_at: Option<&str>) -> u32 {
+    let Some(last_resolved_at) = last_resolved_at else {
+        return 0;
+    };
+
+    let Ok(dt) = chrono::DateTime::parse_from_rfc3339(last_resolved_at) else {
+        return 0;
+    };
+
+    let now = chrono::Utc::now();
+    let duration = now - dt.with_timezone(&chrono::Utc);
+    duration.num_days().max(0) as u32
+}
+
 /// Determine if a stale bookmark should be auto-archived.
 pub fn should_auto_archive(stale_since: &str, archive_after_days: u32) -> bool {
     let Ok(stale_dt) = chrono::DateTime::parse_from_rfc3339(stale_since) else {

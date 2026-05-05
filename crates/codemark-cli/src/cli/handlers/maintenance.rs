@@ -24,7 +24,7 @@ pub async fn handle_heal(cli: &Cli, mode: &OutputMode, args: &HealArgs) -> Resul
     let filter = BookmarkFilter {
         file_path: args.file.as_ref().map(|p| p.to_string_lossy().to_string()),
         language: args.lang.clone(),
-        health: super::parse_status_filter(health_input).or(Some(vec![
+        health: super::parse_status_filter(health_input)?.or(Some(vec![
             BookmarkHealth::Active,
             BookmarkHealth::Drifted,
             BookmarkHealth::Stale,
@@ -86,11 +86,12 @@ pub async fn handle_heal(cli: &Cli, mode: &OutputMode, args: &HealArgs) -> Resul
         let ts_lang = lang.tree_sitter_language();
         let provider = codemark_core::vfs::LocalFileProvider;
         let result = resolution::resolve(bm, &mut cache, &ts_lang, db.path(), &provider).await?;
+        let days_since = health::days_since_resolution(bm.last_resolved_at.as_deref());
         let new_status = health::transition(
             bm.health,
             result.method,
             result.hash_matches,
-            0,
+            days_since,
             config.health.stale_days(),
         );
         let previous_status = bm.health;
@@ -193,7 +194,12 @@ pub async fn handle_heal(cli: &Cli, mode: &OutputMode, args: &HealArgs) -> Resul
 
     // Recompute health for all affected collections
     for collection_id in affected_collections {
-        let _ = db.recompute_collection_health(&collection_id);
+        if let Err(e) = db.recompute_collection_health(&collection_id) {
+            eprintln!(
+                "codemark: warning: failed to recompute health for collection {}: {}",
+                collection_id, e
+            );
+        }
     }
 
     let total_processed = updates.len();
@@ -296,11 +302,12 @@ pub async fn handle_diff(cli: &Cli, mode: &OutputMode, args: &DiffArgs) -> Resul
                 let provider = codemark_core::vfs::LocalFileProvider;
                 let result =
                     resolution::resolve(bm, &mut cache, &ts_lang, db.path(), &provider).await?;
+                let days_since = health::days_since_resolution(bm.last_resolved_at.as_deref());
                 let new_status = health::transition(
                     bm.health,
                     result.method,
                     result.hash_matches,
-                    0,
+                    days_since,
                     config.health.stale_days(),
                 );
                 results.push(serde_json::json!({
@@ -327,11 +334,12 @@ pub async fn handle_diff(cli: &Cli, mode: &OutputMode, args: &DiffArgs) -> Resul
                 let provider = codemark_core::vfs::LocalFileProvider;
                 let result =
                     resolution::resolve(bm, &mut cache, &ts_lang, db.path(), &provider).await?;
+                let days_since = health::days_since_resolution(bm.last_resolved_at.as_deref());
                 let new_status = health::transition(
                     bm.health,
                     result.method,
                     result.hash_matches,
-                    0,
+                    days_since,
                     config.health.stale_days(),
                 );
                 let status_change = if new_status != bm.health {
@@ -384,7 +392,7 @@ pub async fn handle_export(cli: &Cli, args: &ExportArgs) -> Result<()> {
     let health_input = args.health.as_deref().or(args.status.as_deref());
     let filter = BookmarkFilter {
         tag: args.tag.clone(),
-        health: super::parse_status_filter(health_input),
+        health: super::parse_status_filter(health_input)?,
         ..Default::default()
     };
     let mut bookmarks = Vec::new();
@@ -398,7 +406,7 @@ pub async fn handle_export(cli: &Cli, args: &ExportArgs) -> Result<()> {
             println!("{json}");
         }
         ExportFormat::Csv => {
-            println!("id,file_path,language,status,tags,notes");
+            println!("id,file_path,language,health,tags,notes");
             for bm in &bookmarks {
                 // For CSV, we use the first annotation's notes
                 let notes = bm.annotations.first().and_then(|a| a.notes.as_deref()).unwrap_or("");

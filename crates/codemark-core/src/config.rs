@@ -68,6 +68,24 @@ pub struct Config {
     pub identity: IdentityConfig,
     #[serde(default)]
     pub codetours: CodetoursConfig,
+    #[serde(default)]
+    pub publish: PublishConfig,
+}
+
+/// Publishing configuration.
+#[derive(Debug, Default, Deserialize, Serialize)]
+#[serde(default)]
+pub struct PublishConfig {
+    /// Number of most frequent tags to auto-populate for a collection during publish.
+    /// Default: 3
+    pub autopopulate_collection_tags: Option<usize>,
+}
+
+impl PublishConfig {
+    /// Get the number of tags to auto-populate (default: 3).
+    pub fn autopopulate_tags_count(&self) -> usize {
+        self.autopopulate_collection_tags.unwrap_or(3)
+    }
 }
 
 /// Codetours configuration.
@@ -161,6 +179,7 @@ pub struct HealthConfig {
     pub auto_archive_after_days: Option<u32>,
     /// Maximum age in hours for cached collection health before a recompute is needed.
     /// Default: 24
+    /// TODO: Implement freshness checking in web UI / list commands (Phase 12)
     pub read_max_age_hours: Option<u32>,
 }
 

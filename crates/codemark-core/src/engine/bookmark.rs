@@ -70,7 +70,7 @@ impl FromStr for CollectionHealth {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CollectionLinkKind {
     Pr,
@@ -81,6 +81,11 @@ pub enum CollectionLinkKind {
     Repo,
     Tour,
     Other,
+}
+
+impl CollectionLinkKind {
+    pub const ALL_VARIANTS: &'static [&'static str] =
+        &["pr", "issue", "doc", "discussion", "dashboard", "repo", "tour", "other"];
 }
 
 impl fmt::Display for CollectionLinkKind {
