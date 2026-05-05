@@ -156,7 +156,11 @@
                         </div>
 
                         <!-- Query Panel -->
-                        {% if let Some(q) = bookmark.query %}
+                        {% if let Some(q) = bookmark.query_highlighted %}
+                        <div class="relative group/code panel-query hidden peer-checked/query:block">
+                            <pre class="p-4 text-xs font-mono overflow-x-auto custom-scrollbar"><code>{{ q|safe }}</code></pre>
+                        </div>
+                        {% else if let Some(q) = bookmark.query %}
                         <div class="relative group/code panel-query hidden peer-checked/query:block">
                             <pre class="p-4 text-xs font-mono overflow-x-auto custom-scrollbar text-text-primary"><code>{{ q }}</code></pre>
                         </div>

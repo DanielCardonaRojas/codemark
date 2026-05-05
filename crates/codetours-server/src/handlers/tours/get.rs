@@ -75,6 +75,7 @@ pub struct BookmarkView {
     pub highlighted: String,
     pub has_query: bool,
     pub query: Option<String>,
+    pub query_highlighted: Option<String>,
     pub tags: Vec<String>,
     pub comment_count: usize,
     pub comments: Vec<CommentView>,
@@ -306,9 +307,16 @@ pub async fn handler(
                                         .and_then(|s| s.parse::<usize>().ok())
                                 })
                                 .unwrap_or(1);
-                                
+
                             let raw_preview = preview.unwrap_or_default();
                             let highlighted = (*crate::highlight::highlight(&lang, &raw_preview)).clone();
+
+                            // Highlight the query using lisp syntax (tree-sitter queries use lisp/scheme-like syntax)
+                            let query_highlighted = if !q.is_empty() {
+                                Some((*crate::highlight::highlight("lisp", &q)).clone())
+                            } else {
+                                None
+                            };
 
                             BookmarkView {
                                 id_short: bid[..8].to_string(),
@@ -323,7 +331,8 @@ pub async fn handler(
                                 preview_lines: raw_preview,
                                 highlighted,
                                 has_query: !q.is_empty(),
-                                query: Some(q),
+                                query: if q.is_empty() { None } else { Some(q) },
+                                query_highlighted,
                                 tags,
                                 comment_count: comments.len(),
                                 comments,
