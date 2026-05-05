@@ -1,23 +1,44 @@
 (function() {
   const SB_KEY = 'codetours.sidebar.collapsed';
   const root = document.documentElement;
-  
+
   // Initialize sidebar state
-  if (localStorage.getItem(SB_KEY) === '1') {
-    root.dataset.sidebarCollapsed = '1';
+  const savedCollapsed = localStorage.getItem(SB_KEY);
+  if (savedCollapsed === '1' || savedCollapsed === 'true') {
+    root.dataset.sidebarCollapsed = 'true';
   }
 
   document.addEventListener('DOMContentLoaded', () => {
+    // Sync root dataset to sidebar element
+    const sidebar = document.querySelector('.sidebar');
+    if (sidebar) {
+      const isCollapsed = root.dataset.sidebarCollapsed === 'true';
+      sidebar.dataset.sidebarCollapsed = isCollapsed ? 'true' : 'false';
+    }
+
     // Sidebar toggle
     const toggle = document.querySelector('[data-sidebar-toggle]');
-    const sidebar = document.querySelector('.sidebar');
     if (toggle && sidebar) {
       toggle.addEventListener('click', () => {
-        const collapsed = sidebar.dataset.sidebarCollapsed === 'true';
-        sidebar.dataset.sidebarCollapsed = collapsed ? 'false' : 'true';
-        localStorage.setItem(SB_KEY, collapsed ? '0' : '1');
+        const isCurrentlyCollapsed = root.dataset.sidebarCollapsed === 'true';
+        const newState = !isCurrentlyCollapsed;
+        root.dataset.sidebarCollapsed = newState ? 'true' : 'false';
+        sidebar.dataset.sidebarCollapsed = newState ? 'true' : 'false';
+        localStorage.setItem(SB_KEY, newState ? '1' : '0');
       });
     }
+
+    // Filter out empty query parameters from tours filter form
+    document.body.addEventListener('htmx:configRequest', function(evt) {
+      if (evt.detail.target.matches('#tour-list') || evt.detail.etc.target === '#tour-list') {
+        const params = evt.detail.parameters;
+        for (const key in params) {
+          if (params[key] === '' || params[key] === null || params[key] === undefined) {
+            delete params[key];
+          }
+        }
+      }
+    });
 
     // Scroll Spy
     const scrollContainer = document.querySelector('[data-scrollspy]');

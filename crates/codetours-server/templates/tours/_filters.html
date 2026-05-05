@@ -1,18 +1,19 @@
 {% import "partials/icon.html" as icons %}
-<form hx-get="/tours" 
-      hx-target="#tour-list" 
-      hx-swap="outerHTML" 
-      hx-trigger="change from:select, keyup changed delay:300ms from:input[name=q]" 
+<form hx-get="/tours"
+      hx-target="#tour-list"
+      hx-swap="outerHTML"
+      hx-trigger="change from:select, keyup changed delay:300ms from:input[name=q]"
       hx-push-url="true"
+      id="tours-filter-form"
       class="flex flex-wrap items-center gap-4 mb-8">
-    
+
     <div class="relative flex-1 min-w-[200px]">
         <div class="absolute left-3 top-1/2 -translate-y-1/2 text-text-secondary">
             {% call icons::icon("search", 16) %}
         </div>
-        <input type="text" 
-               name="q" 
-               placeholder="Search tours..." 
+        <input type="text"
+               name="q"
+               placeholder="Search tours..."
                class="w-full bg-bg-secondary border border-border rounded-md pl-10 pr-4 py-2 text-sm focus:outline-none focus:border-accent transition-colors"
                value="{{ params.q.as_deref().unwrap_or("") }}">
     </div>
