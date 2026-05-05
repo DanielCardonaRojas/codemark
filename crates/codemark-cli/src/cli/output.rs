@@ -322,7 +322,7 @@ fn write_bookmarks_line(bookmarks: &[Bookmark]) -> io::Result<()> {
     for bm in bookmarks {
         let tags = bm.tags.iter().map(|t| format!("#{t}")).collect::<Vec<_>>().join(",");
         let note = get_first_note(bm);
-        // Format: <id>\t<file>:<line>\t<status>\t<tags>\t<note>
+        // Format: <id>\t<file>:<line>\t<health>\t<tags>\t<note>
         // Line is unknown without resolution, so we use file path only
         writeln!(
             stdout,
@@ -338,7 +338,7 @@ fn write_bookmarks_line(bookmarks: &[Bookmark]) -> io::Result<()> {
 }
 
 /// Write bookmarks in television format with line numbers.
-/// Format: <id>\t<file>\t<line>\t<status>\t<tags>\t<note>
+/// Format: <id>\t<file>\t<line>\t<health>\t<tags>\t<note>
 /// This requires database access to fetch line numbers from resolutions.
 /// The line number is the center of the line range for better preview positioning.
 /// Write bookmarks using a flexible line format template.

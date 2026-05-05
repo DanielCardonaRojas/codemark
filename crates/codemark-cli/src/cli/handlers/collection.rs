@@ -117,6 +117,13 @@ pub async fn handle_collection_add(
         }
     };
     let added = db.add_to_collection_at(&collection.id, &args.bookmark_ids, args.at)?;
+    // Recompute collection health after adding bookmarks
+    if let Err(e) = db.recompute_collection_health(&collection.id) {
+        eprintln!(
+            "codemark: warning: failed to recompute health for collection {}: {}",
+            collection.id, e
+        );
+    }
     write_success(mode, &format!("Added {added} bookmarks to '{}'", args.name))?;
     Ok(())
 }

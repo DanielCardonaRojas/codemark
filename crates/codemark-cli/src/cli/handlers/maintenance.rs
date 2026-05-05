@@ -24,7 +24,7 @@ pub async fn handle_heal(cli: &Cli, mode: &OutputMode, args: &HealArgs) -> Resul
     let filter = BookmarkFilter {
         file_path: args.file.as_ref().map(|p| p.to_string_lossy().to_string()),
         language: args.lang.clone(),
-        health: super::parse_status_filter(health_input)?.or(Some(vec![
+        health: super::parse_health_filter(health_input)?.or(Some(vec![
             BookmarkHealth::Active,
             BookmarkHealth::Drifted,
             BookmarkHealth::Stale,
@@ -392,7 +392,7 @@ pub async fn handle_export(cli: &Cli, args: &ExportArgs) -> Result<()> {
     let health_input = args.health.as_deref().or(args.status.as_deref());
     let filter = BookmarkFilter {
         tag: args.tag.clone(),
-        health: super::parse_status_filter(health_input)?,
+        health: super::parse_health_filter(health_input)?,
         ..Default::default()
     };
     let mut bookmarks = Vec::new();

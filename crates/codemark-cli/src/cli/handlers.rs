@@ -668,7 +668,7 @@ pub fn parse_hunk(hunk: &str) -> Result<(usize, usize)> {
     Ok((start, end.max(start)))
 }
 
-pub fn parse_status_filter(status: Option<&str>) -> Result<Option<Vec<BookmarkHealth>>> {
+pub fn parse_health_filter(status: Option<&str>) -> Result<Option<Vec<BookmarkHealth>>> {
     match status {
         Some(s) => {
             let mut result = Vec::new();
@@ -1106,7 +1106,7 @@ pub async fn handle_list(cli: &Cli, mode: &OutputMode, args: &ListArgs) -> Resul
     let health_input = args.health.as_deref().or(args.status.as_deref());
     let filter = BookmarkFilter {
         tag: args.tag.clone(),
-        health: parse_status_filter(health_input)?
+        health: parse_health_filter(health_input)?
             .or(Some(vec![BookmarkHealth::Active, BookmarkHealth::Drifted])),
         file_path: args.file.as_ref().map(|p| p.to_string_lossy().to_string()),
         language: args.lang.clone(),

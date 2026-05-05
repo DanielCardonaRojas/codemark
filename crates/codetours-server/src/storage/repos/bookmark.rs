@@ -15,8 +15,8 @@ impl BookmarkRepo {
         let conn = self.pool.get().await?;
         conn.interact(move |conn| {
             let mut stmt = conn.prepare(
-                "SELECT id, query, language, file_path, content_hash, commit_hash, 
-                        status, resolution_method, last_resolved_at, stale_since, 
+                "SELECT id, query, language, file_path, content_hash, commit_hash,
+                        health, resolution_method, last_resolved_at, stale_since,
                         created_at, created_by
                  FROM bookmarks WHERE id = ?1",
             )?;

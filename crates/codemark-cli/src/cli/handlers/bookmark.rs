@@ -759,7 +759,7 @@ pub async fn handle_resolve(cli: &Cli, mode: &OutputMode, args: &ResolveArgs) ->
         let health_input = args.health.as_deref().or(args.status.as_deref());
         let filter = BookmarkFilter {
             tag: args.tag.clone(),
-            health: super::parse_status_filter(health_input)?
+            health: super::parse_health_filter(health_input)?
                 .or(Some(vec![BookmarkHealth::Active, BookmarkHealth::Drifted])),
             file_path: args.file.as_ref().map(|p| p.to_string_lossy().to_string()),
             language: args.lang.clone(),
@@ -952,6 +952,7 @@ pub async fn handle_annotate(cli: &Cli, mode: &OutputMode, args: &AnnotateArgs) 
                 "short_id": short_id(&bm.id),
                 "file_path": bm.file_path,
                 "language": bm.language,
+                "health": bm.health,
                 "status": bm.health,
                 "tags": bm.tags,
                 "annotations": bm.annotations,
