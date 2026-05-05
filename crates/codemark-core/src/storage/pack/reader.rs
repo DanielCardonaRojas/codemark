@@ -29,6 +29,15 @@ impl PackReader {
         )?;
         let rows = stmt.query_map([], |row| {
             let visibility_str: String = row.get(3)?;
+            let health: Option<String> = row.get(11)?;
+            // Validate health value if present
+            let health_parsed = if let Some(h) = &health {
+                Some(h.parse::<crate::engine::bookmark::CollectionHealth>().map_err(|_| {
+                    rusqlite::Error::InvalidColumnType(11, "invalid collection health value".into(), rusqlite::types::Type::Text)
+                })?)
+            } else {
+                None
+            };
             Ok(Collection {
                 id: row.get(0)?,
                 name: row.get(1)?,
@@ -41,7 +50,7 @@ impl PackReader {
                 published_commit_sha: row.get(8)?,
                 repo_url: row.get(9)?,
                 status: row.get(10)?,
-                health: row.get::<_, Option<String>>(11)?.and_then(|h| h.parse().ok()),
+                health: health_parsed,
                 health_computed_at: row.get(12)?,
                 updated_at: row.get(13)?,
                 imported_from_url: row.get(14)?,
@@ -120,6 +129,14 @@ impl PackReader {
 fn row_to_bookmark(row: &rusqlite::Row) -> rusqlite::Result<Bookmark> {
     let health_str: Option<String> = row.get(6)?;
     let method_str: Option<String> = row.get(7)?;
+    // Parse and validate health - reject invalid values
+    let health = if let Some(s) = health_str {
+        Some(s.parse::<BookmarkHealth>().map_err(|_| {
+            rusqlite::Error::InvalidColumnType(6, "invalid bookmark health value".into(), rusqlite::types::Type::Text)
+        })?)
+    } else {
+        None
+    };
     Ok(Bookmark {
         id: row.get(0)?,
         query: row.get(1)?,
@@ -127,9 +144,7 @@ fn row_to_bookmark(row: &rusqlite::Row) -> rusqlite::Result<Bookmark> {
         file_path: row.get(3)?,
         content_hash: row.get(4)?,
         commit_hash: row.get(5)?,
-        health: health_str
-            .and_then(|s| BookmarkHealth::from_str(&s).ok())
-            .unwrap_or(BookmarkHealth::Active),
+        health: health.unwrap_or(BookmarkHealth::Active),
         resolution_method: method_str.and_then(|s| ResolutionMethod::from_str(&s).ok()),
         last_resolved_at: row.get(8)?,
         stale_since: row.get(9)?,

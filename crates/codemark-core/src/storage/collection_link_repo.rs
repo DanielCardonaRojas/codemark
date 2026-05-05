@@ -68,10 +68,16 @@ impl Database {
     ) -> Result<()> {
         let tx = self.conn().unchecked_transaction()?;
         for (i, id) in ordered_ids.iter().enumerate() {
-            tx.execute(
+            let affected = tx.execute(
                 "UPDATE collection_links SET sort_order = ?1 WHERE id = ?2 AND collection_id = ?3",
                 rusqlite::params![i as i32, id, collection_id],
             )?;
+            if affected != 1 {
+                return Err(crate::error::Error::Input(format!(
+                    "link ID '{}' not found in collection '{}'",
+                    id, collection_id
+                )));
+            }
         }
         tx.commit()?;
         Ok(())

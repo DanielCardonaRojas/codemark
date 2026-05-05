@@ -798,7 +798,7 @@ pub async fn handle_show(cli: &Cli, mode: &OutputMode, args: &ShowArgs) -> Resul
             println!("ID:          {}", bm.id);
             println!("File:        {}", bm.file_path);
             println!("Language:    {}", bm.language);
-            println!("Status:      {}", bm.health);
+            println!("Health:      {}", bm.health);
             if !bm.tags.is_empty() {
                 println!("Tags:        {}", bm.tags.join(", "));
             }

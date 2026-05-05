@@ -37,10 +37,6 @@ pub async fn build_snapshot(
         crate::error::Error::Input(format!("collection {collection_id} not found"))
     })?;
 
-    // Set collection health to active at publish time
-    collection.health = Some(CollectionHealth::Active);
-    collection.health_computed_at = Some(Utc::now().to_rfc3339());
-
     let filter =
         BookmarkFilter { collection_id: Some(collection_id.to_string()), ..Default::default() };
     let bookmarks = db.list_bookmarks(&filter)?;
@@ -77,7 +73,7 @@ pub async fn build_snapshot(
             result.method,
             hash_matches,
             days_since,
-            30,
+            config.health.stale_days(),
         );
         bm.resolution_method = Some(result.method);
         bm.last_resolved_at = Some(Utc::now().to_rfc3339());
@@ -143,8 +139,22 @@ pub async fn build_snapshot(
         }
     }
 
-    // Recompute and update collection health in database
-    let health = db.recompute_collection_health(collection_id)?;
+    // Compute collection health from the resolved bookmarks (not from DB)
+    // Rule: stale > drifted > active. Archived bookmarks are excluded.
+    use crate::engine::bookmark::BookmarkHealth;
+    let health = if resolved_bookmarks.is_empty() {
+        None
+    } else {
+        let has_stale = resolved_bookmarks.iter().any(|bm| bm.health == BookmarkHealth::Stale);
+        let has_drifted = resolved_bookmarks.iter().any(|bm| bm.health == BookmarkHealth::Drifted);
+        if has_stale {
+            Some(CollectionHealth::Stale)
+        } else if has_drifted {
+            Some(CollectionHealth::Drifted)
+        } else {
+            Some(CollectionHealth::Active)
+        }
+    };
     collection.health = health;
     collection.health_computed_at = Some(Utc::now().to_rfc3339());
 

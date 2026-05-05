@@ -167,10 +167,20 @@ async fn handle_semantic_search(
     // Perform semantic search
     let results = semantic_repo.search(db.conn(), query, args.limit).await?;
 
-    // Fetch full bookmark details for results
+    // Build health filter
+    let health_input = args.health.as_deref().or(args.status.as_deref());
+    let health_filter = super::parse_health_filter(health_input)?;
+
+    // Fetch full bookmark details for results and apply health filter
     let mut bookmarks = Vec::new();
     for result in results {
         if let Ok(Some(bm)) = db.get_bookmark(&result.bookmark_id) {
+            // Apply health filter if specified
+            if let Some(ref filter) = health_filter {
+                if !filter.contains(&bm.health) {
+                    continue;
+                }
+            }
             bookmarks.push((result.distance, bm));
         }
     }
