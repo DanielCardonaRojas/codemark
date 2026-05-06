@@ -72,3 +72,27 @@ batch_size = 32
 | `CODEMARK_LOG` | Log level (error, warn, info, debug, trace). |
 | `NO_COLOR` | Disable colored output. |
 | `OPENAI_API_KEY` | Key for OpenAI embedding provider. |
+
+## Health and Staleness (`[health]`)
+
+Configure how bookmark and collection health is calculated.
+
+```toml
+[health]
+# Days before a bookmark is considered stale if not re-resolved
+stale_after_days = 30
+
+# Days before a stale bookmark is auto-archived by 'heal --auto-archive'
+auto_archive_after_days = 7
+```
+
+## Publishing (`[publish]`)
+
+Configure behavior for `codemark publish`.
+
+```toml
+[publish]
+# Number of most frequent bookmark tags to auto-populate for a collection during publish
+# Set to 0 to disable auto-population
+autopopulate_collection_tags = 3
+```

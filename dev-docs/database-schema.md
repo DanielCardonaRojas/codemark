@@ -11,6 +11,8 @@ erDiagram
     BOOKMARKS ||--o{ BOOKMARK_TAGS : "tagged with"
     COLLECTIONS ||--o{ COLLECTION_BOOKMARKS : "contains"
     BOOKMARKS ||--o{ COLLECTION_BOOKMARKS : "member of"
+    COLLECTIONS ||--o{ COLLECTION_TAGS : "tagged with"
+    COLLECTIONS ||--o{ COLLECTION_LINKS : "linked with"
 
     BOOKMARKS {
         TEXT id PK "UUIDv4"
@@ -19,7 +21,7 @@ erDiagram
         TEXT file_path FK "relative to repo root"
         TEXT content_hash FK "sha256 of normalized content"
         TEXT commit_hash FK "git HEAD at creation"
-        TEXT status FK "active|drifted|stale|archived"
+        TEXT health FK "active|drifted|stale|archived"
         TEXT resolution_method FK "exact|relaxed|hash_fallback"
         TEXT last_resolved_at FK "ISO 8601 timestamp"
         TEXT stale_since FK "ISO 8601 timestamp"
@@ -61,8 +63,27 @@ erDiagram
         TEXT id PK "UUIDv4"
         TEXT name FK "unique collection name"
         TEXT description FK "human-readable description"
+        TEXT visibility FK "public|private"
+        TEXT health FK "active|drifted|stale"
+        TEXT health_computed_at FK "ISO 8601 timestamp"
         TEXT created_at FK "ISO 8601 timestamp"
         TEXT created_by FK "agent session identifier"
+    }
+
+    COLLECTION_TAGS {
+        TEXT collection_id FK "references COLLECTIONS(id)"
+        TEXT tag FK "tag label"
+        TEXT added_at FK "ISO 8601 timestamp"
+        TEXT added_by FK "agent or user identifier"
+    }
+
+    COLLECTION_LINKS {
+        TEXT id PK "UUIDv4"
+        TEXT collection_id FK "references COLLECTIONS(id)"
+        TEXT kind FK "pr|issue|doc|discussion|dashboard|repo|tour|other"
+        TEXT label FK "link label"
+        TEXT url FK "link URL"
+        INTEGER sort_order FK "display order"
     }
 
     COLLECTION_BOOKMARKS {
@@ -92,7 +113,7 @@ The core table storing bookmark metadata and the tree-sitter query used to re-fi
 | `file_path` | TEXT NOT NULL | Relative path from repo root |
 | `content_hash` | TEXT | SHA-256 of normalized content (64-bit) |
 | `commit_hash` | TEXT | Git HEAD at creation time |
-| `status` | TEXT NOT NULL | `active`, `drifted`, `stale`, or `archived` |
+| `health` | TEXT NOT NULL | `active`, `drifted`, `stale`, or `archived` |
 | `resolution_method` | TEXT | Last resolution method: `exact`, `relaxed`, `hash_fallback` |
 | `last_resolved_at` | TEXT | ISO 8601 timestamp of last resolution |
 | `stale_since` | TEXT | ISO 8601 timestamp when first marked stale |
@@ -103,7 +124,7 @@ The core table storing bookmark metadata and the tree-sitter query used to re-fi
 - `UNIQUE(file_path, query)` - Prevents duplicate bookmarks for the same code location
 
 **Indexes:**
-- `idx_bookmarks_status` on `status`
+- `idx_bookmarks_health` on `health`
 - `idx_bookmarks_file` on `file_path`
 - `idx_bookmarks_language` on `language`
 
@@ -142,6 +163,40 @@ Many-to-many relationship between bookmarks and tags. Tags are append-only - add
 - `idx_tags_bookmark` on `bookmark_id`
 - `idx_tags_tag` on `tag`
 
+### collection_tags
+
+Many-to-many relationship between collections and tags. Tags can be auto-populated (`added_by = '__auto__'`) during publish.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `collection_id` | TEXT NOT NULL | Foreign key to collections |
+| `tag` | TEXT NOT NULL | Tag label |
+| `added_at` | TEXT NOT NULL | ISO 8601 timestamp |
+| `added_by` | TEXT | Agent or user identifier |
+
+**Primary Key:** `(collection_id, tag)`
+
+**Indexes:**
+- `idx_collection_tags_tag` on `tag`
+
+### collection_links
+
+External resources related to a collection.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `id` | TEXT PRIMARY KEY | UUIDv4 identifier |
+| `collection_id` | TEXT NOT NULL | Foreign key to collections |
+| `kind` | TEXT NOT NULL | `pr`, `issue`, `doc`, `discussion`, `dashboard`, `repo`, `tour`, `other` |
+| `label` | TEXT NOT NULL | Human-readable label |
+| `url` | TEXT NOT NULL | Destination URL |
+| `sort_order` | INTEGER | Display order (default 0) |
+| `added_at` | TEXT NOT NULL | ISO 8601 timestamp |
+| `added_by` | TEXT | Agent or user identifier |
+
+**Indexes:**
+- `idx_collection_links_collection` on `(collection_id, sort_order)`
+
 ### resolutions
 
 Audit trail of where bookmarks were found over time. Records are pruned based on `max_resolutions_per_bookmark` config.
@@ -174,8 +229,13 @@ Named groups of bookmarks for organizing related code.
 | `id` | TEXT PRIMARY KEY | UUIDv4 identifier |
 | `name` | TEXT NOT NULL UNIQUE | Collection name |
 | `description` | TEXT | Human-readable description |
+| `visibility` | TEXT | `public` or `private` |
+| `health` | TEXT | Aggregate health: `active`, `drifted`, or `stale` |
+| `health_computed_at` | TEXT | ISO 8601 timestamp of last aggregation |
 | `created_at` | TEXT NOT NULL | ISO 8601 creation timestamp |
 | `created_by` | TEXT | Agent or user identifier |
+
+**Health Aggregation Rule**: stale > drifted > active. Archived bookmarks are excluded.
 
 **Indexes:**
 - `idx_collections_name` on `name`
