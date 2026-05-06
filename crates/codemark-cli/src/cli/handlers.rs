@@ -1475,6 +1475,7 @@ pub async fn handle_preview(cli: &Cli, args: &PreviewArgs) -> Result<()> {
     // Clients should check the "health" field for the precise tri-state (Active/Drifted/Stale).
     let data = serde_json::json!({
         "bookmark_id": bm.id,
+        "resolution_id": resolution.id,
         "file_path": absolute_path.to_string_lossy(),
         "line_range": resolution.line_range,
         "line_range_colon": line_range_colon,

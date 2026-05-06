@@ -843,6 +843,7 @@ fn preview_shows_code() {
     // Should contain the file path and line range
     assert!(result["data"]["file_path"].as_str().unwrap().contains("auth_service.rs"));
     assert!(result["data"]["line_range"].is_string());
+    assert!(result["data"]["resolution_id"].is_string());
 }
 
 #[test]
