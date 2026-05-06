@@ -69,10 +69,8 @@ pub async fn page_handler(State(state): State<AppState>, _auth: AuthContext) -> 
 
     match repos {
         Ok(repos) => {
-            let prefs = PrefsView {
-                theme: "atom-one-dark".to_string(),
-                font: "Fira Code".to_string(),
-            };
+            let prefs =
+                PrefsView { theme: "atom-one-dark".to_string(), font: "Fira Code".to_string() };
             ConfigTemplate { nav: NavItem::Config, repos, prefs }.into_response()
         }
         Err(e) => e.into_response(),

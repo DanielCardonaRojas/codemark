@@ -45,19 +45,29 @@ pub async fn create_handler(
     let comment_id = uuid::Uuid::new_v4().to_string();
     let created_at = chrono::Utc::now().to_rfc3339();
 
-    let result = db.interact(move |conn| {
-        // Validate that the bookmark belongs to the given tour before inserting
-        let affected = conn.execute(
-            "INSERT INTO bookmark_comments (id, bookmark_id, author, body, created_at)
+    let result = db
+        .interact(move |conn| {
+            // Validate that the bookmark belongs to the given tour before inserting
+            let affected = conn.execute(
+                "INSERT INTO bookmark_comments (id, bookmark_id, author, body, created_at)
              SELECT ?, ?, ?, ?, ?
              WHERE EXISTS (SELECT 1 FROM bookmarks WHERE id = ? AND tour_id = ?)",
-            [&comment_id, &bid_clone, &author_clone, &body_clone, &created_at, &bid_clone, &tour_id_clone],
-        )?;
-        if affected == 0 {
-            return Err(rusqlite::Error::QueryReturnedNoRows);
-        }
-        Ok::<_, rusqlite::Error>(affected)
-    }).await;
+                [
+                    &comment_id,
+                    &bid_clone,
+                    &author_clone,
+                    &body_clone,
+                    &created_at,
+                    &bid_clone,
+                    &tour_id_clone,
+                ],
+            )?;
+            if affected == 0 {
+                return Err(rusqlite::Error::QueryReturnedNoRows);
+            }
+            Ok::<_, rusqlite::Error>(affected)
+        })
+        .await;
 
     match result {
         Ok(Ok(_)) => {
