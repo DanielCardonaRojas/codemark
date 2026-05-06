@@ -16,16 +16,10 @@
             </a>
             <div class="flex items-center gap-3 min-w-0">
                 <h1 class="text-sm font-semibold truncate">{{ tour.title }}</h1>
-                <span class="status-badge bg-status-healthy/10 text-status-healthy border border-status-healthy/20">
-                    <span class="status-dot dot-healthy"></span>
-                    Ready
+                <span class="status-badge bg-status-{{ tour.health_class }}/10 text-status-{{ tour.health_class }} border border-status-{{ tour.health_class }}/20">
+                    <span class="status-dot dot-{{ tour.health_class }}"></span>
+                    {{ tour.health_label }}
                 </span>
-                {% if tour.is_drifted %}
-                <span class="status-badge bg-status-drifted/10 text-status-drifted border border-status-drifted/20">
-                    {% call icons::icon("alert-circle", 12) %}
-                    Drifted
-                </span>
-                {% endif %}
             </div>
         </div>
         
@@ -57,7 +51,10 @@
                 {% for bookmark in tour.bookmarks %}
                 <button data-step-nav="{{ bookmark.ordinal }}"
                         class="step-item group {% if loop.first %}active{% endif %}">
-                    <span class="text-[10px] font-mono mt-0.5 opacity-50">{{ bookmark.ordinal }}</span>
+                    <div class="flex flex-col items-center gap-1 mt-0.5">
+                        <span class="text-[10px] font-mono opacity-50">{{ bookmark.ordinal }}</span>
+                        <span class="status-dot dot-{{ bookmark.health_class }} w-1.5 h-1.5"></span>
+                    </div>
                     <div class="flex-1 min-w-0">
                         <div class="text-sm font-medium leading-tight truncate">{{ bookmark.headline }}</div>
                         <div class="text-[10px] opacity-60 truncate mt-1">{{ bookmark.file_path }}</div>
@@ -94,7 +91,7 @@
                         </div>
                         <div class="flex-1 min-w-0">
                             <div class="flex items-center gap-2 text-xs text-text-secondary mb-1">
-                                <span class="status-dot dot-healthy"></span>
+                                <span class="status-dot dot-{{ bookmark.health_class }}"></span>
                                 <span class="font-mono">{{ bookmark.file_path }}</span>
                                 <span>:</span>
                                 <span>{{ bookmark.line_range }}</span>
@@ -250,11 +247,18 @@
             <div class="p-6 border-t border-border bg-bg-secondary/80 backdrop-blur">
                 <div class="text-[10px] font-bold text-text-secondary uppercase tracking-wider mb-4">Tour Resources</div>
                 <ul class="space-y-3">
-                    <li class="flex items-center gap-2 text-xs hover:text-accent cursor-pointer group transition-colors">
-                        {% call icons::icon("github", 14) %}
-                        <span class="truncate">Repository Source</span>
-                        {% call icons::icon("external-link", 10) %}
+                    {% for link in tour.links %}
+                    <li>
+                        <a href="{{ link.url }}" target="_blank" rel="noopener noreferrer" 
+                           class="flex items-center gap-2 text-xs hover:text-accent cursor-pointer group transition-colors">
+                            {% call icons::icon(link.icon, 14) %}
+                            <span class="truncate">{{ link.label }}</span>
+                            {% call icons::icon("external-link", 10) %}
+                        </a>
                     </li>
+                    {% else %}
+                    <li class="text-[10px] text-text-secondary italic">No resources attached</li>
+                    {% endfor %}
                 </ul>
             </div>
         </aside>

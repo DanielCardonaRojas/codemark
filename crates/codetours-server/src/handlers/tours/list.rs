@@ -35,6 +35,7 @@ pub struct TourView {
     pub id: String,
     pub title: String,
     pub description: String,
+    pub health: Option<String>,
     pub status_class: String,
     pub updated_at_relative: String,
     pub author: String,
@@ -68,6 +69,7 @@ pub struct TourSummary {
     pub title: String,
     pub repo_url: Option<String>,
     pub updated_at: String,
+    pub health: Option<String>,
     pub url: String,
 }
 
@@ -105,7 +107,7 @@ pub async fn handler(
         .interact(move |conn| {
             // 1. Build Query
             let mut query_str = "
-                SELECT c.id, c.name, c.description, c.repo_url, c.updated_at, c.created_by, c.created_branch
+                SELECT c.id, c.name, c.description, c.repo_url, c.updated_at, c.created_by, c.created_branch, c.health
                 FROM collections c
                 WHERE c.visibility = 'public' AND c.status = 'ready'
             ".to_string();
@@ -132,9 +134,8 @@ pub async fn handler(
 
             if let Some(tag) = &params_clone.tag {
                 where_clauses.push("EXISTS (
-                    SELECT 1 FROM collection_bookmarks cb 
-                    JOIN bookmark_tags bt ON cb.bookmark_id = bt.bookmark_id 
-                    WHERE cb.collection_id = c.id AND bt.tag = ?
+                    SELECT 1 FROM collection_tags ct 
+                    WHERE ct.collection_id = c.id AND ct.tag = ?
                 )");
                 sql_params.push(Box::new(tag.clone()));
             }
@@ -165,12 +166,13 @@ pub async fn handler(
                     row.get::<_, String>(4)?, // updated_at
                     row.get::<_, Option<String>>(5)?, // created_by
                     row.get::<_, Option<String>>(6)?, // created_branch
+                    row.get::<_, Option<String>>(7)?, // health
                 ))
             })?.collect::<rusqlite::Result<Vec<_>>>()?;
 
             // 2. Map rows to view models or summaries
             let mut tours = Vec::new();
-            for (id, name, desc, repo, updated, author, branch) in tours_rows {
+            for (id, name, desc, repo, updated, author, branch, health) in tours_rows {
                 let step_count: usize = conn.query_row(
                     "SELECT COUNT(*) FROM collection_bookmarks WHERE collection_id = ?",
                     [&id],
@@ -178,15 +180,14 @@ pub async fn handler(
                 )?;
 
                 let tags: Vec<String> = conn.prepare("
-                    SELECT DISTINCT bt.tag 
-                    FROM collection_bookmarks cb 
-                    JOIN bookmark_tags bt ON cb.bookmark_id = bt.bookmark_id 
-                    WHERE cb.collection_id = ?
+                    SELECT tag FROM collection_tags 
+                    WHERE collection_id = ?
+                    ORDER BY added_at ASC
                 ")?
                 .query_map([&id], |row| row.get(0))?
                 .collect::<rusqlite::Result<Vec<String>>>()?;
 
-                tours.push((id, name, desc, repo, updated, author, branch, step_count, tags));
+                tours.push((id, name, desc, repo, updated, author, branch, health, step_count, tags));
             }
 
             // 3. Get total count
@@ -207,7 +208,7 @@ pub async fn handler(
                 .query_map([], |row| row.get(0))?
                 .collect::<rusqlite::Result<Vec<String>>>()?;
 
-            let tags: Vec<String> = conn.prepare("SELECT DISTINCT tag FROM bookmark_tags")?
+            let tags: Vec<String> = conn.prepare("SELECT DISTINCT tag FROM collection_tags")?
                 .query_map([], |row| row.get(0))?
                 .collect::<rusqlite::Result<Vec<String>>>()?;
 
@@ -218,23 +219,32 @@ pub async fn handler(
     match result {
         Ok(Ok((tours_data, total, repos, branches, tags))) => {
             if format == ResponseFormat::Json {
-                let tours = tours_data.into_iter().map(|(id, name, _, repo, updated, _, _, _, _)| {
+                let tours = tours_data.into_iter().map(|(id, name, _, repo, updated, _, _, health, _, _)| {
                     TourSummary {
                         tour_id: id.clone(),
                         title: name,
                         repo_url: repo,
                         updated_at: updated,
+                        health,
                         url: format!("/tours/{}", id),
                     }
                 }).collect();
                 (StatusCode::OK, Json(ListToursResponse { tours, total, limit, offset })).into_response()
             } else {
-                let tours = tours_data.into_iter().map(|(id, name, desc, _repo, updated, author, branch, steps, tags)| {
+                let tours = tours_data.into_iter().map(|(id, name, desc, _repo, updated, author, branch, health, steps, tags)| {
+                    let status_class = match health.as_deref() {
+                        Some("active") => "healthy",
+                        Some("drifted") => "drifted",
+                        Some("stale") => "stale",
+                        _ => "healthy",
+                    }.to_string();
+
                     TourView {
                         id,
                         title: name,
                         description: desc.unwrap_or_default(),
-                        status_class: "healthy".to_string(), // TODO: Real status
+                        health: health.clone(),
+                        status_class,
                         updated_at_relative: updated, // TODO: Relative time
                         author: author.unwrap_or_else(|| "anonymous".to_string()),
                         branch: branch.unwrap_or_else(|| "main".to_string()),

@@ -56,8 +56,22 @@ pub struct TourDetailView {
     pub description: Option<String>,
     pub author: String,
     pub published_at_relative: String,
+    pub health: Option<String>,
+    pub health_class: String,
+    pub health_label: String,
+    pub health_computed_at: Option<String>,
     pub is_drifted: bool,
     pub bookmarks: Vec<BookmarkView>,
+    pub links: Vec<LinkView>,
+}
+
+#[derive(Serialize)]
+pub struct LinkView {
+    pub id: String,
+    pub kind: String,
+    pub label: String,
+    pub url: String,
+    pub icon: String,
 }
 
 #[derive(Serialize)]
@@ -69,6 +83,8 @@ pub struct BookmarkView {
     pub file_path: String,
     pub line_range: String,
     pub line: usize,
+    pub health: String,
+    pub health_class: String,
     pub note: String,
     pub language: String,
     pub preview_lines: String,
@@ -176,14 +192,14 @@ pub async fn handler(
                 .interact(move |conn| {
                     // 1. Get collection
                     let sql = if is_auth {
-                        "SELECT id, name, description, repo_url, published_at, created_by FROM collections 
+                        "SELECT id, name, description, repo_url, published_at, created_by, health, health_computed_at FROM collections 
                      WHERE id = ?1 AND visibility IS NOT NULL"
                     } else {
-                        "SELECT id, name, description, repo_url, published_at, created_by FROM collections 
+                        "SELECT id, name, description, repo_url, published_at, created_by, health, health_computed_at FROM collections 
                      WHERE id = ?1 AND visibility = 'public'"
                     };
 
-                    let (coll_id, name, description, repo_url, published_at, author) = conn
+                    let (coll_id, name, description, repo_url, published_at, author, health, health_computed_at) = conn
                         .query_row(sql, [&id_clone], |row| {
                             Ok((
                                 row.get::<_, String>(0)?,
@@ -192,6 +208,8 @@ pub async fn handler(
                                 row.get::<_, Option<String>>(3)?,
                                 row.get::<_, String>(4)?,
                                 row.get::<_, Option<String>>(5)?,
+                                row.get::<_, Option<String>>(6)?,
+                                row.get::<_, Option<String>>(7)?,
                             ))
                         })
                         .map_err(|e| {
@@ -202,10 +220,38 @@ pub async fn handler(
                             }
                         })?;
 
-                    // 2. Get bookmarks and join with latest resolution
+                    // 2. Get links
+                    let mut stmt = conn.prepare("SELECT id, kind, label, url FROM collection_links WHERE collection_id = ? ORDER BY sort_order ASC, added_at ASC")
+                        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+                    let links = stmt.query_map([&id_clone], |row| {
+                        let kind: String = row.get(1)?;
+                        let icon = match kind.as_str() {
+                            "pr" => "git-pull-request",
+                            "issue" => "alert-circle",
+                            "doc" => "file-text",
+                            "discussion" => "message-square",
+                            "dashboard" => "layout",
+                            "repo" => "github",
+                            "tour" => "book-open",
+                            _ => "link",
+                        }.to_string();
+
+                        Ok(LinkView {
+                            id: row.get(0)?,
+                            kind,
+                            label: row.get(2)?,
+                            url: row.get(3)?,
+                            icon,
+                        })
+                    })
+                    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+                    .collect::<rusqlite::Result<Vec<_>>>()
+                    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+
+                    // 3. Get bookmarks and join with latest resolution
                     let mut stmt = conn
                         .prepare(
-                            "SELECT b.id, b.file_path, r.line_range, r.headline, r.preview_lines, b.language, b.query
+                            "SELECT b.id, b.file_path, r.line_range, r.headline, r.preview_lines, b.language, b.query, b.health
                      FROM collection_bookmarks cb
                      JOIN bookmarks b ON cb.bookmark_id = b.id
                      LEFT JOIN resolutions r ON r.id = (
@@ -231,6 +277,7 @@ pub async fn handler(
                                 row.get::<_, Option<String>>(4)?, // preview_lines
                                 row.get::<_, String>(5)?, // language
                                 row.get::<_, String>(6)?, // query
+                                row.get::<_, String>(7)?, // health
                             ))
                         })
                         .map_err(|e| {
@@ -244,7 +291,7 @@ pub async fn handler(
                         })?;
 
                     let mut bookmarks = Vec::new();
-                    for (i, (bid, file, range, head, preview, lang, q)) in bookmarks_data.into_iter().enumerate() {
+                    for (i, (bid, file, range, head, preview, lang, q, b_health)) in bookmarks_data.into_iter().enumerate() {
                         let tags: Vec<String> = conn.prepare("SELECT tag FROM bookmark_tags WHERE bookmark_id = ?")
                             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
                             .query_map([&bid], |row| row.get(0))
@@ -267,19 +314,19 @@ pub async fn handler(
                             .collect::<rusqlite::Result<Vec<_>>>()
                             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-                        bookmarks.push((bid, file, range, head, preview, String::new(), lang, q, tags, comments, i + 1));
+                        bookmarks.push((bid, file, range, head, preview, String::new(), lang, q, tags, comments, i + 1, b_health));
                     }
 
-                    Ok::<(String, String, Option<String>, Option<String>, String, Option<String>, Vec<_>), StatusCode>((
-                        coll_id, name, description, repo_url, published_at, author, bookmarks
+                    Ok::<(String, String, Option<String>, Option<String>, String, Option<String>, Option<String>, Option<String>, Vec<LinkView>, Vec<_>), StatusCode>((
+                        coll_id, name, description, repo_url, published_at, author, health, health_computed_at, links, bookmarks
                     ))
                 })
                 .await;
 
             match result {
-                Ok(Ok((coll_id, name, description, repo_url, published_at, author, bookmarks_data))) => {
+                Ok(Ok((coll_id, name, description, repo_url, published_at, author, health, health_computed_at, links, bookmarks_data))) => {
                     if format == ResponseFormat::Json {
-                        let bookmarks = bookmarks_data.into_iter().map(|(bid, file, range, head, preview, _, _, _, _, _, _)| {
+                        let bookmarks = bookmarks_data.into_iter().map(|(bid, file, range, head, preview, _, _, _, _, _, _, _)| {
                             BookmarkDetail {
                                 id: bid,
                                 file_path: file,
@@ -299,7 +346,16 @@ pub async fn handler(
                             bookmarks,
                         })).into_response()
                     } else {
-                        let bookmarks = bookmarks_data.into_iter().map(|(bid, file, range, head, preview, notes, lang, q, tags, comments, ordinal)| {
+                        let (health_class, health_label) = match health.as_deref() {
+                            Some("active") => ("healthy", "Ready"),
+                            Some("drifted") => ("drifted", "Drifted"),
+                            Some("stale") => ("stale", "Stale"),
+                            _ => ("healthy", "Ready"),
+                        };
+
+                        let is_drifted = health.as_deref() == Some("drifted") || health.as_deref() == Some("stale");
+
+                        let bookmarks = bookmarks_data.into_iter().map(|(bid, file, range, head, preview, notes, lang, q, tags, comments, ordinal, b_health)| {
                             let line_parsed = range.as_ref()
                                 .and_then(|r| {
                                     r.split('-')
@@ -318,6 +374,14 @@ pub async fn handler(
                                 None
                             };
 
+                            let b_health_class = match b_health.as_str() {
+                                "active" => "healthy",
+                                "drifted" => "drifted",
+                                "stale" => "stale",
+                                "archived" => "archived",
+                                _ => "healthy",
+                            }.to_string();
+
                             BookmarkView {
                                 id_short: bid[..8].to_string(),
                                 id: bid,
@@ -326,6 +390,8 @@ pub async fn handler(
                                 file_path: file,
                                 line_range: range.unwrap_or_else(|| "L1".to_string()),
                                 line: line_parsed,
+                                health: b_health,
+                                health_class: b_health_class,
                                 note: notes,
                                 language: lang,
                                 preview_lines: raw_preview,
@@ -348,8 +414,13 @@ pub async fn handler(
                                 description,
                                 author: author.unwrap_or_else(|| "anonymous".to_string()),
                                 published_at_relative: published_at, // TODO: relative
-                                is_drifted: false, // TODO: drift check
+                                health: health.clone(),
+                                health_class: health_class.to_string(),
+                                health_label: health_label.to_string(),
+                                health_computed_at,
+                                is_drifted,
                                 bookmarks,
+                                links,
                             },
                             host,
                         };
