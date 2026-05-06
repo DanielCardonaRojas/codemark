@@ -1,5 +1,6 @@
-use criterion::{black_box, criterion_group, criterion_main, Criterion};
-use codetours_server::highlight::{highlight, get_cache};
+use codetours_server::highlight::{get_cache, highlight};
+use criterion::{Criterion, criterion_group, criterion_main};
+use std::hint::black_box;
 
 fn bench_highlight(c: &mut Criterion) {
     let language = "rust";
@@ -17,9 +18,7 @@ fn bench_highlight(c: &mut Criterion) {
     let _ = highlight(language, content);
 
     c.bench_function("highlight_cached", |b| {
-        b.iter(|| {
-            highlight(black_box(language), black_box(content))
-        });
+        b.iter(|| highlight(black_box(language), black_box(content)));
     });
 
     c.bench_function("highlight_uncached", |b| {

@@ -1,7 +1,7 @@
-use crate::{auth::AuthContext, router::AppState};
 use crate::handlers::tours::get::CommentView;
+use crate::{auth::AuthContext, router::AppState};
 use axum::{
-    extract::{Path, State, Form},
+    extract::{Form, Path, State},
     http::StatusCode,
     response::IntoResponse,
 };
@@ -29,7 +29,8 @@ pub async fn create_handler(
     let body = form.content.trim();
 
     if body.is_empty() || body.len() > 4000 {
-        return (StatusCode::BAD_REQUEST, "Comment must be between 1 and 4000 characters.").into_response();
+        return (StatusCode::BAD_REQUEST, "Comment must be between 1 and 4000 characters.")
+            .into_response();
     }
 
     let db = match state.storage.get_conn().await {

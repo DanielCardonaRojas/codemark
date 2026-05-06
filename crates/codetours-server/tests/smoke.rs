@@ -34,24 +34,40 @@ async fn test_html_smoke() {
     assert_eq!(response.status(), StatusCode::TEMPORARY_REDIRECT);
 
     // GET /tours returns HTML
-    let req = Request::builder().uri("/tours").header(header::ACCEPT, "text/html").body(Body::empty()).unwrap();
+    let req = Request::builder()
+        .uri("/tours")
+        .header(header::ACCEPT, "text/html")
+        .body(Body::empty())
+        .unwrap();
     let response = app.clone().oneshot(req).await.unwrap();
     assert_eq!(response.status(), StatusCode::OK);
     let headers = response.headers();
     assert!(headers.get(header::CONTENT_SECURITY_POLICY).is_some(), "CSP header missing");
 
     // GET /my-tours returns HTML
-    let req = Request::builder().uri("/my-tours").header(header::ACCEPT, "text/html").body(Body::empty()).unwrap();
+    let req = Request::builder()
+        .uri("/my-tours")
+        .header(header::ACCEPT, "text/html")
+        .body(Body::empty())
+        .unwrap();
     let response = app.clone().oneshot(req).await.unwrap();
     assert_eq!(response.status(), StatusCode::OK);
 
     // GET /config returns HTML
-    let req = Request::builder().uri("/config").header(header::ACCEPT, "text/html").body(Body::empty()).unwrap();
+    let req = Request::builder()
+        .uri("/config")
+        .header(header::ACCEPT, "text/html")
+        .body(Body::empty())
+        .unwrap();
     let response = app.clone().oneshot(req).await.unwrap();
     assert_eq!(response.status(), StatusCode::OK);
 
     // GET /tours/invalid returns 404 (not 5xx)
-    let req = Request::builder().uri("/tours/not-a-tour").header(header::ACCEPT, "text/html").body(Body::empty()).unwrap();
+    let req = Request::builder()
+        .uri("/tours/not-a-tour")
+        .header(header::ACCEPT, "text/html")
+        .body(Body::empty())
+        .unwrap();
     let response = app.clone().oneshot(req).await.unwrap();
     assert_eq!(response.status(), StatusCode::NOT_FOUND);
 }

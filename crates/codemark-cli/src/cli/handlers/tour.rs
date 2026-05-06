@@ -44,6 +44,7 @@ pub async fn handle_tour_list(cli: &Cli, _mode: &OutputMode, args: &TourListArgs
     // 2. Query server
     let client = reqwest::Client::new();
     let mut headers = HeaderMap::new();
+    headers.insert(reqwest::header::ACCEPT, HeaderValue::from_static("application/json"));
     if let Some(t) = &token {
         headers.insert(
             "X-Tour-Token",

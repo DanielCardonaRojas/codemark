@@ -2,12 +2,12 @@ use crate::config::Config;
 use crate::handlers::{self, tours};
 use crate::observability::request_id_middleware;
 use crate::storage::StorageManager;
+use axum::http::HeaderValue;
+use axum::http::header::CONTENT_SECURITY_POLICY;
 use axum::{Router, middleware, routing::get};
 use std::sync::Arc;
-use tower_http::trace::TraceLayer;
 use tower_http::set_header::SetResponseHeaderLayer;
-use axum::http::header::CONTENT_SECURITY_POLICY;
-use axum::http::HeaderValue;
+use tower_http::trace::TraceLayer;
 
 #[derive(Clone)]
 pub struct AppState {

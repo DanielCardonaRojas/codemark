@@ -2,7 +2,7 @@ use quick_cache::sync::Cache;
 use std::sync::{Arc, OnceLock};
 use syntect::easy::HighlightLines;
 use syntect::highlighting::{Theme, ThemeSet};
-use syntect::html::{styled_line_to_highlighted_html, IncludeBackground};
+use syntect::html::{IncludeBackground, styled_line_to_highlighted_html};
 use syntect::parsing::SyntaxSet;
 use xxhash_rust::xxh3::xxh3_64;
 
@@ -11,7 +11,7 @@ static THEME: OnceLock<Theme> = OnceLock::new();
 static HL_CACHE: OnceLock<Cache<(String, u64), Arc<String>>> = OnceLock::new();
 
 pub fn get_syntax_set() -> &'static SyntaxSet {
-    SYNTAX_SET.get_or_init(|| SyntaxSet::load_defaults_newlines())
+    SYNTAX_SET.get_or_init(SyntaxSet::load_defaults_newlines)
 }
 
 pub fn get_theme() -> &'static Theme {
@@ -49,7 +49,8 @@ pub fn highlight(language: &str, content: &str) -> Arc<String> {
 
     for line in content.lines() {
         let ranges = highlighter.highlight_line(line, syntax_set).unwrap_or_default();
-        let escaped_html = styled_line_to_highlighted_html(&ranges, IncludeBackground::No).unwrap_or_default();
+        let escaped_html =
+            styled_line_to_highlighted_html(&ranges, IncludeBackground::No).unwrap_or_default();
         html.push_str(&escaped_html);
         html.push('\n');
     }

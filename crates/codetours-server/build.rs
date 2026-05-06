@@ -1,5 +1,5 @@
-use std::process::Command;
 use std::env;
+use std::process::Command;
 
 fn main() {
     println!("cargo:rerun-if-changed=static/app.css");
@@ -10,19 +10,11 @@ fn main() {
     let output = format!("{}/static/app.generated.css", out_dir);
 
     let status = Command::new("tailwindcss")
-        .args([
-            "-i", &input,
-            "-o", &output,
-            "--minify",
-        ])
+        .args(["-i", &input, "-o", &output, "--minify"])
         .status()
         .or_else(|_| {
             Command::new("../../tailwindcss")
-                .args([
-                    "-i", &input,
-                    "-o", &output,
-                    "--minify",
-                ])
+                .args(["-i", &input, "-o", &output, "--minify"])
                 .status()
         });
 

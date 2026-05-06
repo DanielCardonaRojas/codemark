@@ -28,6 +28,7 @@ pub async fn handle_pull(cli: &Cli, mode: &OutputMode, args: &PullArgs) -> Resul
         let client = build_pull_http_client()?;
         let response = client
             .get(format!("{}/tours", server_url))
+            .header(reqwest::header::ACCEPT, "application/json")
             .send()
             .await
             .map_err(|e| Error::Operation(format!("failed to query tours list: {e}")))?;

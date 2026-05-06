@@ -1,5 +1,5 @@
-pub mod negotiation;
 pub mod handlers;
+pub mod negotiation;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NavItem {
@@ -17,7 +17,9 @@ pub mod filters {
             "core" => "bg-blue-500/10 text-blue-500 border border-blue-500/20",
             "onboarding" => "bg-green-500/10 text-green-500 border border-green-500/20",
             "bug" | "fix" | "critical" => "bg-red-500/10 text-red-500 border border-red-500/20",
-            "feat" | "feature" | "new" => "bg-emerald-500/10 text-emerald-500 border border-emerald-500/20",
+            "feat" | "feature" | "new" => {
+                "bg-emerald-500/10 text-emerald-500 border border-emerald-500/20"
+            }
             "docs" | "tutorial" => "bg-yellow-500/10 text-yellow-500 border border-yellow-500/20",
             _ => {
                 // Deterministic color based on name hash

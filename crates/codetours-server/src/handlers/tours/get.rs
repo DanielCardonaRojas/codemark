@@ -12,7 +12,7 @@ use crate::auth::AuthContext;
 use crate::pack_cache::PackCache;
 use crate::router::AppState;
 use crate::web::negotiation::{Negotiated, ResponseFormat};
-use crate::web::{filters, NavItem};
+use crate::web::{NavItem, filters};
 
 /// Detailed information about a tour, including its bookmarks (JSON API).
 #[derive(Debug, Serialize)]
@@ -192,10 +192,10 @@ pub async fn handler(
                 .interact(move |conn| {
                     // 1. Get collection
                     let sql = if is_auth {
-                        "SELECT id, name, description, repo_url, published_at, created_by, health, health_computed_at FROM collections 
+                        "SELECT id, name, description, repo_url, published_at, created_by, health, health_computed_at FROM collections
                      WHERE id = ?1 AND visibility IS NOT NULL"
                     } else {
-                        "SELECT id, name, description, repo_url, published_at, created_by, health, health_computed_at FROM collections 
+                        "SELECT id, name, description, repo_url, published_at, created_by, health, health_computed_at FROM collections
                      WHERE id = ?1 AND visibility = 'public'"
                     };
 
@@ -255,8 +255,8 @@ pub async fn handler(
                      FROM collection_bookmarks cb
                      JOIN bookmarks b ON cb.bookmark_id = b.id
                      LEFT JOIN resolutions r ON r.id = (
-                         SELECT id FROM resolutions 
-                         WHERE bookmark_id = b.id 
+                         SELECT id FROM resolutions
+                         WHERE bookmark_id = b.id
                          ORDER BY resolved_at DESC LIMIT 1
                      )
                      WHERE cb.collection_id = ?1
@@ -298,7 +298,7 @@ pub async fn handler(
                             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
                             .collect::<rusqlite::Result<Vec<String>>>()
                             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-                            
+
                         let comments: Vec<CommentView> = conn.prepare("SELECT author, body, created_at FROM bookmark_comments WHERE bookmark_id = ? ORDER BY created_at ASC")
                             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
                             .query_map([&bid], |row| {
@@ -324,27 +324,45 @@ pub async fn handler(
                 .await;
 
             match result {
-                Ok(Ok((coll_id, name, description, repo_url, published_at, author, health, health_computed_at, links, bookmarks_data))) => {
+                Ok(Ok((
+                    coll_id,
+                    name,
+                    description,
+                    repo_url,
+                    published_at,
+                    author,
+                    health,
+                    health_computed_at,
+                    links,
+                    bookmarks_data,
+                ))) => {
                     if format == ResponseFormat::Json {
-                        let bookmarks = bookmarks_data.into_iter().map(|(bid, file, range, head, preview, _, _, _, _, _, _, _)| {
-                            BookmarkDetail {
-                                id: bid,
-                                file_path: file,
-                                line_range: range,
-                                snapshot: head.map(|h| ResolutionSnapshot {
-                                    headline: Some(h),
-                                    preview_lines: preview,
-                                }),
-                            }
-                        }).collect();
-                        (StatusCode::OK, Json(TourDetail {
-                            tour_id: coll_id,
-                            title: name,
-                            description,
-                            repo_url,
-                            published_at,
-                            bookmarks,
-                        })).into_response()
+                        let bookmarks = bookmarks_data
+                            .into_iter()
+                            .map(|(bid, file, range, head, preview, _, _, _, _, _, _, _)| {
+                                BookmarkDetail {
+                                    id: bid,
+                                    file_path: file,
+                                    line_range: range,
+                                    snapshot: head.map(|h| ResolutionSnapshot {
+                                        headline: Some(h),
+                                        preview_lines: preview,
+                                    }),
+                                }
+                            })
+                            .collect();
+                        (
+                            StatusCode::OK,
+                            Json(TourDetail {
+                                tour_id: coll_id,
+                                title: name,
+                                description,
+                                repo_url,
+                                published_at,
+                                bookmarks,
+                            }),
+                        )
+                            .into_response()
                     } else {
                         let (health_class, health_label) = match health.as_deref() {
                             Some("active") => ("healthy", "Ready"),
@@ -353,58 +371,80 @@ pub async fn handler(
                             _ => ("healthy", "Ready"),
                         };
 
-                        let is_drifted = health.as_deref() == Some("drifted") || health.as_deref() == Some("stale");
+                        let is_drifted = health.as_deref() == Some("drifted")
+                            || health.as_deref() == Some("stale");
 
-                        let bookmarks = bookmarks_data.into_iter().map(|(bid, file, range, head, preview, notes, lang, q, tags, comments, ordinal, b_health)| {
-                            let line_parsed = range.as_ref()
-                                .and_then(|r| {
-                                    r.split('-')
-                                        .next()
-                                        .and_then(|s| s.parse::<usize>().ok())
-                                })
-                                .unwrap_or(1);
+                        let bookmarks = bookmarks_data
+                            .into_iter()
+                            .map(
+                                |(
+                                    bid,
+                                    file,
+                                    range,
+                                    head,
+                                    preview,
+                                    notes,
+                                    lang,
+                                    q,
+                                    tags,
+                                    comments,
+                                    ordinal,
+                                    b_health,
+                                )| {
+                                    let line_parsed = range
+                                        .as_ref()
+                                        .and_then(|r| {
+                                            r.split('-')
+                                                .next()
+                                                .and_then(|s| s.parse::<usize>().ok())
+                                        })
+                                        .unwrap_or(1);
 
-                            let raw_preview = preview.unwrap_or_default();
-                            let highlighted = (*crate::highlight::highlight(&lang, &raw_preview)).clone();
+                                    let raw_preview = preview.unwrap_or_default();
+                                    let highlighted =
+                                        (*crate::highlight::highlight(&lang, &raw_preview)).clone();
 
-                            // Highlight the query using lisp syntax (tree-sitter queries use lisp/scheme-like syntax)
-                            let query_highlighted = if !q.is_empty() {
-                                Some((*crate::highlight::highlight("lisp", &q)).clone())
-                            } else {
-                                None
-                            };
+                                    // Highlight the query using lisp syntax (tree-sitter queries use lisp/scheme-like syntax)
+                                    let query_highlighted = if !q.is_empty() {
+                                        Some((*crate::highlight::highlight("lisp", &q)).clone())
+                                    } else {
+                                        None
+                                    };
 
-                            let b_health_class = match b_health.as_str() {
-                                "active" => "healthy",
-                                "drifted" => "drifted",
-                                "stale" => "stale",
-                                "archived" => "archived",
-                                _ => "healthy",
-                            }.to_string();
+                                    let b_health_class = match b_health.as_str() {
+                                        "active" => "healthy",
+                                        "drifted" => "drifted",
+                                        "stale" => "stale",
+                                        "archived" => "archived",
+                                        _ => "healthy",
+                                    }
+                                    .to_string();
 
-                            BookmarkView {
-                                id_short: bid[..8].to_string(),
-                                id: bid,
-                                ordinal,
-                                headline: head.unwrap_or_else(|| "No headline".to_string()),
-                                file_path: file,
-                                line_range: range.unwrap_or_else(|| "L1".to_string()),
-                                line: line_parsed,
-                                health: b_health,
-                                health_class: b_health_class,
-                                note: notes,
-                                language: lang,
-                                preview_lines: raw_preview,
-                                highlighted,
-                                has_query: !q.is_empty(),
-                                query: if q.is_empty() { None } else { Some(q) },
-                                query_highlighted,
-                                tags,
-                                comment_count: comments.len(),
-                                comments,
-                                has_notes: false, // TODO: bookmark_annotations check
-                            }
-                        }).collect();
+                                    BookmarkView {
+                                        id_short: bid[..8].to_string(),
+                                        id: bid,
+                                        ordinal,
+                                        headline: head.unwrap_or_else(|| "No headline".to_string()),
+                                        file_path: file,
+                                        line_range: range.unwrap_or_else(|| "L1".to_string()),
+                                        line: line_parsed,
+                                        health: b_health,
+                                        health_class: b_health_class,
+                                        note: notes,
+                                        language: lang,
+                                        preview_lines: raw_preview,
+                                        highlighted,
+                                        has_query: !q.is_empty(),
+                                        query: if q.is_empty() { None } else { Some(q) },
+                                        query_highlighted,
+                                        tags,
+                                        comment_count: comments.len(),
+                                        comments,
+                                        has_notes: false, // TODO: bookmark_annotations check
+                                    }
+                                },
+                            )
+                            .collect();
 
                         let template = TourDetailTemplate {
                             nav: NavItem::Tours,

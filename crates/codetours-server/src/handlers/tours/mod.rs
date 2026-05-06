@@ -1,9 +1,9 @@
+pub mod comments;
 pub mod create;
 pub mod delete;
 pub mod get;
+pub mod heal;
+pub mod links;
 pub mod list;
 pub mod permalink;
 pub mod publish;
-pub mod comments;
-pub mod heal;
-pub mod links;

@@ -22,7 +22,7 @@ struct FormatQuery {
 }
 
 /// Axum extractor that performs content negotiation.
-/// 
+///
 /// The rule:
 /// 1. `?format=` query parameter wins if present (`json`, `html`, `pack`).
 /// 2. `Accept` header containing `application/vnd.codetours.pack+sqlite` wins Pack.
@@ -51,7 +51,9 @@ where
         }
 
         // 2. Check Accept header
-        if let Some(accept) = parts.headers.get(axum::http::header::ACCEPT).and_then(|v| v.to_str().ok()) {
+        if let Some(accept) =
+            parts.headers.get(axum::http::header::ACCEPT).and_then(|v| v.to_str().ok())
+        {
             if accept.contains("application/vnd.codetours.pack+sqlite") {
                 return Ok(Negotiated(ResponseFormat::Pack));
             }

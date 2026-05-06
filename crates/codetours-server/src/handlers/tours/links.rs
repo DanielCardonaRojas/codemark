@@ -1,14 +1,14 @@
-use crate::{auth::AuthContext, router::AppState};
 use crate::handlers::tours::get::LinkView;
+use crate::{auth::AuthContext, router::AppState};
 use axum::{
-    extract::{Path, State, Form},
+    extract::{Form, Path, State},
     http::StatusCode,
     response::IntoResponse,
 };
+use chrono::Utc;
 use rinja::Template;
 use serde::Deserialize;
 use uuid::Uuid;
-use chrono::Utc;
 
 #[derive(Deserialize)]
 pub struct AddLinkForm {
@@ -86,7 +86,8 @@ pub async fn add_handler(
                 "repo" => "github",
                 "tour" => "book-open",
                 _ => "link",
-            }.to_string();
+            }
+            .to_string();
 
             let view = LinkView {
                 id,

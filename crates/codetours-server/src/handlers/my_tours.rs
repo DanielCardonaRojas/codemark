@@ -1,5 +1,5 @@
-use crate::{auth::AuthContext, router::AppState};
 use crate::web::NavItem;
+use crate::{auth::AuthContext, router::AppState};
 use axum::{
     extract::{Query, State},
     response::IntoResponse,
@@ -84,7 +84,7 @@ pub async fn handler(
 
         let tours = stmt.query_map([], |row: &rusqlite::Row| {
             let repo_url: Option<String> = row.get(5)?;
-            let repo = repo_url.as_ref().and_then(|u| u.split('/').last().map(|s| s.to_string()));
+            let repo = repo_url.as_ref().and_then(|u| u.split('/').next_back().map(|s| s.to_string()));
 
             Ok(MyTourCard {
                 id: row.get(0)?,
@@ -103,15 +103,14 @@ pub async fn handler(
     }).await;
 
     match result {
-        Ok(Ok((published_count, draft_count, tours))) => {
-            MyToursTemplate {
-                active_tab: query.tab,
-                published_count,
-                draft_count,
-                tours,
-                nav: crate::web::NavItem::MyTours,
-            }.into_response()
-        },
+        Ok(Ok((published_count, draft_count, tours))) => MyToursTemplate {
+            active_tab: query.tab,
+            published_count,
+            draft_count,
+            tours,
+            nav: crate::web::NavItem::MyTours,
+        }
+        .into_response(),
         _ => axum::http::StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }
 }

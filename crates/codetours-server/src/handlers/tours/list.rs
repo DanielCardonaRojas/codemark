@@ -1,11 +1,11 @@
 use crate::router::AppState;
 use crate::web::negotiation::{Negotiated, ResponseFormat};
-use crate::web::{filters, NavItem};
+use crate::web::{NavItem, filters};
 use axum::{
+    Json,
     extract::{Query, State},
     http::{HeaderMap, StatusCode},
     response::IntoResponse,
-    Json,
 };
 use rinja::Template;
 use serde::{Deserialize, Serialize};
@@ -138,7 +138,7 @@ pub async fn handler(
 
             if let Some(tag) = &params_clone.tag {
                 where_clauses.push("EXISTS (
-                    SELECT 1 FROM collection_tags ct 
+                    SELECT 1 FROM collection_tags ct
                     WHERE ct.collection_id = c.id AND ct.tag = ?
                 )");
                 sql_params.push(Box::new(tag.clone()));
@@ -156,7 +156,7 @@ pub async fn handler(
             };
             query_str.push_str(&format!(" ORDER BY {}", sort));
             query_str.push_str(" LIMIT ? OFFSET ?");
-            
+
             sql_params.push(Box::new(limit));
             sql_params.push(Box::new(offset));
 
@@ -184,7 +184,7 @@ pub async fn handler(
                 )?;
 
                 let tags: Vec<String> = conn.prepare("
-                    SELECT tag FROM collection_tags 
+                    SELECT tag FROM collection_tags
                     WHERE collection_id = ?
                     ORDER BY added_at ASC
                 ")?
@@ -196,12 +196,12 @@ pub async fn handler(
 
             // 3. Get total count
             let count_query = "
-                SELECT COUNT(*) FROM collections c 
+                SELECT COUNT(*) FROM collections c
                 WHERE c.visibility = 'public' AND c.status = 'ready'
             ";
             // (Re-apply filters to count query if needed, but for now keep it simple)
 
-            let total: usize = conn.query_row(&count_query, [], |row| row.get(0))?;
+            let total: usize = conn.query_row(count_query, [], |row| row.get(0))?;
 
             // 4. Get filter options (Repos, Branches, Tags)
             let repos: Vec<String> = conn.prepare("SELECT DISTINCT repo_url FROM collections WHERE repo_url IS NOT NULL AND visibility = 'public'")?
@@ -223,52 +223,60 @@ pub async fn handler(
     match result {
         Ok(Ok((tours_data, total, repos, branches, tags))) => {
             if format == ResponseFormat::Json {
-                let tours = tours_data.into_iter().map(|(id, name, desc, repo, updated, _, _, health, _, _)| {
-                    let repo_name = repo.as_ref().and_then(|u| u.split('/').last().map(|s| s.to_string()));
-                    TourSummary {
-                        tour_id: id.clone(),
-                        title: name,
-                        description: desc,
-                        repo_url: repo,
-                        repo: repo_name,
-                        updated_at: updated,
-                        health,
-                        url: format!("/tours/{}", id),
-                    }
-                }).collect();
-                (StatusCode::OK, Json(ListToursResponse { tours, total, limit, offset })).into_response()
+                let tours = tours_data
+                    .into_iter()
+                    .map(|(id, name, desc, repo, updated, _, _, health, _, _)| {
+                        let repo_name = repo
+                            .as_ref()
+                            .and_then(|u| u.split('/').next_back().map(|s| s.to_string()));
+                        TourSummary {
+                            tour_id: id.clone(),
+                            title: name,
+                            description: desc,
+                            repo_url: repo,
+                            repo: repo_name,
+                            updated_at: updated,
+                            health,
+                            url: format!("/tours/{}", id),
+                        }
+                    })
+                    .collect();
+                (StatusCode::OK, Json(ListToursResponse { tours, total, limit, offset }))
+                    .into_response()
             } else {
-                let tours = tours_data.into_iter().map(|(id, name, desc, repo, updated, author, branch, health, steps, tags)| {
-                    let (status_class, health_label) = match health.as_deref() {
-                        Some("active") => ("healthy", "ACTIVE"),
-                        Some("drifted") => ("drifted", "DRIFTED"),
-                        Some("stale") => ("stale", "STALE"),
-                        _ => ("healthy", "ACTIVE"),
-                    };
+                let tours = tours_data
+                    .into_iter()
+                    .map(|(id, name, desc, repo, updated, author, branch, health, steps, tags)| {
+                        let (status_class, health_label) = match health.as_deref() {
+                            Some("active") => ("healthy", "ACTIVE"),
+                            Some("drifted") => ("drifted", "DRIFTED"),
+                            Some("stale") => ("stale", "STALE"),
+                            _ => ("healthy", "ACTIVE"),
+                        };
 
-                    let updated_date = if updated.len() >= 10 {
-                        updated[..10].to_string()
-                    } else {
-                        updated
-                    };
+                        let updated_date =
+                            if updated.len() >= 10 { updated[..10].to_string() } else { updated };
 
-                    let repo_name = repo.as_ref().and_then(|u| u.split('/').last().map(|s| s.to_string()));
+                        let repo_name = repo
+                            .as_ref()
+                            .and_then(|u| u.split('/').next_back().map(|s| s.to_string()));
 
-                    TourView {
-                        id,
-                        title: name,
-                        description: desc.unwrap_or_default(),
-                        health: health.clone(),
-                        health_label: health_label.to_string(),
-                        status_class: status_class.to_string(),
-                        updated_at_relative: updated_date,
-                        author: author.unwrap_or_else(|| "anonymous".to_string()),
-                        repo: repo_name,
-                        branch: branch.unwrap_or_else(|| "main".to_string()),
-                        step_count: steps,
-                        tags,
-                    }
-                }).collect();
+                        TourView {
+                            id,
+                            title: name,
+                            description: desc.unwrap_or_default(),
+                            health: health.clone(),
+                            health_label: health_label.to_string(),
+                            status_class: status_class.to_string(),
+                            updated_at_relative: updated_date,
+                            author: author.unwrap_or_else(|| "anonymous".to_string()),
+                            repo: repo_name,
+                            branch: branch.unwrap_or_else(|| "main".to_string()),
+                            step_count: steps,
+                            tags,
+                        }
+                    })
+                    .collect();
 
                 if hx_request {
                     ToursListPartialTemplate { tours }.into_response()
