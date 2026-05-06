@@ -48,6 +48,9 @@ pub struct BookmarkTemplateContext {
     /// When it became stale (optional)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stale_since: Option<String>,
+    /// Breadcrumbs for sticky headers
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub breadcrumbs: Vec<codemark_core::engine::breadcrumbs::Breadcrumb>,
     /// Tags
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub tags: Vec<String>,
@@ -118,6 +121,12 @@ impl BookmarkTemplateContext {
 
         let short_commit = bm.commit_hash.as_ref().map(|c| short_id_value(c));
 
+        let breadcrumbs = resolutions
+            .first()
+            .and_then(|r| r.breadcrumbs.as_ref())
+            .and_then(|s| serde_json::from_str(s).ok())
+            .unwrap_or_default();
+
         BookmarkTemplateContext {
             short_id,
             id: bm.id.clone(),
@@ -133,6 +142,7 @@ impl BookmarkTemplateContext {
             last_resolved_at: bm.last_resolved_at.clone(),
             resolution_method: bm.resolution_method.map(|m| m.to_string()),
             stale_since: bm.stale_since.clone(),
+            breadcrumbs,
             tags: bm.tags.clone(),
             annotations: bm
                 .annotations
@@ -401,6 +411,7 @@ mod tests {
             content_hash: None,
             headline: None,
             preview_lines: None,
+            breadcrumbs: None,
         }];
 
         let result = render_show_template(&bm, &resolutions);

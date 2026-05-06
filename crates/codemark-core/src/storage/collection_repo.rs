@@ -362,10 +362,10 @@ mod tests {
             resolution_method: None,
             last_resolved_at: None,
             stale_since: None,
-            created_at: "2026-04-01T00:00:00Z".to_string(),
+            created_at: "2024-01-01T00:00:00Z".to_string(),
             created_by: None,
-            tags: vec![],
-            annotations: vec![],
+            tags: Vec::new(),
+            annotations: Vec::new(),
             comments: vec![],
         }
     }

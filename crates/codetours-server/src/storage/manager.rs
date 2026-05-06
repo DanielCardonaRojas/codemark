@@ -94,7 +94,7 @@ mod tests {
             .await
             .map_err(|e| anyhow::anyhow!("Interact error: {}", e))??;
 
-        assert_eq!(version, 18);
+        assert_eq!(version, 19);
         Ok(())
     }
 }

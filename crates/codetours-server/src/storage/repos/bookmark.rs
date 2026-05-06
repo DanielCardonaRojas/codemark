@@ -40,7 +40,6 @@ impl BookmarkRepo {
                         b.created_at, b.created_by
                  FROM bookmarks b
                  JOIN collection_bookmarks cb ON b.id = cb.bookmark_id
-
                  WHERE cb.collection_id = ?1
                  ORDER BY cb.position ASC",
             )?;

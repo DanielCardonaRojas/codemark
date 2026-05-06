@@ -1,0 +1,10 @@
+---
+source: crates/codemark-core/tests/breadcrumb_snapshots.rs
+expression: "serde_json::json!({ \"breadcrumbs\": breadcrumbs, \"preview_lines\": preview })"
+---
+breadcrumbs:
+  - line: 37
+    text: "impl AuthService {"
+  - line: 47
+    text: "    fn decode(&self, token: &str) -> Result<Claims, AuthError> {"
+preview_lines: "    // Target: bookmark a private method inside impl\n    fn decode(&self, token: &str) -> Result<Claims, AuthError> {\n        if token.is_empty() {\n            return Err(AuthError::InvalidToken);\n        }\n        // Simulated decode\n        Ok(Claims {"

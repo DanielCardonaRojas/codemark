@@ -44,3 +44,4 @@ shellexpand = "3"
 
 [dev-dependencies]
 tempfile = { workspace = true }
+insta = { version = "1.39", features = ["yaml"] }

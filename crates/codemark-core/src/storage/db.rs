@@ -30,6 +30,8 @@ const MIGRATION_016: &str = include_str!("../../../../migrations/V16__add_collec
 const MIGRATION_017: &str =
     include_str!("../../../../migrations/V17__rename_bookmark_status_to_health.sql");
 const MIGRATION_018: &str = include_str!("../../../../migrations/V18__add_collection_health.sql");
+const MIGRATION_019: &str =
+    include_str!("../../../../migrations/V19__add_bookmark_breadcrumbs.sql");
 
 /// SQLite database wrapper with automatic migrations.
 pub struct Database {
@@ -39,7 +41,7 @@ pub struct Database {
 
 impl Database {
     /// Current schema version supported by this crate.
-    pub const CURRENT_VERSION: i64 = 18;
+    pub const CURRENT_VERSION: i64 = 19;
 
     /// Open the database at the given path, run migrations.
     /// Returns an error if the parent directory does not exist.
@@ -124,6 +126,7 @@ impl Database {
             (16, MIGRATION_016),
             (17, MIGRATION_017),
             (18, MIGRATION_018),
+            (19, MIGRATION_019),
         ];
 
         for (version, sql) in migrations {
@@ -307,7 +310,7 @@ mod tests {
         init_test_env();
         let db = Database::open_in_memory().unwrap();
         let version = db.schema_version();
-        assert_eq!(version, 18);
+        assert_eq!(version, 19);
     }
 
     #[test]
@@ -315,7 +318,7 @@ mod tests {
         init_test_env();
         let mut db = Database::open_in_memory().unwrap();
         db.run_migrations().unwrap();
-        assert_eq!(db.schema_version(), 18);
+        assert_eq!(db.schema_version(), 19);
     }
 
     #[test]

@@ -1078,6 +1078,7 @@ pub async fn resolve_batch(
             content_hash: Some(result.content_hash.clone()),
             headline: None,
             preview_lines: None,
+            breadcrumbs: None,
         };
         let _ = db.insert_resolution_if_changed(&res, config.storage.max_resolutions());
     }
@@ -1439,6 +1440,16 @@ pub async fn handle_preview(cli: &Cli, args: &PreviewArgs) -> Result<()> {
 
     // Handle raw output mode
     if args.raw {
+        if let Some(breadcrumbs) =
+            resolution.breadcrumbs.as_ref().filter(|_| args.breadcrumbs).and_then(|s| {
+                serde_json::from_str::<Vec<codemark_core::engine::breadcrumbs::Breadcrumb>>(s).ok()
+            })
+        {
+            for bc in breadcrumbs {
+                println!("{}", bc.text);
+            }
+        }
+
         let byte_range_str = resolution
             .byte_range
             .as_ref()
@@ -1451,19 +1462,27 @@ pub async fn handle_preview(cli: &Cli, args: &PreviewArgs) -> Result<()> {
             Error::Input(format!("failed to read file {}: {}", absolute_path.display(), e))
         })?;
 
-        if byte_location.start_byte >= file_bytes.len()
+        let mut start_byte = byte_location.start_byte;
+        if args.breadcrumbs {
+            // Move start_byte back to the beginning of the line to preserve indentation
+            while start_byte > 0 && file_bytes[start_byte - 1] != b'\n' {
+                start_byte -= 1;
+            }
+        }
+
+        if start_byte >= file_bytes.len()
             || byte_location.end_byte > file_bytes.len()
-            || byte_location.start_byte > byte_location.end_byte
+            || start_byte > byte_location.end_byte
         {
             return Err(Error::Input(format!(
                 "byte range {}:{} out of bounds for file (size: {})",
-                byte_location.start_byte,
+                start_byte,
                 byte_location.end_byte,
                 file_bytes.len()
             )));
         }
 
-        let content = &file_bytes[byte_location.start_byte..byte_location.end_byte];
+        let content = &file_bytes[start_byte..byte_location.end_byte];
         std::io::stdout().write_all(content)?;
         std::io::stdout().flush()?;
         return Ok(());
@@ -1486,6 +1505,7 @@ pub async fn handle_preview(cli: &Cli, args: &PreviewArgs) -> Result<()> {
         "resolved_at": resolution.resolved_at,
         "commit_hash": resolution.commit_hash,
         "content_hash": resolution.content_hash,
+        "breadcrumbs": resolution.breadcrumbs.as_ref().and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok()),
         "drifted": bm.health == BookmarkHealth::Drifted || bm.health == BookmarkHealth::Stale,
     });
 

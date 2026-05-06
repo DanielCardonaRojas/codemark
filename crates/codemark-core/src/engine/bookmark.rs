@@ -271,6 +271,7 @@ pub struct Resolution {
     pub content_hash: Option<String>,
     pub headline: Option<String>,
     pub preview_lines: Option<String>,
+    pub breadcrumbs: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

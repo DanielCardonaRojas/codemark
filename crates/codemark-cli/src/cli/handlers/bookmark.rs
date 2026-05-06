@@ -97,7 +97,8 @@ pub async fn handle_add(cli: &Cli, mode: &OutputMode, args: &AddArgsOriginal) ->
         stale_since: None,
         created_at: now_iso(),
         created_by: Some(args.created_by.clone()),
-        tags: vec![],
+        tags: Vec::new(),
+
         annotations: vec![],
         comments: vec![],
     };
@@ -162,6 +163,17 @@ pub async fn handle_add(cli: &Cli, mode: &OutputMode, args: &AddArgsOriginal) ->
 
     // Record initial resolution as baseline (only if new bookmark)
     if is_new {
+        let breadcrumbs = if let Some(node) = tree
+            .root_node()
+            .descendant_for_byte_range(generated.byte_range.0, generated.byte_range.1)
+        {
+            codemark_core::engine::breadcrumbs::extract_breadcrumbs(node, &source, lang, 3)
+        } else {
+            Vec::new()
+        };
+        let breadcrumbs_json =
+            if breadcrumbs.is_empty() { None } else { serde_json::to_string(&breadcrumbs).ok() };
+
         let initial_res = Resolution {
             id: uuid::Uuid::new_v4().to_string(),
             bookmark_id: actual_bookmark_id.clone(),
@@ -175,6 +187,7 @@ pub async fn handle_add(cli: &Cli, mode: &OutputMode, args: &AddArgsOriginal) ->
             content_hash: Some(content_hash.clone()),
             headline: None,
             preview_lines: None,
+            breadcrumbs: breadcrumbs_json,
         };
         db.insert_resolution_if_changed(&initial_res, config.storage.max_resolutions())?;
     }
@@ -300,7 +313,8 @@ pub async fn handle_add_from_snippet(
         stale_since: None,
         created_at: now_iso(),
         created_by: Some(args.created_by.clone()),
-        tags: vec![],
+        tags: Vec::new(),
+
         annotations: vec![],
         comments: vec![],
     };
@@ -364,6 +378,17 @@ pub async fn handle_add_from_snippet(
 
     // Record initial resolution as baseline (only if new bookmark)
     if is_new {
+        let breadcrumbs = if let Some(node) = tree
+            .root_node()
+            .descendant_for_byte_range(generated.byte_range.0, generated.byte_range.1)
+        {
+            codemark_core::engine::breadcrumbs::extract_breadcrumbs(node, &source, lang, 3)
+        } else {
+            Vec::new()
+        };
+        let breadcrumbs_json =
+            if breadcrumbs.is_empty() { None } else { serde_json::to_string(&breadcrumbs).ok() };
+
         let initial_res = Resolution {
             id: uuid::Uuid::new_v4().to_string(),
             bookmark_id: actual_bookmark_id.clone(),
@@ -377,6 +402,7 @@ pub async fn handle_add_from_snippet(
             content_hash: Some(content_hash.clone()),
             headline: None,
             preview_lines: None,
+            breadcrumbs: breadcrumbs_json,
         };
         db.insert_resolution_if_changed(&initial_res, config.storage.max_resolutions())?;
     }
@@ -503,7 +529,8 @@ pub async fn handle_add_from_query(
         stale_since: None,
         created_at: now_iso(),
         created_by: Some(args.created_by.clone()),
-        tags: vec![],
+        tags: Vec::new(),
+
         annotations: vec![],
         comments: vec![],
     };
@@ -567,6 +594,16 @@ pub async fn handle_add_from_query(
 
     // Record initial resolution as baseline (only if new bookmark)
     if is_new {
+        let breadcrumbs = if let Some(node) =
+            tree.root_node().descendant_for_byte_range(byte_range.0, byte_range.1)
+        {
+            codemark_core::engine::breadcrumbs::extract_breadcrumbs(node, &source, lang, 3)
+        } else {
+            Vec::new()
+        };
+        let breadcrumbs_json =
+            if breadcrumbs.is_empty() { None } else { serde_json::to_string(&breadcrumbs).ok() };
+
         let initial_res = Resolution {
             id: uuid::Uuid::new_v4().to_string(),
             bookmark_id: actual_bookmark_id.clone(),
@@ -580,6 +617,7 @@ pub async fn handle_add_from_query(
             content_hash: Some(content_hash.clone()),
             headline: None,
             preview_lines: None,
+            breadcrumbs: breadcrumbs_json,
         };
         db.insert_resolution_if_changed(&initial_res, config.storage.max_resolutions())?;
     }
@@ -734,6 +772,12 @@ pub async fn handle_resolve(cli: &Cli, mode: &OutputMode, args: &ResolveArgs) ->
             db.update_bookmark_query(&bm.id, new_query, &result.file_path, &result.content_hash)?;
         }
 
+        let breadcrumbs_json = if result.breadcrumbs.is_empty() {
+            None
+        } else {
+            serde_json::to_string(&result.breadcrumbs).ok()
+        };
+
         // Record resolution (deduped — skips if same commit + location + method)
         let res = Resolution {
             id: uuid::Uuid::new_v4().to_string(),
@@ -749,6 +793,7 @@ pub async fn handle_resolve(cli: &Cli, mode: &OutputMode, args: &ResolveArgs) ->
             content_hash: Some(result.content_hash.clone()),
             headline: None,
             preview_lines: None,
+            breadcrumbs: breadcrumbs_json,
         };
         let config = super::load_config(cli);
         db.insert_resolution_if_changed(&res, config.storage.max_resolutions())?;
@@ -820,6 +865,23 @@ pub async fn handle_show(cli: &Cli, mode: &OutputMode, args: &ShowArgs) -> Resul
             if let Some(ref resolved) = bm.last_resolved_at {
                 println!("Resolved at: {resolved}");
             }
+            if let Some(breadcrumbs) = resolutions
+                .first()
+                .and_then(|r| r.breadcrumbs.as_ref())
+                .and_then(|s| {
+                    serde_json::from_str::<Vec<codemark_core::engine::breadcrumbs::Breadcrumb>>(s)
+                        .ok()
+                })
+                .filter(|bc| !bc.is_empty())
+            {
+                let bc_str = breadcrumbs
+                    .iter()
+                    .map(|b| format!("{}:{}", b.line, b.text))
+                    .collect::<Vec<_>>()
+                    .join(" › ");
+                println!("Context:     {bc_str}");
+            }
+
             if let Some(ref commit) = bm.commit_hash {
                 println!("Commit:      {}", &commit[..commit.len().min(8)]);
             }
