@@ -198,9 +198,14 @@
                 {% for bookmark in tour.bookmarks %}
                 <div data-step-panel="{{ bookmark.ordinal }}" class="{% if !loop.first %}hidden{% endif %} p-6 space-y-8">
                     <div class="space-y-4">
-                        <div class="text-[10px] font-bold text-text-secondary uppercase tracking-wider">Step Metadata</div>
+                        <div class="flex items-center gap-2">
+                            <span class="text-text-secondary">
+                                {% call icons::icon("layers", 14) %}
+                            </span>
+                            <div class="text-[10px] font-bold text-text-secondary uppercase tracking-wider">Step Metadata</div>
+                        </div>
                         <div class="flex flex-wrap gap-2">
-                            <span class="px-2 py-1 bg-bg-tertiary rounded text-[10px] font-mono border border-border">ID: {{ bookmark.id_short }}</span>
+                            <span class="px-2 py-1 bg-bg-tertiary/40 rounded text-[10px] font-mono border border-border text-text-secondary">ID: {{ bookmark.id_short }}</span>
                             {% for tag in bookmark.tags %}
                             <span class="px-2 py-1 rounded text-[10px] font-medium {{ tag|tag_color_classes }}">{{ tag }}</span>
                             {% endfor %}
@@ -209,8 +214,13 @@
 
                     <div class="space-y-4">
                         <div class="flex items-center justify-between">
-                            <div class="text-[10px] font-bold text-text-secondary uppercase tracking-wider">Comments</div>
-                            <span class="text-[10px] bg-bg-tertiary px-1.5 py-0.5 rounded text-text-secondary border border-border">{{ bookmark.comment_count }}</span>
+                            <div class="flex items-center gap-2">
+                                <span class="text-text-secondary">
+                                    {% call icons::icon("message-square", 14) %}
+                                </span>
+                                <div class="text-[10px] font-bold text-text-secondary uppercase tracking-wider">Step Discussion</div>
+                            </div>
+                            <span class="text-[10px] bg-bg-tertiary/40 px-1.5 py-0.5 rounded text-text-secondary border border-border">{{ bookmark.comment_count }}</span>
                         </div>
                         
                         <!-- Comment Thread Placeholder -->
@@ -245,21 +255,25 @@
 
             <!-- Global Tour Resources (Fixed at bottom) -->
             <div class="p-6 border-t border-border bg-bg-secondary/80 backdrop-blur">
-                <div class="text-[10px] font-bold text-text-secondary uppercase tracking-wider mb-4">Tour Resources</div>
-                <ul class="space-y-3">
+                <div class="flex items-center gap-2 mb-4">
+                    <span class="text-text-secondary">
+                        {% call icons::icon("link", 14) %}
+                    </span>
+                    <div class="text-[10px] font-bold text-text-secondary uppercase tracking-wider">Tour Resources</div>
+                </div>
+                <div class="space-y-2">
                     {% for link in tour.links %}
-                    <li>
-                        <a href="{{ link.url }}" target="_blank" rel="noopener noreferrer" 
-                           class="flex items-center gap-2 text-xs hover:text-accent cursor-pointer group transition-colors">
-                            {% call icons::icon(link.icon, 14) %}
-                            <span class="truncate">{{ link.label }}</span>
-                            {% call icons::icon("external-link", 10) %}
-                        </a>
-                    </li>
+                    <a href="{{ link.url }}" target="_blank" rel="noopener noreferrer" 
+                       class="flex items-center gap-3 p-3 bg-bg-tertiary/20 border border-border rounded-lg text-sm font-medium hover:bg-bg-tertiary/40 transition-colors group">
+                        <span class="text-text-secondary group-hover:text-text-primary transition-colors">
+                            {% call icons::icon(link.icon, 16) %}
+                        </span>
+                        <span class="truncate">{{ link.label }}</span>
+                    </a>
                     {% else %}
-                    <li class="text-[10px] text-text-secondary italic">No resources attached</li>
+                    <div class="text-[10px] text-text-secondary italic">No resources attached</div>
                     {% endfor %}
-                </ul>
+                </div>
             </div>
         </aside>
     </div>
