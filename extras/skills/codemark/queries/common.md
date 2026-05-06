@@ -65,7 +65,7 @@ Tree-sitter queries use S-expressions to match AST nodes:
 |--------|----------|-----------------|
 | `codemark add --range` | Humans who know line numbers | ⭐⭐⭐ (generates optimal query) |
 | `codemark add-from-snippet` | Quick bookmark when you have code but not location | ⭐⭐ (text search, first match wins) |
-| `codemark add-from-query` | Agents with semantic understanding of code | ⭐⭐⭐⭐⭐ (strategic control) |
+| `codemark add --query` | Agents with semantic understanding of code | ⭐⭐⭐⭐⭐ (strategic control) |
 
 **Agent Recommendation**: Use `add-from-query` when possible. You can:
 - Analyze the code structure to determine the best matching strategy
@@ -78,7 +78,7 @@ Tree-sitter queries use S-expressions to match AST nodes:
 Before creating any bookmark, verify your query captures exactly what you intend:
 
 ```bash
-codemark add-from-query --file src/auth.swift --query '(function_declaration name: (simple_identifier) @name (#eq? @name "validateToken")) @target' --dry-run
+codemark add --query --file src/auth.swift --query '(function_declaration name: (simple_identifier) @name (#eq? @name "validateToken")) @target' --dry-run
 ```
 
 Check the output:
@@ -95,7 +95,7 @@ Before bookmarking, check if your target is unique:
 
 ```bash
 # Find all functions with similar names/signatures
-codemark add-from-query --file src/auth.swift --query '(function_declaration name: (simple_identifier) @name) @target' --dry-run
+codemark add --query --file src/auth.swift --query '(function_declaration name: (simple_identifier) @name) @target' --dry-run
 ```
 
 If `match_count > 1`, you need more context.
@@ -106,10 +106,10 @@ For uniquely named functions, simple queries are sufficient. Always verify first
 
 ```bash
 # Test first
-codemark add-from-query --file src/auth.swift --query '(function_declaration name: (simple_identifier) @name (#eq? @name "validateToken")) @target' --dry-run
+codemark add --query --file src/auth.swift --query '(function_declaration name: (simple_identifier) @name (#eq? @name "validateToken")) @target' --dry-run
 
 # Then create if match_count: 1
-codemark add-from-query --file src/auth.swift --query '(function_declaration name: (simple_identifier) @name (#eq? @name "validateToken")) @target'
+codemark add --query --file src/auth.swift --query '(function_declaration name: (simple_identifier) @name (#eq? @name "validateToken")) @target'
 ```
 
 ```
@@ -158,8 +158,8 @@ When a function has siblings or internal steps you also care about, bookmark the
 
 ```bash
 # Bookmark each method individually
-codemark add-from-query --file src/auth.swift --query '(function_declaration name: (simple_identifier) @name (#eq? @name "validateToken")) @target' --note "Auth validation: validateToken" --tag feature:auth
-codemark add-from-query --file src/auth.swift --query '(function_declaration name: (simple_identifier) @name (#eq? @name "refreshToken")) @target' --note "Auth validation: refreshToken" --tag feature:auth
+codemark add --query --file src/auth.swift --query '(function_declaration name: (simple_identifier) @name (#eq? @name "validateToken")) @target' --note "Auth validation: validateToken" --tag feature:auth
+codemark add --query --file src/auth.swift --query '(function_declaration name: (simple_identifier) @name (#eq? @name "refreshToken")) @target' --note "Auth validation: refreshToken" --tag feature:auth
 ```
 
 ## Targeting Fine-Grained Execution Logic

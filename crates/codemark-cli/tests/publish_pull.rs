@@ -120,6 +120,7 @@ async fn test_cli_publish_pull_roundtrip() {
                 repo: None,
                 limit: 10,
                 offset: 0,
+                line_format: None,
             }),
         }),
     };

@@ -37,16 +37,16 @@ pub async fn dispatch(cli: &Cli) -> Result<()> {
     let mode = OutputMode::resolve_with_default(false, cli.format.as_deref(), true);
     match &cli.command {
         Command::Init => handle_init(cli, &mode).await,
-        Command::Add(args) => bookmark::handle_add(cli, &mode, args).await,
+        Command::Add(args) => handle_add_v2(cli, &mode, args).await,
         Command::AddFromSnippet(args) => bookmark::handle_add_from_snippet(cli, &mode, args).await,
         Command::AddFromQuery(args) => bookmark::handle_add_from_query(cli, &mode, args).await,
         Command::Resolve(args) => bookmark::handle_resolve(cli, &mode, args).await,
-        Command::Show(args) => bookmark::handle_show(cli, &mode, args).await,
+        Command::Show(args) => handle_show_v2(cli, &mode, args).await,
+        Command::Preview(args) => handle_preview(cli, args).await,
         Command::Remove(args) => bookmark::handle_remove(cli, &mode, args).await,
         Command::Heal(args) => maintenance::handle_heal(cli, &mode, args).await,
         Command::Status => maintenance::handle_status(cli, &mode).await,
         Command::List(args) => handle_list(cli, &mode, args).await,
-        Command::Preview(args) => handle_preview(cli, args).await,
         Command::Search(args) => search::handle_search(cli, &mode, args).await,
         Command::Reindex(args) => search::handle_reindex(cli, &mode, args).await,
         Command::Collection(args) => dispatch_collection(cli, &mode, args).await,
@@ -55,11 +55,14 @@ pub async fn dispatch(cli: &Cli) -> Result<()> {
         Command::Export(args) => maintenance::handle_export(cli, args).await,
         Command::Import(args) => maintenance::handle_import(cli, &mode, args).await,
         Command::Completions(args) => handle_completions(args),
+        Command::Edit(args) => handle_edit_v2(cli, &mode, args).await,
         Command::Annotate(args) => bookmark::handle_annotate(cli, &mode, args).await,
         Command::Open(args) => handle_open(cli, args).await,
+        Command::Tour(args) => dispatch_tour_v2(cli, &mode, args).await,
         Command::Publish(args) => publish::handle_publish(cli, &mode, args).await,
         Command::Pull(args) => pull::handle_pull(cli, &mode, args).await,
-        Command::Tour(args) => dispatch_tour(cli, &mode, args).await,
+        Command::Health(args) => dispatch_health(cli, &mode, args).await,
+        Command::Data(args) => dispatch_data(cli, &mode, args).await,
     }
 }
 
@@ -78,10 +81,169 @@ async fn dispatch_collection(cli: &Cli, mode: &OutputMode, args: &CollectionArgs
     }
 }
 
+#[allow(dead_code)]
 async fn dispatch_tour(cli: &Cli, mode: &OutputMode, args: &TourArgs) -> Result<()> {
     match &args.command {
         TourCommand::List(a) => tour::handle_tour_list(cli, mode, a).await,
+        _ => dispatch_tour_v2(cli, mode, args).await,
     }
+}
+
+async fn dispatch_tour_v2(cli: &Cli, mode: &OutputMode, args: &TourArgs) -> Result<()> {
+    use crate::cli::TourCommand;
+    match &args.command {
+        TourCommand::List(a) => collection::handle_collection_list_v2(cli, mode, a).await,
+        TourCommand::Create(a) => collection::handle_collection_create(cli, mode, a).await,
+        TourCommand::Add(a) => collection::handle_collection_add(cli, mode, a).await,
+        TourCommand::Remove(a) => collection::handle_collection_remove(cli, mode, a).await,
+        TourCommand::Delete(a) => collection::handle_collection_delete(cli, mode, a).await,
+        TourCommand::Show(a) => collection::handle_collection_show(cli, mode, a).await,
+        TourCommand::Push(a) => publish::handle_publish(cli, mode, a).await,
+        TourCommand::Pull(a) => pull::handle_pull(cli, mode, a).await,
+        TourCommand::Diff(a) => maintenance::handle_diff(cli, mode, a).await,
+        TourCommand::Resolve(a) => collection::handle_collection_resolve(cli, mode, a).await,
+        TourCommand::Reorder(a) => collection::handle_collection_reorder(cli, mode, a).await,
+        TourCommand::Tag(a) => collection::handle_collection_tag(cli, mode, a).await,
+        TourCommand::Link(a) => collection::handle_collection_link(cli, mode, a).await,
+        TourCommand::Annotate(a) => collection::handle_collection_annotate(cli, mode, a).await,
+    }
+}
+
+async fn dispatch_health(cli: &Cli, mode: &OutputMode, args: &HealthArgs) -> Result<()> {
+    use crate::cli::HealthCommand;
+    match &args.command {
+        HealthCommand::Status => maintenance::handle_status(cli, mode).await,
+        HealthCommand::Check(a) => maintenance::handle_heal(cli, mode, a).await,
+        HealthCommand::Gc(a) => maintenance::handle_gc(cli, mode, a).await,
+    }
+}
+
+async fn dispatch_data(cli: &Cli, mode: &OutputMode, args: &DataArgs) -> Result<()> {
+    use crate::cli::DataCommand;
+    match &args.command {
+        DataCommand::Export(a) => maintenance::handle_export(cli, a).await,
+        DataCommand::Import(a) => maintenance::handle_import(cli, mode, a).await,
+        DataCommand::Reindex(a) => search::handle_reindex(cli, mode, a).await,
+    }
+}
+
+/// V2 unified add handler that supports --snippet and --query flags.
+pub async fn handle_add_v2(cli: &Cli, mode: &OutputMode, args: &AddArgs) -> Result<()> {
+    use crate::cli;
+
+    // Route to appropriate handler based on flags
+    if args.snippet {
+        // Convert AddArgs to AddFromSnippetArgs
+        let file = args
+            .file
+            .as_ref()
+            .ok_or_else(|| Error::Input("--file is required when using --snippet".to_string()))?;
+        let snippet_args = cli::AddFromSnippetArgs {
+            lang: args.lang.clone(),
+            file: file.clone(),
+            tag: args.tag.clone(),
+            note: args.note.clone(),
+            context: args.context.clone(),
+            created_by: args.created_by.clone(),
+            dry_run: args.dry_run,
+            collection: args.collection.clone(),
+        };
+        return bookmark::handle_add_from_snippet(cli, mode, &snippet_args).await;
+    }
+
+    if let Some(ref query) = args.query {
+        // Convert AddArgs to AddFromQueryArgs
+        let file = args
+            .file
+            .as_ref()
+            .ok_or_else(|| Error::Input("--file is required when using --query".to_string()))?;
+        let query_args = cli::AddFromQueryArgs {
+            lang: args.lang.clone(),
+            file: file.clone(),
+            query: query.clone(),
+            tag: args.tag.clone(),
+            note: args.note.clone(),
+            context: args.context.clone(),
+            created_by: args.created_by.clone(),
+            dry_run: args.dry_run,
+            collection: args.collection.clone(),
+        };
+        return bookmark::handle_add_from_query(cli, mode, &query_args).await;
+    }
+
+    // Range-based mode (original behavior)
+    let file = args.file.as_ref().ok_or_else(|| {
+        Error::Input("--file is required when not using --snippet or --query".to_string())
+    })?;
+    let original_args = cli::AddArgsOriginal {
+        file: file.clone(),
+        range: args.range.clone(),
+        hunk: args.hunk.clone(),
+        lang: args.lang.clone(),
+        tag: args.tag.clone(),
+        note: args.note.clone(),
+        context: args.context.clone(),
+        created_by: args.created_by.clone(),
+        dry_run: args.dry_run,
+        collection: args.collection.clone(),
+    };
+    bookmark::handle_add(cli, mode, &original_args).await
+}
+
+/// V2 show handler that supports --location and --no-preview flags.
+pub async fn handle_show_v2(cli: &Cli, mode: &OutputMode, args: &ShowArgs) -> Result<()> {
+    if args.location {
+        // Resolve mode (old resolve behavior)
+        let resolve_args = crate::cli::ResolveArgs {
+            id: Some(args.id.clone()),
+            tag: None,
+            health: None,
+            status: None,
+            file: None,
+            lang: None,
+            collection: None,
+            dry_run: false,
+        };
+        return bookmark::handle_resolve(cli, mode, &resolve_args).await;
+    }
+
+    // For backward compatibility, use the original show behavior (metadata + resolutions)
+    // The --no-preview flag is for future use when we implement the merged show+preview
+    let show_args =
+        crate::cli::ShowArgs { id: args.id.clone(), location: false, no_preview: false };
+    bookmark::handle_show(cli, mode, &show_args).await
+}
+
+/// V2 edit handler (renamed from annotate).
+pub async fn handle_edit_v2(cli: &Cli, mode: &OutputMode, args: &EditArgs) -> Result<()> {
+    use crate::cli;
+
+    // Convert EditArgs to AnnotateArgs
+    let mut tags_to_add: Vec<String> = Vec::new();
+    for tag in &args.tag {
+        if let Some(rest) = tag.strip_prefix('-') {
+            return Err(Error::Input(format!(
+                "tag removal is not yet supported: '{}'; use 'codemark list --tag {}' to find bookmarks with this tag",
+                tag, rest
+            )));
+        }
+        if let Some(stripped) = tag.strip_prefix('+') {
+            tags_to_add.push(stripped.to_string());
+        } else {
+            tags_to_add.push(tag.clone());
+        }
+    }
+
+    let annotate_args = cli::AnnotateArgs {
+        id: args.id.clone(),
+        note: args.note.clone(),
+        context: args.context.clone(),
+        tag: tags_to_add,
+        added_by: "user".to_string(),
+        source: "cli".to_string(),
+    };
+
+    bookmark::handle_annotate(cli, mode, &annotate_args).await
 }
 
 // --- Shared helpers ---

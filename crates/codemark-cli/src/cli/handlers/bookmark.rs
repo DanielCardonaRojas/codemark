@@ -22,7 +22,7 @@ use super::{
 };
 
 /// Add a new bookmark from a file range or git hunk.
-pub async fn handle_add(cli: &Cli, mode: &OutputMode, args: &AddArgs) -> Result<()> {
+pub async fn handle_add(cli: &Cli, mode: &OutputMode, args: &AddArgsOriginal) -> Result<()> {
     let lang = resolve_language(args.lang.as_deref(), &args.file)?;
     let (abs_path, rel_path) = resolve_file_path(&args.file)?;
 
