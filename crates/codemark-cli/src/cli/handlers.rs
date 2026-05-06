@@ -1448,9 +1448,8 @@ pub async fn handle_preview(cli: &Cli, args: &PreviewArgs) -> Result<()> {
                     )
                 {
                     for bc in breadcrumbs {
-                        println!("-- Line {}: {} --", bc.line, bc.text);
+                        println!("{}", bc.text);
                     }
-                    println!();
                 }
             }
         }
@@ -1467,19 +1466,27 @@ pub async fn handle_preview(cli: &Cli, args: &PreviewArgs) -> Result<()> {
             Error::Input(format!("failed to read file {}: {}", absolute_path.display(), e))
         })?;
 
-        if byte_location.start_byte >= file_bytes.len()
+        let mut start_byte = byte_location.start_byte;
+        if args.breadcrumbs {
+            // Move start_byte back to the beginning of the line to preserve indentation
+            while start_byte > 0 && file_bytes[start_byte - 1] != b'\n' {
+                start_byte -= 1;
+            }
+        }
+
+        if start_byte >= file_bytes.len()
             || byte_location.end_byte > file_bytes.len()
-            || byte_location.start_byte > byte_location.end_byte
+            || start_byte > byte_location.end_byte
         {
             return Err(Error::Input(format!(
                 "byte range {}:{} out of bounds for file (size: {})",
-                byte_location.start_byte,
+                start_byte,
                 byte_location.end_byte,
                 file_bytes.len()
             )));
         }
 
-        let content = &file_bytes[byte_location.start_byte..byte_location.end_byte];
+        let content = &file_bytes[start_byte..byte_location.end_byte];
         std::io::stdout().write_all(content)?;
         std::io::stdout().flush()?;
         return Ok(());

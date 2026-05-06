@@ -24,17 +24,13 @@ pub fn extract_breadcrumbs(
     let mut current = target_node.parent();
     while let Some(node) = current {
         if whitelist.contains(&node.kind()) {
-            let start_byte = node.start_byte();
-            let end_byte = node.end_byte();
-            
-            // Extract the source text of the node
-            let node_source = &source[start_byte..end_byte];
-            // Take the first line as the "signature"
-            let first_line = node_source.lines().next().unwrap_or("").trim();
+            // Extract the full source line to preserve leading indentation
+            let start_pos = node.start_position();
+            let line_text = source.lines().nth(start_pos.row).unwrap_or("").trim_end();
             
             breadcrumbs.push(Breadcrumb {
-                line: node.start_position().row + 1,
-                text: first_line.to_string(),
+                line: start_pos.row + 1,
+                text: line_text.to_string(),
             });
 
             if breadcrumbs.len() >= max_count {
@@ -127,8 +123,8 @@ mod auth {
         let bc = extract_breadcrumbs(target, source, Language::Rust, 3);
         assert_eq!(bc.len(), 3);
         assert_eq!(bc[0].text, "mod auth {");
-        assert_eq!(bc[1].text, "impl User {");
-        assert_eq!(bc[2].text, "fn validate(&self) {");
+        assert_eq!(bc[1].text, "    impl User {");
+        assert_eq!(bc[2].text, "        fn validate(&self) {");
     }
 
     #[test]
@@ -149,6 +145,6 @@ class AuthService {
         let bc = extract_breadcrumbs(target, source, Language::Swift, 3);
         assert_eq!(bc.len(), 2);
         assert_eq!(bc[0].text, "class AuthService {");
-        assert_eq!(bc[1].text, "func login() {");
+        assert_eq!(bc[1].text, "    func login() {");
     }
 }
