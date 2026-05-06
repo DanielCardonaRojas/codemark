@@ -22,8 +22,8 @@
 
     <div class="flex flex-wrap gap-2 mb-4">
         {% for tag in tour.tags %}
-        <span class="px-2 py-0.5 rounded text-[10px] font-medium {{ tag|tag_color_classes }}">
-            {{ tag }}
+        <span class="px-2 py-0.5 rounded text-[10px] font-bold tracking-wider {{ tag|tag_color_classes }}">
+            {{ tag.to_uppercase() }}
         </span>
         {% endfor %}
     </div>

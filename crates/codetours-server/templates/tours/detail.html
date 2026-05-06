@@ -205,11 +205,12 @@
                             <div class="text-[10px] font-bold text-text-secondary uppercase tracking-wider">Step Metadata</div>
                         </div>
                         <div class="flex flex-wrap gap-2">
-                            <span class="px-2 py-1 bg-bg-tertiary/40 rounded text-[10px] font-mono border border-border text-text-secondary">ID: {{ bookmark.id_short }}</span>
+                            <span class="px-2 py-1 bg-bg-tertiary rounded text-[10px] font-mono border border-border">ID: {{ bookmark.id_short }}</span>
                             {% for tag in bookmark.tags %}
-                            <span class="px-2 py-1 rounded text-[10px] font-medium {{ tag|tag_color_classes }}">{{ tag }}</span>
+                            <span class="px-2 py-1 rounded text-[10px] font-bold tracking-wider {{ tag|tag_color_classes }}">{{ tag.to_uppercase() }}</span>
                             {% endfor %}
                         </div>
+
                     </div>
 
                     <div class="space-y-4">
