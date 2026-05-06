@@ -67,10 +67,10 @@ pub async fn handle_collection_create(
         for link_str in &args.link {
             // Parse "url,label" format
             let parts: Vec<&str> = link_str.splitn(2, ',').collect();
-            let url = parts.get(0).ok_or_else(|| {
+            let url = parts.first().ok_or_else(|| {
                 Error::Input(format!("invalid link format: '{}', expected 'url,label'", link_str))
             })?;
-            let label = parts.get(1).unwrap_or(&url).to_string();
+            let label = parts.get(1).unwrap_or(url).to_string();
 
             let link_obj = CollectionLink {
                 id: uuid::Uuid::new_v4().to_string(),
@@ -188,10 +188,10 @@ pub async fn handle_collection_add(
         for link_str in &args.link {
             // Parse "url,label" format
             let parts: Vec<&str> = link_str.splitn(2, ',').collect();
-            let url = parts.get(0).ok_or_else(|| {
+            let url = parts.first().ok_or_else(|| {
                 Error::Input(format!("invalid link format: '{}', expected 'url,label'", link_str))
             })?;
-            let label = parts.get(1).unwrap_or(&url).to_string();
+            let label = parts.get(1).unwrap_or(url).to_string();
 
             let link_obj = CollectionLink {
                 id: uuid::Uuid::new_v4().to_string(),
@@ -675,10 +675,7 @@ pub async fn handle_collection_list_v2(
     args: &TourListArgs,
 ) -> Result<()> {
     // Convert TourListArgs to CollectionListArgs
-    let list_args = CollectionListArgs {
-        bookmark: None,
-        line_format: args.line_format.clone(),
-    };
+    let list_args = CollectionListArgs { bookmark: None, line_format: args.line_format.clone() };
     handle_collection_list(cli, mode, &list_args).await
 }
 
@@ -689,9 +686,9 @@ pub async fn handle_collection_annotate(
     args: &CollectionAnnotateArgs,
 ) -> Result<()> {
     let db = open_db_for_write(cli)?;
-    let collection = db.get_collection_by_name(&args.name)?.ok_or_else(|| {
-        Error::Input(format!("collection '{}' not found", args.name))
-    })?;
+    let collection = db
+        .get_collection_by_name(&args.name)?
+        .ok_or_else(|| Error::Input(format!("collection '{}' not found", args.name)))?;
 
     let now = now_iso();
 
@@ -715,10 +712,10 @@ pub async fn handle_collection_annotate(
         for link_str in &args.link {
             // Parse "url,label" format
             let parts: Vec<&str> = link_str.splitn(2, ',').collect();
-            let url = parts.get(0).ok_or_else(|| {
+            let url = parts.first().ok_or_else(|| {
                 Error::Input(format!("invalid link format: '{}', expected 'url,label'", link_str))
             })?;
-            let label = parts.get(1).unwrap_or(&url).to_string();
+            let label = parts.get(1).unwrap_or(url).to_string();
 
             let link_obj = CollectionLink {
                 id: uuid::Uuid::new_v4().to_string(),
@@ -743,9 +740,6 @@ pub async fn handle_collection_annotate(
         added_count += args.note.len();
     }
 
-    write_success(
-        mode,
-        &format!("Added {added_count} annotations to collection '{}'", args.name),
-    )?;
+    write_success(mode, &format!("Added {added_count} annotations to collection '{}'", args.name))?;
     Ok(())
 }

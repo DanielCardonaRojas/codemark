@@ -50,22 +50,22 @@ pub enum Command {
     /// Create a bookmark from a file and byte range
     Add(AddArgs),
 
-    /// [Deprecated: Use `codemark add --snippet`] Create a bookmark by matching a code snippet from stdin against a file
+    /// Create a bookmark by matching a code snippet from stdin against a file
     #[command(name = "add-from-snippet", hide = true)]
     AddFromSnippet(AddFromSnippetArgs),
 
-    /// [Deprecated: Use `codemark add --query`] Create a bookmark from a file and a raw tree-sitter query
+    /// Create a bookmark from a file and a raw tree-sitter query
     #[command(name = "add-from-query", hide = true)]
     AddFromQuery(AddFromQueryArgs),
 
-    /// [Deprecated: Use `codemark show --location`] Resolve a bookmark to its current file location
+    /// Resolve a bookmark to its current file location
     #[command(name = "resolve", hide = true)]
     Resolve(ResolveArgs),
 
     /// Display bookmark details and code preview
     Show(ShowArgs),
 
-    /// [Deprecated: Use `codemark show`] Show the current location of a bookmark (file, line, byte range)
+    /// Show the current location of a bookmark (file, line, byte range)
     #[command(name = "preview", hide = true)]
     Preview(PreviewArgs),
 
@@ -81,7 +81,7 @@ pub enum Command {
     /// Update metadata for an existing bookmark
     Edit(EditArgs),
 
-    /// [Deprecated: Use `codemark edit`] Add notes, context, or tags to an existing bookmark
+    /// Add notes, context, or tags to an existing bookmark
     #[command(name = "annotate", hide = true)]
     Annotate(AnnotateArgs),
 
@@ -91,52 +91,52 @@ pub enum Command {
     /// Manage collections and remote sync (tours)
     Tour(TourArgs),
 
-    /// [Deprecated: Use `codemark tour push`] Publish a local collection to a Codetours server
+    /// Publish a local collection to a Codetours server
     #[command(name = "publish", hide = true)]
     Publish(PublishArgs),
 
-    /// [Deprecated: Use `codemark tour`] Manage named groups of bookmarks
+    /// Manage named groups of bookmarks
     #[command(name = "collection", hide = true)]
     Collection(CollectionArgs),
 
     /// Database health and maintenance
     Health(HealthArgs),
 
-    /// [Deprecated: Use `codemark health check`] Heal bookmarks by resolving and updating their status
+    /// Heal bookmarks by resolving and updating their status
     #[command(name = "heal", hide = true)]
     Heal(HealArgs),
 
-    /// [Deprecated: Use `codemark health status`] Print a summary of bookmark health
+    /// Print a summary of bookmark health
     #[command(name = "status", hide = true)]
     Status,
 
     /// Import, export, and indexing
     Data(DataArgs),
 
-    /// [Deprecated: Use `codemark data reindex`] Rebuild semantic search embeddings for all bookmarks
+    /// Rebuild semantic search embeddings for all bookmarks
     #[command(name = "reindex", hide = true)]
     Reindex(ReindexArgs),
 
-    /// [Deprecated: Use `codemark data export`] Export bookmarks to stdout
+    /// Export bookmarks to stdout
     #[command(name = "export", hide = true)]
     Export(ExportArgs),
 
-    /// [Deprecated: Use `codemark data import`] Import bookmarks from a JSON file
+    /// Import bookmarks from a JSON file
     #[command(name = "import", hide = true)]
     Import(ImportArgs),
 
-    /// [Deprecated: Use `codemark health gc`] Remove old archived bookmarks
+    /// Remove old archived bookmarks
     #[command(name = "gc", hide = true)]
     Gc(GcArgs),
 
-    /// [Deprecated: Use `codemark tour diff`] Show bookmarks affected by recent changes
+    /// Show bookmarks affected by recent changes
     #[command(name = "diff", hide = true)]
     Diff(DiffArgs),
 
     /// Generate shell completions
     Completions(CompletionsArgs),
 
-    /// [Deprecated: Use `codemark tour pull`] Pull a tour from a Codetours server
+    /// Pull a tour from a Codetours server
     #[command(name = "pull", hide = true)]
     Pull(PullArgs),
 }

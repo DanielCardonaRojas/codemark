@@ -38,74 +38,29 @@ pub async fn dispatch(cli: &Cli) -> Result<()> {
     match &cli.command {
         Command::Init => handle_init(cli, &mode).await,
         Command::Add(args) => handle_add_v2(cli, &mode, args).await,
-        Command::AddFromSnippet(args) => {
-            eprintln!("codemark: warning: 'add-from-snippet' is deprecated, use 'codemark add --snippet' instead");
-            bookmark::handle_add_from_snippet(cli, &mode, args).await
-        }
-        Command::AddFromQuery(args) => {
-            eprintln!("codemark: warning: 'add-from-query' is deprecated, use 'codemark add --query <query>' instead");
-            bookmark::handle_add_from_query(cli, &mode, args).await
-        }
-        Command::Resolve(args) => {
-            eprintln!("codemark: warning: 'resolve' is deprecated, use 'codemark show --location' instead");
-            bookmark::handle_resolve(cli, &mode, args).await
-        }
+        Command::AddFromSnippet(args) => bookmark::handle_add_from_snippet(cli, &mode, args).await,
+        Command::AddFromQuery(args) => bookmark::handle_add_from_query(cli, &mode, args).await,
+        Command::Resolve(args) => bookmark::handle_resolve(cli, &mode, args).await,
         Command::Show(args) => handle_show_v2(cli, &mode, args).await,
-        Command::Preview(args) => {
-            eprintln!("codemark: warning: 'preview' is deprecated, use 'codemark show' instead");
-            handle_preview(cli, args).await
-        }
+        Command::Preview(args) => handle_preview(cli, args).await,
         Command::Remove(args) => bookmark::handle_remove(cli, &mode, args).await,
-        Command::Heal(args) => {
-            eprintln!("codemark: warning: 'heal' is deprecated, use 'codemark health check' instead");
-            maintenance::handle_heal(cli, &mode, args).await
-        }
-        Command::Status => {
-            eprintln!("codemark: warning: 'status' is deprecated, use 'codemark health status' instead");
-            maintenance::handle_status(cli, &mode).await
-        }
+        Command::Heal(args) => maintenance::handle_heal(cli, &mode, args).await,
+        Command::Status => maintenance::handle_status(cli, &mode).await,
         Command::List(args) => handle_list(cli, &mode, args).await,
         Command::Search(args) => search::handle_search(cli, &mode, args).await,
-        Command::Reindex(args) => {
-            eprintln!("codemark: warning: 'reindex' is deprecated, use 'codemark data reindex' instead");
-            search::handle_reindex(cli, &mode, args).await
-        }
-        Command::Collection(args) => {
-            eprintln!("codemark: warning: 'collection' is deprecated, use 'codemark tour' instead");
-            dispatch_collection(cli, &mode, args).await
-        }
-        Command::Diff(args) => {
-            eprintln!("codemark: warning: 'diff' is deprecated, use 'codemark tour diff' instead");
-            maintenance::handle_diff(cli, &mode, args).await
-        }
-        Command::Gc(args) => {
-            eprintln!("codemark: warning: 'gc' is deprecated, use 'codemark health gc' instead");
-            maintenance::handle_gc(cli, &mode, args).await
-        }
-        Command::Export(args) => {
-            eprintln!("codemark: warning: 'export' is deprecated, use 'codemark data export' instead");
-            maintenance::handle_export(cli, args).await
-        }
-        Command::Import(args) => {
-            eprintln!("codemark: warning: 'import' is deprecated, use 'codemark data import' instead");
-            maintenance::handle_import(cli, &mode, args).await
-        }
+        Command::Reindex(args) => search::handle_reindex(cli, &mode, args).await,
+        Command::Collection(args) => dispatch_collection(cli, &mode, args).await,
+        Command::Diff(args) => maintenance::handle_diff(cli, &mode, args).await,
+        Command::Gc(args) => maintenance::handle_gc(cli, &mode, args).await,
+        Command::Export(args) => maintenance::handle_export(cli, args).await,
+        Command::Import(args) => maintenance::handle_import(cli, &mode, args).await,
         Command::Completions(args) => handle_completions(args),
         Command::Edit(args) => handle_edit_v2(cli, &mode, args).await,
-        Command::Annotate(args) => {
-            eprintln!("codemark: warning: 'annotate' is deprecated, use 'codemark edit' instead");
-            bookmark::handle_annotate(cli, &mode, args).await
-        }
+        Command::Annotate(args) => bookmark::handle_annotate(cli, &mode, args).await,
         Command::Open(args) => handle_open(cli, args).await,
         Command::Tour(args) => dispatch_tour_v2(cli, &mode, args).await,
-        Command::Publish(args) => {
-            eprintln!("codemark: warning: 'publish' is deprecated, use 'codemark tour push' instead");
-            publish::handle_publish(cli, &mode, args).await
-        }
-        Command::Pull(args) => {
-            eprintln!("codemark: warning: 'pull' is deprecated, use 'codemark tour pull' instead");
-            pull::handle_pull(cli, &mode, args).await
-        }
+        Command::Publish(args) => publish::handle_publish(cli, &mode, args).await,
+        Command::Pull(args) => pull::handle_pull(cli, &mode, args).await,
         Command::Health(args) => dispatch_health(cli, &mode, args).await,
         Command::Data(args) => dispatch_data(cli, &mode, args).await,
     }
@@ -126,14 +81,11 @@ async fn dispatch_collection(cli: &Cli, mode: &OutputMode, args: &CollectionArgs
     }
 }
 
+#[allow(dead_code)]
 async fn dispatch_tour(cli: &Cli, mode: &OutputMode, args: &TourArgs) -> Result<()> {
     match &args.command {
         TourCommand::List(a) => tour::handle_tour_list(cli, mode, a).await,
-        _ => {
-            eprintln!("codemark: warning: 'tour' subcommands have been consolidated, use 'codemark tour <subcommand>' instead");
-            // Forward to the v2 handler
-            dispatch_tour_v2(cli, mode, args).await
-        }
+        _ => dispatch_tour_v2(cli, mode, args).await,
     }
 }
 
@@ -182,9 +134,10 @@ pub async fn handle_add_v2(cli: &Cli, mode: &OutputMode, args: &AddArgs) -> Resu
     // Route to appropriate handler based on flags
     if args.snippet {
         // Convert AddArgs to AddFromSnippetArgs
-        let file = args.file.as_ref().ok_or_else(|| {
-            Error::Input("--file is required when using --snippet".to_string())
-        })?;
+        let file = args
+            .file
+            .as_ref()
+            .ok_or_else(|| Error::Input("--file is required when using --snippet".to_string()))?;
         let snippet_args = cli::AddFromSnippetArgs {
             lang: args.lang.clone(),
             file: file.clone(),
@@ -198,15 +151,16 @@ pub async fn handle_add_v2(cli: &Cli, mode: &OutputMode, args: &AddArgs) -> Resu
         return bookmark::handle_add_from_snippet(cli, mode, &snippet_args).await;
     }
 
-    if args.query.is_some() {
+    if let Some(ref query) = args.query {
         // Convert AddArgs to AddFromQueryArgs
-        let file = args.file.as_ref().ok_or_else(|| {
-            Error::Input("--file is required when using --query".to_string())
-        })?;
+        let file = args
+            .file
+            .as_ref()
+            .ok_or_else(|| Error::Input("--file is required when using --query".to_string()))?;
         let query_args = cli::AddFromQueryArgs {
             lang: args.lang.clone(),
             file: file.clone(),
-            query: args.query.as_ref().unwrap().clone(),
+            query: query.clone(),
             tag: args.tag.clone(),
             note: args.note.clone(),
             context: args.context.clone(),
@@ -255,11 +209,8 @@ pub async fn handle_show_v2(cli: &Cli, mode: &OutputMode, args: &ShowArgs) -> Re
 
     // For backward compatibility, use the original show behavior (metadata + resolutions)
     // The --no-preview flag is for future use when we implement the merged show+preview
-    let show_args = crate::cli::ShowArgs {
-        id: args.id.clone(),
-        location: false,
-        no_preview: false,
-    };
+    let show_args =
+        crate::cli::ShowArgs { id: args.id.clone(), location: false, no_preview: false };
     bookmark::handle_show(cli, mode, &show_args).await
 }
 
@@ -271,8 +222,8 @@ pub async fn handle_edit_v2(cli: &Cli, mode: &OutputMode, args: &EditArgs) -> Re
     // EditArgs uses +/- prefix for tag operations, AnnotateArgs is add-only
     let mut tags_to_add: Vec<String> = Vec::new();
     for tag in &args.tag {
-        if tag.starts_with('+') {
-            tags_to_add.push(tag[1..].to_string());
+        if let Some(stripped) = tag.strip_prefix('+') {
+            tags_to_add.push(stripped.to_string());
         } else if !tag.starts_with('-') {
             tags_to_add.push(tag.clone());
         }
