@@ -1,5 +1,7 @@
 pub mod bookmark_repo;
+pub mod collection_link_repo;
 pub mod collection_repo;
+pub mod collection_tag_repo;
 pub mod comment_repo;
 pub mod db;
 pub mod pack;

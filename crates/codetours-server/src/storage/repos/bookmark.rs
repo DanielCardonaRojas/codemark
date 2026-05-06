@@ -15,8 +15,8 @@ impl BookmarkRepo {
         let conn = self.pool.get().await?;
         conn.interact(move |conn| {
             let mut stmt = conn.prepare(
-                "SELECT id, query, language, file_path, content_hash, commit_hash, 
-                        status, resolution_method, last_resolved_at, stale_since, 
+                "SELECT id, query, language, file_path, content_hash, commit_hash,
+                        health, resolution_method, last_resolved_at, stale_since,
                         created_at, created_by
                  FROM bookmarks WHERE id = ?1",
             )?;
@@ -35,11 +35,12 @@ impl BookmarkRepo {
         let conn = self.pool.get().await?;
         conn.interact(move |conn| {
             let mut stmt = conn.prepare(
-                "SELECT b.id, b.query, b.language, b.file_path, b.content_hash, b.commit_hash, 
-                        b.status, b.resolution_method, b.last_resolved_at, b.stale_since, 
+                "SELECT b.id, b.query, b.language, b.file_path, b.content_hash, b.commit_hash,
+                        b.health, b.resolution_method, b.last_resolved_at, b.stale_since,
                         b.created_at, b.created_by
                  FROM bookmarks b
                  JOIN collection_bookmarks cb ON b.id = cb.bookmark_id
+
                  WHERE cb.collection_id = ?1
                  ORDER BY cb.position ASC",
             )?;
@@ -68,10 +69,10 @@ impl BookmarkRepo {
 }
 
 fn row_to_bookmark(row: &rusqlite::Row) -> rusqlite::Result<Bookmark> {
-    let status_str: String = row.get(6)?;
+    let health_str: String = row.get(6)?;
     let method_str: Option<String> = row.get(7)?;
 
-    let status = status_str.parse().map_err(|e| {
+    let health = health_str.parse().map_err(|e| {
         rusqlite::Error::FromSqlConversionFailure(6, rusqlite::types::Type::Text, Box::new(e))
     })?;
 
@@ -89,7 +90,7 @@ fn row_to_bookmark(row: &rusqlite::Row) -> rusqlite::Result<Bookmark> {
         file_path: row.get(3)?,
         content_hash: row.get(4)?,
         commit_hash: row.get(5)?,
-        status,
+        health,
         resolution_method,
         last_resolved_at: row.get(8)?,
         stale_since: row.get(9)?,

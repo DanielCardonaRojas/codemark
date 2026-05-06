@@ -7,7 +7,7 @@ use crate::cli::output::{
 use crate::cli::*;
 use codemark_core::embeddings::config::EmbeddingModel;
 use codemark_core::engine::bookmark::{
-    Bookmark, BookmarkFilter, BookmarkStatus, Resolution, ResolutionMethod, Tag,
+    Bookmark, BookmarkFilter, BookmarkHealth, Resolution, ResolutionMethod, Tag,
 };
 use codemark_core::engine::{health, resolution};
 use codemark_core::error::{Error, Result};
@@ -18,11 +18,17 @@ use codemark_core::storage::SemanticRepo;
 use super::{load_config, now_iso, open_all_dbs, open_db, open_db_for_write};
 
 pub async fn handle_heal(cli: &Cli, mode: &OutputMode, args: &HealArgs) -> Result<()> {
+    super::check_deprecated_status(&args.health, &args.status);
     let db = open_db_for_write(cli)?;
+    let health_input = args.health.as_deref().or(args.status.as_deref());
     let filter = BookmarkFilter {
         file_path: args.file.as_ref().map(|p| p.to_string_lossy().to_string()),
         language: args.lang.clone(),
-        status: Some(vec![BookmarkStatus::Active, BookmarkStatus::Drifted, BookmarkStatus::Stale]),
+        health: super::parse_health_filter(health_input)?.or(Some(vec![
+            BookmarkHealth::Active,
+            BookmarkHealth::Drifted,
+            BookmarkHealth::Stale,
+        ])),
         collection: args.collection.clone(),
         ..Default::default()
     };
@@ -35,6 +41,7 @@ pub async fn handle_heal(cli: &Cli, mode: &OutputMode, args: &HealArgs) -> Resul
 
     let mut updates = Vec::new();
     let mut skipped = 0usize;
+    let mut affected_collections = std::collections::HashSet::new();
 
     for bm in &bookmarks {
         // Get previous resolution for location tracking
@@ -79,10 +86,17 @@ pub async fn handle_heal(cli: &Cli, mode: &OutputMode, args: &HealArgs) -> Resul
         let ts_lang = lang.tree_sitter_language();
         let provider = codemark_core::vfs::LocalFileProvider;
         let result = resolution::resolve(bm, &mut cache, &ts_lang, db.path(), &provider).await?;
-        let new_status = health::transition(bm.status, result.method, result.hash_matches);
-        let previous_status = bm.status;
+        let days_since = health::days_since_resolution(bm.last_resolved_at.as_deref());
+        let new_status = health::transition(
+            bm.health,
+            result.method,
+            result.hash_matches,
+            days_since,
+            config.health.stale_days(),
+        );
+        let previous_status = bm.health;
 
-        let stale_since = if new_status == BookmarkStatus::Stale {
+        let stale_since = if new_status == BookmarkHealth::Stale {
             bm.stale_since.clone().or_else(|| Some(now_iso()))
         } else {
             None
@@ -90,24 +104,31 @@ pub async fn handle_heal(cli: &Cli, mode: &OutputMode, args: &HealArgs) -> Resul
 
         // Auto-archive check
         let final_status = if args.auto_archive
-            && new_status == BookmarkStatus::Stale
+            && new_status == BookmarkHealth::Stale
             && bm
                 .stale_since
                 .as_deref()
                 .is_some_and(|s| health::should_auto_archive(s, args.archive_after))
         {
-            BookmarkStatus::Archived
+            BookmarkHealth::Archived
         } else {
             new_status
         };
 
-        db.update_bookmark_status(
+        db.update_bookmark_health(
             &bm.id,
             final_status,
             Some(result.method),
             Some(&now_iso()),
             stale_since.as_deref(),
         )?;
+
+        // Track affected collections for health recompute
+        if let Ok(ids) = db.list_collection_ids_for_bookmark(&bm.id) {
+            for id in ids {
+                affected_collections.insert(id);
+            }
+        }
 
         if let Some(ref new_query) = result.new_query {
             db.update_bookmark_query(&bm.id, new_query, &result.file_path, &result.content_hash)?;
@@ -161,12 +182,24 @@ pub async fn handle_heal(cli: &Cli, mode: &OutputMode, args: &HealArgs) -> Resul
             resolution_id,
             name,
             file_path: bm.file_path.clone(),
-            previous_status: previous_status.to_string(),
-            new_status: final_status.to_string(),
+            previous_health: previous_status.to_string(),
+            new_health: final_status.to_string(),
+            previous_health_alias: previous_status.to_string(),
+            new_health_alias: final_status.to_string(),
             resolution_method: result.method.to_string(),
             previous_location,
             new_location,
         });
+    }
+
+    // Recompute health for all affected collections
+    for collection_id in affected_collections {
+        if let Err(e) = db.recompute_collection_health(&collection_id) {
+            eprintln!(
+                "codemark: warning: failed to recompute health for collection {}: {}",
+                collection_id, e
+            );
+        }
     }
 
     let total_processed = updates.len();
@@ -186,11 +219,11 @@ pub async fn handle_status(cli: &Cli, mode: &OutputMode) -> Result<()> {
     let mut total_archived = 0usize;
 
     for (label, db) in &dbs {
-        let counts = db.count_by_status()?;
-        let a = counts.get(&BookmarkStatus::Active).copied().unwrap_or(0);
-        let d = counts.get(&BookmarkStatus::Drifted).copied().unwrap_or(0);
-        let s = counts.get(&BookmarkStatus::Stale).copied().unwrap_or(0);
-        let r = counts.get(&BookmarkStatus::Archived).copied().unwrap_or(0);
+        let counts = db.count_by_health()?;
+        let a = counts.get(&BookmarkHealth::Active).copied().unwrap_or(0);
+        let d = counts.get(&BookmarkHealth::Drifted).copied().unwrap_or(0);
+        let s = counts.get(&BookmarkHealth::Stale).copied().unwrap_or(0);
+        let r = counts.get(&BookmarkHealth::Archived).copied().unwrap_or(0);
 
         if multi {
             match mode {
@@ -230,6 +263,7 @@ pub async fn handle_status(cli: &Cli, mode: &OutputMode) -> Result<()> {
 
 pub async fn handle_diff(cli: &Cli, mode: &OutputMode, args: &DiffArgs) -> Result<()> {
     let db = open_db(cli)?;
+    let config = super::load_config(cli);
     let cwd = std::env::current_dir()?;
 
     let since = args.since.as_deref().unwrap_or("HEAD~1");
@@ -242,7 +276,7 @@ pub async fn handle_diff(cli: &Cli, mode: &OutputMode, args: &DiffArgs) -> Resul
 
     // Find bookmarks that reference changed files
     let all_bookmarks = db.list_bookmarks(&BookmarkFilter {
-        status: Some(vec![BookmarkStatus::Active, BookmarkStatus::Drifted, BookmarkStatus::Stale]),
+        health: Some(vec![BookmarkHealth::Active, BookmarkHealth::Drifted, BookmarkHealth::Stale]),
         ..Default::default()
     })?;
 
@@ -268,11 +302,18 @@ pub async fn handle_diff(cli: &Cli, mode: &OutputMode, args: &DiffArgs) -> Resul
                 let provider = codemark_core::vfs::LocalFileProvider;
                 let result =
                     resolution::resolve(bm, &mut cache, &ts_lang, db.path(), &provider).await?;
-                let new_status = health::transition(bm.status, result.method, result.hash_matches);
+                let days_since = health::days_since_resolution(bm.last_resolved_at.as_deref());
+                let new_status = health::transition(
+                    bm.health,
+                    result.method,
+                    result.hash_matches,
+                    days_since,
+                    config.health.stale_days(),
+                );
                 results.push(serde_json::json!({
                     "id": bm.id,
                     "file": bm.file_path,
-                    "status_before": bm.status.to_string(),
+                    "status_before": bm.health.to_string(),
                     "status_after": new_status.to_string(),
                     "method": result.method.to_string(),
                     "line": result.start_line + 1,
@@ -293,9 +334,16 @@ pub async fn handle_diff(cli: &Cli, mode: &OutputMode, args: &DiffArgs) -> Resul
                 let provider = codemark_core::vfs::LocalFileProvider;
                 let result =
                     resolution::resolve(bm, &mut cache, &ts_lang, db.path(), &provider).await?;
-                let new_status = health::transition(bm.status, result.method, result.hash_matches);
-                let status_change = if new_status != bm.status {
-                    format!("{} -> {}", bm.status, new_status)
+                let days_since = health::days_since_resolution(bm.last_resolved_at.as_deref());
+                let new_status = health::transition(
+                    bm.health,
+                    result.method,
+                    result.hash_matches,
+                    days_since,
+                    config.health.stale_days(),
+                );
+                let status_change = if new_status != bm.health {
+                    format!("{} -> {}", bm.health, new_status)
                 } else {
                     new_status.to_string()
                 };
@@ -327,7 +375,7 @@ pub async fn handle_gc(cli: &Cli, mode: &OutputMode, args: &GcArgs) -> Result<()
 
     if args.dry_run {
         let filter =
-            BookmarkFilter { status: Some(vec![BookmarkStatus::Archived]), ..Default::default() };
+            BookmarkFilter { health: Some(vec![BookmarkHealth::Archived]), ..Default::default() };
         let bookmarks = db.list_bookmarks(&filter)?;
         let would_remove: Vec<_> = bookmarks.iter().filter(|b| b.created_at < cutoff_str).collect();
         write_success(mode, &format!("Would remove {} archived bookmarks", would_remove.len()))?;
@@ -339,10 +387,12 @@ pub async fn handle_gc(cli: &Cli, mode: &OutputMode, args: &GcArgs) -> Result<()
 }
 
 pub async fn handle_export(cli: &Cli, args: &ExportArgs) -> Result<()> {
+    super::check_deprecated_status(&args.health, &args.status);
     let dbs = open_all_dbs(cli)?;
+    let health_input = args.health.as_deref().or(args.status.as_deref());
     let filter = BookmarkFilter {
         tag: args.tag.clone(),
-        status: super::parse_status_filter(args.status.as_deref()),
+        health: super::parse_health_filter(health_input)?,
         ..Default::default()
     };
     let mut bookmarks = Vec::new();
@@ -356,7 +406,7 @@ pub async fn handle_export(cli: &Cli, args: &ExportArgs) -> Result<()> {
             println!("{json}");
         }
         ExportFormat::Csv => {
-            println!("id,file_path,language,status,tags,notes");
+            println!("id,file_path,language,health,tags,notes");
             for bm in &bookmarks {
                 // For CSV, we use the first annotation's notes
                 let notes = bm.annotations.first().and_then(|a| a.notes.as_deref()).unwrap_or("");
@@ -365,7 +415,7 @@ pub async fn handle_export(cli: &Cli, args: &ExportArgs) -> Result<()> {
                     bm.id,
                     bm.file_path,
                     bm.language,
-                    bm.status,
+                    bm.health,
                     serde_json::to_string(&bm.tags).unwrap_or_else(|_| "[]".to_string()),
                     notes
                 );

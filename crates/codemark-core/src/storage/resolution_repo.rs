@@ -182,7 +182,7 @@ impl Database {
 
 #[cfg(test)]
 mod tests {
-    use crate::engine::bookmark::{Bookmark, BookmarkStatus, Resolution, ResolutionMethod};
+    use crate::engine::bookmark::{Bookmark, BookmarkHealth, Resolution, ResolutionMethod};
     use crate::storage::db::Database;
 
     fn test_bookmark(id: &str) -> Bookmark {
@@ -193,7 +193,7 @@ mod tests {
             file_path: format!("src/main_{}.swift", id),
             content_hash: None,
             commit_hash: None,
-            status: BookmarkStatus::Active,
+            health: BookmarkHealth::Active,
             resolution_method: None,
             last_resolved_at: None,
             stale_since: None,

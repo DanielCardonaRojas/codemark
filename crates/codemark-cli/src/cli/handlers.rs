@@ -6,6 +6,7 @@
 //! - [`search`]: FTS and semantic search, reindex
 //! - [`maintenance`]: heal, status, diff, gc, export, import
 
+use std::collections::HashSet;
 use std::io::Write;
 
 use crate::cli::output::{OutputMode, write_json_success, write_success};
@@ -13,7 +14,7 @@ use crate::cli::*;
 use codemark_core::config::Config;
 use codemark_core::embeddings::config::EmbeddingModel;
 use codemark_core::engine::bookmark::{
-    Bookmark, BookmarkFilter, BookmarkStatus, Collection, Resolution, ResolutionMethod, Visibility,
+    Bookmark, BookmarkFilter, BookmarkHealth, Collection, Resolution, ResolutionMethod, Visibility,
 };
 use codemark_core::engine::{health, resolution};
 use codemark_core::error::{Error, Result};
@@ -72,6 +73,8 @@ async fn dispatch_collection(cli: &Cli, mode: &OutputMode, args: &CollectionArgs
         CollectionCommand::Show(a) => collection::handle_collection_show(cli, mode, a).await,
         CollectionCommand::Resolve(a) => collection::handle_collection_resolve(cli, mode, a).await,
         CollectionCommand::Reorder(a) => collection::handle_collection_reorder(cli, mode, a).await,
+        CollectionCommand::Tag(a) => collection::handle_collection_tag(cli, mode, a).await,
+        CollectionCommand::Link(a) => collection::handle_collection_link(cli, mode, a).await,
     }
 }
 
@@ -665,8 +668,31 @@ pub fn parse_hunk(hunk: &str) -> Result<(usize, usize)> {
     Ok((start, end.max(start)))
 }
 
-pub fn parse_status_filter(status: Option<&str>) -> Option<Vec<BookmarkStatus>> {
-    status.map(|s| s.split(',').filter_map(|part| part.trim().parse().ok()).collect())
+pub fn parse_health_filter(status: Option<&str>) -> Result<Option<Vec<BookmarkHealth>>> {
+    match status {
+        Some(s) => {
+            let mut result = Vec::new();
+            for part in s.split(',') {
+                let parsed = part.trim().parse::<BookmarkHealth>().map_err(|_| {
+                    Error::Input(format!("invalid health filter: '{}'", part.trim()))
+                })?;
+                result.push(parsed);
+            }
+            Ok(Some(result))
+        }
+        None => Ok(None),
+    }
+}
+
+/// Emit a one-time deprecation warning for --status.
+pub fn check_deprecated_status(health: &Option<String>, status: &Option<String>) {
+    if health.is_none() && status.is_some() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        static WARNED: AtomicBool = AtomicBool::new(false);
+        if !WARNED.swap(true, Ordering::SeqCst) {
+            eprintln!("codemark: warning: --status is deprecated, use --health instead");
+        }
+    }
 }
 
 /// Extract ID from input (handles line-format input).
@@ -775,6 +801,8 @@ pub fn add_bookmark_to_collection(
                 published_commit_sha: None,
                 repo_url: None,
                 status: None,
+                health: None,
+                health_computed_at: None,
                 updated_at: None,
                 imported_from_url: None,
             };
@@ -783,6 +811,12 @@ pub fn add_bookmark_to_collection(
         }
     };
     db.add_to_collection(&collection.id, &[bookmark_id.to_string()])?;
+    if let Err(e) = db.recompute_collection_health(&collection.id) {
+        eprintln!(
+            "codemark: warning: failed to recompute health for collection {}: {}",
+            collection.id, e
+        );
+    }
     Ok(Some(collection_name.to_string()))
 }
 
@@ -807,6 +841,7 @@ pub async fn resolve_batch(
 
     let mut results = Vec::new();
     let provider = codemark_core::vfs::LocalFileProvider;
+    let mut affected_collections: HashSet<String> = std::collections::HashSet::new();
 
     for bm in bookmarks {
         let Ok(lang) = bm.language.parse::<Language>() else {
@@ -815,7 +850,14 @@ pub async fn resolve_batch(
         let mut cache = ParseCache::new(lang)?;
         let ts_lang = lang.tree_sitter_language();
         let result = resolution::resolve(bm, &mut cache, &ts_lang, db.path(), &provider).await?;
-        let new_status = health::transition(bm.status, result.method, result.hash_matches);
+        let days_since = health::days_since_resolution(bm.last_resolved_at.as_deref());
+        let new_status = health::transition(
+            bm.health,
+            result.method,
+            result.hash_matches,
+            days_since,
+            config.health.stale_days(),
+        );
 
         // Resolve relative path to absolute for output
         let absolute_path = git_context::resolve_bookmark_file_path(&result.file_path, db.path())
@@ -834,13 +876,20 @@ pub async fn resolve_batch(
             continue;
         }
 
-        let stale_since = if new_status == BookmarkStatus::Stale {
+        // Track affected collections for health recompute
+        if let Ok(ids) = db.list_collection_ids_for_bookmark(&bm.id) {
+            for id in ids {
+                affected_collections.insert(id);
+            }
+        }
+
+        let stale_since = if new_status == BookmarkHealth::Stale {
             bm.stale_since.clone().or_else(|| Some(now_iso()))
         } else {
             None
         };
 
-        db.update_bookmark_status(
+        db.update_bookmark_health(
             &bm.id,
             new_status,
             Some(result.method),
@@ -869,6 +918,16 @@ pub async fn resolve_batch(
             preview_lines: None,
         };
         let _ = db.insert_resolution_if_changed(&res, config.storage.max_resolutions());
+    }
+
+    // Recompute health for all affected collections
+    for collection_id in affected_collections {
+        if let Err(e) = db.recompute_collection_health(&collection_id) {
+            eprintln!(
+                "codemark: warning: failed to recompute health for collection {}: {}",
+                collection_id, e
+            );
+        }
     }
 
     Ok(results)
@@ -908,6 +967,7 @@ pub fn write_resolution_output(
     bm: &Bookmark,
     result: &resolution::ResolutionResult,
     db_path: &std::path::Path,
+    stale_threshold: u32,
 ) -> Result<()> {
     use crate::cli::output::short_id;
 
@@ -920,6 +980,7 @@ pub fn write_resolution_output(
 
     match mode {
         OutputMode::Json => {
+            let days_since = health::days_since_resolution(bm.last_resolved_at.as_deref());
             write_json_success(&serde_json::json!({
                 "id": bm.id,
                 "file": absolute_path_str,
@@ -929,7 +990,8 @@ pub fn write_resolution_output(
                 "line_range": format!("{}-{}", result.start_line + 1, result.end_line + 1),
                 "line_range_colon": format!("{}:{}", result.start_line + 1, result.end_line + 1),
                 "method": result.method.to_string(),
-                "status": health::transition(bm.status, result.method, result.hash_matches).to_string(),
+                "health": health::transition(bm.health, result.method, result.hash_matches, days_since, stale_threshold).to_string(),
+                "status": health::transition(bm.health, result.method, result.hash_matches, days_since, stale_threshold).to_string(),
                 "preview": result.matched_text.lines().next().unwrap_or(""),
                 "note": note,
                 "tags": bm.tags,
@@ -1035,13 +1097,17 @@ pub fn handle_completions(args: &CompletionsArgs) -> Result<()> {
 pub async fn handle_list(cli: &Cli, mode: &OutputMode, args: &ListArgs) -> Result<()> {
     use crate::cli::output::template_needs_line;
 
+    check_deprecated_status(&args.health, &args.status);
+
     let dbs = open_all_dbs_with_extra(cli, &args.add_db)?;
     let dbs = filter_dbs_by_user_email(dbs, args.user_email.as_deref());
     let dbs = filter_dbs_by_repo_owner(dbs, args.repo_owner.as_deref());
+
+    let health_input = args.health.as_deref().or(args.status.as_deref());
     let filter = BookmarkFilter {
         tag: args.tag.clone(),
-        status: parse_status_filter(args.status.as_deref())
-            .or(Some(vec![BookmarkStatus::Active, BookmarkStatus::Drifted])),
+        health: parse_health_filter(health_input)?
+            .or(Some(vec![BookmarkHealth::Active, BookmarkHealth::Drifted])),
         file_path: args.file.as_ref().map(|p| p.to_string_lossy().to_string()),
         language: args.lang.clone(),
         created_by: args.author.clone(),
@@ -1243,18 +1309,21 @@ pub async fn handle_preview(cli: &Cli, args: &PreviewArgs) -> Result<()> {
 
     // Output JSON with resolution data (using standard envelope)
     let line_range_colon = resolution.line_range.as_ref().map(|r| r.replace('-', ":"));
+    // The "drifted" boolean includes both Drifted and Stale for backward compatibility.
+    // Clients should check the "health" field for the precise tri-state (Active/Drifted/Stale).
     let data = serde_json::json!({
         "bookmark_id": bm.id,
         "file_path": absolute_path.to_string_lossy(),
         "line_range": resolution.line_range,
         "line_range_colon": line_range_colon,
         "byte_range": resolution.byte_range,
-        "status": bm.status,
+        "health": bm.health,
+        "status": bm.health,
         "resolution_method": resolution.method,
         "resolved_at": resolution.resolved_at,
         "commit_hash": resolution.commit_hash,
         "content_hash": resolution.content_hash,
-        "drifted": bm.status == BookmarkStatus::Drifted || bm.status == BookmarkStatus::Stale,
+        "drifted": bm.health == BookmarkHealth::Drifted || bm.health == BookmarkHealth::Stale,
     });
 
     write_json_success(&data)?;

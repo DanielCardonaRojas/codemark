@@ -226,7 +226,7 @@ fn hash_fallback_walk(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engine::bookmark::{Bookmark, BookmarkStatus};
+    use crate::engine::bookmark::{Bookmark, BookmarkHealth};
     use crate::parser::languages::Language as CodemarkLang;
     use crate::query::generator as qgen;
 
@@ -253,7 +253,7 @@ mod tests {
             file_path: path.to_string_lossy().to_string(),
             content_hash: Some(ch),
             commit_hash: None,
-            status: BookmarkStatus::Active,
+            health: BookmarkHealth::Active,
             resolution_method: None,
             last_resolved_at: None,
             stale_since: None,

@@ -25,6 +25,11 @@ const MIGRATION_012: &str =
     include_str!("../../../../migrations/V12__add_resolution_display_fields.sql");
 const MIGRATION_013: &str = include_str!("../../../../migrations/V13__add_published_tours.sql");
 const MIGRATION_014: &str = include_str!("../../../../migrations/V14__add_imported_from_url.sql");
+const MIGRATION_015: &str = include_str!("../../../../migrations/V15__add_collection_tags.sql");
+const MIGRATION_016: &str = include_str!("../../../../migrations/V16__add_collection_links.sql");
+const MIGRATION_017: &str =
+    include_str!("../../../../migrations/V17__rename_bookmark_status_to_health.sql");
+const MIGRATION_018: &str = include_str!("../../../../migrations/V18__add_collection_health.sql");
 
 /// SQLite database wrapper with automatic migrations.
 pub struct Database {
@@ -34,7 +39,7 @@ pub struct Database {
 
 impl Database {
     /// Current schema version supported by this crate.
-    pub const CURRENT_VERSION: i64 = 14;
+    pub const CURRENT_VERSION: i64 = 18;
 
     /// Open the database at the given path, run migrations.
     /// Returns an error if the parent directory does not exist.
@@ -115,6 +120,10 @@ impl Database {
             (12, MIGRATION_012),
             (13, MIGRATION_013),
             (14, MIGRATION_014),
+            (15, MIGRATION_015),
+            (16, MIGRATION_016),
+            (17, MIGRATION_017),
+            (18, MIGRATION_018),
         ];
 
         for (version, sql) in migrations {
@@ -298,7 +307,7 @@ mod tests {
         init_test_env();
         let db = Database::open_in_memory().unwrap();
         let version = db.schema_version();
-        assert_eq!(version, 14);
+        assert_eq!(version, 18);
     }
 
     #[test]
@@ -306,7 +315,7 @@ mod tests {
         init_test_env();
         let mut db = Database::open_in_memory().unwrap();
         db.run_migrations().unwrap();
-        assert_eq!(db.schema_version(), 14);
+        assert_eq!(db.schema_version(), 18);
     }
 
     #[test]

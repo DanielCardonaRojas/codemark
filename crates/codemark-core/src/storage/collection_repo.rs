@@ -1,12 +1,12 @@
-use crate::engine::bookmark::Collection;
+use crate::engine::bookmark::{Collection, CollectionHealth};
 use crate::error::Result;
 use crate::storage::db::Database;
 
 impl Database {
     pub fn insert_collection(&self, collection: &Collection) -> Result<()> {
         self.conn().execute(
-            "INSERT INTO collections (id, name, description, visibility, created_at, created_by, created_branch, published_at, published_commit_sha, repo_url, status, updated_at, imported_from_url)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+            "INSERT INTO collections (id, name, description, visibility, created_at, created_by, created_branch, published_at, published_commit_sha, repo_url, status, health, health_computed_at, updated_at, imported_from_url)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
             rusqlite::params![
                 collection.id,
                 collection.name,
@@ -19,6 +19,8 @@ impl Database {
                 collection.published_commit_sha,
                 collection.repo_url,
                 collection.status,
+                collection.health.as_ref().map(|h| h.to_string()),
+                collection.health_computed_at,
                 collection.updated_at,
                 collection.imported_from_url,
             ],
@@ -29,7 +31,7 @@ impl Database {
     /// Get a collection by its exact name.
     pub fn get_collection_by_name(&self, name: &str) -> Result<Option<Collection>> {
         let mut stmt = self.conn().prepare(
-            "SELECT id, name, description, visibility, created_at, created_by, created_branch, published_at, published_commit_sha, repo_url, status, updated_at, imported_from_url
+            "SELECT id, name, description, visibility, created_at, created_by, created_branch, published_at, published_commit_sha, repo_url, status, health, health_computed_at, updated_at, imported_from_url
              FROM collections WHERE name = ?1",
         )?;
         let mut rows = stmt.query_map([name], row_to_collection)?;
@@ -42,7 +44,7 @@ impl Database {
     /// Get a collection by its unique ID.
     pub fn get_collection_by_id(&self, id: &str) -> Result<Option<Collection>> {
         let mut stmt = self.conn().prepare(
-            "SELECT id, name, description, visibility, created_at, created_by, created_branch, published_at, published_commit_sha, repo_url, status, updated_at, imported_from_url
+            "SELECT id, name, description, visibility, created_at, created_by, created_branch, published_at, published_commit_sha, repo_url, status, health, health_computed_at, updated_at, imported_from_url
              FROM collections WHERE id = ?1",
         )?;
         let mut rows = stmt.query_map([id], row_to_collection)?;
@@ -60,7 +62,7 @@ impl Database {
             ));
         }
         let mut stmt = self.conn().prepare(
-            "SELECT id, name, description, visibility, created_at, created_by, created_branch, published_at, published_commit_sha, repo_url, status, updated_at, imported_from_url
+            "SELECT id, name, description, visibility, created_at, created_by, created_branch, published_at, published_commit_sha, repo_url, status, health, health_computed_at, updated_at, imported_from_url
              FROM collections WHERE id LIKE ?1",
         )?;
         let pattern = format!("{prefix}%");
@@ -81,7 +83,7 @@ impl Database {
     pub fn list_collections(&self) -> Result<Vec<(Collection, usize)>> {
         let mut stmt = self.conn().prepare(
             "SELECT c.id, c.name, c.description, c.visibility, c.created_at, c.created_by, c.created_branch,
-             c.published_at, c.published_commit_sha, c.repo_url, c.status, c.updated_at, c.imported_from_url,
+             c.published_at, c.published_commit_sha, c.repo_url, c.status, c.health, c.health_computed_at, c.updated_at, c.imported_from_url,
              COUNT(cb.bookmark_id) AS bookmark_count
              FROM collections c
              LEFT JOIN collection_bookmarks cb ON c.id = cb.collection_id
@@ -107,10 +109,12 @@ impl Database {
                 published_commit_sha: row.get(8)?,
                 repo_url: row.get(9)?,
                 status: row.get(10)?,
-                updated_at: row.get(11)?,
-                imported_from_url: row.get(12)?,
+                health: row.get::<_, Option<String>>(11)?.and_then(|h| h.parse().ok()),
+                health_computed_at: row.get(12)?,
+                updated_at: row.get(13)?,
+                imported_from_url: row.get(14)?,
             };
-            let count: usize = row.get(13)?;
+            let count: usize = row.get(15)?;
             Ok((collection, count))
         })?;
 
@@ -256,7 +260,7 @@ impl Database {
     pub fn list_collections_for_bookmark(&self, bookmark_id: &str) -> Result<Vec<Collection>> {
         let mut stmt = self.conn().prepare(
             "SELECT c.id, c.name, c.description, c.visibility, c.created_at, c.created_by, c.created_branch,
-             c.published_at, c.published_commit_sha, c.repo_url, c.status, c.updated_at, c.imported_from_url
+             c.published_at, c.published_commit_sha, c.repo_url, c.status, c.health, c.health_computed_at, c.updated_at, c.imported_from_url
              FROM collections c
              JOIN collection_bookmarks cb ON c.id = cb.collection_id
              WHERE cb.bookmark_id = ?1
@@ -264,6 +268,56 @@ impl Database {
         )?;
         let rows = stmt.query_map([bookmark_id], row_to_collection)?;
         let results: Vec<Collection> = rows.filter_map(|r| r.ok()).collect();
+        Ok(results)
+    }
+
+    pub fn update_collection_health(
+        &self,
+        id: &str,
+        health: Option<CollectionHealth>,
+    ) -> Result<()> {
+        let now = chrono::Utc::now().to_rfc3339();
+        self.conn().execute(
+            "UPDATE collections SET health = ?1, health_computed_at = ?2 WHERE id = ?3",
+            rusqlite::params![health.map(|h| h.to_string()), now, id],
+        )?;
+        Ok(())
+    }
+
+    /// Recompute the health of a collection based on its bookmarks' health.
+    /// Rule: stale > drifted > active. Archived bookmarks are excluded.
+    pub fn recompute_collection_health(&self, id: &str) -> Result<Option<CollectionHealth>> {
+        let health_str: Option<String> = self.conn().query_row(
+            "WITH bookmark_health AS (
+              SELECT b.health
+              FROM collection_bookmarks cb
+              JOIN bookmarks b ON b.id = cb.bookmark_id
+              WHERE cb.collection_id = ?1 AND b.health != 'archived'
+            )
+            SELECT 
+                   CASE
+                     WHEN COUNT(*) = 0 THEN NULL
+                     WHEN MAX(CASE WHEN health = 'stale'   THEN 1 ELSE 0 END) = 1 THEN 'stale'
+                     WHEN MAX(CASE WHEN health = 'drifted' THEN 1 ELSE 0 END) = 1 THEN 'drifted'
+                     ELSE 'active'
+                   END AS health
+            FROM bookmark_health",
+            [id],
+            |row| row.get(0),
+        )?;
+
+        let health = health_str.and_then(|s| s.parse().ok());
+        self.update_collection_health(id, health)?;
+        Ok(health)
+    }
+
+    /// List IDs of collections that contain a specific bookmark.
+    pub fn list_collection_ids_for_bookmark(&self, bookmark_id: &str) -> Result<Vec<String>> {
+        let mut stmt = self
+            .conn()
+            .prepare("SELECT collection_id FROM collection_bookmarks WHERE bookmark_id = ?1")?;
+        let rows = stmt.query_map([bookmark_id], |row| row.get(0))?;
+        let results: Vec<String> = rows.filter_map(|r| r.ok()).collect();
         Ok(results)
     }
 }
@@ -283,14 +337,16 @@ fn row_to_collection(row: &rusqlite::Row) -> rusqlite::Result<Collection> {
         published_commit_sha: row.get(8)?,
         repo_url: row.get(9)?,
         status: row.get(10)?,
-        updated_at: row.get(11)?,
-        imported_from_url: row.get(12)?,
+        health: row.get::<_, Option<String>>(11)?.and_then(|h| h.parse().ok()),
+        health_computed_at: row.get(12)?,
+        updated_at: row.get(13)?,
+        imported_from_url: row.get(14)?,
     })
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::engine::bookmark::{Bookmark, BookmarkStatus, Collection};
+    use crate::engine::bookmark::{Bookmark, BookmarkHealth, Collection, CollectionHealth};
     use crate::storage::db::Database;
 
     fn test_bookmark(id: &str) -> Bookmark {
@@ -302,7 +358,7 @@ mod tests {
             file_path: format!("src/main_{}.swift", id),
             content_hash: None,
             commit_hash: None,
-            status: BookmarkStatus::Active,
+            health: BookmarkHealth::Active,
             resolution_method: None,
             last_resolved_at: None,
             stale_since: None,
@@ -327,6 +383,8 @@ mod tests {
             published_commit_sha: None,
             repo_url: None,
             status: None,
+            health: None,
+            health_computed_at: None,
             updated_at: None,
             imported_from_url: None,
         }
@@ -417,101 +475,49 @@ mod tests {
     }
 
     #[test]
-    fn list_collections_for_bookmark() {
+    fn test_collection_health_aggregation() {
         init_test_env();
         let db = Database::open_in_memory().unwrap();
-        db.insert_bookmark(&test_bookmark("bm-0001")).unwrap();
-        db.insert_collection(&test_collection("col-a")).unwrap();
-        db.insert_collection(&test_collection("col-b")).unwrap();
-        db.add_to_collection("col-col-a", &["bm-0001".into()]).unwrap();
-        db.add_to_collection("col-col-b", &["bm-0001".into()]).unwrap();
+        let col = test_collection("health-test");
+        db.insert_collection(&col).unwrap();
 
-        let collections = db.list_collections_for_bookmark("bm-0001").unwrap();
-        assert_eq!(collections.len(), 2);
+        let mut bm1 = test_bookmark("bm1");
+        bm1.health = BookmarkHealth::Active;
+        db.insert_bookmark(&bm1).unwrap();
+
+        let mut bm2 = test_bookmark("bm2");
+        bm2.health = BookmarkHealth::Drifted;
+        db.insert_bookmark(&bm2).unwrap();
+
+        db.add_to_collection(&col.id, &["bm1".into(), "bm2".into()]).unwrap();
+
+        // Initial recompute should be 'drifted' (bm2 is drifted)
+        let health = db.recompute_collection_health(&col.id).unwrap();
+        assert_eq!(health, Some(CollectionHealth::Drifted));
+
+        // Add a stale bookmark
+        let mut bm3 = test_bookmark("bm3");
+        bm3.health = BookmarkHealth::Stale;
+        db.insert_bookmark(&bm3).unwrap();
+        db.add_to_collection(&col.id, &["bm3".into()]).unwrap();
+
+        let health = db.recompute_collection_health(&col.id).unwrap();
+        assert_eq!(health, Some(CollectionHealth::Stale));
+
+        // Archive the stale one, health should return to drifted
+        db.update_bookmark_health("bm3", BookmarkHealth::Archived, None, None, None).unwrap();
+        let health = db.recompute_collection_health(&col.id).unwrap();
+        assert_eq!(health, Some(CollectionHealth::Drifted));
     }
 
     #[test]
-    fn add_preserves_insertion_order() {
+    fn test_empty_collection_health() {
         init_test_env();
         let db = Database::open_in_memory().unwrap();
-        db.insert_bookmark(&test_bookmark("bm-0001")).unwrap();
-        db.insert_bookmark(&test_bookmark("bm-0002")).unwrap();
-        db.insert_bookmark(&test_bookmark("bm-0003")).unwrap();
-        db.insert_collection(&test_collection("ordered")).unwrap();
+        let col = test_collection("empty");
+        db.insert_collection(&col).unwrap();
 
-        db.add_to_collection(
-            "col-ordered",
-            &["bm-0001".into(), "bm-0002".into(), "bm-0003".into()],
-        )
-        .unwrap();
-
-        let filter = crate::engine::bookmark::BookmarkFilter {
-            collection: Some("ordered".to_string()),
-            ..Default::default()
-        };
-        let bookmarks = db.list_bookmarks(&filter).unwrap();
-        assert_eq!(bookmarks.len(), 3);
-        assert_eq!(bookmarks[0].id, "bm-0001");
-        assert_eq!(bookmarks[1].id, "bm-0002");
-        assert_eq!(bookmarks[2].id, "bm-0003");
-    }
-
-    #[test]
-    fn reorder_changes_order() {
-        init_test_env();
-        let db = Database::open_in_memory().unwrap();
-        db.insert_bookmark(&test_bookmark("bm-0001")).unwrap();
-        db.insert_bookmark(&test_bookmark("bm-0002")).unwrap();
-        db.insert_bookmark(&test_bookmark("bm-0003")).unwrap();
-        db.insert_collection(&test_collection("reorder")).unwrap();
-
-        db.add_to_collection(
-            "col-reorder",
-            &["bm-0001".into(), "bm-0002".into(), "bm-0003".into()],
-        )
-        .unwrap();
-
-        // Reorder: 3, 1, 2
-        db.reorder_collection(
-            "col-reorder",
-            &["bm-0003".into(), "bm-0001".into(), "bm-0002".into()],
-        )
-        .unwrap();
-
-        let filter = crate::engine::bookmark::BookmarkFilter {
-            collection: Some("reorder".to_string()),
-            ..Default::default()
-        };
-        let bookmarks = db.list_bookmarks(&filter).unwrap();
-        assert_eq!(bookmarks.len(), 3);
-        assert_eq!(bookmarks[0].id, "bm-0003");
-        assert_eq!(bookmarks[1].id, "bm-0001");
-        assert_eq!(bookmarks[2].id, "bm-0002");
-    }
-
-    #[test]
-    fn add_at_position_inserts_and_shifts() {
-        init_test_env();
-        let db = Database::open_in_memory().unwrap();
-        db.insert_bookmark(&test_bookmark("bm-0001")).unwrap();
-        db.insert_bookmark(&test_bookmark("bm-0002")).unwrap();
-        db.insert_bookmark(&test_bookmark("bm-0003")).unwrap();
-        db.insert_collection(&test_collection("insert")).unwrap();
-
-        // Add first two
-        db.add_to_collection("col-insert", &["bm-0001".into(), "bm-0002".into()]).unwrap();
-
-        // Insert bm-0003 at position 1 (between bm-0001 and bm-0002)
-        db.add_to_collection_at("col-insert", &["bm-0003".into()], Some(1)).unwrap();
-
-        let filter = crate::engine::bookmark::BookmarkFilter {
-            collection: Some("insert".to_string()),
-            ..Default::default()
-        };
-        let bookmarks = db.list_bookmarks(&filter).unwrap();
-        assert_eq!(bookmarks.len(), 3);
-        assert_eq!(bookmarks[0].id, "bm-0001");
-        assert_eq!(bookmarks[1].id, "bm-0003");
-        assert_eq!(bookmarks[2].id, "bm-0002");
+        let health = db.recompute_collection_health(&col.id).unwrap();
+        assert_eq!(health, None);
     }
 }

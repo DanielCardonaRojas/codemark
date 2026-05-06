@@ -20,6 +20,10 @@ pub enum PackError {
     TourCountOutOfRange(usize),
     #[error("Dangling bookmark reference: {0}")]
     DanglingBookmarkRef(String),
+    #[error("Dangling collection reference: {0}")]
+    DanglingCollectionRef(String),
+    #[error("Invalid value in pack: {0}")]
+    InvalidValue(String),
     #[error("Bookmark count exceeds limit: {0}")]
     BookmarkLimitExceeded(usize),
     #[error("Database error: {0}")]
@@ -65,6 +69,8 @@ pub fn pre_inspect(pack_path: &Path) -> Result<i64, PackError> {
     let allowed_tables = [
         "collections",
         "collection_bookmarks",
+        "collection_tags",
+        "collection_links",
         "bookmarks",
         "bookmark_annotations",
         "bookmark_tags",
@@ -142,6 +148,44 @@ pub fn inspect(pack_path: &Path) -> Result<PackInfo, PackError> {
             "{} dangling bookmarks",
             dangling_bookmarks
         )));
+    }
+
+    // Integrity: collection_tags and collection_links must reference collections in the pack
+    let dangling_tags: usize = conn.query_row(
+        "SELECT COUNT(*) FROM collection_tags WHERE collection_id NOT IN (SELECT id FROM collections)",
+        [],
+        |row| row.get(0),
+    )?;
+    if dangling_tags > 0 {
+        return Err(PackError::DanglingCollectionRef(format!(
+            "{} dangling collection tags",
+            dangling_tags
+        )));
+    }
+
+    let dangling_links: usize = conn.query_row(
+        "SELECT COUNT(*) FROM collection_links WHERE collection_id NOT IN (SELECT id FROM collections)",
+        [],
+        |row| row.get(0),
+    )?;
+    if dangling_links > 0 {
+        return Err(PackError::DanglingCollectionRef(format!(
+            "{} dangling collection links",
+            dangling_links
+        )));
+    }
+
+    // Kind integrity for collection_links
+    let kinds_list = crate::engine::bookmark::CollectionLinkKind::ALL_VARIANTS
+        .iter()
+        .map(|s| format!("'{}'", s))
+        .collect::<Vec<_>>()
+        .join(", ");
+    let query = format!("SELECT COUNT(*) FROM collection_links WHERE kind NOT IN ({})", kinds_list);
+    let invalid_kinds: usize = conn.query_row(&query, [], |row| row.get(0))?;
+
+    if invalid_kinds > 0 {
+        return Err(PackError::InvalidValue(format!("{} invalid link kinds", invalid_kinds)));
     }
 
     Ok(PackInfo { user_version, tour_count, bookmark_count, source_client })

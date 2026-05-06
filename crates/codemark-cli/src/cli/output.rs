@@ -78,6 +78,7 @@ pub struct LineFormatContext<'a> {
     pub filename: &'a str,
     pub line: usize,
     pub offset: usize,
+    pub health: &'a str,
     pub status: &'a str,
     pub tags: &'a str,
     pub note: &'a str,
@@ -98,6 +99,7 @@ pub fn format_line(template: &str, ctx: &LineFormatContext) -> String {
         .replace("{FILENAME}", ctx.filename)
         .replace("{LINE}", &ctx.line.to_string())
         .replace("{OFFSET}", &ctx.offset.to_string())
+        .replace("{HEALTH}", ctx.health)
         .replace("{STATUS}", ctx.status)
         .replace("{TAGS}", ctx.tags)
         .replace("{NOTE}", ctx.note)
@@ -110,6 +112,7 @@ pub fn format_line(template: &str, ctx: &LineFormatContext) -> String {
         .replace("{filename}", ctx.filename)
         .replace("{line}", &ctx.line.to_string())
         .replace("{offset}", &ctx.offset.to_string())
+        .replace("{health}", ctx.health)
         .replace("{status}", ctx.status)
         .replace("{tags}", ctx.tags)
         .replace("{note}", ctx.note)
@@ -295,7 +298,7 @@ fn write_bookmarks_table(bookmarks: &[Bookmark]) -> io::Result<()> {
         return Ok(());
     }
     let mut table = Table::new();
-    table.set_header(vec!["ID", "File", "Status", "Tags", "Note", "Last Resolved"]);
+    table.set_header(vec!["ID", "File", "Health", "Tags", "Note", "Last Resolved"]);
 
     for bm in bookmarks {
         let tags = bm.tags.join(", ");
@@ -304,7 +307,7 @@ fn write_bookmarks_table(bookmarks: &[Bookmark]) -> io::Result<()> {
         table.add_row(vec![
             Cell::new(short_id(&bm.id)),
             Cell::new(&bm.file_path),
-            Cell::new(bm.status.to_string()),
+            Cell::new(bm.health.to_string()),
             Cell::new(tags),
             Cell::new(note),
             Cell::new(resolved),
@@ -319,14 +322,14 @@ fn write_bookmarks_line(bookmarks: &[Bookmark]) -> io::Result<()> {
     for bm in bookmarks {
         let tags = bm.tags.iter().map(|t| format!("#{t}")).collect::<Vec<_>>().join(",");
         let note = get_first_note(bm);
-        // Format: <id>\t<file>:<line>\t<status>\t<tags>\t<note>
+        // Format: <id>\t<file>:<line>\t<health>\t<tags>\t<note>
         // Line is unknown without resolution, so we use file path only
         writeln!(
             stdout,
             "{}\t{}\t{}\t{}\t{}",
             short_id(&bm.id),
             bm.file_path,
-            bm.status,
+            bm.health,
             tags,
             note
         )?;
@@ -335,7 +338,7 @@ fn write_bookmarks_line(bookmarks: &[Bookmark]) -> io::Result<()> {
 }
 
 /// Write bookmarks in television format with line numbers.
-/// Format: <id>\t<file>\t<line>\t<status>\t<tags>\t<note>
+/// Format: <id>\t<file>\t<line>\t<health>\t<tags>\t<note>
 /// This requires database access to fetch line numbers from resolutions.
 /// The line number is the center of the line range for better preview positioning.
 /// Write bookmarks using a flexible line format template.
@@ -358,7 +361,7 @@ where
         let context = get_first_context(bm);
         let line =
             if let Some(ref fn_line) = get_line_fn { fn_line(short).unwrap_or(0) } else { 0 };
-        let status = bm.status.to_string();
+        let health = bm.health.to_string();
 
         let ctx = LineFormatContext {
             id: short,
@@ -366,7 +369,8 @@ where
             filename,
             line,
             offset: line,
-            status: status.as_str(),
+            health: health.as_str(),
+            status: health.as_str(),
             tags: &tags,
             note,
             context,
@@ -408,7 +412,7 @@ where
         let context = get_first_context(bm);
         let line =
             if let Some(ref fn_line) = get_line_fn { fn_line(short).unwrap_or(0) } else { 0 };
-        let status = bm.status.to_string();
+        let health = bm.health.to_string();
 
         let ctx = LineFormatContext {
             id: short,
@@ -416,7 +420,8 @@ where
             filename,
             line,
             offset: line,
-            status: status.as_str(),
+            health: health.as_str(),
+            status: health.as_str(),
             tags: &tags,
             note,
             context,
@@ -460,7 +465,7 @@ where
                 return Ok(());
             }
             let mut table = Table::new();
-            table.set_header(vec!["Source", "ID", "File", "Status", "Tags", "Note"]);
+            table.set_header(vec!["Source", "ID", "File", "Health", "Tags", "Note"]);
             for ab in bookmarks {
                 let bm = ab.bookmark;
                 let tags = bm.tags.join(", ");
@@ -469,7 +474,7 @@ where
                     Cell::new(ab.source),
                     Cell::new(short_id(&bm.id)),
                     Cell::new(&bm.file_path),
-                    Cell::new(bm.status.to_string()),
+                    Cell::new(bm.health.to_string()),
                     Cell::new(tags),
                     Cell::new(note),
                 ]);
@@ -493,7 +498,7 @@ where
                         ab.source,
                         short_id(&bm.id),
                         bm.file_path,
-                        bm.status,
+                        bm.health,
                         tags,
                         note
                     )?;
@@ -507,7 +512,7 @@ where
         OutputMode::Markdown => {
             // For multi-db markdown output, fall back to table format
             let mut table = Table::new();
-            table.set_header(vec!["Source", "ID", "File", "Status", "Tags", "Note"]);
+            table.set_header(vec!["Source", "ID", "File", "Health", "Tags", "Note"]);
             for ab in bookmarks {
                 let bm = ab.bookmark;
                 let tags = bm.tags.join(", ");
@@ -516,7 +521,7 @@ where
                     Cell::new(ab.source),
                     Cell::new(short_id(&bm.id)),
                     Cell::new(&bm.file_path),
-                    Cell::new(bm.status.to_string()),
+                    Cell::new(bm.health.to_string()),
                     Cell::new(tags),
                     Cell::new(note),
                 ]);
@@ -575,7 +580,7 @@ fn write_bookmark_markdown_fallback(bm: &Bookmark, resolutions: &[Resolution]) -
     writeln!(stdout, "|----------|-------|")?;
     writeln!(stdout, "| **File** | {} |", escape_markdown(&bm.file_path))?;
     writeln!(stdout, "| **Language** | {} |", bm.language)?;
-    writeln!(stdout, "| **Status** | {} |", bm.status)?;
+    writeln!(stdout, "| **Health** | {} |", bm.health)?;
     writeln!(stdout, "| **Created** | {} |", bm.created_at)?;
     if let Some(ref created_by) = bm.created_by {
         writeln!(stdout, "| **Author** | {} |", escape_markdown(created_by))?;
@@ -677,8 +682,12 @@ pub struct HealUpdate {
     pub resolution_id: Option<String>,
     pub name: String,
     pub file_path: String,
-    pub previous_status: String,
-    pub new_status: String,
+    pub previous_health: String,
+    pub new_health: String,
+    #[serde(rename = "previous_status")]
+    pub previous_health_alias: String,
+    #[serde(rename = "new_status")]
+    pub new_health_alias: String,
     pub resolution_method: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub previous_location: Option<ByteLocation>,
@@ -726,9 +735,9 @@ pub fn write_heal_output(mode: &OutputMode, output: &HealOutput) -> io::Result<(
 }
 
 fn write_heal_table(output: &HealOutput) -> io::Result<()> {
-    let updated_count = output.updates.iter().filter(|u| u.previous_status != u.new_status).count();
+    let updated_count = output.updates.iter().filter(|u| u.previous_health != u.new_health).count();
     let unchanged_count =
-        output.updates.iter().filter(|u| u.previous_status == u.new_status).count();
+        output.updates.iter().filter(|u| u.previous_health == u.new_health).count();
 
     println!(
         "Healed {} bookmarks: {} updated, {} unchanged, {} skipped",
@@ -738,9 +747,9 @@ fn write_heal_table(output: &HealOutput) -> io::Result<()> {
 }
 
 fn write_heal_line(output: &HealOutput) -> io::Result<()> {
-    let updated_count = output.updates.iter().filter(|u| u.previous_status != u.new_status).count();
+    let updated_count = output.updates.iter().filter(|u| u.previous_health != u.new_health).count();
     let unchanged_count =
-        output.updates.iter().filter(|u| u.previous_status == u.new_status).count();
+        output.updates.iter().filter(|u| u.previous_health == u.new_health).count();
 
     let mut stdout = io::stdout().lock();
     writeln!(
