@@ -1,3 +1,4 @@
+{% import "partials/icon.html" as icons %}
 <div class="my-tour-card flex flex-col p-4 rounded-xl border border-border bg-bg-secondary/30 hover:bg-bg-secondary/50 hover:border-border/80 transition-colors">
     <div class="flex items-start justify-between gap-4 mb-3">
         <div class="flex-1 min-w-0">
@@ -17,7 +18,7 @@
         </div>
         <div class="flex gap-2 shrink-0">
             {% if !tour.is_published %}
-            <button hx-post="/tours/{{ tour.id }}/publish" hx-confirm="Publish this draft?" class="primary-button !py-1 !px-2 text-xs">
+            <button hx-post="/tours/{{ tour.id }}/publish" hx-confirm="Publish this draft?" hx-swap="none" class="primary-button !py-1 !px-2 text-xs">
                 Publish
             </button>
             {% endif %}

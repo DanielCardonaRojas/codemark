@@ -37,6 +37,13 @@ pub async fn add_handler(
         return (StatusCode::BAD_REQUEST, "Label and URL are required.").into_response();
     }
 
+    // Reject URLs whose scheme is not http(s) to avoid javascript:/data: injection.
+    let lower = url.to_ascii_lowercase();
+    if !(lower.starts_with("http://") || lower.starts_with("https://")) {
+        return (StatusCode::BAD_REQUEST, "URL must start with http:// or https://")
+            .into_response();
+    }
+
     let db = match state.storage.get_conn().await {
         Ok(t) => t,
         Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
@@ -52,23 +59,16 @@ pub async fn add_handler(
     let added_by = auth.current_user(&state.config).unwrap_or_else(|| "Anonymous".to_string());
 
     let result = db.interact(move |conn| {
-        // Get max sort_order
-        let max_sort: i32 = conn.query_row(
-            "SELECT COALESCE(MAX(sort_order), -1) FROM collection_links WHERE collection_id = ?",
-            [&tour_id_clone],
-            |row| row.get(0),
-        ).unwrap_or(-1);
-
         conn.execute(
             "INSERT INTO collection_links (id, collection_id, kind, label, url, sort_order, added_at, added_by) 
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-            [
+             VALUES (?, ?, ?, ?, ?, (SELECT COALESCE(MAX(sort_order), -1) + 1 FROM collection_links WHERE collection_id = ?), ?, ?)",
+            rusqlite::params![
                 &id_clone,
                 &tour_id_clone,
                 &kind_clone,
                 &label_clone,
                 &url_clone,
-                &(max_sort + 1).to_string(),
+                &tour_id_clone,
                 &added_at,
                 &added_by,
             ],

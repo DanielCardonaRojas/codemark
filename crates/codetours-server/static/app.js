@@ -30,7 +30,13 @@
 
     // Filter out empty query parameters from tours filter form
     document.body.addEventListener('htmx:configRequest', function(evt) {
-      if (evt.detail.target.matches('#tour-list') || evt.detail.etc.target === '#tour-list') {
+      const targetEl = evt.detail?.target;
+      const etcTarget = evt.detail?.etc?.target;
+      const isTourListTarget =
+        (targetEl instanceof Element && targetEl.matches('#tour-list')) ||
+        etcTarget === '#tour-list';
+
+      if (isTourListTarget) {
         const params = evt.detail.parameters;
         for (const key in params) {
           if (params[key] === '' || params[key] === null || params[key] === undefined) {

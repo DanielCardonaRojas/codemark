@@ -195,13 +195,39 @@ pub async fn handler(
             }
 
             // 3. Get total count
-            let count_query = "
+            let mut count_query = "
                 SELECT COUNT(*) FROM collections c
                 WHERE c.visibility = 'public' AND c.status = 'ready'
-            ";
-            // (Re-apply filters to count query if needed, but for now keep it simple)
+            ".to_string();
 
-            let total: usize = conn.query_row(count_query, [], |row| row.get(0))?;
+            let mut count_params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+
+            if let Some(q) = &params_clone.q {
+                count_query.push_str(" AND (c.name LIKE ? OR c.description LIKE ?)");
+                let pattern = format!("%{}%", q);
+                count_params.push(Box::new(pattern.clone()));
+                count_params.push(Box::new(pattern));
+            }
+
+            if let Some(repo) = &params_clone.repo_url {
+                count_query.push_str(" AND c.repo_url = ?");
+                count_params.push(Box::new(repo.clone()));
+            }
+
+            if let Some(branch) = &params_clone.branch {
+                count_query.push_str(" AND c.created_branch = ?");
+                count_params.push(Box::new(branch.clone()));
+            }
+
+            if let Some(tag) = &params_clone.tag {
+                count_query.push_str(" AND EXISTS (
+                    SELECT 1 FROM collection_tags ct
+                    WHERE ct.collection_id = c.id AND ct.tag = ?
+                )");
+                count_params.push(Box::new(tag.clone()));
+            }
+
+            let total: usize = conn.query_row(&count_query, rusqlite::params_from_iter(count_params), |row| row.get(0))?;
 
             // 4. Get filter options (Repos, Branches, Tags)
             let repos: Vec<String> = conn.prepare("SELECT DISTINCT repo_url FROM collections WHERE repo_url IS NOT NULL AND visibility = 'public'")?

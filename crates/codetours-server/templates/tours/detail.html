@@ -142,7 +142,7 @@
                             <div class="flex">
                                 <div class="line-numbers shrink-0 py-4 px-3 text-right bg-bg-secondary/20 border-r border-border text-[10px] font-mono text-text-secondary opacity-50 select-none">
                                     {% for _ in bookmark.preview_lines.lines() %}
-                                        <div>{{ loop.index0 + bookmark.line }}</div>
+                                        <div>{{ (loop.index0 + bookmark.line).saturating_sub(5) }}</div>
                                     {% endfor %}
                                 </div>
                                 <pre class="p-4 text-xs font-mono overflow-x-auto custom-scrollbar flex-1"><code>{{ bookmark.highlighted|safe }}</code></pre>
