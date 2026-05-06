@@ -28,18 +28,20 @@
     </div>
     
     {% if let Some(desc) = tour.description %}
-    <p class="text-xs text-text-secondary line-clamp-2 mb-4">{{ desc }}</p>
+    <p class="text-sm text-text-secondary line-clamp-2 mb-4">{{ desc }}</p>
     {% endif %}
 
     <div class="mt-auto flex items-center justify-between pt-3 border-t border-border/40 text-[10px] text-text-secondary">
-        <div class="flex gap-3">
+        <div class="flex items-center gap-3">
+            {% if let Some(repo) = tour.repo %}
             <div class="flex items-center gap-1">
-                {% call icons::icon("git-branch", 12) %}
-                {% if let Some(repo) = tour.repo %}{{ repo }}{% else %}Local{% endif %}
+                {% call icons::icon("folder", 12) %}
+                <span>{{ repo }}</span>
             </div>
+            {% endif %}
         </div>
         <div class="flex items-center gap-1 font-mono">
-            {% call icons::icon("hash", 12) %}
+            {% call icons::icon("book-open", 12) %}
             {{ tour.step_count }} steps
         </div>
     </div>

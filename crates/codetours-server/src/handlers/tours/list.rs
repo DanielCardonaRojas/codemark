@@ -36,9 +36,11 @@ pub struct TourView {
     pub title: String,
     pub description: String,
     pub health: Option<String>,
+    pub health_label: String,
     pub status_class: String,
     pub updated_at_relative: String,
     pub author: String,
+    pub repo: Option<String>,
     pub branch: String,
     pub step_count: usize,
     pub tags: Vec<String>,
@@ -67,7 +69,9 @@ pub struct ToursListPartialTemplate {
 pub struct TourSummary {
     pub tour_id: String,
     pub title: String,
+    pub description: Option<String>,
     pub repo_url: Option<String>,
+    pub repo: Option<String>,
     pub updated_at: String,
     pub health: Option<String>,
     pub url: String,
@@ -219,11 +223,14 @@ pub async fn handler(
     match result {
         Ok(Ok((tours_data, total, repos, branches, tags))) => {
             if format == ResponseFormat::Json {
-                let tours = tours_data.into_iter().map(|(id, name, _, repo, updated, _, _, health, _, _)| {
+                let tours = tours_data.into_iter().map(|(id, name, desc, repo, updated, _, _, health, _, _)| {
+                    let repo_name = repo.as_ref().and_then(|u| u.split('/').last().map(|s| s.to_string()));
                     TourSummary {
                         tour_id: id.clone(),
                         title: name,
+                        description: desc,
                         repo_url: repo,
+                        repo: repo_name,
                         updated_at: updated,
                         health,
                         url: format!("/tours/{}", id),
@@ -231,22 +238,32 @@ pub async fn handler(
                 }).collect();
                 (StatusCode::OK, Json(ListToursResponse { tours, total, limit, offset })).into_response()
             } else {
-                let tours = tours_data.into_iter().map(|(id, name, desc, _repo, updated, author, branch, health, steps, tags)| {
-                    let status_class = match health.as_deref() {
-                        Some("active") => "healthy",
-                        Some("drifted") => "drifted",
-                        Some("stale") => "stale",
-                        _ => "healthy",
-                    }.to_string();
+                let tours = tours_data.into_iter().map(|(id, name, desc, repo, updated, author, branch, health, steps, tags)| {
+                    let (status_class, health_label) = match health.as_deref() {
+                        Some("active") => ("healthy", "ACTIVE"),
+                        Some("drifted") => ("drifted", "DRIFTED"),
+                        Some("stale") => ("stale", "STALE"),
+                        _ => ("healthy", "ACTIVE"),
+                    };
+
+                    let updated_date = if updated.len() >= 10 {
+                        updated[..10].to_string()
+                    } else {
+                        updated
+                    };
+
+                    let repo_name = repo.as_ref().and_then(|u| u.split('/').last().map(|s| s.to_string()));
 
                     TourView {
                         id,
                         title: name,
                         description: desc.unwrap_or_default(),
                         health: health.clone(),
-                        status_class,
-                        updated_at_relative: updated, // TODO: Relative time
+                        health_label: health_label.to_string(),
+                        status_class: status_class.to_string(),
+                        updated_at_relative: updated_date,
                         author: author.unwrap_or_else(|| "anonymous".to_string()),
+                        repo: repo_name,
                         branch: branch.unwrap_or_else(|| "main".to_string()),
                         step_count: steps,
                         tags,
