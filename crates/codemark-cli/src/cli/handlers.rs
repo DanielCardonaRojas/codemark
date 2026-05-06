@@ -221,11 +221,10 @@ pub async fn handle_edit_v2(cli: &Cli, mode: &OutputMode, args: &EditArgs) -> Re
     // Convert EditArgs to AnnotateArgs
     let mut tags_to_add: Vec<String> = Vec::new();
     for tag in &args.tag {
-        if tag.starts_with('-') {
+        if let Some(rest) = tag.strip_prefix('-') {
             return Err(Error::Input(format!(
                 "tag removal is not yet supported: '{}'; use 'codemark list --tag {}' to find bookmarks with this tag",
-                tag,
-                &tag[1..]
+                tag, rest
             )));
         }
         if let Some(stripped) = tag.strip_prefix('+') {
