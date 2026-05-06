@@ -140,9 +140,9 @@ impl Packer {
         // 5. Insert resolutions
         for res in &payload.resolutions {
             conn.execute(
-                "INSERT INTO resolutions (id, bookmark_id, resolved_at, commit_hash, method, match_count, file_path, byte_range, line_range, content_hash, headline, preview_lines)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
-                params![res.id, res.bookmark_id, res.resolved_at, res.commit_hash, res.method.to_string(), res.match_count, res.file_path, res.byte_range, res.line_range, res.content_hash, res.headline, res.preview_lines],
+                "INSERT INTO resolutions (id, bookmark_id, resolved_at, commit_hash, method, match_count, file_path, byte_range, line_range, content_hash, headline, preview_lines, breadcrumbs)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+                params![res.id, res.bookmark_id, res.resolved_at, res.commit_hash, res.method.to_string(), res.match_count, res.file_path, res.byte_range, res.line_range, res.content_hash, res.headline, res.preview_lines, res.breadcrumbs],
             )?;
         }
 

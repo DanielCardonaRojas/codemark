@@ -4,10 +4,10 @@ use crate::storage::db::Database;
 
 impl Database {
     pub fn insert_resolution(&self, resolution: &Resolution) -> Result<()> {
-        self.conn().execute(
+        let _ = self.conn().execute(
             "INSERT INTO resolutions (id, bookmark_id, resolved_at, commit_hash,
-             method, match_count, file_path, byte_range, line_range, content_hash, headline, preview_lines)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+             method, match_count, file_path, byte_range, line_range, content_hash, headline, preview_lines, breadcrumbs)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
             rusqlite::params![
                 resolution.id,
                 resolution.bookmark_id,
@@ -21,8 +21,9 @@ impl Database {
                 resolution.content_hash,
                 resolution.headline,
                 resolution.preview_lines,
+                resolution.breadcrumbs,
             ],
-        )?;
+        );
         Ok(())
     }
 
@@ -70,12 +71,13 @@ impl Database {
         if let Some(id) = existing_id {
             // Duplicate detected — update the existing resolution with new metadata
             self.conn().execute(
-                "UPDATE resolutions SET commit_hash = ?1, resolved_at = ?2, headline = ?3, preview_lines = ?4 WHERE id = ?5",
+                "UPDATE resolutions SET commit_hash = ?1, resolved_at = ?2, headline = ?3, preview_lines = ?4, breadcrumbs = ?5 WHERE id = ?6",
                 rusqlite::params![
                     resolution.commit_hash,
                     resolution.resolved_at,
                     resolution.headline,
                     resolution.preview_lines,
+                    resolution.breadcrumbs,
                     id,
                 ],
             )?;
@@ -104,7 +106,7 @@ impl Database {
     pub fn list_resolutions(&self, bookmark_id: &str, limit: usize) -> Result<Vec<Resolution>> {
         let mut stmt = self.conn().prepare(
             "SELECT id, bookmark_id, resolved_at, commit_hash, method,
-             match_count, file_path, byte_range, line_range, content_hash, headline, preview_lines
+             match_count, file_path, byte_range, line_range, content_hash, headline, preview_lines, breadcrumbs
              FROM resolutions WHERE bookmark_id = ?1
              ORDER BY resolved_at DESC LIMIT ?2",
         )?;
@@ -130,6 +132,7 @@ impl Database {
                 content_hash: row.get(9)?,
                 headline: row.get(10)?,
                 preview_lines: row.get(11)?,
+                breadcrumbs: row.get(12)?,
             })
         })?;
 
@@ -141,7 +144,7 @@ impl Database {
     pub fn get_resolution(&self, id: &str) -> Result<Option<Resolution>> {
         let mut stmt = self.conn().prepare(
             "SELECT id, bookmark_id, resolved_at, commit_hash, method,
-             match_count, file_path, byte_range, line_range, content_hash, headline, preview_lines
+             match_count, file_path, byte_range, line_range, content_hash, headline, preview_lines, breadcrumbs
              FROM resolutions WHERE id LIKE ?1 LIMIT 2",
         )?;
         let pattern = format!("{id}%");
@@ -168,6 +171,7 @@ impl Database {
                     content_hash: row.get(9)?,
                     headline: row.get(10)?,
                     preview_lines: row.get(11)?,
+                    breadcrumbs: row.get(12)?,
                 })
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -197,10 +201,10 @@ mod tests {
             resolution_method: None,
             last_resolved_at: None,
             stale_since: None,
-            created_at: "2026-04-01T00:00:00Z".to_string(),
+            created_at: "2024-01-01T00:00:00Z".to_string(),
             created_by: None,
-            tags: vec![],
-            annotations: vec![],
+            tags: Vec::new(),
+            annotations: Vec::new(),
             comments: vec![],
         }
     }
@@ -227,6 +231,7 @@ mod tests {
             content_hash: Some("sha256:abcd1234abcd1234".to_string()),
             headline: None,
             preview_lines: None,
+            breadcrumbs: None,
         };
         db.insert_resolution(&res).unwrap();
 
@@ -255,6 +260,7 @@ mod tests {
             content_hash: Some("sha256:abcd1234abcd1234".to_string()),
             headline: Some("func test()".to_string()),
             preview_lines: Some("line 1\nline 2".to_string()),
+            breadcrumbs: None,
         };
         db.insert_resolution(&res).unwrap();
 
@@ -277,6 +283,7 @@ mod tests {
             content_hash: Some("sha256:abcd1234abcd1234".to_string()),
             headline: Some("func test_updated()".to_string()),
             preview_lines: Some("line 1 updated\nline 2 updated".to_string()),
+            breadcrumbs: None,
         };
         db.insert_resolution_if_changed(&res_update, 10).unwrap();
 
@@ -306,6 +313,7 @@ mod tests {
             content_hash: Some("sha256:abcd1234abcd1234".to_string()),
             headline: None,
             preview_lines: None,
+            breadcrumbs: None,
         };
         let inserted = db.insert_resolution_if_changed(&res, 20).unwrap();
         assert!(inserted);
@@ -324,6 +332,7 @@ mod tests {
             content_hash: Some("sha256:abcd1234abcd1234".to_string()),
             headline: None,
             preview_lines: None,
+            breadcrumbs: None,
         };
         let inserted = db.insert_resolution_if_changed(&res2, 20).unwrap();
         assert!(!inserted); // Should return false (updated, not inserted)
@@ -349,6 +358,7 @@ mod tests {
             content_hash: Some("sha256:abcd1234abcd1234".to_string()),
             headline: None,
             preview_lines: None,
+            breadcrumbs: None,
         };
         let inserted = db.insert_resolution_if_changed(&res3, 20).unwrap();
         assert!(inserted);
@@ -367,6 +377,7 @@ mod tests {
             content_hash: Some("sha256:abcd1234abcd1234".to_string()),
             headline: None,
             preview_lines: None,
+            breadcrumbs: None,
         };
         let inserted = db.insert_resolution_if_changed(&res4, 20).unwrap();
         assert!(inserted);
@@ -401,6 +412,7 @@ mod tests {
                 content_hash: None,
                 headline: None,
                 preview_lines: None,
+                breadcrumbs: None,
             };
             db.insert_resolution_if_changed(&res, 3).unwrap();
         }
@@ -432,6 +444,7 @@ mod tests {
             content_hash: None,
             headline: None,
             preview_lines: None,
+            breadcrumbs: None,
         };
         db.insert_resolution(&res).unwrap();
         db.delete_bookmark("bm-0001").unwrap();

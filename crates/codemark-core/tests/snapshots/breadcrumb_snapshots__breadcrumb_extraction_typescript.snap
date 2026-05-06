@@ -1,0 +1,10 @@
+---
+source: crates/codemark-core/tests/breadcrumb_snapshots.rs
+expression: "serde_json::json!({ \"breadcrumbs\": breadcrumbs, \"preview_lines\": preview })"
+---
+breadcrumbs:
+  - line: 16
+    text: "class AuthService {"
+  - line: 27
+    text: "async validateToken(token: string): Promise<Claims> {"
+preview_lines: "    if (cached) {\n      if (cached.expiry <= new Date()) {\n        this.tokenCache.delete(token);\n        throw new Error(AuthError.Expired);\n      }"

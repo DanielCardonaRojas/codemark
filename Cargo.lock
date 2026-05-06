@@ -468,6 +468,7 @@ dependencies = [
  "directories",
  "git2",
  "hf-hub",
+ "insta",
  "regex",
  "rusqlite",
  "serde",

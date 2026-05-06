@@ -70,7 +70,7 @@ impl PackReader {
 
     pub fn bookmarks(&self) -> Result<Vec<Bookmark>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, query, language, file_path, content_hash, commit_hash, health, resolution_method, last_resolved_at, stale_since, created_at, created_by 
+            "SELECT id, query, language, file_path, content_hash, commit_hash, health, resolution_method, last_resolved_at, stale_since, created_at, created_by
              FROM bookmarks"
         )?;
         let rows = stmt.query_map([], row_to_bookmark)?;
@@ -84,7 +84,7 @@ impl PackReader {
 
     pub fn bookmarks_for_collection(&self, collection_id: &str) -> Result<Vec<Bookmark>> {
         let mut stmt = self.conn.prepare(
-            "SELECT b.id, b.query, b.language, b.file_path, b.content_hash, b.commit_hash, b.health, b.resolution_method, b.last_resolved_at, b.stale_since, b.created_at, b.created_by 
+            "SELECT b.id, b.query, b.language, b.file_path, b.content_hash, b.commit_hash, b.health, b.resolution_method, b.last_resolved_at, b.stale_since, b.created_at, b.created_by
              FROM bookmarks b
              JOIN collection_bookmarks cb ON b.id = cb.bookmark_id
              WHERE cb.collection_id = ?1
@@ -101,7 +101,7 @@ impl PackReader {
 
     pub fn resolutions(&self, bookmark_id: &str) -> Result<Vec<Resolution>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, bookmark_id, resolved_at, commit_hash, method, match_count, file_path, byte_range, line_range, content_hash, headline, preview_lines 
+            "SELECT id, bookmark_id, resolved_at, commit_hash, method, match_count, file_path, byte_range, line_range, content_hash, headline, preview_lines, breadcrumbs
              FROM resolutions WHERE bookmark_id = ?1"
         )?;
         let rows = stmt.query_map([bookmark_id], |row| {
@@ -119,6 +119,7 @@ impl PackReader {
                 content_hash: row.get(9)?,
                 headline: row.get(10)?,
                 preview_lines: row.get(11)?,
+                breadcrumbs: row.get(12)?,
             })
         })?;
 

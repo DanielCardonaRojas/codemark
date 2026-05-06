@@ -274,19 +274,18 @@ impl Database {
         &self,
         id: &str,
         health: BookmarkHealth,
-        method: Option<ResolutionMethod>,
+        resolution_method: Option<ResolutionMethod>,
         last_resolved_at: Option<&str>,
         stale_since: Option<&str>,
     ) -> Result<()> {
         self.conn().execute(
-            "UPDATE bookmarks SET health = ?1, resolution_method = ?2,
-             last_resolved_at = ?3, stale_since = ?4 WHERE id = ?5",
+            "UPDATE bookmarks SET health = ?1, resolution_method = ?2, last_resolved_at = ?3, stale_since = ?4 WHERE id = ?5",
             rusqlite::params![
                 health.to_string(),
-                method.map(|m| m.to_string()),
+                resolution_method.map(|m| m.to_string()),
                 last_resolved_at,
                 stale_since,
-                id,
+                id
             ],
         )?;
         Ok(())
@@ -569,10 +568,10 @@ mod tests {
             resolution_method: Some(ResolutionMethod::Exact),
             last_resolved_at: None,
             stale_since: None,
-            created_at: "2026-04-01T00:00:00Z".to_string(),
+            created_at: "2024-01-01T00:00:00Z".to_string(),
             created_by: None,
-            tags: vec![],
-            annotations: vec![],
+            tags: Vec::new(),
+            annotations: Vec::new(),
             comments: vec![],
         }
     }

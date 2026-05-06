@@ -21,6 +21,8 @@ pub struct ResolutionResult {
     pub matched_text: String,
     pub content_hash: String,
     pub hash_matches: bool,
+    /// Structural ancestors for sticky headers.
+    pub breadcrumbs: Vec<crate::engine::breadcrumbs::Breadcrumb>,
     /// If hash fallback was used, the regenerated query for the new location.
     pub new_query: Option<String>,
 }
@@ -68,29 +70,17 @@ pub async fn resolve(
                 bookmark.query
             );
         }
-        if matches.len() == 1 {
-            let m = &matches[0];
-            let ch = hash::content_hash(&m.node_text);
-            let hash_matches = bookmark.content_hash.as_deref() == Some(ch.as_str());
-            return Ok(ResolutionResult {
-                method: ResolutionMethod::Exact,
-                file_path: bookmark.file_path.clone(),
-                byte_range: m.byte_range,
-                start_line: m.start_point.0,
-                start_col: m.start_point.1,
-                end_line: m.end_point.0,
-                matched_text: m.node_text.clone(),
-                content_hash: ch,
-                hash_matches,
-                new_query: None,
-            });
+        if let Some(result) = pick_match(&matches, bookmark, tree, source, ResolutionMethod::Exact) {
+            return Ok(result);
         }
     }
 
     // Tier 2: Relaxed query
     if let Ok(relaxed) = relaxer::relax_query(&bookmark.query) {
         if let Ok(matches) = matcher::run_query(&relaxed, tree, source_bytes, language) {
-            if let Some(result) = pick_match(&matches, bookmark, ResolutionMethod::Relaxed) {
+            if let Some(result) =
+                pick_match(&matches, bookmark, tree, source, ResolutionMethod::Relaxed)
+            {
                 return Ok(result);
             }
         }
@@ -99,7 +89,9 @@ pub async fn resolve(
     // Tier 3: Minimal query
     if let Ok(minimal) = relaxer::minimize_query(&bookmark.query) {
         if let Ok(matches) = matcher::run_query(&minimal, tree, source_bytes, language) {
-            if let Some(result) = pick_match(&matches, bookmark, ResolutionMethod::Relaxed) {
+            if let Some(result) =
+                pick_match(&matches, bookmark, tree, source, ResolutionMethod::Relaxed)
+            {
                 return Ok(result);
             }
         }
@@ -126,6 +118,7 @@ pub async fn resolve(
         matched_text: String::new(),
         content_hash: String::new(),
         hash_matches: false,
+        breadcrumbs: Vec::new(),
         new_query: None,
     })
 }
@@ -134,12 +127,16 @@ pub async fn resolve(
 fn pick_match(
     matches: &[matcher::MatchResult],
     bookmark: &Bookmark,
+    tree: &tree_sitter::Tree,
+    source: &str,
     method: ResolutionMethod,
 ) -> Option<ResolutionResult> {
     if matches.len() == 1 {
         let m = &matches[0];
         let ch = hash::content_hash(&m.node_text);
         let hash_matches = bookmark.content_hash.as_deref() == Some(ch.as_str());
+        let breadcrumbs = extract_breadcrumbs_from_match(m, tree, source, bookmark);
+
         return Some(ResolutionResult {
             method,
             file_path: bookmark.file_path.clone(),
@@ -150,6 +147,7 @@ fn pick_match(
             matched_text: m.node_text.clone(),
             content_hash: ch,
             hash_matches,
+            breadcrumbs,
             new_query: None,
         });
     }
@@ -159,6 +157,7 @@ fn pick_match(
         for m in matches {
             let ch = hash::content_hash(&m.node_text);
             if ch == *stored_hash {
+                let breadcrumbs = extract_breadcrumbs_from_match(m, tree, source, bookmark);
                 return Some(ResolutionResult {
                     method,
                     file_path: bookmark.file_path.clone(),
@@ -169,6 +168,7 @@ fn pick_match(
                     matched_text: m.node_text.clone(),
                     content_hash: ch,
                     hash_matches: true,
+                    breadcrumbs,
                     new_query: None,
                 });
             }
@@ -178,23 +178,49 @@ fn pick_match(
     None
 }
 
+fn extract_breadcrumbs_from_match(
+    m: &matcher::MatchResult,
+    tree: &tree_sitter::Tree,
+    source: &str,
+    bookmark: &Bookmark,
+) -> Vec<crate::engine::breadcrumbs::Breadcrumb> {
+    use std::str::FromStr;
+    let lang = crate::parser::languages::Language::from_str(&bookmark.language)
+        .unwrap_or(crate::parser::languages::Language::Rust);
+
+    if let Some(target_node) =
+        tree.root_node().descendant_for_byte_range(m.byte_range.0, m.byte_range.1)
+    {
+        crate::engine::breadcrumbs::extract_breadcrumbs(target_node, source, lang, 3)
+    } else {
+        Vec::new()
+    }
+}
+
 /// Walk all named nodes looking for a hash match.
 fn hash_fallback_walk(
     tree: &Tree,
     node: tree_sitter::Node,
-    source: &[u8],
+    source_bytes: &[u8],
     stored_hash: &str,
     bookmark: &Bookmark,
     language: &Language,
 ) -> Option<ResolutionResult> {
     if node.is_named() {
-        let text = std::str::from_utf8(&source[node.byte_range()]).unwrap_or("");
+        let text = std::str::from_utf8(&source_bytes[node.byte_range()]).unwrap_or("");
         let ch = hash::content_hash(text);
         if ch == stored_hash {
             // Regenerate query for this new location
-            let new_query = generator::generate_query_for_node(tree, node, source, language)
+            let new_query = generator::generate_query_for_node(tree, node, source_bytes, language)
                 .ok()
                 .map(|gq| gq.query);
+
+            let source_str = std::str::from_utf8(source_bytes).unwrap_or("");
+            use std::str::FromStr;
+            let lang_enum = crate::parser::languages::Language::from_str(&bookmark.language)
+                .unwrap_or(crate::parser::languages::Language::Rust);
+            let breadcrumbs =
+                crate::engine::breadcrumbs::extract_breadcrumbs(node, source_str, lang_enum, 3);
 
             return Some(ResolutionResult {
                 method: ResolutionMethod::HashFallback,
@@ -206,6 +232,7 @@ fn hash_fallback_walk(
                 matched_text: text.to_string(),
                 content_hash: ch,
                 hash_matches: true,
+                breadcrumbs,
                 new_query,
             });
         }
@@ -214,7 +241,7 @@ fn hash_fallback_walk(
     let mut cursor = node.walk();
     for child in node.named_children(&mut cursor) {
         if let Some(result) =
-            hash_fallback_walk(tree, child, source, stored_hash, bookmark, language)
+            hash_fallback_walk(tree, child, source_bytes, stored_hash, bookmark, language)
         {
             return Some(result);
         }

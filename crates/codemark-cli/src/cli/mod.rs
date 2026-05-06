@@ -482,6 +482,10 @@ pub struct PreviewArgs {
     /// Output raw file content to stdout instead of JSON metadata
     #[arg(long)]
     pub raw: bool,
+
+    /// Include ASCII breadcrumbs in the preview
+    #[arg(long)]
+    pub breadcrumbs: bool,
 }
 
 #[derive(Debug, clap::Args)]

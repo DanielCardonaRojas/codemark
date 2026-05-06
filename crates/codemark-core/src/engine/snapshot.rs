@@ -63,6 +63,11 @@ pub async fn build_snapshot(
         let abs_path = git_context::resolve_bookmark_file_path(&bm.file_path, project_root)?;
         let source = provider.read_file(&abs_path, None).await?;
         let preview = result.capture_preview(&source, padding);
+        let breadcrumbs_json = if result.breadcrumbs.is_empty() {
+            None
+        } else {
+            serde_json::to_string(&result.breadcrumbs).ok()
+        };
 
         // Update bookmark health based on resolution
         let hash_matches = bm.content_hash.as_ref() == Some(&result.content_hash);
@@ -97,6 +102,7 @@ pub async fn build_snapshot(
                 .find_map(|a| a.notes.clone())
                 .or(Some(result.matched_text.clone())),
             preview_lines: Some(preview),
+            breadcrumbs: breadcrumbs_json,
         };
 
         // Fetch tags for this bookmark

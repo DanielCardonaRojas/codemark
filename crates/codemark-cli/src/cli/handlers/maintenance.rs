@@ -115,6 +115,12 @@ pub async fn handle_heal(cli: &Cli, mode: &OutputMode, args: &HealArgs) -> Resul
             new_status
         };
 
+        let breadcrumbs_json = if result.breadcrumbs.is_empty() {
+            None
+        } else {
+            serde_json::to_string(&result.breadcrumbs).ok()
+        };
+
         db.update_bookmark_health(
             &bm.id,
             final_status,
@@ -150,6 +156,7 @@ pub async fn handle_heal(cli: &Cli, mode: &OutputMode, args: &HealArgs) -> Resul
                 content_hash: Some(result.content_hash.clone()),
                 headline: None,
                 preview_lines: None,
+                breadcrumbs: breadcrumbs_json,
             };
             let res_id = res.id.clone();
             let _ = db.insert_resolution_if_changed(&res, config.storage.max_resolutions());
@@ -500,3 +507,4 @@ pub async fn handle_import(cli: &Cli, mode: &OutputMode, args: &ImportArgs) -> R
     write_success(mode, &format!("Imported {imported} bookmarks ({skipped} duplicates skipped)"))?;
     Ok(())
 }
+

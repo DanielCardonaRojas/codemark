@@ -1078,6 +1078,7 @@ pub async fn resolve_batch(
             content_hash: Some(result.content_hash.clone()),
             headline: None,
             preview_lines: None,
+            breadcrumbs: None,
         };
         let _ = db.insert_resolution_if_changed(&res, config.storage.max_resolutions());
     }
@@ -1439,6 +1440,21 @@ pub async fn handle_preview(cli: &Cli, args: &PreviewArgs) -> Result<()> {
 
     // Handle raw output mode
     if args.raw {
+        if args.breadcrumbs {
+            if let Some(ref bc_json) = resolution.breadcrumbs {
+                if let Ok(breadcrumbs) =
+                    serde_json::from_str::<Vec<codemark_core::engine::breadcrumbs::Breadcrumb>>(
+                        bc_json,
+                    )
+                {
+                    for bc in breadcrumbs {
+                        println!("-- Line {}: {} --", bc.line, bc.text);
+                    }
+                    println!();
+                }
+            }
+        }
+
         let byte_range_str = resolution
             .byte_range
             .as_ref()
@@ -1486,6 +1502,7 @@ pub async fn handle_preview(cli: &Cli, args: &PreviewArgs) -> Result<()> {
         "resolved_at": resolution.resolved_at,
         "commit_hash": resolution.commit_hash,
         "content_hash": resolution.content_hash,
+        "breadcrumbs": resolution.breadcrumbs.as_ref().and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok()),
         "drifted": bm.health == BookmarkHealth::Drifted || bm.health == BookmarkHealth::Stale,
     });
 
