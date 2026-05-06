@@ -6,3 +6,4 @@ pub mod permalink;
 pub mod publish;
 pub mod comments;
 pub mod heal;
+pub mod links;

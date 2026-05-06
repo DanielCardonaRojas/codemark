@@ -255,23 +255,54 @@
 
             <!-- Global Tour Resources (Fixed at bottom) -->
             <div class="p-6 border-t border-border bg-bg-secondary/80 backdrop-blur">
-                <div class="flex items-center gap-2 mb-4">
-                    <span class="text-text-secondary">
-                        {% call icons::icon("link", 14) %}
-                    </span>
-                    <div class="text-[10px] font-bold text-text-secondary uppercase tracking-wider">Tour Resources</div>
-                </div>
-                <div class="space-y-2">
-                    {% for link in tour.links %}
-                    <a href="{{ link.url }}" target="_blank" rel="noopener noreferrer" 
-                       class="flex items-center gap-3 p-3 bg-bg-tertiary/20 border border-border rounded-lg text-sm font-medium hover:bg-bg-tertiary/40 transition-colors group">
-                        <span class="text-text-secondary group-hover:text-text-primary transition-colors">
-                            {% call icons::icon(link.icon, 16) %}
+                <div class="flex items-center justify-between mb-4">
+                    <div class="flex items-center gap-2">
+                        <span class="text-text-secondary">
+                            {% call icons::icon("link", 14) %}
                         </span>
-                        <span class="truncate">{{ link.label }}</span>
-                    </a>
+                        <div class="text-[10px] font-bold text-text-secondary uppercase tracking-wider">Tour Resources</div>
+                    </div>
+                    <button onclick="document.getElementById('add-link-form').classList.toggle('hidden')" 
+                            class="p-1 hover:bg-bg-tertiary rounded text-text-secondary hover:text-text-primary transition-colors">
+                        {% call icons::icon("plus", 12) %}
+                    </button>
+                </div>
+
+                <!-- Add Link Form (Hidden by default) -->
+                <div id="add-link-form" class="hidden mb-4 p-3 rounded-lg border border-border bg-bg-tertiary/20">
+                    <form hx-post="/tours/{{ tour.id }}/links"
+                          hx-target="#links-list"
+                          hx-swap="beforeend"
+                          hx-on::after-request="if(event.detail.successful) { this.reset(); document.getElementById('add-link-form').classList.add('hidden'); if(document.querySelector('.empty-notice')) document.querySelector('.empty-notice').remove(); }">
+                        <div class="space-y-2">
+                            <input type="text" name="label" required placeholder="Label (e.g. GitHub PR)" 
+                                   class="w-full bg-bg-tertiary/50 border border-border rounded px-2 py-1.5 text-[10px] focus:outline-none focus:border-accent">
+                            <input type="url" name="url" required placeholder="URL" 
+                                   class="w-full bg-bg-tertiary/50 border border-border rounded px-2 py-1.5 text-[10px] focus:outline-none focus:border-accent">
+                            <select name="kind" class="w-full bg-bg-tertiary/50 border border-border rounded px-2 py-1.5 text-[10px] focus:outline-none focus:border-accent">
+                                <option value="other">Other</option>
+                                <option value="pr">Pull Request</option>
+                                <option value="issue">Issue</option>
+                                <option value="doc">Documentation</option>
+                                <option value="discussion">Discussion</option>
+                                <option value="dashboard">Dashboard</option>
+                                <option value="repo">Repository</option>
+                                <option value="tour">Related Tour</option>
+                            </select>
+                            <div class="flex justify-end gap-2 pt-1">
+                                <button type="button" onclick="document.getElementById('add-link-form').classList.add('hidden')"
+                                        class="text-[10px] text-text-secondary hover:text-text-primary">Cancel</button>
+                                <button type="submit" class="primary-button !py-0.5 !px-2 text-[10px]">Add</button>
+                            </div>
+                        </div>
+                    </form>
+                </div>
+
+                <div class="space-y-2" id="links-list">
+                    {% for link in tour.links %}
+                    {% include "tours/_link_item.html" %}
                     {% else %}
-                    <div class="text-[10px] text-text-secondary italic">No resources attached</div>
+                    <div class="text-[10px] text-text-secondary italic empty-notice">No resources attached</div>
                     {% endfor %}
                 </div>
             </div>

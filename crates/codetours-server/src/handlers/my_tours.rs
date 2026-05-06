@@ -40,7 +40,7 @@ pub struct MyTourCard {
 
 pub async fn handler(
     State(state): State<AppState>,
-    auth: AuthContext,
+    _auth: AuthContext,
     Query(query): Query<MyToursQuery>,
 ) -> impl IntoResponse {
     // In M2: single-tenant mode, show all tours for "My Tours"

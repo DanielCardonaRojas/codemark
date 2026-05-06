@@ -30,6 +30,7 @@ pub fn router(state: AppState) -> Router {
         .route("/tours/:id/permalink/:ordinal", get(tours::permalink::handler))
         .route("/tours/:id/publish", axum::routing::post(tours::publish::handler))
         .route("/tours/:id/heal", axum::routing::post(tours::heal::handler))
+        .route("/tours/:id/links", axum::routing::post(tours::links::add_handler))
         .route("/tours/:id/bookmarks/:bid/comments", axum::routing::post(tours::comments::create_handler))
         .layer(SetResponseHeaderLayer::overriding(
             CONTENT_SECURITY_POLICY,
