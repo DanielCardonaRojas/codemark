@@ -1,6 +1,6 @@
 # Java Tree-Sitter Query Patterns
 
-Query patterns for bookmarking Java code using `codemark add-from-query`.
+Query patterns for bookmarking Java code using `codemark add --query`.
 
 ## Quick Reference
 
@@ -157,11 +157,11 @@ Java uses `package:<name>` with the full Java package name (dot notation):
 ### Bookmark an Auth Validator
 
 ```bash
-codemark add-from-query --file com/app/auth/AuthService.java --query '(method_declaration name: (identifier) @name (#eq? @name "validateToken")) @target' --note "Core JWT validation. Entry point for all authenticated requests." --context "Package: com.app.auth | Validates JWT tokens with expiry check" --tag package:com.app.auth --tag feature:auth --tag role:validator --created-by agent
+codemark add --query --file com/app/auth/AuthService.java --query '(method_declaration name: (identifier) @name (#eq? @name "validateToken")) @target' --note "Core JWT validation. Entry point for all authenticated requests." --context "Package: com.app.auth | Validates JWT tokens with expiry check" --tag package:com.app.auth --tag feature:auth --tag role:validator --created-by agent
 ```
 
 ### Bookmark a Class Method
 
 ```bash
-codemark add-from-query --file com/app/auth/AuthService.java --query '(class_declaration name: (identifier) @class (#eq? @class "AuthService") body: (class_body (method_declaration name: (identifier) @method (#eq? @method "invalidateCache")) @target))' --note "Clears the JWT token cache" --context "Package: com.app.auth | Cache invalidation logic" --tag package:com.app.auth --tag feature:auth --tag layer:business --created-by agent
+codemark add --query --file com/app/auth/AuthService.java --query '(class_declaration name: (identifier) @class (#eq? @class "AuthService") body: (class_body (method_declaration name: (identifier) @method (#eq? @method "invalidateCache")) @target))' --note "Clears the JWT token cache" --context "Package: com.app.auth | Cache invalidation logic" --tag package:com.app.auth --tag feature:auth --tag layer:business --created-by agent
 ```

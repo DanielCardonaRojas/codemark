@@ -219,15 +219,20 @@ pub async fn handle_edit_v2(cli: &Cli, mode: &OutputMode, args: &EditArgs) -> Re
     use crate::cli;
 
     // Convert EditArgs to AnnotateArgs
-    // EditArgs uses +/- prefix for tag operations, AnnotateArgs is add-only
     let mut tags_to_add: Vec<String> = Vec::new();
     for tag in &args.tag {
+        if tag.starts_with('-') {
+            return Err(Error::Input(format!(
+                "tag removal is not yet supported: '{}'; use 'codemark list --tag {}' to find bookmarks with this tag",
+                tag,
+                &tag[1..]
+            )));
+        }
         if let Some(stripped) = tag.strip_prefix('+') {
             tags_to_add.push(stripped.to_string());
-        } else if !tag.starts_with('-') {
+        } else {
             tags_to_add.push(tag.clone());
         }
-        // Tags starting with '-' would be removed (not implemented in original annotate)
     }
 
     let annotate_args = cli::AnnotateArgs {

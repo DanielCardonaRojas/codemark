@@ -356,8 +356,8 @@ pub struct ShowArgs {
     #[arg(long)]
     pub location: bool,
 
-    /// Hide code preview (show metadata only)
-    #[arg(long)]
+    /// Hide code preview (show metadata only) — not yet implemented
+    #[arg(long, hide = true)]
     pub no_preview: bool,
 }
 
@@ -882,7 +882,7 @@ pub struct EditArgs {
     #[arg(long)]
     pub context: Option<String>,
 
-    /// Tag label to add (prefix with + to add, - to remove); repeatable
+    /// Tag label to add; repeatable
     #[arg(long)]
     pub tag: Vec<String>,
 }

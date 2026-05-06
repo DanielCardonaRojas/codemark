@@ -39,36 +39,36 @@ Instead of bookmarking the entire function, target the specific execution point 
 ### Bookmark a specific method call inside a function
 ```bash
 # Target the exact line where the database is updated
-codemark add-from-query --file src/db/repo.rs --query '(call_expression function: (member_expression property: (property_identifier) @method (#eq? @method "update_user_balance"))) @target' --note "Critical: Database update point for user balances. Relationships: triggered after payment verification." --tag layer:data --tag role:repository --created-by agent
+codemark add --query --file src/db/repo.rs --query '(call_expression function: (member_expression property: (property_identifier) @method (#eq? @method "update_user_balance"))) @target' --note "Critical: Database update point for user balances. Relationships: triggered after payment verification." --tag layer:data --tag role:repository --created-by agent
 ```
 
 ## Creating Bookmarks with Raw Queries
 
 ### 1. Use dry-run to verify query uniqueness
 ```bash
-codemark add-from-query --file src/auth.swift --query '(function_declaration name: (simple_identifier) @name (#eq? @name "validateToken")) @target' --dry-run
+codemark add --query --file src/auth.swift --query '(function_declaration name: (simple_identifier) @name (#eq? @name "validateToken")) @target' --dry-run
 ```
 
 ### 2. Create bookmark with context and multiple notes
 ```bash
 # Context attaches to first note when multiple notes provided
-codemark add-from-query --file src/auth.swift --query '(function_declaration name: (simple_identifier) @name (#eq? @name "validateToken")) @target' --note "Validates JWT tokens. checks expiry and cache." --context "Called by API middleware on all authenticated endpoints" --note "Returns Claims struct on success" --note "Raises AuthenticationError on failure" --tag feature:auth --tag role:validator --created-by agent
+codemark add --query --file src/auth.swift --query '(function_declaration name: (simple_identifier) @name (#eq? @name "validateToken")) @target' --note "Validates JWT tokens. checks expiry and cache." --context "Called by API middleware on all authenticated endpoints" --note "Returns Claims struct on success" --note "Raises AuthenticationError on failure" --tag feature:auth --tag role:validator --created-by agent
 ```
 
 ### 3. Cross-language query examples
 For detailed query patterns per language, see `queries/` directory.
 ```bash
 # Swift - see queries/swift.md
-codemark add-from-query --file AuthService.swift --query '(function_declaration name: (simple_identifier) @name (#eq? @name "validateToken")) @target'
+codemark add --query --file AuthService.swift --query '(function_declaration name: (simple_identifier) @name (#eq? @name "validateToken")) @target'
 
 # Rust - see queries/rust.md
-codemark add-from-query --file auth.rs --query '(function_item name: (identifier) @name (#eq? @name "validate_token")) @target'
+codemark add --query --file auth.rs --query '(function_item name: (identifier) @name (#eq? @name "validate_token")) @target'
 
 # TypeScript - see queries/typescript.md
-codemark add-from-query --file AuthService.ts --query '(method_definition name: (property_identifier) @name (#eq? @name "validateToken")) @target'
+codemark add --query --file AuthService.ts --query '(method_definition name: (property_identifier) @name (#eq? @name "validateToken")) @target'
 
 # Python - see queries/python.md
-codemark add-from-query --file auth.py --query '(function_definition name: (identifier) @name (#eq? @name "validate_token")) @target'
+codemark add --query --file auth.py --query '(function_definition name: (identifier) @name (#eq? @name "validate_token")) @target'
 ```
 
 ## Organizing an Ordered Collection
@@ -80,23 +80,23 @@ For complex call chains, use ordered collections. **Recommended: Use `--collecti
 # Each bookmark can have multiple notes
 codemark add --file src/handler.rs --range 10 --note "HTTP request handler" --note "Entry point for login flow" --collection login-flow
 
-codemark add-from-query --file src/middleware.rs --query '(function_item name: (identifier) @name (#eq? @name "validate")) @target' --note "JWT validation middleware" --note "Called before all protected endpoints" --collection login-flow
+codemark add --query --file src/middleware.rs --query '(function_item name: (identifier) @name (#eq? @name "validate")) @target' --note "JWT validation middleware" --note "Called before all protected endpoints" --collection login-flow
 
-codemark add-from-query --file src/db.rs --query '(function_item name: (identifier) @name (#eq? @name "lookup_user")) @target' --note "Database query for user lookup" --note "Uses connection pool" --note "Returns User struct or NotFound error" --collection login-flow
+codemark add --query --file src/db.rs --query '(function_item name: (identifier) @name (#eq? @name "lookup_user")) @target' --note "Database query for user lookup" --note "Uses connection pool" --note "Returns User struct or NotFound error" --collection login-flow
 
-codemark collection show login-flow
+codemark tour show login-flow
 ```
 
 **Alternative: Create collection first, then add existing bookmarks**
 ```bash
 # Create collection
-codemark collection create login-flow --description "Step-by-step login execution path"
+codemark tour create login-flow --description "Step-by-step login execution path"
 
 # Add existing bookmarks by ID (useful when reorganizing)
-codemark collection add login-flow <id_handler> <id_middleware> <id_db_query>
+codemark tour add login-flow <id_handler> <id_middleware> <id_db_query>
 
 # Verify order
-codemark collection show login-flow
+codemark tour show login-flow
 ```
 
 ## Searching and Filtering
@@ -123,7 +123,7 @@ codemark add --file src/auth.rs --range 42 --note "Primary function: validates J
 
 ### Adding multiple notes via annotate
 ```bash
-codemark annotate <bookmark-id> --note "Discovered during debugging: race condition" --note "Fix: added mutex lock" --note "Related to issue #123"
+codemark edit <bookmark-id> --note "Discovered during debugging: race condition" --note "Fix: added mutex lock" --note "Related to issue #123"
 ```
 
 ### Combining notes with context
@@ -160,8 +160,8 @@ codemark heal
 codemark resolve --status active
 
 # 2. During exploration, bookmark critical findings directly to a collection
-codemark add-from-query --file src/api/middleware.go --query '(function_declaration name: (identifier) @name (#eq? @name "AuthMiddleware")) @target' --note "Middleware that validates JWT tokens on all protected routes" --tag feature:auth --tag role:middleware --created-by agent --collection auth-investigation
-codemark add-from-query --file src/api/handler.go --query '(function_declaration name: (identifier) @name (#eq? @name "LoginHandler")) @target' --note "HTTP handler for login endpoint" --tag feature:auth --tag role:handler --created-by agent --collection auth-investigation
+codemark add --query --file src/api/middleware.go --query '(function_declaration name: (identifier) @name (#eq? @name "AuthMiddleware")) @target' --note "Middleware that validates JWT tokens on all protected routes" --tag feature:auth --tag role:middleware --created-by agent --collection auth-investigation
+codemark add --query --file src/api/handler.go --query '(function_declaration name: (identifier) @name (#eq? @name "LoginHandler")) @target' --note "HTTP handler for login endpoint" --tag feature:auth --tag role:handler --created-by agent --collection auth-investigation
 
 # 3. At session end, validate bookmarks
 codemark heal --auto-archive
@@ -170,5 +170,5 @@ codemark heal --auto-archive
 codemark status
 
 # 5. Review what you've bookmarked in this session
-codemark collection show auth-investigation
+codemark tour show auth-investigation
 ```

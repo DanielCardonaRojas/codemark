@@ -86,10 +86,12 @@ pub async fn handle_collection_create(
         }
     }
 
-    // Notes would be stored as annotations - placeholder for future implementation
+    // Notes are not currently stored on collections - warn user
     if !args.note.is_empty() {
-        // Notes are not currently stored on collections
-        // This would require a new table or storing as a special tag
+        eprintln!(
+            "codemark: warning: --note is not yet persisted on collections; {} note(s) ignored",
+            args.note.len()
+        );
     }
 
     write_success(mode, &format!("Collection '{}' created", args.name))?;
@@ -207,10 +209,12 @@ pub async fn handle_collection_add(
         }
     }
 
-    // Notes would be stored as annotations - placeholder for future implementation
+    // Notes are not currently stored on collections - warn user
     if !args.note.is_empty() {
-        // Notes are not currently stored on collections
-        // This would require a new table or storing as a special tag
+        eprintln!(
+            "codemark: warning: --note is not yet persisted on collections; {} note(s) ignored",
+            args.note.len()
+        );
     }
 
     // Recompute collection health after adding bookmarks
@@ -674,6 +678,18 @@ pub async fn handle_collection_list_v2(
     mode: &OutputMode,
     args: &TourListArgs,
 ) -> Result<()> {
+    // Warn about unimplemented remote tour flags
+    if args.server.is_some() || args.repo.is_some() {
+        eprintln!(
+            "codemark: warning: 'tour list' remote server flags are not yet implemented; showing local collections only"
+        );
+    }
+    if args.limit != 50 || args.offset != 0 {
+        eprintln!(
+            "codemark: warning: 'tour list' pagination flags are not yet implemented; showing all collections"
+        );
+    }
+
     // Convert TourListArgs to CollectionListArgs
     let list_args = CollectionListArgs { bookmark: None, line_format: args.line_format.clone() };
     handle_collection_list(cli, mode, &list_args).await
@@ -731,13 +747,13 @@ pub async fn handle_collection_annotate(
         }
     }
 
-    // Notes would be stored as annotations on the collection itself
-    // For now, we'll just report success
-    let mut added_count = args.tag.len() + args.link.len();
+    // Notes are not currently stored on collections - warn user
+    let added_count = args.tag.len() + args.link.len();
     if !args.note.is_empty() {
-        // Notes are not currently stored on collections
-        // This would require a new table or storing as a special tag
-        added_count += args.note.len();
+        eprintln!(
+            "codemark: warning: --note is not yet persisted on collections; {} note(s) ignored",
+            args.note.len()
+        );
     }
 
     write_success(mode, &format!("Added {added_count} annotations to collection '{}'", args.name))?;

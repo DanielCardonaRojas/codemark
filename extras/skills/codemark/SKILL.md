@@ -404,10 +404,7 @@ codemark tour pull <tour-url>
 # Add notes, context, or tags to an existing bookmark
 codemark edit <bookmark-id> --note "Additional context discovered during implementation"
 codemark edit <bookmark-id> --context "Related to auth-refactor feature"
-codemark edit <bookmark-id> --tag +bug-fix --tag +priority:high
-
-# Remove tags using - prefix
-codemark edit <bookmark-id> --tag -old-tag
+codemark edit <bookmark-id> --tag bug-fix --tag priority:high
 
 # Add multiple notes at once (each --note creates a separate annotation)
 codemark edit <bookmark-id> --note "First observation" --note "Second observation" --note "Third insight"
