@@ -82,7 +82,8 @@ pub async fn prefs_handler(
     _auth: AuthContext,
     Form(_form): Form<PrefsForm>,
 ) -> impl IntoResponse {
-    StatusCode::OK.into_response()
+    // TODO: Persist preferences in Phase 10
+    StatusCode::NOT_IMPLEMENTED.into_response()
 }
 
 pub async fn stub_handler() -> impl IntoResponse {

@@ -340,14 +340,19 @@ pub async fn handler(
                         let bookmarks = bookmarks_data
                             .into_iter()
                             .map(|(bid, file, range, head, preview, _, _, _, _, _, _, _)| {
+                                let snapshot = if head.is_some() || preview.is_some() {
+                                    Some(ResolutionSnapshot {
+                                        headline: head,
+                                        preview_lines: preview,
+                                    })
+                                } else {
+                                    None
+                                };
                                 BookmarkDetail {
                                     id: bid,
                                     file_path: file,
                                     line_range: range,
-                                    snapshot: head.map(|h| ResolutionSnapshot {
-                                        headline: Some(h),
-                                        preview_lines: preview,
-                                    }),
+                                    snapshot,
                                 }
                             })
                             .collect();

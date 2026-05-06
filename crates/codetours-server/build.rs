@@ -26,8 +26,13 @@ fn main() {
 
     match status {
         Ok(status) if status.success() => (),
-        _ => {
+        Ok(status) => {
+            eprintln!("Fatal: tailwindcss exited with status {status}.");
+            std::process::exit(1);
+        }
+        Err(err) => {
             eprintln!("Error: tailwindcss CLI not found or failed.");
+            eprintln!("Details: {err}");
             eprintln!("Please install it via 'cargo binstall tailwindcss' or 'mise install'.");
             // If the generated file already exists (e.g., committed in CI), allow the
             // build to proceed with the stale artifact rather than blocking CI entirely.

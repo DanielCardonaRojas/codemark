@@ -2,8 +2,16 @@
   const SB_KEY = 'codetours.sidebar.collapsed';
   const root = document.documentElement;
 
+  // Safe localStorage access helpers
+  const safeStorageGet = (key) => {
+    try { return localStorage.getItem(key); } catch { return null; }
+  };
+  const safeStorageSet = (key, value) => {
+    try { localStorage.setItem(key, value); } catch {}
+  };
+
   // Initialize sidebar state
-  const savedCollapsed = localStorage.getItem(SB_KEY);
+  const savedCollapsed = safeStorageGet(SB_KEY);
   if (savedCollapsed === '1' || savedCollapsed === 'true') {
     root.dataset.sidebarCollapsed = 'true';
   }
@@ -24,7 +32,7 @@
         const newState = !isCurrentlyCollapsed;
         root.dataset.sidebarCollapsed = newState ? 'true' : 'false';
         sidebar.dataset.sidebarCollapsed = newState ? 'true' : 'false';
-        localStorage.setItem(SB_KEY, newState ? '1' : '0');
+        safeStorageSet(SB_KEY, newState ? '1' : '0');
       });
     }
 
@@ -51,13 +59,13 @@
     if (scrollContainer) {
       const items = document.querySelectorAll('.step-item');
       const panels = document.querySelectorAll('.metadata-sidebar [data-step-panel]');
-      
+
       const observer = new IntersectionObserver((entries) => {
         for (const entry of entries) {
           if (entry.isIntersecting) {
             const ord = entry.target.dataset.stepOrdinal;
             root.dataset.activeStep = ord;
-            
+
             items.forEach(item => {
               if (item.dataset.stepNav === ord) {
                 item.classList.add('active');
@@ -65,7 +73,7 @@
                 item.classList.remove('active');
               }
             });
-            
+
             panels.forEach(panel => {
               if (panel.dataset.stepPanel === ord) {
                 panel.classList.remove('hidden');
@@ -73,16 +81,16 @@
                 panel.classList.add('hidden');
               }
             });
-            
+
             break; // Process the first intersecting item in the batch
           }
         }
       }, { root: scrollContainer, rootMargin: '-150px 0px -50% 0px', threshold: 0 });
-      
+
       document.querySelectorAll('.step-block').forEach(block => {
         observer.observe(block);
       });
-      
+
       // Left sidebar click handler
       const nav = document.querySelector('.steps-sidebar nav') || document.querySelector('aside.w-64 nav');
       if (nav) {
@@ -123,10 +131,10 @@
       // Open in Editor
       const editorBtn = e.target.closest('[data-open-in-editor]');
       if (editorBtn) {
-        let editor = localStorage.getItem('codetours.editor');
+        let editor = safeStorageGet('codetours.editor');
         if (!editor) {
           editor = window.prompt("Which editor do you use? (vscode, cursor, idea)", "vscode") || "vscode";
-          localStorage.setItem('codetours.editor', editor);
+          safeStorageSet('codetours.editor', editor);
         }
         window.location.href = buildEditorUrl(editor, editorBtn.dataset);
         return;
@@ -140,13 +148,16 @@
         if (textToCopy.startsWith('/tours/')) {
           textToCopy = window.location.origin + textToCopy;
         }
+        if (typeof navigator.clipboard?.writeText !== 'function') {
+          return;
+        }
         navigator.clipboard.writeText(textToCopy).then(() => {
           const originalContent = copyBtn.innerHTML;
           copyBtn.innerHTML = '<span class="text-status-healthy text-[10px] font-bold px-1">Copied!</span>';
           setTimeout(() => {
             copyBtn.innerHTML = originalContent;
           }, 2000);
-        });
+        }).catch(() => {});
         return;
       }
     });

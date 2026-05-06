@@ -32,7 +32,7 @@ pub async fn handler(State(state): State<AppState>, Path(path): Path<String>) ->
 
     Response::builder()
         .header(header::CONTENT_TYPE, content_type)
-        .header(header::CACHE_CONTROL, "public, max-age=31536000, immutable")
+        .header(header::CACHE_CONTROL, "public, max-age=0, must-revalidate")
         .body(content)
         .unwrap()
         .into_response()

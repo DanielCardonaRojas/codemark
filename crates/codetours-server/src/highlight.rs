@@ -48,9 +48,44 @@ pub fn highlight(language: &str, content: &str) -> Arc<String> {
     let mut html = String::new();
 
     for line in content.lines() {
-        let ranges = highlighter.highlight_line(line, syntax_set).unwrap_or_default();
-        let escaped_html =
-            styled_line_to_highlighted_html(&ranges, IncludeBackground::No).unwrap_or_default();
+        let ranges = match highlighter.highlight_line(line, syntax_set) {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::warn!("Failed to highlight line for language '{}': {}", language, e);
+                // Fall back to escaped plain text
+                for c in line.chars() {
+                    match c {
+                        '&' => html.push_str("&amp;"),
+                        '<' => html.push_str("&lt;"),
+                        '>' => html.push_str("&gt;"),
+                        '"' => html.push_str("&quot;"),
+                        '\'' => html.push_str("&apos;"),
+                        _ => html.push(c),
+                    }
+                }
+                html.push('\n');
+                continue;
+            }
+        };
+        let escaped_html = match styled_line_to_highlighted_html(&ranges, IncludeBackground::No) {
+            Ok(h) => h,
+            Err(e) => {
+                tracing::warn!("Failed to format highlighted HTML for language '{}': {}", language, e);
+                // Fall back to escaped plain text
+                for c in line.chars() {
+                    match c {
+                        '&' => html.push_str("&amp;"),
+                        '<' => html.push_str("&lt;"),
+                        '>' => html.push_str("&gt;"),
+                        '"' => html.push_str("&quot;"),
+                        '\'' => html.push_str("&apos;"),
+                        _ => html.push(c),
+                    }
+                }
+                html.push('\n');
+                continue;
+            }
+        };
         html.push_str(&escaped_html);
         html.push('\n');
     }

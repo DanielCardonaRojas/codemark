@@ -229,16 +229,21 @@ pub async fn handler(
 
             let total: usize = conn.query_row(&count_query, rusqlite::params_from_iter(count_params), |row| row.get(0))?;
 
-            // 4. Get filter options (Repos, Branches, Tags)
-            let repos: Vec<String> = conn.prepare("SELECT DISTINCT repo_url FROM collections WHERE repo_url IS NOT NULL AND visibility = 'public'")?
+            // 4. Get filter options (Repos, Branches, Tags) - use same published-ready scope as main query
+            let repos: Vec<String> = conn.prepare("SELECT DISTINCT repo_url FROM collections WHERE repo_url IS NOT NULL AND visibility = 'public' AND status = 'ready'")?
                 .query_map([], |row| row.get(0))?
                 .collect::<rusqlite::Result<Vec<String>>>()?;
 
-            let branches: Vec<String> = conn.prepare("SELECT DISTINCT created_branch FROM collections WHERE created_branch IS NOT NULL AND visibility = 'public'")?
+            let branches: Vec<String> = conn.prepare("SELECT DISTINCT created_branch FROM collections WHERE created_branch IS NOT NULL AND visibility = 'public' AND status = 'ready'")?
                 .query_map([], |row| row.get(0))?
                 .collect::<rusqlite::Result<Vec<String>>>()?;
 
-            let tags: Vec<String> = conn.prepare("SELECT DISTINCT tag FROM collection_tags")?
+            let tags: Vec<String> = conn.prepare("
+                SELECT DISTINCT ct.tag
+                FROM collection_tags ct
+                INNER JOIN collections c ON c.id = ct.collection_id
+                WHERE c.visibility = 'public' AND c.status = 'ready'
+            ")?
                 .query_map([], |row| row.get(0))?
                 .collect::<rusqlite::Result<Vec<String>>>()?;
 
@@ -248,6 +253,10 @@ pub async fn handler(
 
     match result {
         Ok(Ok((tours_data, total, repos, branches, tags))) => {
+            if format == ResponseFormat::Pack {
+                // Pack format is only supported for individual tours, not lists
+                return StatusCode::NOT_IMPLEMENTED.into_response();
+            }
             if format == ResponseFormat::Json {
                 let tours = tours_data
                     .into_iter()
