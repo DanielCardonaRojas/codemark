@@ -70,7 +70,8 @@ pub async fn resolve(
                 bookmark.query
             );
         }
-        if let Some(result) = pick_match(&matches, bookmark, tree, source, ResolutionMethod::Exact) {
+        if let Some(result) = pick_match(&matches, bookmark, tree, source, ResolutionMethod::Exact)
+        {
             return Ok(result);
         }
     }

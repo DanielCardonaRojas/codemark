@@ -1440,17 +1440,13 @@ pub async fn handle_preview(cli: &Cli, args: &PreviewArgs) -> Result<()> {
 
     // Handle raw output mode
     if args.raw {
-        if args.breadcrumbs {
-            if let Some(ref bc_json) = resolution.breadcrumbs {
-                if let Ok(breadcrumbs) =
-                    serde_json::from_str::<Vec<codemark_core::engine::breadcrumbs::Breadcrumb>>(
-                        bc_json,
-                    )
-                {
-                    for bc in breadcrumbs {
-                        println!("{}", bc.text);
-                    }
-                }
+        if let Some(breadcrumbs) =
+            resolution.breadcrumbs.as_ref().filter(|_| args.breadcrumbs).and_then(|s| {
+                serde_json::from_str::<Vec<codemark_core::engine::breadcrumbs::Breadcrumb>>(s).ok()
+            })
+        {
+            for bc in breadcrumbs {
+                println!("{}", bc.text);
             }
         }
 

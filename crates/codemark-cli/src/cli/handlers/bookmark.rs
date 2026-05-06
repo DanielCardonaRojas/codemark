@@ -171,11 +171,8 @@ pub async fn handle_add(cli: &Cli, mode: &OutputMode, args: &AddArgsOriginal) ->
         } else {
             Vec::new()
         };
-        let breadcrumbs_json = if breadcrumbs.is_empty() {
-            None
-        } else {
-            serde_json::to_string(&breadcrumbs).ok()
-        };
+        let breadcrumbs_json =
+            if breadcrumbs.is_empty() { None } else { serde_json::to_string(&breadcrumbs).ok() };
 
         let initial_res = Resolution {
             id: uuid::Uuid::new_v4().to_string(),
@@ -389,11 +386,8 @@ pub async fn handle_add_from_snippet(
         } else {
             Vec::new()
         };
-        let breadcrumbs_json = if breadcrumbs.is_empty() {
-            None
-        } else {
-            serde_json::to_string(&breadcrumbs).ok()
-        };
+        let breadcrumbs_json =
+            if breadcrumbs.is_empty() { None } else { serde_json::to_string(&breadcrumbs).ok() };
 
         let initial_res = Resolution {
             id: uuid::Uuid::new_v4().to_string(),
@@ -600,19 +594,15 @@ pub async fn handle_add_from_query(
 
     // Record initial resolution as baseline (only if new bookmark)
     if is_new {
-        let breadcrumbs = if let Some(node) = tree
-            .root_node()
-            .descendant_for_byte_range(byte_range.0, byte_range.1)
+        let breadcrumbs = if let Some(node) =
+            tree.root_node().descendant_for_byte_range(byte_range.0, byte_range.1)
         {
             codemark_core::engine::breadcrumbs::extract_breadcrumbs(node, &source, lang, 3)
         } else {
             Vec::new()
         };
-        let breadcrumbs_json = if breadcrumbs.is_empty() {
-            None
-        } else {
-            serde_json::to_string(&breadcrumbs).ok()
-        };
+        let breadcrumbs_json =
+            if breadcrumbs.is_empty() { None } else { serde_json::to_string(&breadcrumbs).ok() };
 
         let initial_res = Resolution {
             id: uuid::Uuid::new_v4().to_string(),
@@ -875,23 +865,23 @@ pub async fn handle_show(cli: &Cli, mode: &OutputMode, args: &ShowArgs) -> Resul
             if let Some(ref resolved) = bm.last_resolved_at {
                 println!("Resolved at: {resolved}");
             }
-            if let Some(latest_res) = resolutions.first() {
-                if let Some(ref bc_json) = latest_res.breadcrumbs {
-                    if let Ok(breadcrumbs) = serde_json::from_str::<
-                        Vec<codemark_core::engine::breadcrumbs::Breadcrumb>,
-                    >(bc_json)
-                    {
-                        if !breadcrumbs.is_empty() {
-                            let bc_str = breadcrumbs
-                                .iter()
-                                .map(|b| format!("{}:{}", b.line, b.text))
-                                .collect::<Vec<_>>()
-                                .join(" › ");
-                            println!("Context:     {bc_str}");
-                        }
-                    }
-                }
+            if let Some(breadcrumbs) = resolutions
+                .first()
+                .and_then(|r| r.breadcrumbs.as_ref())
+                .and_then(|s| {
+                    serde_json::from_str::<Vec<codemark_core::engine::breadcrumbs::Breadcrumb>>(s)
+                        .ok()
+                })
+                .filter(|bc| !bc.is_empty())
+            {
+                let bc_str = breadcrumbs
+                    .iter()
+                    .map(|b| format!("{}:{}", b.line, b.text))
+                    .collect::<Vec<_>>()
+                    .join(" › ");
+                println!("Context:     {bc_str}");
             }
+
             if let Some(ref commit) = bm.commit_hash {
                 println!("Commit:      {}", &commit[..commit.len().min(8)]);
             }

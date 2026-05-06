@@ -507,4 +507,3 @@ pub async fn handle_import(cli: &Cli, mode: &OutputMode, args: &ImportArgs) -> R
     write_success(mode, &format!("Imported {imported} bookmarks ({skipped} duplicates skipped)"))?;
     Ok(())
 }
-

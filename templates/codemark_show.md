@@ -26,7 +26,7 @@
 | **Status** | {{status}} |
 | **Created** | {{created_at}} |
 {{#if breadcrumbs}}
-| **Breadcrumbs** | {{#each breadcrumbs}}`{{line}}`:{{text}}{{#unless @last}} › {{/unless}}{{/each}} |
+| **Breadcrumbs** | {{#each breadcrumbs}}`{{line}}`:{{escape_markdown text}}{{#unless @last}} › {{/unless}}{{/each}} |
 {{/if}}
 {{#if created_by}}| **Author** | {{escape_markdown created_by}} |{{/if}}
 {{#if last_resolved_at}}| **Last Resolved** | {{last_resolved_at}} |{{/if}}

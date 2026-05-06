@@ -1,6 +1,6 @@
-use tree_sitter::Node;
-use serde::{Deserialize, Serialize};
 use crate::parser::languages::Language;
+use serde::{Deserialize, Serialize};
+use tree_sitter::Node;
 
 /// A single breadcrumb entry representing a structural ancestor.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -18,6 +18,9 @@ pub fn extract_breadcrumbs(
     language: Language,
     max_count: usize,
 ) -> Vec<Breadcrumb> {
+    if max_count == 0 {
+        return Vec::new();
+    }
     let mut breadcrumbs = Vec::new();
     let whitelist = get_whitelist(language);
 
@@ -27,11 +30,8 @@ pub fn extract_breadcrumbs(
             // Extract the full source line to preserve leading indentation
             let start_pos = node.start_position();
             let line_text = source.lines().nth(start_pos.row).unwrap_or("").trim_end();
-            
-            breadcrumbs.push(Breadcrumb {
-                line: start_pos.row + 1,
-                text: line_text.to_string(),
-            });
+
+            breadcrumbs.push(Breadcrumb { line: start_pos.row + 1, text: line_text.to_string() });
 
             if breadcrumbs.len() >= max_count {
                 break;
@@ -66,11 +66,9 @@ fn get_whitelist(language: Language) -> &'static [&'static str] {
             "type_alias_declaration",
             "enum_declaration",
         ],
-        Language::Python => &[
-            "class_definition",
-            "function_definition",
-            "async_function_definition",
-        ],
+        Language::Python => {
+            &["class_definition", "function_definition", "async_function_definition"]
+        }
         Language::Go => &["type_declaration", "function_declaration", "method_declaration"],
         Language::Java => &[
             "class_declaration",
@@ -116,10 +114,8 @@ mod auth {
         let mut parser = Parser::new(Language::Rust).unwrap();
         let tree = parser.parse(source.as_bytes()).unwrap();
         // Target is the block inside validate
-        let target = tree.root_node()
-            .descendant_for_byte_range(60, 61)
-            .unwrap();
-        
+        let target = tree.root_node().descendant_for_byte_range(60, 61).unwrap();
+
         let bc = extract_breadcrumbs(target, source, Language::Rust, 3);
         assert_eq!(bc.len(), 3);
         assert_eq!(bc[0].text, "mod auth {");
@@ -138,10 +134,8 @@ class AuthService {
 "#;
         let mut parser = Parser::new(Language::Swift).unwrap();
         let tree = parser.parse(source.as_bytes()).unwrap();
-        let target = tree.root_node()
-            .descendant_for_byte_range(45, 46)
-            .unwrap();
-        
+        let target = tree.root_node().descendant_for_byte_range(45, 46).unwrap();
+
         let bc = extract_breadcrumbs(target, source, Language::Swift, 3);
         assert_eq!(bc.len(), 2);
         assert_eq!(bc[0].text, "class AuthService {");
