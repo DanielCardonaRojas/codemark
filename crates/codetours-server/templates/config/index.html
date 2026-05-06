@@ -69,10 +69,10 @@
                                     <div class="text-xs text-text-secondary mt-1">Theme used for syntax highlighting in tours</div>
                                 </div>
                                 <select name="theme" class="setting-select bg-bg-tertiary border border-border rounded-md px-3 py-1.5 text-sm text-text-primary focus:outline-none focus:border-accent">
-                                    <option value="atom-one-dark">Atom One Dark</option>
-                                    <option value="dracula">Dracula</option>
-                                    <option value="github-dark">GitHub Dark</option>
-                                    <option value="monokai">Monokai</option>
+                                    <option value="atom-one-dark" {% if prefs.theme == "atom-one-dark" %}selected{% endif %}>Atom One Dark</option>
+                                    <option value="dracula" {% if prefs.theme == "dracula" %}selected{% endif %}>Dracula</option>
+                                    <option value="github-dark" {% if prefs.theme == "github-dark" %}selected{% endif %}>GitHub Dark</option>
+                                    <option value="monokai" {% if prefs.theme == "monokai" %}selected{% endif %}>Monokai</option>
                                 </select>
                             </div>
                             <div class="setting-row p-4 flex items-start justify-between gap-4">
@@ -81,9 +81,9 @@
                                     <div class="text-xs text-text-secondary mt-1">Monospace font for code previews</div>
                                 </div>
                                 <select name="font" class="setting-select bg-bg-tertiary border border-border rounded-md px-3 py-1.5 text-sm text-text-primary focus:outline-none focus:border-accent">
-                                    <option value="Fira Code">Fira Code</option>
-                                    <option value="JetBrains Mono">JetBrains Mono</option>
-                                    <option value="Source Code Pro">Source Code Pro</option>
+                                    <option value="Fira Code" {% if prefs.font == "Fira Code" %}selected{% endif %}>Fira Code</option>
+                                    <option value="JetBrains Mono" {% if prefs.font == "JetBrains Mono" %}selected{% endif %}>JetBrains Mono</option>
+                                    <option value="Source Code Pro" {% if prefs.font == "Source Code Pro" %}selected{% endif %}>Source Code Pro</option>
                                 </select>
                             </div>
                         </form>

@@ -22,7 +22,7 @@ pub struct CommentBubbleTemplate {
 pub async fn create_handler(
     State(state): State<AppState>,
     auth: AuthContext,
-    Path((_tour_id, bookmark_id)): Path<(String, String)>,
+    Path((tour_id, bookmark_id)): Path<(String, String)>,
     Form(form): Form<CommentForm>,
 ) -> impl IntoResponse {
     let author = auth.current_user(&state.config).unwrap_or_else(|| "Anonymous".to_string());
@@ -41,14 +41,22 @@ pub async fn create_handler(
     let author_clone = author.clone();
     let body_clone = body.to_string();
     let bid_clone = bookmark_id.clone();
+    let tour_id_clone = tour_id.clone();
     let comment_id = uuid::Uuid::new_v4().to_string();
     let created_at = chrono::Utc::now().to_rfc3339();
 
     let result = db.interact(move |conn| {
-        conn.execute(
-            "INSERT INTO bookmark_comments (id, bookmark_id, author, body, created_at) VALUES (?, ?, ?, ?, ?)",
-            [&comment_id, &bid_clone, &author_clone, &body_clone, &created_at],
-        )
+        // Validate that the bookmark belongs to the given tour before inserting
+        let affected = conn.execute(
+            "INSERT INTO bookmark_comments (id, bookmark_id, author, body, created_at)
+             SELECT ?, ?, ?, ?, ?
+             WHERE EXISTS (SELECT 1 FROM bookmarks WHERE id = ? AND tour_id = ?)",
+            [&comment_id, &bid_clone, &author_clone, &body_clone, &created_at, &bid_clone, &tour_id_clone],
+        )?;
+        if affected == 0 {
+            return Err(rusqlite::Error::QueryReturnedNoRows);
+        }
+        Ok::<_, rusqlite::Error>(affected)
     }).await;
 
     match result {
@@ -62,6 +70,7 @@ pub async fn create_handler(
             };
             CommentBubbleTemplate { comment: view }.into_response()
         }
+        Ok(Err(rusqlite::Error::QueryReturnedNoRows)) => StatusCode::NOT_FOUND.into_response(),
         _ => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
     }
 }

@@ -54,29 +54,31 @@ pub async fn handler(
 
     let result = db.interact(move |conn| {
         // Count all collections (single-tenant mode)
+        // Published = visibility = 'public' AND status = 'ready' (canonical definition from tours/list.rs)
         let published_count: usize = conn.query_row(
-            "SELECT COUNT(*) FROM collections WHERE visibility IS NOT NULL",
+            "SELECT COUNT(*) FROM collections WHERE visibility = 'public' AND status = 'ready'",
             [],
             |row: &rusqlite::Row| row.get(0),
         ).unwrap_or(0);
 
+        // Drafts = everything not matching the published condition
         let draft_count: usize = conn.query_row(
-            "SELECT COUNT(*) FROM collections WHERE visibility IS NULL",
+            "SELECT COUNT(*) FROM collections WHERE NOT (visibility = 'public' AND status = 'ready')",
             [],
             |row: &rusqlite::Row| row.get(0),
         ).unwrap_or(0);
 
         let sql = if is_published_filter {
-            "SELECT id, name, description, created_at, created_at, repo_url,
+            "SELECT id, name, description, created_at, updated_at, repo_url,
             (SELECT COUNT(*) FROM collection_bookmarks WHERE collection_id = collections.id) as step_count
             FROM collections
-            WHERE visibility IS NOT NULL
+            WHERE visibility = 'public' AND status = 'ready'
             ORDER BY created_at DESC"
         } else {
-            "SELECT id, name, description, created_at, created_at, repo_url,
+            "SELECT id, name, description, created_at, updated_at, repo_url,
             (SELECT COUNT(*) FROM collection_bookmarks WHERE collection_id = collections.id) as step_count
             FROM collections
-            WHERE visibility IS NULL
+            WHERE NOT (visibility = 'public' AND status = 'ready')
             ORDER BY created_at DESC"
         };
 

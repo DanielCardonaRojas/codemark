@@ -13,6 +13,12 @@ use serde::Deserialize;
 pub struct ConfigTemplate {
     pub nav: NavItem,
     pub repos: Vec<RepoView>,
+    pub prefs: PrefsView,
+}
+
+pub struct PrefsView {
+    pub theme: String,
+    pub font: String,
 }
 
 pub struct RepoView {
@@ -62,7 +68,13 @@ pub async fn page_handler(State(state): State<AppState>, _auth: AuthContext) -> 
         .unwrap_or(Err(StatusCode::INTERNAL_SERVER_ERROR));
 
     match repos {
-        Ok(repos) => ConfigTemplate { nav: NavItem::Config, repos }.into_response(),
+        Ok(repos) => {
+            let prefs = PrefsView {
+                theme: "atom-one-dark".to_string(),
+                font: "Fira Code".to_string(),
+            };
+            ConfigTemplate { nav: NavItem::Config, repos, prefs }.into_response()
+        }
         Err(e) => e.into_response(),
     }
 }

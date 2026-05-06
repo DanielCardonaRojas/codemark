@@ -15,19 +15,15 @@ pub async fn handler(State(state): State<AppState>, Path(path): Path<String>) ->
         }
         "app.js" => (static_assets::APP_JS.to_string(), "application/javascript"),
         "theme.css" => {
-            if let Some(css) = state
-                .config
-                .ui
-                .theme_css
-                .as_ref()
-                .and_then(|path| std::fs::read_to_string(path).ok())
-            {
-                return Response::builder()
-                    .header(header::CONTENT_TYPE, "text/css")
-                    .header(header::CACHE_CONTROL, "public, max-age=60")
-                    .body(css)
-                    .unwrap()
-                    .into_response();
+            if let Some(theme_path) = &state.config.ui.theme_css {
+                if let Ok(css) = tokio::fs::read_to_string(theme_path).await {
+                    return Response::builder()
+                        .header(header::CONTENT_TYPE, "text/css")
+                        .header(header::CACHE_CONTROL, "public, max-age=60")
+                        .body(css)
+                        .unwrap()
+                        .into_response();
+                }
             }
             return StatusCode::NO_CONTENT.into_response();
         }
