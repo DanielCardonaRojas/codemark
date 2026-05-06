@@ -50,79 +50,154 @@ pub enum Command {
     /// Create a bookmark from a file and byte range
     Add(AddArgs),
 
-    /// Create a bookmark by matching a code snippet from stdin against a file
-    #[command(name = "add-from-snippet")]
+    /// [Deprecated: Use `codemark add --snippet`] Create a bookmark by matching a code snippet from stdin against a file
+    #[command(name = "add-from-snippet", hide = true)]
     AddFromSnippet(AddFromSnippetArgs),
 
-    /// Create a bookmark from a file and a raw tree-sitter query
-    #[command(name = "add-from-query")]
+    /// [Deprecated: Use `codemark add --query`] Create a bookmark from a file and a raw tree-sitter query
+    #[command(name = "add-from-query", hide = true)]
     AddFromQuery(AddFromQueryArgs),
 
-    /// Resolve a bookmark to its current file location
+    /// [Deprecated: Use `codemark show --location`] Resolve a bookmark to its current file location
+    #[command(name = "resolve", hide = true)]
     Resolve(ResolveArgs),
 
-    /// Display full details of a bookmark
+    /// Display bookmark details and code preview
     Show(ShowArgs),
+
+    /// [Deprecated: Use `codemark show`] Show the current location of a bookmark (file, line, byte range)
+    #[command(name = "preview", hide = true)]
+    Preview(PreviewArgs),
 
     /// Remove bookmarks by ID
     Remove(RemoveArgs),
 
-    /// Heal bookmarks by resolving and updating their status
-    Heal(HealArgs),
-
-    /// Print a summary of bookmark health
-    Status,
-
     /// List bookmarks with optional filters
     List(ListArgs),
-
-    /// Show the current location of a bookmark (file, line, byte range)
-    Preview(PreviewArgs),
 
     /// Full-text search across notes and context
     Search(SearchArgs),
 
-    /// Rebuild semantic search embeddings for all bookmarks
-    Reindex(ReindexArgs),
+    /// Update metadata for an existing bookmark
+    Edit(EditArgs),
 
-    /// Manage named groups of bookmarks
-    Collection(CollectionArgs),
-
-    /// Show bookmarks affected by recent changes
-    Diff(DiffArgs),
-
-    /// Remove old archived bookmarks
-    Gc(GcArgs),
-
-    /// Export bookmarks to stdout
-    Export(ExportArgs),
-
-    /// Import bookmarks from a JSON file
-    Import(ImportArgs),
-
-    /// Generate shell completions
-    Completions(CompletionsArgs),
-
-    /// Add notes, context, or tags to an existing bookmark
+    /// [Deprecated: Use `codemark edit`] Add notes, context, or tags to an existing bookmark
+    #[command(name = "annotate", hide = true)]
     Annotate(AnnotateArgs),
 
     /// Open a bookmarked file in your editor
     Open(OpenArgs),
 
-    /// Publish a local collection to a Codetours server
+    /// Manage collections and remote sync (tours)
+    Tour(TourArgs),
+
+    /// [Deprecated: Use `codemark tour push`] Publish a local collection to a Codetours server
+    #[command(name = "publish", hide = true)]
     Publish(PublishArgs),
 
-    /// Pull a tour from a Codetours server
-    Pull(PullArgs),
+    /// [Deprecated: Use `codemark tour`] Manage named groups of bookmarks
+    #[command(name = "collection", hide = true)]
+    Collection(CollectionArgs),
 
-    /// Manage remote tours
-    Tour(TourArgs),
+    /// Database health and maintenance
+    Health(HealthArgs),
+
+    /// [Deprecated: Use `codemark health check`] Heal bookmarks by resolving and updating their status
+    #[command(name = "heal", hide = true)]
+    Heal(HealArgs),
+
+    /// [Deprecated: Use `codemark health status`] Print a summary of bookmark health
+    #[command(name = "status", hide = true)]
+    Status,
+
+    /// Import, export, and indexing
+    Data(DataArgs),
+
+    /// [Deprecated: Use `codemark data reindex`] Rebuild semantic search embeddings for all bookmarks
+    #[command(name = "reindex", hide = true)]
+    Reindex(ReindexArgs),
+
+    /// [Deprecated: Use `codemark data export`] Export bookmarks to stdout
+    #[command(name = "export", hide = true)]
+    Export(ExportArgs),
+
+    /// [Deprecated: Use `codemark data import`] Import bookmarks from a JSON file
+    #[command(name = "import", hide = true)]
+    Import(ImportArgs),
+
+    /// [Deprecated: Use `codemark health gc`] Remove old archived bookmarks
+    #[command(name = "gc", hide = true)]
+    Gc(GcArgs),
+
+    /// [Deprecated: Use `codemark tour diff`] Show bookmarks affected by recent changes
+    #[command(name = "diff", hide = true)]
+    Diff(DiffArgs),
+
+    /// Generate shell completions
+    Completions(CompletionsArgs),
+
+    /// [Deprecated: Use `codemark tour pull`] Pull a tour from a Codetours server
+    #[command(name = "pull", hide = true)]
+    Pull(PullArgs),
 }
 
 // --- Subcommand argument structs ---
 
 #[derive(Debug, clap::Args)]
 pub struct AddArgs {
+    /// Path to the file (relative or absolute) — required unless using --snippet
+    #[arg(long)]
+    pub file: Option<PathBuf>,
+
+    /// Line range (42, 42-67, 10:5-12:20) or byte range with b prefix (b1024-1280)
+    #[arg(long, conflicts_with = "snippet", conflicts_with = "query", conflicts_with = "hunk")]
+    pub range: Option<String>,
+
+    /// Git diff hunk header (@@ -a,b +c,d @@) to derive line range
+    #[arg(long, conflicts_with = "snippet", conflicts_with = "query", conflicts_with = "range")]
+    pub hunk: Option<String>,
+
+    /// Language identifier; auto-detected from file extension if omitted
+    #[arg(long)]
+    pub lang: Option<String>,
+
+    /// Tag label; repeatable for multiple tags
+    #[arg(long)]
+    pub tag: Vec<String>,
+
+    /// Semantic annotation; repeatable for multiple notes
+    #[arg(long)]
+    pub note: Vec<String>,
+
+    /// Agent context at time of bookmarking
+    #[arg(long)]
+    pub context: Option<String>,
+
+    /// Who created this bookmark (defaults to "user")
+    #[arg(long, default_value = "user")]
+    pub created_by: String,
+
+    /// Preview what would be bookmarked without saving
+    #[arg(long)]
+    pub dry_run: bool,
+
+    /// Add bookmark to this collection (auto-creates if it doesn't exist)
+    #[arg(long)]
+    pub collection: Option<String>,
+
+    /// Match code from stdin against the file (reads from stdin)
+    #[arg(long, conflicts_with = "range", conflicts_with = "hunk", conflicts_with = "query")]
+    pub snippet: bool,
+
+    /// Use a raw tree-sitter query to create the bookmark
+    #[arg(long, conflicts_with = "range", conflicts_with = "hunk", conflicts_with = "snippet")]
+    pub query: Option<String>,
+}
+
+/// Original AddArgs struct for backward compatibility with existing handlers.
+/// This is the non-optional version used by bookmark::handle_add.
+#[derive(Debug, clap::Args)]
+pub struct AddArgsOriginal {
     /// Path to the file (relative or absolute)
     #[arg(long)]
     pub file: PathBuf,
@@ -276,6 +351,14 @@ pub struct ResolveArgs {
 pub struct ShowArgs {
     /// Bookmark ID (full UUID or unambiguous prefix)
     pub id: String,
+
+    /// Show only the file location (was 'resolve' behavior)
+    #[arg(long)]
+    pub location: bool,
+
+    /// Hide code preview (show metadata only)
+    #[arg(long)]
+    pub no_preview: bool,
 }
 
 #[derive(Debug, clap::Args)]
@@ -521,6 +604,18 @@ pub struct CollectionCreateArgs {
     /// Human-readable description
     #[arg(long)]
     pub description: Option<String>,
+
+    /// Tag labels to add; repeatable
+    #[arg(long)]
+    pub tag: Vec<String>,
+
+    /// Links to add (format: "url,label"); repeatable
+    #[arg(long)]
+    pub link: Vec<String>,
+
+    /// Notes to add; repeatable
+    #[arg(long)]
+    pub note: Vec<String>,
 }
 
 #[derive(Debug, clap::Args)]
@@ -545,6 +640,18 @@ pub struct CollectionAddArgs {
     /// Insert at this position (0-indexed); shifts existing items. Appends at end if omitted.
     #[arg(long)]
     pub at: Option<usize>,
+
+    /// Tag labels to add to the collection; repeatable
+    #[arg(long)]
+    pub tag: Vec<String>,
+
+    /// Links to add to the collection (format: "url,label"); repeatable
+    #[arg(long)]
+    pub link: Vec<String>,
+
+    /// Notes to add to the collection; repeatable
+    #[arg(long)]
+    pub note: Vec<String>,
 }
 
 #[derive(Debug, clap::Args)]
@@ -763,6 +870,24 @@ pub struct CompletionsArgs {
 }
 
 #[derive(Debug, clap::Args)]
+pub struct EditArgs {
+    /// Bookmark ID (full UUID or unambiguous prefix)
+    pub id: String,
+
+    /// Semantic annotation to add; repeatable for multiple notes
+    #[arg(long)]
+    pub note: Vec<String>,
+
+    /// Agent context to add
+    #[arg(long)]
+    pub context: Option<String>,
+
+    /// Tag label to add (prefix with + to add, - to remove); repeatable
+    #[arg(long)]
+    pub tag: Vec<String>,
+}
+
+#[derive(Debug, clap::Args)]
 pub struct AnnotateArgs {
     /// Bookmark ID (full UUID or unambiguous prefix)
     pub id: String,
@@ -850,13 +975,52 @@ pub struct TourArgs {
 
 #[derive(Debug, Subcommand)]
 pub enum TourCommand {
-    /// List tours on a server
+    /// List local collections and remote tours
     List(TourListArgs),
+
+    /// Create a new local collection
+    Create(CollectionCreateArgs),
+
+    /// Add bookmarks to a collection
+    Add(CollectionAddArgs),
+
+    /// Remove bookmarks from a collection
+    Remove(CollectionRemoveArgs),
+
+    /// Delete a collection (bookmarks are kept by default)
+    Delete(CollectionDeleteArgs),
+
+    /// Show bookmarks in a collection
+    Show(CollectionShowArgs),
+
+    /// Publish a collection to Codetours
+    Push(PublishArgs),
+
+    /// Pull a tour from Codetours
+    Pull(PullArgs),
+
+    /// Show changes since last publish
+    Diff(DiffArgs),
+
+    /// Batch-resolve all bookmarks in a collection
+    Resolve(CollectionResolveArgs),
+
+    /// Reorder bookmarks in a collection
+    Reorder(CollectionReorderArgs),
+
+    /// Manage tags for a collection
+    Tag(CollectionTagArgs),
+
+    /// Manage links for a collection
+    Link(CollectionLinkArgs),
+
+    /// Add notes, tags, or links to a collection
+    Annotate(CollectionAnnotateArgs),
 }
 
 #[derive(Debug, clap::Args)]
 pub struct TourListArgs {
-    /// Server URL or name
+    /// Server URL or name (for remote tours)
     #[arg(long)]
     pub server: Option<String>,
 
@@ -871,4 +1035,66 @@ pub struct TourListArgs {
     /// Offset for pagination
     #[arg(long, default_value = "0")]
     pub offset: usize,
+
+    /// Custom line format template (placeholders: {ID}, {NAME}, {COUNT}, {DESCRIPTION}, {CREATED})
+    #[arg(long)]
+    pub line_format: Option<String>,
+}
+
+#[derive(Debug, clap::Args)]
+pub struct CollectionAnnotateArgs {
+    /// Collection name
+    pub name: String,
+
+    /// Tag labels to add
+    #[arg(long)]
+    pub tag: Vec<String>,
+
+    /// Links to add (format: "url,label")
+    #[arg(long)]
+    pub link: Vec<String>,
+
+    /// Notes to add
+    #[arg(long)]
+    pub note: Vec<String>,
+}
+
+// === Health Namespace ===
+
+#[derive(Debug, clap::Args)]
+pub struct HealthArgs {
+    #[command(subcommand)]
+    pub command: HealthCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum HealthCommand {
+    /// Print health summary
+    Status,
+
+    /// Run resolution/validation pass
+    Check(HealArgs),
+
+    /// Remove old archived bookmarks
+    Gc(GcArgs),
+}
+
+// === Data Namespace ===
+
+#[derive(Debug, clap::Args)]
+pub struct DataArgs {
+    #[command(subcommand)]
+    pub command: DataCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum DataCommand {
+    /// Export bookmarks to JSON/CSV
+    Export(ExportArgs),
+
+    /// Import bookmarks from JSON
+    Import(ImportArgs),
+
+    /// Rebuild semantic search embeddings
+    Reindex(ReindexArgs),
 }

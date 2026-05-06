@@ -19,7 +19,7 @@ You have access to `codemark`, a CLI tool that creates **structural bookmarks** 
 When starting a session, inject a summary of active bookmarks:
 
 ```
-codemark list --status active
+codemark list --health active
 ```
 
 ## Agent Directives: Handling Invocations
@@ -43,29 +43,29 @@ codemark search "user query" --semantic
 When the user mentions specific concepts or categories:
 ```bash
 codemark list --tag feature:auth --tag role:entrypoint
-codemark list --tag layer:api --status active
+codemark list --tag layer:api --health active
 codemark list --tag type:config --author agent
 ```
 
 ### 3. File-Aware Search
 When discussing specific files or modules:
 ```bash
-codemark list --file src/auth.rs --status active
+codemark list --file src/auth.rs --health active
 codemark list --file src/auth.rs --lang rust
 ```
 
 ### 4. Collection Browsing
 When exploring a feature or workflow:
 ```bash
-codemark collection list
-codemark collection show <collection-name>
+codemark tour list
+codemark tour show <collection-name>
 ```
 
 ### 5. Hybrid Search Pattern
 For best results, combine semantic search with filters:
 ```bash
 codemark search "authentication" --lang rust --author agent
-codemark search "middleware" --tag layer:api --status active
+codemark search "middleware" --tag layer:api --health active
 ```
 
 ### Discovery Strategy Summary
@@ -75,7 +75,7 @@ codemark search "middleware" --tag layer:api --status active
 | "Where's the config?" | `--tag type:config` | `--tag role:config` |
 | "Bookmarks in auth.rs" | `--file src/auth.rs` | semantic search |
 | "Recent agent bookmarks" | `--author agent` | semantic search |
-| "What did I mark for X?" | semantic search | collection browse |
+| "What did I mark for X?" | semantic search | tour browse |
 
 ## When to use codemark
 
@@ -83,7 +83,7 @@ codemark search "middleware" --tag layer:api --status active
 - **Exploring code**: When you discover something critical, bookmark it with context about *why* it matters.
 - **During work**: Bookmark code you'll need to reference later — especially cross-file relationships.
 - **Ending a session**: Validate bookmarks so the next session has accurate references.
-- **Checking impact**: Use `diff` to see which bookmarks are affected by recent changes.
+- **Checking impact**: Use `codemark tour diff` to see which bookmarks are affected by recent changes.
 
 **Proactive bookmarking**: When you recognize code that is critical to the current task — entry points, auth boundaries, error handling paths, configuration — bookmark it immediately with a note explaining its significance and relationship to the work. Don't bookmark everything you read; bookmark what you'd want to know if starting over tomorrow.
 
@@ -91,8 +91,8 @@ codemark search "middleware" --tag layer:api --status active
 
 - **Bookmarks** store a tree-sitter query that identifies code by AST structure, not line numbers.
 - **Resolution** re-finds bookmarked code even after edits (exact → relaxed → hash fallback).
-- **Collections** group related bookmarks (one per feature, bugfix, or investigation).
-- **Status**: active (healthy), drifted (found but moved), stale (lost), archived (cleaned up).
+- **Tours/Collections** group related bookmarks (one per feature, bugfix, or investigation).
+- **Health**: active (healthy), drifted (found but moved), stale (lost), archived (cleaned up).
 - **Author**: bookmarks track who created them (`--created-by agent` vs default `user`).
 - **Annotations**: bookmarks can have multiple annotations (notes, context) added by different agents over time, with provenance tracking. Use `--note` multiple times to add several notes at once.
 
@@ -236,33 +236,33 @@ Always include the module or package context from the file path. Each language e
 
 **Example (Rust crate):**
 ```bash
-codemark add --file crates/auth/src/lib.rs --range 10 --note "Core JWT validation" --tag crate:auth --tag feature:auth --tag layer:business --tag role:validator
+codemark add src/auth.rs --range 10 --note "Core JWT validation" --tag crate:auth --tag feature:auth --tag layer:business --tag role:validator
 ```
 
 **Example (Go package):**
 ```bash
-codemark add --file internal/auth/handler.go --range 25 --note "HTTP handler for authentication" --tag package:internal.auth --tag feature:auth --tag layer:api --tag role:handler
+codemark add internal/auth/handler.go --range 25 --note "HTTP handler for authentication" --tag package:internal.auth --tag feature:auth --tag layer:api --tag role:handler
 ```
 
 ## Quick Start
 
-### Creating a collection of bookmarks (recommended for agents)
-Use `--collection` when creating bookmarks to add them directly to a collection. **Always prefer range-based targeting** as the first resource. You can add multiple notes using `--note` multiple times:
+### Creating a tour/collection of bookmarks (recommended for agents)
+Use `--collection` when creating bookmarks to add them directly to a tour. **Always prefer range-based targeting** as the first resource. You can add multiple notes using `--note` multiple times:
 
 ```bash
 # 1. Preferred: Range-based targeting (Line or Point)
-codemark add --file src/auth.rs --range 42 --note "Core auth entry point" --note "Handles JWT validation" --collection login-flow
+codemark add src/auth.rs --range 42 --note "Core auth entry point" --note "Handles JWT validation" --collection login-flow
 
 # 2. Alternative: Snippet-based (if range is unknown)
-echo "func validateToken" | codemark add-from-snippet --file src/auth.swift --note "Validates JWT tokens" --note "Critical for security" --collection login-flow
+echo "func validateToken" | codemark add src/auth.swift --snippet --note "Validates JWT tokens" --note "Critical for security" --collection login-flow
 
 # 3. Last Resort: Raw tree-sitter query (for extreme precision/disambiguation)
-codemark add-from-query --file src/auth.swift --query '(function_declaration) @target' --note "Token validation function" --note "Called by middleware" --collection login-flow
+codemark add src/auth.swift --query '(function_declaration) @target' --note "Token validation function" --note "Called by middleware" --collection login-flow
 
 # With context attached to first note
-codemark add --file src/auth.rs --range 42 --note "Auth entry point" --context "Part of login refactor" --note "Needs review" --collection login-flow
+codemark add src/auth.rs --range 42 --note "Auth entry point" --context "Part of login refactor" --note "Needs review" --collection login-flow
 
-codemark collection show login-flow
+codemark tour show login-flow
 ```
 
 ### Method 1: Range-based bookmarking (Primary Resource)
@@ -270,30 +270,30 @@ When you know the file and line numbers. This leverages the **Anchored Precision
 
 ```bash
 # Point targeting: targets the smallest node at line 42, column 10
-codemark add --file src/auth.rs --range 42:10 --note "Specific authorization gate" --created-by agent
+codemark add src/auth.rs --range 42:10 --note "Specific authorization gate" --created-by agent
 
 # Line targeting: targets the tightest node containing line 42
-codemark add --file src/auth.rs --range 42 --note "Core auth entry point" --created-by agent
+codemark add src/auth.rs --range 42 --note "Core auth entry point" --created-by agent
 
 # Span targeting: targets a specific range of lines
-codemark add --file src/auth.rs --range 42-67 --note "Full login method" --created-by agent
+codemark add src/auth.rs --range 42-67 --note "Full login method" --created-by agent
 
 # Precise Span targeting: targets a specific range of characters
-codemark add --file src/auth.rs --range 10:5-10:20 --note "Specific expression" --created-by agent
+codemark add src/auth.rs --range 10:5-10:20 --note "Specific expression" --created-by agent
 ```
 
 ### Method 2: Snippet-based bookmarking
 When you have the code snippet but need to find it in a file:
 
 ```bash
-echo "func validateToken(_ token: String) -> Claims" | codemark add-from-snippet --file src/auth.swift --note "Validates JWT tokens" --tag role:validator --created-by agent
+echo "func validateToken(_ token: String) -> Claims" | codemark add src/auth.swift --snippet --note "Validates JWT tokens" --tag role:validator --created-by agent
 ```
 
 ### Method 3: Raw tree-sitter query (Last Resort)
 Use this **only** if range-based targeting is ambiguous or you need a highly specific non-positional pattern.
 
 ```bash
-codemark add-from-query --file src/auth.swift --query '(function_declaration name: (simple_identifier) @name (#eq? @name "validateToken")) @target' --note "Validates JWT tokens" --created-by agent
+codemark add src/auth.swift --query '(function_declaration name: (simple_identifier) @name (#eq? @name "validateToken")) @target' --note "Validates JWT tokens" --created-by agent
 ```
 
 For common query patterns across languages, see:
@@ -314,8 +314,8 @@ For common query patterns across languages, see:
 - **Fine-grained execution targeting**: Don't just bookmark containers (classes/functions). Bookmark **execution boundaries** like critical method calls (`call_expression`), authorization gates (`if_statement`), or complex state transitions (`switch`/`match`).
 - **Granularity Strategy**: We prefer **more, highly specific bookmarks** over fewer, general ones. For example, if a function performs three critical steps (auth, validation, DB write), it is better to bookmark those three specific lines/nodes than to bookmark the entire function.
 - Use `--created-by agent` to distinguish your bookmarks from the user's.
-- Use `--collection <name>` when creating bookmarks to add them directly to a collection (collections are auto-created if they don't exist).
-- **Iterative enhancement**: When working with an existing bookmark and discover new context, use `annotate` to add notes without re-parsing the file. Multiple agents can annotate the same bookmark over time.
+- Use `--collection <name>` when creating bookmarks to add them directly to a tour (tours are auto-created if they don't exist).
+- **Iterative enhancement**: When working with an existing bookmark and discover new context, use `edit` to add notes without re-parsing the file. Multiple agents can edit the same bookmark over time.
 - For detailed note guidelines, see `templates.md`.
 - For usage examples, see `examples.md`.
 - For tree-sitter query patterns, see `queries/` directory for language-specific guides.
@@ -324,25 +324,37 @@ For common query patterns across languages, see:
 
 ### Creating bookmarks
 ```bash
-# By range (line or byte) — optionally add to collection
-codemark add --file src/auth.rs --range 42-67 --collection my-work
+# By range (line or byte) — optionally add to tour
+codemark add src/auth.rs --range 42-67 --collection my-work
+
+# By snippet (reads from stdin) — optionally add to tour
+echo "snippet here" | codemark add src/auth.rs --snippet --collection my-work
+
+# By raw tree-sitter query (most precise) — optionally add to tour
+codemark add src/auth.rs --query '(function_declaration) @target' --collection my-work
 
 # With multiple notes (each creates a separate annotation entry)
-codemark add --file src/auth.rs --range 42-67 --note "Primary observation" --note "Secondary note" --note "Action item" --collection my-work
-
-# By code snippet (searches for snippet in file) — optionally add to collection
-codemark add-from-snippet --file src/auth.rs --note "Found this function" --note "Needs refactoring" --collection my-work
-
-# By raw tree-sitter query (most precise) — optionally add to collection
-codemark add-from-query --file src/auth.rs --query '(function_declaration) @target' --collection my-work
+codemark add src/auth.rs --range 42-67 --note "Primary observation" --note "Secondary note" --note "Action item" --collection my-work
 
 # Preview what would be bookmarked (dry-run)
-codemark add --file src/auth.rs --range 42 --dry-run
+codemark add src/auth.rs --range 42 --dry-run
+```
+
+### Viewing bookmarks
+```bash
+# Show bookmark with preview (default)
+codemark show <bookmark-id>
+
+# Show only file location (was 'resolve')
+codemark show <bookmark-id> --location
+
+# Show metadata only (no preview)
+codemark show <bookmark-id> --no-preview
 ```
 
 ### Load context
 ```bash
-codemark resolve --status active
+codemark list --health active
 codemark list --author agent
 codemark search "authentication"
 ```
@@ -357,36 +369,79 @@ codemark open <bookmark-id>
 # Example: rs = "nvim +{LINE_START} {FILE}"
 ```
 
-### Organize with collections
+### Organize with tours (collections)
 ```bash
-# Collections are auto-created when using --collection, or create explicitly:
-codemark collection create login-flow --description "Step-by-step login execution path"
+# Tours are auto-created when using --collection, or create explicitly:
+codemark tour create login-flow --description "Step-by-step login execution path"
 
-# Show bookmarks in a collection
-codemark collection show login-flow
+# Create with tags, links, and notes in one command
+codemark tour create auth-flow --tag feature:auth --link "https://docs.example.com/auth,Docs" --note "Main authentication flow"
 
-# List all collections
-codemark collection list
+# Show bookmarks in a tour
+codemark tour show login-flow
+
+# List all tours
+codemark tour list
+
+# Add bookmarks to a tour
+codemark tour add login-flow <bookmark-id-1> <bookmark-id-2>
+
+# Add with metadata
+codemark tour add login-flow <bookmark-id> --tag implementation --note "Core handler"
+
+# Annotate a tour (add tags, links, notes)
+codemark tour annotate login-flow --tag phase:2 --link "https://example.com,Related"
+
+# Publish a tour to Codetours
+codemark tour push login-flow
+
+# Pull a tour from Codetours
+codemark tour pull <tour-url>
+```
+
+### Editing bookmarks
+```bash
+# Add notes, context, or tags to an existing bookmark
+codemark edit <bookmark-id> --note "Additional context discovered during implementation"
+codemark edit <bookmark-id> --context "Related to auth-refactor feature"
+codemark edit <bookmark-id> --tag +bug-fix --tag +priority:high
+
+# Remove tags using - prefix
+codemark edit <bookmark-id> --tag -old-tag
+
+# Add multiple notes at once (each --note creates a separate annotation)
+codemark edit <bookmark-id> --note "First observation" --note "Second observation" --note "Third insight"
+codemark edit <bookmark-id> --note "Performance concern" --context "Investigation details" --note "Follow-up needed"
+```
+
+### Health and maintenance
+```bash
+# Check bookmark health
+codemark health status
+
+# Run resolution (was 'heal')
+codemark health check --auto-archive
+
+# Remove old archived bookmarks
+codemark health gc --older-than 30d
+```
+
+### Data operations
+```bash
+# Export bookmarks
+codemark data export --export-format json
+
+# Import bookmarks
+codemark data import backup.json
+
+# Rebuild semantic search embeddings
+codemark data reindex
 ```
 
 ### Check impact
 ```bash
-codemark diff --since HEAD~3
-```
-
-### Enhancing existing bookmarks
-```bash
-# Add notes, context, or tags to an existing bookmark
-codemark annotate <bookmark-id> --note "Additional context discovered during implementation"
-codemark annotate <bookmark-id> --context "Related to auth-refactor feature"
-codemark annotate <bookmark-id> --tag bug-fix --tag priority:high
-
-# Add multiple notes at once (each --note creates a separate annotation)
-codemark annotate <bookmark-id> --note "First observation" --note "Second observation" --note "Third insight"
-codemark annotate <bookmark-id> --note "Performance concern" --context "Investigation details" --note "Follow-up needed"
-
-# Add annotation as an agent with provenance
-codemark annotate <bookmark-id> --note "Found this during debugging the session timeout issue" --added-by agent --source investigation
+# See which bookmarks are affected by recent changes
+codemark tour diff --since HEAD~3
 ```
 
 ## Enriching Bookmark Context
@@ -399,7 +454,7 @@ Always include module or package information inferred from the file path. This i
 
 ```bash
 # Infer from file path and add as context
-codemark add --file src/auth/service.rs --range 42 --context "Module: auth | Package: service" --note "Core JWT validation" --tag module:auth
+codemark add src/auth/service.rs --range 42 --context "Module: auth | Package: service" --note "Core JWT validation" --tag module:auth
 ```
 
 | Language | Path pattern | Module context |
@@ -417,7 +472,7 @@ codemark add --file src/auth/service.rs --range 42 --context "Module: auth | Pac
 Explain which business domain or bounded context this code belongs to.
 
 ```bash
-codemark annotate <id> --context "Domain: User authentication | Bounded context: Identity and Access Management"
+codemark edit <id> --context "Domain: User authentication | Bounded context: Identity and Access Management"
 ```
 
 ### Usage Context
@@ -425,7 +480,7 @@ codemark annotate <id> --context "Domain: User authentication | Bounded context:
 Document where and how this code is used.
 
 ```bash
-codemark annotate <id> --context "Used by: API middleware, websocket handler, cron jobs"
+codemark edit <id> --context "Used by: API middleware, websocket handler, cron jobs"
 ```
 
 ### Evolution Context
@@ -433,7 +488,7 @@ codemark annotate <id> --context "Used by: API middleware, websocket handler, cr
 Track the lifecycle and evolution of the code.
 
 ```bash
-codemark annotate <id> --context "Added in: v2.3.0 | Deprecated in: v3.0.0 | Replacement: src/auth/v2/"
+codemark edit <id> --context "Added in: v2.3.0 | Deprecated in: v3.0.0 | Replacement: src/auth/v2/"
 ```
 
 ### Dependency Context
@@ -441,7 +496,7 @@ codemark annotate <id> --context "Added in: v2.3.0 | Deprecated in: v3.0.0 | Rep
 Link to related bookmarks and dependencies.
 
 ```bash
-codemark annotate <id> --context "Depends on: [[bookmark-id-claims]] | Called by: [[bookmark-id-middleware]]"
+codemark edit <id> --context "Depends on: [[bookmark-id-claims]] | Called by: [[bookmark-id-middleware]]"
 ```
 
 ### Performance Context
@@ -449,7 +504,7 @@ codemark annotate <id> --context "Depends on: [[bookmark-id-claims]] | Called by
 Note performance characteristics when relevant.
 
 ```bash
-codemark annotate <id> --context "Performance: O(n) where n = user roles | Cache: 30s TTL"
+codemark edit <id> --context "Performance: O(n) where n = user roles | Cache: 30s TTL"
 ```
 
 ### Security Context
@@ -457,12 +512,12 @@ codemark annotate <id> --context "Performance: O(n) where n = user roles | Cache
 For security-sensitive code, document security considerations.
 
 ```bash
-codemark annotate <id> --context "Security: Validates JWT signature | Checks expiry | Handles token rotation"
+codemark edit <id> --context "Security: Validates JWT signature | Checks expiry | Handles token rotation"
 ```
 
 ### Context Template
 
-When creating or annotating bookmarks, use this template:
+When creating or editing bookmarks, use this template:
 
 ```
 Context: <domain> | <usage> | <dependencies> | <security/evolution notes>
@@ -472,12 +527,6 @@ Examples:
 - `Context: Auth domain | Validates all API requests | Depends on Claims struct`
 - `Context: Payment processing | Called by checkout flow | External: Stripe API`
 - `Context: User preferences | Cached 30s | DB: users_table`
-
-### Maintenance
-```bash
-codemark heal --auto-archive
-codemark status
-```
 
 ## Supported languages
 Swift, Rust, TypeScript, Python, Go, Java, C#, Dart.
