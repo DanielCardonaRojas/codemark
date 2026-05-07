@@ -48,6 +48,8 @@ struct PathEntry {
     semantic_info: Option<SemanticInfo>,
     /// Whether this node is a "landmark" (stable named declaration).
     is_landmark: bool,
+    /// Sticky breadcrumb tag (e.g., Some("class"), Some("method")) for @sticky captures.
+    sticky_tag: Option<String>,
 }
 
 /// How to query for the "name" of a node.
@@ -244,6 +246,35 @@ const DECLARATION_TYPES: &[&str] = &[
     "enum_constant",
 ];
 
+/// Map tree-sitter node types to breadcrumb category tags for @sticky captures.
+/// Returns the category name (e.g., "class", "function", "method") for landmark nodes.
+fn get_sticky_tag(node_kind: &str) -> Option<&'static str> {
+    match node_kind {
+        // Classes / Structs / Interfaces
+        "class_declaration" | "struct_declaration" | "interface_declaration" => Some("class"),
+        "impl_item" | "trait_item" => Some("impl"),
+
+        // Functions / Methods
+        "function_declaration" | "function_item" | "function_definition" => Some("function"),
+        "method_definition" | "method_declaration" => Some("method"),
+
+        // Modules / Namespaces
+        "mod_item" => Some("module"),
+        "namespace_declaration" => Some("namespace"),
+
+        // Protocols / Traits
+        "protocol_declaration" => Some("protocol"),
+
+        // Enums
+        "enum_declaration" | "enum_item" => Some("enum"),
+
+        // Types
+        "type_declaration" | "type_alias_declaration" | "type_spec" => Some("type"),
+
+        _ => None,
+    }
+}
+
 /// Check if a declaration node is likely a local variable/constant.
 fn is_local_declaration(node: Node) -> bool {
     let kind = node.kind();
@@ -285,6 +316,7 @@ fn build_base_query(
         name_info: extract_name_info(node, source),
         semantic_info,
         is_landmark: DECLARATION_TYPES.contains(&node.kind()) && !is_local_declaration(node),
+        sticky_tag: get_sticky_tag(node.kind()).map(|s| s.to_string()),
     };
 
     let path = vec![entry];
@@ -440,6 +472,7 @@ fn build_structural_path(target: Node, source: &[u8]) -> Vec<PathEntry> {
                 },
                 is_landmark: DECLARATION_TYPES.contains(&current.kind())
                     && !is_local_declaration(current),
+                sticky_tag: get_sticky_tag(current.kind()).map(|s| s.to_string()),
             };
             if std::env::var("CODEMARK_DEBUG_QUERY").is_ok() {
                 eprintln!(
@@ -718,17 +751,24 @@ fn build_tier1_query(path: &[PathEntry]) -> String {
                 name
             };
 
+            // Determine if this landmark node gets a sticky capture
+            let sticky_suffix = if let Some(ref tag) = entry.sticky_tag {
+                format!(" @sticky.{}", tag)
+            } else {
+                String::new()
+            };
+
             if let Some(ref inner_type) = info.inner_type {
                 // Nested name: e.g., name: (user_type (type_identifier) @capture)
                 if let Some(ref field_name) = info.field {
                     s.push_str(&format!(
-                        "\n{pad}  {}: ({} ({inner_type}) @{capture_name})",
-                        field_name, info.direct_type
+                        "\n{pad}  {}: ({} ({inner_type}) @{capture_name}{})",
+                        field_name, info.direct_type, sticky_suffix
                     ));
                 } else {
                     s.push_str(&format!(
-                        "\n{pad}  ({} ({inner_type}) @{capture_name})",
-                        info.direct_type
+                        "\n{pad}  ({} ({inner_type}) @{capture_name}{})",
+                        info.direct_type, sticky_suffix
                     ));
                 }
                 inner_predicate.push_str(&format!(
@@ -738,8 +778,8 @@ fn build_tier1_query(path: &[PathEntry]) -> String {
                 ));
             } else if let Some(ref field_name) = info.field {
                 s.push_str(&format!(
-                    "\n{pad}  {}: ({}) @{capture_name}",
-                    field_name, info.direct_type
+                    "\n{pad}  {}: ({}) @{capture_name}{}",
+                    field_name, info.direct_type, sticky_suffix
                 ));
                 inner_predicate.push_str(&format!(
                     "\n{pad}  (#eq? @{} \"{}\")",
@@ -757,7 +797,10 @@ fn build_tier1_query(path: &[PathEntry]) -> String {
                         escape_query_text(&info.text)
                     ));
                 } else {
-                    s.push_str(&format!("\n{pad}  ({}) @{}", info.direct_type, capture_name));
+                    s.push_str(&format!(
+                        "\n{pad}  ({}) @{}{}",
+                        info.direct_type, capture_name, sticky_suffix
+                    ));
                     inner_predicate.push_str(&format!(
                         "\n{pad}  (#eq? @{} \"{}\")",
                         capture_name,
@@ -778,7 +821,12 @@ fn build_tier1_query(path: &[PathEntry]) -> String {
                 && entry.node_type == info.direct_type
             {
                 let capture_name = "fn_name";
-                s.push_str(&format!(" @{}", capture_name));
+                let sticky_suffix = if let Some(ref tag) = entry.sticky_tag {
+                    format!(" @sticky.{}", tag)
+                } else {
+                    String::new()
+                };
+                s.push_str(&format!(" @{}{}", capture_name, sticky_suffix));
             }
 
             s.push_str(" @target");
@@ -802,7 +850,12 @@ fn build_tier1_query(path: &[PathEntry]) -> String {
                 && entry.node_type == info.direct_type
             {
                 let capture_name = format!("name{}", *counter - 1);
-                s.push_str(&format!(" @{}", capture_name));
+                let sticky_suffix = if let Some(ref tag) = entry.sticky_tag {
+                    format!(" @sticky.{}", tag)
+                } else {
+                    String::new()
+                };
+                s.push_str(&format!(" @{}{}", capture_name, sticky_suffix));
             }
 
             // Wrap in extra parens if we have an outer predicate
@@ -1615,5 +1668,33 @@ mod tests {
             result.target_node_type, "block",
             "single line inside method should target the tightest node (block)"
         );
+    }
+
+    // --- Sticky capture tests ---
+
+    #[tokio::test]
+    async fn generated_query_includes_sticky_captures() {
+        let (tree, source) = parse_fixture("auth_service.swift").await;
+        let range = find_function_byte_range(&tree, &source, "validateToken");
+        let lang = CodemarkLang::Swift.tree_sitter_language();
+
+        let result = generate_query(&tree, source.as_bytes(), range, &lang).unwrap();
+
+        // Query should contain @sticky.class and @sticky.function (Swift uses function_declaration for both)
+        assert!(result.query.contains("@sticky.class"), "query should have @sticky.class:\n{}", result.query);
+        assert!(result.query.contains("@sticky.function"), "query should have @sticky.function:\n{}", result.query);
+    }
+
+    #[tokio::test]
+    async fn generated_query_for_nested_class_has_sticky_captures() {
+        let (tree, source) = parse_ts_fixture("auth_service.ts").await;
+        let range = find_ts_function_byte_range(&tree, &source, "validateToken");
+        let lang = CodemarkLang::TypeScript.tree_sitter_language();
+
+        let result = generate_query(&tree, source.as_bytes(), range, &lang).unwrap();
+
+        // Query should contain @sticky.class and @sticky.method (TypeScript distinguishes these)
+        assert!(result.query.contains("@sticky.class"), "query should have @sticky.class:\n{}", result.query);
+        assert!(result.query.contains("@sticky.method"), "query should have @sticky.method:\n{}", result.query);
     }
 }

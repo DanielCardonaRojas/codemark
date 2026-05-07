@@ -1,11 +1,11 @@
 ---
-source: tests/query_snapshots.rs
+source: crates/codemark-cli/tests/query_snapshots.rs
 expression: result.query
 ---
 (class_declaration
   (class_body
     (function_declaration
-      name: (simple_identifier) @name0
+      name: (simple_identifier) @name0 @sticky.function
       (#eq? @name0 "update")
       (function_body
         (statements

@@ -9,6 +9,9 @@ pub struct MatchResult {
     pub byte_range: (usize, usize),
     pub start_point: (usize, usize),
     pub end_point: (usize, usize),
+    /// All captures from the match, including @sticky.* captures.
+    /// Each entry is (capture_name, (byte_range, line_number)).
+    pub captures: Vec<(String, (usize, usize), usize)>,
 }
 
 /// Compile and run a tree-sitter query against a tree, returning all @target matches.
@@ -21,7 +24,7 @@ pub fn run_query(
     let query = Query::new(language, query_str)
         .map_err(|e| Error::TreeSitter(format!("invalid query: {e}")))?;
 
-    let target_idx = query
+    let _target_idx = query
         .capture_index_for_name("target")
         .ok_or_else(|| Error::TreeSitter("query has no @target capture".into()))?;
 
@@ -30,18 +33,31 @@ pub fn run_query(
     let mut results = Vec::new();
 
     while let Some(m) = matches.next() {
+        let mut target_node = None;
+        let mut sticky_captures = Vec::new();
+
         for capture in m.captures {
-            if capture.index == target_idx {
+            let capture_name = query.capture_names()[capture.index as usize].to_string();
+            if capture_name == "target" {
+                target_node = Some(capture.node);
+            } else if capture_name.starts_with("sticky.") {
                 let node = capture.node;
-                let text =
-                    std::str::from_utf8(&source[node.byte_range()]).unwrap_or("").to_string();
-                results.push(MatchResult {
-                    node_text: text,
-                    byte_range: (node.start_byte(), node.end_byte()),
-                    start_point: (node.start_position().row, node.start_position().column),
-                    end_point: (node.end_position().row, node.end_position().column),
-                });
+                let byte_range = (node.start_byte(), node.end_byte());
+                let line = node.start_position().row;
+                sticky_captures.push((capture_name, byte_range, line));
             }
+        }
+
+        if let Some(node) = target_node {
+            let text =
+                std::str::from_utf8(&source[node.byte_range()]).unwrap_or("").to_string();
+            results.push(MatchResult {
+                node_text: text,
+                byte_range: (node.start_byte(), node.end_byte()),
+                start_point: (node.start_position().row, node.start_position().column),
+                end_point: (node.end_position().row, node.end_position().column),
+                captures: sticky_captures,
+            });
         }
     }
 
@@ -244,4 +260,60 @@ mod tests {
         CodemarkLang::Dart,
         "../../tests/fixtures/dart/auth_service.dart"
     );
+
+    // --- Sticky capture tests ---
+
+    #[test]
+    fn matcher_extracts_sticky_captures() {
+        let source = r#"
+    class Foo {
+        func bar() {}
+    }
+    "#;
+        let query = r#"
+    (class_declaration
+      name: (type_identifier) @name0 @sticky.class
+      (class_body
+        (function_declaration
+          name: (simple_identifier) @fn_name @sticky.method) @target))
+    "#;
+
+        let mut parser = Parser::new(CodemarkLang::Swift).unwrap();
+        let tree = parser.parse(source.as_bytes()).unwrap();
+
+        let results = run_query(query, &tree, source.as_bytes(), &CodemarkLang::Swift.tree_sitter_language()).unwrap();
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].captures.len(), 2);
+
+        // Check that we have both sticky captures
+        let capture_names: Vec<&str> = results[0].captures.iter().map(|(name, _, _)| name.as_str()).collect();
+        assert!(capture_names.contains(&"sticky.class"));
+        assert!(capture_names.contains(&"sticky.method"));
+    }
+
+    #[tokio::test]
+    async fn matcher_no_sticky_captures_in_legacy_query() {
+        // Legacy query without @sticky captures should return empty captures vec
+        let source = r#"
+    class Foo {
+        func bar() {}
+    }
+    "#;
+        let query = r#"
+    (class_declaration
+      name: (type_identifier) @name0
+      (class_body
+        (function_declaration
+          name: (simple_identifier) @fn_name) @target))
+    "#;
+
+        let mut parser = Parser::new(CodemarkLang::Swift).unwrap();
+        let tree = parser.parse(source.as_bytes()).unwrap();
+
+        let results = run_query(query, &tree, source.as_bytes(), &CodemarkLang::Swift.tree_sitter_language()).unwrap();
+
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].captures.len(), 0);
+    }
 }
