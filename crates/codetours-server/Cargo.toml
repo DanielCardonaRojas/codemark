@@ -30,6 +30,7 @@ deadpool-sqlite = { workspace = true }
 rinja = { workspace = true }
 rinja_axum = { workspace = true }
 syntect = { workspace = true }
+syntect-assets = "0.23"
 futures-util = "0.3"
 zstd = "0.13"
 quick_cache = "0.6.21"

@@ -11,7 +11,16 @@ static THEME: OnceLock<Theme> = OnceLock::new();
 static HL_CACHE: OnceLock<Cache<(String, u64), Arc<String>>> = OnceLock::new();
 
 pub fn get_syntax_set() -> &'static SyntaxSet {
-    SYNTAX_SET.get_or_init(SyntaxSet::load_defaults_newlines)
+    SYNTAX_SET.get_or_init(|| {
+        // Try to load from syntect-assets (bat's syntaxes) for better language support including Swift
+        let assets = syntect_assets::assets::HighlightingAssets::from_binary();
+        assets.get_syntax_set()
+            .cloned()
+            .unwrap_or_else(|_| {
+                tracing::warn!("Failed to load syntect-assets syntax set, falling back to default syntaxes");
+                SyntaxSet::load_defaults_newlines()
+            })
+    })
 }
 
 pub fn get_theme() -> &'static Theme {
@@ -38,11 +47,46 @@ pub fn highlight(language: &str, content: &str, target_line_range: Option<(usize
     let syntax_set = get_syntax_set();
     let theme = get_theme();
 
-    let syntax = syntax_set
-        .find_syntax_by_extension(language)
-        .or_else(|| syntax_set.find_syntax_by_token(language))
-        .or_else(|| syntax_set.find_syntax_by_name(language))
-        .unwrap_or_else(|| syntax_set.find_syntax_plain_text());
+    // First, try to find by file extension
+    let syntax = syntax_set.find_syntax_by_extension(language);
+
+    // If not found, try by token (first keyword of the language)
+    let syntax = syntax.or_else(|| {
+        // Map our language identifiers to tokens that syntect recognizes
+        let token = match language.to_lowercase().as_str() {
+            "swift" => "func",
+            "rust" | "rs" => "fn",
+            "typescript" | "ts" => "interface",
+            "javascript" | "js" => "function",
+            "python" | "py" => "def",
+            "go" => "func",
+            _ => language,
+        };
+        syntax_set.find_syntax_by_token(token)
+    });
+
+    // If still not found, try by exact name
+    let syntax = syntax.or_else(|| {
+        let name = match language.to_lowercase().as_str() {
+            "swift" => "Swift",
+            "rust" | "rs" => "Rust",
+            "typescript" | "ts" => "TypeScript",
+            "tsx" => "TSX",
+            "javascript" | "js" => "JavaScript",
+            "python" | "py" => "Python",
+            "go" => "Go",
+            _ => language,
+        };
+        syntax_set.find_syntax_by_name(name)
+    });
+
+    let syntax = syntax.unwrap_or_else(|| {
+        tracing::warn!("No syntax found for language '{}', using plain text", language);
+        syntax_set.find_syntax_plain_text()
+    });
+
+    tracing::debug!("Highlighting {} lines for language '{}' (syntax: {})",
+        content.lines().count(), language, syntax.name);
 
     let mut highlighter = HighlightLines::new(syntax, theme);
     let mut html = String::new();
