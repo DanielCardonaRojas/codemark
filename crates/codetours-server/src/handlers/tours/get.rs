@@ -194,23 +194,26 @@ pub async fn handler(
                         .and_then(|json| serde_json::from_str::<Vec<Breadcrumb>>(&json).ok())
                         .unwrap_or_default();
 
-                    let sticky_lines: Vec<String> = breadcrumbs.iter().map(|b| b.text.clone()).collect();
-                    let sticky_line_numbers: Vec<usize> = breadcrumbs.iter().map(|b| b.line).collect();
+                    let sticky_lines: Vec<String> =
+                        breadcrumbs.iter().map(|b| b.text.clone()).collect();
+                    let sticky_line_numbers: Vec<usize> =
+                        breadcrumbs.iter().map(|b| b.line).collect();
 
                     // Read headline and snapshot separately using fallible get calls
                     let headline: Option<String> = row.get(3)?;
                     let snapshot: Option<String> = row.get(4)?;
 
-                    let snapshot_data = if headline.is_some() || snapshot.is_some() || !sticky_lines.is_empty() {
-                        Some(ResolutionSnapshot {
-                            headline,
-                            snapshot,
-                            sticky_lines,
-                            sticky_line_numbers,
-                        })
-                    } else {
-                        None
-                    };
+                    let snapshot_data =
+                        if headline.is_some() || snapshot.is_some() || !sticky_lines.is_empty() {
+                            Some(ResolutionSnapshot {
+                                headline,
+                                snapshot,
+                                sticky_lines,
+                                sticky_line_numbers,
+                            })
+                        } else {
+                            None
+                        };
 
                     Ok(BookmarkDetail {
                         id: row.get(0)?,
@@ -229,7 +232,6 @@ pub async fn handler(
             Ok::<_, StatusCode>(tour)
         })
         .await;
-
 
     match result {
         Ok(Ok(tour)) => (StatusCode::OK, Json(tour)).into_response(),

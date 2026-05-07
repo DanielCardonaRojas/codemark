@@ -1496,18 +1496,23 @@ pub async fn handle_preview(cli: &Cli, args: &PreviewArgs) -> Result<()> {
 
     // Output JSON with resolution data (using standard envelope)
     let line_range_colon = resolution.line_range.as_ref().map(|r| r.replace('-', ":"));
-    
+
     // For JSON output, we want the actual snapshot text if it's missing in the resolution record
     let snapshot_text = resolution.snapshot.clone().or_else(|| {
         if let Ok(file_bytes) = std::fs::read(&absolute_path) {
-             let byte_range_str = resolution.byte_range.as_ref()?;
-             let byte_location = ByteLocation::from_str(byte_range_str)?;
-             if byte_location.start_byte <= byte_location.end_byte
-                 && byte_location.start_byte < file_bytes.len()
-                 && byte_location.end_byte <= file_bytes.len()
-             {
-                 return Some(String::from_utf8_lossy(&file_bytes[byte_location.start_byte..byte_location.end_byte]).to_string());
-             }
+            let byte_range_str = resolution.byte_range.as_ref()?;
+            let byte_location = ByteLocation::from_str(byte_range_str)?;
+            if byte_location.start_byte <= byte_location.end_byte
+                && byte_location.start_byte < file_bytes.len()
+                && byte_location.end_byte <= file_bytes.len()
+            {
+                return Some(
+                    String::from_utf8_lossy(
+                        &file_bytes[byte_location.start_byte..byte_location.end_byte],
+                    )
+                    .to_string(),
+                );
+            }
         }
         None
     });

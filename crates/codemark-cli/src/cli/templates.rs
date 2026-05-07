@@ -426,7 +426,10 @@ mod tests {
 
         // Verify snapshot is present in resolution
         assert!(resolutions[0].snapshot.is_some(), "Snapshot should be Some");
-        assert_eq!(resolutions[0].snapshot.as_ref().unwrap(), "fn main() {\n    println!(\"Hello\");\n}");
+        assert_eq!(
+            resolutions[0].snapshot.as_ref().unwrap(),
+            "fn main() {\n    println!(\"Hello\");\n}"
+        );
 
         let result = render_show_template(&bm, &resolutions);
         assert!(result.is_ok(), "Template rendering failed: {:?}", result.err());
