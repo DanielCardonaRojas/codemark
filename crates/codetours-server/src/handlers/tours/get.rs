@@ -96,6 +96,8 @@ pub struct BookmarkView {
     pub comment_count: usize,
     pub comments: Vec<CommentView>,
     pub has_notes: bool,
+    pub breadcrumbs: Vec<codemark_core::engine::breadcrumbs::Breadcrumb>,
+    pub snippet_start: usize,
 }
 
 #[derive(Serialize)]
@@ -251,7 +253,7 @@ pub async fn handler(
                     // 3. Get bookmarks and join with latest resolution
                     let mut stmt = conn
                         .prepare(
-                            "SELECT b.id, b.file_path, r.line_range, r.headline, r.preview_lines, b.language, b.query, b.health
+                            "SELECT b.id, b.file_path, r.line_range, r.headline, r.preview_lines, b.language, b.query, b.health, r.breadcrumbs
                      FROM collection_bookmarks cb
                      JOIN bookmarks b ON cb.bookmark_id = b.id
                      LEFT JOIN resolutions r ON r.id = (
@@ -278,6 +280,7 @@ pub async fn handler(
                                 row.get::<_, String>(5)?, // language
                                 row.get::<_, String>(6)?, // query
                                 row.get::<_, String>(7)?, // health
+                                row.get::<_, Option<String>>(8)?, // breadcrumbs
                             ))
                         })
                         .map_err(|e| {
@@ -291,7 +294,7 @@ pub async fn handler(
                         })?;
 
                     let mut bookmarks = Vec::new();
-                    for (i, (bid, file, range, head, preview, lang, q, b_health)) in bookmarks_data.into_iter().enumerate() {
+                    for (i, (bid, file, range, head, preview, lang, q, b_health, bcs)) in bookmarks_data.into_iter().enumerate() {
                         let tags: Vec<String> = conn.prepare("SELECT tag FROM bookmark_tags WHERE bookmark_id = ?")
                             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
                             .query_map([&bid], |row| row.get(0))
@@ -314,7 +317,9 @@ pub async fn handler(
                             .collect::<rusqlite::Result<Vec<_>>>()
                             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-                        bookmarks.push((bid, file, range, head, preview, String::new(), lang, q, tags, comments, i + 1, b_health));
+                        let breadcrumbs = bcs.and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
+
+                        bookmarks.push((bid, file, range, head, preview, String::new(), lang, q, tags, comments, i + 1, b_health, breadcrumbs));
                     }
 
                     Ok::<(String, String, Option<String>, Option<String>, String, Option<String>, Option<String>, Option<String>, Vec<LinkView>, Vec<_>), StatusCode>((
@@ -339,7 +344,7 @@ pub async fn handler(
                     if format == ResponseFormat::Json {
                         let bookmarks = bookmarks_data
                             .into_iter()
-                            .map(|(bid, file, range, head, preview, _, _, _, _, _, _, _)| {
+                            .map(|(bid, file, range, head, preview, _, _, _, _, _, _, _, _)| {
                                 let snapshot = if head.is_some() || preview.is_some() {
                                     Some(ResolutionSnapshot {
                                         headline: head,
@@ -395,23 +400,31 @@ pub async fn handler(
                                     comments,
                                     ordinal,
                                     b_health,
+                                    breadcrumbs,
                                 )| {
-                                    let line_parsed = range
-                                        .as_ref()
-                                        .and_then(|r| {
-                                            r.split('-')
-                                                .next()
-                                                .and_then(|s| s.parse::<usize>().ok())
-                                        })
-                                        .unwrap_or(1);
+                                    let (target_start, target_end) = if let Some(r) = &range {
+                                        let mut parts = r.split('-');
+                                        let start = parts.next().and_then(|s| s.parse::<usize>().ok()).unwrap_or(1);
+                                        let end = parts.next().and_then(|s| s.parse::<usize>().ok()).unwrap_or(start);
+                                        (start, end)
+                                    } else {
+                                        (1, 1)
+                                    };
 
                                     let raw_preview = preview.unwrap_or_default();
-                                    let highlighted =
-                                        (*crate::highlight::highlight(&lang, &raw_preview)).clone();
+                                    
+                                    // Calculate target range relative to the snippet (usually 5 lines of context above)
+                                    let snippet_start = target_start.saturating_sub(5).max(1);
+                                    let rel_start = target_start - snippet_start + 1;
+                                    let rel_end = target_end - snippet_start + 1;
+                                    let target_range_in_snippet = Some((rel_start, rel_end));
 
-                                    // Highlight the query using lisp syntax (tree-sitter queries use lisp/scheme-like syntax)
+                                    let highlighted =
+                                        (*crate::highlight::highlight(&lang, &raw_preview, target_range_in_snippet)).clone();
+
+                                    // Highlight the query using lisp syntax
                                     let query_highlighted = if !q.is_empty() {
-                                        Some((*crate::highlight::highlight("lisp", &q)).clone())
+                                        Some((*crate::highlight::highlight("lisp", &q, None)).clone())
                                     } else {
                                         None
                                     };
@@ -432,7 +445,7 @@ pub async fn handler(
                                         headline: head.unwrap_or_else(|| "No headline".to_string()),
                                         file_path: file,
                                         line_range: range.unwrap_or_else(|| "L1".to_string()),
-                                        line: line_parsed,
+                                        line: target_start,
                                         health: b_health,
                                         health_class: b_health_class,
                                         note: notes,
@@ -446,6 +459,8 @@ pub async fn handler(
                                         comment_count: comments.len(),
                                         comments,
                                         has_notes: false, // TODO: bookmark_annotations check
+                                        breadcrumbs,
+                                        snippet_start,
                                     }
                                 },
                             )

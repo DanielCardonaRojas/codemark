@@ -137,12 +137,25 @@
                             </div>
                         </div>
 
+                        <!-- Sticky Breadcrumbs -->
+                        {% if !bookmark.breadcrumbs.is_empty() %}
+                        <div class="breadcrumb-bar sticky top-0 z-10">
+                            {% for bc in bookmark.breadcrumbs %}
+                            <div class="breadcrumb-item">
+                                <span class="opacity-40 text-[9px]">{{ bc.line }}</span>
+                                <span>{{ bc.text }}</span>
+                            </div>
+                            {% if !loop.last %}<span class="breadcrumb-separator">›</span>{% endif %}
+                            {% endfor %}
+                        </div>
+                        {% endif %}
+
                         <!-- Source Panel -->
                         <div class="relative group/code panel-source hidden peer-checked/source:block">
                             <div class="flex">
                                 <div class="line-numbers shrink-0 py-4 px-3 text-right bg-bg-secondary/20 border-r border-border text-[10px] font-mono text-text-secondary opacity-50 select-none">
                                     {% for _ in bookmark.preview_lines.lines() %}
-                                        <div>{{ (loop.index0 + bookmark.line).saturating_sub(5) }}</div>
+                                        <div>{{ loop.index0 + bookmark.snippet_start }}</div>
                                     {% endfor %}
                                 </div>
                                 <pre class="p-4 text-xs font-mono overflow-x-auto custom-scrollbar flex-1"><code>{{ bookmark.highlighted|safe }}</code></pre>

@@ -26,11 +26,11 @@ pub fn get_cache() -> &'static Cache<(String, u64), Arc<String>> {
     HL_CACHE.get_or_init(|| Cache::new(10_000))
 }
 
-pub fn highlight(language: &str, content: &str) -> Arc<String> {
+pub fn highlight(language: &str, content: &str, target_line_range: Option<(usize, usize)>) -> Arc<String> {
     let hash = xxh3_64(content.as_bytes());
-    let key = (language.to_string(), hash);
+    let key = (language.to_string(), hash, target_line_range);
 
-    let cache = get_cache();
+    let cache = get_cache_with_range();
     if let Some(cached) = cache.get(&key) {
         return cached;
     }
@@ -47,50 +47,61 @@ pub fn highlight(language: &str, content: &str) -> Arc<String> {
     let mut highlighter = HighlightLines::new(syntax, theme);
     let mut html = String::new();
 
-    for line in content.lines() {
+    for (i, line) in content.lines().enumerate() {
+        let line_num = i + 1; // 1-based line number relative to the snippet
+        let is_target = if let Some((start, end)) = target_line_range {
+            line_num >= start && line_num <= end
+        } else {
+            true
+        };
+
+        let class = if is_target { "hl-target" } else { "hl-context" };
+        html.push_str(&format!("<div class=\"{}\">", class));
+
         let ranges = match highlighter.highlight_line(line, syntax_set) {
             Ok(r) => r,
             Err(e) => {
                 tracing::warn!("Failed to highlight line for language '{}': {}", language, e);
                 // Fall back to escaped plain text
-                for c in line.chars() {
-                    match c {
-                        '&' => html.push_str("&amp;"),
-                        '<' => html.push_str("&lt;"),
-                        '>' => html.push_str("&gt;"),
-                        '"' => html.push_str("&quot;"),
-                        '\'' => html.push_str("&apos;"),
-                        _ => html.push(c),
-                    }
-                }
-                html.push('\n');
+                push_escaped(&mut html, line);
+                html.push_str("</div>\n");
                 continue;
             }
         };
+
         let escaped_html = match styled_line_to_highlighted_html(&ranges, IncludeBackground::No) {
             Ok(h) => h,
             Err(e) => {
                 tracing::warn!("Failed to format highlighted HTML for language '{}': {}", language, e);
-                // Fall back to escaped plain text
-                for c in line.chars() {
-                    match c {
-                        '&' => html.push_str("&amp;"),
-                        '<' => html.push_str("&lt;"),
-                        '>' => html.push_str("&gt;"),
-                        '"' => html.push_str("&quot;"),
-                        '\'' => html.push_str("&apos;"),
-                        _ => html.push(c),
-                    }
-                }
-                html.push('\n');
+                push_escaped(&mut html, line);
+                html.push_str("</div>\n");
                 continue;
             }
         };
         html.push_str(&escaped_html);
-        html.push('\n');
+        html.push_str("</div>\n");
     }
 
     let result = Arc::new(html);
     cache.insert(key, result.clone());
     result
+}
+
+fn push_escaped(html: &mut String, text: &str) {
+    for c in text.chars() {
+        match c {
+            '&' => html.push_str("&amp;"),
+            '<' => html.push_str("&lt;"),
+            '>' => html.push_str("&gt;"),
+            '"' => html.push_str("&quot;"),
+            '\'' => html.push_str("&apos;"),
+            _ => html.push(c),
+        }
+    }
+}
+
+static HL_CACHE_WITH_RANGE: OnceLock<Cache<(String, u64, Option<(usize, usize)>), Arc<String>>> = OnceLock::new();
+
+fn get_cache_with_range() -> &'static Cache<(String, u64, Option<(usize, usize)>), Arc<String>> {
+    HL_CACHE_WITH_RANGE.get_or_init(|| Cache::new(10_000))
 }

@@ -55,6 +55,13 @@
   .metadata-sidebar { @apply w-80 border-l border-border bg-bg-secondary/50 flex flex-col shrink-0 overflow-hidden; }
   .step-block { @apply space-y-6 pt-8 border-t border-border/40; }
 
+  /* Code Highlighting Extensions */
+  .hl-target { @apply opacity-100; }
+  .hl-context { @apply opacity-40; }
+  .breadcrumb-bar { @apply flex items-center gap-2 px-4 py-1.5 bg-bg-secondary/50 border-b border-border text-[10px] font-mono text-text-secondary overflow-x-auto whitespace-nowrap; }
+  .breadcrumb-item { @apply flex items-center gap-2 shrink-0; }
+  .breadcrumb-separator { @apply opacity-30 shrink-0; }
+
   @keyframes spin {
     from { transform: rotate(0deg); }
     to { transform: rotate(360deg); }
