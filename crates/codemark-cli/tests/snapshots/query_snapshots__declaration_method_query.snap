@@ -1,11 +1,11 @@
 ---
-source: tests/query_snapshots.rs
+source: crates/codemark-cli/tests/query_snapshots.rs
 expression: result.query
 ---
 (class_declaration
-  name: (type_identifier) @name0
+  name: (type_identifier) @name0 @sticky.class
   (#eq? @name0 "ComplexViewModel")
   (class_body
     (function_declaration
-      name: (simple_identifier) @fn_name
+      name: (simple_identifier) @fn_name @sticky.function
       (#eq? @fn_name "update")) @target))
