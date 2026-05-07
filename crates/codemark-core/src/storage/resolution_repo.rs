@@ -4,9 +4,9 @@ use crate::storage::db::Database;
 
 impl Database {
     pub fn insert_resolution(&self, resolution: &Resolution) -> Result<()> {
-        let _ = self.conn().execute(
+        self.conn().execute(
             "INSERT INTO resolutions (id, bookmark_id, resolved_at, commit_hash,
-             method, match_count, file_path, byte_range, line_range, content_hash, headline, preview_lines, breadcrumbs)
+             method, match_count, file_path, byte_range, line_range, content_hash, headline, snapshot, breadcrumbs)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
             rusqlite::params![
                 resolution.id,
@@ -20,10 +20,10 @@ impl Database {
                 resolution.line_range,
                 resolution.content_hash,
                 resolution.headline,
-                resolution.preview_lines,
+                resolution.snapshot,
                 resolution.breadcrumbs,
             ],
-        );
+        )?;
         Ok(())
     }
 
@@ -71,12 +71,12 @@ impl Database {
         if let Some(id) = existing_id {
             // Duplicate detected — update the existing resolution with new metadata
             self.conn().execute(
-                "UPDATE resolutions SET commit_hash = ?1, resolved_at = ?2, headline = ?3, preview_lines = ?4, breadcrumbs = ?5 WHERE id = ?6",
+                "UPDATE resolutions SET commit_hash = ?1, resolved_at = ?2, headline = ?3, snapshot = ?4, breadcrumbs = ?5 WHERE id = ?6",
                 rusqlite::params![
                     resolution.commit_hash,
                     resolution.resolved_at,
                     resolution.headline,
-                    resolution.preview_lines,
+                    resolution.snapshot,
                     resolution.breadcrumbs,
                     id,
                 ],
@@ -106,7 +106,7 @@ impl Database {
     pub fn list_resolutions(&self, bookmark_id: &str, limit: usize) -> Result<Vec<Resolution>> {
         let mut stmt = self.conn().prepare(
             "SELECT id, bookmark_id, resolved_at, commit_hash, method,
-             match_count, file_path, byte_range, line_range, content_hash, headline, preview_lines, breadcrumbs
+             match_count, file_path, byte_range, line_range, content_hash, headline, snapshot, breadcrumbs
              FROM resolutions WHERE bookmark_id = ?1
              ORDER BY resolved_at DESC LIMIT ?2",
         )?;
@@ -131,7 +131,7 @@ impl Database {
                 line_range: row.get(8)?,
                 content_hash: row.get(9)?,
                 headline: row.get(10)?,
-                preview_lines: row.get(11)?,
+                snapshot: row.get(11)?,
                 breadcrumbs: row.get(12)?,
             })
         })?;
@@ -144,7 +144,7 @@ impl Database {
     pub fn get_resolution(&self, id: &str) -> Result<Option<Resolution>> {
         let mut stmt = self.conn().prepare(
             "SELECT id, bookmark_id, resolved_at, commit_hash, method,
-             match_count, file_path, byte_range, line_range, content_hash, headline, preview_lines, breadcrumbs
+             match_count, file_path, byte_range, line_range, content_hash, headline, snapshot, breadcrumbs
              FROM resolutions WHERE id LIKE ?1 LIMIT 2",
         )?;
         let pattern = format!("{id}%");
@@ -170,7 +170,7 @@ impl Database {
                     line_range: row.get(8)?,
                     content_hash: row.get(9)?,
                     headline: row.get(10)?,
-                    preview_lines: row.get(11)?,
+                    snapshot: row.get(11)?,
                     breadcrumbs: row.get(12)?,
                 })
             })?
@@ -230,7 +230,7 @@ mod tests {
             line_range: Some("10:20".to_string()),
             content_hash: Some("sha256:abcd1234abcd1234".to_string()),
             headline: None,
-            preview_lines: None,
+            snapshot: None,
             breadcrumbs: None,
         };
         db.insert_resolution(&res).unwrap();
@@ -259,7 +259,7 @@ mod tests {
             line_range: Some("10:20".to_string()),
             content_hash: Some("sha256:abcd1234abcd1234".to_string()),
             headline: Some("func test()".to_string()),
-            preview_lines: Some("line 1\nline 2".to_string()),
+            snapshot: Some("line 1\nline 2".to_string()),
             breadcrumbs: None,
         };
         db.insert_resolution(&res).unwrap();
@@ -267,7 +267,7 @@ mod tests {
         let results = db.list_resolutions("bm-0001", 10).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].headline.as_deref(), Some("func test()"));
-        assert_eq!(results[0].preview_lines.as_deref(), Some("line 1\nline 2"));
+        assert_eq!(results[0].snapshot.as_deref(), Some("line 1\nline 2"));
 
         // Test update in insert_resolution_if_changed
         let res_update = Resolution {
@@ -282,7 +282,7 @@ mod tests {
             line_range: Some("10:20".to_string()),
             content_hash: Some("sha256:abcd1234abcd1234".to_string()),
             headline: Some("func test_updated()".to_string()),
-            preview_lines: Some("line 1 updated\nline 2 updated".to_string()),
+            snapshot: Some("line 1 updated\nline 2 updated".to_string()),
             breadcrumbs: None,
         };
         db.insert_resolution_if_changed(&res_update, 10).unwrap();
@@ -290,7 +290,7 @@ mod tests {
         let results = db.list_resolutions("bm-0001", 10).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].headline.as_deref(), Some("func test_updated()"));
-        assert_eq!(results[0].preview_lines.as_deref(), Some("line 1 updated\nline 2 updated"));
+        assert_eq!(results[0].snapshot.as_deref(), Some("line 1 updated\nline 2 updated"));
         assert_eq!(results[0].commit_hash.as_deref(), Some("def456"));
     }
 
@@ -312,7 +312,7 @@ mod tests {
             line_range: Some("10:20".to_string()),
             content_hash: Some("sha256:abcd1234abcd1234".to_string()),
             headline: None,
-            preview_lines: None,
+            snapshot: None,
             breadcrumbs: None,
         };
         let inserted = db.insert_resolution_if_changed(&res, 20).unwrap();
@@ -331,7 +331,7 @@ mod tests {
             line_range: Some("10:20".to_string()),
             content_hash: Some("sha256:abcd1234abcd1234".to_string()),
             headline: None,
-            preview_lines: None,
+            snapshot: None,
             breadcrumbs: None,
         };
         let inserted = db.insert_resolution_if_changed(&res2, 20).unwrap();
@@ -357,7 +357,7 @@ mod tests {
             line_range: Some("15:25".to_string()),
             content_hash: Some("sha256:abcd1234abcd1234".to_string()),
             headline: None,
-            preview_lines: None,
+            snapshot: None,
             breadcrumbs: None,
         };
         let inserted = db.insert_resolution_if_changed(&res3, 20).unwrap();
@@ -376,7 +376,7 @@ mod tests {
             line_range: Some("15:25".to_string()),
             content_hash: Some("sha256:abcd1234abcd1234".to_string()),
             headline: None,
-            preview_lines: None,
+            snapshot: None,
             breadcrumbs: None,
         };
         let inserted = db.insert_resolution_if_changed(&res4, 20).unwrap();
@@ -411,7 +411,7 @@ mod tests {
                 line_range: Some(format!("{line_start}:{line_end}")),
                 content_hash: None,
                 headline: None,
-                preview_lines: None,
+                snapshot: None,
                 breadcrumbs: None,
             };
             db.insert_resolution_if_changed(&res, 3).unwrap();
@@ -443,7 +443,7 @@ mod tests {
             line_range: None,
             content_hash: None,
             headline: None,
-            preview_lines: None,
+            snapshot: None,
             breadcrumbs: None,
         };
         db.insert_resolution(&res).unwrap();

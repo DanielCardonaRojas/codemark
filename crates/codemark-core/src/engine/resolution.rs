@@ -28,22 +28,13 @@ pub struct ResolutionResult {
 }
 
 impl ResolutionResult {
-    /// Capture preview lines around the resolved range.
-    /// default: 5 above and 5 below.
-    pub fn capture_preview(&self, source: &str, padding: usize) -> String {
-        let lines: Vec<&str> = source.lines().collect();
-        let total_lines = lines.len();
-        if total_lines == 0 {
-            return String::new();
-        }
-
-        let start_line = self.start_line;
-        let end_line = self.end_line;
-
-        let context_start = start_line.saturating_sub(padding);
-        let context_end = (end_line + padding).min(total_lines.saturating_sub(1));
-
-        lines[context_start..=context_end].join("\n")
+    /// Capture exact snapshot lines from the resolved range.
+    /// New: Captures ONLY the lines within target_range (no padding).
+    /// The sticky headers (breadcrumbs) provide structural context instead.
+    pub fn capture_preview(&self, _source: &str, _padding: usize) -> String {
+        // Return the exact matched text - no padding
+        // The padding parameter is kept for API compatibility but ignored
+        self.matched_text.clone()
     }
 }
 

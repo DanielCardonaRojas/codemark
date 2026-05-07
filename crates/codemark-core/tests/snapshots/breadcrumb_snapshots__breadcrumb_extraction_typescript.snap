@@ -7,4 +7,4 @@ breadcrumbs:
     text: "export class AuthService {"
   - line: 27
     text: "  async validateToken(token: string): Promise<Claims> {"
-preview_lines: "    if (cached) {\n      if (cached.expiry <= new Date()) {\n        this.tokenCache.delete(token);\n        throw new Error(AuthError.Expired);\n      }"
+preview_lines: this.tokenCache

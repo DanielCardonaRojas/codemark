@@ -186,7 +186,7 @@ pub async fn handle_add(cli: &Cli, mode: &OutputMode, args: &AddArgsOriginal) ->
             line_range: Some(format!("{}-{}", target_start_line, target_end_line)),
             content_hash: Some(content_hash.clone()),
             headline: None,
-            preview_lines: None,
+            snapshot: Some(source[generated.byte_range.0..generated.byte_range.1].to_string()),
             breadcrumbs: breadcrumbs_json,
         };
         db.insert_resolution_if_changed(&initial_res, config.storage.max_resolutions())?;
@@ -401,7 +401,7 @@ pub async fn handle_add_from_snippet(
             line_range: Some(format!("{}-{}", target_start_line, target_end_line)),
             content_hash: Some(content_hash.clone()),
             headline: None,
-            preview_lines: None,
+            snapshot: Some(source[generated.byte_range.0..generated.byte_range.1].to_string()),
             breadcrumbs: breadcrumbs_json,
         };
         db.insert_resolution_if_changed(&initial_res, config.storage.max_resolutions())?;
@@ -616,7 +616,7 @@ pub async fn handle_add_from_query(
             line_range: Some(format!("{}-{}", target_start_line, target_end_line)),
             content_hash: Some(content_hash.clone()),
             headline: None,
-            preview_lines: None,
+            snapshot: Some(source[byte_range.0..byte_range.1].to_string()),
             breadcrumbs: breadcrumbs_json,
         };
         db.insert_resolution_if_changed(&initial_res, config.storage.max_resolutions())?;
@@ -792,7 +792,7 @@ pub async fn handle_resolve(cli: &Cli, mode: &OutputMode, args: &ResolveArgs) ->
             line_range: Some(format!("{}-{}", result.start_line + 1, result.end_line + 1)),
             content_hash: Some(result.content_hash.clone()),
             headline: None,
-            preview_lines: None,
+            snapshot: Some(result.matched_text.clone()),
             breadcrumbs: breadcrumbs_json,
         };
         let config = super::load_config(cli);
