@@ -4,6 +4,7 @@ use axum::{
     http::{HeaderMap, StatusCode, header},
     response::IntoResponse,
 };
+use codemark_core::engine::breadcrumbs::Breadcrumb;
 use serde::{Deserialize, Serialize};
 use tokio::fs;
 
@@ -55,6 +56,8 @@ pub struct ResolutionSnapshot {
     pub headline: Option<String>,
     /// Exact snapshot showing only the target node code (no padding).
     pub snapshot: Option<String>,
+    /// Sticky headers (breadcrumbs) representing structural context.
+    pub sticky_lines: Vec<String>,
 }
 
 /// Handler for GET /tours/:id. Returns tour details in JSON or binary pack format.
@@ -169,7 +172,7 @@ pub async fn handler(
             // Security: Use a deterministic latest-resolution query (correlated subquery)
             let mut stmt = conn
                 .prepare(
-                    "SELECT b.id, b.file_path, r.line_range, r.headline, r.snapshot
+                    "SELECT b.id, b.file_path, r.line_range, r.headline, r.snapshot, r.breadcrumbs
              FROM collection_bookmarks cb
              JOIN bookmarks b ON cb.bookmark_id = b.id
              LEFT JOIN resolutions r ON r.id = (
@@ -184,6 +187,12 @@ pub async fn handler(
 
             let bookmarks = stmt
                 .query_map([&id], |row| {
+                    let breadcrumbs_json: Option<String> = row.get(5)?;
+                    let sticky_lines = breadcrumbs_json
+                        .and_then(|json| serde_json::from_str::<Vec<Breadcrumb>>(&json).ok())
+                        .map(|bc| bc.into_iter().map(|b| b.text).collect::<Vec<_>>())
+                        .unwrap_or_default();
+
                     Ok(BookmarkDetail {
                         id: row.get(0)?,
                         file_path: row.get(1)?,
@@ -191,6 +200,7 @@ pub async fn handler(
                         snapshot: row.get::<_, Option<String>>(3)?.map(|h| ResolutionSnapshot {
                             headline: Some(h),
                             snapshot: row.get(4).ok(),
+                            sticky_lines,
                         }),
                     })
                 })
@@ -204,6 +214,7 @@ pub async fn handler(
             Ok::<_, StatusCode>(tour)
         })
         .await;
+
 
     match result {
         Ok(Ok(tour)) => (StatusCode::OK, Json(tour)).into_response(),

@@ -48,6 +48,9 @@ pub struct BookmarkTemplateContext {
     /// When it became stale (optional)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stale_since: Option<String>,
+    /// Code snapshot from the latest resolution (optional)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub snapshot: Option<String>,
     /// Breadcrumbs for sticky headers
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub breadcrumbs: Vec<codemark_core::engine::breadcrumbs::Breadcrumb>,
@@ -105,6 +108,9 @@ pub struct ResolutionTemplateContext {
     /// Short commit hash (first 8 chars, optional)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub short_commit: Option<String>,
+    /// Code snapshot at this resolution (optional)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub snapshot: Option<String>,
 }
 
 impl BookmarkTemplateContext {
@@ -120,6 +126,8 @@ impl BookmarkTemplateContext {
             .to_string();
 
         let short_commit = bm.commit_hash.as_ref().map(|c| short_id_value(c));
+
+        let latest_snapshot = resolutions.first().and_then(|r| r.snapshot.clone());
 
         let breadcrumbs = resolutions
             .first()
@@ -142,6 +150,7 @@ impl BookmarkTemplateContext {
             last_resolved_at: bm.last_resolved_at.clone(),
             resolution_method: bm.resolution_method.map(|m| m.to_string()),
             stale_since: bm.stale_since.clone(),
+            snapshot: latest_snapshot,
             breadcrumbs,
             tags: bm.tags.clone(),
             annotations: bm
@@ -184,6 +193,7 @@ impl ResolutionTemplateContext {
             match_count: r.match_count,
             commit_hash: r.commit_hash.clone(),
             short_commit,
+            snapshot: r.snapshot.clone(),
         }
     }
 }
@@ -410,7 +420,7 @@ mod tests {
             line_range: Some("10-20".to_string()),
             content_hash: None,
             headline: None,
-            snapshot: None,
+            snapshot: Some("fn main() {\n    println!(\"Hello\");\n}".to_string()),
             breadcrumbs: None,
         }];
 

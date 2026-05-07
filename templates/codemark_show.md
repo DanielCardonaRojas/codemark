@@ -34,6 +34,13 @@
 {{#if commit_hash}}| **Commit** | `{{short_commit}}` |{{/if}}
 {{#if stale_since}}| **Stale Since** | {{stale_since}} |{{/if}}
 
+{{#if snapshot}}
+## Snapshot
+```{{language}}
+{{{snapshot}}}
+```
+{{/if}}
+
 ## Tree-sitter Query
 ```scheme
 {{query}}
