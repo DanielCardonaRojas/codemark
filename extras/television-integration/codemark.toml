@@ -24,7 +24,6 @@ enter = "actions:edit"
 ctrl-e = "actions:edit"
 ctrl-r = "actions:resolve"
 ctrl-c = "actions:copy"
-ctrl-d = "actions:delete"
 
 [actions.edit]
 description = "Open in configured editor"
@@ -35,7 +34,6 @@ mode = "fork"
 description = "Re-resolve bookmark"
 command = "codemark resolve {split:\\t:0}"
 mode = "execute"
-
 
 [actions.copy]
 description = "Copy content to clipboard"
