@@ -4,7 +4,7 @@ use crate::storage::db::Database;
 
 impl Database {
     pub fn insert_resolution(&self, resolution: &Resolution) -> Result<()> {
-        let _ = self.conn().execute(
+        self.conn().execute(
             "INSERT INTO resolutions (id, bookmark_id, resolved_at, commit_hash,
              method, match_count, file_path, byte_range, line_range, content_hash, headline, snapshot, breadcrumbs)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
@@ -23,7 +23,7 @@ impl Database {
                 resolution.snapshot,
                 resolution.breadcrumbs,
             ],
-        );
+        )?;
         Ok(())
     }
 

@@ -36,9 +36,9 @@
 
 {{#if snapshot}}
 ## Snapshot
-```{{language}}
+````{{language}}
 {{{snapshot}}}
-```
+````
 {{/if}}
 
 ## Tree-sitter Query

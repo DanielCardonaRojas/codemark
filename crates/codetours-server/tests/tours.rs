@@ -98,7 +98,6 @@ async fn test_publish_list_get_delete_flow() {
     assert_eq!(response.status(), StatusCode::OK);
 
     let body = ax_body_to_json(response).await;
-    println!("BODY: {}", serde_json::to_string_pretty(&body).unwrap());
     assert_eq!(body["tour_id"], collection_id);
     assert_eq!(body["bookmarks"].as_array().unwrap().len(), 1);
     assert_eq!(body["bookmarks"][0]["snapshot"]["headline"], "headline");

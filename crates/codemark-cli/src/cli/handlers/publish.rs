@@ -27,7 +27,7 @@ pub async fn handle_publish(cli: &Cli, mode: &OutputMode, args: &PublishArgs) ->
     // 3. Build snapshot
     let project_root = super::get_project_root(&db);
     // TODO: support --allow-stale
-    let mut payload = build_snapshot(&db, &collection.id, &project_root, 5, &config).await?;
+    let mut payload = build_snapshot(&db, &collection.id, &project_root, &config).await?;
 
     // 4. Override metadata if flags provided
     if let Some(title) = &args.title {

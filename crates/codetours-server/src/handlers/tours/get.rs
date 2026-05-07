@@ -193,20 +193,30 @@ pub async fn handler(
                     let breadcrumbs = breadcrumbs_json
                         .and_then(|json| serde_json::from_str::<Vec<Breadcrumb>>(&json).ok())
                         .unwrap_or_default();
-                    
-                    let sticky_lines = breadcrumbs.iter().map(|b| b.text.clone()).collect();
-                    let sticky_line_numbers = breadcrumbs.iter().map(|b| b.line).collect();
+
+                    let sticky_lines: Vec<String> = breadcrumbs.iter().map(|b| b.text.clone()).collect();
+                    let sticky_line_numbers: Vec<usize> = breadcrumbs.iter().map(|b| b.line).collect();
+
+                    // Read headline and snapshot separately using fallible get calls
+                    let headline: Option<String> = row.get(3)?;
+                    let snapshot: Option<String> = row.get(4)?;
+
+                    let snapshot_data = if headline.is_some() || snapshot.is_some() || !sticky_lines.is_empty() {
+                        Some(ResolutionSnapshot {
+                            headline,
+                            snapshot,
+                            sticky_lines,
+                            sticky_line_numbers,
+                        })
+                    } else {
+                        None
+                    };
 
                     Ok(BookmarkDetail {
                         id: row.get(0)?,
                         file_path: row.get(1)?,
                         line_range: row.get(2)?,
-                        snapshot: row.get::<_, Option<String>>(3)?.map(|h| ResolutionSnapshot {
-                            headline: Some(h),
-                            snapshot: row.get(4).ok(),
-                            sticky_lines,
-                            sticky_line_numbers,
-                        }),
+                        snapshot: snapshot_data,
                     })
                 })
                 .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?

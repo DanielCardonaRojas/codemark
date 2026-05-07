@@ -424,6 +424,10 @@ mod tests {
             breadcrumbs: None,
         }];
 
+        // Verify snapshot is present in resolution
+        assert!(resolutions[0].snapshot.is_some(), "Snapshot should be Some");
+        assert_eq!(resolutions[0].snapshot.as_ref().unwrap(), "fn main() {\n    println!(\"Hello\");\n}");
+
         let result = render_show_template(&bm, &resolutions);
         assert!(result.is_ok(), "Template rendering failed: {:?}", result.err());
         let output = result.unwrap();
@@ -434,5 +438,7 @@ mod tests {
         assert!(output.contains("## Tags"));
         assert!(output.contains("- `tag1`"));
         assert!(output.contains("- `tag2`"));
+        // Verify snapshot content appears in output
+        assert!(output.contains("fn main()"));
     }
 }
