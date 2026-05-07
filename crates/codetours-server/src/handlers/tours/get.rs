@@ -4,9 +4,8 @@ use axum::{
     http::{HeaderMap, StatusCode, header},
     response::IntoResponse,
 };
-use codemark_core::engine::breadcrumbs::Breadcrumb;
 use rinja::Template;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use tokio::fs;
 
 use crate::auth::AuthContext;
@@ -104,6 +103,20 @@ pub struct BookmarkView {
     pub has_notes: bool,
     pub breadcrumbs: Vec<codemark_core::engine::breadcrumbs::Breadcrumb>,
     pub snippet_start: usize,
+}
+
+impl BookmarkView {
+    /// Check if a given line number (absolute, 1-based) is a breadcrumb line.
+    pub fn is_breadcrumb_line(&self, line_num: &usize) -> bool {
+        self.breadcrumbs.iter().any(|bc| bc.line == *line_num)
+    }
+
+    /// Get the breadcrumb text for a given line number, if it exists.
+    pub fn breadcrumb_text(&self, line_num: &usize) -> Option<String> {
+        self.breadcrumbs.iter()
+            .find(|bc| bc.line == *line_num)
+            .map(|bc| bc.text.clone())
+    }
 }
 
 #[derive(Serialize)]
@@ -301,6 +314,16 @@ pub async fn handler(
 
                     let mut bookmarks = Vec::new();
                     for (i, (bid, file, range, head, snapshot, lang, q, b_health, bcs)) in bookmarks_data.into_iter().enumerate() {
+                        let bid: String = bid;
+                        let file: String = file;
+                        let range: Option<String> = range;
+                        let head: Option<String> = head;
+                        let snapshot: Option<String> = snapshot;
+                        let lang: String = lang;
+                        let q: String = q;
+                        let b_health: String = b_health;
+                        let bcs: Option<String> = bcs;
+
                         let tags: Vec<String> = conn.prepare("SELECT tag FROM bookmark_tags WHERE bookmark_id = ?")
                             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
                             .query_map([&bid], |row| row.get(0))
@@ -323,7 +346,7 @@ pub async fn handler(
                             .collect::<rusqlite::Result<Vec<_>>>()
                             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-                        let breadcrumbs = bcs.and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
+                        let breadcrumbs: Vec<codemark_core::engine::breadcrumbs::Breadcrumb> = bcs.and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
 
                         bookmarks.push((bid, file, range, head, snapshot, String::new(), lang, q, tags, comments, i + 1, b_health, breadcrumbs));
                     }
