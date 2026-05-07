@@ -58,6 +58,8 @@ pub struct ResolutionSnapshot {
     pub snapshot: Option<String>,
     /// Sticky headers (breadcrumbs) representing structural context.
     pub sticky_lines: Vec<String>,
+    /// Corresponding line numbers for the sticky headers.
+    pub sticky_line_numbers: Vec<usize>,
 }
 
 /// Handler for GET /tours/:id. Returns tour details in JSON or binary pack format.
@@ -188,10 +190,12 @@ pub async fn handler(
             let bookmarks = stmt
                 .query_map([&id], |row| {
                     let breadcrumbs_json: Option<String> = row.get(5)?;
-                    let sticky_lines = breadcrumbs_json
+                    let breadcrumbs = breadcrumbs_json
                         .and_then(|json| serde_json::from_str::<Vec<Breadcrumb>>(&json).ok())
-                        .map(|bc| bc.into_iter().map(|b| b.text).collect::<Vec<_>>())
                         .unwrap_or_default();
+                    
+                    let sticky_lines = breadcrumbs.iter().map(|b| b.text.clone()).collect();
+                    let sticky_line_numbers = breadcrumbs.iter().map(|b| b.line).collect();
 
                     Ok(BookmarkDetail {
                         id: row.get(0)?,
@@ -201,6 +205,7 @@ pub async fn handler(
                             headline: Some(h),
                             snapshot: row.get(4).ok(),
                             sticky_lines,
+                            sticky_line_numbers,
                         }),
                     })
                 })

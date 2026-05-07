@@ -104,6 +104,7 @@ async fn test_publish_list_get_delete_flow() {
     assert_eq!(body["bookmarks"][0]["snapshot"]["headline"], "headline");
     assert_eq!(body["bookmarks"][0]["snapshot"]["snapshot"], "snapshot_content");
     assert_eq!(body["bookmarks"][0]["snapshot"]["sticky_lines"][0], "mod auth {");
+    assert_eq!(body["bookmarks"][0]["snapshot"]["sticky_line_numbers"][0], 1);
 
     // 5. GET /tours/:id (Pack binary)
     let req = Request::builder()
