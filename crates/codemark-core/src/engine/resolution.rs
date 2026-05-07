@@ -176,6 +176,15 @@ fn extract_breadcrumbs_from_match(
     source: &str,
     bookmark: &Bookmark,
 ) -> Vec<crate::engine::breadcrumbs::Breadcrumb> {
+    // Try to extract from sticky captures first
+    if !m.captures.is_empty() {
+        let sticky_breadcrumbs = extract_breadcrumbs_from_captures(&m.captures, source);
+        if !sticky_breadcrumbs.is_empty() {
+            return sticky_breadcrumbs;
+        }
+    }
+
+    // Fallback to AST walking for legacy queries
     use std::str::FromStr;
     let lang = crate::parser::languages::Language::from_str(&bookmark.language)
         .unwrap_or(crate::parser::languages::Language::Rust);
@@ -187,6 +196,26 @@ fn extract_breadcrumbs_from_match(
     } else {
         Vec::new()
     }
+}
+
+/// Extract breadcrumbs from sticky captures.
+fn extract_breadcrumbs_from_captures(
+    captures: &[(String, (usize, usize), usize)],
+    source: &str,
+) -> Vec<crate::engine::breadcrumbs::Breadcrumb> {
+    let mut breadcrumbs = Vec::new();
+
+    for (capture_name, _byte_range, line) in captures {
+        if capture_name.starts_with("sticky.") {
+            let line_text = source.lines().nth(*line).unwrap_or("").trim_end();
+            breadcrumbs.push(crate::engine::breadcrumbs::Breadcrumb {
+                line: line + 1,
+                text: line_text.to_string(),
+            });
+        }
+    }
+
+    breadcrumbs
 }
 
 /// Walk all named nodes looking for a hash match.
@@ -380,5 +409,139 @@ mod tests {
         let provider = crate::vfs::LocalFileProvider;
         let result = resolve(&bm, &mut cache, &lang, dummy_db.as_path(), &provider).await.unwrap();
         assert_eq!(result.method, ResolutionMethod::Failed);
+    }
+
+    #[tokio::test]
+    async fn breadcrumbs_extracted_from_sticky_captures() {
+        // Test that breadcrumbs come from captures when present
+        let (bm, mut cache) =
+            create_bookmark_for_function("auth_service.swift", "validateToken").await;
+        let lang = CodemarkLang::Swift.tree_sitter_language();
+        let dummy_db =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(".codemark/codemark.db");
+
+        // The generated query should have sticky captures
+        assert!(bm.query.contains("@sticky.class"));
+
+        let provider = crate::vfs::LocalFileProvider;
+        let result = resolve(&bm, &mut cache, &lang, dummy_db.as_path(), &provider).await.unwrap();
+
+        // Should have breadcrumbs from sticky captures
+        assert!(!result.breadcrumbs.is_empty(), "expected breadcrumbs from sticky captures");
+        // First breadcrumb should be the class declaration line
+        assert!(result.breadcrumbs[0].text.contains("class"));
+    }
+
+    #[tokio::test]
+    async fn fallback_to_ast_walking_without_sticky_captures() {
+        // Test that legacy queries without @sticky captures still work
+        let source = r#"
+class LegacyService {
+    func legacyFunc() {}
+}
+"#;
+
+        let path = fixture_path("legacy_test.swift");
+        // Create a temporary fixture file
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).ok();
+        }
+        std::fs::write(&path, source).ok();
+
+        let _cache = ParseCache::new(CodemarkLang::Swift).unwrap();
+        let lang = CodemarkLang::Swift.tree_sitter_language();
+
+        // Create a legacy query without sticky captures
+        let query = r#"
+(class_declaration
+  name: (type_identifier) @name0
+  (class_body
+    (function_declaration
+      name: (simple_identifier) @fn_name) @target))
+"#;
+
+        let mut parser = crate::parser::languages::Parser::new(CodemarkLang::Swift).unwrap();
+        let tree = parser.parse(source.as_bytes()).unwrap();
+
+        let matches =
+            crate::query::matcher::run_query(query, &tree, source.as_bytes(), &lang).unwrap();
+        assert_eq!(matches.len(), 1);
+
+        // Breadcrumb extraction should fall back to AST walking
+        let target_node = tree
+            .root_node()
+            .descendant_for_byte_range(matches[0].byte_range.0, matches[0].byte_range.1)
+            .unwrap();
+        let breadcrumbs = crate::engine::breadcrumbs::extract_breadcrumbs(
+            target_node,
+            source,
+            crate::parser::languages::Language::Swift,
+            3,
+        );
+
+        // Should have breadcrumbs from AST walking (the class)
+        assert!(!breadcrumbs.is_empty());
+
+        // Clean up
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[tokio::test]
+    async fn extract_breadcrumbs_from_captures_direct() {
+        // Direct unit test for extract_breadcrumbs_from_captures
+        let source = r#"
+class TestClass {
+    func testMethod() {}
+}
+"#;
+
+        let mut parser = crate::parser::languages::Parser::new(CodemarkLang::Swift).unwrap();
+        let tree = parser.parse(source.as_bytes()).unwrap();
+
+        // Manually create captures to test the extraction function
+        let root = tree.root_node();
+        let mut class_line = None;
+        let mut method_line = None;
+
+        let mut cursor = root.walk();
+        for child in root.named_children(&mut cursor) {
+            if child.kind() == "class_declaration" {
+                class_line = Some(child.start_position().row);
+                // Class body contains the function
+                let mut cursor2 = child.walk();
+                if cursor2.goto_first_child() {
+                    loop {
+                        let child2 = cursor2.node();
+                        // Look through the class body to find the function
+                        if child2.is_named() {
+                            let mut cursor3 = child2.walk();
+                            for child3 in child2.named_children(&mut cursor3) {
+                                if child3.kind() == "function_declaration" {
+                                    method_line = Some(child3.start_position().row);
+                                    break;
+                                }
+                            }
+                        }
+                        if !cursor2.goto_next_sibling() {
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        let class_l = class_line.expect("class node not found");
+        let method_l = method_line.expect("method node not found");
+
+        let captures = vec![
+            ("sticky.class".to_string(), (0, 0), class_l),
+            ("sticky.function".to_string(), (0, 0), method_l),
+        ];
+
+        let breadcrumbs = extract_breadcrumbs_from_captures(&captures, source);
+
+        assert_eq!(breadcrumbs.len(), 2);
+        assert!(breadcrumbs[0].text.contains("class TestClass"));
+        assert!(breadcrumbs[1].text.contains("func testMethod"));
     }
 }
