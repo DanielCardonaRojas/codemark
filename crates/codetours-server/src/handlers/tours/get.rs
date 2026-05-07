@@ -94,6 +94,10 @@ pub struct BookmarkView {
     pub language: String,
     pub preview_lines: String,
     pub highlighted: String,
+    /// The highlighted code with sticky lines prepended at the top
+    pub highlighted_with_sticky: String,
+    /// Line numbers for the sticky lines only
+    pub sticky_line_numbers: Vec<usize>,
     pub has_query: bool,
     pub query: Option<String>,
     pub query_highlighted: Option<String>,
@@ -475,6 +479,20 @@ pub async fn handler(
                                     }
                                     .to_string();
 
+                                    // Build highlighted code with sticky lines prepended
+                                    // The sticky lines are the breadcrumb lines shown at the top
+                                    let sticky_line_numbers: Vec<usize> = breadcrumbs.iter().map(|bc| bc.line).collect();
+                                    let mut highlighted_with_sticky = String::new();
+
+                                    // Highlight and prepend each sticky line
+                                    for bc in &breadcrumbs {
+                                        let sticky_html = (*crate::highlight::highlight(&lang, &bc.text, None)).clone();
+                                        highlighted_with_sticky.push_str(&sticky_html);
+                                    }
+
+                                    // Append the original highlighted code
+                                    highlighted_with_sticky.push_str(&highlighted);
+
                                     BookmarkView {
                                         id_short: bid[..8].to_string(),
                                         id: bid,
@@ -489,6 +507,8 @@ pub async fn handler(
                                         language: lang,
                                         preview_lines: raw_preview,
                                         highlighted,
+                                        highlighted_with_sticky,
+                                        sticky_line_numbers,
                                         has_query: !q.is_empty(),
                                         query: if q.is_empty() { None } else { Some(q) },
                                         query_highlighted,

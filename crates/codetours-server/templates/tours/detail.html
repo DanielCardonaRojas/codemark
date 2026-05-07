@@ -139,29 +139,19 @@
 
                         <!-- Source Panel with Sticky Breadcrumbs -->
                         <div class="relative group/code panel-source hidden peer-checked/source:block">
-                            <!-- Sticky Header Breadcrumbs -->
-                            {% if !bookmark.breadcrumbs.is_empty() %}
-                            <div class="sticky top-0 z-10 bg-bg-secondary/95 px-4 py-2">
-                                <div class="flex items-center gap-2 text-[10px] font-mono text-text-secondary overflow-x-auto">
-                                    {% for bc in bookmark.breadcrumbs %}
-                                    <div class="flex items-center gap-2 shrink-0">
-                                        <span class="opacity-40">{{ bc.line }}</span>
-                                        <span class="text-accent">{{ bc.text }}</span>
-                                    </div>
-                                    {% if !loop.last %}<span class="opacity-30">›</span>{% endif %}
-                                    {% endfor %}
-                                </div>
-                            </div>
-                            {% endif %}
-
                             <div class="flex">
                                 <div class="line-numbers shrink-0 py-4 px-3 text-right bg-bg-secondary/20 border-r border-border text-[10px] font-mono text-text-secondary opacity-50 select-none">
+                                    <!-- Sticky line numbers (shown first, highlighted in accent) -->
+                                    {% for sticky_line_num in bookmark.sticky_line_numbers %}
+                                        <div class="text-accent font-bold opacity-100">{{ sticky_line_num }}</div>
+                                    {% endfor %}
+                                    <!-- Regular line numbers -->
                                     {% for line in bookmark.preview_lines.lines() %}
                                         {% set line_num = loop.index0 + bookmark.snippet_start %}
-                                        <div class="{% if bookmark.is_breadcrumb_line(line_num) %}text-accent font-bold opacity-100{% endif %}">{{ line_num }}</div>
+                                        <div>{{ line_num }}</div>
                                     {% endfor %}
                                 </div>
-                                <pre class="p-4 text-xs font-mono overflow-x-auto custom-scrollbar flex-1"><code>{{ bookmark.highlighted|safe }}</code></pre>
+                                <pre class="p-4 text-xs font-mono overflow-x-auto custom-scrollbar flex-1"><code>{{ bookmark.highlighted_with_sticky|safe }}</code></pre>
                             </div>
                             <button class="absolute top-3 right-3 p-1.5 bg-bg-secondary border border-border rounded opacity-0 group-hover/code:opacity-100 transition-opacity" data-copy="{{ bookmark.preview_lines }}">
                                 {% call icons::icon("clipboard", 12) %}
