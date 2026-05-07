@@ -1681,8 +1681,16 @@ mod tests {
         let result = generate_query(&tree, source.as_bytes(), range, &lang).unwrap();
 
         // Query should contain @sticky.class and @sticky.function (Swift uses function_declaration for both)
-        assert!(result.query.contains("@sticky.class"), "query should have @sticky.class:\n{}", result.query);
-        assert!(result.query.contains("@sticky.function"), "query should have @sticky.function:\n{}", result.query);
+        assert!(
+            result.query.contains("@sticky.class"),
+            "query should have @sticky.class:\n{}",
+            result.query
+        );
+        assert!(
+            result.query.contains("@sticky.function"),
+            "query should have @sticky.function:\n{}",
+            result.query
+        );
     }
 
     #[tokio::test]
@@ -1694,7 +1702,15 @@ mod tests {
         let result = generate_query(&tree, source.as_bytes(), range, &lang).unwrap();
 
         // Query should contain @sticky.class and @sticky.method (TypeScript distinguishes these)
-        assert!(result.query.contains("@sticky.class"), "query should have @sticky.class:\n{}", result.query);
-        assert!(result.query.contains("@sticky.method"), "query should have @sticky.method:\n{}", result.query);
+        assert!(
+            result.query.contains("@sticky.class"),
+            "query should have @sticky.class:\n{}",
+            result.query
+        );
+        assert!(
+            result.query.contains("@sticky.method"),
+            "query should have @sticky.method:\n{}",
+            result.query
+        );
     }
 }

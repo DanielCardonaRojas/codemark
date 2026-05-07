@@ -49,8 +49,7 @@ pub fn run_query(
         }
 
         if let Some(node) = target_node {
-            let text =
-                std::str::from_utf8(&source[node.byte_range()]).unwrap_or("").to_string();
+            let text = std::str::from_utf8(&source[node.byte_range()]).unwrap_or("").to_string();
             results.push(MatchResult {
                 node_text: text,
                 byte_range: (node.start_byte(), node.end_byte()),
@@ -281,13 +280,16 @@ mod tests {
         let mut parser = Parser::new(CodemarkLang::Swift).unwrap();
         let tree = parser.parse(source.as_bytes()).unwrap();
 
-        let results = run_query(query, &tree, source.as_bytes(), &CodemarkLang::Swift.tree_sitter_language()).unwrap();
+        let results =
+            run_query(query, &tree, source.as_bytes(), &CodemarkLang::Swift.tree_sitter_language())
+                .unwrap();
 
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].captures.len(), 2);
 
         // Check that we have both sticky captures
-        let capture_names: Vec<&str> = results[0].captures.iter().map(|(name, _, _)| name.as_str()).collect();
+        let capture_names: Vec<&str> =
+            results[0].captures.iter().map(|(name, _, _)| name.as_str()).collect();
         assert!(capture_names.contains(&"sticky.class"));
         assert!(capture_names.contains(&"sticky.method"));
     }
@@ -311,7 +313,9 @@ mod tests {
         let mut parser = Parser::new(CodemarkLang::Swift).unwrap();
         let tree = parser.parse(source.as_bytes()).unwrap();
 
-        let results = run_query(query, &tree, source.as_bytes(), &CodemarkLang::Swift.tree_sitter_language()).unwrap();
+        let results =
+            run_query(query, &tree, source.as_bytes(), &CodemarkLang::Swift.tree_sitter_language())
+                .unwrap();
 
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].captures.len(), 0);

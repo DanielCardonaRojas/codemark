@@ -463,12 +463,21 @@ class LegacyService {
         let mut parser = crate::parser::languages::Parser::new(CodemarkLang::Swift).unwrap();
         let tree = parser.parse(source.as_bytes()).unwrap();
 
-        let matches = crate::query::matcher::run_query(query, &tree, source.as_bytes(), &lang).unwrap();
+        let matches =
+            crate::query::matcher::run_query(query, &tree, source.as_bytes(), &lang).unwrap();
         assert_eq!(matches.len(), 1);
 
         // Breadcrumb extraction should fall back to AST walking
-        let target_node = tree.root_node().descendant_for_byte_range(matches[0].byte_range.0, matches[0].byte_range.1).unwrap();
-        let breadcrumbs = crate::engine::breadcrumbs::extract_breadcrumbs(target_node, source, crate::parser::languages::Language::Swift, 3);
+        let target_node = tree
+            .root_node()
+            .descendant_for_byte_range(matches[0].byte_range.0, matches[0].byte_range.1)
+            .unwrap();
+        let breadcrumbs = crate::engine::breadcrumbs::extract_breadcrumbs(
+            target_node,
+            source,
+            crate::parser::languages::Language::Swift,
+            3,
+        );
 
         // Should have breadcrumbs from AST walking (the class)
         assert!(!breadcrumbs.is_empty());
