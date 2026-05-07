@@ -155,7 +155,7 @@ pub async fn handle_heal(cli: &Cli, mode: &OutputMode, args: &HealArgs) -> Resul
                 line_range: Some(format!("{}-{}", result.start_line + 1, result.end_line + 1)),
                 content_hash: Some(result.content_hash.clone()),
                 headline: None,
-                preview_lines: None,
+                snapshot: Some(result.matched_text.clone()),
                 breadcrumbs: breadcrumbs_json,
             };
             let res_id = res.id.clone();

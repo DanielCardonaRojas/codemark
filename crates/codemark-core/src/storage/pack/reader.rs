@@ -101,7 +101,7 @@ impl PackReader {
 
     pub fn resolutions(&self, bookmark_id: &str) -> Result<Vec<Resolution>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, bookmark_id, resolved_at, commit_hash, method, match_count, file_path, byte_range, line_range, content_hash, headline, preview_lines, breadcrumbs
+            "SELECT id, bookmark_id, resolved_at, commit_hash, method, match_count, file_path, byte_range, line_range, content_hash, headline, snapshot, breadcrumbs
              FROM resolutions WHERE bookmark_id = ?1"
         )?;
         let rows = stmt.query_map([bookmark_id], |row| {
@@ -118,7 +118,7 @@ impl PackReader {
                 line_range: row.get(8)?,
                 content_hash: row.get(9)?,
                 headline: row.get(10)?,
-                preview_lines: row.get(11)?,
+                snapshot: row.get(11)?,
                 breadcrumbs: row.get(12)?,
             })
         })?;

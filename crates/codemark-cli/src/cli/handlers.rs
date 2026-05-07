@@ -1063,6 +1063,12 @@ pub async fn resolve_batch(
             db.update_bookmark_query(&bm.id, new_query, &result.file_path, &result.content_hash)?;
         }
 
+        let breadcrumbs_json = if result.breadcrumbs.is_empty() {
+            None
+        } else {
+            serde_json::to_string(&result.breadcrumbs).ok()
+        };
+
         // Record resolution history (deduped)
         let res = Resolution {
             id: uuid::Uuid::new_v4().to_string(),
@@ -1077,8 +1083,8 @@ pub async fn resolve_batch(
             line_range: Some(format!("{}-{}", result.start_line + 1, result.end_line + 1)),
             content_hash: Some(result.content_hash.clone()),
             headline: None,
-            preview_lines: None,
-            breadcrumbs: None,
+            snapshot: Some(result.matched_text.clone()),
+            breadcrumbs: breadcrumbs_json,
         };
         let _ = db.insert_resolution_if_changed(&res, config.storage.max_resolutions());
     }
@@ -1490,6 +1496,27 @@ pub async fn handle_preview(cli: &Cli, args: &PreviewArgs) -> Result<()> {
 
     // Output JSON with resolution data (using standard envelope)
     let line_range_colon = resolution.line_range.as_ref().map(|r| r.replace('-', ":"));
+
+    // For JSON output, we want the actual snapshot text if it's missing in the resolution record
+    let snapshot_text = resolution.snapshot.clone().or_else(|| {
+        if let Ok(file_bytes) = std::fs::read(&absolute_path) {
+            let byte_range_str = resolution.byte_range.as_ref()?;
+            let byte_location = ByteLocation::from_str(byte_range_str)?;
+            if byte_location.start_byte <= byte_location.end_byte
+                && byte_location.start_byte < file_bytes.len()
+                && byte_location.end_byte <= file_bytes.len()
+            {
+                return Some(
+                    String::from_utf8_lossy(
+                        &file_bytes[byte_location.start_byte..byte_location.end_byte],
+                    )
+                    .to_string(),
+                );
+            }
+        }
+        None
+    });
+
     // The "drifted" boolean includes both Drifted and Stale for backward compatibility.
     // Clients should check the "health" field for the precise tri-state (Active/Drifted/Stale).
     let data = serde_json::json!({
@@ -1499,6 +1526,7 @@ pub async fn handle_preview(cli: &Cli, args: &PreviewArgs) -> Result<()> {
         "line_range": resolution.line_range,
         "line_range_colon": line_range_colon,
         "byte_range": resolution.byte_range,
+        "snapshot": snapshot_text,
         "health": bm.health,
         "status": bm.health,
         "resolution_method": resolution.method,

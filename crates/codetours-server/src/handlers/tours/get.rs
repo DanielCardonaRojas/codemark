@@ -4,8 +4,9 @@ use axum::{
     http::{HeaderMap, StatusCode, header},
     response::IntoResponse,
 };
+use codemark_core::engine::breadcrumbs::Breadcrumb;
 use rinja::Template;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tokio::fs;
 
 use crate::auth::AuthContext;
@@ -38,7 +39,12 @@ pub struct BookmarkDetail {
 #[derive(Debug, Serialize)]
 pub struct ResolutionSnapshot {
     pub headline: Option<String>,
-    pub preview_lines: Option<String>,
+    /// Exact snapshot showing only the target node code (no padding).
+    pub snapshot: Option<String>,
+    /// Sticky headers (breadcrumbs) representing structural context.
+    pub sticky_lines: Vec<String>,
+    /// Corresponding line numbers for the sticky headers.
+    pub sticky_line_numbers: Vec<usize>,
 }
 
 #[derive(Template)]
@@ -253,7 +259,7 @@ pub async fn handler(
                     // 3. Get bookmarks and join with latest resolution
                     let mut stmt = conn
                         .prepare(
-                            "SELECT b.id, b.file_path, r.line_range, r.headline, r.preview_lines, b.language, b.query, b.health, r.breadcrumbs
+                            "SELECT b.id, b.file_path, r.line_range, r.headline, r.snapshot, b.language, b.query, b.health, r.breadcrumbs
                      FROM collection_bookmarks cb
                      JOIN bookmarks b ON cb.bookmark_id = b.id
                      LEFT JOIN resolutions r ON r.id = (
@@ -276,7 +282,7 @@ pub async fn handler(
                                 row.get::<_, String>(1)?, // file_path
                                 row.get::<_, Option<String>>(2)?, // line_range
                                 row.get::<_, Option<String>>(3)?, // headline
-                                row.get::<_, Option<String>>(4)?, // preview_lines
+                                row.get::<_, Option<String>>(4)?, // snapshot (was preview_lines)
                                 row.get::<_, String>(5)?, // language
                                 row.get::<_, String>(6)?, // query
                                 row.get::<_, String>(7)?, // health
@@ -294,7 +300,7 @@ pub async fn handler(
                         })?;
 
                     let mut bookmarks = Vec::new();
-                    for (i, (bid, file, range, head, preview, lang, q, b_health, bcs)) in bookmarks_data.into_iter().enumerate() {
+                    for (i, (bid, file, range, head, snapshot, lang, q, b_health, bcs)) in bookmarks_data.into_iter().enumerate() {
                         let tags: Vec<String> = conn.prepare("SELECT tag FROM bookmark_tags WHERE bookmark_id = ?")
                             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
                             .query_map([&bid], |row| row.get(0))
@@ -319,7 +325,7 @@ pub async fn handler(
 
                         let breadcrumbs = bcs.and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
 
-                        bookmarks.push((bid, file, range, head, preview, String::new(), lang, q, tags, comments, i + 1, b_health, breadcrumbs));
+                        bookmarks.push((bid, file, range, head, snapshot, String::new(), lang, q, tags, comments, i + 1, b_health, breadcrumbs));
                     }
 
                     Ok::<(String, String, Option<String>, Option<String>, String, Option<String>, Option<String>, Option<String>, Vec<LinkView>, Vec<_>), StatusCode>((
@@ -344,20 +350,28 @@ pub async fn handler(
                     if format == ResponseFormat::Json {
                         let bookmarks = bookmarks_data
                             .into_iter()
-                            .map(|(bid, file, range, head, preview, _, _, _, _, _, _, _, _)| {
-                                let snapshot = if head.is_some() || preview.is_some() {
-                                    Some(ResolutionSnapshot {
-                                        headline: head,
-                                        preview_lines: preview,
-                                    })
-                                } else {
-                                    None
-                                };
+                            .map(|(bid, file, range, head, snapshot, _, _, _, _, _, _, _, breadcrumbs)| {
+                                let sticky_lines: Vec<String> =
+                                    breadcrumbs.iter().map(|b| b.text.clone()).collect();
+                                let sticky_line_numbers: Vec<usize> =
+                                    breadcrumbs.iter().map(|b| b.line).collect();
+
+                                let snapshot_data =
+                                    if head.is_some() || snapshot.is_some() || !sticky_lines.is_empty() {
+                                        Some(ResolutionSnapshot {
+                                            headline: head,
+                                            snapshot,
+                                            sticky_lines,
+                                            sticky_line_numbers,
+                                        })
+                                    } else {
+                                        None
+                                    };
                                 BookmarkDetail {
                                     id: bid,
                                     file_path: file,
                                     line_range: range,
-                                    snapshot,
+                                    snapshot: snapshot_data,
                                 }
                             })
                             .collect();
@@ -392,7 +406,7 @@ pub async fn handler(
                                     file,
                                     range,
                                     head,
-                                    preview,
+                                    snapshot,
                                     notes,
                                     lang,
                                     q,
@@ -411,8 +425,8 @@ pub async fn handler(
                                         (1, 1)
                                     };
 
-                                    let raw_preview = preview.unwrap_or_default();
-                                    
+                                    let raw_preview = snapshot.unwrap_or_default();
+
                                     // Calculate target range relative to the snippet (usually 5 lines of context above)
                                     let snippet_start = target_start.saturating_sub(5).max(1);
                                     let rel_start = target_start - snippet_start + 1;

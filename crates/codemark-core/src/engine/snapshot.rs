@@ -9,7 +9,6 @@ use crate::error::Result;
 use crate::git::context as git_context;
 use crate::parser::languages::{Language, ParseCache};
 use crate::storage::db::Database;
-use crate::vfs::FileProvider;
 use chrono::Utc;
 use std::collections::HashMap;
 use std::path::Path;
@@ -30,7 +29,6 @@ pub async fn build_snapshot(
     db: &Database,
     collection_id: &str,
     project_root: &Path,
-    padding: usize,
     config: &Config,
 ) -> Result<SnapshotPayload> {
     let mut collection = db.get_collection_by_id(collection_id)?.ok_or_else(|| {
@@ -59,10 +57,8 @@ pub async fn build_snapshot(
         let result =
             resolution::resolve(&bm, &mut cache, &ts_lang, project_root, &provider).await?;
 
-        // Capture preview lines
-        let abs_path = git_context::resolve_bookmark_file_path(&bm.file_path, project_root)?;
-        let source = provider.read_file(&abs_path, None).await?;
-        let preview = result.capture_preview(&source, padding);
+        // Capture preview - just use the matched text directly
+        let preview = result.matched_text.clone();
         let breadcrumbs_json = if result.breadcrumbs.is_empty() {
             None
         } else {
@@ -101,7 +97,7 @@ pub async fn build_snapshot(
                 .iter()
                 .find_map(|a| a.notes.clone())
                 .or(Some(result.matched_text.clone())),
-            preview_lines: Some(preview),
+            snapshot: Some(preview),
             breadcrumbs: breadcrumbs_json,
         };
 
