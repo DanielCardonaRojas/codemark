@@ -270,7 +270,7 @@ pub struct Resolution {
     pub line_range: Option<String>,
     pub content_hash: Option<String>,
     pub headline: Option<String>,
-    pub preview_lines: Option<String>,
+    pub snapshot: Option<String>,
     pub breadcrumbs: Option<String>,
 }
 

@@ -1077,7 +1077,7 @@ pub async fn resolve_batch(
             line_range: Some(format!("{}-{}", result.start_line + 1, result.end_line + 1)),
             content_hash: Some(result.content_hash.clone()),
             headline: None,
-            preview_lines: None,
+            snapshot: None,
             breadcrumbs: None,
         };
         let _ = db.insert_resolution_if_changed(&res, config.storage.max_resolutions());

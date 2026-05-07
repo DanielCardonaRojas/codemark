@@ -101,7 +101,7 @@ pub async fn build_snapshot(
                 .iter()
                 .find_map(|a| a.notes.clone())
                 .or(Some(result.matched_text.clone())),
-            preview_lines: Some(preview),
+            snapshot: Some(preview),
             breadcrumbs: breadcrumbs_json,
         };
 

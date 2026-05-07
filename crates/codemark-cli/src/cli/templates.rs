@@ -410,7 +410,7 @@ mod tests {
             line_range: Some("10-20".to_string()),
             content_hash: None,
             headline: None,
-            preview_lines: None,
+            snapshot: None,
             breadcrumbs: None,
         }];
 

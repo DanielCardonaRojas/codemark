@@ -433,8 +433,8 @@ pub async fn handler(
             )?;
 
             tx.execute(
-                "INSERT INTO main.resolutions (id, bookmark_id, resolved_at, commit_hash, method, match_count, file_path, byte_range, line_range, content_hash, headline, preview_lines)
-                 SELECT id, bookmark_id, resolved_at, commit_hash, method, match_count, file_path, byte_range, line_range, content_hash, headline, preview_lines
+                "INSERT INTO main.resolutions (id, bookmark_id, resolved_at, commit_hash, method, match_count, file_path, byte_range, line_range, content_hash, headline, snapshot)
+                 SELECT id, bookmark_id, resolved_at, commit_hash, method, match_count, file_path, byte_range, line_range, content_hash, headline, snapshot
                  FROM pack.resolutions 
                  WHERE bookmark_id IN (SELECT bookmark_id FROM pack.collection_bookmarks WHERE collection_id = ?1)
                  AND id NOT IN (SELECT id FROM main.resolutions)",

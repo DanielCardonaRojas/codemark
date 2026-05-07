@@ -53,8 +53,8 @@ pub struct BookmarkDetail {
 pub struct ResolutionSnapshot {
     /// Human-readable headline describing the code at this bookmark.
     pub headline: Option<String>,
-    /// Preview lines showing the code around the bookmark.
-    pub preview_lines: Option<String>,
+    /// Exact snapshot showing only the target node code (no padding).
+    pub snapshot: Option<String>,
 }
 
 /// Handler for GET /tours/:id. Returns tour details in JSON or binary pack format.
@@ -169,7 +169,7 @@ pub async fn handler(
             // Security: Use a deterministic latest-resolution query (correlated subquery)
             let mut stmt = conn
                 .prepare(
-                    "SELECT b.id, b.file_path, r.line_range, r.headline, r.preview_lines
+                    "SELECT b.id, b.file_path, r.line_range, r.headline, r.snapshot
              FROM collection_bookmarks cb
              JOIN bookmarks b ON cb.bookmark_id = b.id
              LEFT JOIN resolutions r ON r.id = (
@@ -190,7 +190,7 @@ pub async fn handler(
                         line_range: row.get(2)?,
                         snapshot: row.get::<_, Option<String>>(3)?.map(|h| ResolutionSnapshot {
                             headline: Some(h),
-                            preview_lines: row.get(4).ok(),
+                            snapshot: row.get(4).ok(),
                         }),
                     })
                 })

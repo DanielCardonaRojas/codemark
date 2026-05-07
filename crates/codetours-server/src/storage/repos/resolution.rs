@@ -17,7 +17,7 @@ impl ResolutionRepo {
             let mut stmt = conn.prepare(
                 "SELECT id, bookmark_id, resolved_at, commit_hash, method,
                         match_count, file_path, byte_range, line_range, content_hash,
-                        headline, preview_lines, breadcrumbs
+                        headline, snapshot, breadcrumbs
                  FROM resolutions 
                  WHERE bookmark_id = ?1
                  ORDER BY resolved_at DESC
@@ -41,7 +41,7 @@ impl ResolutionRepo {
             let mut stmt = conn.prepare(
                 "SELECT id, bookmark_id, resolved_at, commit_hash, method,
                         match_count, file_path, byte_range, line_range, content_hash,
-                        headline, preview_lines, breadcrumbs
+                        headline, snapshot, breadcrumbs
                  FROM resolutions 
                  WHERE bookmark_id = ?1
                  ORDER BY resolved_at DESC",
@@ -74,7 +74,7 @@ fn row_to_resolution(row: &rusqlite::Row) -> rusqlite::Result<Resolution> {
         line_range: row.get(8)?,
         content_hash: row.get(9)?,
         headline: row.get(10)?,
-        preview_lines: row.get(11)?,
+        snapshot: row.get(11)?,
         breadcrumbs: row.get(12)?,
     })
 }
