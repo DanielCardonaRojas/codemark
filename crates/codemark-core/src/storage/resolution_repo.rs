@@ -1,17 +1,18 @@
-use crate::engine::bookmark::Resolution;
+use crate::engine::bookmark::{BookmarkHealth, Resolution};
 use crate::error::Result;
 use crate::storage::db::Database;
 
 impl Database {
     pub fn insert_resolution(&self, resolution: &Resolution) -> Result<()> {
         self.conn().execute(
-            "INSERT INTO resolutions (id, bookmark_id, resolved_at, commit_hash,
+            "INSERT INTO resolutions (id, bookmark_id, resolved_at, health, commit_hash,
              method, match_count, file_path, byte_range, line_range, content_hash, headline, snapshot, breadcrumbs)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
             rusqlite::params![
                 resolution.id,
                 resolution.bookmark_id,
                 resolution.resolved_at,
+                resolution.health.to_string(),
                 resolution.commit_hash,
                 resolution.method.to_string(),
                 resolution.match_count,
@@ -46,30 +47,37 @@ impl Database {
         resolution: &Resolution,
         max_per_bookmark: usize,
     ) -> Result<bool> {
-        // Check if the latest resolution has the same byte_range, line_range, and method
-        // We intentionally don't compare commit_hash — unrelated commits shouldn't create duplicates
-        let (existing_id, _existing_commit_hash): (Option<String>, Option<String>) = self
+        // Check if the SINGLE absolute latest resolution has the same byte_range, line_range, method, and health
+        // Use id DESC as tiebreaker for same timestamp to ensure deterministic ordering
+        let latest_res: Option<(String, String, String, String, String)> = self
             .conn()
             .query_row(
-                "SELECT id, commit_hash FROM resolutions
-             WHERE bookmark_id = ?1
-               AND COALESCE(byte_range, '') = COALESCE(?2, '')
-               AND COALESCE(line_range, '') = COALESCE(?3, '')
-               AND method = ?4
-             ORDER BY resolved_at DESC
-             LIMIT 1",
-                rusqlite::params![
-                    resolution.bookmark_id,
-                    resolution.byte_range.as_deref().unwrap_or(""),
-                    resolution.line_range.as_deref().unwrap_or(""),
-                    resolution.method.to_string(),
-                ],
-                |row| Ok((Some(row.get(0)?), row.get(1)?)),
+                "SELECT id, COALESCE(byte_range, ''), COALESCE(line_range, ''), method, health
+                 FROM resolutions
+                 WHERE bookmark_id = ?1
+                 ORDER BY resolved_at DESC, id DESC
+                 LIMIT 1",
+                rusqlite::params![resolution.bookmark_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
             )
-            .unwrap_or((None, None));
+            .ok();
 
-        if let Some(id) = existing_id {
-            // Duplicate detected — update the existing resolution with new metadata
+        let is_duplicate = if let Some((_id, br, lr, m, h)) = latest_res {
+            br == resolution.byte_range.as_deref().unwrap_or("")
+                && lr == resolution.line_range.as_deref().unwrap_or("")
+                && m == resolution.method.to_string()
+                && h == resolution.health.to_string()
+        } else {
+            false
+        };
+
+        if is_duplicate {
+            // Duplicate detected — update the existing latest resolution with new metadata
+            let id: String = self.conn().query_row(
+                "SELECT id FROM resolutions WHERE bookmark_id = ?1 ORDER BY resolved_at DESC, id DESC LIMIT 1",
+                rusqlite::params![resolution.bookmark_id],
+                |row| row.get(0),
+            )?;
             self.conn().execute(
                 "UPDATE resolutions SET commit_hash = ?1, resolved_at = ?2, headline = ?3, snapshot = ?4, breadcrumbs = ?5 WHERE id = ?6",
                 rusqlite::params![
@@ -86,7 +94,7 @@ impl Database {
 
         self.insert_resolution(resolution)?;
 
-        // Prune old entries beyond the cap
+        // Prune old entries beyond the cap (now also handled by DB trigger, but kept for safety)
         if max_per_bookmark > 0 {
             self.conn().execute(
                 "DELETE FROM resolutions
@@ -105,16 +113,18 @@ impl Database {
 
     pub fn list_resolutions(&self, bookmark_id: &str, limit: usize) -> Result<Vec<Resolution>> {
         let mut stmt = self.conn().prepare(
-            "SELECT id, bookmark_id, resolved_at, commit_hash, method,
+            "SELECT id, bookmark_id, resolved_at, health, commit_hash, method,
              match_count, file_path, byte_range, line_range, content_hash, headline, snapshot, breadcrumbs
              FROM resolutions WHERE bookmark_id = ?1
-             ORDER BY resolved_at DESC LIMIT ?2",
+             ORDER BY resolved_at DESC, id DESC LIMIT ?2",
         )?;
         let rows = stmt.query_map(rusqlite::params![bookmark_id, limit], |row| {
-            let method_str: String = row.get(4)?;
+            let health_str: String = row.get(3)?;
+            let method_str: String = row.get(5)?;
+            let health = health_str.parse().unwrap_or(BookmarkHealth::Active);
             let method = method_str.parse().map_err(|e| {
                 rusqlite::Error::FromSqlConversionFailure(
-                    4,
+                    5,
                     rusqlite::types::Type::Text,
                     Box::new(e),
                 )
@@ -123,16 +133,17 @@ impl Database {
                 id: row.get(0)?,
                 bookmark_id: row.get(1)?,
                 resolved_at: row.get(2)?,
-                commit_hash: row.get(3)?,
+                health,
+                commit_hash: row.get(4)?,
                 method,
-                match_count: row.get(5)?,
-                file_path: row.get(6)?,
-                byte_range: row.get(7)?,
-                line_range: row.get(8)?,
-                content_hash: row.get(9)?,
-                headline: row.get(10)?,
-                snapshot: row.get(11)?,
-                breadcrumbs: row.get(12)?,
+                match_count: row.get(6)?,
+                file_path: row.get(7)?,
+                byte_range: row.get(8)?,
+                line_range: row.get(9)?,
+                content_hash: row.get(10)?,
+                headline: row.get(11)?,
+                snapshot: row.get(12)?,
+                breadcrumbs: row.get(13)?,
             })
         })?;
 
@@ -143,17 +154,19 @@ impl Database {
     /// Get a single resolution by ID or prefix.
     pub fn get_resolution(&self, id: &str) -> Result<Option<Resolution>> {
         let mut stmt = self.conn().prepare(
-            "SELECT id, bookmark_id, resolved_at, commit_hash, method,
+            "SELECT id, bookmark_id, resolved_at, health, commit_hash, method,
              match_count, file_path, byte_range, line_range, content_hash, headline, snapshot, breadcrumbs
              FROM resolutions WHERE id LIKE ?1 LIMIT 2",
         )?;
         let pattern = format!("{id}%");
         let results: Vec<Resolution> = stmt
             .query_map([&pattern], |row| {
-                let method_str: String = row.get(4)?;
+                let health_str: String = row.get(3)?;
+                let method_str: String = row.get(5)?;
+                let health = health_str.parse().unwrap_or(BookmarkHealth::Active);
                 let method = method_str.parse().map_err(|e| {
                     rusqlite::Error::FromSqlConversionFailure(
-                        4,
+                        5,
                         rusqlite::types::Type::Text,
                         Box::new(e),
                     )
@@ -162,16 +175,17 @@ impl Database {
                     id: row.get(0)?,
                     bookmark_id: row.get(1)?,
                     resolved_at: row.get(2)?,
-                    commit_hash: row.get(3)?,
+                    health,
+                    commit_hash: row.get(4)?,
                     method,
-                    match_count: row.get(5)?,
-                    file_path: row.get(6)?,
-                    byte_range: row.get(7)?,
-                    line_range: row.get(8)?,
-                    content_hash: row.get(9)?,
-                    headline: row.get(10)?,
-                    snapshot: row.get(11)?,
-                    breadcrumbs: row.get(12)?,
+                    match_count: row.get(6)?,
+                    file_path: row.get(7)?,
+                    byte_range: row.get(8)?,
+                    line_range: row.get(9)?,
+                    content_hash: row.get(10)?,
+                    headline: row.get(11)?,
+                    snapshot: row.get(12)?,
+                    breadcrumbs: row.get(13)?,
                 })
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -203,6 +217,7 @@ mod tests {
             stale_since: None,
             created_at: "2024-01-01T00:00:00Z".to_string(),
             created_by: None,
+            current_resolution_id: None,
             tags: Vec::new(),
             annotations: Vec::new(),
             comments: vec![],
@@ -222,6 +237,7 @@ mod tests {
             id: "res-0001".to_string(),
             bookmark_id: "bm-0001".to_string(),
             resolved_at: "2026-04-01T01:00:00Z".to_string(),
+            health: BookmarkHealth::Active,
             commit_hash: Some("abc123".to_string()),
             method: ResolutionMethod::Exact,
             match_count: Some(1),
@@ -236,7 +252,8 @@ mod tests {
         db.insert_resolution(&res).unwrap();
 
         let results = db.list_resolutions("bm-0001", 10).unwrap();
-        assert_eq!(results.len(), 1);
+        // Expect 2: 1 auto-created by insert_bookmark + 1 manually inserted here
+        assert_eq!(results.len(), 2);
         assert_eq!(results[0].method, ResolutionMethod::Exact);
         assert_eq!(results[0].match_count, Some(1));
     }
@@ -251,6 +268,7 @@ mod tests {
             id: "res-0001".to_string(),
             bookmark_id: "bm-0001".to_string(),
             resolved_at: "2026-04-01T01:00:00Z".to_string(),
+            health: BookmarkHealth::Active,
             commit_hash: Some("abc123".to_string()),
             method: ResolutionMethod::Exact,
             match_count: Some(1),
@@ -265,7 +283,7 @@ mod tests {
         db.insert_resolution(&res).unwrap();
 
         let results = db.list_resolutions("bm-0001", 10).unwrap();
-        assert_eq!(results.len(), 1);
+        // results[0] is the manual insert (sorted by resolved_at DESC)
         assert_eq!(results[0].headline.as_deref(), Some("func test()"));
         assert_eq!(results[0].snapshot.as_deref(), Some("line 1\nline 2"));
 
@@ -274,6 +292,7 @@ mod tests {
             id: "res-0002".to_string(),
             bookmark_id: "bm-0001".to_string(),
             resolved_at: "2026-04-01T02:00:00Z".to_string(),
+            health: BookmarkHealth::Active,
             commit_hash: Some("def456".to_string()),
             method: ResolutionMethod::Exact,
             match_count: Some(1),
@@ -288,7 +307,7 @@ mod tests {
         db.insert_resolution_if_changed(&res_update, 10).unwrap();
 
         let results = db.list_resolutions("bm-0001", 10).unwrap();
-        assert_eq!(results.len(), 1);
+        assert_eq!(results.len(), 2); // Manual + Auto (res-0001 was updated to res-0002 meta)
         assert_eq!(results[0].headline.as_deref(), Some("func test_updated()"));
         assert_eq!(results[0].snapshot.as_deref(), Some("line 1 updated\nline 2 updated"));
         assert_eq!(results[0].commit_hash.as_deref(), Some("def456"));
@@ -304,6 +323,7 @@ mod tests {
             id: "res-0001".to_string(),
             bookmark_id: "bm-0001".to_string(),
             resolved_at: "2026-04-01T01:00:00Z".to_string(),
+            health: BookmarkHealth::Active,
             commit_hash: Some("abc123".to_string()),
             method: ResolutionMethod::Exact,
             match_count: Some(1),
@@ -323,6 +343,7 @@ mod tests {
             id: "res-0002".to_string(),
             bookmark_id: "bm-0001".to_string(),
             resolved_at: "2026-04-01T02:00:00Z".to_string(),
+            health: BookmarkHealth::Active,
             commit_hash: Some("def456".to_string()),
             method: ResolutionMethod::Exact,
             match_count: Some(1),
@@ -339,7 +360,7 @@ mod tests {
 
         // Verify the existing resolution was updated with new commit_hash and resolved_at
         let all = db.list_resolutions("bm-0001", 100).unwrap();
-        assert_eq!(all.len(), 1); // Still just 1 resolution
+        assert_eq!(all.len(), 2); // Still just 2 resolutions (Auto + res-0001 updated)
         assert_eq!(all[0].id, "res-0001"); // Same ID
         assert_eq!(all[0].commit_hash, Some("def456".to_string())); // Updated commit
         assert_eq!(all[0].resolved_at, "2026-04-01T02:00:00Z"); // Updated timestamp
@@ -349,6 +370,7 @@ mod tests {
             id: "res-0003".to_string(),
             bookmark_id: "bm-0001".to_string(),
             resolved_at: "2026-04-01T03:00:00Z".to_string(),
+            health: BookmarkHealth::Active,
             commit_hash: Some("abc123".to_string()),
             method: ResolutionMethod::Exact,
             match_count: Some(1),
@@ -368,6 +390,7 @@ mod tests {
             id: "res-0004".to_string(),
             bookmark_id: "bm-0001".to_string(),
             resolved_at: "2026-04-01T04:00:00Z".to_string(),
+            health: BookmarkHealth::Drifted,
             commit_hash: Some("abc123".to_string()),
             method: ResolutionMethod::Relaxed,
             match_count: Some(1),
@@ -383,7 +406,7 @@ mod tests {
         assert!(inserted);
 
         let all = db.list_resolutions("bm-0001", 100).unwrap();
-        assert_eq!(all.len(), 3); // res1 (updated), res3, res4 (res2 was merged into res1)
+        assert_eq!(all.len(), 4); // Auto + res1 (updated) + res3 + res4 (res2 was merged into res1)
     }
 
     #[test]
@@ -403,6 +426,7 @@ mod tests {
                 id: format!("res-{i:04}"),
                 bookmark_id: "bm-0001".to_string(),
                 resolved_at: format!("2026-04-01T{i:02}:00:00Z"),
+                health: BookmarkHealth::Active,
                 commit_hash: Some(format!("commit-{i}")),
                 method: ResolutionMethod::Exact,
                 match_count: Some(1),
@@ -414,7 +438,10 @@ mod tests {
                 snapshot: None,
                 breadcrumbs: None,
             };
-            db.insert_resolution_if_changed(&res, 3).unwrap();
+            let res_id = res.id.clone();
+            if db.insert_resolution_if_changed(&res, 3).unwrap() {
+                db.update_bookmark_resolution_id("bm-0001", &res_id).unwrap();
+            }
         }
 
         let all = db.list_resolutions("bm-0001", 100).unwrap();
@@ -435,6 +462,7 @@ mod tests {
             id: "res-0001".to_string(),
             bookmark_id: "bm-0001".to_string(),
             resolved_at: "2026-04-01T01:00:00Z".to_string(),
+            health: BookmarkHealth::Active,
             commit_hash: None,
             method: ResolutionMethod::Exact,
             match_count: Some(1),

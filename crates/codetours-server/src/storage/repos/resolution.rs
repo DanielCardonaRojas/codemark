@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use codemark_core::engine::bookmark::Resolution;
+use codemark_core::engine::bookmark::{BookmarkHealth, Resolution};
 use deadpool_sqlite::Pool;
 
 pub struct ResolutionRepo {
@@ -17,7 +17,7 @@ impl ResolutionRepo {
             let mut stmt = conn.prepare(
                 "SELECT id, bookmark_id, resolved_at, commit_hash, method,
                         match_count, file_path, byte_range, line_range, content_hash,
-                        headline, snapshot, breadcrumbs
+                        headline, snapshot, breadcrumbs, health
                  FROM resolutions 
                  WHERE bookmark_id = ?1
                  ORDER BY resolved_at DESC
@@ -41,7 +41,7 @@ impl ResolutionRepo {
             let mut stmt = conn.prepare(
                 "SELECT id, bookmark_id, resolved_at, commit_hash, method,
                         match_count, file_path, byte_range, line_range, content_hash,
-                        headline, snapshot, breadcrumbs
+                        headline, snapshot, breadcrumbs, health
                  FROM resolutions 
                  WHERE bookmark_id = ?1
                  ORDER BY resolved_at DESC",
@@ -62,10 +62,16 @@ fn row_to_resolution(row: &rusqlite::Row) -> rusqlite::Result<Resolution> {
         rusqlite::Error::FromSqlConversionFailure(4, rusqlite::types::Type::Text, Box::new(e))
     })?;
 
+    let health_str: String = row.get(13)?;
+    let health: BookmarkHealth = health_str.parse().map_err(|e| {
+        rusqlite::Error::FromSqlConversionFailure(13, rusqlite::types::Type::Text, Box::new(e))
+    })?;
+
     Ok(Resolution {
         id: row.get(0)?,
         bookmark_id: row.get(1)?,
         resolved_at: row.get(2)?,
+        health,
         commit_hash: row.get(3)?,
         method,
         match_count: row.get(5)?,

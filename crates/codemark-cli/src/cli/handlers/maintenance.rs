@@ -96,12 +96,6 @@ pub async fn handle_heal(cli: &Cli, mode: &OutputMode, args: &HealArgs) -> Resul
         );
         let previous_status = bm.health;
 
-        let stale_since = if new_status == BookmarkHealth::Stale {
-            bm.stale_since.clone().or_else(|| Some(now_iso()))
-        } else {
-            None
-        };
-
         // Auto-archive check
         let final_status = if args.auto_archive
             && new_status == BookmarkHealth::Stale
@@ -121,14 +115,6 @@ pub async fn handle_heal(cli: &Cli, mode: &OutputMode, args: &HealArgs) -> Resul
             serde_json::to_string(&result.breadcrumbs).ok()
         };
 
-        db.update_bookmark_health(
-            &bm.id,
-            final_status,
-            Some(result.method),
-            Some(&now_iso()),
-            stale_since.as_deref(),
-        )?;
-
         // Track affected collections for health recompute
         if let Ok(ids) = db.list_collection_ids_for_bookmark(&bm.id) {
             for id in ids {
@@ -146,6 +132,7 @@ pub async fn handle_heal(cli: &Cli, mode: &OutputMode, args: &HealArgs) -> Resul
                 id: uuid::Uuid::new_v4().to_string(),
                 bookmark_id: bm.id.clone(),
                 resolved_at: now_iso(),
+                health: final_status,
                 commit_hash: git_context::detect_context(&std::env::current_dir()?)
                     .and_then(|ctx| ctx.head_commit),
                 method: result.method,
@@ -159,8 +146,14 @@ pub async fn handle_heal(cli: &Cli, mode: &OutputMode, args: &HealArgs) -> Resul
                 breadcrumbs: breadcrumbs_json,
             };
             let res_id = res.id.clone();
-            let _ = db.insert_resolution_if_changed(&res, config.storage.max_resolutions());
-            Some(res_id)
+            if db.insert_resolution_if_changed(&res, config.storage.max_resolutions())? {
+                // New resolution recorded, update the bookmark's current pointer
+                db.update_bookmark_resolution_id(&bm.id, &res_id)?;
+                Some(res_id)
+            } else {
+                // Existing resolution updated, current_resolution_id remains correct
+                bm.current_resolution_id.clone()
+            }
         } else {
             None
         };

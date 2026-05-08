@@ -14,11 +14,13 @@ impl Database {
     /// Insert a bookmark, returning the bookmark ID.
     /// If a bookmark with the same file_path and query exists, returns its ID instead.
     pub fn insert_bookmark(&self, bookmark: &Bookmark) -> Result<String> {
+        let tx = self.conn().unchecked_transaction()?;
+
         // Try to insert with OR FAIL to check for uniqueness constraint
-        let result = self.conn().execute(
+        let result = tx.execute(
             "INSERT INTO bookmarks (id, query, language, file_path, content_hash, commit_hash,
-             health, resolution_method, last_resolved_at, stale_since, created_at, created_by)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+             created_at, created_by)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
             rusqlite::params![
                 bookmark.id,
                 bookmark.query,
@@ -26,29 +28,52 @@ impl Database {
                 bookmark.file_path,
                 bookmark.content_hash,
                 bookmark.commit_hash,
-                bookmark.health.to_string(),
-                bookmark.resolution_method.map(|m| m.to_string()),
-                bookmark.last_resolved_at,
-                bookmark.stale_since,
                 bookmark.created_at,
                 bookmark.created_by,
             ],
         );
 
         match result {
-            Ok(_) => Ok(bookmark.id.clone()),
+            Ok(_) => {
+                // Create initial resolution
+                let res_id = uuid::Uuid::new_v4().to_string();
+                tx.execute(
+                    "INSERT INTO resolutions (id, bookmark_id, resolved_at, health, commit_hash, method, match_count, file_path, content_hash)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                    rusqlite::params![
+                        res_id,
+                        bookmark.id,
+                        bookmark.created_at, // Use created_at as initial resolved_at
+                        bookmark.health.to_string(),
+                        bookmark.commit_hash,
+                        bookmark.resolution_method.map(|m| m.to_string()).unwrap_or_else(|| "exact".to_string()),
+                        1,
+                        bookmark.file_path,
+                        bookmark.content_hash,
+                    ],
+                )?;
+
+                // Link resolution to bookmark
+                tx.execute(
+                    "UPDATE bookmarks SET current_resolution_id = ?1 WHERE id = ?2",
+                    rusqlite::params![res_id, bookmark.id],
+                )?;
+
+                tx.commit()?;
+                Ok(bookmark.id.clone())
+            }
             Err(rusqlite::Error::SqliteFailure(err, _))
                 if err.code == rusqlite::ErrorCode::ConstraintViolation =>
             {
                 // Bookmark with same file_path and query exists, fetch its ID
-                let existing_id: String = self.conn().query_row(
+                let existing_id: String = tx.query_row(
                     "SELECT id FROM bookmarks WHERE file_path = ?1 AND query = ?2",
                     rusqlite::params![bookmark.file_path, bookmark.query],
                     |row| row.get(0),
                 )?;
                 Ok(existing_id)
             }
-            Err(e) => Err(e.into()),
+            Err(e) => Err(Error::from(e)),
         }
     }
 
@@ -118,9 +143,11 @@ impl Database {
 
     pub fn get_bookmark(&self, id: &str) -> Result<Option<Bookmark>> {
         let mut stmt = self.conn().prepare(
-            "SELECT id, query, language, file_path, content_hash, commit_hash,
-             health, resolution_method, last_resolved_at, stale_since, created_at, created_by
-             FROM bookmarks WHERE id = ?1",
+            "SELECT b.id, b.query, b.language, b.file_path, b.content_hash, b.commit_hash,
+             r.health, r.method, r.resolved_at, NULL as stale_since, b.created_at, b.created_by, b.current_resolution_id
+             FROM bookmarks b
+             LEFT JOIN resolutions r ON b.current_resolution_id = r.id
+             WHERE b.id = ?1",
         )?;
         let mut rows = stmt.query_map([id], row_to_bookmark_base)?;
         match rows.next() {
@@ -139,9 +166,11 @@ impl Database {
         }
         let pattern = format!("{prefix}%");
         let mut stmt = self.conn().prepare(
-            "SELECT id, query, language, file_path, content_hash, commit_hash,
-             health, resolution_method, last_resolved_at, stale_since, created_at, created_by
-             FROM bookmarks WHERE id LIKE ?1",
+            "SELECT b.id, b.query, b.language, b.file_path, b.content_hash, b.commit_hash,
+             r.health, r.method, r.resolved_at, NULL as stale_since, b.created_at, b.created_by, b.current_resolution_id
+             FROM bookmarks b
+             LEFT JOIN resolutions r ON b.current_resolution_id = r.id
+             WHERE b.id LIKE ?1",
         )?;
         let mut results: Vec<Bookmark> =
             stmt.query_map([&pattern], row_to_bookmark_base)?.filter_map(|r| r.ok()).collect();
@@ -168,9 +197,11 @@ impl Database {
         query: &str,
     ) -> Result<Option<Bookmark>> {
         let mut stmt = self.conn().prepare(
-            "SELECT id, query, language, file_path, content_hash, commit_hash,
-             health, resolution_method, last_resolved_at, stale_since, created_at, created_by
-             FROM bookmarks WHERE file_path = ?1 AND query = ?2",
+            "SELECT b.id, b.query, b.language, b.file_path, b.content_hash, b.commit_hash,
+             r.health, r.method, r.resolved_at, NULL as stale_since, b.created_at, b.created_by, b.current_resolution_id
+             FROM bookmarks b
+             LEFT JOIN resolutions r ON b.current_resolution_id = r.id
+             WHERE b.file_path = ?1 AND b.query = ?2",
         )?;
         let mut rows = stmt.query_map(rusqlite::params![file_path, query], row_to_bookmark_base)?;
         match rows.next() {
@@ -186,8 +217,9 @@ impl Database {
     pub fn list_bookmarks(&self, filter: &BookmarkFilter) -> Result<Vec<Bookmark>> {
         let mut sql = String::from(
             "SELECT DISTINCT b.id, b.query, b.language, b.file_path, b.content_hash, b.commit_hash,
-             b.health, b.resolution_method, b.last_resolved_at, b.stale_since, b.created_at, b.created_by
-             FROM bookmarks b",
+             r.health, r.method, r.resolved_at, NULL as stale_since, b.created_at, b.created_by, b.current_resolution_id
+             FROM bookmarks b
+             LEFT JOIN resolutions r ON b.current_resolution_id = r.id",
         );
         let mut conditions = Vec::new();
         let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
@@ -208,7 +240,7 @@ impl Database {
         if let Some(ref healths) = filter.health {
             let placeholders: Vec<String> =
                 healths.iter().enumerate().map(|_| "?".to_string()).collect();
-            conditions.push(format!("b.health IN ({})", placeholders.join(", ")));
+            conditions.push(format!("r.health IN ({})", placeholders.join(", ")));
             for h in healths {
                 params.push(Box::new(h.to_string()));
             }
@@ -270,24 +302,39 @@ impl Database {
         Ok(results)
     }
 
+    pub fn update_bookmark_resolution_id(&self, id: &str, resolution_id: &str) -> Result<()> {
+        self.conn().execute(
+            "UPDATE bookmarks SET current_resolution_id = ?1 WHERE id = ?2",
+            rusqlite::params![resolution_id, id],
+        )?;
+        Ok(())
+    }
+
     pub fn update_bookmark_health(
         &self,
         id: &str,
-        health: BookmarkHealth,
-        resolution_method: Option<ResolutionMethod>,
-        last_resolved_at: Option<&str>,
-        stale_since: Option<&str>,
+        _health: BookmarkHealth,
+        _resolution_method: Option<ResolutionMethod>,
+        _last_resolved_at: Option<&str>,
+        _stale_since: Option<&str>,
     ) -> Result<()> {
-        self.conn().execute(
-            "UPDATE bookmarks SET health = ?1, resolution_method = ?2, last_resolved_at = ?3, stale_since = ?4 WHERE id = ?5",
-            rusqlite::params![
-                health.to_string(),
-                resolution_method.map(|m| m.to_string()),
-                last_resolved_at,
-                stale_since,
-                id
-            ],
-        )?;
+        // In the resolution-centric model, updating "health" means creating a new resolution
+        // and linking it. However, the 'heal' logic in maintenance.rs already creates a resolution.
+        // So this method might be redundant or should just update the current_resolution_id
+        // if we have it.
+
+        // For backward compatibility during refactoring, we'll try to find the latest resolution
+        // for this bookmark and link it.
+        let latest_res_id: Option<String> = self.conn().query_row(
+            "SELECT id FROM resolutions WHERE bookmark_id = ?1 ORDER BY resolved_at DESC LIMIT 1",
+            [id],
+            |row| row.get(0),
+        ).ok();
+
+        if let Some(res_id) = latest_res_id {
+            self.update_bookmark_resolution_id(id, &res_id)?;
+        }
+
         Ok(())
     }
 
@@ -311,8 +358,12 @@ impl Database {
     }
 
     pub fn count_by_health(&self) -> Result<HashMap<BookmarkHealth, usize>> {
-        let mut stmt =
-            self.conn().prepare("SELECT health, COUNT(*) FROM bookmarks GROUP BY health")?;
+        let mut stmt = self.conn().prepare(
+            "SELECT r.health, COUNT(*) 
+             FROM bookmarks b
+             JOIN resolutions r ON b.current_resolution_id = r.id
+             GROUP BY r.health",
+        )?;
         let rows = stmt.query_map([], |row| {
             let health: String = row.get(0)?;
             let count: usize = row.get(1)?;
@@ -331,7 +382,12 @@ impl Database {
 
     pub fn delete_archived_before(&self, before: &str) -> Result<usize> {
         let count = self.conn().execute(
-            "DELETE FROM bookmarks WHERE health = 'archived' AND created_at < ?1",
+            "DELETE FROM bookmarks 
+             WHERE id IN (
+                 SELECT b.id FROM bookmarks b
+                 JOIN resolutions r ON b.current_resolution_id = r.id
+                 WHERE r.health = 'archived' AND b.created_at < ?1
+             )",
             [before],
         )?;
         Ok(count)
@@ -363,8 +419,9 @@ impl Database {
         // Always need tag join for tag search
         let mut sql = String::from(
             "SELECT DISTINCT b.id, b.query, b.language, b.file_path, b.content_hash, b.commit_hash,
-             b.health, b.resolution_method, b.last_resolved_at, b.stale_since, b.created_at, b.created_by
+             r.health, r.method, r.resolved_at, NULL as stale_since, b.created_at, b.created_by, b.current_resolution_id
              FROM bookmarks b
+             LEFT JOIN resolutions r ON b.current_resolution_id = r.id
              LEFT JOIN bookmark_annotations ba ON b.id = ba.bookmark_id
              LEFT JOIN bookmark_tags bt ON b.id = bt.bookmark_id",
         );
@@ -417,13 +474,13 @@ impl Database {
         if let Some(ref healths) = health {
             let placeholders: Vec<String> =
                 healths.iter().enumerate().map(|_| "?".to_string()).collect();
-            conditions.push(format!("b.health IN ({})", placeholders.join(", ")));
+            conditions.push(format!("r.health IN ({})", placeholders.join(", ")));
             for h in healths {
                 params.push(Box::new(h.to_string()));
             }
         } else {
             // Exclude archived by default
-            conditions.push("b.health != 'archived'".to_string());
+            conditions.push("r.health != 'archived'".to_string());
         }
 
         if !conditions.is_empty() {
@@ -510,7 +567,7 @@ impl Database {
 }
 
 fn row_to_bookmark_base(row: &rusqlite::Row) -> rusqlite::Result<Bookmark> {
-    let health_str: String = row.get(6)?;
+    let health_str: Option<String> = row.get(6)?;
     let method_str: Option<String> = row.get(7)?;
 
     Ok(Bookmark {
@@ -520,12 +577,13 @@ fn row_to_bookmark_base(row: &rusqlite::Row) -> rusqlite::Result<Bookmark> {
         file_path: row.get(3)?,
         content_hash: row.get(4)?,
         commit_hash: row.get(5)?,
-        health: health_str.parse().unwrap_or(BookmarkHealth::Active),
+        health: health_str.as_ref().and_then(|s| s.parse().ok()).unwrap_or(BookmarkHealth::Active),
         resolution_method: method_str.and_then(|s| s.parse().ok()),
         last_resolved_at: row.get(8)?,
         stale_since: row.get(9)?,
         created_at: row.get(10)?,
         created_by: row.get(11)?,
+        current_resolution_id: row.get(12)?,
         tags: Vec::new(),        // Loaded separately
         annotations: Vec::new(), // Loaded separately
         comments: Vec::new(),    // Loaded separately
@@ -570,6 +628,7 @@ mod tests {
             stale_since: None,
             created_at: "2024-01-01T00:00:00Z".to_string(),
             created_by: None,
+            current_resolution_id: None,
             tags: Vec::new(),
             annotations: Vec::new(),
             comments: vec![],
@@ -587,6 +646,7 @@ mod tests {
         assert_eq!(fetched.id, bm.id);
         assert_eq!(fetched.query, bm.query);
         assert_eq!(fetched.health, BookmarkHealth::Active);
+        assert!(fetched.current_resolution_id.is_some());
         assert!(fetched.tags.is_empty());
         assert!(fetched.annotations.is_empty());
     }
@@ -803,14 +863,26 @@ mod tests {
         let db = Database::open_in_memory().unwrap();
         db.insert_bookmark(&test_bookmark("aaaa-0000-0000-0001")).unwrap();
 
-        db.update_bookmark_health(
-            "aaaa-0000-0000-0001",
-            BookmarkHealth::Drifted,
-            Some(ResolutionMethod::Relaxed),
-            Some("2026-04-01T01:00:00Z"),
-            None,
-        )
-        .unwrap();
+        // In new model, we'd normally create a resolution.
+        // For the test, we'll manually insert one and link it.
+        let res = crate::engine::bookmark::Resolution {
+            id: "res-new".to_string(),
+            bookmark_id: "aaaa-0000-0000-0001".to_string(),
+            resolved_at: "2026-04-01T01:00:00Z".to_string(),
+            health: BookmarkHealth::Drifted,
+            commit_hash: None,
+            method: ResolutionMethod::Relaxed,
+            match_count: Some(1),
+            file_path: None,
+            byte_range: None,
+            line_range: None,
+            content_hash: None,
+            headline: None,
+            snapshot: None,
+            breadcrumbs: None,
+        };
+        db.insert_resolution(&res).unwrap();
+        db.update_bookmark_resolution_id("aaaa-0000-0000-0001", "res-new").unwrap();
 
         let bm = db.get_bookmark("aaaa-0000-0000-0001").unwrap().unwrap();
         assert_eq!(bm.health, BookmarkHealth::Drifted);

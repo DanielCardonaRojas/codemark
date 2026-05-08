@@ -9,24 +9,20 @@ CREATE TABLE IF NOT EXISTS schema_meta (
 INSERT OR IGNORE INTO schema_meta (key, value) VALUES ('created_at', strftime('%Y-%m-%dT%H:%M:%SZ', 'now'));
 
 CREATE TABLE IF NOT EXISTS bookmarks (
-    id                TEXT PRIMARY KEY,
-    query             TEXT NOT NULL,
-    language          TEXT NOT NULL,
-    file_path         TEXT NOT NULL,
-    content_hash      TEXT,
-    commit_hash       TEXT,
-    status            TEXT NOT NULL DEFAULT 'active',
-    resolution_method TEXT,
-    last_resolved_at  TEXT,
-    stale_since       TEXT,
-    created_at        TEXT NOT NULL,
-    created_by        TEXT,
-    tags              TEXT,
-    notes             TEXT,
-    context           TEXT
+    id                    TEXT PRIMARY KEY,
+    query                 TEXT NOT NULL,
+    language              TEXT NOT NULL,
+    file_path             TEXT NOT NULL,
+    content_hash          TEXT,
+    commit_hash           TEXT,
+    created_at            TEXT NOT NULL,
+    created_by            TEXT,
+    current_resolution_id TEXT REFERENCES resolutions(id),
+    tags                  TEXT,
+    notes                 TEXT,
+    context               TEXT
 );
 
-CREATE INDEX IF NOT EXISTS idx_bookmarks_status ON bookmarks(status);
 CREATE INDEX IF NOT EXISTS idx_bookmarks_file ON bookmarks(file_path);
 CREATE INDEX IF NOT EXISTS idx_bookmarks_language ON bookmarks(language);
 
@@ -34,6 +30,7 @@ CREATE TABLE IF NOT EXISTS resolutions (
     id            TEXT PRIMARY KEY,
     bookmark_id   TEXT NOT NULL REFERENCES bookmarks(id) ON DELETE CASCADE,
     resolved_at   TEXT NOT NULL,
+    health        TEXT NOT NULL, -- 'active', 'drifted', 'stale'
     commit_hash   TEXT,
     method        TEXT NOT NULL,
     match_count   INTEGER,

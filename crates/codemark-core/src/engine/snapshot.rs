@@ -1,8 +1,8 @@
 //! Logic for creating snapshots of a collection for publishing.
 use crate::config::Config;
 use crate::engine::bookmark::{
-    Bookmark, BookmarkComment, BookmarkFilter, Collection, CollectionHealth, CollectionLink,
-    CollectionTag, Resolution, Tag,
+    Bookmark, BookmarkComment, BookmarkFilter, BookmarkHealth, Collection, CollectionHealth,
+    CollectionLink, CollectionTag, Resolution, Tag,
 };
 use crate::engine::resolution;
 use crate::error::Result;
@@ -85,6 +85,7 @@ pub async fn build_snapshot(
             id: res_id,
             bookmark_id: bm.id.clone(),
             resolved_at: Utc::now().to_rfc3339(),
+            health: bm.health,
             commit_hash: head_commit.clone(),
             method: result.method,
             match_count: Some(1),
@@ -143,7 +144,6 @@ pub async fn build_snapshot(
 
     // Compute collection health from the resolved bookmarks (not from DB)
     // Rule: stale > drifted > active. Archived bookmarks are excluded.
-    use crate::engine::bookmark::BookmarkHealth;
     let health = if resolved_bookmarks.is_empty() {
         None
     } else {
