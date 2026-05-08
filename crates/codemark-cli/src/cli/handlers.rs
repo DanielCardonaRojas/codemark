@@ -914,9 +914,11 @@ pub fn find_bookmark_across<'a>(
     Err(Error::Input(format!("bookmark not found: {id}")))
 }
 
-/// Get current timestamp in ISO format with fractional seconds for precision.
+/// Get current timestamp in ISO format.
+/// Uses second precision (not milliseconds) for lexicographic sorting compatibility
+/// with legacy timestamps stored as TEXT in the database.
 pub fn now_iso() -> String {
-    chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+    chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string()
 }
 
 /// Parse duration string (e.g., "30d", "2w", "6m") to days.

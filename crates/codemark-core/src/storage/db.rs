@@ -225,9 +225,20 @@ impl Database {
                 Ok(())
             };
 
-            // Ignore migration errors - they just mean we're on a fresh install or data already migrated
-            let _ = migrate_annotations(&tx);
-            let _ = migrate_tags(&tx);
+            // Only run legacy data migration when the old columns exist; surface other errors.
+            let has_legacy_cols: bool = tx
+                .query_row(
+                    "SELECT COUNT(*) FROM pragma_table_info('bookmarks')
+                     WHERE name IN ('notes','context','tags')",
+                    [],
+                    |row| row.get::<_, i64>(0),
+                )
+                .map(|n| n >= 2)
+                .unwrap_or(false);
+            if has_legacy_cols {
+                migrate_annotations(&tx)?;
+                migrate_tags(&tx)?;
+            }
 
             Self::set_schema_version(&tx, 7)?;
 
@@ -235,10 +246,14 @@ impl Database {
             Ok(())
         })();
 
-        if original_state == 1 {
-            conn.execute("PRAGMA foreign_keys = ON", [])?;
-        }
-        res
+        // Restore FK enforcement, preferring migration errors over restore errors.
+        let restore_res = if original_state == 1 {
+            conn.execute("PRAGMA foreign_keys = ON", []).map(|_| ())
+        } else {
+            Ok(())
+        };
+        // Migration error takes precedence over pragma-restore error.
+        res.and_then(|_| restore_res.map_err(Into::into))
     }
 
     /// Initialize the sqlite-vec extension and create the embeddings table.

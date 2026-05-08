@@ -74,11 +74,28 @@ fn row_to_bookmark(row: &rusqlite::Row) -> rusqlite::Result<Bookmark> {
     let health_str: Option<String> = row.get(6)?;
     let method_str: Option<String> = row.get(7)?;
 
-    let health = health_str
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(codemark_core::engine::bookmark::BookmarkHealth::Active);
+    // Parse health, returning an error on parse failures to surface data inconsistencies.
+    // A NULL health (missing current_resolution) indicates incomplete migration/backfill.
+    let health = match health_str {
+        Some(s) => s.parse().map_err(|e| {
+            rusqlite::Error::FromSqlConversionFailure(6, rusqlite::types::Type::Text, Box::new(e))
+        })?,
+        None => {
+            return Err(rusqlite::Error::InvalidQuery);
+        }
+    };
 
-    let resolution_method = method_str.and_then(|s| s.parse().ok());
+    let resolution_method = method_str
+        .map(|s| {
+            s.parse().map_err(|e| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    7,
+                    rusqlite::types::Type::Text,
+                    Box::new(e),
+                )
+            })
+        })
+        .transpose()?;
 
     Ok(Bookmark {
         id: row.get(0)?,
