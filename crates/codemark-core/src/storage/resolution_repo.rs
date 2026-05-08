@@ -61,7 +61,7 @@ impl Database {
             )
             .ok();
 
-        let is_duplicate = if let Some((id, br, lr, m, h)) = latest_res {
+        let is_duplicate = if let Some((_id, br, lr, m, h)) = latest_res {
             br == resolution.byte_range.as_deref().unwrap_or("")
                 && lr == resolution.line_range.as_deref().unwrap_or("")
                 && m == resolution.method.to_string()

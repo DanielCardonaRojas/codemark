@@ -1861,26 +1861,32 @@ fn git_repo_bookmark_recovers_from_stale_to_active() {
     assert_eq!(show_json["data"]["bookmark"]["health"], "stale");
 
     // Restore the function
-    let _commit_c = cm.commit("test.rs", "fn original_function() { return 42; }", "Commit C - restored");
-    
+    let _commit_c =
+        cm.commit("test.rs", "fn original_function() { return 42; }", "Commit C - restored");
+
     // Debug: what does resolve say?
     let resolve_out = cm.run_json(&["resolve", &id[..8]]);
-    eprintln!("DEBUG resolve after restore: {}", serde_json::to_string_pretty(&resolve_out).unwrap());
-    
+    eprintln!(
+        "DEBUG resolve after restore: {}",
+        serde_json::to_string_pretty(&resolve_out).unwrap()
+    );
+
     let heal_out = cm.run_json(&["heal"]);
     eprintln!("DEBUG heal after restore: {}", serde_json::to_string_pretty(&heal_out).unwrap());
 
     // Verify it recovered back to active
     let show_json_final = cm.run_json(&["show", &id[..8]]);
     assert_eq!(
-        show_json_final["data"]["bookmark"]["health"],
-        "active",
+        show_json_final["data"]["bookmark"]["health"], "active",
         "bookmark should recover to active after code is restored"
     );
 
     // Verify we have a history of these transitions
     let resolutions = show_json_final["data"]["resolutions"].as_array().unwrap();
-    assert!(resolutions.len() >= 3, "should have at least 3 resolutions: initial, stale, recovered");
+    assert!(
+        resolutions.len() >= 3,
+        "should have at least 3 resolutions: initial, stale, recovered"
+    );
     assert_eq!(resolutions[0]["health"], "active"); // The latest (recovered)
     assert_eq!(resolutions[1]["health"], "stale"); // The intermediate
 }
