@@ -480,4 +480,100 @@ mod tests {
         let results = db.list_resolutions("bm-0001", 10).unwrap();
         assert!(results.is_empty());
     }
+
+    #[test]
+    fn test_healing_is_appending() {
+        // @lat: [[tests#System Invariants Tests#Health & Resolution Rules#Healing is Appending]]
+        // Verifies that healing or resolving a bookmark creates a new resolutions record
+        // and updates the current_resolution_id pointer, without modifying the original
+        // bookmarks row data.
+        init_test_env();
+        let db = Database::open_in_memory().unwrap();
+
+        let bm_id = "heal-test-bm";
+        let original_query = "(function_declaration) @target /* original */";
+        let original_language = "swift";
+        let original_file_path = "src/original.swift";
+        let original_created_at = "2024-01-01T00:00:00Z".to_string();
+
+        // Create initial bookmark
+        let bm = crate::engine::bookmark::Bookmark {
+            id: bm_id.to_string(),
+            query: original_query.to_string(),
+            language: original_language.to_string(),
+            file_path: original_file_path.to_string(),
+            content_hash: Some("sha256:original".to_string()),
+            commit_hash: Some("commit-1".to_string()),
+            health: BookmarkHealth::Active,
+            resolution_method: Some(ResolutionMethod::Exact),
+            last_resolved_at: Some(original_created_at.clone()),
+            stale_since: None,
+            created_at: original_created_at.clone(),
+            created_by: None,
+            current_resolution_id: None,
+            tags: vec![],
+            annotations: vec![],
+            comments: vec![],
+        };
+        db.insert_bookmark(&bm).unwrap();
+
+        // Capture the initial bookmark state from DB
+        let initial_bm = db.get_bookmark(bm_id).unwrap().unwrap();
+        let initial_res_id = initial_bm.current_resolution_id.clone().unwrap();
+
+        // Verify the initial resolution was created
+        let initial_resolutions = db.list_resolutions(bm_id, 10).unwrap();
+        assert_eq!(initial_resolutions.len(), 1, "Should have 1 initial resolution");
+        assert_eq!(initial_resolutions[0].id, initial_res_id);
+
+        // Simulate a "heal" operation - create a new resolution
+        let heal_resolution = Resolution {
+            id: "res-heal-1".to_string(),
+            bookmark_id: bm_id.to_string(),
+            resolved_at: "2024-01-02T00:00:00Z".to_string(),
+            health: BookmarkHealth::Active,
+            commit_hash: Some("commit-2".to_string()),
+            method: ResolutionMethod::Exact,
+            match_count: Some(1),
+            file_path: Some("src/original.swift".to_string()),
+            byte_range: Some("100:200".to_string()),
+            line_range: Some("10:20".to_string()),
+            content_hash: Some("sha256:newhash".to_string()),
+            headline: Some("Updated headline".to_string()),
+            snapshot: Some("Updated snapshot".to_string()),
+            breadcrumbs: Some("[]".to_string()),
+        };
+
+        // Insert the new resolution (simulating heal)
+        let inserted = db.insert_resolution_if_changed(&heal_resolution, 20).unwrap();
+        assert!(inserted, "Heal should create a new resolution when location changes");
+
+        // Update the bookmark's current_resolution_id pointer
+        db.update_bookmark_resolution_id(bm_id, "res-heal-1").unwrap();
+
+        // Verify the healing behavior
+        let healed_bm = db.get_bookmark(bm_id).unwrap().unwrap();
+        let all_resolutions = db.list_resolutions(bm_id, 100).unwrap();
+
+        // 1. A new resolution was created (not replaced)
+        assert_eq!(all_resolutions.len(), 2, "Healing should append a new resolution");
+        assert!(all_resolutions.iter().any(|r| r.id == "res-heal-1"), "New resolution should exist");
+        assert!(all_resolutions.iter().any(|r| r.id == initial_res_id), "Old resolution should still exist");
+
+        // 2. The current_resolution_id pointer was updated
+        assert_eq!(healed_bm.current_resolution_id, Some("res-heal-1".to_string()));
+
+        // 3. The original bookmarks row immutable fields were NOT modified
+        assert_eq!(healed_bm.id, initial_bm.id, "Bookmark ID must never change");
+        assert_eq!(healed_bm.created_at, initial_bm.created_at, "Bookmark created_at must never change");
+
+        // 4. The mutable fields (via resolution) were updated
+        assert_eq!(healed_bm.last_resolved_at, Some("2024-01-02T00:00:00Z".to_string()));
+
+        // 5. Verify the most recent resolution has the new data
+        let latest_res = &all_resolutions[0]; // Ordered by resolved_at DESC
+        assert_eq!(latest_res.id, "res-heal-1");
+        assert_eq!(latest_res.commit_hash, Some("commit-2".to_string()));
+        assert_eq!(latest_res.headline, Some("Updated headline".to_string()));
+    }
 }

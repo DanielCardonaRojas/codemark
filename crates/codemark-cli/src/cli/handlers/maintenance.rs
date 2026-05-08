@@ -122,9 +122,6 @@ pub async fn handle_heal(cli: &Cli, mode: &OutputMode, args: &HealArgs) -> Resul
             }
         }
 
-        if let Some(ref new_query) = result.new_query {
-            db.update_bookmark_query(&bm.id, new_query, &result.file_path, &result.content_hash)?;
-        }
 
         // Track the resolution ID that was created (if any)
         let resolution_id = if !args.validate_only {

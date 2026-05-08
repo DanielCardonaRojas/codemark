@@ -762,9 +762,6 @@ pub async fn handle_resolve(cli: &Cli, mode: &OutputMode, args: &ResolveArgs) ->
             }
         }
 
-        if let Some(ref new_query) = result.new_query {
-            db.update_bookmark_query(&bm.id, new_query, &result.file_path, &result.content_hash)?;
-        }
 
         let breadcrumbs_json = if result.breadcrumbs.is_empty() {
             None

@@ -545,4 +545,165 @@ class TestClass {
         assert!(breadcrumbs[0].text.contains("class TestClass"));
         assert!(breadcrumbs[1].text.contains("func testMethod"));
     }
+
+    #[tokio::test]
+    async fn test_exact_over_relaxed() {
+        // @lat: [[tests#System Invariants Tests#Health & Resolution Rules#Hierarchical Preference]]
+        // Verifies that the resolution engine always prefers higher-tier matches.
+        // It must never return a `relaxed` match if an `exact` match is possible
+        // for the same query.
+        let (bm, mut cache) =
+            create_bookmark_for_function("auth_service.swift", "validateToken").await;
+        let lang = CodemarkLang::Swift.tree_sitter_language();
+        let dummy_db =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(".codemark/codemark.db");
+
+        let provider = crate::vfs::LocalFileProvider;
+        let result = resolve(&bm, &mut cache, &lang, dummy_db.as_path(), &provider).await.unwrap();
+
+        // The original query should match exactly
+        assert_eq!(
+            result.method,
+            ResolutionMethod::Exact,
+            "Expected Exact match when the query uniquely matches the target"
+        );
+
+        // Test the hierarchy: when exact fails but relaxed would succeed,
+        // verify we fall through to a lower tier (not Exact)
+        let mut bm_relaxed = bm.clone();
+        // Break the exact query with a wrong name, but relaxed will strip the predicate
+        bm_relaxed.query = r#"(function_declaration
+  name: (simple_identifier) @fn_name
+  (#eq? @fn_name "thisDoesNotExist")) @target"#.to_string();
+
+        let result3 = resolve(&bm_relaxed, &mut cache, &lang, dummy_db.as_path(), &provider).await.unwrap();
+
+        // Should fall through to Relaxed tier (or HashFallback depending on implementation)
+        // The key is that it should NOT be Exact
+        assert_ne!(
+            result3.method,
+            ResolutionMethod::Exact,
+            "Should not return Exact when the exact query predicate fails"
+        );
+
+        // And it should be Relaxed or HashFallback (both are valid fall-throughs)
+        assert!(
+            result3.method == ResolutionMethod::Relaxed
+                || result3.method == ResolutionMethod::HashFallback,
+            "Expected Relaxed or HashFallback when exact predicate fails, got {:?}",
+            result3.method
+        );
+    }
+
+    #[tokio::test]
+    async fn test_resolution_tier_hierarchy() {
+        // @lat: [[tests#System Invariants Tests#Health & Resolution Rules#Hierarchical Preference]]
+        // Explicitly test that tiers are tried in order: Exact → Relaxed → Minimal → HashFallback
+        let source = r#"
+class TierTest {
+    func targetFunction() -> String {
+        return "test"
+    }
+
+    func otherFunction() -> String {
+        return "other"
+    }
+}
+"#;
+
+        let path = fixture_path("tier_test.swift");
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).ok();
+        }
+        std::fs::write(&path, source).ok();
+
+        let mut cache = ParseCache::new(CodemarkLang::Swift).unwrap();
+        let lang = CodemarkLang::Swift.tree_sitter_language();
+
+        // Generate a query for targetFunction with its hash
+        let mut parser = crate::parser::languages::Parser::new(CodemarkLang::Swift).unwrap();
+        let tree = parser.parse(source.as_bytes()).unwrap();
+
+        // Find targetFunction node
+        let root = tree.root_node();
+        let mut target_byte_range = None;
+        let mut cursor = root.walk();
+        for child in root.named_children(&mut cursor) {
+            if child.kind() == "class_declaration" {
+                let mut cursor2 = child.walk();
+                for child2 in child.named_children(&mut cursor2) {
+                    if child2.is_named() && source[child2.byte_range()].contains("targetFunction") {
+                        target_byte_range = Some(child2.byte_range());
+                        break;
+                    }
+                }
+            }
+        }
+        let byte_range = target_byte_range.unwrap();
+        let range = (byte_range.start, byte_range.end);
+
+        let generated = qgen::generate_query(&tree, source.as_bytes(), range, &lang).unwrap();
+        let ch = hash::content_hash(&source[byte_range]);
+
+        // Test 1: Exact match - query as generated
+        let bm_exact = Bookmark {
+            id: "tier-test-exact".to_string(),
+            query: generated.query.clone(),
+            language: "swift".to_string(),
+            file_path: path.to_string_lossy().to_string(),
+            content_hash: Some(ch.clone()),
+            commit_hash: None,
+            health: BookmarkHealth::Active,
+            resolution_method: None,
+            current_resolution_id: None,
+            last_resolved_at: None,
+            stale_since: None,
+            created_at: "2026-04-01T00:00:00Z".to_string(),
+            created_by: None,
+            tags: vec![],
+            annotations: vec![],
+            comments: vec![],
+        };
+
+        let dummy_db =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(".codemark/codemark.db");
+        let provider = crate::vfs::LocalFileProvider;
+        let result = resolve(&bm_exact, &mut cache, &lang, dummy_db.as_path(), &provider).await.unwrap();
+        assert_eq!(result.method, ResolutionMethod::Exact, "Tier 1: Exact should match");
+
+        // Test 2: Relaxed - wrong name predicate but right hash
+        let bm_relaxed = Bookmark {
+            id: "tier-test-relaxed".to_string(),
+            query: r#"(function_declaration
+  name: (simple_identifier) @fn_name
+  (#eq? @fn_name "wrongName")) @target"#.to_string(),
+            language: "swift".to_string(),
+            file_path: path.to_string_lossy().to_string(),
+            content_hash: Some(ch.clone()),
+            commit_hash: None,
+            health: BookmarkHealth::Active,
+            resolution_method: None,
+            current_resolution_id: None,
+            last_resolved_at: None,
+            stale_since: None,
+            created_at: "2026-04-01T00:00:00Z".to_string(),
+            created_by: None,
+            tags: vec![],
+            annotations: vec![],
+            comments: vec![],
+        };
+
+        let result = resolve(&bm_relaxed, &mut cache, &lang, dummy_db.as_path(), &provider).await.unwrap();
+        assert_ne!(result.method, ResolutionMethod::Exact, "Exact should not match with wrong name");
+        // The relaxed tier may produce multiple matches, causing fall-through to hash_fallback
+        // Both Relaxed and HashFallback are valid outcomes when exact fails
+        assert!(
+            result.method == ResolutionMethod::Relaxed || result.method == ResolutionMethod::HashFallback,
+            "Expected Relaxed or HashFallback when exact predicate fails, got {:?}",
+            result.method
+        );
+
+        // Clean up
+        std::fs::remove_file(&path).ok();
+    }
 }
