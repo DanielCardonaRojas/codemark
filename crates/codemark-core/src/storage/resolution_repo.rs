@@ -48,13 +48,14 @@ impl Database {
         max_per_bookmark: usize,
     ) -> Result<bool> {
         // Check if the SINGLE absolute latest resolution has the same byte_range, line_range, method, and health
+        // Use id DESC as tiebreaker for same timestamp to ensure deterministic ordering
         let latest_res: Option<(String, String, String, String, String)> = self
             .conn()
             .query_row(
-                "SELECT id, COALESCE(byte_range, ''), COALESCE(line_range, ''), method, health 
+                "SELECT id, COALESCE(byte_range, ''), COALESCE(line_range, ''), method, health
                  FROM resolutions
                  WHERE bookmark_id = ?1
-                 ORDER BY resolved_at DESC
+                 ORDER BY resolved_at DESC, id DESC
                  LIMIT 1",
                 rusqlite::params![resolution.bookmark_id],
                 |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
@@ -73,7 +74,7 @@ impl Database {
         if is_duplicate {
             // Duplicate detected — update the existing latest resolution with new metadata
             let id: String = self.conn().query_row(
-                "SELECT id FROM resolutions WHERE bookmark_id = ?1 ORDER BY resolved_at DESC LIMIT 1",
+                "SELECT id FROM resolutions WHERE bookmark_id = ?1 ORDER BY resolved_at DESC, id DESC LIMIT 1",
                 rusqlite::params![resolution.bookmark_id],
                 |row| row.get(0),
             )?;
@@ -115,7 +116,7 @@ impl Database {
             "SELECT id, bookmark_id, resolved_at, health, commit_hash, method,
              match_count, file_path, byte_range, line_range, content_hash, headline, snapshot, breadcrumbs
              FROM resolutions WHERE bookmark_id = ?1
-             ORDER BY resolved_at DESC LIMIT ?2",
+             ORDER BY resolved_at DESC, id DESC LIMIT ?2",
         )?;
         let rows = stmt.query_map(rusqlite::params![bookmark_id, limit], |row| {
             let health_str: String = row.get(3)?;

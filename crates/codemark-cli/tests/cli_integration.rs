@@ -1864,13 +1864,6 @@ fn git_repo_bookmark_recovers_from_stale_to_active() {
     let _commit_c =
         cm.commit("test.rs", "fn original_function() { return 42; }", "Commit C - restored");
 
-    // Debug: what does resolve say?
-    let resolve_out = cm.run_json(&["resolve", &id[..8]]);
-    eprintln!(
-        "DEBUG resolve after restore: {}",
-        serde_json::to_string_pretty(&resolve_out).unwrap()
-    );
-
     let heal_out = cm.run_json(&["heal"]);
     eprintln!("DEBUG heal after restore: {}", serde_json::to_string_pretty(&heal_out).unwrap());
 
