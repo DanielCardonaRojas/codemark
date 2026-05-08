@@ -7,7 +7,7 @@ use crate::engine::hash;
 use crate::error::Result;
 use crate::git::context as git_context;
 use crate::parser::languages::ParseCache;
-use crate::query::{generator, matcher, relaxer};
+use crate::query::{matcher, relaxer};
 
 /// The result of resolving a single bookmark.
 #[derive(Debug)]
@@ -23,8 +23,6 @@ pub struct ResolutionResult {
     pub hash_matches: bool,
     /// Structural ancestors for sticky headers.
     pub breadcrumbs: Vec<crate::engine::breadcrumbs::Breadcrumb>,
-    /// If hash fallback was used, the regenerated query for the new location.
-    pub new_query: Option<String>,
 }
 
 impl ResolutionResult {
@@ -111,7 +109,6 @@ pub async fn resolve(
         content_hash: String::new(),
         hash_matches: false,
         breadcrumbs: Vec::new(),
-        new_query: None,
     })
 }
 
@@ -140,7 +137,6 @@ fn pick_match(
             content_hash: ch,
             hash_matches,
             breadcrumbs,
-            new_query: None,
         });
     }
 
@@ -161,7 +157,6 @@ fn pick_match(
                     content_hash: ch,
                     hash_matches: true,
                     breadcrumbs,
-                    new_query: None,
                 });
             }
         }
@@ -231,11 +226,6 @@ fn hash_fallback_walk(
         let text = std::str::from_utf8(&source_bytes[node.byte_range()]).unwrap_or("");
         let ch = hash::content_hash(text);
         if ch == stored_hash {
-            // Regenerate query for this new location
-            let new_query = generator::generate_query_for_node(tree, node, source_bytes, language)
-                .ok()
-                .map(|gq| gq.query);
-
             let source_str = std::str::from_utf8(source_bytes).unwrap_or("");
             use std::str::FromStr;
             let lang_enum = crate::parser::languages::Language::from_str(&bookmark.language)
@@ -254,7 +244,6 @@ fn hash_fallback_walk(
                 content_hash: ch,
                 hash_matches: true,
                 breadcrumbs,
-                new_query,
             });
         }
     }
