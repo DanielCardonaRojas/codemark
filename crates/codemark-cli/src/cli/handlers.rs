@@ -1046,7 +1046,6 @@ pub async fn resolve_batch(
             }
         }
 
-
         let breadcrumbs_json = if result.breadcrumbs.is_empty() {
             None
         } else {

@@ -762,7 +762,6 @@ pub async fn handle_resolve(cli: &Cli, mode: &OutputMode, args: &ResolveArgs) ->
             }
         }
 
-
         let breadcrumbs_json = if result.breadcrumbs.is_empty() {
             None
         } else {

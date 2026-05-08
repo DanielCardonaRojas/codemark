@@ -557,15 +557,24 @@ mod tests {
 
         // 1. A new resolution was created (not replaced)
         assert_eq!(all_resolutions.len(), 2, "Healing should append a new resolution");
-        assert!(all_resolutions.iter().any(|r| r.id == "res-heal-1"), "New resolution should exist");
-        assert!(all_resolutions.iter().any(|r| r.id == initial_res_id), "Old resolution should still exist");
+        assert!(
+            all_resolutions.iter().any(|r| r.id == "res-heal-1"),
+            "New resolution should exist"
+        );
+        assert!(
+            all_resolutions.iter().any(|r| r.id == initial_res_id),
+            "Old resolution should still exist"
+        );
 
         // 2. The current_resolution_id pointer was updated
         assert_eq!(healed_bm.current_resolution_id, Some("res-heal-1".to_string()));
 
         // 3. The original bookmarks row immutable fields were NOT modified
         assert_eq!(healed_bm.id, initial_bm.id, "Bookmark ID must never change");
-        assert_eq!(healed_bm.created_at, initial_bm.created_at, "Bookmark created_at must never change");
+        assert_eq!(
+            healed_bm.created_at, initial_bm.created_at,
+            "Bookmark created_at must never change"
+        );
 
         // 4. The mutable fields (via resolution) were updated
         assert_eq!(healed_bm.last_resolved_at, Some("2024-01-02T00:00:00Z".to_string()));

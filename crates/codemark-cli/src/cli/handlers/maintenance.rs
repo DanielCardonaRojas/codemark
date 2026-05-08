@@ -122,7 +122,6 @@ pub async fn handle_heal(cli: &Cli, mode: &OutputMode, args: &HealArgs) -> Resul
             }
         }
 
-
         // Track the resolution ID that was created (if any)
         let resolution_id = if !args.validate_only {
             let res = Resolution {

@@ -563,9 +563,11 @@ class TestClass {
         // Break the exact query with a wrong name, but relaxed will strip the predicate
         bm_relaxed.query = r#"(function_declaration
   name: (simple_identifier) @fn_name
-  (#eq? @fn_name "thisDoesNotExist")) @target"#.to_string();
+  (#eq? @fn_name "thisDoesNotExist")) @target"#
+            .to_string();
 
-        let result3 = resolve(&bm_relaxed, &mut cache, &lang, dummy_db.as_path(), &provider).await.unwrap();
+        let result3 =
+            resolve(&bm_relaxed, &mut cache, &lang, dummy_db.as_path(), &provider).await.unwrap();
 
         // Should fall through to Relaxed tier (or HashFallback depending on implementation)
         // The key is that it should NOT be Exact
@@ -657,7 +659,8 @@ class TierTest {
         let dummy_db =
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(".codemark/codemark.db");
         let provider = crate::vfs::LocalFileProvider;
-        let result = resolve(&bm_exact, &mut cache, &lang, dummy_db.as_path(), &provider).await.unwrap();
+        let result =
+            resolve(&bm_exact, &mut cache, &lang, dummy_db.as_path(), &provider).await.unwrap();
         assert_eq!(result.method, ResolutionMethod::Exact, "Tier 1: Exact should match");
 
         // Test 2: Relaxed - wrong name predicate but right hash
@@ -665,7 +668,8 @@ class TierTest {
             id: "tier-test-relaxed".to_string(),
             query: r#"(function_declaration
   name: (simple_identifier) @fn_name
-  (#eq? @fn_name "wrongName")) @target"#.to_string(),
+  (#eq? @fn_name "wrongName")) @target"#
+                .to_string(),
             language: "swift".to_string(),
             file_path: path.to_string_lossy().to_string(),
             content_hash: Some(ch.clone()),
@@ -682,12 +686,18 @@ class TierTest {
             comments: vec![],
         };
 
-        let result = resolve(&bm_relaxed, &mut cache, &lang, dummy_db.as_path(), &provider).await.unwrap();
-        assert_ne!(result.method, ResolutionMethod::Exact, "Exact should not match with wrong name");
+        let result =
+            resolve(&bm_relaxed, &mut cache, &lang, dummy_db.as_path(), &provider).await.unwrap();
+        assert_ne!(
+            result.method,
+            ResolutionMethod::Exact,
+            "Exact should not match with wrong name"
+        );
         // The relaxed tier may produce multiple matches, causing fall-through to hash_fallback
         // Both Relaxed and HashFallback are valid outcomes when exact fails
         assert!(
-            result.method == ResolutionMethod::Relaxed || result.method == ResolutionMethod::HashFallback,
+            result.method == ResolutionMethod::Relaxed
+                || result.method == ResolutionMethod::HashFallback,
             "Expected Relaxed or HashFallback when exact predicate fails, got {:?}",
             result.method
         );

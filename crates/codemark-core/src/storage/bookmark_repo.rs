@@ -1006,10 +1006,7 @@ mod tests {
         let after_resolution = db.get_bookmark(bm_id).unwrap().unwrap();
 
         // ASSERTION: The following fields MUST remain immutable
-        assert_eq!(
-            after_resolution.id, original_id_bytes,
-            "Bookmark ID must be immutable"
-        );
+        assert_eq!(after_resolution.id, original_id_bytes, "Bookmark ID must be immutable");
         assert_eq!(
             after_resolution.query, original_query_bytes,
             "Bookmark query must be immutable"
@@ -1077,10 +1074,7 @@ mod tests {
 
         // Verify it was accepted
         let fetched = db.get_bookmark(bm_id).unwrap().unwrap();
-        assert_eq!(
-            fetched.last_resolved_at,
-            Some(bookmark_created_at.to_string())
-        );
+        assert_eq!(fetched.last_resolved_at, Some(bookmark_created_at.to_string()));
 
         // Test 2: Resolution AFTER creation should be allowed
         let res_future = crate::engine::bookmark::Resolution {

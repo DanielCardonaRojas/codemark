@@ -3036,18 +3036,10 @@ async fn test_no_past_resolution() {
     let cm = Codemark::with_git_repo();
 
     // Commit 1: Initial file with function (using Swift syntax for better query support)
-    let commit1 = cm.commit(
-        "Source.swift",
-        r#"func oldFunction() {}"#,
-        "Commit 1",
-    );
+    let commit1 = cm.commit("Source.swift", r#"func oldFunction() {}"#, "Commit 1");
 
     // Move forward with commit2
-    let commit2 = cm.commit(
-        "Source.swift",
-        r#"func newFunction() {}"#,
-        "Commit 2",
-    );
+    let commit2 = cm.commit("Source.swift", r#"func newFunction() {}"#, "Commit 2");
 
     // Create bookmark at commit2
     let result = cm.run(&[
