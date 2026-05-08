@@ -47,32 +47,36 @@ impl Database {
         resolution: &Resolution,
         max_per_bookmark: usize,
     ) -> Result<bool> {
-        // Check if the latest resolution has the same byte_range, line_range, and method
-        // We intentionally don't compare commit_hash — unrelated commits shouldn't create duplicates
-        let (existing_id, _existing_commit_hash): (Option<String>, Option<String>) = self
+        // Check if the SINGLE absolute latest resolution has the same byte_range, line_range, method, and health
+        let latest_res: Option<(String, String, String, String, String)> = self
             .conn()
             .query_row(
-                "SELECT id, commit_hash FROM resolutions
-             WHERE bookmark_id = ?1
-               AND COALESCE(byte_range, '') = COALESCE(?2, '')
-               AND COALESCE(line_range, '') = COALESCE(?3, '')
-               AND method = ?4
-               AND health = ?5
-             ORDER BY resolved_at DESC
-             LIMIT 1",
-                rusqlite::params![
-                    resolution.bookmark_id,
-                    resolution.byte_range.as_deref().unwrap_or(""),
-                    resolution.line_range.as_deref().unwrap_or(""),
-                    resolution.method.to_string(),
-                    resolution.health.to_string(),
-                ],
-                |row| Ok((Some(row.get(0)?), row.get(1)?)),
+                "SELECT id, COALESCE(byte_range, ''), COALESCE(line_range, ''), method, health 
+                 FROM resolutions
+                 WHERE bookmark_id = ?1
+                 ORDER BY resolved_at DESC
+                 LIMIT 1",
+                rusqlite::params![resolution.bookmark_id],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?)),
             )
-            .unwrap_or((None, None));
+            .ok();
 
-        if let Some(id) = existing_id {
-            // Duplicate detected — update the existing resolution with new metadata
+        let is_duplicate = if let Some((id, br, lr, m, h)) = latest_res {
+            br == resolution.byte_range.as_deref().unwrap_or("")
+                && lr == resolution.line_range.as_deref().unwrap_or("")
+                && m == resolution.method.to_string()
+                && h == resolution.health.to_string()
+        } else {
+            false
+        };
+
+        if is_duplicate {
+            // Duplicate detected — update the existing latest resolution with new metadata
+            let id: String = self.conn().query_row(
+                "SELECT id FROM resolutions WHERE bookmark_id = ?1 ORDER BY resolved_at DESC LIMIT 1",
+                rusqlite::params![resolution.bookmark_id],
+                |row| row.get(0),
+            )?;
             self.conn().execute(
                 "UPDATE resolutions SET commit_hash = ?1, resolved_at = ?2, headline = ?3, snapshot = ?4, breadcrumbs = ?5 WHERE id = ?6",
                 rusqlite::params![

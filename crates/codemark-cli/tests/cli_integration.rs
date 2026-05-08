@@ -1833,6 +1833,59 @@ fn git_repo_bookmark_goes_stale_when_code_completely_changed() {
 }
 
 #[test]
+fn git_repo_bookmark_recovers_from_stale_to_active() {
+    // Test that a bookmark recovers from stale back to active when the code is restored
+    let cm = Codemark::with_git_repo();
+
+    // Initial file with function
+    let _commit_a = cm.commit("test.rs", "fn original_function() { return 42; }", "Commit A");
+
+    // Create bookmark targeting the function
+    let json = cm.run_json(&[
+        "add",
+        "--file",
+        &cm.file_path("test.rs"),
+        "--range",
+        "1",
+        "--note",
+        "bookmark on original_function",
+    ]);
+    let id = json["data"]["id"].as_str().unwrap().to_string();
+
+    // Completely remove the function to make the bookmark stale
+    let _commit_b = cm.commit("test.rs", "", "Commit B - empty file");
+    cm.run_json(&["heal"]);
+
+    // Verify it is stale
+    let show_json = cm.run_json(&["show", &id[..8]]);
+    assert_eq!(show_json["data"]["bookmark"]["health"], "stale");
+
+    // Restore the function
+    let _commit_c = cm.commit("test.rs", "fn original_function() { return 42; }", "Commit C - restored");
+    
+    // Debug: what does resolve say?
+    let resolve_out = cm.run_json(&["resolve", &id[..8]]);
+    eprintln!("DEBUG resolve after restore: {}", serde_json::to_string_pretty(&resolve_out).unwrap());
+    
+    let heal_out = cm.run_json(&["heal"]);
+    eprintln!("DEBUG heal after restore: {}", serde_json::to_string_pretty(&heal_out).unwrap());
+
+    // Verify it recovered back to active
+    let show_json_final = cm.run_json(&["show", &id[..8]]);
+    assert_eq!(
+        show_json_final["data"]["bookmark"]["health"],
+        "active",
+        "bookmark should recover to active after code is restored"
+    );
+
+    // Verify we have a history of these transitions
+    let resolutions = show_json_final["data"]["resolutions"].as_array().unwrap();
+    assert!(resolutions.len() >= 3, "should have at least 3 resolutions: initial, stale, recovered");
+    assert_eq!(resolutions[0]["health"], "active"); // The latest (recovered)
+    assert_eq!(resolutions[1]["health"], "stale"); // The intermediate
+}
+
+#[test]
 fn git_repo_resolve_fails_when_file_deleted() {
     // Test that resolve handles deleted file gracefully
     let cm = Codemark::with_git_repo();
