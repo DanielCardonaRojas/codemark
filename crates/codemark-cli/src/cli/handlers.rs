@@ -914,9 +914,9 @@ pub fn find_bookmark_across<'a>(
     Err(Error::Input(format!("bookmark not found: {id}")))
 }
 
-/// Get current timestamp in ISO format.
+/// Get current timestamp in ISO format with fractional seconds for precision.
 pub fn now_iso() -> String {
-    chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string()
+    chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
 }
 
 /// Parse duration string (e.g., "30d", "2w", "6m") to days.
@@ -1045,20 +1045,6 @@ pub async fn resolve_batch(
             }
         }
 
-        let stale_since = if new_status == BookmarkHealth::Stale {
-            bm.stale_since.clone().or_else(|| Some(now_iso()))
-        } else {
-            None
-        };
-
-        db.update_bookmark_health(
-            &bm.id,
-            new_status,
-            Some(result.method),
-            Some(&now_iso()),
-            stale_since.as_deref(),
-        )?;
-
         if let Some(ref new_query) = result.new_query {
             db.update_bookmark_query(&bm.id, new_query, &result.file_path, &result.content_hash)?;
         }
@@ -1074,6 +1060,7 @@ pub async fn resolve_batch(
             id: uuid::Uuid::new_v4().to_string(),
             bookmark_id: bm.id.clone(),
             resolved_at: now_iso(),
+            health: new_status,
             commit_hash: git_context::detect_context(&std::env::current_dir()?)
                 .and_then(|ctx| ctx.head_commit),
             method: result.method,
@@ -1086,7 +1073,10 @@ pub async fn resolve_batch(
             snapshot: Some(result.matched_text.clone()),
             breadcrumbs: breadcrumbs_json,
         };
-        let _ = db.insert_resolution_if_changed(&res, config.storage.max_resolutions());
+        let res_id = res.id.clone();
+        if db.insert_resolution_if_changed(&res, config.storage.max_resolutions())? {
+            db.update_bookmark_resolution_id(&bm.id, &res_id)?;
+        }
     }
 
     // Recompute health for all affected collections

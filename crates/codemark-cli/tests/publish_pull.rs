@@ -78,6 +78,7 @@ async fn test_cli_publish_pull_roundtrip() {
         stale_since: None,
         created_at: "2024-01-01T00:00:00Z".to_string(),
         created_by: None,
+        current_resolution_id: None,
         tags: vec![],
         annotations: vec![],
         comments: vec![],

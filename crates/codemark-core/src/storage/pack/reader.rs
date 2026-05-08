@@ -69,9 +69,12 @@ impl PackReader {
     }
 
     pub fn bookmarks(&self) -> Result<Vec<Bookmark>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT id, query, language, file_path, content_hash, commit_hash, health, resolution_method, last_resolved_at, stale_since, created_at, created_by
-             FROM bookmarks"
+        let mut stmt = self.conn().prepare(
+            "SELECT b.id, b.query, b.language, b.file_path, b.content_hash, b.commit_hash,
+                    r.health, r.method, r.resolved_at, NULL as stale_since,
+                    b.created_at, b.created_by, b.current_resolution_id
+             FROM bookmarks b
+             LEFT JOIN resolutions r ON b.current_resolution_id = r.id",
         )?;
         let rows = stmt.query_map([], row_to_bookmark)?;
 
@@ -83,12 +86,15 @@ impl PackReader {
     }
 
     pub fn bookmarks_for_collection(&self, collection_id: &str) -> Result<Vec<Bookmark>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT b.id, b.query, b.language, b.file_path, b.content_hash, b.commit_hash, b.health, b.resolution_method, b.last_resolved_at, b.stale_since, b.created_at, b.created_by
+        let mut stmt = self.conn().prepare(
+            "SELECT b.id, b.query, b.language, b.file_path, b.content_hash, b.commit_hash,
+                    r.health, r.method, r.resolved_at, NULL as stale_since,
+                    b.created_at, b.created_by, b.current_resolution_id
              FROM bookmarks b
              JOIN collection_bookmarks cb ON b.id = cb.bookmark_id
+             LEFT JOIN resolutions r ON b.current_resolution_id = r.id
              WHERE cb.collection_id = ?1
-             ORDER BY cb.position ASC"
+             ORDER BY cb.position ASC",
         )?;
         let rows = stmt.query_map([collection_id], row_to_bookmark)?;
 
@@ -101,25 +107,28 @@ impl PackReader {
 
     pub fn resolutions(&self, bookmark_id: &str) -> Result<Vec<Resolution>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, bookmark_id, resolved_at, commit_hash, method, match_count, file_path, byte_range, line_range, content_hash, headline, snapshot, breadcrumbs
+            "SELECT id, bookmark_id, resolved_at, health, commit_hash, method, match_count, file_path, byte_range, line_range, content_hash, headline, snapshot, breadcrumbs
              FROM resolutions WHERE bookmark_id = ?1"
         )?;
         let rows = stmt.query_map([bookmark_id], |row| {
-            let method_str: String = row.get(4)?;
+            let method_str: String = row.get(5)?;
+            let health_str: String = row.get(3)?;
+            let health = health_str.parse::<BookmarkHealth>().unwrap_or(BookmarkHealth::Active);
             Ok(Resolution {
                 id: row.get(0)?,
                 bookmark_id: row.get(1)?,
                 resolved_at: row.get(2)?,
-                commit_hash: row.get(3)?,
+                health,
+                commit_hash: row.get(4)?,
                 method: ResolutionMethod::from_str(&method_str).unwrap_or(ResolutionMethod::Exact),
-                match_count: row.get(5)?,
-                file_path: row.get(6)?,
-                byte_range: row.get(7)?,
-                line_range: row.get(8)?,
-                content_hash: row.get(9)?,
-                headline: row.get(10)?,
-                snapshot: row.get(11)?,
-                breadcrumbs: row.get(12)?,
+                match_count: row.get(6)?,
+                file_path: row.get(7)?,
+                byte_range: row.get(8)?,
+                line_range: row.get(9)?,
+                content_hash: row.get(10)?,
+                headline: row.get(11)?,
+                snapshot: row.get(12)?,
+                breadcrumbs: row.get(13)?,
             })
         })?;
 
@@ -134,18 +143,11 @@ impl PackReader {
 fn row_to_bookmark(row: &rusqlite::Row) -> rusqlite::Result<Bookmark> {
     let health_str: Option<String> = row.get(6)?;
     let method_str: Option<String> = row.get(7)?;
-    // Parse and validate health - reject invalid values
-    let health = if let Some(s) = health_str {
-        Some(s.parse::<BookmarkHealth>().map_err(|_| {
-            rusqlite::Error::InvalidColumnType(
-                6,
-                "invalid bookmark health value".into(),
-                rusqlite::types::Type::Text,
-            )
-        })?)
-    } else {
-        None
-    };
+
+    let health = health_str.and_then(|s| s.parse().ok()).unwrap_or(BookmarkHealth::Active);
+
+    let resolution_method = method_str.and_then(|s| s.parse().ok());
+
     Ok(Bookmark {
         id: row.get(0)?,
         query: row.get(1)?,
@@ -153,14 +155,15 @@ fn row_to_bookmark(row: &rusqlite::Row) -> rusqlite::Result<Bookmark> {
         file_path: row.get(3)?,
         content_hash: row.get(4)?,
         commit_hash: row.get(5)?,
-        health: health.unwrap_or(BookmarkHealth::Active),
-        resolution_method: method_str.and_then(|s| ResolutionMethod::from_str(&s).ok()),
+        health,
+        resolution_method,
         last_resolved_at: row.get(8)?,
         stale_since: row.get(9)?,
         created_at: row.get(10)?,
         created_by: row.get(11)?,
-        tags: Vec::new(),
-        annotations: Vec::new(),
-        comments: Vec::new(),
+        current_resolution_id: row.get(12)?,
+        tags: vec![],
+        annotations: vec![],
+        comments: vec![],
     })
 }

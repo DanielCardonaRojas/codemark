@@ -15,10 +15,12 @@ impl BookmarkRepo {
         let conn = self.pool.get().await?;
         conn.interact(move |conn| {
             let mut stmt = conn.prepare(
-                "SELECT id, query, language, file_path, content_hash, commit_hash,
-                        health, resolution_method, last_resolved_at, stale_since,
-                        created_at, created_by
-                 FROM bookmarks WHERE id = ?1",
+                "SELECT b.id, b.query, b.language, b.file_path, b.content_hash, b.commit_hash,
+                        r.health, r.method, r.resolved_at, NULL as stale_since,
+                        b.created_at, b.created_by, b.current_resolution_id
+                 FROM bookmarks b
+                 LEFT JOIN resolutions r ON b.current_resolution_id = r.id
+                 WHERE b.id = ?1",
             )?;
             let mut rows = stmt.query_map([id], row_to_bookmark)?;
             match rows.next() {
@@ -36,10 +38,11 @@ impl BookmarkRepo {
         conn.interact(move |conn| {
             let mut stmt = conn.prepare(
                 "SELECT b.id, b.query, b.language, b.file_path, b.content_hash, b.commit_hash,
-                        b.health, b.resolution_method, b.last_resolved_at, b.stale_since,
-                        b.created_at, b.created_by
+                        r.health, r.method, r.resolved_at, NULL as stale_since,
+                        b.created_at, b.created_by, b.current_resolution_id
                  FROM bookmarks b
                  JOIN collection_bookmarks cb ON b.id = cb.bookmark_id
+                 LEFT JOIN resolutions r ON b.current_resolution_id = r.id
                  WHERE cb.collection_id = ?1
                  ORDER BY cb.position ASC",
             )?;
@@ -68,19 +71,14 @@ impl BookmarkRepo {
 }
 
 fn row_to_bookmark(row: &rusqlite::Row) -> rusqlite::Result<Bookmark> {
-    let health_str: String = row.get(6)?;
+    let health_str: Option<String> = row.get(6)?;
     let method_str: Option<String> = row.get(7)?;
 
-    let health = health_str.parse().map_err(|e| {
-        rusqlite::Error::FromSqlConversionFailure(6, rusqlite::types::Type::Text, Box::new(e))
-    })?;
+    let health = health_str
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(codemark_core::engine::bookmark::BookmarkHealth::Active);
 
-    let resolution_method = match method_str {
-        Some(s) => Some(s.parse().map_err(|e| {
-            rusqlite::Error::FromSqlConversionFailure(7, rusqlite::types::Type::Text, Box::new(e))
-        })?),
-        None => None,
-    };
+    let resolution_method = method_str.and_then(|s| s.parse().ok());
 
     Ok(Bookmark {
         id: row.get(0)?,
@@ -95,6 +93,7 @@ fn row_to_bookmark(row: &rusqlite::Row) -> rusqlite::Result<Bookmark> {
         stale_since: row.get(9)?,
         created_at: row.get(10)?,
         created_by: row.get(11)?,
+        current_resolution_id: row.get(12)?,
         tags: vec![],
         annotations: vec![],
         comments: vec![],

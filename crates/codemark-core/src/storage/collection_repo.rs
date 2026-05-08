@@ -289,10 +289,11 @@ impl Database {
     pub fn recompute_collection_health(&self, id: &str) -> Result<Option<CollectionHealth>> {
         let health_str: Option<String> = self.conn().query_row(
             "WITH bookmark_health AS (
-              SELECT b.health
+              SELECT r.health
               FROM collection_bookmarks cb
               JOIN bookmarks b ON b.id = cb.bookmark_id
-              WHERE cb.collection_id = ?1 AND b.health != 'archived'
+              JOIN resolutions r ON b.current_resolution_id = r.id
+              WHERE cb.collection_id = ?1 AND r.health != 'archived'
             )
             SELECT 
                    CASE
@@ -364,6 +365,7 @@ mod tests {
             stale_since: None,
             created_at: "2024-01-01T00:00:00Z".to_string(),
             created_by: None,
+            current_resolution_id: None,
             tags: Vec::new(),
             annotations: Vec::new(),
             comments: vec![],
@@ -505,7 +507,25 @@ mod tests {
         assert_eq!(health, Some(CollectionHealth::Stale));
 
         // Archive the stale one, health should return to drifted
-        db.update_bookmark_health("bm3", BookmarkHealth::Archived, None, None, None).unwrap();
+        let archive_res = crate::engine::bookmark::Resolution {
+            id: "archive-res".to_string(),
+            bookmark_id: "bm3".to_string(),
+            resolved_at: chrono::Utc::now().to_rfc3339(),
+            health: BookmarkHealth::Archived,
+            commit_hash: None,
+            method: crate::engine::bookmark::ResolutionMethod::Exact,
+            match_count: Some(1),
+            file_path: None,
+            byte_range: None,
+            line_range: None,
+            content_hash: None,
+            headline: None,
+            snapshot: None,
+            breadcrumbs: None,
+        };
+        db.insert_resolution(&archive_res).unwrap();
+        db.update_bookmark_resolution_id("bm3", "archive-res").unwrap();
+
         let health = db.recompute_collection_health(&col.id).unwrap();
         assert_eq!(health, Some(CollectionHealth::Drifted));
     }

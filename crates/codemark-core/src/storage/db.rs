@@ -185,50 +185,60 @@ impl Database {
     /// Migrate to schema version 7: append-only metadata model
     /// This handles migrating existing data from the old schema to the new one.
     fn migrate_to_v7_on(conn: &mut Connection) -> Result<()> {
-        // Run in a transaction for atomicity
-        let tx = conn.transaction()?;
+        let original_state: i64 = conn.query_row("PRAGMA foreign_keys", [], |row| row.get(0))?;
+        conn.execute("PRAGMA foreign_keys = OFF", [])?;
 
-        // First run the base migration which creates new tables and recreates bookmarks
-        tx.execute_batch(MIGRATION_007)?;
+        let res = (|| -> Result<()> {
+            // Run in a transaction for atomicity
+            let tx = conn.transaction()?;
 
-        // Now migrate existing data if we're coming from schema 6
-        // Check if the old bookmarks table had data (we can tell by checking if annotations are empty)
-        // Actually, the SQL migration should have already copied the bookmarks table data
-        // We just need to migrate the annotations and tags
+            // First run the base migration which creates new tables and recreates bookmarks
+            tx.execute_batch(MIGRATION_007)?;
 
-        // Try to migrate annotations from old schema
-        // This will fail if the old columns don't exist (fresh install), so we ignore errors
-        let migrate_annotations = |tx: &rusqlite::Transaction| -> Result<()> {
-            tx.execute(
-                "INSERT INTO bookmark_annotations (id, bookmark_id, added_at, added_by, notes, context, source)
-                 SELECT lower(hex(randomblob(16))), id, created_at, created_by, notes, context, 'migration'
-                 FROM (SELECT id, created_at, created_by, notes, context FROM bookmarks WHERE notes IS NOT NULL OR context IS NOT NULL)
-                 WHERE notes IS NOT NULL OR context IS NOT NULL",
-                [],
-            )?;
+            // Now migrate existing data if we're coming from schema 6
+            // Check if the old bookmarks table had data (we can tell by checking if annotations are empty)
+            // Actually, the SQL migration should have already copied the bookmarks table data
+            // We just need to migrate the annotations and tags
+
+            // Try to migrate annotations from old schema
+            // This will fail if the old columns don't exist (fresh install), so we ignore errors
+            let migrate_annotations = |tx: &rusqlite::Transaction| -> Result<()> {
+                tx.execute(
+                    "INSERT INTO bookmark_annotations (id, bookmark_id, added_at, added_by, notes, context, source)
+                     SELECT lower(hex(randomblob(16))), id, created_at, created_by, notes, context, 'migration'
+                     FROM (SELECT id, created_at, created_by, notes, context FROM bookmarks WHERE notes IS NOT NULL OR context IS NOT NULL)
+                     WHERE notes IS NOT NULL OR context IS NOT NULL",
+                    [],
+                )?;
+                Ok(())
+            };
+
+            // Try to migrate tags from old schema
+            let migrate_tags = |tx: &rusqlite::Transaction| -> Result<()> {
+                tx.execute(
+                    "INSERT INTO bookmark_tags (bookmark_id, tag, added_at, added_by)
+                     SELECT bm.id, TRIM(json_each.value), bm.created_at, bm.created_by
+                     FROM bookmarks bm, json_each(bm.tags)
+                     WHERE json_valid(bm.tags) AND TRIM(json_each.value) != ''",
+                    [],
+                )?;
+                Ok(())
+            };
+
+            // Ignore migration errors - they just mean we're on a fresh install or data already migrated
+            let _ = migrate_annotations(&tx);
+            let _ = migrate_tags(&tx);
+
+            Self::set_schema_version(&tx, 7)?;
+
+            tx.commit()?;
             Ok(())
-        };
+        })();
 
-        // Try to migrate tags from old schema
-        let migrate_tags = |tx: &rusqlite::Transaction| -> Result<()> {
-            tx.execute(
-                "INSERT INTO bookmark_tags (bookmark_id, tag, added_at, added_by)
-                 SELECT bm.id, TRIM(json_each.value), bm.created_at, bm.created_by
-                 FROM bookmarks bm, json_each(bm.tags)
-                 WHERE json_valid(bm.tags) AND TRIM(json_each.value) != ''",
-                [],
-            )?;
-            Ok(())
-        };
-
-        // Ignore migration errors - they just mean we're on a fresh install or data already migrated
-        let _ = migrate_annotations(&tx);
-        let _ = migrate_tags(&tx);
-
-        Self::set_schema_version(&tx, 7)?;
-
-        tx.commit()?;
-        Ok(())
+        if original_state == 1 {
+            conn.execute("PRAGMA foreign_keys = ON", [])?;
+        }
+        res
     }
 
     /// Initialize the sqlite-vec extension and create the embeddings table.

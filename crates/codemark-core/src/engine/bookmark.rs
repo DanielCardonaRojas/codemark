@@ -248,6 +248,7 @@ pub struct Bookmark {
     pub stale_since: Option<String>,
     pub created_at: String,
     pub created_by: Option<String>,
+    pub current_resolution_id: Option<String>,
     // Aggregated from related tables
     #[serde(default)]
     pub tags: Vec<String>,
@@ -262,6 +263,7 @@ pub struct Resolution {
     pub id: String,
     pub bookmark_id: String,
     pub resolved_at: String,
+    pub health: BookmarkHealth,
     pub commit_hash: Option<String>,
     pub method: ResolutionMethod,
     pub match_count: Option<i32>,
@@ -378,6 +380,7 @@ mod tests {
             stale_since: None,
             created_at: "2026-04-01T00:00:00Z".into(),
             created_by: None,
+            current_resolution_id: None,
             tags: vec!["auth".into()],
             annotations: vec![],
             comments: vec![],

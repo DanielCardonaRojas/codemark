@@ -303,6 +303,7 @@ mod tests {
             commit_hash: None,
             health: BookmarkHealth::Active,
             resolution_method: None,
+            current_resolution_id: None,
             last_resolved_at: None,
             stale_since: None,
             created_at: "2026-04-01T00:00:00Z".to_string(),
