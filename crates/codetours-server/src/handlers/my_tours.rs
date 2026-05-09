@@ -1,5 +1,5 @@
 use crate::web::NavItem;
-use crate::{auth::AuthContext, router::AppState};
+use crate::{auth::AuthContext, router::AppState, storage::CollectionFilter};
 use axum::{
     extract::{Query, State},
     response::IntoResponse,
@@ -43,14 +43,100 @@ pub async fn handler(
     _auth: AuthContext,
     Query(query): Query<MyToursQuery>,
 ) -> impl IntoResponse {
-    // In M2: single-tenant mode, show all tours for "My Tours"
-    // Phase 6: filter by authenticated user_id
-    let db = match state.storage.get_conn().await {
-        Ok(t) => t,
-        Err(_) => return axum::http::StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    // Use storage engine if available (registry mode), otherwise use single DB
+    let result = if let Some(engine) = &state.storage_engine {
+        query_with_engine(engine, &query.tab).await
+    } else {
+        query_single_db(&state, &query.tab).await
     };
 
-    let is_published_filter = query.tab == "published";
+    match result {
+        Ok((published_count, draft_count, tours)) => MyToursTemplate {
+            active_tab: query.tab,
+            published_count,
+            draft_count,
+            tours,
+            nav: crate::web::NavItem::MyTours,
+        }
+        .into_response(),
+        Err(e) => {
+            tracing::error!("Error querying my tours: {}", e);
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR.into_response()
+        }
+    }
+}
+
+/// Query using the storage engine (scatter-gather mode).
+async fn query_with_engine(
+    engine: &crate::storage::StorageEngine,
+    tab: &str,
+) -> anyhow::Result<(usize, usize, Vec<MyTourCard>)> {
+    let is_published_filter = tab == "published";
+
+    // Query for published tours
+    let published_filter = CollectionFilter {
+        visibility: Some("public".to_string()),
+        status: Some("ready".to_string()),
+        ..Default::default()
+    };
+
+    let published_result = engine
+        .query_all_collections(published_filter, 1000, 0, None)
+        .await?;
+
+    // Query for draft tours (everything not published)
+    // For simplicity, we'll query all and filter in-memory
+    let all_filter = CollectionFilter::default();
+    let all_result = engine
+        .query_all_collections(all_filter, 1000, 0, None)
+        .await?;
+
+    let published_count = published_result.total;
+    let draft_count = all_result.total - published_count;
+
+    let tours = if is_published_filter {
+        published_result.items
+    } else {
+        // Filter out published tours
+        all_result.items
+            .into_iter()
+            .filter(|t| {
+                !(t.repo_url.as_deref() == Some("public") || t.health.as_deref() == Some("ready"))
+            })
+            .collect()
+    };
+
+    let tour_cards = tours
+        .into_iter()
+        .map(|entry| {
+            let repo = entry
+                .repo_url
+                .as_ref()
+                .and_then(|u| u.split('/').next_back().map(|s| s.to_string()));
+
+            MyTourCard {
+                id: entry.id,
+                title: entry.name,
+                description: entry.description,
+                is_published: is_published_filter,
+                created_at: entry.updated_at.clone(),
+                updated_at: entry.updated_at,
+                step_count: 0, // TODO: Fetch from repo DB
+                repo,
+            }
+        })
+        .collect();
+
+    Ok((published_count, draft_count, tour_cards))
+}
+
+/// Query using single database (legacy mode).
+async fn query_single_db(
+    state: &AppState,
+    tab: &str,
+) -> anyhow::Result<(usize, usize, Vec<MyTourCard>)> {
+    let is_published_filter = tab == "published";
+    let db = state.storage.get_conn().await?;
 
     let result = db.interact(move |conn| {
         // Count all collections (single-tenant mode)
@@ -82,7 +168,7 @@ pub async fn handler(
             ORDER BY created_at DESC"
         };
 
-        let mut stmt = conn.prepare(sql).map_err(|_| axum::http::StatusCode::INTERNAL_SERVER_ERROR)?;
+        let mut stmt = conn.prepare(sql)?;
 
         let tours = stmt.query_map([], |row: &rusqlite::Row| {
             let repo_url: Option<String> = row.get(5)?;
@@ -98,21 +184,10 @@ pub async fn handler(
                 repo,
                 step_count: row.get(6)?,
             })
-        }).map_err(|_| axum::http::StatusCode::INTERNAL_SERVER_ERROR)?
-        .collect::<Result<Vec<_>, _>>().map_err(|_| axum::http::StatusCode::INTERNAL_SERVER_ERROR)?;
+        })?.collect::<rusqlite::Result<Vec<_>>>()?;
 
-        Ok::<(usize, usize, Vec<MyTourCard>), axum::http::StatusCode>((published_count, draft_count, tours))
-    }).await;
+        Ok::<(usize, usize, Vec<MyTourCard>), rusqlite::Error>((published_count, draft_count, tours))
+    }).await.map_err(|e| anyhow::anyhow!("Interaction error: {}", e))??;
 
-    match result {
-        Ok(Ok((published_count, draft_count, tours))) => MyToursTemplate {
-            active_tab: query.tab,
-            published_count,
-            draft_count,
-            tours,
-            nav: crate::web::NavItem::MyTours,
-        }
-        .into_response(),
-        _ => axum::http::StatusCode::INTERNAL_SERVER_ERROR.into_response(),
-    }
+    Ok(result)
 }

@@ -70,7 +70,7 @@ mod tests {
     #[tokio::test]
     async fn test_storage_manager_init() -> Result<()> {
         let dir = tempdir()?;
-        let config = StorageConfig { pool_size: 2 };
+        let config = StorageConfig { pool_size: 2, registry_mode: false, registry_path: None };
 
         let manager = StorageManager::new(dir.path().to_path_buf(), config)?;
 

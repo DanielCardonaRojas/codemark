@@ -1,4 +1,5 @@
 use crate::router::AppState;
+use crate::storage::CollectionFilter;
 use crate::web::negotiation::{Negotiated, ResponseFormat};
 use crate::web::{NavItem, filters};
 use axum::{
@@ -9,6 +10,7 @@ use axum::{
 };
 use rinja::Template;
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 
 /// Request parameters for listing tours.
 #[derive(Debug, Deserialize, Clone, Serialize, Default)]
@@ -86,6 +88,20 @@ pub struct ListToursResponse {
     pub offset: usize,
 }
 
+/// Tour data with step count and tags for rendering.
+struct TourWithData {
+    id: String,
+    name: String,
+    description: Option<String>,
+    repo_url: Option<String>,
+    updated_at: String,
+    author: Option<String>,
+    branch: Option<String>,
+    health: Option<String>,
+    step_count: usize,
+    tags: Vec<String>,
+}
+
 /// Handler for GET /tours. Lists public tours with filtering and pagination.
 pub async fn handler(
     State(state): State<AppState>,
@@ -97,16 +113,168 @@ pub async fn handler(
     let offset = params.offset.unwrap_or(0);
     let hx_request = headers.contains_key("hx-request");
 
-    let storage = state.storage.clone();
-    let conn = match storage.get_conn().await {
-        Ok(c) => c,
-        Err(e) => {
-            tracing::error!("Failed to acquire DB connection: {}", e);
-            return StatusCode::SERVICE_UNAVAILABLE.into_response();
-        }
+    // Use storage engine if available (registry mode), otherwise use single DB
+    let result = if let Some(engine) = &state.storage_engine {
+        query_with_engine(engine, &params, limit, offset).await
+    } else {
+        query_single_db(&state, &params, limit, offset).await
     };
 
+    match result {
+        Ok((tours_data, total, repos, branches, tags)) => {
+            if format == ResponseFormat::Pack {
+                // Pack format is only supported for individual tours, not lists
+                return StatusCode::NOT_IMPLEMENTED.into_response();
+            }
+            if format == ResponseFormat::Json {
+                let tours = tours_data
+                    .into_iter()
+                    .map(|t| {
+                        let repo_name = t.repo_url
+                            .as_ref()
+                            .and_then(|u| u.split('/').next_back().map(|s| s.to_string()));
+                        TourSummary {
+                            tour_id: t.id.clone(),
+                            title: t.name,
+                            description: t.description,
+                            repo_url: t.repo_url,
+                            repo: repo_name,
+                            updated_at: t.updated_at,
+                            health: t.health,
+                            url: format!("/tours/{}", t.id),
+                        }
+                    })
+                    .collect();
+                (StatusCode::OK, Json(ListToursResponse { tours, total, limit, offset }))
+                    .into_response()
+            } else {
+                let tours = tours_data
+                    .into_iter()
+                    .map(|t| {
+                        let (status_class, health_label) = match t.health.as_deref() {
+                            Some("active") => ("healthy", "ACTIVE"),
+                            Some("drifted") => ("drifted", "DRIFTED"),
+                            Some("stale") => ("stale", "STALE"),
+                            _ => ("healthy", "ACTIVE"),
+                        };
+
+                        let updated_date =
+                            if t.updated_at.len() >= 10 { t.updated_at[..10].to_string() } else { t.updated_at.clone() };
+
+                        let repo_name = t.repo_url
+                            .as_ref()
+                            .and_then(|u| u.split('/').next_back().map(|s| s.to_string()));
+
+                        TourView {
+                            id: t.id,
+                            title: t.name,
+                            description: t.description.unwrap_or_default(),
+                            health: t.health.clone(),
+                            health_label: health_label.to_string(),
+                            status_class: status_class.to_string(),
+                            updated_at_relative: updated_date,
+                            author: t.author.unwrap_or_else(|| "anonymous".to_string()),
+                            repo: repo_name,
+                            branch: t.branch.unwrap_or_else(|| "main".to_string()),
+                            step_count: t.step_count,
+                            tags: t.tags,
+                        }
+                    })
+                    .collect();
+
+                if hx_request {
+                    ToursListPartialTemplate { tours }.into_response()
+                } else {
+                    let template = ToursListTemplate {
+                        nav: NavItem::Tours,
+                        tours,
+                        repos,
+                        branches,
+                        tags,
+                        params,
+                        hx_request,
+                    };
+                    template.into_response()
+                }
+            }
+        }
+        Err(e) => {
+            tracing::error!("Error querying tours: {}", e);
+            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+        }
+    }
+}
+
+/// Query using the storage engine (scatter-gather mode).
+async fn query_with_engine(
+    engine: &crate::storage::StorageEngine,
+    params: &ListToursParams,
+    limit: usize,
+    offset: usize,
+) -> anyhow::Result<(Vec<TourWithData>, usize, Vec<String>, Vec<String>, Vec<String>)> {
+    let filter = CollectionFilter {
+        q: params.q.clone(),
+        repo_url: params.repo_url.clone(),
+        branch: params.branch.clone(),
+        tag: params.tag.clone(),
+        visibility: Some("public".to_string()),
+        status: Some("ready".to_string()),
+    };
+
+    let result = engine
+        .query_all_collections(filter, limit + offset, 0, params.sort.as_deref())
+        .await?;
+
+    // For scatter-gather, we need to get step counts and tags from each repo's database
+    // This is expensive, so we'll return default values for now and optimize later
+    let tours_with_data: Vec<TourWithData> = result.items.into_iter().map(|entry| {
+        TourWithData {
+            id: entry.id,
+            name: entry.name,
+            description: entry.description,
+            repo_url: entry.repo_url,
+            updated_at: entry.updated_at,
+            author: entry.created_by,
+            branch: entry.created_branch,
+            health: entry.health,
+            step_count: 0, // TODO: Fetch from repo DB
+            tags: vec![],   // TODO: Fetch from repo DB
+        }
+    }).collect();
+
+    // Get filter options from the engine
+    // For now, we'll derive them from the results
+    let mut repos_set = HashSet::new();
+    let mut branches_set = HashSet::new();
+    let tags_set = HashSet::new();
+
+    for tour in &tours_with_data {
+        if let Some(repo_url) = &tour.repo_url {
+            repos_set.insert(repo_url.clone());
+        }
+        if let Some(branch) = &tour.branch {
+            branches_set.insert(branch.clone());
+        }
+    }
+
+    let repos: Vec<String> = repos_set.into_iter().collect();
+    let branches: Vec<String> = branches_set.into_iter().collect();
+    let tags: Vec<String> = tags_set.into_iter().collect();
+
+    Ok((tours_with_data, result.total, repos, branches, tags))
+}
+
+/// Query using single database (legacy mode).
+async fn query_single_db(
+    state: &AppState,
+    params: &ListToursParams,
+    limit: usize,
+    offset: usize,
+) -> anyhow::Result<(Vec<TourWithData>, usize, Vec<String>, Vec<String>, Vec<String>)> {
+    let storage = state.storage.clone();
+    let conn = storage.get_conn().await?;
     let params_clone = params.clone();
+
     let result = conn
         .interact(move |conn| {
             // 1. Build Query
@@ -157,8 +325,8 @@ pub async fn handler(
             query_str.push_str(&format!(" ORDER BY {}", sort));
             query_str.push_str(" LIMIT ? OFFSET ?");
 
-            sql_params.push(Box::new(limit));
-            sql_params.push(Box::new(offset));
+            sql_params.push(Box::new(limit + offset)); // Fetch extra for offset
+            sql_params.push(Box::new(0)); // Offset handled in-memory
 
             let mut stmt = conn.prepare(&query_str)?;
             let tours_rows = stmt.query_map(rusqlite::params_from_iter(sql_params), |row| {
@@ -249,86 +417,30 @@ pub async fn handler(
 
             Ok::<(Vec<_>, usize, Vec<String>, Vec<String>, Vec<String>), rusqlite::Error>((tours, total, repos, branches, tags))
         })
-        .await;
+        .await
+        .map_err(|e| anyhow::anyhow!("Interaction error: {}", e))??;
 
-    match result {
-        Ok(Ok((tours_data, total, repos, branches, tags))) => {
-            if format == ResponseFormat::Pack {
-                // Pack format is only supported for individual tours, not lists
-                return StatusCode::NOT_IMPLEMENTED.into_response();
+    // Convert to TourWithData and apply offset
+    let offset = offset.min(result.0.len());
+    let limit = limit.min(result.0.len() - offset);
+    let tours_data: Vec<TourWithData> = result.0.into_iter()
+        .skip(offset)
+        .take(limit)
+        .map(|(id, name, desc, repo, updated, author, branch, health, step_count, tags)| {
+            TourWithData {
+                id,
+                name,
+                description: desc,
+                repo_url: repo,
+                updated_at: updated,
+                author,
+                branch,
+                health,
+                step_count,
+                tags,
             }
-            if format == ResponseFormat::Json {
-                let tours = tours_data
-                    .into_iter()
-                    .map(|(id, name, desc, repo, updated, _, _, health, _, _)| {
-                        let repo_name = repo
-                            .as_ref()
-                            .and_then(|u| u.split('/').next_back().map(|s| s.to_string()));
-                        TourSummary {
-                            tour_id: id.clone(),
-                            title: name,
-                            description: desc,
-                            repo_url: repo,
-                            repo: repo_name,
-                            updated_at: updated,
-                            health,
-                            url: format!("/tours/{}", id),
-                        }
-                    })
-                    .collect();
-                (StatusCode::OK, Json(ListToursResponse { tours, total, limit, offset }))
-                    .into_response()
-            } else {
-                let tours = tours_data
-                    .into_iter()
-                    .map(|(id, name, desc, repo, updated, author, branch, health, steps, tags)| {
-                        let (status_class, health_label) = match health.as_deref() {
-                            Some("active") => ("healthy", "ACTIVE"),
-                            Some("drifted") => ("drifted", "DRIFTED"),
-                            Some("stale") => ("stale", "STALE"),
-                            _ => ("healthy", "ACTIVE"),
-                        };
+        })
+        .collect();
 
-                        let updated_date =
-                            if updated.len() >= 10 { updated[..10].to_string() } else { updated };
-
-                        let repo_name = repo
-                            .as_ref()
-                            .and_then(|u| u.split('/').next_back().map(|s| s.to_string()));
-
-                        TourView {
-                            id,
-                            title: name,
-                            description: desc.unwrap_or_default(),
-                            health: health.clone(),
-                            health_label: health_label.to_string(),
-                            status_class: status_class.to_string(),
-                            updated_at_relative: updated_date,
-                            author: author.unwrap_or_else(|| "anonymous".to_string()),
-                            repo: repo_name,
-                            branch: branch.unwrap_or_else(|| "main".to_string()),
-                            step_count: steps,
-                            tags,
-                        }
-                    })
-                    .collect();
-
-                if hx_request {
-                    ToursListPartialTemplate { tours }.into_response()
-                } else {
-                    let template = ToursListTemplate {
-                        nav: NavItem::Tours,
-                        tours,
-                        repos,
-                        branches,
-                        tags,
-                        params,
-                        hx_request,
-                    };
-                    template.into_response()
-                }
-            }
-        }
-        _ => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
-    }
+    Ok((tours_data, result.1, result.2, result.3, result.4))
 }

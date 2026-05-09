@@ -22,7 +22,11 @@ async fn setup_app() -> (axum::Router, tempfile::TempDir) {
     let storage =
         StorageManager::new(temp_data.path().to_path_buf(), config.storage.clone()).unwrap();
 
-    let state = AppState { config: Arc::new(config), storage: Arc::new(storage) };
+    let state = AppState {
+        config: Arc::new(config),
+        storage: Arc::new(storage),
+        storage_engine: None,
+    };
     (router(state), temp_data)
 }
 

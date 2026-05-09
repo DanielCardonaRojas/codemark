@@ -147,41 +147,60 @@ pub async fn handler(
 
     match format {
         ResponseFormat::Pack => {
-            // Check visibility/auth before serving the pack
-            let storage = state.storage.clone();
-            let id_clone = id.clone();
-            let is_auth = auth.is_authenticated();
-
-            let conn = match storage.get_conn().await {
-                Ok(c) => c,
-                Err(e) => {
-                    tracing::error!("Failed to acquire DB connection: {}", e);
-                    return StatusCode::SERVICE_UNAVAILABLE.into_response();
+            // In registry mode, first find the collection across all repos
+            let pack_path = if let Some(engine) = &state.storage_engine {
+                match engine.find_collection_by_id(&id).await {
+                    Ok(Some(_entry)) => {
+                        // For pack format, we need to find the pack file in the repo's cache
+                        // The pack cache is per-repo, so we need to construct the path differently
+                        // For now, use the default cache path
+                        let cache = PackCache::new(state.config.data_dir.clone());
+                        cache.get_pack_path(&id)
+                    }
+                    Ok(None) => return StatusCode::NOT_FOUND.into_response(),
+                    Err(e) => {
+                        tracing::error!("Error finding collection: {}", e);
+                        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+                    }
                 }
+            } else {
+                // Single DB mode
+                // Check visibility/auth before serving the pack
+                let storage = state.storage.clone();
+                let id_clone = id.clone();
+                let is_auth = auth.is_authenticated();
+
+                let conn = match storage.get_conn().await {
+                    Ok(c) => c,
+                    Err(e) => {
+                        tracing::error!("Failed to acquire DB connection: {}", e);
+                        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+                    }
+                };
+
+                let allowed = conn
+                    .interact(move |conn| {
+                        let sql = if is_auth {
+                            "SELECT EXISTS(SELECT 1 FROM collections WHERE id = ?1 AND visibility IS NOT NULL)"
+                        } else {
+                            "SELECT EXISTS(SELECT 1 FROM collections WHERE id = ?1 AND visibility = 'public')"
+                        };
+                        conn.query_row(sql, [&id_clone], |row| row.get::<_, bool>(0))
+                    })
+                    .await;
+
+                let allowed = match allowed {
+                    Ok(Ok(allowed)) => allowed,
+                    _ => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+                };
+
+                if !allowed {
+                    return StatusCode::NOT_FOUND.into_response();
+                }
+
+                let cache = PackCache::new(state.config.data_dir.clone());
+                cache.get_pack_path(&id)
             };
-
-            let allowed = conn
-                .interact(move |conn| {
-                    let sql = if is_auth {
-                        "SELECT EXISTS(SELECT 1 FROM collections WHERE id = ?1 AND visibility IS NOT NULL)"
-                    } else {
-                        "SELECT EXISTS(SELECT 1 FROM collections WHERE id = ?1 AND visibility = 'public')"
-                    };
-                    conn.query_row(sql, [&id_clone], |row| row.get::<_, bool>(0))
-                })
-                .await;
-
-            let allowed = match allowed {
-                Ok(Ok(allowed)) => allowed,
-                _ => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
-            };
-
-            if !allowed {
-                return StatusCode::NOT_FOUND.into_response();
-            }
-
-            let cache = PackCache::new(state.config.data_dir.clone());
-            let pack_path = cache.get_pack_path(&id);
 
             if let Some(path) = pack_path.filter(|p| p.exists()) {
                 match fs::read(&path).await {
@@ -201,20 +220,54 @@ pub async fn handler(
             StatusCode::NOT_FOUND.into_response()
         }
         ResponseFormat::Html | ResponseFormat::Json => {
-            let storage = state.storage.clone();
             let is_auth = auth.is_authenticated();
 
-            let conn = match storage.get_conn().await {
-                Ok(c) => c,
-                Err(e) => {
-                    tracing::error!("Failed to acquire DB connection: {}", e);
-                    return StatusCode::SERVICE_UNAVAILABLE.into_response();
+            // In registry mode, first find the collection across all repos
+            let (repo_pool, id_clone) = if let Some(engine) = &state.storage_engine {
+                match engine.find_collection_by_id(&id).await {
+                    Ok(Some(entry)) => {
+                        // Get the pool for this specific repo
+                        match engine.get_pool_for_repo(&entry.repo_root).await {
+                            Some(pool) => (Some(pool), entry.id),
+                            None => {
+                                tracing::error!("Failed to get pool for repo: {}", entry.repo_root);
+                                return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+                            }
+                        }
+                    }
+                    Ok(None) => return StatusCode::NOT_FOUND.into_response(),
+                    Err(e) => {
+                        tracing::error!("Error finding collection: {}", e);
+                        return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+                    }
+                }
+            } else {
+                // Single DB mode - use the default storage
+                (None, id.clone())
+            };
+
+            // Get connection from the appropriate pool
+            let conn = if let Some(pool) = repo_pool {
+                match pool.get().await {
+                    Ok(c) => c,
+                    Err(e) => {
+                        tracing::error!("Failed to acquire DB connection: {}", e);
+                        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+                    }
+                }
+            } else {
+                match state.storage.get_conn().await {
+                    Ok(c) => c,
+                    Err(e) => {
+                        tracing::error!("Failed to acquire DB connection: {}", e);
+                        return StatusCode::SERVICE_UNAVAILABLE.into_response();
+                    }
                 }
             };
 
-            let id_clone = id.clone();
             let result = conn
                 .interact(move |conn| {
+                    let id_for_query = id_clone.clone();
                     // 1. Get collection
                     let sql = if is_auth {
                         "SELECT id, name, description, repo_url, published_at, created_by, health, health_computed_at FROM collections
@@ -225,7 +278,7 @@ pub async fn handler(
                     };
 
                     let (coll_id, name, description, repo_url, published_at, author, health, health_computed_at) = conn
-                        .query_row(sql, [&id_clone], |row| {
+                        .query_row(sql, [&id_for_query], |row| {
                             Ok((
                                 row.get::<_, String>(0)?,
                                 row.get::<_, String>(1)?,
@@ -248,7 +301,7 @@ pub async fn handler(
                     // 2. Get links
                     let mut stmt = conn.prepare("SELECT id, kind, label, url FROM collection_links WHERE collection_id = ? ORDER BY sort_order ASC, added_at ASC")
                         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-                    let links = stmt.query_map([&id_clone], |row| {
+                    let links = stmt.query_map([&id_for_query], |row| {
                         let kind: String = row.get(1)?;
                         let icon = match kind.as_str() {
                             "pr" => "git-pull-request",
@@ -293,7 +346,7 @@ pub async fn handler(
                         })?;
 
                     let bookmarks_data = stmt
-                        .query_map([&id_clone], |row| {
+                        .query_map([&id_for_query], |row| {
                             Ok((
                                 row.get::<_, String>(0)?, // id
                                 row.get::<_, String>(1)?, // file_path

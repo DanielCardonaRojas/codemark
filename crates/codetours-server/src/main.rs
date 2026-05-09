@@ -7,7 +7,7 @@ use codetours_server::{
     observability::init_tracing,
     router::{AppState, router},
     shutdown::shutdown_signal,
-    storage::StorageManager,
+    storage::{StorageManager, StorageEngine, RegistryClient},
 };
 use std::sync::Arc;
 use tokio::net::TcpListener;
@@ -28,7 +28,21 @@ async fn main() -> anyhow::Result<()> {
         return Ok(());
     }
 
-    let state = AppState { config: Arc::new(config.clone()), storage: Arc::new(storage) };
+    // Initialize storage engine if registry mode is enabled
+    let storage_engine = if config.storage.registry_mode {
+        let registry_client = RegistryClient::new(config.storage.registry_path.clone())?;
+        let engine = StorageEngine::new(registry_client);
+        engine.refresh().await?;
+        Some(Arc::new(engine))
+    } else {
+        None
+    };
+
+    let state = AppState {
+        config: Arc::new(config.clone()),
+        storage: Arc::new(storage),
+        storage_engine,
+    };
 
     let app = router(state);
 

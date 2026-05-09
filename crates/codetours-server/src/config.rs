@@ -35,6 +35,11 @@ pub struct UiConfig {
 pub struct StorageConfig {
     #[serde(default = "default_pool_size")]
     pub pool_size: u32,
+    /// Enable registry mode for aggregating data from multiple repositories
+    #[serde(default)]
+    pub registry_mode: bool,
+    /// Path to the registry database (defaults to global config dir)
+    pub registry_path: Option<PathBuf>,
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -102,7 +107,7 @@ impl Default for Config {
 
 impl Default for StorageConfig {
     fn default() -> Self {
-        Self { pool_size: default_pool_size() }
+        Self { pool_size: default_pool_size(), registry_mode: false, registry_path: None }
     }
 }
 

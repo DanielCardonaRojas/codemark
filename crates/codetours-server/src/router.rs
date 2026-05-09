@@ -1,7 +1,7 @@
 use crate::config::Config;
 use crate::handlers::{self, tours};
 use crate::observability::request_id_middleware;
-use crate::storage::StorageManager;
+use crate::storage::{StorageManager, StorageEngine};
 use axum::http::HeaderValue;
 use axum::http::header::CONTENT_SECURITY_POLICY;
 use axum::{Router, middleware, routing::get};
@@ -13,6 +13,8 @@ use tower_http::trace::TraceLayer;
 pub struct AppState {
     pub config: Arc<Config>,
     pub storage: Arc<StorageManager>,
+    /// Storage engine for registry mode (scatter-gather queries)
+    pub storage_engine: Option<Arc<StorageEngine>>,
 }
 
 pub fn router(state: AppState) -> Router {
