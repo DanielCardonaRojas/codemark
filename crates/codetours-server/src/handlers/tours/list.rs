@@ -185,6 +185,7 @@ pub async fn handler(
                 if hx_request {
                     ToursListPartialTemplate { tours }.into_response()
                 } else {
+                    tracing::info!("Rendering template with {} repos, {} branches, {} tags", repos.len(), branches.len(), tags.len());
                     let template = ToursListTemplate {
                         nav: NavItem::Tours,
                         tours,
@@ -245,23 +246,38 @@ async fn query_with_engine(
     }).collect();
 
     // Get filter options from the engine
-    // For now, we'll derive them from the results
     let mut repos_set = HashSet::new();
     let mut branches_set = HashSet::new();
-    let tags_set = HashSet::new();
+    let mut tags_set = HashSet::new();
 
+    // Get all repos from the engine for the filter dropdown
+    let all_repos = engine.all_repos().await;
+    tracing::info!("Found {} repos from engine for filter dropdown", all_repos.len());
+    for (owner, name, origin_url) in all_repos {
+        // Use origin_url if available (e.g., https://github.com/owner/repo)
+        // Otherwise construct from owner/name
+        let repo_display = origin_url.unwrap_or_else(|| format!("{}/{}", owner, name));
+        tracing::info!("Adding repo to filter: {} (owner={}, name={})", repo_display, owner, name);
+        repos_set.insert(repo_display);
+    }
+    tracing::info!("Final repos_set size: {}", repos_set.len());
+
+    // Also collect from tour results for branches and tags
     for tour in &tours_with_data {
-        if let Some(repo_url) = &tour.repo_url {
-            repos_set.insert(repo_url.clone());
-        }
         if let Some(branch) = &tour.branch {
             branches_set.insert(branch.clone());
         }
+        for tag in &tour.tags {
+            tags_set.insert(tag.clone());
+        }
     }
 
-    let repos: Vec<String> = repos_set.into_iter().collect();
-    let branches: Vec<String> = branches_set.into_iter().collect();
-    let tags: Vec<String> = tags_set.into_iter().collect();
+    let mut repos: Vec<String> = repos_set.into_iter().collect();
+    repos.sort(); // Sort alphabetically
+    let mut branches: Vec<String> = branches_set.into_iter().collect();
+    branches.sort();
+    let mut tags: Vec<String> = tags_set.into_iter().collect();
+    tags.sort();
 
     Ok((tours_with_data, result.total, repos, branches, tags))
 }

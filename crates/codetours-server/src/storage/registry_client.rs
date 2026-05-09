@@ -58,12 +58,16 @@ impl RegistryClient {
         let conn = self.open_registry()?;
         let repos = codemark_core::storage::registry::list_repos(&conn)?;
 
+        tracing::info!("Registry has {} total repos", repos.len());
+
         let entries: Vec<KnownRepoEntry> = repos
             .into_iter()
             .filter_map(|repo| {
                 // Codetours (collections) are stored in the codemark database
                 let db_path = repo.repo_root.join(".codemark/codemark.db");
+                tracing::info!("Checking repo {}/{} at db_path: {:?}", repo.repo_owner, repo.repo_name, db_path);
                 if db_path.exists() {
+                    tracing::info!("Found database for {}/{}", repo.repo_owner, repo.repo_name);
                     Some(KnownRepoEntry {
                         repo_root: repo.repo_root.clone(),
                         db_path,

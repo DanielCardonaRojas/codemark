@@ -81,11 +81,17 @@ impl StorageEngine {
         // Get the list of known repositories
         let known_repos = self.registry_client.known_repos().await;
 
+        tracing::info!("StorageEngine::refresh: got {} known repos from registry", known_repos.len());
+
         // Build new pools map
         let mut new_pools = HashMap::new();
 
         for entry in known_repos {
             let repo_root = entry.repo_root.to_string_lossy().to_string();
+            let repo_owner = entry.repo_owner.clone();
+            let repo_name = entry.repo_name.clone();
+
+            tracing::info!("Creating pool for {}/{} at {:?}", repo_owner, repo_name, entry.db_path);
 
             match create_repo_pool(entry.db_path.clone()) {
                 Ok(pool) => {
@@ -99,6 +105,7 @@ impl StorageEngine {
                             origin_url: entry.origin_url,
                         },
                     );
+                    tracing::info!("Successfully created pool for {}/{}", repo_owner, repo_name);
                 }
                 Err(e) => {
                     tracing::warn!("Failed to create pool for {}: {}", repo_root, e);
@@ -121,6 +128,7 @@ impl StorageEngine {
         sort: Option<&str>,
     ) -> Result<PaginatedResult<CollectionEntry>> {
         let pools = self.pools.read().await;
+        tracing::info!("query_all_collections: {} pools to query, filter: {:?}", pools.len(), filter);
 
         // Scatter: Query all repositories concurrently
         let mut tasks = FuturesUnordered::new();
@@ -133,6 +141,8 @@ impl StorageEngine {
             let repo_name = repo_pool.repo_name.clone();
             let origin_url = repo_pool.origin_url.clone();
 
+            tracing::info!("Queueing query for repo: {}/{}", repo_owner, repo_name);
+
             tasks.push(tokio::task::spawn_blocking(move || {
                 Self::query_single_repo(pool, filter, repo_root, repo_owner, repo_name, origin_url)
             }));
@@ -143,15 +153,20 @@ impl StorageEngine {
 
         while let Some(result) = tasks.next().await {
             match result {
-                Ok(Ok(entries)) => all_collections.extend(entries),
+                Ok(Ok(entries)) => {
+                    tracing::info!("Got {} collections from query", entries.len());
+                    all_collections.extend(entries);
+                }
                 Ok(Err(e)) => {
-                    tracing::warn!("Error querying repository: {}", e);
+                    tracing::warn!("Error querying repository: {:?}", e);
                 }
                 Err(e) => {
-                    tracing::warn!("Task failed: {}", e);
+                    tracing::warn!("Task failed: {:?}", e);
                 }
             }
         }
+
+        tracing::info!("query_all_collections: total {} collections gathered", all_collections.len());
 
         // Apply sorting
         let sort_order = sort.unwrap_or("updated_at_desc");
@@ -223,6 +238,17 @@ impl StorageEngine {
     /// Get the count of managed repositories.
     pub async fn repo_count(&self) -> usize {
         self.pools.read().await.len()
+    }
+
+    /// Get all managed repositories for filter dropdowns.
+    /// Returns a list of (repo_owner, repo_name, origin_url) tuples.
+    pub async fn all_repos(&self) -> Vec<(String, String, Option<String>)> {
+        let pools = self.pools.read().await;
+        tracing::info!("all_repos() called, pools.len() = {}", pools.len());
+        pools.iter().map(|(_, p)| {
+            tracing::info!("Returning repo: {}/{} (origin: {:?})", p.repo_owner, p.repo_name, p.origin_url);
+            (p.repo_owner.clone(), p.repo_name.clone(), p.origin_url.clone())
+        }).collect()
     }
 
     /// Query a single repository database.
@@ -300,7 +326,7 @@ impl StorageEngine {
                         row.get::<_, String>(1)?, // name
                         row.get::<_, Option<String>>(2)?, // description
                         row.get::<_, Option<String>>(3)?, // repo_url
-                        row.get::<_, String>(4)?, // updated_at
+                        row.get::<_, Option<String>>(4)?, // updated_at - can be NULL
                         row.get::<_, Option<String>>(5)?, // created_by
                         row.get::<_, Option<String>>(6)?, // created_branch
                         row.get::<_, Option<String>>(7)?, // health
@@ -310,12 +336,14 @@ impl StorageEngine {
                 let mut entries = Vec::new();
                 for row in rows {
                     let (id, name, description, repo_url, updated_at, created_by, created_branch, health) = row?;
+                    // Use created_at as fallback if updated_at is NULL
+                    let display_date = updated_at.unwrap_or_else(|| "".to_string());
                     entries.push(CollectionEntry {
                         id,
                         name,
                         description,
                         repo_url: repo_url.or_else(|| origin_url.clone()),
-                        updated_at,
+                        updated_at: display_date,
                         created_by,
                         created_branch,
                         health,
@@ -362,7 +390,7 @@ impl StorageEngine {
                         row.get::<_, String>(1)?, // name
                         row.get::<_, Option<String>>(2)?, // description
                         row.get::<_, Option<String>>(3)?, // repo_url
-                        row.get::<_, String>(4)?, // updated_at
+                        row.get::<_, Option<String>>(4)?, // updated_at - can be NULL
                         row.get::<_, Option<String>>(5)?, // created_by
                         row.get::<_, Option<String>>(6)?, // created_branch
                         row.get::<_, Option<String>>(7)?, // health
@@ -371,12 +399,14 @@ impl StorageEngine {
 
                 match result {
                     Ok((id, name, description, repo_url, updated_at, created_by, created_branch, health)) => {
+                        // Use empty string as fallback for updated_at
+                        let display_date = updated_at.unwrap_or_else(|| "".to_string());
                         Ok(Some(CollectionEntry {
                             id,
                             name,
                             description,
                             repo_url: repo_url.or_else(|| origin_url),
-                            updated_at,
+                            updated_at: display_date,
                             created_by,
                             created_branch,
                             health,
