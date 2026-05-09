@@ -236,31 +236,33 @@ Always include the module or package context from the file path. Each language e
 
 **Example (Rust crate):**
 ```bash
-codemark add src/auth.rs --range 10 --note "Core JWT validation" --tag crate:auth --tag feature:auth --tag layer:business --tag role:validator
+codemark add --file src/auth.rs --range 10 --note "Core JWT validation" --tag crate:auth --tag feature:auth --tag layer:business --tag role:validator
 ```
 
 **Example (Go package):**
 ```bash
-codemark add internal/auth/handler.go --range 25 --note "HTTP handler for authentication" --tag package:internal.auth --tag feature:auth --tag layer:api --tag role:handler
+codemark add --file internal/auth/handler.go --range 25 --note "HTTP handler for authentication" --tag package:internal.auth --tag feature:auth --tag layer:api --tag role:handler
 ```
 
 ## Quick Start
+
+> **IMPORTANT**: The `codemark add` command requires `--file <path>` for all operations. The file path is NOT a positional argument.
 
 ### Creating a tour/collection of bookmarks (recommended for agents)
 Use `--collection` when creating bookmarks to add them directly to a tour. **Always prefer range-based targeting** as the first resource. You can add multiple notes using `--note` multiple times:
 
 ```bash
 # 1. Preferred: Range-based targeting (Line or Point)
-codemark add src/auth.rs --range 42 --note "Core auth entry point" --note "Handles JWT validation" --collection login-flow
+codemark add --file src/auth.rs --range 42 --note "Core auth entry point" --note "Handles JWT validation" --collection login-flow
 
 # 2. Alternative: Snippet-based (if range is unknown)
-echo "func validateToken" | codemark add src/auth.swift --snippet --note "Validates JWT tokens" --note "Critical for security" --collection login-flow
+echo "func validateToken" | codemark add --file src/auth.swift --snippet --note "Validates JWT tokens" --note "Critical for security" --collection login-flow
 
 # 3. Last Resort: Raw tree-sitter query (for extreme precision/disambiguation)
-codemark add src/auth.swift --query '(function_declaration) @target' --note "Token validation function" --note "Called by middleware" --collection login-flow
+codemark add --file src/auth.swift --query '(function_declaration) @target' --note "Token validation function" --note "Called by middleware" --collection login-flow
 
 # With context attached to first note
-codemark add src/auth.rs --range 42 --note "Auth entry point" --context "Part of login refactor" --note "Needs review" --collection login-flow
+codemark add --file src/auth.rs --range 42 --note "Auth entry point" --context "Part of login refactor" --note "Needs review" --collection login-flow
 
 codemark tour show login-flow
 ```
@@ -270,30 +272,30 @@ When you know the file and line numbers. This leverages the **Anchored Precision
 
 ```bash
 # Point targeting: targets the smallest node at line 42, column 10
-codemark add src/auth.rs --range 42:10 --note "Specific authorization gate" --created-by agent
+codemark add --file src/auth.rs --range 42:10 --note "Specific authorization gate" --created-by agent
 
 # Line targeting: targets the tightest node containing line 42
-codemark add src/auth.rs --range 42 --note "Core auth entry point" --created-by agent
+codemark add --file src/auth.rs --range 42 --note "Core auth entry point" --created-by agent
 
 # Span targeting: targets a specific range of lines
-codemark add src/auth.rs --range 42-67 --note "Full login method" --created-by agent
+codemark add --file src/auth.rs --range 42-67 --note "Full login method" --created-by agent
 
 # Precise Span targeting: targets a specific range of characters
-codemark add src/auth.rs --range 10:5-10:20 --note "Specific expression" --created-by agent
+codemark add --file src/auth.rs --range 10:5-10:20 --note "Specific expression" --created-by agent
 ```
 
 ### Method 2: Snippet-based bookmarking
 When you have the code snippet but need to find it in a file:
 
 ```bash
-echo "func validateToken(_ token: String) -> Claims" | codemark add src/auth.swift --snippet --note "Validates JWT tokens" --tag role:validator --created-by agent
+echo "func validateToken(_ token: String) -> Claims" | codemark add --file src/auth.swift --snippet --note "Validates JWT tokens" --tag role:validator --created-by agent
 ```
 
 ### Method 3: Raw tree-sitter query (Last Resort)
 Use this **only** if range-based targeting is ambiguous or you need a highly specific non-positional pattern.
 
 ```bash
-codemark add src/auth.swift --query '(function_declaration name: (simple_identifier) @name (#eq? @name "validateToken")) @target' --note "Validates JWT tokens" --created-by agent
+codemark add --file src/auth.swift --query '(function_declaration name: (simple_identifier) @name (#eq? @name "validateToken")) @target' --note "Validates JWT tokens" --created-by agent
 ```
 
 For common query patterns across languages, see:
@@ -325,19 +327,19 @@ For common query patterns across languages, see:
 ### Creating bookmarks
 ```bash
 # By range (line or byte) — optionally add to tour
-codemark add src/auth.rs --range 42-67 --collection my-work
+codemark add --file src/auth.rs --range 42-67 --collection my-work
 
 # By snippet (reads from stdin) — optionally add to tour
-echo "snippet here" | codemark add src/auth.rs --snippet --collection my-work
+echo "snippet here" | codemark add --file src/auth.rs --snippet --collection my-work
 
 # By raw tree-sitter query (most precise) — optionally add to tour
-codemark add src/auth.rs --query '(function_declaration) @target' --collection my-work
+codemark add --file src/auth.rs --query '(function_declaration) @target' --collection my-work
 
 # With multiple notes (each creates a separate annotation entry)
-codemark add src/auth.rs --range 42-67 --note "Primary observation" --note "Secondary note" --note "Action item" --collection my-work
+codemark add --file src/auth.rs --range 42-67 --note "Primary observation" --note "Secondary note" --note "Action item" --collection my-work
 
 # Preview what would be bookmarked (dry-run)
-codemark add src/auth.rs --range 42 --dry-run
+codemark add --file src/auth.rs --range 42 --dry-run
 ```
 
 ### Viewing bookmarks
@@ -451,7 +453,7 @@ Always include module or package information inferred from the file path. This i
 
 ```bash
 # Infer from file path and add as context
-codemark add src/auth/service.rs --range 42 --context "Module: auth | Package: service" --note "Core JWT validation" --tag module:auth
+codemark add --file src/auth/service.rs --range 42 --context "Module: auth | Package: service" --note "Core JWT validation" --tag module:auth
 ```
 
 | Language | Path pattern | Module context |

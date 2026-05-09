@@ -96,6 +96,7 @@ async fn test_cli_publish_pull_roundtrip() {
     // 3. Run Publish
     let cli = Cli {
         db: vec![db_path.clone()],
+        repo: vec![],
         format: None,
         verbose: true,
         command: Command::Publish(PublishArgs {
@@ -115,6 +116,7 @@ async fn test_cli_publish_pull_roundtrip() {
     // We'll use the CLI to list tours
     let list_cli = Cli {
         db: vec![db_path.clone()],
+        repo: vec![],
         format: None,
         verbose: true,
         command: Command::Tour(codemark_cli::cli::TourArgs {
@@ -132,6 +134,7 @@ async fn test_cli_publish_pull_roundtrip() {
     // 5. Run Pull
     let pull_cli = Cli {
         db: vec![db_path.clone()],
+        repo: vec![],
         format: None,
         verbose: true,
         command: Command::Pull(PullArgs {
