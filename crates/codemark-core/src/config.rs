@@ -165,6 +165,10 @@ pub struct StorageConfig {
     /// Older entries are pruned after each new resolution.
     /// Use `max_resolutions()` to get the resolved value (default: 20).
     pub max_resolutions_per_bookmark: Option<usize>,
+
+    /// Default server URL for remote sync operations.
+    /// This can be overridden per-repository in the global registry.
+    pub server_url: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize)]

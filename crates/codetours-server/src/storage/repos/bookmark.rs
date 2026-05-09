@@ -17,7 +17,7 @@ impl BookmarkRepo {
             let mut stmt = conn.prepare(
                 "SELECT b.id, b.query, b.language, b.file_path, b.content_hash, b.commit_hash,
                         r.health, r.method, r.resolved_at, NULL as stale_since,
-                        b.created_at, b.created_by, b.current_resolution_id
+                        b.created_at, b.created_by, b.current_resolution_id, b.repo_id
                  FROM bookmarks b
                  LEFT JOIN resolutions r ON b.current_resolution_id = r.id
                  WHERE b.id = ?1",
@@ -39,7 +39,7 @@ impl BookmarkRepo {
             let mut stmt = conn.prepare(
                 "SELECT b.id, b.query, b.language, b.file_path, b.content_hash, b.commit_hash,
                         r.health, r.method, r.resolved_at, NULL as stale_since,
-                        b.created_at, b.created_by, b.current_resolution_id
+                        b.created_at, b.created_by, b.current_resolution_id, b.repo_id
                  FROM bookmarks b
                  JOIN collection_bookmarks cb ON b.id = cb.bookmark_id
                  LEFT JOIN resolutions r ON b.current_resolution_id = r.id
@@ -111,6 +111,7 @@ fn row_to_bookmark(row: &rusqlite::Row) -> rusqlite::Result<Bookmark> {
         created_at: row.get(10)?,
         created_by: row.get(11)?,
         current_resolution_id: row.get(12)?,
+        repo_id: row.get(13)?,
         tags: vec![],
         annotations: vec![],
         comments: vec![],

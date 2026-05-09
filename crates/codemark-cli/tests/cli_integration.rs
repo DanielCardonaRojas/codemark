@@ -3016,3 +3016,67 @@ fn env_variable_filters() {
     assert_eq!(json["success"], true);
     assert_eq!(json["data"].as_array().unwrap().len(), 2);
 }
+
+#[tokio::test]
+async fn test_no_past_resolution() {
+    // @lat: [[tests#System Invariants Tests#Bookmark Integrity Rules#Resolution Horizon]]
+    // Integration test that verifies a bookmark cannot be resolved against a git commit
+    // that is an ancestor of the commit in which it was created.
+    //
+    // Current behavior: The heal command shows "resolution X is ahead of HEAD Y"
+    // and skips, which provides some protection. However, this is based on
+    // current HEAD, not the bookmark's creation commit.
+    //
+    // Expected behavior: A bookmark should not be resolvable against commits
+    // that are ancestors of its creation commit (the bookmark "exists" from
+    // creation forward, not backward in time).
+    use codemark_core::storage::db::Database;
+
+    // Create a fresh git repo
+    let cm = Codemark::with_git_repo();
+
+    // Commit 1: Initial file with function (using Swift syntax for better query support)
+    let commit1 = cm.commit("Source.swift", r#"func oldFunction() {}"#, "Commit 1");
+
+    // Move forward with commit2
+    let commit2 = cm.commit("Source.swift", r#"func newFunction() {}"#, "Commit 2");
+
+    // Create bookmark at commit2
+    let result = cm.run(&[
+        "add",
+        "--query",
+        "(function_declaration name: (simple_identifier) @name) @target",
+        "--file",
+        &cm.file_path("Source.swift"),
+    ]);
+
+    // Verify bookmark was created successfully
+    assert_eq!(result.status, 0, "Bookmark creation should succeed: {}", result.stderr);
+
+    // Get the bookmark
+    let db = Database::create(&cm.db_path).unwrap();
+    let bookmarks = db.list_bookmarks(&Default::default()).unwrap();
+    assert_eq!(bookmarks.len(), 1, "Should have created one bookmark");
+    let bm = db.get_bookmark(&bookmarks[0].id).unwrap().unwrap();
+
+    // Bookmark was created at commit2
+    assert_eq!(bm.commit_hash, Some(commit2.clone()));
+
+    // Now checkout commit1 (which is in the past - an ancestor of commit2)
+    cm.checkout(&commit1);
+
+    // Try to heal
+    let heal_result = cm.run(&["heal"]);
+
+    // Current behavior: The heal command skips because the resolution is "ahead"
+    // This is partial protection but not the full invariant.
+    // TODO: Implement proper check: compare bookmark's commit_hash with target commit
+    // and reject if target is an ancestor of creation commit.
+
+    // The heal should skip the bookmark (indicated in JSON output)
+    assert!(
+        heal_result.stdout.contains(r#""skipped": 1"#) || heal_result.stdout.contains("skipping"),
+        "Heal should skip bookmark with future resolution, got: {}",
+        heal_result.stdout
+    );
+}

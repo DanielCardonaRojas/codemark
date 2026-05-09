@@ -198,6 +198,7 @@ mod tests {
             created_at: chrono::Utc::now().to_string(),
             created_by: Some("user".to_string()),
             current_resolution_id: None,
+            repo_id: None,
             tags: vec!["tag1".to_string(), "tag2".to_string()],
             annotations: vec![crate::engine::bookmark::Annotation {
                 id: "ann-1".to_string(),

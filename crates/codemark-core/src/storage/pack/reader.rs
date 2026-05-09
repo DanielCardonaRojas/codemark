@@ -24,17 +24,17 @@ impl PackReader {
 
     pub fn tours(&self) -> Result<Vec<Collection>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, name, description, visibility, created_at, created_by, created_branch, published_at, published_commit_sha, repo_url, status, health, health_computed_at, updated_at, imported_from_url
+            "SELECT id, name, description, visibility, created_at, created_by, created_branch, published_at, published_commit_sha, repo_url, repo_id, status, health, health_computed_at, updated_at, imported_from_url
              FROM collections WHERE visibility IS NOT NULL"
         )?;
         let rows = stmt.query_map([], |row| {
             let visibility_str: String = row.get(3)?;
-            let health: Option<String> = row.get(11)?;
+            let health: Option<String> = row.get(12)?;
             // Validate health value if present
             let health_parsed = if let Some(h) = &health {
                 Some(h.parse::<crate::engine::bookmark::CollectionHealth>().map_err(|_| {
                     rusqlite::Error::InvalidColumnType(
-                        11,
+                        12,
                         "invalid collection health value".into(),
                         rusqlite::types::Type::Text,
                     )
@@ -53,11 +53,12 @@ impl PackReader {
                 published_at: row.get(7)?,
                 published_commit_sha: row.get(8)?,
                 repo_url: row.get(9)?,
-                status: row.get(10)?,
+                repo_id: row.get(10)?,
+                status: row.get(11)?,
                 health: health_parsed,
-                health_computed_at: row.get(12)?,
-                updated_at: row.get(13)?,
-                imported_from_url: row.get(14)?,
+                health_computed_at: row.get(13)?,
+                updated_at: row.get(14)?,
+                imported_from_url: row.get(15)?,
             })
         })?;
 
@@ -72,7 +73,7 @@ impl PackReader {
         let mut stmt = self.conn().prepare(
             "SELECT b.id, b.query, b.language, b.file_path, b.content_hash, b.commit_hash,
                     r.health, r.method, r.resolved_at, NULL as stale_since,
-                    b.created_at, b.created_by, b.current_resolution_id
+                    b.created_at, b.created_by, b.current_resolution_id, b.repo_id
              FROM bookmarks b
              LEFT JOIN resolutions r ON b.current_resolution_id = r.id",
         )?;
@@ -89,7 +90,7 @@ impl PackReader {
         let mut stmt = self.conn().prepare(
             "SELECT b.id, b.query, b.language, b.file_path, b.content_hash, b.commit_hash,
                     r.health, r.method, r.resolved_at, NULL as stale_since,
-                    b.created_at, b.created_by, b.current_resolution_id
+                    b.created_at, b.created_by, b.current_resolution_id, b.repo_id
              FROM bookmarks b
              JOIN collection_bookmarks cb ON b.id = cb.bookmark_id
              LEFT JOIN resolutions r ON b.current_resolution_id = r.id
@@ -162,6 +163,7 @@ fn row_to_bookmark(row: &rusqlite::Row) -> rusqlite::Result<Bookmark> {
         created_at: row.get(10)?,
         created_by: row.get(11)?,
         current_resolution_id: row.get(12)?,
+        repo_id: row.get(13)?,
         tags: vec![],
         annotations: vec![],
         comments: vec![],

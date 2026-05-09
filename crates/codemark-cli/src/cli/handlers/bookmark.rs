@@ -77,11 +77,18 @@ pub async fn handle_add(cli: &Cli, mode: &OutputMode, args: &AddArgsOriginal) ->
     // Resolve identity and create/update repo metadata
     let config = super::load_config(cli);
     let (db_owner_email, db_owner_name) = resolve_identity(&config);
-    if let Err(e) =
-        resolve_or_create_repo_metadata(&db, &config, &db_owner_email, db_owner_name.as_deref())
-    {
-        eprintln!("codemark: warning: failed to record repo metadata: {e}");
-    }
+    let repo_id = match resolve_or_create_repo_metadata(
+        &db,
+        &config,
+        &db_owner_email,
+        db_owner_name.as_deref(),
+    ) {
+        Ok(id) => id,
+        Err(e) => {
+            eprintln!("codemark: warning: failed to record repo metadata: {e}");
+            None
+        }
+    };
 
     let bookmark_id = uuid::Uuid::new_v4().to_string();
     let bookmark = Bookmark {
@@ -98,6 +105,7 @@ pub async fn handle_add(cli: &Cli, mode: &OutputMode, args: &AddArgsOriginal) ->
         created_at: now_iso(),
         created_by: Some(args.created_by.clone()),
         current_resolution_id: None,
+        repo_id,
         tags: Vec::new(),
 
         annotations: vec![],
@@ -295,11 +303,18 @@ pub async fn handle_add_from_snippet(
     // Resolve identity and create/update repo metadata
     let config = super::load_config(cli);
     let (db_owner_email, db_owner_name) = resolve_identity(&config);
-    if let Err(e) =
-        resolve_or_create_repo_metadata(&db, &config, &db_owner_email, db_owner_name.as_deref())
-    {
-        eprintln!("codemark: warning: failed to record repo metadata: {e}");
-    }
+    let repo_id = match resolve_or_create_repo_metadata(
+        &db,
+        &config,
+        &db_owner_email,
+        db_owner_name.as_deref(),
+    ) {
+        Ok(id) => id,
+        Err(e) => {
+            eprintln!("codemark: warning: failed to record repo metadata: {e}");
+            None
+        }
+    };
 
     let bookmark_id = uuid::Uuid::new_v4().to_string();
     let bookmark = Bookmark {
@@ -316,6 +331,7 @@ pub async fn handle_add_from_snippet(
         created_at: now_iso(),
         created_by: Some(args.created_by.clone()),
         current_resolution_id: None,
+        repo_id,
         tags: Vec::new(),
 
         annotations: vec![],
@@ -513,11 +529,18 @@ pub async fn handle_add_from_query(
     // Resolve identity and create/update repo metadata
     let config = super::load_config(cli);
     let (db_owner_email, db_owner_name) = resolve_identity(&config);
-    if let Err(e) =
-        resolve_or_create_repo_metadata(&db, &config, &db_owner_email, db_owner_name.as_deref())
-    {
-        eprintln!("codemark: warning: failed to record repo metadata: {e}");
-    }
+    let repo_id = match resolve_or_create_repo_metadata(
+        &db,
+        &config,
+        &db_owner_email,
+        db_owner_name.as_deref(),
+    ) {
+        Ok(id) => id,
+        Err(e) => {
+            eprintln!("codemark: warning: failed to record repo metadata: {e}");
+            None
+        }
+    };
 
     let bookmark_id = uuid::Uuid::new_v4().to_string();
     let bookmark = Bookmark {
@@ -534,6 +557,7 @@ pub async fn handle_add_from_query(
         created_at: now_iso(),
         created_by: Some(args.created_by.clone()),
         current_resolution_id: None,
+        repo_id,
         tags: Vec::new(),
 
         annotations: vec![],
@@ -760,10 +784,6 @@ pub async fn handle_resolve(cli: &Cli, mode: &OutputMode, args: &ResolveArgs) ->
                     );
                 }
             }
-        }
-
-        if let Some(ref new_query) = result.new_query {
-            db.update_bookmark_query(&bm.id, new_query, &result.file_path, &result.content_hash)?;
         }
 
         let breadcrumbs_json = if result.breadcrumbs.is_empty() {

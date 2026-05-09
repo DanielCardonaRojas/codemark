@@ -94,6 +94,7 @@ mod tests {
             created_at: "2024-01-01T00:00:00Z".to_string(),
             created_by: None,
             current_resolution_id: None,
+            repo_id: None,
             tags: Vec::new(),
             annotations: Vec::new(),
             comments: vec![],

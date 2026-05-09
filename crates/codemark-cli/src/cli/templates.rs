@@ -404,6 +404,7 @@ mod tests {
             created_at: "2024-01-01T00:00:00Z".to_string(),
             created_by: Some("user".to_string()),
             current_resolution_id: None,
+            repo_id: None,
             tags: vec!["tag1".to_string(), "tag2".to_string()],
             annotations: vec![],
             comments: vec![],
