@@ -1,17 +1,18 @@
 //! Global registry database for tracking known repositories across the filesystem.
 //!
-//! The registry is stored at `~/.config/codemark/registry.db` and maintains
+//! The registry is stored in the global config directory as `registry.db` and maintains
 //! a cross-repository index of all projects that use codemark.
 
 use crate::error::{Error, Result};
+use crate::config::global_config_dir;
 use rusqlite::{Connection, params};
 use std::path::PathBuf;
 
 /// Global registry database path.
 pub fn registry_path() -> Result<PathBuf> {
-    let config_dir = directories::ProjectDirs::from("com", "codemark", "codemark")
-        .ok_or_else(|| Error::Operation("Could not determine config directory".into()))?;
-    Ok(config_dir.config_dir().join("registry.db"))
+    let config_dir =
+        global_config_dir().ok_or_else(|| Error::Operation("Could not determine config directory".into()))?;
+    Ok(config_dir.join("registry.db"))
 }
 
 /// Open or create the global registry database.
@@ -36,19 +37,6 @@ pub fn open_registry() -> Result<Connection> {
 
 /// Initialize the registry database schema.
 fn init_schema(conn: &Connection) -> Result<()> {
-    // Check if schema already exists by checking for known_repos table
-    let exists: bool = conn
-        .query_row(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='known_repos'",
-            [],
-            |_| Ok(true),
-        )
-        .unwrap_or(false);
-
-    if exists {
-        return Ok(());
-    }
-
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS known_repos (
             id              TEXT PRIMARY KEY,
@@ -141,24 +129,30 @@ pub fn find_repo_by_owner_name(conn: &Connection, owner_name: &str) -> Result<Op
         )));
     }
 
-    let repo = conn.query_row(
-        "SELECT id, repo_owner, repo_name, origin_url, repo_root, db_owner_email, db_owner_name, detected_at, last_seen_at, server_url
+    let repo = conn
+        .query_row(
+            "SELECT id, repo_owner, repo_name, origin_url, repo_root, db_owner_email, db_owner_name, detected_at, last_seen_at, server_url
          FROM known_repos WHERE repo_owner = ?1 AND repo_name = ?2",
-        params![parts[0], parts[1]],
-        row_to_known_repo,
-    ).ok();
+            params![parts[0], parts[1]],
+            row_to_known_repo,
+        )
+        .optional()?
+        .unwrap_or_default();
 
     Ok(repo)
 }
 
 /// Find a repository by its local root path.
 pub fn find_repo_by_root(conn: &Connection, root: &str) -> Result<Option<KnownRepo>> {
-    let repo = conn.query_row(
-        "SELECT id, repo_owner, repo_name, origin_url, repo_root, db_owner_email, db_owner_name, detected_at, last_seen_at, server_url
+    let repo = conn
+        .query_row(
+            "SELECT id, repo_owner, repo_name, origin_url, repo_root, db_owner_email, db_owner_name, detected_at, last_seen_at, server_url
          FROM known_repos WHERE repo_root = ?1",
-        params![root],
-        row_to_known_repo,
-    ).ok();
+            params![root],
+            row_to_known_repo,
+        )
+        .optional()?
+        .unwrap_or_default();
 
     Ok(repo)
 }
@@ -188,11 +182,14 @@ pub fn set_server_url(conn: &Connection, repo_root: &str, server_url: Option<&st
 
 /// Get the server URL for a repository by its root path.
 pub fn get_server_url(conn: &Connection, repo_root: &str) -> Result<Option<String>> {
-    let url: Option<String> = conn.query_row(
-        "SELECT server_url FROM known_repos WHERE repo_root = ?1",
-        params![repo_root],
-        |row| row.get(0),
-    )?;
+    let url: Option<String> = conn
+        .query_row(
+            "SELECT server_url FROM known_repos WHERE repo_root = ?1",
+            params![repo_root],
+            |row| row.get(0),
+        )
+        .optional()?
+        .unwrap_or_default();
 
     Ok(url)
 }

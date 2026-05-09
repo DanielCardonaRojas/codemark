@@ -24,7 +24,26 @@ pub async fn handle_collection_create(
 
     let cwd = std::env::current_dir()?;
     let git_ctx = codemark_core::git::context::detect_context(&cwd);
-    let created_branch = git_ctx.and_then(|ctx| ctx.branch_name);
+    let created_branch = git_ctx.as_ref().and_then(|ctx| ctx.branch_name);
+
+    // Resolve repo metadata for repo_id
+    let config = super::load_config(cli);
+    let (db_owner_email, db_owner_name) = super::resolve_identity(&config);
+    let repo_id = match super::resolve_or_create_repo_metadata(
+        &db,
+        &config,
+        &db_owner_email,
+        db_owner_name.as_deref(),
+    ) {
+        Ok(id) => id,
+        Err(e) => {
+            eprintln!("codemark: warning: failed to record repo metadata: {e}");
+            None
+        }
+    };
+
+    // Get repo URL for repo_url field
+    let repo_url = git_ctx.as_ref().and_then(|ctx| ctx.repo_url.clone());
 
     let collection = Collection {
         id: uuid::Uuid::new_v4().to_string(),
@@ -36,8 +55,8 @@ pub async fn handle_collection_create(
         created_branch,
         published_at: None,
         published_commit_sha: None,
-        repo_url: None,
-        repo_id: None,
+        repo_url,
+        repo_id,
         status: None,
         health: None,
         health_computed_at: None,
