@@ -30,6 +30,10 @@ pub struct Cli {
     )]
     pub db: Vec<PathBuf>,
 
+    /// Repository reference (owner/name) for identity-based discovery; repeatable
+    #[arg(long, global = true)]
+    pub repo: Vec<String>,
+
     /// Output format: json (default), table, line, markdown (or a custom template)
     #[arg(long, global = true, env = "CODEMARK_FORMAT")]
     pub format: Option<String>,
@@ -452,6 +456,10 @@ pub struct ListArgs {
     #[arg(long, value_name = "PATH")]
     pub add_db: Vec<String>,
 
+    /// Repository reference (owner/name) for identity-based discovery; repeatable
+    #[arg(long, value_name = "OWNER/NAME")]
+    pub repo: Vec<String>,
+
     /// Filter by database owner email
     #[arg(long)]
     pub user_email: Option<String>,
@@ -535,6 +543,10 @@ pub struct SearchArgs {
     /// Additional databases to query (can be specified multiple times)
     #[arg(long, value_name = "PATH")]
     pub add_db: Vec<String>,
+
+    /// Repository reference (owner/name) for identity-based discovery; repeatable
+    #[arg(long, value_name = "OWNER/NAME")]
+    pub repo: Vec<String>,
 
     /// Filter by database owner email
     #[arg(long)]

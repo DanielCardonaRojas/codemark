@@ -599,7 +599,8 @@ fn sync_to_global_registry(
 ///
 /// Database loading strategy:
 /// 1. If CLI `--db` is specified, only those paths are used (override mode)
-/// 2. Otherwise, uses auto-detected primary DB + configured additional databases
+/// 2. If CLI `--repo` is specified, resolves repo references via the global registry
+/// 3. Otherwise, uses auto-detected primary DB + configured additional databases
 pub fn open_all_dbs(cli: &Cli) -> Result<Vec<(String, Database)>> {
     // If CLI specified explicit --db paths, use only those (override mode)
     if !cli.db.is_empty() {
@@ -611,6 +612,11 @@ pub fn open_all_dbs(cli: &Cli) -> Result<Vec<(String, Database)>> {
             }
         }
         return Ok(dbs);
+    }
+
+    // If CLI specified --repo references, resolve via global registry
+    if !cli.repo.is_empty() {
+        return open_repos_from_registry(&cli.repo);
     }
 
     // No CLI --db specified: use auto-detected primary + configured additional
@@ -641,6 +647,49 @@ pub fn open_all_dbs(cli: &Cli) -> Result<Vec<(String, Database)>> {
                 }
             }
         }
+    }
+
+    Ok(dbs)
+}
+
+/// Open databases for repositories specified by owner/name references.
+///
+/// This implements RR-2.3: identity-based discovery using the global registry.
+/// Returns (source_label, database) pairs for all valid repository references.
+fn open_repos_from_registry(repo_refs: &[String]) -> Result<Vec<(String, Database)>> {
+    use codemark_core::storage::registry;
+
+    let conn = registry::open_registry()?;
+    let resolved = registry::resolve_repos(&conn, repo_refs)?;
+
+    if resolved.is_empty() {
+        return Err(Error::Input(
+            "no valid repositories found; run 'codemark repo list' to see known repositories"
+                .into(),
+        ));
+    }
+
+    let mut dbs = Vec::new();
+    for (repo_ref, repo_root) in resolved {
+        let db_path = repo_root.join(".codemark").join("codemark.db");
+        if db_path.exists() {
+            let label = format!(
+                "{}/{}",
+                repo_ref,
+                repo_root.file_name().and_then(|n| n.to_str()).unwrap_or("unknown")
+            );
+            if let Ok(db) = Database::open(&db_path) {
+                dbs.push((label, db));
+            }
+        } else {
+            eprintln!("codemark: warning: no codemark database found at {}", db_path.display());
+        }
+    }
+
+    if dbs.is_empty() {
+        return Err(Error::Input(
+            "no codemark databases found for the specified repositories".into(),
+        ));
     }
 
     Ok(dbs)
@@ -727,6 +776,46 @@ pub fn open_all_dbs_with_extra(
                 && let Ok(db) = Database::open(&path)
             {
                 dbs.push((label, db));
+            }
+        }
+    }
+
+    Ok(dbs)
+}
+
+/// Open all specified databases for commands that support additional --db and --repo flags.
+///
+/// This extends `open_all_dbs_with_extra` to also resolve repository references via the registry.
+pub fn open_all_dbs_with_extra_and_repos(
+    cli: &Cli,
+    extra_db_paths: &[String],
+    extra_repo_refs: &[String],
+) -> Result<Vec<(String, Database)>> {
+    let mut dbs = open_all_dbs_with_extra(cli, extra_db_paths)?;
+
+    // Resolve additional repositories via the global registry
+    if !extra_repo_refs.is_empty() {
+        use codemark_core::storage::registry;
+
+        let conn = registry::open_registry()?;
+        let resolved = registry::resolve_repos(&conn, extra_repo_refs)?;
+
+        for (repo_ref, repo_root) in resolved {
+            let db_path = repo_root.join(".codemark").join("codemark.db");
+            if db_path.exists() {
+                let label = format!(
+                    "{}/{}",
+                    repo_ref,
+                    repo_root.file_name().and_then(|n| n.to_str()).unwrap_or("unknown")
+                );
+                // Only add if not already present (avoid duplicates)
+                if !dbs.iter().any(|(l, _)| l == &label)
+                    && let Ok(db) = Database::open(&db_path)
+                {
+                    dbs.push((label, db));
+                }
+            } else {
+                eprintln!("codemark: warning: no codemark database found at {}", db_path.display());
             }
         }
     }
@@ -1356,7 +1445,7 @@ pub async fn handle_list(cli: &Cli, mode: &OutputMode, args: &ListArgs) -> Resul
 
     check_deprecated_status(&args.health, &args.status);
 
-    let dbs = open_all_dbs_with_extra(cli, &args.add_db)?;
+    let dbs = open_all_dbs_with_extra_and_repos(cli, &args.add_db, &args.repo)?;
     let dbs = filter_dbs_by_user_email(dbs, args.user_email.as_deref());
     let dbs = filter_dbs_by_repo_owner(dbs, args.repo_owner.as_deref());
 

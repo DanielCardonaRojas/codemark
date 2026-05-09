@@ -5,11 +5,27 @@ Full list of subcommands and flags for `codemark`.
 ## Global Options
 
 ```
-codemark [--db <path>]... [--format <fmt>] [--verbose] <subcommand>
+codemark [--db <path>]... [--repo <owner/name>]... [--format <fmt>] [--verbose] <subcommand>
 
---db <path>       Database location (repeatable for multi-repo queries)
---format <fmt>    Output format: json (default), table, line, tv, markdown
---verbose         Enable debug-level logging to stderr
+--db <path>          Database location (repeatable for multi-repo queries)
+--repo <owner/name>  Repository reference for identity-based discovery (repeatable)
+--format <fmt>       Output format: json (default), table, line, tv, markdown
+--verbose            Enable debug-level logging to stderr
+```
+
+### Identity-Based Discovery
+
+The `--repo` flag enables querying repositories by their identity (e.g., `facebook/react`) instead of their filesystem path. This uses the global registry at `~/.config/codemark/registry.db` to resolve repository references to their local paths.
+
+```bash
+# List bookmarks from multiple repositories by identity
+codemark list --repo facebook/react --repo acme/api
+
+# Search across specific repositories
+codemark search "authentication" --repo facebook/react
+
+# Combine with other filters
+codemark list --repo facebook/react --tag performance --health active
 ```
 
 ---
@@ -45,8 +61,9 @@ codemark show <id>
 ### `list`
 List bookmarks with filters.
 ```bash
-codemark list [--tag <tag>] [--status <status>] [--file <path>]
+codemark list [--tag <tag>] [--health <status>] [--file <path>] [--repo <owner/name>]
 ```
+- `--repo`: Query specific repositories by identity (repeatable)
 
 ### `open`
 Open a bookmarked file in your configured editor.
@@ -122,3 +139,30 @@ Transfer bookmarks via JSON or CSV.
 
 ### `completions`
 Generate shell completions for bash, zsh, fish, or powershell.
+
+---
+
+## Repository Registry
+
+Manage repository identities and server bindings for cross-repo discovery.
+
+### `repo list`
+List all known repositories in the global registry.
+```bash
+codemark repo list
+```
+
+### `repo show [owner/name]`
+Show details for a repository (defaults to current repo).
+```bash
+codemark repo show
+codemark repo show facebook/react
+```
+
+### `repo set-server [owner/name] <url>`
+Set the default server URL for a repository.
+```bash
+codemark repo set-server facebook/react https://codetours.example.com
+```
+
+---

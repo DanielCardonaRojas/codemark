@@ -192,6 +192,43 @@ pub fn get_server_url(conn: &Connection, repo_root: &str) -> Result<Option<Strin
     Ok(url)
 }
 
+/// Resolve multiple repository references (owner/name) to their local paths.
+///
+/// Returns a vector of (repo_ref, local_path) pairs for repositories found in the registry.
+/// Repositories not found are silently skipped (consistent with how missing --db paths are handled).
+pub fn resolve_repos(conn: &Connection, repo_refs: &[String]) -> Result<Vec<(String, PathBuf)>> {
+    let mut result = Vec::new();
+
+    for repo_ref in repo_refs {
+        let parts: Vec<&str> = repo_ref.split('/').collect();
+        if parts.len() != 2 {
+            eprintln!(
+                "codemark: warning: invalid repo reference: '{}', expected format 'owner/name'",
+                repo_ref
+            );
+            continue;
+        }
+
+        match conn.query_row(
+            "SELECT repo_root FROM known_repos WHERE repo_owner = ?1 AND repo_name = ?2",
+            params![parts[0], parts[1]],
+            |row| row.get::<_, String>(0),
+        ) {
+            Ok(repo_root) => {
+                result.push((repo_ref.clone(), PathBuf::from(repo_root)));
+            }
+            Err(rusqlite::Error::QueryReturnedNoRows) => {
+                eprintln!("codemark: warning: repository '{}' not found in registry", repo_ref);
+            }
+            Err(e) => {
+                eprintln!("codemark: warning: failed to resolve repository '{}': {}", repo_ref, e);
+            }
+        }
+    }
+
+    Ok(result)
+}
+
 fn row_to_known_repo(row: &rusqlite::Row) -> rusqlite::Result<KnownRepo> {
     Ok(KnownRepo {
         id: row.get(0)?,
@@ -270,5 +307,60 @@ mod tests {
 
         let url = get_server_url(&conn, "/another/path").unwrap().unwrap();
         assert_eq!(url, "https://codemark.example.com");
+    }
+
+    #[test]
+    fn test_resolve_repos() {
+        let conn = test_registry().unwrap();
+
+        // Insert multiple repos
+        upsert_repo(
+            &conn,
+            &RepoUpsert {
+                id: "test-id-1",
+                repo_owner: "facebook",
+                repo_name: "react",
+                origin_url: Some("https://github.com/facebook/react"),
+                repo_root: "/dev/react",
+                db_owner_email: "user@example.com",
+                db_owner_name: None,
+                server_url: None,
+            },
+        )
+        .unwrap();
+
+        upsert_repo(
+            &conn,
+            &RepoUpsert {
+                id: "test-id-2",
+                repo_owner: "acme",
+                repo_name: "api",
+                origin_url: Some("https://github.com/acme/api"),
+                repo_root: "/work/api",
+                db_owner_email: "user@example.com",
+                db_owner_name: None,
+                server_url: None,
+            },
+        )
+        .unwrap();
+
+        // Resolve multiple repos
+        let repo_refs = vec!["facebook/react".to_string(), "acme/api".to_string()];
+        let resolved = resolve_repos(&conn, &repo_refs).unwrap();
+
+        assert_eq!(resolved.len(), 2);
+        assert_eq!(resolved[0].0, "facebook/react");
+        assert_eq!(resolved[0].1, PathBuf::from("/dev/react"));
+        assert_eq!(resolved[1].0, "acme/api");
+        assert_eq!(resolved[1].1, PathBuf::from("/work/api"));
+
+        // Test with non-existent repo (should be skipped)
+        let repo_refs = vec![
+            "facebook/react".to_string(),
+            "nonexistent/repo".to_string(),
+            "acme/api".to_string(),
+        ];
+        let resolved = resolve_repos(&conn, &repo_refs).unwrap();
+        assert_eq!(resolved.len(), 2); // Only the two existing repos
     }
 }
