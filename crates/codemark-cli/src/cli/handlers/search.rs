@@ -11,7 +11,7 @@ use codemark_core::storage::{SemanticRepo, db::Database};
 
 use super::{
     filter_dbs_by_repo_owner, filter_dbs_by_user_email, get_bookmark_line, load_config,
-    open_all_dbs_with_extra, open_db,
+    open_all_dbs_with_extra_and_repos, open_db,
 };
 
 /// Search for bookmarks using full-text search or semantic search.
@@ -35,7 +35,7 @@ pub async fn handle_search(cli: &Cli, mode: &OutputMode, args: &SearchArgs) -> R
     }
 
     // Regular FTS search
-    let dbs = open_all_dbs_with_extra(cli, &args.add_db)?;
+    let dbs = open_all_dbs_with_extra_and_repos(cli, &args.add_db, &args.repo)?;
     let dbs = filter_dbs_by_user_email(dbs, args.user_email.as_deref());
     let dbs = filter_dbs_by_repo_owner(dbs, args.repo_owner.as_deref());
 
