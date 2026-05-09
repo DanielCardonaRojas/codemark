@@ -435,7 +435,6 @@ pub fn resolve_or_create_repo_metadata(
     };
 
     let new_name = db_owner_name.map(|s| s.to_string());
-    let repo_root_str = git_ctx.repo_root.to_string_lossy().to_string();
 
     // Try to find existing repo by origin URL first
     if let Some(ref origin_url) = repo_metadata.origin_url {
@@ -448,18 +447,30 @@ pub fn resolve_or_create_repo_metadata(
             db.upsert_repo(&updated)?;
 
             // Sync to global registry
-            sync_to_global_registry(&updated.id, &updated.repo_owner, &updated.repo_name,
-                updated.origin_url.as_deref(), &updated.repo_root, &updated.db_owner_email,
-                updated.db_owner_name.as_deref());
+            sync_to_global_registry(
+                &updated.id,
+                &updated.repo_owner,
+                &updated.repo_name,
+                updated.origin_url.as_deref(),
+                &updated.repo_root,
+                &updated.db_owner_email,
+                updated.db_owner_name.as_deref(),
+            );
 
             return Ok(Some(existing.id));
         }
 
         if let Ok(Some(existing)) = db.get_repo_by_origin(origin_url) {
             // Sync to global registry (may update server_url)
-            sync_to_global_registry(&existing.id, &existing.repo_owner, &existing.repo_name,
-                existing.origin_url.as_deref(), &existing.repo_root, &existing.db_owner_email,
-                existing.db_owner_name.as_deref());
+            sync_to_global_registry(
+                &existing.id,
+                &existing.repo_owner,
+                &existing.repo_name,
+                existing.origin_url.as_deref(),
+                &existing.repo_root,
+                &existing.db_owner_email,
+                existing.db_owner_name.as_deref(),
+            );
 
             return Ok(Some(existing.id));
         }
@@ -477,18 +488,30 @@ pub fn resolve_or_create_repo_metadata(
         db.upsert_repo(&updated)?;
 
         // Sync to global registry
-        sync_to_global_registry(&updated.id, &updated.repo_owner, &updated.repo_name,
-            updated.origin_url.as_deref(), &updated.repo_root, &updated.db_owner_email,
-            updated.db_owner_name.as_deref());
+        sync_to_global_registry(
+            &updated.id,
+            &updated.repo_owner,
+            &updated.repo_name,
+            updated.origin_url.as_deref(),
+            &updated.repo_root,
+            &updated.db_owner_email,
+            updated.db_owner_name.as_deref(),
+        );
 
         return Ok(Some(updated.id));
     }
 
     if let Ok(Some(existing)) = db.get_repo_by_root(&repo_root_str) {
         // Sync to global registry (may update server_url)
-        sync_to_global_registry(&existing.id, &existing.repo_owner, &existing.repo_name,
-            existing.origin_url.as_deref(), &existing.repo_root, &existing.db_owner_email,
-            existing.db_owner_name.as_deref());
+        sync_to_global_registry(
+            &existing.id,
+            &existing.repo_owner,
+            &existing.repo_name,
+            existing.origin_url.as_deref(),
+            &existing.repo_root,
+            &existing.db_owner_email,
+            existing.db_owner_name.as_deref(),
+        );
 
         return Ok(Some(existing.id));
     }
@@ -518,9 +541,15 @@ pub fn resolve_or_create_repo_metadata(
     let repo_id = db.upsert_repo(&repo)?;
 
     // Sync new repo to global registry
-    sync_to_global_registry(&repo_id, &repo.repo_owner, &repo.repo_name,
-        repo.origin_url.as_deref(), &repo_root_str, &repo.db_owner_email,
-        repo.db_owner_name.as_deref());
+    sync_to_global_registry(
+        &repo_id,
+        &repo.repo_owner,
+        &repo.repo_name,
+        repo.origin_url.as_deref(),
+        &repo_root_str,
+        &repo.db_owner_email,
+        repo.db_owner_name.as_deref(),
+    );
 
     Ok(Some(repo_id))
 }
@@ -550,14 +579,16 @@ fn sync_to_global_registry(
 
     let _ = registry::upsert_repo(
         &conn,
-        id,
-        repo_owner,
-        repo_name,
-        origin_url,
-        repo_root,
-        db_owner_email,
-        db_owner_name,
-        server_url.as_deref(),
+        &registry::RepoUpsert {
+            id,
+            repo_owner,
+            repo_name,
+            origin_url,
+            repo_root,
+            db_owner_email,
+            db_owner_name,
+            server_url: server_url.as_deref(),
+        },
     );
 }
 

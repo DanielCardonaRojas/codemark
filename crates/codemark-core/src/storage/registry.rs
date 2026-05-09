@@ -4,7 +4,7 @@
 //! a cross-repository index of all projects that use codemark.
 
 use crate::error::{Error, Result};
-use rusqlite::{params, Connection};
+use rusqlite::{Connection, params};
 use std::path::PathBuf;
 
 /// Global registry database path.
@@ -37,11 +37,13 @@ pub fn open_registry() -> Result<Connection> {
 /// Initialize the registry database schema.
 fn init_schema(conn: &Connection) -> Result<()> {
     // Check if schema already exists by checking for known_repos table
-    let exists: bool = conn.query_row(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='known_repos'",
-        [],
-        |_| Ok(true),
-    ).unwrap_or(false);
+    let exists: bool = conn
+        .query_row(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='known_repos'",
+            [],
+            |_| Ok(true),
+        )
+        .unwrap_or(false);
 
     if exists {
         return Ok(());
@@ -85,18 +87,20 @@ pub struct KnownRepo {
     pub server_url: Option<String>,
 }
 
+/// Builder for upserting a repository to the global registry.
+pub struct RepoUpsert<'a> {
+    pub id: &'a str,
+    pub repo_owner: &'a str,
+    pub repo_name: &'a str,
+    pub origin_url: Option<&'a str>,
+    pub repo_root: &'a str,
+    pub db_owner_email: &'a str,
+    pub db_owner_name: Option<&'a str>,
+    pub server_url: Option<&'a str>,
+}
+
 /// Register or update a repository in the global registry.
-pub fn upsert_repo(
-    conn: &Connection,
-    id: &str,
-    repo_owner: &str,
-    repo_name: &str,
-    origin_url: Option<&str>,
-    repo_root: &str,
-    db_owner_email: &str,
-    db_owner_name: Option<&str>,
-    server_url: Option<&str>,
-) -> Result<()> {
+pub fn upsert_repo(conn: &Connection, repo: &RepoUpsert<'_>) -> Result<()> {
     let now = chrono::Utc::now().to_rfc3339();
 
     conn.execute(
@@ -112,16 +116,16 @@ pub fn upsert_repo(
              last_seen_at = excluded.last_seen_at,
              server_url = COALESCE(excluded.server_url, known_repos.server_url)",
         params![
-            id,
-            repo_owner,
-            repo_name,
-            origin_url,
-            repo_root,
-            db_owner_email,
-            db_owner_name,
-            now,  // detected_at (only used on insert)
-            now,  // last_seen_at
-            server_url,
+            repo.id,
+            repo.repo_owner,
+            repo.repo_name,
+            repo.origin_url,
+            repo.repo_root,
+            repo.db_owner_email,
+            repo.db_owner_name,
+            now, // detected_at (only used on insert)
+            now, // last_seen_at
+            repo.server_url,
         ],
     )?;
 
@@ -166,8 +170,8 @@ pub fn list_repos(conn: &Connection) -> Result<Vec<KnownRepo>> {
          FROM known_repos ORDER BY repo_owner, repo_name"
     )?;
 
-    let repos = stmt.query_map([], row_to_known_repo)?
-        .collect::<std::result::Result<Vec<_>, _>>()?;
+    let repos =
+        stmt.query_map([], row_to_known_repo)?.collect::<std::result::Result<Vec<_>, _>>()?;
 
     Ok(repos)
 }
@@ -224,15 +228,18 @@ mod tests {
 
         upsert_repo(
             &conn,
-            "test-id-1",
-            "owner",
-            "repo",
-            Some("https://github.com/owner/repo"),
-            "/path/to/repo",
-            "owner@example.com",
-            Some("Owner"),
-            None,
-        ).unwrap();
+            &RepoUpsert {
+                id: "test-id-1",
+                repo_owner: "owner",
+                repo_name: "repo",
+                origin_url: Some("https://github.com/owner/repo"),
+                repo_root: "/path/to/repo",
+                db_owner_email: "owner@example.com",
+                db_owner_name: Some("Owner"),
+                server_url: None,
+            },
+        )
+        .unwrap();
 
         // Find by owner/name
         let repo = find_repo_by_owner_name(&conn, "owner/repo").unwrap().unwrap();
@@ -251,15 +258,18 @@ mod tests {
 
         upsert_repo(
             &conn,
-            "test-id-2",
-            "owner",
-            "repo",
-            None,
-            "/another/path",
-            "user@example.com",
-            None,
-            None,
-        ).unwrap();
+            &RepoUpsert {
+                id: "test-id-2",
+                repo_owner: "owner",
+                repo_name: "repo",
+                origin_url: None,
+                repo_root: "/another/path",
+                db_owner_email: "user@example.com",
+                db_owner_name: None,
+                server_url: None,
+            },
+        )
+        .unwrap();
 
         set_server_url(&conn, "/another/path", Some("https://codemark.example.com")).unwrap();
 

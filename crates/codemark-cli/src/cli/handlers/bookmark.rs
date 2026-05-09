@@ -77,7 +77,12 @@ pub async fn handle_add(cli: &Cli, mode: &OutputMode, args: &AddArgsOriginal) ->
     // Resolve identity and create/update repo metadata
     let config = super::load_config(cli);
     let (db_owner_email, db_owner_name) = resolve_identity(&config);
-    let repo_id = match resolve_or_create_repo_metadata(&db, &config, &db_owner_email, db_owner_name.as_deref()) {
+    let repo_id = match resolve_or_create_repo_metadata(
+        &db,
+        &config,
+        &db_owner_email,
+        db_owner_name.as_deref(),
+    ) {
         Ok(id) => id,
         Err(e) => {
             eprintln!("codemark: warning: failed to record repo metadata: {e}");
@@ -298,7 +303,12 @@ pub async fn handle_add_from_snippet(
     // Resolve identity and create/update repo metadata
     let config = super::load_config(cli);
     let (db_owner_email, db_owner_name) = resolve_identity(&config);
-    let repo_id = match resolve_or_create_repo_metadata(&db, &config, &db_owner_email, db_owner_name.as_deref()) {
+    let repo_id = match resolve_or_create_repo_metadata(
+        &db,
+        &config,
+        &db_owner_email,
+        db_owner_name.as_deref(),
+    ) {
         Ok(id) => id,
         Err(e) => {
             eprintln!("codemark: warning: failed to record repo metadata: {e}");
@@ -519,7 +529,12 @@ pub async fn handle_add_from_query(
     // Resolve identity and create/update repo metadata
     let config = super::load_config(cli);
     let (db_owner_email, db_owner_name) = resolve_identity(&config);
-    let repo_id = match resolve_or_create_repo_metadata(&db, &config, &db_owner_email, db_owner_name.as_deref()) {
+    let repo_id = match resolve_or_create_repo_metadata(
+        &db,
+        &config,
+        &db_owner_email,
+        db_owner_name.as_deref(),
+    ) {
         Ok(id) => id,
         Err(e) => {
             eprintln!("codemark: warning: failed to record repo metadata: {e}");

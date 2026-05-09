@@ -7,11 +7,7 @@ use codemark_core::storage::registry;
 use std::path::PathBuf;
 
 /// Handle the `codemark repo` subcommand.
-pub async fn handle_repo(
-    cli: &Cli,
-    mode: &OutputMode,
-    args: &RepoArgs,
-) -> Result<()> {
+pub async fn handle_repo(cli: &Cli, mode: &OutputMode, args: &RepoArgs) -> Result<()> {
     match &args.command {
         RepoCommand::List => handle_repo_list(mode),
         RepoCommand::ShowRepo(args) => handle_repo_show(cli, mode, args),
@@ -35,15 +31,26 @@ fn handle_repo_list(mode: &OutputMode) -> Result<()> {
             } else {
                 println!("Registered repositories ({}):\n", repos.len());
                 for repo in &repos {
-                    println!("  {}/{}  {}", repo.repo_owner, repo.repo_name, repo.repo_root.display());
+                    println!(
+                        "  {}/{}  {}",
+                        repo.repo_owner,
+                        repo.repo_name,
+                        repo.repo_root.display()
+                    );
                     if let Some(ref url) = repo.origin_url {
                         println!("    URL: {}", url);
                     }
                     if let Some(ref server) = repo.server_url {
                         println!("    Server: {}", server);
                     }
-                    println!("    DB Owner: {}{}\n", repo.db_owner_email,
-                        repo.db_owner_name.as_ref().map(|n| format!(" ({})", n)).unwrap_or_default());
+                    println!(
+                        "    DB Owner: {}{}\n",
+                        repo.db_owner_email,
+                        repo.db_owner_name
+                            .as_ref()
+                            .map(|n| format!(" ({})", n))
+                            .unwrap_or_default()
+                    );
                 }
             }
         }
@@ -58,8 +65,9 @@ fn handle_repo_show(cli: &Cli, mode: &OutputMode, args: &RepoShowArgs) -> Result
 
     let repo = if let Some(ref repo_ref) = args.repo {
         // Look up by owner/name
-        registry::find_repo_by_owner_name(&conn, repo_ref)?
-            .ok_or_else(|| Error::Input(format!("Repository '{}' not found in registry", repo_ref)))?
+        registry::find_repo_by_owner_name(&conn, repo_ref)?.ok_or_else(|| {
+            Error::Input(format!("Repository '{}' not found in registry", repo_ref))
+        })?
     } else {
         // Show current repo
         let db = super::open_db(cli)?;
@@ -74,13 +82,17 @@ fn handle_repo_show(cli: &Cli, mode: &OutputMode, args: &RepoShowArgs) -> Result
         if let Ok(Some(_local_repo)) = db.get_repo_by_root(&repo_root_str) {
             // Get full info from registry
             registry::find_repo_by_root(&conn, &repo_root_str)?.ok_or_else(|| {
-                Error::Input(format!("Repository '{}' not found in global registry.\n\
-                    Run any codemark command to sync it.", repo_root_str))
+                Error::Input(format!(
+                    "Repository '{}' not found in global registry.\n\
+                    Run any codemark command to sync it.",
+                    repo_root_str
+                ))
             })?
         } else {
             return Err(Error::Input(
                 "Current repository not yet tracked by codemark.\n\
-                Run any codemark command (like `codemark list`) to register it.".into()
+                Run any codemark command (like `codemark list`) to register it."
+                    .into(),
             ));
         }
     };
@@ -96,8 +108,11 @@ fn handle_repo_show(cli: &Cli, mode: &OutputMode, args: &RepoShowArgs) -> Result
             if let Some(ref url) = repo.origin_url {
                 println!("Origin: {}", url);
             }
-            println!("Database Owner: {}{}", repo.db_owner_email,
-                repo.db_owner_name.as_ref().map(|n| format!(" ({})", n)).unwrap_or_default());
+            println!(
+                "Database Owner: {}{}",
+                repo.db_owner_email,
+                repo.db_owner_name.as_ref().map(|n| format!(" ({})", n)).unwrap_or_default()
+            );
             println!("Detected: {}", repo.detected_at);
             println!("Last Seen: {}", repo.last_seen_at);
             if let Some(ref server) = repo.server_url {
@@ -117,8 +132,9 @@ fn handle_repo_set_server(cli: &Cli, mode: &OutputMode, args: &RepoSetServerArgs
 
     let repo_root = if let Some(ref repo_ref) = args.repo {
         // Look up by owner/name to get repo_root
-        let repo = registry::find_repo_by_owner_name(&conn, repo_ref)?
-            .ok_or_else(|| Error::Input(format!("Repository '{}' not found in registry", repo_ref)))?;
+        let repo = registry::find_repo_by_owner_name(&conn, repo_ref)?.ok_or_else(|| {
+            Error::Input(format!("Repository '{}' not found in registry", repo_ref))
+        })?;
         repo.repo_root.clone()
     } else {
         // Use current repo
@@ -132,10 +148,14 @@ fn handle_repo_set_server(cli: &Cli, mode: &OutputMode, args: &RepoSetServerArgs
 
         // Verify it exists in local db
         db.get_repo_by_root(&repo_root_str)
-            .map_err(|_| Error::Input(
-                "Current repository not yet tracked by codemark.\n\
-                Run any codemark command (like `codemark list`) to register it.".into()
-            ))?.ok_or_else(|| {
+            .map_err(|_| {
+                Error::Input(
+                    "Current repository not yet tracked by codemark.\n\
+                Run any codemark command (like `codemark list`) to register it."
+                        .into(),
+                )
+            })?
+            .ok_or_else(|| {
                 Error::Input("Current repository not found in local database.".into())
             })?;
 
