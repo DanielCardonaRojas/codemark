@@ -215,12 +215,12 @@ fn extract_breadcrumbs_from_captures(
 
 /// Walk all named nodes looking for a hash match.
 fn hash_fallback_walk(
-    tree: &Tree,
+    _tree: &Tree,
     node: tree_sitter::Node,
     source_bytes: &[u8],
     stored_hash: &str,
     bookmark: &Bookmark,
-    language: &Language,
+    _language: &Language,
 ) -> Option<ResolutionResult> {
     if node.is_named() {
         let text = std::str::from_utf8(&source_bytes[node.byte_range()]).unwrap_or("");
@@ -251,7 +251,7 @@ fn hash_fallback_walk(
     let mut cursor = node.walk();
     for child in node.named_children(&mut cursor) {
         if let Some(result) =
-            hash_fallback_walk(tree, child, source_bytes, stored_hash, bookmark, language)
+            hash_fallback_walk(_tree, child, source_bytes, stored_hash, bookmark, _language)
         {
             return Some(result);
         }
