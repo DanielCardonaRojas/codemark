@@ -139,6 +139,9 @@ pub enum Command {
     /// Pull a tour from a Codetours server
     #[command(name = "pull", hide = true)]
     Pull(PullArgs),
+
+    /// Manage repository registry and server configuration
+    Repo(RepoArgs),
 }
 
 // --- Subcommand argument structs ---
@@ -1101,4 +1104,40 @@ pub enum DataCommand {
 
     /// Rebuild semantic search embeddings
     Reindex(ReindexArgs),
+}
+
+/// Arguments for the `codemark repo` subcommand.
+#[derive(Debug, clap::Args)]
+pub struct RepoArgs {
+    #[command(subcommand)]
+    pub command: RepoCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum RepoCommand {
+    /// List all known repositories in the global registry
+    List,
+
+    /// Show details for a repository (current or by owner/name)
+    #[command(name = "show")]
+    ShowRepo(RepoShowArgs),
+
+    /// Set the server URL for a repository
+    #[command(name = "set-server")]
+    SetServer(RepoSetServerArgs),
+}
+
+#[derive(Debug, clap::Args)]
+pub struct RepoShowArgs {
+    /// Repository reference (owner/name) - defaults to current repo
+    pub repo: Option<String>,
+}
+
+#[derive(Debug, clap::Args)]
+pub struct RepoSetServerArgs {
+    /// Repository reference (owner/name) - defaults to current repo
+    pub repo: Option<String>,
+
+    /// Server URL (e.g., https://codemark.example.com)
+    pub server: String,
 }

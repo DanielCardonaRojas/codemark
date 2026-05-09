@@ -144,7 +144,7 @@ impl Database {
     pub fn get_bookmark(&self, id: &str) -> Result<Option<Bookmark>> {
         let mut stmt = self.conn().prepare(
             "SELECT b.id, b.query, b.language, b.file_path, b.content_hash, b.commit_hash,
-             r.health, r.method, r.resolved_at, NULL as stale_since, b.created_at, b.created_by, b.current_resolution_id
+             r.health, r.method, r.resolved_at, NULL as stale_since, b.created_at, b.created_by, b.current_resolution_id, b.repo_id
              FROM bookmarks b
              LEFT JOIN resolutions r ON b.current_resolution_id = r.id
              WHERE b.id = ?1",
@@ -167,7 +167,7 @@ impl Database {
         let pattern = format!("{prefix}%");
         let mut stmt = self.conn().prepare(
             "SELECT b.id, b.query, b.language, b.file_path, b.content_hash, b.commit_hash,
-             r.health, r.method, r.resolved_at, NULL as stale_since, b.created_at, b.created_by, b.current_resolution_id
+             r.health, r.method, r.resolved_at, NULL as stale_since, b.created_at, b.created_by, b.current_resolution_id, b.repo_id
              FROM bookmarks b
              LEFT JOIN resolutions r ON b.current_resolution_id = r.id
              WHERE b.id LIKE ?1",
@@ -198,7 +198,7 @@ impl Database {
     ) -> Result<Option<Bookmark>> {
         let mut stmt = self.conn().prepare(
             "SELECT b.id, b.query, b.language, b.file_path, b.content_hash, b.commit_hash,
-             r.health, r.method, r.resolved_at, NULL as stale_since, b.created_at, b.created_by, b.current_resolution_id
+             r.health, r.method, r.resolved_at, NULL as stale_since, b.created_at, b.created_by, b.current_resolution_id, b.repo_id
              FROM bookmarks b
              LEFT JOIN resolutions r ON b.current_resolution_id = r.id
              WHERE b.file_path = ?1 AND b.query = ?2",
@@ -217,7 +217,7 @@ impl Database {
     pub fn list_bookmarks(&self, filter: &BookmarkFilter) -> Result<Vec<Bookmark>> {
         let mut sql = String::from(
             "SELECT DISTINCT b.id, b.query, b.language, b.file_path, b.content_hash, b.commit_hash,
-             r.health, r.method, r.resolved_at, NULL as stale_since, b.created_at, b.created_by, b.current_resolution_id
+             r.health, r.method, r.resolved_at, NULL as stale_since, b.created_at, b.created_by, b.current_resolution_id, b.repo_id
              FROM bookmarks b
              LEFT JOIN resolutions r ON b.current_resolution_id = r.id",
         );
@@ -405,7 +405,7 @@ impl Database {
         // Always need tag join for tag search
         let mut sql = String::from(
             "SELECT DISTINCT b.id, b.query, b.language, b.file_path, b.content_hash, b.commit_hash,
-             r.health, r.method, r.resolved_at, NULL as stale_since, b.created_at, b.created_by, b.current_resolution_id
+             r.health, r.method, r.resolved_at, NULL as stale_since, b.created_at, b.created_by, b.current_resolution_id, b.repo_id
              FROM bookmarks b
              LEFT JOIN resolutions r ON b.current_resolution_id = r.id
              LEFT JOIN bookmark_annotations ba ON b.id = ba.bookmark_id
@@ -570,6 +570,7 @@ fn row_to_bookmark_base(row: &rusqlite::Row) -> rusqlite::Result<Bookmark> {
         created_at: row.get(10)?,
         created_by: row.get(11)?,
         current_resolution_id: row.get(12)?,
+        repo_id: row.get(13)?,
         tags: Vec::new(),        // Loaded separately
         annotations: Vec::new(), // Loaded separately
         comments: Vec::new(),    // Loaded separately
@@ -615,6 +616,7 @@ mod tests {
             created_at: "2024-01-01T00:00:00Z".to_string(),
             created_by: None,
             current_resolution_id: None,
+            repo_id: None,
             tags: Vec::new(),
             annotations: Vec::new(),
             comments: vec![],
@@ -806,6 +808,7 @@ mod tests {
             published_at: None,
             published_commit_sha: None,
             repo_url: None,
+            repo_id: None,
             status: None,
             health: None,
             health_computed_at: None,
@@ -967,6 +970,7 @@ mod tests {
             created_at: "2024-01-01T00:00:00Z".to_string(),
             created_by: None,
             current_resolution_id: None,
+            repo_id: None,
             tags: vec![],
             annotations: vec![],
             comments: vec![],
@@ -1046,6 +1050,7 @@ mod tests {
             created_at: bookmark_created_at.to_string(),
             created_by: None,
             current_resolution_id: None,
+            repo_id: None,
             tags: vec![],
             annotations: vec![],
             comments: vec![],

@@ -5,8 +5,8 @@ use crate::storage::db::Database;
 impl Database {
     pub fn insert_collection(&self, collection: &Collection) -> Result<()> {
         self.conn().execute(
-            "INSERT INTO collections (id, name, description, visibility, created_at, created_by, created_branch, published_at, published_commit_sha, repo_url, status, health, health_computed_at, updated_at, imported_from_url)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+            "INSERT INTO collections (id, name, description, visibility, created_at, created_by, created_branch, published_at, published_commit_sha, repo_url, repo_id, status, health, health_computed_at, updated_at, imported_from_url)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
             rusqlite::params![
                 collection.id,
                 collection.name,
@@ -18,6 +18,7 @@ impl Database {
                 collection.published_at,
                 collection.published_commit_sha,
                 collection.repo_url,
+                collection.repo_id,
                 collection.status,
                 collection.health.as_ref().map(|h| h.to_string()),
                 collection.health_computed_at,
@@ -31,7 +32,7 @@ impl Database {
     /// Get a collection by its exact name.
     pub fn get_collection_by_name(&self, name: &str) -> Result<Option<Collection>> {
         let mut stmt = self.conn().prepare(
-            "SELECT id, name, description, visibility, created_at, created_by, created_branch, published_at, published_commit_sha, repo_url, status, health, health_computed_at, updated_at, imported_from_url
+            "SELECT id, name, description, visibility, created_at, created_by, created_branch, published_at, published_commit_sha, repo_url, repo_id, status, health, health_computed_at, updated_at, imported_from_url
              FROM collections WHERE name = ?1",
         )?;
         let mut rows = stmt.query_map([name], row_to_collection)?;
@@ -44,7 +45,7 @@ impl Database {
     /// Get a collection by its unique ID.
     pub fn get_collection_by_id(&self, id: &str) -> Result<Option<Collection>> {
         let mut stmt = self.conn().prepare(
-            "SELECT id, name, description, visibility, created_at, created_by, created_branch, published_at, published_commit_sha, repo_url, status, health, health_computed_at, updated_at, imported_from_url
+            "SELECT id, name, description, visibility, created_at, created_by, created_branch, published_at, published_commit_sha, repo_url, repo_id, status, health, health_computed_at, updated_at, imported_from_url
              FROM collections WHERE id = ?1",
         )?;
         let mut rows = stmt.query_map([id], row_to_collection)?;
@@ -62,7 +63,7 @@ impl Database {
             ));
         }
         let mut stmt = self.conn().prepare(
-            "SELECT id, name, description, visibility, created_at, created_by, created_branch, published_at, published_commit_sha, repo_url, status, health, health_computed_at, updated_at, imported_from_url
+            "SELECT id, name, description, visibility, created_at, created_by, created_branch, published_at, published_commit_sha, repo_url, repo_id, status, health, health_computed_at, updated_at, imported_from_url
              FROM collections WHERE id LIKE ?1",
         )?;
         let pattern = format!("{prefix}%");
@@ -83,7 +84,7 @@ impl Database {
     pub fn list_collections(&self) -> Result<Vec<(Collection, usize)>> {
         let mut stmt = self.conn().prepare(
             "SELECT c.id, c.name, c.description, c.visibility, c.created_at, c.created_by, c.created_branch,
-             c.published_at, c.published_commit_sha, c.repo_url, c.status, c.health, c.health_computed_at, c.updated_at, c.imported_from_url,
+             c.published_at, c.published_commit_sha, c.repo_url, c.repo_id, c.status, c.health, c.health_computed_at, c.updated_at, c.imported_from_url,
              COUNT(cb.bookmark_id) AS bookmark_count
              FROM collections c
              LEFT JOIN collection_bookmarks cb ON c.id = cb.collection_id
@@ -108,13 +109,14 @@ impl Database {
                 published_at: row.get(7)?,
                 published_commit_sha: row.get(8)?,
                 repo_url: row.get(9)?,
-                status: row.get(10)?,
-                health: row.get::<_, Option<String>>(11)?.and_then(|h| h.parse().ok()),
-                health_computed_at: row.get(12)?,
-                updated_at: row.get(13)?,
-                imported_from_url: row.get(14)?,
+                repo_id: row.get(10)?,
+                status: row.get(11)?,
+                health: row.get::<_, Option<String>>(12)?.and_then(|h| h.parse().ok()),
+                health_computed_at: row.get(13)?,
+                updated_at: row.get(14)?,
+                imported_from_url: row.get(15)?,
             };
-            let count: usize = row.get(15)?;
+            let count: usize = row.get(16)?;
             Ok((collection, count))
         })?;
 
@@ -260,7 +262,7 @@ impl Database {
     pub fn list_collections_for_bookmark(&self, bookmark_id: &str) -> Result<Vec<Collection>> {
         let mut stmt = self.conn().prepare(
             "SELECT c.id, c.name, c.description, c.visibility, c.created_at, c.created_by, c.created_branch,
-             c.published_at, c.published_commit_sha, c.repo_url, c.status, c.health, c.health_computed_at, c.updated_at, c.imported_from_url
+             c.published_at, c.published_commit_sha, c.repo_url, c.repo_id, c.status, c.health, c.health_computed_at, c.updated_at, c.imported_from_url
              FROM collections c
              JOIN collection_bookmarks cb ON c.id = cb.collection_id
              WHERE cb.bookmark_id = ?1
@@ -337,11 +339,12 @@ fn row_to_collection(row: &rusqlite::Row) -> rusqlite::Result<Collection> {
         published_at: row.get(7)?,
         published_commit_sha: row.get(8)?,
         repo_url: row.get(9)?,
-        status: row.get(10)?,
-        health: row.get::<_, Option<String>>(11)?.and_then(|h| h.parse().ok()),
-        health_computed_at: row.get(12)?,
-        updated_at: row.get(13)?,
-        imported_from_url: row.get(14)?,
+        repo_id: row.get(10)?,
+        status: row.get(11)?,
+        health: row.get::<_, Option<String>>(12)?.and_then(|h| h.parse().ok()),
+        health_computed_at: row.get(13)?,
+        updated_at: row.get(14)?,
+        imported_from_url: row.get(15)?,
     })
 }
 
@@ -366,6 +369,7 @@ mod tests {
             created_at: "2024-01-01T00:00:00Z".to_string(),
             created_by: None,
             current_resolution_id: None,
+            repo_id: None,
             tags: Vec::new(),
             annotations: Vec::new(),
             comments: vec![],
@@ -384,6 +388,7 @@ mod tests {
             published_at: None,
             published_commit_sha: None,
             repo_url: None,
+            repo_id: None,
             status: None,
             health: None,
             health_computed_at: None,

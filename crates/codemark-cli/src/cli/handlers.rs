@@ -5,6 +5,7 @@
 //! - [`collection`]: collection management
 //! - [`search`]: FTS and semantic search, reindex
 //! - [`maintenance`]: heal, status, diff, gc, export, import
+//! - [`repo`]: repository registry management
 
 use std::collections::HashSet;
 use std::io::Write;
@@ -28,6 +29,7 @@ pub mod collection;
 pub mod maintenance;
 pub mod publish;
 pub mod pull;
+pub mod repo;
 pub mod search;
 pub mod tour;
 
@@ -63,6 +65,7 @@ pub async fn dispatch(cli: &Cli) -> Result<()> {
         Command::Pull(args) => pull::handle_pull(cli, &mode, args).await,
         Command::Health(args) => dispatch_health(cli, &mode, args).await,
         Command::Data(args) => dispatch_data(cli, &mode, args).await,
+        Command::Repo(args) => repo::handle_repo(cli, &mode, args).await,
     }
 }
 
@@ -409,6 +412,7 @@ pub fn resolve_identity(config: &Config) -> (String, Option<String>) {
 /// Resolve or create repository metadata in the database.
 ///
 /// Detects git repo information (origin URL, owner, name) and upserts to the repos table.
+/// Also syncs the repo metadata to the global registry.
 /// Returns the repo ID if successful, None if not in a git repo.
 pub fn resolve_or_create_repo_metadata(
     db: &Database,
@@ -431,6 +435,7 @@ pub fn resolve_or_create_repo_metadata(
     };
 
     let new_name = db_owner_name.map(|s| s.to_string());
+    let repo_root_str = git_ctx.repo_root.to_string_lossy().to_string();
 
     // Try to find existing repo by origin URL first
     if let Some(ref origin_url) = repo_metadata.origin_url {
@@ -439,12 +444,23 @@ pub fn resolve_or_create_repo_metadata(
         {
             let mut updated = existing.clone();
             updated.db_owner_email = db_owner_email.to_string();
-            updated.db_owner_name = new_name;
+            updated.db_owner_name = new_name.clone();
             db.upsert_repo(&updated)?;
+
+            // Sync to global registry
+            sync_to_global_registry(&updated.id, &updated.repo_owner, &updated.repo_name,
+                updated.origin_url.as_deref(), &updated.repo_root, &updated.db_owner_email,
+                updated.db_owner_name.as_deref());
+
             return Ok(Some(existing.id));
         }
 
         if let Ok(Some(existing)) = db.get_repo_by_origin(origin_url) {
+            // Sync to global registry (may update server_url)
+            sync_to_global_registry(&existing.id, &existing.repo_owner, &existing.repo_name,
+                existing.origin_url.as_deref(), &existing.repo_root, &existing.db_owner_email,
+                existing.db_owner_name.as_deref());
+
             return Ok(Some(existing.id));
         }
     }
@@ -457,12 +473,23 @@ pub fn resolve_or_create_repo_metadata(
     {
         let mut updated = existing.clone();
         updated.db_owner_email = db_owner_email.to_string();
-        updated.db_owner_name = new_name;
+        updated.db_owner_name = new_name.clone();
         db.upsert_repo(&updated)?;
-        return Ok(Some(existing.id));
+
+        // Sync to global registry
+        sync_to_global_registry(&updated.id, &updated.repo_owner, &updated.repo_name,
+            updated.origin_url.as_deref(), &updated.repo_root, &updated.db_owner_email,
+            updated.db_owner_name.as_deref());
+
+        return Ok(Some(updated.id));
     }
 
     if let Ok(Some(existing)) = db.get_repo_by_root(&repo_root_str) {
+        // Sync to global registry (may update server_url)
+        sync_to_global_registry(&existing.id, &existing.repo_owner, &existing.repo_name,
+            existing.origin_url.as_deref(), &existing.repo_root, &existing.db_owner_email,
+            existing.db_owner_name.as_deref());
+
         return Ok(Some(existing.id));
     }
 
@@ -482,14 +509,56 @@ pub fn resolve_or_create_repo_metadata(
                 .unwrap_or_else(|| "unknown".to_string())
         }),
         origin_url: repo_metadata.origin_url,
-        repo_root: repo_root_str,
+        repo_root: repo_root_str.clone(),
         db_owner_email: db_owner_email.to_string(),
-        db_owner_name: new_name,
+        db_owner_name: new_name.clone(),
         detected_at: now,
     };
 
     let repo_id = db.upsert_repo(&repo)?;
+
+    // Sync new repo to global registry
+    sync_to_global_registry(&repo_id, &repo.repo_owner, &repo.repo_name,
+        repo.origin_url.as_deref(), &repo_root_str, &repo.db_owner_email,
+        repo.db_owner_name.as_deref());
+
     Ok(Some(repo_id))
+}
+
+/// Sync repository metadata to the global registry database.
+///
+/// This implements RR-2.2: observation-based sync that pings the global
+/// registry and UPSERTs current project repo metadata on every CLI invocation.
+fn sync_to_global_registry(
+    id: &str,
+    repo_owner: &str,
+    repo_name: &str,
+    origin_url: Option<&str>,
+    repo_root: &str,
+    db_owner_email: &str,
+    db_owner_name: Option<&str>,
+) {
+    use codemark_core::storage::registry;
+
+    let Ok(conn) = registry::open_registry() else {
+        // Silently fail if registry is unavailable - shouldn't block CLI operations
+        return;
+    };
+
+    // Get server URL from registry (if already set) instead of from config
+    let server_url = registry::get_server_url(&conn, repo_root).ok().flatten();
+
+    let _ = registry::upsert_repo(
+        &conn,
+        id,
+        repo_owner,
+        repo_name,
+        origin_url,
+        repo_root,
+        db_owner_email,
+        db_owner_name,
+        server_url.as_deref(),
+    );
 }
 
 /// Open all specified databases (for read commands that support cross-repo queries).
@@ -963,6 +1032,7 @@ pub fn add_bookmark_to_collection(
                 published_at: None,
                 published_commit_sha: None,
                 repo_url: None,
+                repo_id: None,
                 status: None,
                 health: None,
                 health_computed_at: None,
