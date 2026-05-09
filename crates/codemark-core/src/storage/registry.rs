@@ -218,16 +218,10 @@ pub fn resolve_repos(conn: &Connection, repo_refs: &[String]) -> Result<Vec<(Str
                 result.push((repo_ref.clone(), PathBuf::from(repo_root)));
             }
             Err(rusqlite::Error::QueryReturnedNoRows) => {
-                eprintln!(
-                    "codemark: warning: repository '{}' not found in registry",
-                    repo_ref
-                );
+                eprintln!("codemark: warning: repository '{}' not found in registry", repo_ref);
             }
             Err(e) => {
-                eprintln!(
-                    "codemark: warning: failed to resolve repository '{}': {}",
-                    repo_ref, e
-                );
+                eprintln!("codemark: warning: failed to resolve repository '{}': {}", repo_ref, e);
             }
         }
     }

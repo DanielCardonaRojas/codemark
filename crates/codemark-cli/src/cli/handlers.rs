@@ -664,7 +664,8 @@ fn open_repos_from_registry(repo_refs: &[String]) -> Result<Vec<(String, Databas
 
     if resolved.is_empty() {
         return Err(Error::Input(
-            "no valid repositories found; run 'codemark repo list' to see known repositories".into()
+            "no valid repositories found; run 'codemark repo list' to see known repositories"
+                .into(),
         ));
     }
 
@@ -672,23 +673,22 @@ fn open_repos_from_registry(repo_refs: &[String]) -> Result<Vec<(String, Databas
     for (repo_ref, repo_root) in resolved {
         let db_path = repo_root.join(".codemark").join("codemark.db");
         if db_path.exists() {
-            let label = format!("{}/{}", repo_ref, repo_root.file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("unknown"));
+            let label = format!(
+                "{}/{}",
+                repo_ref,
+                repo_root.file_name().and_then(|n| n.to_str()).unwrap_or("unknown")
+            );
             if let Ok(db) = Database::open(&db_path) {
                 dbs.push((label, db));
             }
         } else {
-            eprintln!(
-                "codemark: warning: no codemark database found at {}",
-                db_path.display()
-            );
+            eprintln!("codemark: warning: no codemark database found at {}", db_path.display());
         }
     }
 
     if dbs.is_empty() {
         return Err(Error::Input(
-            "no codemark databases found for the specified repositories".into()
+            "no codemark databases found for the specified repositories".into(),
         ));
     }
 
@@ -803,9 +803,11 @@ pub fn open_all_dbs_with_extra_and_repos(
         for (repo_ref, repo_root) in resolved {
             let db_path = repo_root.join(".codemark").join("codemark.db");
             if db_path.exists() {
-                let label = format!("{}/{}", repo_ref, repo_root.file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or("unknown"));
+                let label = format!(
+                    "{}/{}",
+                    repo_ref,
+                    repo_root.file_name().and_then(|n| n.to_str()).unwrap_or("unknown")
+                );
                 // Only add if not already present (avoid duplicates)
                 if !dbs.iter().any(|(l, _)| l == &label)
                     && let Ok(db) = Database::open(&db_path)
@@ -813,10 +815,7 @@ pub fn open_all_dbs_with_extra_and_repos(
                     dbs.push((label, db));
                 }
             } else {
-                eprintln!(
-                    "codemark: warning: no codemark database found at {}",
-                    db_path.display()
-                );
+                eprintln!("codemark: warning: no codemark database found at {}", db_path.display());
             }
         }
     }
