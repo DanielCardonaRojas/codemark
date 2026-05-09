@@ -3,15 +3,15 @@
 //! The registry is stored in the global config directory as `registry.db` and maintains
 //! a cross-repository index of all projects that use codemark.
 
-use crate::error::{Error, Result};
 use crate::config::global_config_dir;
-use rusqlite::{Connection, params};
+use crate::error::{Error, Result};
+use rusqlite::{Connection, OptionalExtension, params};
 use std::path::PathBuf;
 
 /// Global registry database path.
 pub fn registry_path() -> Result<PathBuf> {
-    let config_dir =
-        global_config_dir().ok_or_else(|| Error::Operation("Could not determine config directory".into()))?;
+    let config_dir = global_config_dir()
+        .ok_or_else(|| Error::Operation("Could not determine config directory".into()))?;
     Ok(config_dir.join("registry.db"))
 }
 
@@ -129,32 +129,30 @@ pub fn find_repo_by_owner_name(conn: &Connection, owner_name: &str) -> Result<Op
         )));
     }
 
-    let repo = conn
-        .query_row(
-            "SELECT id, repo_owner, repo_name, origin_url, repo_root, db_owner_email, db_owner_name, detected_at, last_seen_at, server_url
+    match conn.query_row(
+        "SELECT id, repo_owner, repo_name, origin_url, repo_root, db_owner_email, db_owner_name, detected_at, last_seen_at, server_url
          FROM known_repos WHERE repo_owner = ?1 AND repo_name = ?2",
-            params![parts[0], parts[1]],
-            row_to_known_repo,
-        )
-        .optional()?
-        .unwrap_or_default();
-
-    Ok(repo)
+        params![parts[0], parts[1]],
+        row_to_known_repo,
+    ) {
+        Ok(repo) => Ok(Some(repo)),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(e) => Err(Error::Database(e.to_string())),
+    }
 }
 
 /// Find a repository by its local root path.
 pub fn find_repo_by_root(conn: &Connection, root: &str) -> Result<Option<KnownRepo>> {
-    let repo = conn
-        .query_row(
-            "SELECT id, repo_owner, repo_name, origin_url, repo_root, db_owner_email, db_owner_name, detected_at, last_seen_at, server_url
+    match conn.query_row(
+        "SELECT id, repo_owner, repo_name, origin_url, repo_root, db_owner_email, db_owner_name, detected_at, last_seen_at, server_url
          FROM known_repos WHERE repo_root = ?1",
-            params![root],
-            row_to_known_repo,
-        )
-        .optional()?
-        .unwrap_or_default();
-
-    Ok(repo)
+        params![root],
+        row_to_known_repo,
+    ) {
+        Ok(repo) => Ok(Some(repo)),
+        Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+        Err(e) => Err(Error::Database(e.to_string())),
+    }
 }
 
 /// List all known repositories.
@@ -189,7 +187,7 @@ pub fn get_server_url(conn: &Connection, repo_root: &str) -> Result<Option<Strin
             |row| row.get(0),
         )
         .optional()?
-        .unwrap_or_default();
+        .unwrap_or(None);
 
     Ok(url)
 }
@@ -214,7 +212,7 @@ mod tests {
     use super::*;
 
     fn test_registry() -> Result<Connection> {
-        let mut conn = Connection::open_in_memory()?;
+        let conn = Connection::open_in_memory()?;
         init_schema(&conn)?;
         Ok(conn)
     }

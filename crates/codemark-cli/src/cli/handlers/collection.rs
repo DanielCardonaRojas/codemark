@@ -11,6 +11,7 @@ use codemark_core::engine::bookmark::{
     Visibility,
 };
 use codemark_core::error::{Error, Result};
+use codemark_core::git::context as git_context;
 
 use super::{find_bookmark, now_iso, open_db, open_db_for_write, resolve_batch};
 
@@ -24,7 +25,7 @@ pub async fn handle_collection_create(
 
     let cwd = std::env::current_dir()?;
     let git_ctx = codemark_core::git::context::detect_context(&cwd);
-    let created_branch = git_ctx.as_ref().and_then(|ctx| ctx.branch_name);
+    let created_branch = git_ctx.as_ref().and_then(|ctx| ctx.branch_name.clone());
 
     // Resolve repo metadata for repo_id
     let config = super::load_config(cli);
@@ -43,7 +44,7 @@ pub async fn handle_collection_create(
     };
 
     // Get repo URL for repo_url field
-    let repo_url = git_ctx.as_ref().and_then(|ctx| ctx.repo_url.clone());
+    let repo_url = git_context::detect_repo_metadata(&cwd).and_then(|m| m.origin_url);
 
     let collection = Collection {
         id: uuid::Uuid::new_v4().to_string(),
