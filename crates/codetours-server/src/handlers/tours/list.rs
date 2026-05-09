@@ -212,13 +212,15 @@ async fn query_with_engine(
     limit: usize,
     offset: usize,
 ) -> anyhow::Result<(Vec<TourWithData>, usize, Vec<String>, Vec<String>, Vec<String>)> {
+    // In registry mode, show all collections (not just public/ready)
+    // This is useful for local development where you want to see everything
     let filter = CollectionFilter {
         q: params.q.clone(),
         repo_url: params.repo_url.clone(),
         branch: params.branch.clone(),
         tag: params.tag.clone(),
-        visibility: Some("public".to_string()),
-        status: Some("ready".to_string()),
+        visibility: None,  // Show all, not just public
+        status: None,      // Show all, not just ready
     };
 
     let result = engine

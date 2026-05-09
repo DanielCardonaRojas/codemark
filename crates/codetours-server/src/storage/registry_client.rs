@@ -61,7 +61,8 @@ impl RegistryClient {
         let entries: Vec<KnownRepoEntry> = repos
             .into_iter()
             .filter_map(|repo| {
-                let db_path = repo.repo_root.join(".codemark/db/codetours.sqlite");
+                // Codetours (collections) are stored in the codemark database
+                let db_path = repo.repo_root.join(".codemark/codemark.db");
                 if db_path.exists() {
                     Some(KnownRepoEntry {
                         repo_root: repo.repo_root.clone(),
@@ -71,7 +72,7 @@ impl RegistryClient {
                         origin_url: repo.origin_url,
                     })
                 } else {
-                    tracing::debug!("No codetours database found at {:?}", db_path);
+                    tracing::debug!("No codemark database found at {:?}", db_path);
                     None
                 }
             })

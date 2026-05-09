@@ -28,9 +28,12 @@ async fn main() -> anyhow::Result<()> {
         return Ok(());
     }
 
-    // Initialize storage engine if registry mode is enabled
-    let storage_engine = if config.storage.registry_mode {
-        let registry_client = RegistryClient::new(config.storage.registry_path.clone())?;
+    // Initialize storage engine if registry mode is enabled (via CLI flag or config)
+    let registry_mode = cli.registry_mode || config.storage.registry_mode;
+    let registry_path = cli.registry_path.clone().or(config.storage.registry_path.clone());
+
+    let storage_engine = if registry_mode {
+        let registry_client = RegistryClient::new(registry_path)?;
         let engine = StorageEngine::new(registry_client);
         engine.refresh().await?;
         Some(Arc::new(engine))
