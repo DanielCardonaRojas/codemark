@@ -77,11 +77,18 @@ pub async fn handle_add(cli: &Cli, mode: &OutputMode, args: &AddArgsOriginal) ->
     // Resolve identity and create/update repo metadata
     let config = super::load_config(cli);
     let (db_owner_email, db_owner_name) = resolve_identity(&config);
-    if let Err(e) =
-        resolve_or_create_repo_metadata(&db, &config, &db_owner_email, db_owner_name.as_deref())
-    {
-        eprintln!("codemark: warning: failed to record repo metadata: {e}");
-    }
+    let repo_id = match resolve_or_create_repo_metadata(
+        &db,
+        &config,
+        &db_owner_email,
+        db_owner_name.as_deref(),
+    ) {
+        Ok(id) => id,
+        Err(e) => {
+            eprintln!("codemark: warning: failed to record repo metadata: {e}");
+            None
+        }
+    };
 
     let bookmark_id = uuid::Uuid::new_v4().to_string();
     let bookmark = Bookmark {
@@ -97,6 +104,8 @@ pub async fn handle_add(cli: &Cli, mode: &OutputMode, args: &AddArgsOriginal) ->
         stale_since: None,
         created_at: now_iso(),
         created_by: Some(args.created_by.clone()),
+        current_resolution_id: None,
+        repo_id,
         tags: Vec::new(),
 
         annotations: vec![],
@@ -178,6 +187,7 @@ pub async fn handle_add(cli: &Cli, mode: &OutputMode, args: &AddArgsOriginal) ->
             id: uuid::Uuid::new_v4().to_string(),
             bookmark_id: actual_bookmark_id.clone(),
             resolved_at: now_iso(),
+            health: BookmarkHealth::Active,
             commit_hash,
             method: ResolutionMethod::Exact,
             match_count: Some(match_count as i32),
@@ -293,11 +303,18 @@ pub async fn handle_add_from_snippet(
     // Resolve identity and create/update repo metadata
     let config = super::load_config(cli);
     let (db_owner_email, db_owner_name) = resolve_identity(&config);
-    if let Err(e) =
-        resolve_or_create_repo_metadata(&db, &config, &db_owner_email, db_owner_name.as_deref())
-    {
-        eprintln!("codemark: warning: failed to record repo metadata: {e}");
-    }
+    let repo_id = match resolve_or_create_repo_metadata(
+        &db,
+        &config,
+        &db_owner_email,
+        db_owner_name.as_deref(),
+    ) {
+        Ok(id) => id,
+        Err(e) => {
+            eprintln!("codemark: warning: failed to record repo metadata: {e}");
+            None
+        }
+    };
 
     let bookmark_id = uuid::Uuid::new_v4().to_string();
     let bookmark = Bookmark {
@@ -313,6 +330,8 @@ pub async fn handle_add_from_snippet(
         stale_since: None,
         created_at: now_iso(),
         created_by: Some(args.created_by.clone()),
+        current_resolution_id: None,
+        repo_id,
         tags: Vec::new(),
 
         annotations: vec![],
@@ -393,6 +412,7 @@ pub async fn handle_add_from_snippet(
             id: uuid::Uuid::new_v4().to_string(),
             bookmark_id: actual_bookmark_id.clone(),
             resolved_at: now_iso(),
+            health: BookmarkHealth::Active,
             commit_hash,
             method: ResolutionMethod::Exact,
             match_count: Some(match_count as i32),
@@ -509,11 +529,18 @@ pub async fn handle_add_from_query(
     // Resolve identity and create/update repo metadata
     let config = super::load_config(cli);
     let (db_owner_email, db_owner_name) = resolve_identity(&config);
-    if let Err(e) =
-        resolve_or_create_repo_metadata(&db, &config, &db_owner_email, db_owner_name.as_deref())
-    {
-        eprintln!("codemark: warning: failed to record repo metadata: {e}");
-    }
+    let repo_id = match resolve_or_create_repo_metadata(
+        &db,
+        &config,
+        &db_owner_email,
+        db_owner_name.as_deref(),
+    ) {
+        Ok(id) => id,
+        Err(e) => {
+            eprintln!("codemark: warning: failed to record repo metadata: {e}");
+            None
+        }
+    };
 
     let bookmark_id = uuid::Uuid::new_v4().to_string();
     let bookmark = Bookmark {
@@ -529,6 +556,8 @@ pub async fn handle_add_from_query(
         stale_since: None,
         created_at: now_iso(),
         created_by: Some(args.created_by.clone()),
+        current_resolution_id: None,
+        repo_id,
         tags: Vec::new(),
 
         annotations: vec![],
@@ -608,6 +637,7 @@ pub async fn handle_add_from_query(
             id: uuid::Uuid::new_v4().to_string(),
             bookmark_id: actual_bookmark_id.clone(),
             resolved_at: now_iso(),
+            health: BookmarkHealth::Active,
             commit_hash,
             method: ResolutionMethod::Exact,
             match_count: Some(matches.len() as i32),
@@ -742,19 +772,7 @@ pub async fn handle_resolve(cli: &Cli, mode: &OutputMode, args: &ResolveArgs) ->
             config.health.stale_days(),
         );
 
-        let stale_since = if new_status == BookmarkHealth::Stale {
-            bm.stale_since.clone().or_else(|| Some(now_iso()))
-        } else {
-            None
-        };
-
-        db.update_bookmark_health(
-            &bm.id,
-            new_status,
-            Some(result.method),
-            Some(&now_iso()),
-            stale_since.as_deref(),
-        )?;
+        let final_status = new_status;
 
         // Recompute health for affected collections
         if let Ok(ids) = db.list_collection_ids_for_bookmark(&bm.id) {
@@ -768,21 +786,18 @@ pub async fn handle_resolve(cli: &Cli, mode: &OutputMode, args: &ResolveArgs) ->
             }
         }
 
-        if let Some(ref new_query) = result.new_query {
-            db.update_bookmark_query(&bm.id, new_query, &result.file_path, &result.content_hash)?;
-        }
-
         let breadcrumbs_json = if result.breadcrumbs.is_empty() {
             None
         } else {
             serde_json::to_string(&result.breadcrumbs).ok()
         };
 
-        // Record resolution (deduped — skips if same commit + location + method)
+        // Record resolution
         let res = Resolution {
             id: uuid::Uuid::new_v4().to_string(),
             bookmark_id: bm.id.clone(),
             resolved_at: now_iso(),
+            health: final_status,
             commit_hash: git_context::detect_context(&std::env::current_dir()?)
                 .and_then(|ctx| ctx.head_commit),
             method: result.method,
@@ -795,8 +810,10 @@ pub async fn handle_resolve(cli: &Cli, mode: &OutputMode, args: &ResolveArgs) ->
             snapshot: Some(result.matched_text.clone()),
             breadcrumbs: breadcrumbs_json,
         };
-        let config = super::load_config(cli);
-        db.insert_resolution_if_changed(&res, config.storage.max_resolutions())?;
+        let res_id = res.id.clone();
+        if db.insert_resolution_if_changed(&res, config.storage.max_resolutions())? {
+            db.update_bookmark_resolution_id(&bm.id, &res_id)?;
+        }
 
         write_resolution_output(mode, &bm, &result, db.path(), config.health.stale_days())?;
     } else {

@@ -355,6 +355,9 @@ pub async fn handler(
             let escaped_path = pack_path_str.replace('\'', "''");
             conn.execute(&format!("ATTACH DATABASE '{}' AS pack", escaped_path), [])?;
 
+            // Disable FK checks during merge
+            conn.execute_batch("PRAGMA foreign_keys = OFF;")?;
+
             let res = (|| -> rusqlite::Result<(CreateTourResponse, bool)> {
             // Get the collection ID from the pack
             let collection_id: String = conn.query_row(
@@ -383,8 +386,8 @@ pub async fn handler(
             // 2. Merge SQL
             // Use explicit columns to be safe against schema drift
             tx.execute(
-                "INSERT INTO main.bookmarks (id, query, language, file_path, content_hash, commit_hash, health, resolution_method, last_resolved_at, stale_since, created_at, created_by)
-                 SELECT id, query, language, file_path, content_hash, commit_hash, health, resolution_method, last_resolved_at, stale_since, created_at, created_by
+                "INSERT INTO main.bookmarks (id, query, language, file_path, content_hash, commit_hash, created_at, created_by, current_resolution_id)
+                 SELECT id, query, language, file_path, content_hash, commit_hash, created_at, created_by, current_resolution_id
                  FROM pack.bookmarks 
                  WHERE id IN (SELECT bookmark_id FROM pack.collection_bookmarks WHERE collection_id = ?1)
                  AND id NOT IN (SELECT id FROM main.bookmarks)",
@@ -433,8 +436,8 @@ pub async fn handler(
             )?;
 
             tx.execute(
-               "INSERT INTO main.resolutions (id, bookmark_id, resolved_at, commit_hash, method, match_count, file_path, byte_range, line_range, content_hash, headline, snapshot, breadcrumbs, snapshot_top_padding, snapshot_bottom_padding)
-                SELECT id, bookmark_id, resolved_at, commit_hash, method, match_count, file_path, byte_range, line_range, content_hash, headline, snapshot, breadcrumbs, snapshot_top_padding, snapshot_bottom_padding
+               "INSERT INTO main.resolutions (id, bookmark_id, resolved_at, health, commit_hash, method, match_count, file_path, byte_range, line_range, content_hash, headline, snapshot, breadcrumbs, snapshot_top_padding, snapshot_bottom_padding)
+                SELECT id, bookmark_id, resolved_at, health, commit_hash, method, match_count, file_path, byte_range, line_range, content_hash, headline, snapshot, breadcrumbs, snapshot_top_padding, snapshot_bottom_padding
                 FROM pack.resolutions
                 WHERE bookmark_id IN (SELECT bookmark_id FROM pack.collection_bookmarks WHERE collection_id = ?1)
                 AND id NOT IN (SELECT id FROM main.resolutions)",
@@ -497,6 +500,8 @@ pub async fn handler(
             Ok((response, exists))
         })();
 
+        // Re-enable FK checks after merge
+        let _ = conn.execute_batch("PRAGMA foreign_keys = ON;");
         let _ = conn.execute("DETACH DATABASE pack", []);
         res
     }).await;

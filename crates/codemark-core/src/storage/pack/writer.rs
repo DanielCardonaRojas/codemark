@@ -72,6 +72,8 @@ impl Packer {
         conn: &rusqlite::Connection,
         payload: &SnapshotPayload,
     ) -> Result<()> {
+        conn.execute_batch("PRAGMA foreign_keys = OFF;")?;
+
         // 1. Insert collection
         let c = &payload.collection;
         conn.execute(
@@ -99,9 +101,20 @@ impl Packer {
         // 2. Insert bookmarks
         for bm in &payload.bookmarks {
             conn.execute(
-                "INSERT INTO bookmarks (id, query, language, file_path, content_hash, commit_hash, health, resolution_method, last_resolved_at, stale_since, created_at, created_by)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
-                params![bm.id, bm.query, bm.language, bm.file_path, bm.content_hash, bm.commit_hash, bm.health.to_string(), bm.resolution_method.map(|m| m.to_string()), bm.last_resolved_at, bm.stale_since, bm.created_at, bm.created_by],
+                "INSERT INTO bookmarks (id, query, language, file_path, content_hash, commit_hash,
+                 created_at, created_by, current_resolution_id)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                params![
+                    bm.id,
+                    bm.query,
+                    bm.language,
+                    bm.file_path,
+                    bm.content_hash,
+                    bm.commit_hash,
+                    bm.created_at,
+                    bm.created_by,
+                    bm.current_resolution_id,
+                ],
             )?;
 
             // Insert membership
@@ -140,9 +153,24 @@ impl Packer {
         // 5. Insert resolutions
         for res in &payload.resolutions {
             conn.execute(
-                "INSERT INTO resolutions (id, bookmark_id, resolved_at, commit_hash, method, match_count, file_path, byte_range, line_range, content_hash, headline, snapshot, breadcrumbs)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)",
-                params![res.id, res.bookmark_id, res.resolved_at, res.commit_hash, res.method.to_string(), res.match_count, res.file_path, res.byte_range, res.line_range, res.content_hash, res.headline, res.snapshot, res.breadcrumbs],
+                "INSERT INTO resolutions (id, bookmark_id, resolved_at, health, commit_hash, method, match_count, file_path, byte_range, line_range, content_hash, headline, snapshot, breadcrumbs)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+                params![
+                    res.id,
+                    res.bookmark_id,
+                    res.resolved_at,
+                    res.health.to_string(),
+                    res.commit_hash,
+                    res.method.to_string(),
+                    res.match_count,
+                    res.file_path,
+                    res.byte_range,
+                    res.line_range,
+                    res.content_hash,
+                    res.headline,
+                    res.snapshot,
+                    res.breadcrumbs
+                ],
             )?;
         }
 
@@ -163,6 +191,7 @@ impl Packer {
             )?;
         }
 
+        conn.execute_batch("PRAGMA foreign_keys = ON;")?;
         Ok(())
     }
 

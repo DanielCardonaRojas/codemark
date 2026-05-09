@@ -1406,12 +1406,13 @@ fn preview_uses_nearest_ancestor_resolution() {
 
     // Add a resolution at HEAD (already exists from add, but we add another one)
     conn.execute(
-        "INSERT INTO resolutions (id, bookmark_id, resolved_at, commit_hash, method, match_count, file_path, byte_range, line_range, content_hash)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+        "INSERT INTO resolutions (id, bookmark_id, resolved_at, health, commit_hash, method, match_count, file_path, byte_range, line_range, content_hash)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
         rusqlite::params![
             uuid::Uuid::new_v4().to_string(),
             id.clone(),
             chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string(),
+            "active".to_string(),
             current_head.clone(), // Current HEAD is definitely an ancestor of itself
             "exact".to_string(),
             1i32,
@@ -1500,12 +1501,13 @@ fn git_repo_heal_skips_when_head_is_before_resolution() {
     // For this test, we're simulating that scenario
     let conn = rusqlite::Connection::open(&cm.db_path).unwrap();
     conn.execute(
-        "INSERT INTO resolutions (id, bookmark_id, resolved_at, commit_hash, method, match_count, file_path, byte_range, line_range, content_hash)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+        "INSERT INTO resolutions (id, bookmark_id, resolved_at, health, commit_hash, method, match_count, file_path, byte_range, line_range, content_hash)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
         rusqlite::params![
             uuid::Uuid::new_v4().to_string(),
             id.clone(),
             chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string(),
+            "active".to_string(),
             future_commit.clone(),
             "exact".to_string(),
             1i32,
@@ -1652,7 +1654,11 @@ fn git_repo_move_method_then_heal_gets_new_resolution() {
     cm.run_json(&["heal"]);
     let show_json = cm.run_json(&["show", &id[..8]]);
     let resolutions_a = show_json["data"]["resolutions"].as_array().unwrap();
-    assert_eq!(resolutions_a.len(), 1, "should have 1 resolution after initial heal");
+    assert_eq!(
+        resolutions_a.len(),
+        2,
+        "should have 2 resolutions after initial heal (1 auto + 1 heal)"
+    );
     let line_range_a = resolutions_a[0]["line_range"].as_str().unwrap();
     assert!(
         line_range_a == "1-2" || line_range_a == "1-1",
@@ -1824,6 +1830,58 @@ fn git_repo_bookmark_goes_stale_when_code_completely_changed() {
     let show_json = cm.run_json(&["show", &id[..8]]);
     let status = show_json["data"]["bookmark"]["health"].as_str().unwrap();
     assert_eq!(status, "stale", "bookmark status should be stale: got {}", status);
+}
+
+#[test]
+fn git_repo_bookmark_recovers_from_stale_to_active() {
+    // Test that a bookmark recovers from stale back to active when the code is restored
+    let cm = Codemark::with_git_repo();
+
+    // Initial file with function
+    let _commit_a = cm.commit("test.rs", "fn original_function() { return 42; }", "Commit A");
+
+    // Create bookmark targeting the function
+    let json = cm.run_json(&[
+        "add",
+        "--file",
+        &cm.file_path("test.rs"),
+        "--range",
+        "1",
+        "--note",
+        "bookmark on original_function",
+    ]);
+    let id = json["data"]["id"].as_str().unwrap().to_string();
+
+    // Completely remove the function to make the bookmark stale
+    let _commit_b = cm.commit("test.rs", "", "Commit B - empty file");
+    cm.run_json(&["heal"]);
+
+    // Verify it is stale
+    let show_json = cm.run_json(&["show", &id[..8]]);
+    assert_eq!(show_json["data"]["bookmark"]["health"], "stale");
+
+    // Restore the function
+    let _commit_c =
+        cm.commit("test.rs", "fn original_function() { return 42; }", "Commit C - restored");
+
+    let heal_out = cm.run_json(&["heal"]);
+    eprintln!("DEBUG heal after restore: {}", serde_json::to_string_pretty(&heal_out).unwrap());
+
+    // Verify it recovered back to active
+    let show_json_final = cm.run_json(&["show", &id[..8]]);
+    assert_eq!(
+        show_json_final["data"]["bookmark"]["health"], "active",
+        "bookmark should recover to active after code is restored"
+    );
+
+    // Verify we have a history of these transitions
+    let resolutions = show_json_final["data"]["resolutions"].as_array().unwrap();
+    assert!(
+        resolutions.len() >= 3,
+        "should have at least 3 resolutions: initial, stale, recovered"
+    );
+    assert_eq!(resolutions[0]["health"], "active"); // The latest (recovered)
+    assert_eq!(resolutions[1]["health"], "stale"); // The intermediate
 }
 
 #[test]
@@ -2051,12 +2109,14 @@ fn resolve_dry_run_after_code_change() {
     let resolve_json = cm.run_json(&["resolve", &id[..8]]);
     assert!(resolve_json["success"] == true);
 
-    // Verify the resolution was updated (same count, but commit_hash changed)
+    // Verify it created a new resolution (now 3: Auto + Heal + New)
+    // It creates a new one because the health status likely changed from active to drifted
     let show_json_final = cm.run_json(&["show", &id[..8]]);
     let final_resolutions = show_json_final["data"]["resolutions"].as_array().unwrap().len();
     assert_eq!(
-        final_resolutions, after_resolutions,
-        "should update existing resolution, not create new one"
+        final_resolutions,
+        after_resolutions + 1,
+        "should create a new resolution because health changed"
     );
 
     // Verify the commit_hash was updated to the latest commit
@@ -2955,4 +3015,68 @@ fn env_variable_filters() {
     let json: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(json["success"], true);
     assert_eq!(json["data"].as_array().unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn test_no_past_resolution() {
+    // @lat: [[tests#System Invariants Tests#Bookmark Integrity Rules#Resolution Horizon]]
+    // Integration test that verifies a bookmark cannot be resolved against a git commit
+    // that is an ancestor of the commit in which it was created.
+    //
+    // Current behavior: The heal command shows "resolution X is ahead of HEAD Y"
+    // and skips, which provides some protection. However, this is based on
+    // current HEAD, not the bookmark's creation commit.
+    //
+    // Expected behavior: A bookmark should not be resolvable against commits
+    // that are ancestors of its creation commit (the bookmark "exists" from
+    // creation forward, not backward in time).
+    use codemark_core::storage::db::Database;
+
+    // Create a fresh git repo
+    let cm = Codemark::with_git_repo();
+
+    // Commit 1: Initial file with function (using Swift syntax for better query support)
+    let commit1 = cm.commit("Source.swift", r#"func oldFunction() {}"#, "Commit 1");
+
+    // Move forward with commit2
+    let commit2 = cm.commit("Source.swift", r#"func newFunction() {}"#, "Commit 2");
+
+    // Create bookmark at commit2
+    let result = cm.run(&[
+        "add",
+        "--query",
+        "(function_declaration name: (simple_identifier) @name) @target",
+        "--file",
+        &cm.file_path("Source.swift"),
+    ]);
+
+    // Verify bookmark was created successfully
+    assert_eq!(result.status, 0, "Bookmark creation should succeed: {}", result.stderr);
+
+    // Get the bookmark
+    let db = Database::create(&cm.db_path).unwrap();
+    let bookmarks = db.list_bookmarks(&Default::default()).unwrap();
+    assert_eq!(bookmarks.len(), 1, "Should have created one bookmark");
+    let bm = db.get_bookmark(&bookmarks[0].id).unwrap().unwrap();
+
+    // Bookmark was created at commit2
+    assert_eq!(bm.commit_hash, Some(commit2.clone()));
+
+    // Now checkout commit1 (which is in the past - an ancestor of commit2)
+    cm.checkout(&commit1);
+
+    // Try to heal
+    let heal_result = cm.run(&["heal"]);
+
+    // Current behavior: The heal command skips because the resolution is "ahead"
+    // This is partial protection but not the full invariant.
+    // TODO: Implement proper check: compare bookmark's commit_hash with target commit
+    // and reject if target is an ancestor of creation commit.
+
+    // The heal should skip the bookmark (indicated in JSON output)
+    assert!(
+        heal_result.stdout.contains(r#""skipped": 1"#) || heal_result.stdout.contains("skipping"),
+        "Heal should skip bookmark with future resolution, got: {}",
+        heal_result.stdout
+    );
 }

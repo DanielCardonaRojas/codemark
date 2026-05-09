@@ -16,7 +16,7 @@ impl CollectionRepo {
         conn.interact(move |conn| {
             let mut stmt = conn.prepare(
                 "SELECT id, name, description, visibility, created_at, created_by, created_branch,
-                        published_at, published_commit_sha, repo_url, status, health, health_computed_at, updated_at, imported_from_url
+                        published_at, published_commit_sha, repo_url, repo_id, status, health, health_computed_at, updated_at, imported_from_url
                  FROM collections WHERE id = ?1",
             )?;
             let rows = stmt.query_map([id], row_to_collection)?;
@@ -36,7 +36,7 @@ impl CollectionRepo {
         conn.interact(move |conn| {
             let mut stmt = conn.prepare(
                 "SELECT id, name, description, visibility, created_at, created_by, created_branch,
-                        published_at, published_commit_sha, repo_url, status, health, health_computed_at, updated_at, imported_from_url
+                        published_at, published_commit_sha, repo_url, repo_id, status, health, health_computed_at, updated_at, imported_from_url
                  FROM collections WHERE name = ?1",
             )?;
             let rows = stmt.query_map([name], row_to_collection)?;
@@ -53,8 +53,8 @@ impl CollectionRepo {
         conn.interact(move |conn| {
             let mut stmt = conn.prepare(
                 "SELECT id, name, description, visibility, created_at, created_by, created_branch,
-                        published_at, published_commit_sha, repo_url, status, health, health_computed_at, updated_at, imported_from_url
-                 FROM collections 
+                        published_at, published_commit_sha, repo_url, repo_id, status, health, health_computed_at, updated_at, imported_from_url
+                 FROM collections
                  WHERE visibility IS NOT NULL AND visibility != 'private'
                    AND published_at IS NOT NULL
                    AND status = 'ready'
@@ -109,10 +109,11 @@ fn row_to_collection(row: &rusqlite::Row) -> rusqlite::Result<Collection> {
         published_at: row.get(7)?,
         published_commit_sha: row.get(8)?,
         repo_url: row.get(9)?,
-        status: row.get(10)?,
-        health: row.get::<_, Option<String>>(11)?.and_then(|h| h.parse().ok()),
-        health_computed_at: row.get(12)?,
-        updated_at: row.get(13)?,
-        imported_from_url: row.get(14)?,
+        repo_id: row.get(10)?,
+        status: row.get(11)?,
+        health: row.get::<_, Option<String>>(12)?.and_then(|h| h.parse().ok()),
+        health_computed_at: row.get(13)?,
+        updated_at: row.get(14)?,
+        imported_from_url: row.get(15)?,
     })
 }

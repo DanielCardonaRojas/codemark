@@ -48,7 +48,6 @@ async fn test_breadcrumb_extraction_rust() {
         content_hash: "".into(),
         hash_matches: true,
         breadcrumbs: breadcrumbs.clone(),
-        new_query: None,
     };
 
     let preview = res.capture_preview(&source, 2);
@@ -96,7 +95,6 @@ async fn test_breadcrumb_extraction_swift() {
         content_hash: "".into(),
         hash_matches: true,
         breadcrumbs: breadcrumbs.clone(),
-        new_query: None,
     };
 
     let preview = res.capture_preview(&source, 2);
@@ -144,7 +142,6 @@ async fn test_breadcrumb_extraction_typescript() {
         content_hash: "".into(),
         hash_matches: true,
         breadcrumbs: breadcrumbs.clone(),
-        new_query: None,
     };
 
     let preview = res.capture_preview(&source, 2);

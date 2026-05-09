@@ -40,19 +40,19 @@ async fn test_publish_list_get_delete_flow() {
              CREATE TABLE schema_meta (key TEXT PRIMARY KEY, value TEXT);
              INSERT INTO schema_meta (key, value) VALUES ('schema_version', '20');
              CREATE TABLE collections (id TEXT PRIMARY KEY, name TEXT, visibility TEXT, created_at TEXT, description TEXT, repo_url TEXT, created_branch TEXT, published_commit_sha TEXT, status TEXT, health TEXT, health_computed_at TEXT, published_at TEXT, updated_at TEXT, created_by TEXT);
-             CREATE TABLE bookmarks (id TEXT PRIMARY KEY, file_path TEXT, query TEXT, language TEXT, created_at TEXT, content_hash TEXT, commit_hash TEXT, health TEXT, resolution_method TEXT, last_resolved_at TEXT, stale_since TEXT, created_by TEXT);
+             CREATE TABLE bookmarks (id TEXT PRIMARY KEY, file_path TEXT, query TEXT, language TEXT, created_at TEXT, content_hash TEXT, commit_hash TEXT, created_by TEXT, current_resolution_id TEXT);
              CREATE TABLE collection_bookmarks (collection_id TEXT, bookmark_id TEXT, position INTEGER, added_at TEXT);
              CREATE TABLE collection_tags (collection_id TEXT, tag TEXT, added_at TEXT, added_by TEXT);
              CREATE TABLE collection_links (id TEXT PRIMARY KEY, collection_id TEXT, kind TEXT, label TEXT, url TEXT, sort_order INTEGER, added_at TEXT, added_by TEXT);
-             CREATE TABLE resolutions (id TEXT PRIMARY KEY, bookmark_id TEXT, resolved_at TEXT, method TEXT, headline TEXT, snapshot TEXT, commit_hash TEXT, match_count INTEGER, file_path TEXT, byte_range TEXT, line_range TEXT, content_hash TEXT, breadcrumbs TEXT, snapshot_top_padding INTEGER, snapshot_bottom_padding INTEGER);
+             CREATE TABLE resolutions (id TEXT PRIMARY KEY, bookmark_id TEXT, resolved_at TEXT, health TEXT, method TEXT, headline TEXT, snapshot TEXT, commit_hash TEXT, match_count INTEGER, file_path TEXT, byte_range TEXT, line_range TEXT, content_hash TEXT, breadcrumbs TEXT, snapshot_top_padding INTEGER, snapshot_bottom_padding INTEGER);
              CREATE TABLE bookmark_annotations (id TEXT PRIMARY KEY, bookmark_id TEXT, added_at TEXT, added_by TEXT, notes TEXT, context TEXT, source TEXT);
              CREATE TABLE bookmark_tags (bookmark_id TEXT, tag TEXT, added_at TEXT, added_by TEXT);
              CREATE TABLE _pack_meta (pack_id TEXT PRIMARY KEY, protocol_version INTEGER, purpose TEXT, source_client TEXT, generated_at TEXT, notes TEXT);
              
              INSERT INTO collections (id, name, visibility, created_at, status, health, published_at, updated_at) VALUES ('COL_ID', 'Test Tour', 'public', '2026-05-01T00:00:00Z', 'ready', 'active', '2026-05-01T00:00:00Z', '2026-05-01T00:00:00Z');
-             INSERT INTO bookmarks (id, file_path, query, language, created_at, health) VALUES ('BM_FLOW_1', 'src/main.rs', 'query', 'rust', '2026-05-01T00:00:00Z', 'active');
+             INSERT INTO bookmarks (id, file_path, query, language, created_at, current_resolution_id) VALUES ('BM_FLOW_1', 'src/main.rs', 'query', 'rust', '2026-05-01T00:00:00Z', 'RES_FLOW_1');
              INSERT INTO collection_bookmarks (collection_id, bookmark_id, position, added_at) VALUES ('COL_ID', 'BM_FLOW_1', 0, '2026-05-01T00:00:00Z');
-             INSERT INTO resolutions (id, bookmark_id, resolved_at, method, headline, line_range, snapshot, breadcrumbs) VALUES ('RES_FLOW_1', 'BM_FLOW_1', '2026-05-01T00:00:00Z', 'exact', 'headline', '10', 'snapshot_content', '[{\"line\": 1, \"text\": \"mod auth {\"}]');
+             INSERT INTO resolutions (id, bookmark_id, resolved_at, health, method, headline, line_range, snapshot, breadcrumbs) VALUES ('RES_FLOW_1', 'BM_FLOW_1', '2026-05-01T00:00:00Z', 'active', 'exact', 'headline', '10', 'snapshot_content', '[{\"line\": 1, \"text\": \"mod auth {\"}]');
              INSERT INTO _pack_meta (pack_id, protocol_version, purpose, source_client, generated_at) VALUES ('PACK_FLOW_1', 20, 'publish', 'test-client', '2026-05-01T00:00:00Z');"
              .replace("COL_ID", &collection_id);
         conn.execute_batch(&sql).unwrap();
@@ -136,15 +136,15 @@ async fn test_publish_list_get_delete_flow() {
              INSERT INTO schema_meta (key, value) VALUES ('schema_version', '1');
 
              CREATE TABLE collections (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, description TEXT, created_at TEXT NOT NULL, created_by TEXT);
-             CREATE TABLE bookmarks (id TEXT PRIMARY KEY, query TEXT NOT NULL, language TEXT NOT NULL, file_path TEXT NOT NULL, content_hash TEXT, commit_hash TEXT, status TEXT NOT NULL DEFAULT 'active', resolution_method TEXT, last_resolved_at TEXT, stale_since TEXT, created_at TEXT NOT NULL, created_by TEXT, tags TEXT, notes TEXT, context TEXT);
+             CREATE TABLE bookmarks (id TEXT PRIMARY KEY, query TEXT NOT NULL, language TEXT NOT NULL, file_path TEXT NOT NULL, content_hash TEXT, commit_hash TEXT, current_resolution_id TEXT, created_at TEXT NOT NULL, created_by TEXT, tags TEXT, notes TEXT, context TEXT);
              CREATE TABLE collection_bookmarks (collection_id TEXT NOT NULL REFERENCES collections(id) ON DELETE CASCADE, bookmark_id TEXT NOT NULL REFERENCES bookmarks(id) ON DELETE CASCADE, added_at TEXT NOT NULL, PRIMARY KEY (collection_id, bookmark_id));
-             CREATE TABLE resolutions (id TEXT PRIMARY KEY, bookmark_id TEXT NOT NULL REFERENCES bookmarks(id) ON DELETE CASCADE, resolved_at TEXT NOT NULL, commit_hash TEXT, method TEXT NOT NULL, match_count INTEGER, file_path TEXT, byte_range TEXT, content_hash TEXT);
+             CREATE TABLE resolutions (id TEXT PRIMARY KEY, bookmark_id TEXT NOT NULL REFERENCES bookmarks(id) ON DELETE CASCADE, resolved_at TEXT NOT NULL, health TEXT, commit_hash TEXT, method TEXT NOT NULL, match_count INTEGER, file_path TEXT, byte_range TEXT, content_hash TEXT);
              CREATE TABLE _pack_meta (pack_id TEXT PRIMARY KEY, protocol_version INTEGER, purpose TEXT, source_client TEXT, generated_at TEXT, notes TEXT);
              
              INSERT INTO collections (id, name, created_at) VALUES ('COL_ID', 'Old Tour', '2026-05-01T00:00:00Z');
-             INSERT INTO bookmarks (id, query, language, file_path, created_at) VALUES ('BM_MIG_1', 'query_mig', 'rust', 'src/mig.rs', '2026-05-01T00:00:00Z');
+             INSERT INTO bookmarks (id, query, language, file_path, created_at, current_resolution_id) VALUES ('BM_MIG_1', 'query_mig', 'rust', 'src/mig.rs', '2026-05-01T00:00:00Z', 'RES_MIG_1');
              INSERT INTO collection_bookmarks (collection_id, bookmark_id, added_at) VALUES ('COL_ID', 'BM_MIG_1', '2026-05-01T00:00:00Z');
-             INSERT INTO resolutions (id, bookmark_id, resolved_at, method) VALUES ('RES_MIG_1', 'BM_MIG_1', '2026-05-01T00:00:00Z', 'exact');
+             INSERT INTO resolutions (id, bookmark_id, resolved_at, health, method) VALUES ('RES_MIG_1', 'BM_MIG_1', '2026-05-01T00:00:00Z', 'active', 'exact');
              INSERT INTO _pack_meta (pack_id, protocol_version, purpose, source_client, generated_at) VALUES ('PACK_MIG_1', 1, 'publish', 'test-client', '2026-05-01T00:00:00Z');"
              .replace("COL_ID", &migration_collection_id);
         conn.execute_batch(&sql).unwrap();

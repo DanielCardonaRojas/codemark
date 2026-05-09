@@ -21,8 +21,11 @@ size = 55
 [keybindings]
 shortcut = "F6"
 enter = "actions:show"
-ctrl-d = "actions:delete"
-ctrl-x = "actions:delete_with_bookmarks"
+
+[actions.push]
+description = "Push collection to public"
+command = "codemark tour push {split:\\t:1} --visibility public"
+mode = "execute"
 
 [actions.show]
 description = "Show bookmarks in this collection (opens television with codemark channel)"

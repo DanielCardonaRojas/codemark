@@ -5,6 +5,7 @@
 //! - [`collection`]: collection management
 //! - [`search`]: FTS and semantic search, reindex
 //! - [`maintenance`]: heal, status, diff, gc, export, import
+//! - [`repo`]: repository registry management
 
 use std::collections::HashSet;
 use std::io::Write;
@@ -28,6 +29,7 @@ pub mod collection;
 pub mod maintenance;
 pub mod publish;
 pub mod pull;
+pub mod repo;
 pub mod search;
 pub mod tour;
 
@@ -63,6 +65,7 @@ pub async fn dispatch(cli: &Cli) -> Result<()> {
         Command::Pull(args) => pull::handle_pull(cli, &mode, args).await,
         Command::Health(args) => dispatch_health(cli, &mode, args).await,
         Command::Data(args) => dispatch_data(cli, &mode, args).await,
+        Command::Repo(args) => repo::handle_repo(cli, &mode, args).await,
     }
 }
 
@@ -409,6 +412,7 @@ pub fn resolve_identity(config: &Config) -> (String, Option<String>) {
 /// Resolve or create repository metadata in the database.
 ///
 /// Detects git repo information (origin URL, owner, name) and upserts to the repos table.
+/// Also syncs the repo metadata to the global registry.
 /// Returns the repo ID if successful, None if not in a git repo.
 pub fn resolve_or_create_repo_metadata(
     db: &Database,
@@ -439,12 +443,35 @@ pub fn resolve_or_create_repo_metadata(
         {
             let mut updated = existing.clone();
             updated.db_owner_email = db_owner_email.to_string();
-            updated.db_owner_name = new_name;
+            updated.db_owner_name = new_name.clone();
             db.upsert_repo(&updated)?;
+
+            // Sync to global registry
+            sync_to_global_registry(
+                &updated.id,
+                &updated.repo_owner,
+                &updated.repo_name,
+                updated.origin_url.as_deref(),
+                &updated.repo_root,
+                &updated.db_owner_email,
+                updated.db_owner_name.as_deref(),
+            );
+
             return Ok(Some(existing.id));
         }
 
         if let Ok(Some(existing)) = db.get_repo_by_origin(origin_url) {
+            // Sync to global registry (may update server_url)
+            sync_to_global_registry(
+                &existing.id,
+                &existing.repo_owner,
+                &existing.repo_name,
+                existing.origin_url.as_deref(),
+                &existing.repo_root,
+                &existing.db_owner_email,
+                existing.db_owner_name.as_deref(),
+            );
+
             return Ok(Some(existing.id));
         }
     }
@@ -457,12 +484,35 @@ pub fn resolve_or_create_repo_metadata(
     {
         let mut updated = existing.clone();
         updated.db_owner_email = db_owner_email.to_string();
-        updated.db_owner_name = new_name;
+        updated.db_owner_name = new_name.clone();
         db.upsert_repo(&updated)?;
-        return Ok(Some(existing.id));
+
+        // Sync to global registry
+        sync_to_global_registry(
+            &updated.id,
+            &updated.repo_owner,
+            &updated.repo_name,
+            updated.origin_url.as_deref(),
+            &updated.repo_root,
+            &updated.db_owner_email,
+            updated.db_owner_name.as_deref(),
+        );
+
+        return Ok(Some(updated.id));
     }
 
     if let Ok(Some(existing)) = db.get_repo_by_root(&repo_root_str) {
+        // Sync to global registry (may update server_url)
+        sync_to_global_registry(
+            &existing.id,
+            &existing.repo_owner,
+            &existing.repo_name,
+            existing.origin_url.as_deref(),
+            &existing.repo_root,
+            &existing.db_owner_email,
+            existing.db_owner_name.as_deref(),
+        );
+
         return Ok(Some(existing.id));
     }
 
@@ -482,14 +532,64 @@ pub fn resolve_or_create_repo_metadata(
                 .unwrap_or_else(|| "unknown".to_string())
         }),
         origin_url: repo_metadata.origin_url,
-        repo_root: repo_root_str,
+        repo_root: repo_root_str.clone(),
         db_owner_email: db_owner_email.to_string(),
-        db_owner_name: new_name,
+        db_owner_name: new_name.clone(),
         detected_at: now,
     };
 
     let repo_id = db.upsert_repo(&repo)?;
+
+    // Sync new repo to global registry
+    sync_to_global_registry(
+        &repo_id,
+        &repo.repo_owner,
+        &repo.repo_name,
+        repo.origin_url.as_deref(),
+        &repo_root_str,
+        &repo.db_owner_email,
+        repo.db_owner_name.as_deref(),
+    );
+
     Ok(Some(repo_id))
+}
+
+/// Sync repository metadata to the global registry database.
+///
+/// This implements RR-2.2: observation-based sync that pings the global
+/// registry and UPSERTs current project repo metadata on every CLI invocation.
+fn sync_to_global_registry(
+    id: &str,
+    repo_owner: &str,
+    repo_name: &str,
+    origin_url: Option<&str>,
+    repo_root: &str,
+    db_owner_email: &str,
+    db_owner_name: Option<&str>,
+) {
+    use codemark_core::storage::registry;
+
+    let Ok(conn) = registry::open_registry() else {
+        // Silently fail if registry is unavailable - shouldn't block CLI operations
+        return;
+    };
+
+    // Get server URL from registry (if already set) instead of from config
+    let server_url = registry::get_server_url(&conn, repo_root).ok().flatten();
+
+    let _ = registry::upsert_repo(
+        &conn,
+        &registry::RepoUpsert {
+            id,
+            repo_owner,
+            repo_name,
+            origin_url,
+            repo_root,
+            db_owner_email,
+            db_owner_name,
+            server_url: server_url.as_deref(),
+        },
+    );
 }
 
 /// Open all specified databases (for read commands that support cross-repo queries).
@@ -914,9 +1014,10 @@ pub fn find_bookmark_across<'a>(
     Err(Error::Input(format!("bookmark not found: {id}")))
 }
 
-/// Get current timestamp in ISO format.
+/// Get current timestamp in ISO format with millisecond precision.
+/// Milliseconds ensure unique timestamps for deterministic ordering in `ORDER BY`.
 pub fn now_iso() -> String {
-    chrono::Utc::now().format("%Y-%m-%dT%H:%M:%SZ").to_string()
+    chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
 }
 
 /// Parse duration string (e.g., "30d", "2w", "6m") to days.
@@ -962,6 +1063,7 @@ pub fn add_bookmark_to_collection(
                 published_at: None,
                 published_commit_sha: None,
                 repo_url: None,
+                repo_id: None,
                 status: None,
                 health: None,
                 health_computed_at: None,
@@ -1045,24 +1147,6 @@ pub async fn resolve_batch(
             }
         }
 
-        let stale_since = if new_status == BookmarkHealth::Stale {
-            bm.stale_since.clone().or_else(|| Some(now_iso()))
-        } else {
-            None
-        };
-
-        db.update_bookmark_health(
-            &bm.id,
-            new_status,
-            Some(result.method),
-            Some(&now_iso()),
-            stale_since.as_deref(),
-        )?;
-
-        if let Some(ref new_query) = result.new_query {
-            db.update_bookmark_query(&bm.id, new_query, &result.file_path, &result.content_hash)?;
-        }
-
         let breadcrumbs_json = if result.breadcrumbs.is_empty() {
             None
         } else {
@@ -1074,6 +1158,7 @@ pub async fn resolve_batch(
             id: uuid::Uuid::new_v4().to_string(),
             bookmark_id: bm.id.clone(),
             resolved_at: now_iso(),
+            health: new_status,
             commit_hash: git_context::detect_context(&std::env::current_dir()?)
                 .and_then(|ctx| ctx.head_commit),
             method: result.method,
@@ -1086,7 +1171,10 @@ pub async fn resolve_batch(
             snapshot: Some(result.matched_text.clone()),
             breadcrumbs: breadcrumbs_json,
         };
-        let _ = db.insert_resolution_if_changed(&res, config.storage.max_resolutions());
+        let res_id = res.id.clone();
+        if db.insert_resolution_if_changed(&res, config.storage.max_resolutions())? {
+            db.update_bookmark_resolution_id(&bm.id, &res_id)?;
+        }
     }
 
     // Recompute health for all affected collections

@@ -37,32 +37,26 @@ CREATE INDEX IF NOT EXISTS idx_tags_tag ON bookmark_tags(tag);
 
 -- Create a new bookmarks table without the metadata columns
 CREATE TABLE IF NOT EXISTS bookmarks_new (
-    id                TEXT PRIMARY KEY,
-    query             TEXT NOT NULL,
-    language          TEXT NOT NULL,
-    file_path         TEXT NOT NULL,
-    content_hash      TEXT,
-    commit_hash       TEXT,
-    status            TEXT NOT NULL DEFAULT 'active',
-    resolution_method TEXT,
-    last_resolved_at  TEXT,
-    stale_since       TEXT,
-    created_at        TEXT NOT NULL,
-    created_by        TEXT,
+    id                    TEXT PRIMARY KEY,
+    query                 TEXT NOT NULL,
+    language              TEXT NOT NULL,
+    file_path             TEXT NOT NULL,
+    content_hash          TEXT,
+    commit_hash           TEXT,
+    created_at            TEXT NOT NULL,
+    created_by            TEXT,
+    current_resolution_id TEXT REFERENCES resolutions(id),
     UNIQUE(file_path, query)
 );
 
-CREATE INDEX IF NOT EXISTS idx_bookmarks_new_status ON bookmarks_new(status);
 CREATE INDEX IF NOT EXISTS idx_bookmarks_new_file ON bookmarks_new(file_path);
 CREATE INDEX IF NOT EXISTS idx_bookmarks_new_language ON bookmarks_new(language);
 
 -- Copy data from old table to new table (only columns that always exist)
 INSERT INTO bookmarks_new (id, query, language, file_path, content_hash, commit_hash,
-                           status, resolution_method, last_resolved_at, stale_since,
-                           created_at, created_by)
+                           created_at, created_by, current_resolution_id)
     SELECT id, query, language, file_path, content_hash, commit_hash,
-           status, resolution_method, last_resolved_at, stale_since,
-           created_at, created_by
+           created_at, created_by, current_resolution_id
     FROM bookmarks;
 
 -- Drop old table and rename new one
@@ -70,7 +64,6 @@ DROP TABLE bookmarks;
 ALTER TABLE bookmarks_new RENAME TO bookmarks;
 
 -- Recreate indexes on the renamed table
-CREATE INDEX IF NOT EXISTS idx_bookmarks_status ON bookmarks(status);
 CREATE INDEX IF NOT EXISTS idx_bookmarks_file ON bookmarks(file_path);
 CREATE INDEX IF NOT EXISTS idx_bookmarks_language ON bookmarks(language);
 
