@@ -42,6 +42,8 @@ pub struct CollectionEntry {
     pub repo_root: String,
     pub repo_owner: String,
     pub repo_name: String,
+    /// Normalized repo URL in "owner/name" format for filtering
+    pub normalized_repo_url: String,
 }
 
 /// Filter parameters for querying collections.
@@ -150,6 +152,7 @@ impl StorageEngine {
 
         // Gather: Collect all results
         let mut all_collections = Vec::new();
+        let filter_for_post = filter.clone();
 
         while let Some(result) = tasks.next().await {
             match result {
@@ -168,17 +171,33 @@ impl StorageEngine {
 
         tracing::info!("query_all_collections: total {} collections gathered", all_collections.len());
 
+        // Post-filter by repo_url if specified
+        let mut filtered = if let Some(ref repo_filter) = filter_for_post.repo_url {
+            all_collections.into_iter()
+                .filter(|entry| {
+                    // Check if entry matches the repo filter (owner/name format)
+                    // Match against:
+                    // 1. normalized_repo_url (already in owner/name format)
+                    // 2. original repo_url from database
+                    &entry.normalized_repo_url == repo_filter
+                        || entry.repo_url.as_ref().map(|u| u.contains(repo_filter)).unwrap_or(false)
+                })
+                .collect()
+        } else {
+            all_collections
+        };
+
         // Apply sorting
         let sort_order = sort.unwrap_or("updated_at_desc");
-        Self::sort_collections(&mut all_collections, sort_order);
+        Self::sort_collections(&mut filtered, sort_order);
 
         // Calculate total before pagination
-        let total = all_collections.len();
+        let total = filtered.len();
 
         // Apply pagination
         let offset = offset.min(total);
         let limit = limit.min(total - offset);
-        let items = all_collections.into_iter().skip(offset).take(limit).collect();
+        let items = filtered.into_iter().skip(offset).take(limit).collect();
 
         Ok(PaginatedResult {
             items,
@@ -272,6 +291,8 @@ impl StorageEngine {
         .context("Failed to get connection from pool")?;
 
         // Use block_in_place again for the interact call
+        let repo_owner_c = repo_owner.clone();
+        let repo_name_c = repo_name.clone();
         tokio::task::block_in_place(|| {
             tokio::runtime::Handle::current().block_on(conn.interact(move |conn| {
                 // Build query
@@ -280,6 +301,10 @@ impl StorageEngine {
                     FROM collections c
                     WHERE 1=1
                 ".to_string();
+
+                // We'll use origin_url as a fallback for filtering if repo_url is empty
+                // Include origin_url from the registry info we have
+                let effective_origin_url = origin_url.clone();
 
                 let mut where_clauses = Vec::new();
                 let mut sql_params: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
@@ -301,10 +326,8 @@ impl StorageEngine {
                     sql_params.push(Box::new(pattern));
                 }
 
-                if let Some(repo) = &filter.repo_url {
-                    where_clauses.push("c.repo_url = ?");
-                    sql_params.push(Box::new(repo.clone()));
-                }
+                // Note: repo_url filtering is done AFTER fetching all collections
+                // This allows us to match against both repo_url and origin_url
 
                 if let Some(branch) = &filter.branch {
                     where_clauses.push("c.created_branch = ?");
@@ -343,11 +366,32 @@ impl StorageEngine {
                     let (id, name, description, repo_url, updated_at, created_by, created_branch, health) = row?;
                     // Use created_at as fallback if updated_at is NULL
                     let display_date = updated_at.unwrap_or_else(|| "".to_string());
+                    // Normalize repo_url for filtering: use owner/name format if available
+                    let normalized_repo_url = repo_url.as_ref()
+                        .map(|url| {
+                            // Convert git@github.com:owner/repo.git to owner/repo format
+                            if url.contains("git@github.com:") {
+                                url.strip_suffix(".git")
+                                    .and_then(|s| s.split(':').nth(1))
+                                    .unwrap_or(url)
+                                    .to_string()
+                            } else if url.contains("github.com/") {
+                                url.split('/')
+                                    .skip(3) // Skip https:, , github.com
+                                    .take(2) // Take owner/repo
+                                    .collect::<Vec<&str>>()
+                                    .join("/")
+                            } else {
+                                url.clone()
+                            }
+                        })
+                        .or_else(|| origin_url.clone());
+
                     entries.push(CollectionEntry {
                         id,
                         name,
                         description,
-                        repo_url: repo_url.or_else(|| origin_url.clone()),
+                        repo_url: normalized_repo_url.clone(),
                         updated_at: display_date,
                         created_by,
                         created_branch,
@@ -355,6 +399,7 @@ impl StorageEngine {
                         repo_root: repo_root.clone(),
                         repo_owner: repo_owner.clone(),
                         repo_name: repo_name.clone(),
+                        normalized_repo_url: normalized_repo_url.unwrap_or_else(|| format!("{}/{}", repo_owner_c, repo_name_c)),
                     });
                 }
 
@@ -381,6 +426,8 @@ impl StorageEngine {
         .context("Failed to get connection from pool")?;
 
         // Use block_in_place again for the interact call
+        let repo_owner_c = repo_owner.clone();
+        let repo_name_c = repo_name.clone();
         tokio::task::block_in_place(|| {
             tokio::runtime::Handle::current().block_on(conn.interact(move |conn| {
                 let query_str = "
@@ -406,18 +453,40 @@ impl StorageEngine {
                     Ok((id, name, description, repo_url, updated_at, created_by, created_branch, health)) => {
                         // Use empty string as fallback for updated_at
                         let display_date = updated_at.unwrap_or_else(|| "".to_string());
+                        // Normalize repo_url for filtering
+                        let normalized = match &repo_url {
+                            Some(url) => {
+                                // Convert git@github.com:owner/repo.git to owner/repo format
+                                if url.contains("git@github.com:") {
+                                    url.strip_suffix(".git")
+                                        .and_then(|s| s.split(':').nth(1))
+                                        .unwrap_or(url)
+                                        .to_string()
+                                } else if url.contains("github.com/") {
+                                    url.split('/')
+                                        .skip(3)
+                                        .take(2)
+                                        .collect::<Vec<&str>>()
+                                        .join("/")
+                                } else {
+                                    url.clone()
+                                }
+                            }
+                            None => format!("{}/{}", repo_owner_c, repo_name_c),
+                        };
                         Ok(Some(CollectionEntry {
                             id,
                             name,
                             description,
-                            repo_url: repo_url.or_else(|| origin_url),
+                            repo_url: repo_url.or_else(|| origin_url.clone()),
                             updated_at: display_date,
                             created_by,
                             created_branch,
                             health,
                             repo_root,
-                            repo_owner,
-                            repo_name,
+                            repo_owner: repo_owner_c.clone(),
+                            repo_name: repo_name_c.clone(),
+                            normalized_repo_url: normalized,
                         }))
                     }
                     Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),

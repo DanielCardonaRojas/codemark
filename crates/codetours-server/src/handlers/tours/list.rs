@@ -256,11 +256,11 @@ async fn query_with_engine(
     let all_repos = engine.all_repos().await;
     tracing::info!("Found {} repos from engine for filter dropdown", all_repos.len());
     for (owner, name, origin_url) in all_repos {
-        // Use origin_url if available (e.g., https://github.com/owner/repo)
-        // Otherwise construct from owner/name
-        let repo_display = origin_url.unwrap_or_else(|| format!("{}/{}", owner, name));
+        // Use "owner/name" format for display instead of full git URL
+        let repo_display = format!("{}/{}", owner, name);
+        // For filtering, also use owner/name format
+        repos_set.insert(repo_display.clone());
         tracing::info!("Adding repo to filter: {} (owner={}, name={})", repo_display, owner, name);
-        repos_set.insert(repo_display);
     }
     tracing::info!("Final repos_set size: {}", repos_set.len());
 
