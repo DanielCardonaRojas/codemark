@@ -385,6 +385,17 @@ pub async fn handler(
                         let b_health: String = "active".to_string(); // Default health for bookmarks
                         let bcs: Option<String> = bcs;
 
+                        // Fetch note from bookmark_annotations
+                        let note: String = conn.prepare("SELECT notes FROM bookmark_annotations WHERE bookmark_id = ? LIMIT 1")
+                            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+                            .query_map([&bid], |row| row.get::<_, String>(0))
+                            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+                            .collect::<rusqlite::Result<Vec<String>>>()
+                            .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+                            .into_iter()
+                            .next()
+                            .unwrap_or_default();
+
                         let tags: Vec<String> = conn.prepare("SELECT tag FROM bookmark_tags WHERE bookmark_id = ?")
                             .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
                             .query_map([&bid], |row| row.get(0))
@@ -409,7 +420,7 @@ pub async fn handler(
 
                         let breadcrumbs: Vec<codemark_core::engine::breadcrumbs::Breadcrumb> = bcs.and_then(|s| serde_json::from_str(&s).ok()).unwrap_or_default();
 
-                        bookmarks.push((bid, file, range, head, snapshot, String::new(), lang, q, tags, comments, i + 1, b_health, breadcrumbs));
+                        bookmarks.push((bid, file, range, head, snapshot, note, lang, q, tags, comments, i + 1, b_health, breadcrumbs));
                     }
 
                     Ok::<(String, String, Option<String>, Option<String>, String, Option<String>, Option<String>, Option<String>, Vec<LinkView>, Vec<_>), StatusCode>((
