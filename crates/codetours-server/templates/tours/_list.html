@@ -1,0 +1,14 @@
+{% import "partials/icon.html" as icons %}
+<div id="tour-list" class="grid grid-cols-2 gap-6">
+    {% for tour in tours %}
+        {% include "_card.html" %}
+    {% else %}
+        <div class="col-span-full py-20 flex flex-col items-center justify-center text-text-secondary border-2 border-dashed border-border rounded-xl">
+            <div class="bg-bg-tertiary p-4 rounded-full mb-4">
+                {% call icons::icon("search", 32) %}
+            </div>
+            <p class="text-lg font-medium">No tours match the selected filters.</p>
+            <p class="text-sm mt-1">Try adjusting your search or filters.</p>
+        </div>
+    {% endfor %}
+</div>

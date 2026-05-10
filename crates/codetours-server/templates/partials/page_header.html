@@ -1,0 +1,11 @@
+<header class="page-header border-b border-border bg-bg-secondary/50 backdrop-blur sticky top-0 z-20">
+    <div class="px-8 py-6 flex items-center justify-between">
+        <div>
+            <h1 class="text-2xl font-bold text-text-primary">{{ title }}</h1>
+            <p class="text-text-secondary mt-1">{% block subtitle %}{% endblock %}</p>
+        </div>
+        <div class="flex items-center gap-3">
+            {% block actions %}{% endblock %}
+        </div>
+    </div>
+</header>

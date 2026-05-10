@@ -1,0 +1,319 @@
+{% extends "base.html" %}
+{% import "partials/icon.html" as icons %}
+
+{% block title %}{{ tour.title }} - Codetours{% endblock %}
+
+{% block head %}
+{% endblock %}
+
+{% block content %}
+<div class="flex flex-col h-screen overflow-hidden">
+    <!-- Compact Header -->
+    <header class="h-14 border-b border-border bg-bg-secondary flex items-center px-4 shrink-0 z-20">
+        <div class="flex items-center gap-4 flex-1">
+            <a href="/tours" class="p-2 hover:bg-bg-tertiary rounded-md text-text-secondary hover:text-text-primary transition-colors">
+                {% call icons::icon("arrow-left", 18) %}
+            </a>
+            <div class="flex items-center gap-3 min-w-0">
+                <h1 class="text-sm font-semibold truncate">{{ tour.title }}</h1>
+                <span class="status-badge bg-status-{{ tour.health_class }}/10 text-status-{{ tour.health_class }} border border-status-{{ tour.health_class }}/20">
+                    <span class="status-dot dot-{{ tour.health_class }}"></span>
+                    {{ tour.health_label }}
+                </span>
+            </div>
+        </div>
+        
+        <div class="flex items-center gap-3">
+            <div class="text-xs text-text-secondary hidden md:block">
+                by <span class="text-text-primary font-medium">{{ tour.author }}</span> 
+                • {{ tour.created_at_relative }}
+            </div>
+            <button hx-post="/tours/{{ tour.id }}/heal"
+                    hx-swap="none"
+                    hx-indicator=".heal-spinner"
+                    class="secondary-button !py-1 text-xs">
+                <div class="heal-spinner htmx-indicator mr-1">
+                    {% call icons::icon("refresh-cw", 12) %}
+                </div>
+                <span>Heal</span>
+            </button>
+        </div>
+    </header>
+
+    <!-- Three-Column Layout -->
+    <div class="flex-1 flex overflow-hidden">
+        <!-- Left: Steps Sidebar -->
+        <aside class="w-64 border-r border-border bg-bg-secondary/50 flex flex-col shrink-0 custom-scrollbar overflow-y-auto">
+            <div class="p-3 text-[10px] font-bold text-text-secondary uppercase tracking-wider">
+                Walkthrough Steps
+            </div>
+            <nav class="flex-1 px-2 pb-4 space-y-0.5">
+                {% for bookmark in tour.bookmarks %}
+                <button data-step-nav="{{ bookmark.ordinal }}"
+                        class="step-item group {% if loop.first %}active{% endif %}">
+                    <div class="flex flex-col items-center gap-1 mt-0.5">
+                        <span class="text-[10px] font-mono opacity-50">{{ bookmark.ordinal }}</span>
+                        <span class="status-dot dot-{{ bookmark.health_class }} w-1.5 h-1.5"></span>
+                    </div>
+                    <div class="flex-1 min-w-0">
+                        <div class="text-sm font-medium leading-tight truncate">{{ bookmark.headline }}</div>
+                        <div class="text-[10px] opacity-60 truncate mt-1">{{ bookmark.file_path }}</div>
+                    </div>
+                    {% if bookmark.has_notes %}
+                    <span class="w-1.5 h-1.5 rounded-full bg-accent mt-1.5"></span>
+                    {% endif %}
+                </button>
+                {% endfor %}
+            </nav>
+        </aside>
+
+        <!-- Center: Scroll Content -->
+        <div class="flex-1 overflow-y-auto custom-scrollbar bg-bg-primary" id="scroll-content" data-scrollspy>
+            <div class="max-w-4xl mx-auto px-8 py-10 space-y-16">
+                <!-- Tour Intro -->
+                <div class="space-y-4">
+                    <h2 class="text-2xl font-bold">{{ tour.title }}</h2>
+                    {% if let Some(desc) = tour.description %}
+                    <div class="text-text-secondary leading-relaxed prose prose-invert max-w-none">
+                        {{ desc }}
+                    </div>
+                    {% endif %}
+                </div>
+
+                <!-- Steps -->
+                {% for bookmark in tour.bookmarks %}
+                <article class="step-block" 
+                         id="step-{{ bookmark.ordinal }}" 
+                         data-step-ordinal="{{ bookmark.ordinal }}">
+                    <header class="flex items-start gap-4">
+                        <div class="w-8 h-8 rounded-full bg-bg-tertiary flex items-center justify-center text-xs font-bold border border-border">
+                            {{ bookmark.ordinal }}
+                        </div>
+                        <div class="flex-1 min-w-0">
+                            <div class="flex items-center gap-2 text-xs text-text-secondary mb-1">
+                                <span class="status-dot dot-{{ bookmark.health_class }}"></span>
+                                <span class="font-mono">{{ bookmark.file_path }}</span>
+                                <span>:</span>
+                                <span>{{ bookmark.line_range }}</span>
+                            </div>
+                            <h2 class="text-xl font-bold text-text-primary">{{ bookmark.headline }}</h2>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            <button class="p-2 hover:bg-bg-tertiary rounded-md text-text-secondary transition-colors" title="Open in Editor" data-open-in-editor data-path="{{ bookmark.file_path }}" data-line="{{ bookmark.line }}">
+                                {% call icons::icon("edit", 16) %}
+                            </button>
+                            <button class="p-2 hover:bg-bg-tertiary rounded-md text-text-secondary transition-colors" title="Copy Permalinks" data-copy="/tours/{{ tour.id }}#step-{{ bookmark.ordinal }}">
+                                {% call icons::icon("link", 16) %}
+                            </button>
+                        </div>
+                    </header>
+
+                    {% if !bookmark.note.is_empty() %}
+                    <div class="text-text-secondary leading-relaxed">
+                        {{ bookmark.note }}
+                    </div>
+                    {% endif %}
+
+                    <!-- Code Preview Container -->
+                    <div class="rounded-xl border border-border bg-bg-tertiary/20 overflow-hidden relative">
+                        <input type="radio" name="view-{{ bookmark.ordinal }}" id="view-source-{{ bookmark.ordinal }}" class="sr-only peer/source" checked>
+                        {% if bookmark.has_query %}
+                        <input type="radio" name="view-{{ bookmark.ordinal }}" id="view-query-{{ bookmark.ordinal }}" class="sr-only peer/query">
+                        {% endif %}
+
+                        <div class="flex items-center justify-between px-4 py-2 border-b border-border bg-bg-secondary/30">
+                            <div class="flex gap-4">
+                                <label for="view-source-{{ bookmark.ordinal }}" class="flex items-center gap-2 cursor-pointer group">
+                                    <span class="text-xs font-medium text-text-secondary peer-checked/source:text-accent group-hover:text-text-primary transition-colors">Source</span>
+                                </label>
+                                {% if bookmark.has_query %}
+                                <label for="view-query-{{ bookmark.ordinal }}" class="flex items-center gap-2 cursor-pointer group">
+                                    <span class="text-xs font-medium text-text-secondary peer-checked/query:text-accent group-hover:text-text-primary transition-colors">Query</span>
+                                </label>
+                                {% endif %}
+                            </div>
+                            <div class="text-[10px] font-mono text-text-secondary opacity-50 uppercase tracking-widest">
+                                {{ bookmark.language }}
+                            </div>
+                        </div>
+
+                        <!-- Source Panel with Sticky Breadcrumbs -->
+                        <div class="relative group/code panel-source hidden peer-checked/source:block">
+                            <div class="flex">
+                                <div class="line-numbers shrink-0 py-4 px-3 text-right bg-bg-secondary/20 border-r border-border text-[10px] font-mono text-text-secondary opacity-50 select-none">
+                                    <!-- Sticky line numbers (shown first, highlighted in accent) -->
+                                    {% for sticky_line_num in bookmark.sticky_line_numbers %}
+                                        <div class="text-accent font-bold opacity-100">{{ sticky_line_num }}</div>
+                                    {% endfor %}
+                                    <!-- Regular line numbers -->
+                                    {% for line in bookmark.preview_lines.lines() %}
+                                        {% set line_num = loop.index0 + bookmark.snippet_start %}
+                                        <div>{{ line_num }}</div>
+                                    {% endfor %}
+                                </div>
+                                <pre class="p-4 text-xs font-mono overflow-x-auto custom-scrollbar flex-1"><code>{{ bookmark.highlighted_with_sticky|safe }}</code></pre>
+                            </div>
+                            <button class="absolute top-3 right-3 p-1.5 bg-bg-secondary border border-border rounded opacity-0 group-hover/code:opacity-100 transition-opacity" data-copy="{{ bookmark.preview_lines }}">
+                                {% call icons::icon("clipboard", 12) %}
+                            </button>
+                        </div>
+
+                        <!-- Query Panel -->
+                        {% if let Some(q) = bookmark.query_highlighted %}
+                        <div class="relative group/code panel-query hidden peer-checked/query:block">
+                            <pre class="p-4 text-xs font-mono overflow-x-auto custom-scrollbar"><code>{{ q|safe }}</code></pre>
+                        </div>
+                        {% else if let Some(q) = bookmark.query %}
+                        <div class="relative group/code panel-query hidden peer-checked/query:block">
+                            <pre class="p-4 text-xs font-mono overflow-x-auto custom-scrollbar text-text-primary"><code>{{ q }}</code></pre>
+                        </div>
+                        {% endif %}
+                    </div>
+                </article>
+                {% endfor %}
+
+                <!-- Tour Footer -->
+                <div class="py-20 border-t border-border flex flex-col items-center justify-center text-center space-y-6">
+                    <div class="w-16 h-16 rounded-full bg-status-healthy/10 flex items-center justify-center text-status-healthy">
+                        {% call icons::icon("check-circle-2", 32) %}
+                    </div>
+                    <div class="space-y-2">
+                        <h3 class="text-2xl font-bold">Tour Complete</h3>
+                        <p class="text-text-secondary">You've reached the end of this walkthrough.</p>
+                    </div>
+                    <div class="pt-4 w-full max-w-md">
+                        <div class="p-4 rounded-xl border border-border bg-bg-secondary flex flex-col gap-3 text-left">
+                            <div class="text-xs font-bold text-text-secondary uppercase tracking-widest">Pull locally</div>
+                            <div class="flex gap-2">
+                                <code class="flex-1 bg-bg-tertiary p-2 rounded border border-border text-[11px] font-mono truncate">
+                                    codemark pull http://{{ host }}/tours/{{ tour.id }}
+                                </code>
+                                <button class="primary-button !py-1 text-xs" data-copy="codemark pull http://{{ host }}/tours/{{ tour.id }}">
+                                    Copy
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Right: Metadata Sidebar -->
+        <aside class="metadata-sidebar">
+            <div class="flex-1 overflow-y-auto custom-scrollbar">
+                {% for bookmark in tour.bookmarks %}
+                <div data-step-panel="{{ bookmark.ordinal }}" class="{% if !loop.first %}hidden{% endif %} p-6 space-y-8">
+                    <div class="space-y-4">
+                        <div class="flex items-center gap-2">
+                            <span class="text-text-secondary">
+                                {% call icons::icon("layers", 14) %}
+                            </span>
+                            <div class="text-[10px] font-bold text-text-secondary uppercase tracking-wider">Step Metadata</div>
+                        </div>
+                        <div class="flex flex-wrap gap-2">
+                            <span class="px-2 py-1 bg-bg-tertiary rounded text-[10px] font-mono border border-border">ID: {{ bookmark.id_short }}</span>
+                            {% for tag in bookmark.tags %}
+                            <span class="px-2 py-1 rounded text-[10px] font-bold tracking-wider {{ tag|tag_color_classes }}">{{ tag.to_uppercase() }}</span>
+                            {% endfor %}
+                        </div>
+
+                    </div>
+
+                    <div class="space-y-4">
+                        <div class="flex items-center justify-between">
+                            <div class="flex items-center gap-2">
+                                <span class="text-text-secondary">
+                                    {% call icons::icon("message-square", 14) %}
+                                </span>
+                                <div class="text-[10px] font-bold text-text-secondary uppercase tracking-wider">Step Discussion</div>
+                            </div>
+                            <span class="text-[10px] bg-bg-tertiary/40 px-1.5 py-0.5 rounded text-text-secondary border border-border">{{ bookmark.comment_count }}</span>
+                        </div>
+                        
+                        <!-- Comment Thread Placeholder -->
+                        <div class="space-y-4">
+                            <div class="comments-list space-y-4">
+                                {% for comment in bookmark.comments %}
+                                    {% include "tours/_comment_bubble.html" %}
+                                {% endfor %}
+                            </div>
+
+                            <!-- Comment Composer -->
+                            <div class="pt-4 border-t border-border/40">
+                                <form hx-post="/tours/{{ tour.id }}/bookmarks/{{ bookmark.id }}/comments" 
+                                      hx-target="previous .comments-list" 
+                                      hx-swap="beforeend"
+                                      hx-on::after-request="if(event.detail.successful) this.reset()">
+                                    <textarea name="content" required maxlength="4000" placeholder="Add a comment to this step..." 
+                                              class="w-full bg-bg-tertiary/20 border border-border rounded-lg p-3 text-xs focus:outline-none focus:border-accent min-h-[80px] transition-colors resize-none"></textarea>
+                                    <div class="flex justify-end mt-2">
+                                        <button type="submit" class="primary-button !py-1 !px-3 text-[10px]">
+                                            {% call icons::icon("send", 10) %}
+                                            Post
+                                        </button>
+                                    </div>
+                                </form>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                {% endfor %}
+            </div>
+
+            <!-- Global Tour Resources (Fixed at bottom) -->
+            <div class="p-6 border-t border-border bg-bg-secondary/80 backdrop-blur">
+                <div class="flex items-center justify-between mb-4">
+                    <div class="flex items-center gap-2">
+                        <span class="text-text-secondary">
+                            {% call icons::icon("link", 14) %}
+                        </span>
+                        <div class="text-[10px] font-bold text-text-secondary uppercase tracking-wider">Tour Resources</div>
+                    </div>
+                    <button onclick="document.getElementById('add-link-form').classList.toggle('hidden')" 
+                            class="p-1 hover:bg-bg-tertiary rounded text-text-secondary hover:text-text-primary transition-colors">
+                        {% call icons::icon("plus", 12) %}
+                    </button>
+                </div>
+
+                <!-- Add Link Form (Hidden by default) -->
+                <div id="add-link-form" class="hidden mb-4 p-3 rounded-lg border border-border bg-bg-tertiary/20">
+                    <form hx-post="/tours/{{ tour.id }}/links"
+                          hx-target="#links-list"
+                          hx-swap="beforeend"
+                          hx-on::after-request="if(event.detail.successful) { this.reset(); document.getElementById('add-link-form').classList.add('hidden'); if(document.querySelector('.empty-notice')) document.querySelector('.empty-notice').remove(); }">
+                        <div class="space-y-2">
+                            <input type="text" name="label" required placeholder="Label (e.g. GitHub PR)" 
+                                   class="w-full bg-bg-tertiary/50 border border-border rounded px-2 py-1.5 text-[10px] focus:outline-none focus:border-accent">
+                            <input type="url" name="url" required placeholder="URL" 
+                                   class="w-full bg-bg-tertiary/50 border border-border rounded px-2 py-1.5 text-[10px] focus:outline-none focus:border-accent">
+                            <select name="kind" class="w-full bg-bg-tertiary/50 border border-border rounded px-2 py-1.5 text-[10px] focus:outline-none focus:border-accent">
+                                <option value="other">Other</option>
+                                <option value="pr">Pull Request</option>
+                                <option value="issue">Issue</option>
+                                <option value="doc">Documentation</option>
+                                <option value="discussion">Discussion</option>
+                                <option value="dashboard">Dashboard</option>
+                                <option value="repo">Repository</option>
+                                <option value="tour">Related Tour</option>
+                            </select>
+                            <div class="flex justify-end gap-2 pt-1">
+                                <button type="button" onclick="document.getElementById('add-link-form').classList.add('hidden')"
+                                        class="text-[10px] text-text-secondary hover:text-text-primary">Cancel</button>
+                                <button type="submit" class="primary-button !py-0.5 !px-2 text-[10px]">Add</button>
+                            </div>
+                        </div>
+                    </form>
+                </div>
+
+                <div class="space-y-2" id="links-list">
+                    {% for link in tour.links %}
+                    {% include "tours/_link_item.html" %}
+                    {% else %}
+                    <div class="text-[10px] text-text-secondary italic empty-notice">No resources attached</div>
+                    {% endfor %}
+                </div>
+            </div>
+        </aside>
+    </div>
+</div>
+{% endblock %}

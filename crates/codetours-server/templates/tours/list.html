@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% import "partials/icon.html" as icons %}
+
+{% block title %}Browse Tours - Codetours{% endblock %}
+
+{% block content %}
+<div class="p-8 max-w-7xl mx-auto">
+    <div class="flex items-center justify-between mb-8">
+        <div>
+            <h1 class="text-3xl font-bold">Code Tours</h1>
+            <p class="text-text-secondary mt-1">Discover walkthroughs and documentation for this workspace.</p>
+        </div>
+    </div>
+
+    {% include "_filters.html" %}
+    
+    {% if hx_request %}
+        {% include "_list.html" %}
+    {% else %}
+        {% include "_list.html" %}
+    {% endif %}
+</div>
+{% endblock %}

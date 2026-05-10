@@ -22,7 +22,11 @@ async fn setup_app() -> (axum::Router, tempfile::TempDir) {
     let storage =
         StorageManager::new(temp_data.path().to_path_buf(), config.storage.clone()).unwrap();
 
-    let state = AppState { config: Arc::new(config), storage: Arc::new(storage) };
+    let state = AppState {
+        config: Arc::new(config),
+        storage: Arc::new(storage),
+        storage_engine: None,
+    };
     (router(state), temp_data)
 }
 
@@ -77,7 +81,12 @@ async fn test_publish_list_get_delete_flow() {
     assert_eq!(body["tour_id"], collection_id);
 
     // 3. GET /tours (List)
-    let req = Request::builder().method("GET").uri("/tours").body(Body::empty()).unwrap();
+    let req = Request::builder()
+        .method("GET")
+        .uri("/tours")
+        .header(header::ACCEPT, "application/json")
+        .body(Body::empty())
+        .unwrap();
 
     let response = app.clone().oneshot(req).await.unwrap();
     let status = response.status();
@@ -91,6 +100,7 @@ async fn test_publish_list_get_delete_flow() {
     let req = Request::builder()
         .method("GET")
         .uri(format!("/tours/{}", collection_id))
+        .header(header::ACCEPT, "application/json")
         .body(Body::empty())
         .unwrap();
 

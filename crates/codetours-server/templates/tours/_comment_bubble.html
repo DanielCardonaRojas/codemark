@@ -1,0 +1,12 @@
+<div class="flex gap-3">
+    <div class="w-6 h-6 rounded-full bg-accent/20 flex items-center justify-center text-[10px] font-bold text-accent shrink-0">
+        {{ comment.author_initial }}
+    </div>
+    <div class="flex-1 min-w-0 bg-bg-tertiary/30 p-2.5 rounded-lg border border-border/50">
+        <div class="flex items-center justify-between mb-1">
+            <div class="text-[10px] font-bold truncate">{{ comment.author }}</div>
+            <div class="text-[9px] text-text-secondary">{{ comment.created_at_relative }}</div>
+        </div>
+        <div class="text-xs text-text-secondary leading-normal whitespace-pre-wrap">{{ comment.body }}</div>
+    </div>
+</div>

@@ -1,0 +1,8 @@
+{% import "partials/icon.html" as icons %}
+<a href="{{ link.url }}" target="_blank" rel="noopener noreferrer" 
+   class="flex items-center gap-3 p-3 bg-bg-tertiary/20 border border-border rounded-lg text-sm font-medium hover:bg-bg-tertiary/40 transition-colors group">
+    <span class="text-text-secondary group-hover:text-text-primary transition-colors">
+        {% call icons::icon(link.icon, 16) %}
+    </span>
+    <span class="truncate">{{ link.label }}</span>
+</a>

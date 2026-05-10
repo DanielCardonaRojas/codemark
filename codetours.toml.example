@@ -18,6 +18,10 @@ max_open_tenants = 256
 # Maximum allowed size for a SQLite pack upload in bytes. Default: 5MB
 max_pack_size = 5242880
 
+[ui]
+# Optional path to a custom CSS file to override Tailwind @theme variables.
+# theme_css = "/path/to/theme.css"
+
 [storage]
 # Number of SQLite connections in the pool per tenant. Default: 8
 pool_size = 8
@@ -29,6 +33,9 @@ mode = "stub"
 # Token used for development/stub authentication. 
 # Clients must provide this in the 'X-Tour-Token' header.
 dev_token = "dev-token"
+
+# Used in Phase 5 for "My Tours" local-dev mock before real auth lands.
+stub_user = "local-dev"
 
 
 # ------------------------------------------------------------------------------

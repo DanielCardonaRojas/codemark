@@ -38,6 +38,16 @@ impl AuthContext {
         matches!(self, AuthContext::Authenticated { .. })
     }
 
+    /// Returns the active user_id for queries that need to key off "me".
+    /// PHASE 6 SWAP POINT: In M2, this falls back to the configured `stub_user` for anonymous callers.
+    /// In Phase 6, anonymous callers will return None, and only authenticated callers will return Some(user_id).
+    pub fn current_user(&self, config: &crate::config::Config) -> Option<String> {
+        match self {
+            AuthContext::Authenticated { user_id, .. } => Some(user_id.clone()),
+            AuthContext::Anonymous => Some(config.auth.stub_user.clone()),
+        }
+    }
+
     /// Returns true if the authenticated user has the specified scope.
     pub fn has_scope(&self, scope: Scope) -> bool {
         match self {
@@ -120,7 +130,7 @@ where
         }
 
         Ok(AuthContext::Authenticated {
-            user_id: "stub".to_string(),
+            user_id: state.config.auth.stub_user.clone(),
             scopes: vec![Scope::Publish, Scope::Read, Scope::Delete],
         })
     }

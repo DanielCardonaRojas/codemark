@@ -1,0 +1,2 @@
+[filter]
+tag_color_classes = "crate::web::filters::tag_color_classes"

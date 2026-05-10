@@ -1,0 +1,97 @@
+@import "tailwindcss";
+
+@theme {
+  /* Ported from dashboard-ui/src/index.css :root */
+  --color-bg-primary: #0d1117;
+  --color-bg-secondary: #161b22;
+  --color-bg-tertiary: #1f242c;
+  --color-text-primary: #e6edf3;
+  --color-text-secondary: #8b949e;
+  --color-accent: #58a6ff;
+  --color-accent-hover: #79b8ff;
+  --color-border: #30363d;
+  --color-status-healthy: #3fb950;
+  --color-status-drifted: #d29922;
+  --color-status-stale: #f85149;
+  --color-status-archived: #6e7681;
+  --width-sidebar: 240px;
+  --width-sidebar-collapsed: 72px;
+}
+
+@layer components {
+  .nav-item       { @apply flex items-center gap-2 px-3 py-2 rounded-md text-text-secondary hover:bg-bg-tertiary hover:text-text-primary transition-colors; }
+  .nav-item.active{ @apply bg-bg-tertiary text-text-primary; }
+  .status-dot     { @apply inline-block w-2 h-2 rounded-full; }
+  .dot-healthy    { @apply bg-status-healthy; }
+  .dot-drifted    { @apply bg-status-drifted; }
+  .dot-stale      { @apply bg-status-stale; }
+  .dot-archived   { @apply bg-status-archived; }
+  .status-badge   { @apply inline-flex items-center gap-1.5 px-2 py-0.5 rounded text-xs font-medium; }
+  .primary-button { @apply inline-flex items-center gap-2 px-3 py-2 rounded-md bg-accent text-white hover:bg-accent-hover transition-colors; }
+  .secondary-button { @apply inline-flex items-center gap-2 px-3 py-2 rounded-md border border-border text-text-primary hover:bg-bg-tertiary transition-colors; }
+
+  /* Sidebar geometry */
+  .sidebar {
+    @apply fixed left-0 top-0 h-full bg-bg-secondary border-r border-border z-30 transition-[width] duration-300;
+    width: var(--width-sidebar);
+  }
+  
+  .sidebar[data-sidebar-collapsed="true"] {
+    width: var(--width-sidebar-collapsed);
+  }
+
+  .main-content {
+    @apply min-h-screen bg-bg-primary text-text-primary transition-[padding-left] duration-300;
+    padding-left: var(--width-sidebar);
+  }
+
+  .sidebar[data-sidebar-collapsed="true"] ~ .main-content {
+    padding-left: var(--width-sidebar-collapsed);
+  }
+
+  /* Tour Detail Components */
+  .step-item { @apply w-full flex items-start gap-3 p-3 rounded-md text-left transition-colors text-text-secondary hover:bg-bg-tertiary/50 hover:text-text-primary; }
+  .step-item.active { @apply bg-bg-tertiary text-text-primary; }
+  .metadata-sidebar { @apply w-80 border-l border-border bg-bg-secondary/50 flex flex-col shrink-0 overflow-hidden; }
+  .step-block { @apply space-y-6 pt-8 border-t border-border/40; }
+
+  /* Code Highlighting Extensions */
+  .hl-target { @apply opacity-100; }
+  .hl-context { @apply opacity-40; }
+  .breadcrumb-bar { @apply flex items-center gap-2 px-4 py-1.5 bg-bg-secondary/50 border-b border-border text-[10px] font-mono text-text-secondary overflow-x-auto whitespace-nowrap; }
+  .breadcrumb-item { @apply flex items-center gap-2 shrink-0; }
+  .breadcrumb-separator { @apply opacity-30 shrink-0; }
+
+  @keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+  }
+  
+  .htmx-request .heal-spinner svg {
+    animation: spin 1s linear infinite;
+  }
+
+  /* Custom scrollbar for steps sidebar and metadata sidebar */
+  .custom-scrollbar::-webkit-scrollbar {
+    width: 4px;
+  }
+  .custom-scrollbar::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .custom-scrollbar::-webkit-scrollbar-thumb {
+    background: var(--color-border);
+    border-radius: 10px;
+  }
+  .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+    background: var(--color-text-secondary);
+  }
+
+  /* Custom select dropdown styling */
+  .filter-select {
+    appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='292.4' height='292.4'%3E%3Cpath fill='%238b949e' d='M287 69.4a17.6 17.6 0 0 0-13-5.4H18.4c-5 0-9.3 1.8-12.9 5.4A17.6 17.6 0 0 0 0 82.2c0 5 1.8 9.3 5.4 12.9l128 127.9c3.6 3.6 7.8 5.4 12.8 5.4s9.2-1.8 12.8-5.4L287 95c3.5-3.5 5.4-7.8 5.4-12.8 0-5-1.9-9.2-5.5-12.8z'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 0.7rem center;
+    background-size: 0.65em;
+  }
+}

@@ -1,0 +1,55 @@
+{% import "partials/icon.html" as icons %}
+<div class="bg-bg-secondary border border-border rounded-xl p-5 hover:border-accent/50 hover:shadow-lg hover:shadow-accent/5 transition-all group flex flex-col h-full">
+    <div class="flex items-center justify-between mb-4">
+        <div class="flex items-center gap-2">
+            <span class="status-dot dot-{{ tour.status_class }}"></span>
+            <span class="text-[10px] font-bold tracking-wider text-text-secondary">{{ tour.health_label }}</span>
+        </div>
+        <span class="text-xs text-text-secondary">{{ tour.updated_at_relative }}</span>
+    </div>
+
+    <h3 class="text-lg font-semibold text-text-primary mb-2 line-clamp-1">
+        <a href="/tours/{{ tour.id }}" class="hover:text-accent transition-colors">
+            {{ tour.title }}
+        </a>
+    </h3>
+
+    {% if !tour.description.is_empty() %}
+    <p class="text-sm text-text-secondary line-clamp-2 mb-4 flex-1">
+        {{ tour.description }}
+    </p>
+    {% else %}
+    <div class="flex-1"></div>
+    {% endif %}
+
+    <div class="flex flex-wrap gap-2 mb-6">
+        {% for tag in tour.tags %}
+        <span class="px-2 py-0.5 rounded text-[10px] font-bold tracking-wider {{ tag|tag_color_classes }}">
+            {{ tag.to_uppercase() }}
+        </span>
+        {% endfor %}
+    </div>
+
+    <div class="pt-4 border-t border-border flex items-center justify-between text-xs text-text-secondary">
+        <div class="flex items-center gap-4">
+            <div class="flex items-center gap-1.5">
+                {% call icons::icon("user", 12) %}
+                <span>{{ tour.author }}</span>
+            </div>
+            {% if let Some(repo) = tour.repo %}
+            <div class="flex items-center gap-1.5">
+                {% call icons::icon("folder", 12) %}
+                <span>{{ repo }}</span>
+            </div>
+            {% endif %}
+            <div class="flex items-center gap-1 overflow-hidden max-w-[150px]">
+                {% call icons::icon("git-branch", 12) %}
+                <span class="truncate">{{ tour.branch }}</span>
+            </div>
+        </div>
+        <div class="flex items-center gap-1 whitespace-nowrap">
+            {% call icons::icon("book-open", 12) %}
+            <span>{{ tour.step_count }} steps</span>
+        </div>
+    </div>
+</div>
