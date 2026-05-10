@@ -21,7 +21,7 @@ pub struct TourDetail {
     pub title: String,
     pub description: Option<String>,
     pub repo_url: Option<String>,
-    pub published_at: String,
+    pub created_at: String,
     pub bookmarks: Vec<BookmarkDetail>,
 }
 
@@ -60,7 +60,7 @@ pub struct TourDetailView {
     pub title: String,
     pub description: Option<String>,
     pub author: String,
-    pub published_at_relative: String,
+    pub created_at_relative: String,
     pub health: Option<String>,
     pub health_class: String,
     pub health_label: String,
@@ -223,12 +223,12 @@ pub async fn handler(
             let is_auth = auth.is_authenticated();
 
             // In registry mode, first find the collection across all repos
-            let (repo_pool, id_clone) = if let Some(engine) = &state.storage_engine {
+            let (repo_pool, id_clone, is_registry_mode) = if let Some(engine) = &state.storage_engine {
                 match engine.find_collection_by_id(&id).await {
                     Ok(Some(entry)) => {
                         // Get the pool for this specific repo
                         match engine.get_pool_for_repo(&entry.repo_root).await {
-                            Some(pool) => (Some(pool), entry.id),
+                            Some(pool) => (Some(pool), entry.id, true),
                             None => {
                                 tracing::error!("Failed to get pool for repo: {}", entry.repo_root);
                                 return StatusCode::INTERNAL_SERVER_ERROR.into_response();
@@ -243,7 +243,7 @@ pub async fn handler(
                 }
             } else {
                 // Single DB mode - use the default storage
-                (None, id.clone())
+                (None, id.clone(), false)
             };
 
             // Get connection from the appropriate pool
@@ -269,22 +269,27 @@ pub async fn handler(
                 .interact(move |conn| {
                     let id_for_query = id_clone.clone();
                     // 1. Get collection
-                    let sql = if is_auth {
-                        "SELECT id, name, description, repo_url, published_at, created_by, health, health_computed_at FROM collections
-                     WHERE id = ?1 AND visibility IS NOT NULL"
+                    // In registry mode, skip visibility check (show all collections)
+                    // In single-tenant mode, enforce visibility
+                    let sql = if is_registry_mode {
+                        "SELECT id, name, description, repo_url, created_at, created_by, health, health_computed_at FROM collections
+                         WHERE id = ?1"
+                    } else if is_auth {
+                        "SELECT id, name, description, repo_url, created_at, created_by, health, health_computed_at FROM collections
+                         WHERE id = ?1 AND visibility IS NOT NULL"
                     } else {
-                        "SELECT id, name, description, repo_url, published_at, created_by, health, health_computed_at FROM collections
-                     WHERE id = ?1 AND visibility = 'public'"
+                        "SELECT id, name, description, repo_url, created_at, created_by, health, health_computed_at FROM collections
+                         WHERE id = ?1 AND visibility = 'public'"
                     };
 
-                    let (coll_id, name, description, repo_url, published_at, author, health, health_computed_at) = conn
+                    let (coll_id, name, description, repo_url, created_at, author, health, health_computed_at) = conn
                         .query_row(sql, [&id_for_query], |row| {
                             Ok((
                                 row.get::<_, String>(0)?,
                                 row.get::<_, String>(1)?,
                                 row.get::<_, Option<String>>(2)?,
                                 row.get::<_, Option<String>>(3)?,
-                                row.get::<_, String>(4)?,
+                                row.get::<_, Option<String>>(4)?, // created_at (was created_at)
                                 row.get::<_, Option<String>>(5)?,
                                 row.get::<_, Option<String>>(6)?,
                                 row.get::<_, Option<String>>(7)?,
@@ -329,7 +334,7 @@ pub async fn handler(
                     // 3. Get bookmarks and join with latest resolution
                     let mut stmt = conn
                         .prepare(
-                            "SELECT b.id, b.file_path, r.line_range, r.headline, r.snapshot, b.language, b.query, b.health, r.breadcrumbs
+                            "SELECT b.id, b.file_path, r.line_range, r.headline, r.snapshot, b.language, b.query, r.breadcrumbs
                      FROM collection_bookmarks cb
                      JOIN bookmarks b ON cb.bookmark_id = b.id
                      LEFT JOIN resolutions r ON r.id = (
@@ -355,8 +360,7 @@ pub async fn handler(
                                 row.get::<_, Option<String>>(4)?, // snapshot (was preview_lines)
                                 row.get::<_, String>(5)?, // language
                                 row.get::<_, String>(6)?, // query
-                                row.get::<_, String>(7)?, // health
-                                row.get::<_, Option<String>>(8)?, // breadcrumbs
+                                row.get::<_, Option<String>>(7)?, // breadcrumbs
                             ))
                         })
                         .map_err(|e| {
@@ -370,7 +374,7 @@ pub async fn handler(
                         })?;
 
                     let mut bookmarks = Vec::new();
-                    for (i, (bid, file, range, head, snapshot, lang, q, b_health, bcs)) in bookmarks_data.into_iter().enumerate() {
+                    for (i, (bid, file, range, head, snapshot, lang, q, bcs)) in bookmarks_data.into_iter().enumerate() {
                         let bid: String = bid;
                         let file: String = file;
                         let range: Option<String> = range;
@@ -378,7 +382,7 @@ pub async fn handler(
                         let snapshot: Option<String> = snapshot;
                         let lang: String = lang;
                         let q: String = q;
-                        let b_health: String = b_health;
+                        let b_health: String = "active".to_string(); // Default health for bookmarks
                         let bcs: Option<String> = bcs;
 
                         let tags: Vec<String> = conn.prepare("SELECT tag FROM bookmark_tags WHERE bookmark_id = ?")
@@ -409,7 +413,7 @@ pub async fn handler(
                     }
 
                     Ok::<(String, String, Option<String>, Option<String>, String, Option<String>, Option<String>, Option<String>, Vec<LinkView>, Vec<_>), StatusCode>((
-                        coll_id, name, description, repo_url, published_at, author, health, health_computed_at, links, bookmarks
+                        coll_id, name, description, repo_url, created_at.unwrap_or_default(), author, health, health_computed_at, links, bookmarks
                     ))
                 })
                 .await;
@@ -420,7 +424,7 @@ pub async fn handler(
                     name,
                     description,
                     repo_url,
-                    published_at,
+                    created_at,
                     author,
                     health,
                     health_computed_at,
@@ -462,7 +466,7 @@ pub async fn handler(
                                 title: name,
                                 description,
                                 repo_url,
-                                published_at,
+                                created_at,
                                 bookmarks,
                             }),
                         )
@@ -583,7 +587,7 @@ pub async fn handler(
                                 title: name,
                                 description,
                                 author: author.unwrap_or_else(|| "anonymous".to_string()),
-                                published_at_relative: published_at, // TODO: relative
+                                created_at_relative: created_at, // TODO: relative
                                 health: health.clone(),
                                 health_class: health_class.to_string(),
                                 health_label: health_label.to_string(),

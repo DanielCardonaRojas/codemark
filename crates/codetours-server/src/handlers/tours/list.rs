@@ -185,7 +185,7 @@ pub async fn handler(
                 if hx_request {
                     ToursListPartialTemplate { tours }.into_response()
                 } else {
-                    tracing::info!("Rendering template with {} repos, {} branches, {} tags", repos.len(), branches.len(), tags.len());
+                    tracing::info!("Rendering template with {} tours, {} repos, {} branches, {} tags", tours.len(), repos.len(), branches.len(), tags.len());
                     let template = ToursListTemplate {
                         nav: NavItem::Tours,
                         tours,
@@ -227,6 +227,8 @@ async fn query_with_engine(
     let result = engine
         .query_all_collections(filter, limit + offset, 0, params.sort.as_deref())
         .await?;
+
+    tracing::info!("query_with_engine: got {} entries from engine", result.items.len());
 
     // For scatter-gather, we need to get step counts and tags from each repo's database
     // This is expensive, so we'll return default values for now and optimize later

@@ -161,7 +161,7 @@ impl StorageEngine {
                     tracing::warn!("Error querying repository: {:?}", e);
                 }
                 Err(e) => {
-                    tracing::warn!("Task failed: {:?}", e);
+                    tracing::warn!("Task join error: {:?}", e);
                 }
             }
         }
@@ -191,6 +191,7 @@ impl StorageEngine {
     /// Find a collection by ID across all repositories.
     pub async fn find_collection_by_id(&self, id: &str) -> Result<Option<CollectionEntry>> {
         let pools = self.pools.read().await;
+        tracing::info!("find_collection_by_id: looking for id={} across {} pools", id, pools.len());
 
         // Query all repositories concurrently
         let mut tasks = FuturesUnordered::new();
@@ -211,17 +212,21 @@ impl StorageEngine {
         // Return the first match found
         while let Some(result) = tasks.next().await {
             match result {
-                Ok(Ok(Some(entry))) => return Ok(Some(entry)),
+                Ok(Ok(Some(entry))) => {
+                    tracing::info!("find_collection_by_id: found collection {} in repo {}/{}", entry.id, entry.repo_owner, entry.repo_name);
+                    return Ok(Some(entry));
+                }
                 Ok(Ok(None)) => continue,
                 Ok(Err(e)) => {
-                    tracing::warn!("Error querying repository: {}", e);
+                    tracing::warn!("Error querying repository: {:?}", e);
                 }
                 Err(e) => {
-                    tracing::warn!("Task failed: {}", e);
+                    tracing::warn!("Task failed: {:?}", e);
                 }
             }
         }
 
+        tracing::warn!("find_collection_by_id: collection {} not found in any repository", id);
         Ok(None)
     }
 
