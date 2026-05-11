@@ -185,6 +185,100 @@ impl GitHubVerifier {
         Ok(has_access)
     }
 
+    /// Verify that the user has write access (push or admin) to the repository.
+    ///
+    /// Returns Ok(true) if write access is granted, Ok(false) if denied.
+    pub async fn verify_write_access(
+        &self,
+        state: &AppState,
+        repo_url: &str,
+        user_id: &str,
+    ) -> Result<bool, anyhow::Error> {
+        let (owner, repo) = Self::parse_repo_url(repo_url)
+            .ok_or_else(|| anyhow::anyhow!("Invalid repository URL: {}", repo_url))?;
+
+        // Check cache first (include user_id in cache key since permissions vary by user)
+        let cache_key = format!("{}:{}:write", owner, repo);
+        {
+            let cache = self.cache.read().await;
+            // We use a simple string key for write access cache
+            if let Some(entry) = cache.get(&(cache_key.clone(), repo.clone()))
+                && entry.expires_at > chrono::Utc::now()
+            {
+                return Ok(entry.has_access);
+            }
+        }
+
+        // Get the user's GitHub token from registry
+        let user_id = user_id.to_string();
+        let registry_conn = state.registry.get_conn().await;
+        let user_id_for_log = user_id.clone();
+        let github_token = registry_conn
+            .interact(move |conn| {
+                let mut stmt = conn.prepare(
+                    "SELECT github_token FROM users
+                     WHERE id = ?1 AND github_token IS NOT NULL",
+                )?;
+
+                stmt.query_row([&user_id], |row| {
+                    let token: String = row.get(0)?;
+                    Ok(token)
+                })
+                .optional()
+            })
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to query user: {}", e))?
+            .map_err(|e| anyhow::anyhow!("Failed to execute query: {}", e))?
+            .ok_or_else(|| anyhow::anyhow!("User not found or no GitHub token available"))?;
+
+        // Verify write access via GitHub API
+        let client = reqwest::Client::new();
+        let api_url = format!("https://api.github.com/repos/{}/{}", owner, repo);
+
+        let resp = client
+            .get(&api_url)
+            .header("Authorization", format!("Bearer {}", github_token))
+            .header("User-Agent", "codetours-server")
+            .header("Accept", "application/vnd.github+json")
+            .send()
+            .await?;
+
+        if !resp.status().is_success() {
+            // Cache the denial
+            let mut cache = self.cache.write().await;
+            cache.insert(
+                (cache_key, repo.clone()),
+                CacheEntry {
+                    has_access: false,
+                    expires_at: chrono::Utc::now() + chrono::Duration::seconds(self.cache_ttl_seconds),
+                },
+            );
+            return Ok(false);
+        }
+
+        let repo_info: GitHubRepo = resp.json().await?;
+        let has_write = repo_info.permissions.push || repo_info.permissions.admin;
+
+        // Cache the result
+        let mut cache = self.cache.write().await;
+        cache.insert(
+            (cache_key, repo),
+            CacheEntry {
+                has_access: has_write,
+                expires_at: chrono::Utc::now() + chrono::Duration::seconds(self.cache_ttl_seconds),
+            },
+        );
+
+        tracing::info!(
+            user_id = %user_id_for_log,
+            repo_url = %repo_url,
+            has_write_access = %has_write,
+            "GitHub write access check completed"
+        );
+
+        Ok(has_write)
+    }
+
     /// Clear expired cache entries.
     pub async fn clean_cache(&self) {
         let mut cache = self.cache.write().await;

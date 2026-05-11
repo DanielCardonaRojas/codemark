@@ -1,8 +1,8 @@
 use crate::cli::output::{OutputMode, write_success};
 use crate::cli::*;
-use codemark_core::config::Config;
 use codemark_core::error::{Error, Result};
 use codemark_core::storage::pack::{PackReader, inspect, pre_inspect};
+use codemark_core::storage::registry;
 use comfy_table::Table;
 use reqwest::header::{ACCEPT, HeaderMap, HeaderValue};
 use std::collections::HashMap;
@@ -18,10 +18,8 @@ fn build_pull_http_client() -> Result<reqwest::Client> {
 }
 
 pub async fn handle_pull(cli: &Cli, mode: &OutputMode, args: &PullArgs) -> Result<()> {
-    let config = super::load_config(cli);
-
     // 1. Resolve server and token
-    let (server_url, token, mut tour_id) = resolve_pull_params(&config, args)?;
+    let (server_url, token, mut tour_id) = resolve_pull_params(cli, args)?;
 
     // 2. Short ID resolution
     if uuid::Uuid::parse_str(&tour_id).is_err() {
@@ -72,14 +70,7 @@ pub async fn handle_pull(cli: &Cli, mode: &OutputMode, args: &PullArgs) -> Resul
 
     let res = async {
         let client = build_pull_http_client()?;
-        let mut headers = HeaderMap::new();
-        if let Some(t) = token {
-            headers.insert(
-                "X-Tour-Token",
-                HeaderValue::from_str(&t)
-                    .map_err(|_| Error::Operation("Invalid token".to_string()))?,
-            );
-        }
+        let mut headers = build_auth_headers(token.as_ref())?;
         headers.insert(ACCEPT, HeaderValue::from_static("application/vnd.codetours.pack+sqlite"));
 
         let response = client
@@ -330,7 +321,7 @@ async fn handle_display_pulled(_mode: &OutputMode, pack_path: &std::path::Path) 
 }
 
 fn resolve_pull_params(
-    config: &Config,
+    cli: &Cli,
     args: &PullArgs,
 ) -> Result<(String, Option<String>, String)> {
     if args.tour.starts_with("http://") || args.tour.starts_with("https://") {
@@ -345,39 +336,77 @@ fn resolve_pull_params(
         let server_url = parts[1].to_string();
         let tour_id = parts[0].to_string();
 
-        // Find token in config if available, but OVERRIDE with --token flag
-        let token = args.token.clone().or_else(|| {
-            config
-                .codetours
-                .servers
-                .iter()
-                .find(|s| {
-                    s.url == server_url
-                        || s.url.trim_end_matches('/') == server_url.trim_end_matches('/')
-                })
-                .and_then(|s| s.token.clone())
-        });
+        // Check for token in registry first, then use CLI flag
+        let registry_token = get_token_for_server(&server_url).ok().flatten();
+        let token = args.token.as_ref().or(registry_token.as_ref()).cloned();
 
         return Ok((server_url, token, tour_id));
     }
 
     // Bare ID, requires --server
-    let server_name = args
-        .server
-        .as_deref()
-        .or(config.codetours.default_server.as_deref())
-        .ok_or_else(|| Error::Input("server is required when pull by ID".to_string()))?;
-
-    let (server_url, token) = if server_name.starts_with("http") {
-        (server_name.to_string(), args.token.clone())
+    let server_name = if let Some(ref server) = args.server {
+        server.clone()
     } else {
-        let s =
-            config.codetours.servers.iter().find(|s| s.name == server_name).ok_or_else(|| {
-                Error::Input(format!("server '{}' not found in config", server_name))
-            })?;
-        // Priority: CLI flag > Server config
-        (s.url.clone(), args.token.clone().or(s.token.clone()))
+        let config = super::load_config(cli);
+        config.codetours.default_server.clone()
+            .ok_or_else(|| Error::Input("server is required when pull by ID".to_string()))?
     };
 
-    Ok((server_url, token, args.tour.clone()))
+    // If it's a URL, get token from registry
+    if server_name.starts_with("http") {
+        let registry_token = get_token_for_server(&server_name).ok().flatten();
+        let token = args.token.as_ref().or(registry_token.as_ref()).cloned();
+        return Ok((server_name.to_string(), token, args.tour.clone()));
+    }
+
+    // Look up server in config
+    let config = super::load_config(cli);
+    let s = config.codetours.servers.iter().find(|s| s.name == server_name).ok_or_else(|| {
+        Error::Input(format!("server '{}' not found in config", server_name))
+    })?;
+
+    // Priority: CLI flag > Server config > Registry
+    let registry_token = get_token_for_server(&s.url).ok().flatten();
+    let token = args.token.as_ref()
+        .or(s.token.as_ref())
+        .or(registry_token.as_ref())
+        .cloned();
+
+    Ok((s.url.clone(), token, args.tour.clone()))
+}
+
+/// Build authorization headers for a server request.
+///
+/// Uses Bearer token for JWT-based auth, fallback to X-Tour-Token for legacy.
+fn build_auth_headers(token: Option<&String>) -> Result<HeaderMap> {
+    let mut headers = HeaderMap::new();
+
+    if let Some(t) = token {
+        if t.starts_with("eyJ") {
+            // JWT token
+            headers.insert(
+                "Authorization",
+                HeaderValue::from_str(&format!("Bearer {}", t))
+                    .map_err(|_| Error::Operation("Invalid token".to_string()))?,
+            );
+        } else {
+            // Legacy token
+            headers.insert(
+                "X-Tour-Token",
+                HeaderValue::from_str(t)
+                    .map_err(|_| Error::Operation("Invalid token".to_string()))?,
+            );
+        }
+    }
+
+    Ok(headers)
+}
+
+/// Get auth token for a server from the registry.
+fn get_token_for_server(server_url: &str) -> Result<Option<String>> {
+    let conn = registry::open_registry()?;
+    let server = registry::get_server(&conn, server_url)
+        .map_err(|e| Error::Database(format!("Failed to query server: {}", e)))?;
+
+    Ok(server.and_then(|s| s.token))
 }
