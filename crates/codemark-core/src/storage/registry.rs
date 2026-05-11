@@ -54,6 +54,12 @@ fn init_schema(conn: &Connection) -> Result<()> {
         CREATE INDEX IF NOT EXISTS idx_known_repos_origin ON known_repos(origin_url);
         CREATE INDEX IF NOT EXISTS idx_known_repos_root ON known_repos(repo_root);
         CREATE INDEX IF NOT EXISTS idx_known_repos_owner_name ON known_repos(repo_owner, repo_name);
+
+        CREATE TABLE IF NOT EXISTS servers (
+            url             TEXT PRIMARY KEY,
+                token           TEXT,
+                last_login      TEXT
+        );
         ",
     )?;
 
@@ -362,5 +368,125 @@ mod tests {
         ];
         let resolved = resolve_repos(&conn, &repo_refs).unwrap();
         assert_eq!(resolved.len(), 2); // Only the two existing repos
+    }
+}
+
+/// Server authentication information.
+#[derive(Debug, Clone)]
+pub struct Server {
+    pub url: String,
+    pub token: Option<String>,
+    pub last_login: Option<String>,
+}
+
+/// Register or update a server in the registry.
+pub fn upsert_server(conn: &Connection, url: &str, token: Option<&str>) -> Result<()> {
+    let now = chrono::Utc::now().to_rfc3339();
+
+    conn.execute(
+        "INSERT INTO servers (url, token, last_login)
+         VALUES (?1, ?2, ?3)
+         ON CONFLICT(url) DO UPDATE SET
+             token = COALESCE(excluded.token, servers.token),
+             last_login = excluded.last_login",
+        params![url, token, now],
+    )?;
+
+    Ok(())
+}
+
+/// Get a server by URL.
+pub fn get_server(conn: &Connection, url: &str) -> Result<Option<Server>> {
+    conn.query_row(
+        "SELECT url, token, last_login FROM servers WHERE url = ?1",
+        params![url],
+        |row| {
+            Ok(Server {
+                url: row.get(0)?,
+                token: row.get(1)?,
+                last_login: row.get(2)?,
+            })
+        },
+    )
+    .optional()
+    .map_err(|e| Error::Database(e.to_string()))
+}
+
+/// List all servers.
+pub fn list_servers(conn: &Connection) -> Result<Vec<Server>> {
+    let mut stmt = conn.prepare(
+        "SELECT url, token, last_login FROM servers ORDER BY url"
+    )?;
+
+    let servers = stmt.query_map([], |row| {
+        Ok(Server {
+            url: row.get(0)?,
+            token: row.get(1)?,
+            last_login: row.get(2)?,
+        })
+    })?.collect::<std::result::Result<Vec<_>, _>>()?;
+
+    Ok(servers)
+}
+
+/// Delete a server by URL.
+pub fn delete_server(conn: &Connection, url: &str) -> Result<()> {
+    conn.execute(
+        "DELETE FROM servers WHERE url = ?1",
+        params![url],
+    )?;
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod server_tests {
+    use super::*;
+
+    fn test_registry() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        init_schema(&conn).unwrap();
+        conn
+    }
+
+    #[test]
+    fn test_server_upsert_and_get() {
+        let conn = test_registry();
+
+        upsert_server(&conn, "https://codemark.example.com", Some("token123")).unwrap();
+
+        let server = get_server(&conn, "https://codemark.example.com").unwrap().unwrap();
+        assert_eq!(server.url, "https://codemark.example.com");
+        assert_eq!(server.token, Some("token123".to_string()));
+        assert!(server.last_login.is_some());
+
+        // Update with new token
+        upsert_server(&conn, "https://codemark.example.com", Some("new_token")).unwrap();
+        let server = get_server(&conn, "https://codemark.example.com").unwrap().unwrap();
+        assert_eq!(server.token, Some("new_token".to_string()));
+    }
+
+    #[test]
+    fn test_list_servers() {
+        let conn = test_registry();
+
+        upsert_server(&conn, "https://server1.com", Some("token1")).unwrap();
+        upsert_server(&conn, "https://server2.com", Some("token2")).unwrap();
+
+        let servers = list_servers(&conn).unwrap();
+        assert_eq!(servers.len(), 2);
+        assert_eq!(servers[0].url, "https://server1.com");
+        assert_eq!(servers[1].url, "https://server2.com");
+    }
+
+    #[test]
+    fn test_delete_server() {
+        let conn = test_registry();
+
+        upsert_server(&conn, "https://server.com", Some("token")).unwrap();
+        assert!(get_server(&conn, "https://server.com").unwrap().is_some());
+
+        delete_server(&conn, "https://server.com").unwrap();
+        assert!(get_server(&conn, "https://server.com").unwrap().is_none());
     }
 }

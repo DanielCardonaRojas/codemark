@@ -5,7 +5,7 @@ use axum::{
 use codetours_server::{
     config::Config,
     router::{AppState, router},
-    storage::StorageManager,
+    storage::{registry::RegistryManager, StorageManager},
 };
 use serde_json::Value;
 use std::sync::Arc;
@@ -17,8 +17,13 @@ async fn setup_app() -> (axum::Router, tempfile::TempDir) {
     let temp_data = tempdir().unwrap();
     let storage =
         StorageManager::new(temp_data.path().to_path_buf(), config.storage.clone()).unwrap();
+    let registry = RegistryManager::new(&temp_data.path().to_path_buf()).unwrap();
 
-    let state = AppState { config: Arc::new(config), storage: Arc::new(storage) };
+    let state = AppState {
+        config: Arc::new(config),
+        storage: Arc::new(storage),
+        registry: Arc::new(registry),
+    };
     (router(state), temp_data)
 }
 

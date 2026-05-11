@@ -144,6 +144,9 @@ pub enum Command {
     #[command(name = "pull", hide = true)]
     Pull(PullArgs),
 
+    /// Manage authentication and login
+    Auth(AuthArgs),
+
     /// Manage repository registry and server configuration
     Repo(RepoArgs),
 }
@@ -1150,6 +1153,45 @@ pub struct RepoSetServerArgs {
     /// Repository reference (owner/name) - defaults to current repo
     pub repo: Option<String>,
 
+    /// Server URL (e.g., https://codemark.example.com)
+    pub server: String,
+}
+
+/// Arguments for the `codemark auth` subcommand.
+#[derive(Debug, clap::Args)]
+pub struct AuthArgs {
+    #[command(subcommand)]
+    pub command: AuthCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum AuthCommand {
+    /// Login to a Codetours server
+    Login(AuthLoginArgs),
+
+    /// Logout from a server
+    Logout(AuthLogoutArgs),
+
+    /// List authenticated servers
+    List,
+}
+
+#[derive(Debug, clap::Args)]
+pub struct AuthLoginArgs {
+    /// Server URL (e.g., https://codemark.example.com)
+    pub server: String,
+
+    /// Auth token (if you have one already)
+    #[arg(long)]
+    pub token: Option<String>,
+
+    /// Open browser for OAuth flow (default: true)
+    #[arg(long, default_value = "true")]
+    pub browser: bool,
+}
+
+#[derive(Debug, clap::Args)]
+pub struct AuthLogoutArgs {
     /// Server URL (e.g., https://codemark.example.com)
     pub server: String,
 }
