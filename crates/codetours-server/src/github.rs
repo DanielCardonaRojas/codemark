@@ -93,10 +93,12 @@ impl GitHubVerifier {
 
         // Handle owner/repo format (simple case, no .git suffix)
         if let Some((owner, repo)) = url.split_once('/')
-            && !owner.contains('.') && !owner.contains(':') {
-                let repo = repo.strip_suffix(".git").unwrap_or(repo);
-                return Some((owner.to_string(), repo.to_string()));
-            }
+            && !owner.contains('.')
+            && !owner.contains(':')
+        {
+            let repo = repo.strip_suffix(".git").unwrap_or(repo);
+            return Some((owner.to_string(), repo.to_string()));
+        }
 
         None
     }
@@ -116,9 +118,10 @@ impl GitHubVerifier {
         {
             let cache = self.cache.read().await;
             if let Some(entry) = cache.get(&(owner.clone(), repo.clone()))
-                && entry.expires_at > chrono::Utc::now() {
-                    return Ok(entry.has_access);
-                }
+                && entry.expires_at > chrono::Utc::now()
+            {
+                return Ok(entry.has_access);
+            }
         }
 
         // Get the user's GitHub token from registry

@@ -145,29 +145,32 @@ fn resolve_server_and_token(
 ) -> Result<(String, Option<String>)> {
     // If explicit server URL is provided, use it
     if let Some(server) = server_arg
-        && server.starts_with("http") {
-            // Direct URL - check for token in registry
-            let token = get_token_for_server(server)?;
-            return Ok((server.to_string(), token));
-        }
+        && server.starts_with("http")
+    {
+        // Direct URL - check for token in registry
+        let token = get_token_for_server(server)?;
+        return Ok((server.to_string(), token));
+    }
 
     // Try to get server from registry based on current repo
     if let Ok(conn) = registry::open_registry() {
         if let Some(repo) = repo_url {
             // Look for a server associated with this repo
             if let Ok(Some(known_repo)) = registry::find_repo_by_origin(&conn, repo)
-                && let Some(ref server_url) = known_repo.server_url {
-                    let token = get_token_for_server(server_url)?;
-                    return Ok((server_url.clone(), token));
-                }
+                && let Some(ref server_url) = known_repo.server_url
+            {
+                let token = get_token_for_server(server_url)?;
+                return Ok((server_url.clone(), token));
+            }
         }
 
         // If no repo-specific server, check for a default server in registry
         if let Ok(servers) = registry::list_servers(&conn)
-            && let Some(server) = servers.first() {
-                let token = server.token.clone();
-                return Ok((server.url.clone(), token));
-            }
+            && let Some(server) = servers.first()
+        {
+            let token = server.token.clone();
+            return Ok((server.url.clone(), token));
+        }
     }
 
     // Fallback to config or localhost

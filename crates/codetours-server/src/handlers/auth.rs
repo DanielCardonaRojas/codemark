@@ -4,30 +4,42 @@ use super::HandlerError;
 use crate::router::AppState;
 use crate::storage::registry::{self, UserUpsert};
 use axum::{
-    extract::State,
+    extract::{Query, State},
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Redirect, Response},
 };
-use serde_json::json;
+use serde::Deserialize;
 use uuid::Uuid;
 
 /// GitHub user info from the API.
-#[derive(serde::Deserialize)]
-struct GithubUser {
-    id: serde_json::Number,
-    login: String,
+#[derive(Debug, Deserialize)]
+pub struct GithubUser {
+    pub id: serde_json::Number,
+    pub login: String,
 }
 
 /// GitHub OAuth token response.
-#[derive(serde::Deserialize)]
-struct GithubTokenResponse {
-    access_token: String,
+#[derive(Debug, Deserialize)]
+pub struct GithubTokenResponse {
+    pub access_token: String,
+}
+
+/// Query parameters for the OAuth callback.
+#[derive(Debug, Deserialize)]
+pub struct CallbackQueryParams {
+    pub code: Option<String>,
+    pub state: Option<String>,
+    pub error: Option<String>,
+    pub error_description: Option<String>,
 }
 
 /// Initiate GitHub OAuth login.
 ///
 /// Redirects the user to GitHub's authorization page.
-pub async fn github_login(State(state): State<AppState>) -> Result<Redirect, HandlerError> {
+pub async fn github_login(
+    State(state): State<AppState>,
+    Query(params): Query<CallbackQueryParams>,
+) -> Result<Redirect, HandlerError> {
     let config = &state.config.auth.github;
 
     if config.client_id.is_empty() {
@@ -39,12 +51,13 @@ pub async fn github_login(State(state): State<AppState>) -> Result<Redirect, Han
     // Generate a state parameter for CSRF protection
     let state_param = Uuid::new_v4().to_string();
 
-    // TODO: Store state_param in cache with expiration for verification
+    // Get redirect_uri from query params or use default
+    let redirect_uri = params.state.clone().unwrap_or_else(|| config.callback_url.clone());
 
     let auth_url = format!(
         "https://github.com/login/oauth/authorize?client_id={}&redirect_uri={}&scope=read:org&state={}",
         config.client_id,
-        urlencoding::encode(&config.callback_url),
+        urlencoding::encode(&redirect_uri),
         state_param
     );
 
@@ -53,17 +66,33 @@ pub async fn github_login(State(state): State<AppState>) -> Result<Redirect, Han
 
 /// Handle GitHub OAuth callback.
 ///
+/// Supports two modes:
+/// 1. Header-based flow (CLI): Authorization code in `x-code` header
+/// 2. Query-based flow (Browser): Authorization code in query parameters
+///
 /// Exchanges the authorization code for an access token,
 /// fetches user info, and creates/updates the user in the registry.
 /// Returns a JWT session token to the client.
 pub async fn github_callback(
     State(state): State<AppState>,
+    Query(query): Query<CallbackQueryParams>,
     headers: HeaderMap,
 ) -> Result<Response, HandlerError> {
-    let code = headers.get("x-code").and_then(|h| h.to_str().ok()).or(None); // We'll use headers for CLI-based flow
+    // Check for OAuth error response
+    if let Some(error) = &query.error {
+        let error_desc = query.error_description.as_deref().unwrap_or("Unknown error").to_string();
+        return Err(HandlerError::BadRequest(format!(
+            "GitHub authorization error: {} - {}",
+            error, error_desc
+        )));
+    }
 
-    let code =
-        code.ok_or_else(|| HandlerError::BadRequest("Missing authorization code".to_string()))?;
+    // Get code from header or query params
+    let code = headers
+        .get("x-code")
+        .and_then(|h| h.to_str().ok())
+        .or(query.code.as_deref())
+        .ok_or_else(|| HandlerError::BadRequest("Missing authorization code".to_string()))?;
 
     let config = &state.config.auth.github;
 
@@ -71,7 +100,7 @@ pub async fn github_callback(
     let client = reqwest::Client::new();
     let token_resp: GithubTokenResponse = client
         .post("https://github.com/login/oauth/access_token")
-        .form(&json!({
+        .form(&serde_json::json!({
             "client_id": config.client_id,
             "client_secret": config.client_secret,
             "code": code,
@@ -148,11 +177,11 @@ pub async fn github_callback(
     // Generate JWT session token
     let session_token = generate_jwt(&user_id, config)?;
 
-    // Return the session token
+    // Return the session token as JSON
     Ok((
         StatusCode::OK,
         [(("content-type"), "application/json")],
-        json!({ "token": session_token }).to_string(),
+        serde_json::json!({ "token": session_token }).to_string(),
     )
         .into_response())
 }
@@ -168,7 +197,7 @@ fn generate_jwt(
         return Err(HandlerError::Internal("JWT secret is not configured".to_string()));
     }
 
-    let claims = json!({
+    let claims = serde_json::json!({
         "sub": user_id,
         "exp": chrono::Utc::now().timestamp() + config.session_expires_in as i64,
     });
