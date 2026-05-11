@@ -198,6 +198,18 @@ pub fn get_server_url(conn: &Connection, repo_root: &str) -> Result<Option<Strin
     Ok(url)
 }
 
+/// Find a repository by its origin URL.
+pub fn find_repo_by_origin(conn: &Connection, origin_url: &str) -> Result<Option<KnownRepo>> {
+    conn.query_row(
+        "SELECT id, repo_owner, repo_name, origin_url, repo_root, db_owner_email, db_owner_name, detected_at, last_seen_at, server_url
+         FROM known_repos WHERE origin_url = ?1",
+        params![origin_url],
+        row_to_known_repo,
+    )
+    .optional()
+    .map_err(|e| Error::Database(e.to_string()))
+}
+
 /// Resolve multiple repository references (owner/name) to their local paths.
 ///
 /// Returns a vector of (repo_ref, local_path) pairs for repositories found in the registry.

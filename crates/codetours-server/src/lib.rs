@@ -2,6 +2,7 @@ pub mod auth;
 pub mod cli;
 pub mod config;
 pub mod error;
+pub mod github;
 pub mod handlers;
 pub mod observability;
 pub mod pack;

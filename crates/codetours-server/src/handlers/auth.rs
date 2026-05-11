@@ -60,10 +60,7 @@ pub async fn github_callback(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Response, HandlerError> {
-    let code = headers
-        .get("x-code")
-        .and_then(|h| h.to_str().ok())
-        .or(None); // We'll use headers for CLI-based flow
+    let code = headers.get("x-code").and_then(|h| h.to_str().ok()).or(None); // We'll use headers for CLI-based flow
 
     let code =
         code.ok_or_else(|| HandlerError::BadRequest("Missing authorization code".to_string()))?;
