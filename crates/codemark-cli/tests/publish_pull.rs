@@ -4,7 +4,7 @@ use codemark_core::storage::db::Database;
 use codetours_server::{
     config::Config as ServerConfig,
     router::{AppState, router},
-    storage::StorageManager,
+    storage::{StorageManager, registry::RegistryManager},
 };
 use std::sync::Arc;
 use tempfile::tempdir;
@@ -16,8 +16,13 @@ async fn start_test_server(data_dir: std::path::PathBuf) -> (String, tokio::task
     config.auth.dev_token = "test-token".to_string();
     config.data_dir = data_dir.clone();
 
-    let storage = StorageManager::new(data_dir, config.storage.clone()).unwrap();
-    let state = AppState { config: Arc::new(config), storage: Arc::new(storage) };
+    let storage = StorageManager::new(data_dir.clone(), config.storage.clone()).unwrap();
+    let registry = RegistryManager::new(&data_dir).unwrap();
+    let state = AppState {
+        config: Arc::new(config),
+        storage: Arc::new(storage),
+        registry: Arc::new(registry),
+    };
 
     let app = router(state);
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();

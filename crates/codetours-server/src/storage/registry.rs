@@ -3,13 +3,13 @@
 //! The registry is stored in `data/registry.sqlite` and serves as the central
 //! source of truth for identity, organization, and access permissions.
 
-use crate::error::{ServerError, Result};
+use crate::error::{Result, ServerError};
 use deadpool_sqlite::{Config as PoolConfig, Pool, Runtime};
 use rusqlite::{Connection, OptionalExtension, params};
 use std::path::PathBuf;
 
 /// Registry database path in the data directory.
-pub fn registry_path(data_dir: &PathBuf) -> PathBuf {
+pub fn registry_path(data_dir: &std::path::Path) -> PathBuf {
     data_dir.join("registry.sqlite")
 }
 
@@ -20,18 +20,20 @@ pub struct RegistryManager {
 
 impl RegistryManager {
     /// Create a new registry manager with connection pool.
-    pub fn new(data_dir: &PathBuf) -> Result<Self> {
+    pub fn new(data_dir: &std::path::Path) -> Result<Self> {
         let path = registry_path(data_dir);
 
         // Ensure parent directory exists
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)
-                .map_err(|e| ServerError::Registry(format!("Failed to create registry directory: {}", e)))?;
+            std::fs::create_dir_all(parent).map_err(|e| {
+                ServerError::Registry(format!("Failed to create registry directory: {}", e))
+            })?;
         }
 
         // Initialize the database file and schema
-        let conn = Connection::open(&path)
-            .map_err(|e| ServerError::Registry(format!("Failed to open registry database: {}", e)))?;
+        let conn = Connection::open(&path).map_err(|e| {
+            ServerError::Registry(format!("Failed to open registry database: {}", e))
+        })?;
 
         // Enable WAL mode for better concurrent access
         conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")
@@ -153,14 +155,7 @@ pub fn upsert_user(conn: &Connection, user: &UserUpsert<'_>) -> Result<()> {
              github_login = excluded.github_login,
              github_token = COALESCE(excluded.github_token, users.github_token),
              last_login_at = excluded.last_login_at",
-        params![
-            user.id,
-            user.github_id,
-            user.github_login,
-            user.github_token,
-            now,
-            now,
-        ],
+        params![user.id, user.github_id, user.github_login, user.github_token, now, now,],
     )
     .map_err(|e| ServerError::Registry(format!("Failed to upsert user: {}", e)))?;
 
@@ -196,12 +191,7 @@ pub fn store_refresh_token(conn: &Connection, token: &RefreshToken) -> Result<()
     conn.execute(
         "INSERT INTO refresh_tokens (token, user_id, expires_at, created_at)
          VALUES (?1, ?2, ?3, ?4)",
-        params![
-            &token.token,
-            &token.user_id,
-            &token.expires_at,
-            &token.created_at,
-        ],
+        params![&token.token, &token.user_id, &token.expires_at, &token.created_at,],
     )
     .map_err(|e| ServerError::Registry(format!("Failed to store refresh token: {}", e)))?;
 
@@ -244,10 +234,7 @@ pub fn find_refresh_token(conn: &Connection, token: &str) -> Result<Option<(Refr
 pub fn delete_expired_tokens(conn: &Connection) -> Result<usize> {
     let now = chrono::Utc::now().to_rfc3339();
     let count = conn
-        .execute(
-            "DELETE FROM refresh_tokens WHERE expires_at < ?1",
-            params![now],
-        )
+        .execute("DELETE FROM refresh_tokens WHERE expires_at < ?1", params![now])
         .map_err(|e| ServerError::Registry(format!("Failed to delete expired tokens: {}", e)))?;
 
     Ok(count)
@@ -258,13 +245,7 @@ pub fn create_tenant(conn: &Connection, tenant: &Tenant) -> Result<()> {
     conn.execute(
         "INSERT INTO tenants (id, slug, db_path, github_id, created_at)
          VALUES (?1, ?2, ?3, ?4, ?5)",
-        params![
-            &tenant.id,
-            &tenant.slug,
-            &tenant.db_path,
-            &tenant.github_id,
-            &tenant.created_at,
-        ],
+        params![&tenant.id, &tenant.slug, &tenant.db_path, &tenant.github_id, &tenant.created_at,],
     )
     .map_err(|e| ServerError::Registry(format!("Failed to create tenant: {}", e)))?;
 
@@ -388,9 +369,7 @@ mod tests {
         store_refresh_token(&conn, &token).unwrap();
 
         // Find the token
-        let (found_token, user) = find_refresh_token(&conn, "refresh-123")
-            .unwrap()
-            .unwrap();
+        let (found_token, user) = find_refresh_token(&conn, "refresh-123").unwrap().unwrap();
         assert_eq!(found_token.token, "refresh-123");
         assert_eq!(user.github_login, "testuser");
     }

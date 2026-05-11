@@ -56,10 +56,7 @@ impl IntoResponse for ServerError {
             }
         };
 
-        let body = Json(ErrorResponse {
-            error: error_code.to_string(),
-            message,
-        });
+        let body = Json(ErrorResponse { error: error_code.to_string(), message });
 
         (status, body).into_response()
     }

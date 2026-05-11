@@ -2,8 +2,8 @@
 
 use crate::cli::output::OutputMode;
 use crate::cli::{AuthArgs, AuthCommand, AuthLoginArgs, AuthLogoutArgs, Cli};
-use codemark_core::storage::registry;
 use codemark_core::error::{Error, Result};
+use codemark_core::storage::registry;
 
 /// Handle auth commands.
 pub async fn handle_auth(cli: &Cli, mode: &OutputMode, args: &AuthArgs) -> Result<()> {
@@ -26,12 +26,15 @@ pub async fn handle_login(_cli: &Cli, mode: &OutputMode, args: &AuthLoginArgs) -
 
         let message = format!("Logged in to {}", server_url);
         if matches!(mode, OutputMode::Json) {
-            println!("{}", serde_json::json!({
-                "status": "success",
-                "message": message,
-                "server": server_url,
-                "method": "token",
-            }));
+            println!(
+                "{}",
+                serde_json::json!({
+                    "status": "success",
+                    "message": message,
+                    "server": server_url,
+                    "method": "token",
+                })
+            );
         } else {
             println!("{}", message);
         }
@@ -42,11 +45,14 @@ pub async fn handle_login(_cli: &Cli, mode: &OutputMode, args: &AuthLoginArgs) -
     // For now, instruct the user to use --token or implement OAuth
     let message = "OAuth login not yet implemented. Use --token to provide a token directly.";
     if matches!(mode, OutputMode::Json) {
-        println!("{}", serde_json::json!({
-            "status": "info",
-            "message": message,
-            "server": server_url,
-        }));
+        println!(
+            "{}",
+            serde_json::json!({
+                "status": "info",
+                "message": message,
+                "server": server_url,
+            })
+        );
     } else {
         println!("{}", message);
     }
@@ -71,11 +77,14 @@ pub async fn handle_logout(_cli: &Cli, mode: &OutputMode, args: &AuthLogoutArgs)
 
     let message = format!("Logged out from {}", server_url);
     if matches!(mode, OutputMode::Json) {
-        println!("{}", serde_json::json!({
-            "status": "success",
-            "message": message,
-            "server": server_url,
-        }));
+        println!(
+            "{}",
+            serde_json::json!({
+                "status": "success",
+                "message": message,
+                "server": server_url,
+            })
+        );
     } else {
         println!("{}", message);
     }
@@ -91,11 +100,14 @@ pub async fn handle_list(_cli: &Cli, mode: &OutputMode) -> Result<()> {
 
     if servers.is_empty() {
         if matches!(mode, OutputMode::Json) {
-            println!("{}", serde_json::json!({
-                "status": "success",
-                "message": "No authenticated servers",
-                "servers": [],
-            }));
+            println!(
+                "{}",
+                serde_json::json!({
+                    "status": "success",
+                    "message": "No authenticated servers",
+                    "servers": [],
+                })
+            );
         } else {
             println!("No authenticated servers");
         }
@@ -115,11 +127,14 @@ pub async fn handle_list(_cli: &Cli, mode: &OutputMode) -> Result<()> {
 
     let message = format!("{} authenticated server(s)", servers.len());
     if matches!(mode, OutputMode::Json) {
-        println!("{}", serde_json::json!({
-            "status": "success",
-            "message": message,
-            "servers": servers_json,
-        }));
+        println!(
+            "{}",
+            serde_json::json!({
+                "status": "success",
+                "message": message,
+                "servers": servers_json,
+            })
+        );
     } else {
         println!("{}", message);
         for server in &servers {

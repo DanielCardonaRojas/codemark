@@ -27,9 +27,7 @@ struct GithubTokenResponse {
 /// Initiate GitHub OAuth login.
 ///
 /// Redirects the user to GitHub's authorization page.
-pub async fn github_login(
-    State(state): State<AppState>,
-) -> Result<Redirect, HandlerError> {
+pub async fn github_login(State(state): State<AppState>) -> Result<Redirect, HandlerError> {
     let config = &state.config.auth.github;
 
     if config.client_id.is_empty() {
@@ -65,14 +63,10 @@ pub async fn github_callback(
     let code = headers
         .get("x-code")
         .and_then(|h| h.to_str().ok())
-        .or_else(|| {
-            // Also check query parameter (for browser-based flow)
-            None // We'll use headers for CLI-based flow
-        });
+        .or(None); // We'll use headers for CLI-based flow
 
-    let code = code.ok_or_else(|| {
-        HandlerError::BadRequest("Missing authorization code".to_string())
-    })?;
+    let code =
+        code.ok_or_else(|| HandlerError::BadRequest("Missing authorization code".to_string()))?;
 
     let config = &state.config.auth.github;
 
@@ -167,13 +161,14 @@ pub async fn github_callback(
 }
 
 /// Generate a JWT token for the user.
-fn generate_jwt(user_id: &str, config: &crate::config::GithubAuthConfig) -> Result<String, HandlerError> {
-    use jsonwebtoken::{encode, EncodingKey, Header};
+fn generate_jwt(
+    user_id: &str,
+    config: &crate::config::GithubAuthConfig,
+) -> Result<String, HandlerError> {
+    use jsonwebtoken::{EncodingKey, Header, encode};
 
     if config.jwt_secret.is_empty() {
-        return Err(HandlerError::Internal(
-            "JWT secret is not configured".to_string(),
-        ));
+        return Err(HandlerError::Internal("JWT secret is not configured".to_string()));
     }
 
     let claims = json!({

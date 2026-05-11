@@ -3,4 +3,4 @@ pub mod registry;
 pub mod repos;
 
 pub use manager::StorageManager;
-pub use registry::{registry_path, RegistryManager};
+pub use registry::{RegistryManager, registry_path};

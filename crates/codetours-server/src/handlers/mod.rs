@@ -3,9 +3,9 @@ pub mod health;
 pub mod tours;
 
 use axum::{
+    Json,
     http::StatusCode,
     response::{IntoResponse, Response},
-    Json,
 };
 
 /// Common handler error type.

@@ -400,13 +400,7 @@ pub fn get_server(conn: &Connection, url: &str) -> Result<Option<Server>> {
     conn.query_row(
         "SELECT url, token, last_login FROM servers WHERE url = ?1",
         params![url],
-        |row| {
-            Ok(Server {
-                url: row.get(0)?,
-                token: row.get(1)?,
-                last_login: row.get(2)?,
-            })
-        },
+        |row| Ok(Server { url: row.get(0)?, token: row.get(1)?, last_login: row.get(2)? }),
     )
     .optional()
     .map_err(|e| Error::Database(e.to_string()))
@@ -414,27 +408,20 @@ pub fn get_server(conn: &Connection, url: &str) -> Result<Option<Server>> {
 
 /// List all servers.
 pub fn list_servers(conn: &Connection) -> Result<Vec<Server>> {
-    let mut stmt = conn.prepare(
-        "SELECT url, token, last_login FROM servers ORDER BY url"
-    )?;
+    let mut stmt = conn.prepare("SELECT url, token, last_login FROM servers ORDER BY url")?;
 
-    let servers = stmt.query_map([], |row| {
-        Ok(Server {
-            url: row.get(0)?,
-            token: row.get(1)?,
-            last_login: row.get(2)?,
-        })
-    })?.collect::<std::result::Result<Vec<_>, _>>()?;
+    let servers = stmt
+        .query_map([], |row| {
+            Ok(Server { url: row.get(0)?, token: row.get(1)?, last_login: row.get(2)? })
+        })?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
 
     Ok(servers)
 }
 
 /// Delete a server by URL.
 pub fn delete_server(conn: &Connection, url: &str) -> Result<()> {
-    conn.execute(
-        "DELETE FROM servers WHERE url = ?1",
-        params![url],
-    )?;
+    conn.execute("DELETE FROM servers WHERE url = ?1", params![url])?;
 
     Ok(())
 }

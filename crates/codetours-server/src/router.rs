@@ -1,7 +1,7 @@
 use crate::config::Config;
 use crate::handlers::{self, auth, tours};
 use crate::observability::request_id_middleware;
-use crate::storage::{registry::RegistryManager, StorageManager};
+use crate::storage::{StorageManager, registry::RegistryManager};
 use axum::{Router, middleware, routing::get};
 use std::sync::Arc;
 use tower_http::trace::TraceLayer;
