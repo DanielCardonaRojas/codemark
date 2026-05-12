@@ -29,6 +29,7 @@ pub struct GithubTokenResponse {
 pub struct CallbackQueryParams {
     pub code: Option<String>,
     pub state: Option<String>,
+    pub redirect_uri: Option<String>,
     pub error: Option<String>,
     pub error_description: Option<String>,
 }
@@ -52,7 +53,7 @@ pub async fn github_login(
     let state_param = Uuid::new_v4().to_string();
 
     // Get redirect_uri from query params or use default
-    let redirect_uri = params.state.clone().unwrap_or_else(|| config.callback_url.clone());
+    let redirect_uri = params.redirect_uri.clone().unwrap_or_else(|| config.callback_url.clone());
 
     let auth_url = format!(
         "https://github.com/login/oauth/authorize?client_id={}&redirect_uri={}&scope=read:org&state={}",
@@ -98,8 +99,9 @@ pub async fn github_callback(
 
     // Exchange code for access token
     let client = reqwest::Client::new();
-    let token_resp: GithubTokenResponse = client
+    let token_resp_bytes = client
         .post("https://github.com/login/oauth/access_token")
+        .header("Accept", "application/json")
         .form(&serde_json::json!({
             "client_id": config.client_id,
             "client_secret": config.client_secret,
@@ -108,8 +110,11 @@ pub async fn github_callback(
         .send()
         .await
         .map_err(|e| HandlerError::Internal(format!("Failed to contact GitHub: {}", e)))?
-        .json()
+        .bytes()
         .await
+        .map_err(|e| HandlerError::Internal(format!("Failed to read token response: {}", e)))?;
+
+    let token_resp: GithubTokenResponse = serde_json::from_slice(&token_resp_bytes)
         .map_err(|e| HandlerError::Internal(format!("Failed to parse token response: {}", e)))?;
 
     // Fetch user info

@@ -31,6 +31,7 @@ pub fn router(state: AppState) -> Router {
         .route("/health", get(handlers::health::handler))
         .route("/auth/github", get(auth::github_login))
         .route("/auth/github/callback", get(auth::github_callback))
+        .route("/callback", get(auth::github_callback))
         .route("/tours", get(tours::list::handler).post(tours::create::handler))
         .route("/tours/:id", get(tours::get::handler).delete(tours::delete::handler))
         .layer(TraceLayer::new_for_http())
