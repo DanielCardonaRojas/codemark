@@ -1184,14 +1184,6 @@ pub struct AuthLoginArgs {
     /// Auth token (if you have one already)
     #[arg(long)]
     pub token: Option<String>,
-
-    /// Open browser for OAuth flow (default: true)
-    #[arg(long, default_value = "true")]
-    pub browser: bool,
-
-    /// Use device flow for login (default: false)
-    #[arg(long, default_value = "false")]
-    pub device: bool,
 }
 
 #[derive(Debug, clap::Args)]
