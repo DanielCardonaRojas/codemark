@@ -4,6 +4,7 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
 };
+use rusqlite::OptionalExtension;
 use futures_util::StreamExt;
 use serde::Serialize;
 use tokio::fs::{self, File};
@@ -322,6 +323,106 @@ pub async fn handler(
             return StatusCode::INTERNAL_SERVER_ERROR.into_response();
         }
     };
+
+    // 5.5. Verify write access to the repository (if repo_url is present)
+    // Extract repo_url from the pack's collections table
+    let pack_path_for_repo = temp_path.clone();
+    let repo_url_res = tokio::task::spawn_blocking(move || {
+        let conn = rusqlite::Connection::open_with_flags(
+            &pack_path_for_repo,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+        )?;
+        conn.query_row(
+            "SELECT repo_url FROM collections WHERE visibility IS NOT NULL LIMIT 1",
+            [],
+            |row| row.get::<_, Option<String>>(0)
+        )
+        .optional()
+        .map(|opt| opt.flatten())
+        .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))
+    })
+    .await;
+
+    let repo_url: Option<String> = match repo_url_res {
+        Ok(Ok(url)) => url,
+        Ok(Err(e)) => {
+            tracing::error!("Failed to read repo_url from pack: {}", e);
+            let _ = fs::remove_file(&temp_path).await;
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: "internal".to_string(),
+                    reason: Some("Failed to read pack metadata".to_string()),
+                    request_id: Some(request_id),
+                }),
+            )
+                .into_response();
+        }
+        Err(e) => {
+            tracing::error!("Task failed during repo_url extraction: {}", e);
+            let _ = fs::remove_file(&temp_path).await;
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
+    };
+
+    if let Some(ref repo_url) = repo_url {
+        let user_id = auth.user_id().ok_or_else(|| {
+            tracing::error!("Write access check failed: no user ID in auth context");
+            (StatusCode::UNAUTHORIZED, Json(ErrorResponse {
+                error: "unauthorized".to_string(),
+                reason: Some("User authentication required for publishing".to_string()),
+                request_id: Some(request_id.clone()),
+            }))
+        });
+
+        let user_id = match user_id {
+            Ok(id) => id,
+            Err(e) => return e.into_response(),
+        };
+
+        // Verify write access using GitHubVerifier
+        let verifier = crate::github::GitHubVerifier::new();
+        let has_write_access = match verifier.verify_write_access(&state, repo_url, user_id).await {
+            Ok(true) => true,
+            Ok(false) => {
+                tracing::warn!(
+                    user_id = %user_id,
+                    repo_url = %repo_url,
+                    "Write access denied for user"
+                );
+                let _ = fs::remove_file(&temp_path).await;
+                return (
+                    StatusCode::FORBIDDEN,
+                    Json(ErrorResponse {
+                        error: "forbidden".to_string(),
+                        reason: Some("You do not have write access to this repository".to_string()),
+                        request_id: Some(request_id),
+                    }),
+                )
+                    .into_response();
+            }
+            Err(e) => {
+                tracing::error!("Failed to verify write access: {}", e);
+                let _ = fs::remove_file(&temp_path).await;
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ErrorResponse {
+                        error: "internal".to_string(),
+                        reason: Some("Failed to verify repository access".to_string()),
+                        request_id: Some(request_id),
+                    }),
+                )
+                    .into_response();
+            }
+        };
+
+        tracing::info!(
+            user_id = %user_id,
+            repo_url = %repo_url,
+            has_write_access = %has_write_access,
+            "Write access verification passed"
+        );
+    }
 
     // 6. Merge into single tenant DB
     let storage = state.storage.clone();
