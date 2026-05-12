@@ -105,8 +105,8 @@ async fn perform_oauth_flow(server_url: &str, mode: &OutputMode) -> Result<()> {
         cancel_token: CancellationToken::new(),
     });
 
-    // 4. Start local callback server
-    let port = pick_unused_port().unwrap_or(34567);
+    // 4. Start local callback server on fixed port
+    let port = 34500;
     let callback_url = format!("http://localhost:{}/callback", port);
     let auth_url_with_callback =
         format!("{}?redirect_uri={}", auth_url, urlencoding::encode(&callback_url));
@@ -270,11 +270,6 @@ async fn exchange_code_for_token(server_url: &str, code: &str) -> Result<String>
         .map_err(|e| Error::Operation(format!("Failed to parse token response: {}", e)))?;
 
     Ok(token_response.token)
-}
-
-/// Find an unused port for the local callback server.
-fn pick_unused_port() -> Option<u16> {
-    (34500..34600).find(|port| std::net::TcpListener::bind(format!("127.0.0.1:{}", port)).is_ok())
 }
 
 /// Signal to shut down the callback server.
