@@ -62,6 +62,10 @@ pub async fn handle_login(_cli: &Cli, mode: &OutputMode, args: &AuthLoginArgs) -
         return Ok(());
     }
 
+    if args.device {
+        return handle_device_login(&server_url, mode).await;
+    }
+
     // Initiate OAuth flow
     if args.browser {
         perform_oauth_flow(&server_url, mode).await
@@ -88,6 +92,63 @@ pub async fn handle_login(_cli: &Cli, mode: &OutputMode, args: &AuthLoginArgs) -
         Ok(())
     }
 }
+
+async fn handle_device_login(server_url: &str, _mode: &OutputMode) -> Result<()> {
+    let server_url = server_url.trim_end_matches('/');
+    let client = reqwest::Client::new();
+
+    // 1. Get device code
+    let device_resp: serde_json::Value = client
+        .get(format!("{}/auth/github/device", server_url))
+        .send()
+        .await
+        .map_err(|e| Error::Operation(format!("Failed to reach server: {}", e)))?
+        .json()
+        .await
+        .map_err(|e| Error::Operation(format!("Failed to parse device response: {}", e)))?;
+
+    // Debug: print the full response to help diagnose the issue
+    eprintln!("DEBUG: device_resp={:?}", device_resp);
+
+    let uri = device_resp["verification_uri"].as_str().ok_or_else(|| Error::Operation("Missing verification_uri".to_string()))?;
+    let code = device_resp["user_code"].as_str().ok_or_else(|| Error::Operation("Missing user_code".to_string()))?;
+
+    println!("Please open: {}", uri);
+    println!("Enter code: {}", code);
+
+    // 2. Poll for token
+    let device_code = device_resp["device_code"].as_str().ok_or_else(|| Error::Operation("Missing device_code".to_string()))?;
+    let interval = device_resp["interval"].as_u64().unwrap_or(5);
+
+    loop {
+        tokio::time::sleep(Duration::from_secs(interval)).await;
+        
+        let poll_resp: serde_json::Value = client
+            .post(format!("{}/auth/github/device/poll", server_url))
+            .json(&serde_json::json!({ "device_code": device_code }))
+            .send()
+            .await
+            .map_err(|e| Error::Operation(format!("Poll failed: {}", e)))?
+            .json()
+            .await
+            .map_err(|e| Error::Operation(format!("Failed to parse poll response: {}", e)))?;
+
+        if let Some(token) = poll_resp["access_token"].as_str() {
+            let conn = registry::open_registry()?;
+            registry::upsert_server(&conn, server_url, Some(token))?;
+            println!("Successfully authenticated!");
+            return Ok(());
+        }
+
+        if let Some(error) = poll_resp["error"].as_str() {
+            if error == "authorization_pending" {
+                continue;
+            }
+            return Err(Error::Operation(format!("Auth error: {}", error)));
+        }
+    }
+}
+
 
 /// Perform the full OAuth flow.
 async fn perform_oauth_flow(server_url: &str, mode: &OutputMode) -> Result<()> {

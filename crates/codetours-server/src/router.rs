@@ -2,7 +2,7 @@ use crate::config::Config;
 use crate::handlers::{self, auth, tours};
 use crate::observability::request_id_middleware;
 use crate::storage::{StorageManager, registry::RegistryManager};
-use axum::{Router, middleware, routing::get};
+use axum::{Router, middleware, routing::{get, post}};
 use std::sync::Arc;
 use tower_http::trace::TraceLayer;
 
@@ -30,6 +30,8 @@ pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/health", get(handlers::health::handler))
         .route("/auth/github", get(auth::github_login))
+        .route("/auth/github/device", get(auth::github_device_login))
+        .route("/auth/github/device/poll", post(auth::github_device_poll))
         .route("/auth/github/callback", get(auth::github_callback))
         .route("/callback", get(auth::github_callback))
         .route("/tours", get(tours::list::handler).post(tours::create::handler))

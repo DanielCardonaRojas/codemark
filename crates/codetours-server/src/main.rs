@@ -13,6 +13,7 @@ use tokio::net::TcpListener;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    dotenvy::dotenv().ok();
     BOOT_TIME.set(Utc::now()).ok();
     let cli = Cli::parse();
 

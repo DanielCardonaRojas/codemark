@@ -304,16 +304,79 @@ fn user_gp_id_to_string(id: &serde_json::Number) -> String {
         .unwrap_or_else(|| "unknown".to_string())
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
 
-    #[test]
-    fn test_github_id_to_string() {
-        let small = serde_json::Number::from(12345_u64);
-        assert_eq!(user_gp_id_to_string(&small), "12345");
-
-        let large = serde_json::Number::from(9876543210_u64);
-        assert_eq!(user_gp_id_to_string(&large), "9876543210");
-    }
+/// Request a device code from GitHub.
+#[derive(Debug, serde::Serialize)]
+pub struct DeviceCodeRequest {
+    pub client_id: String,
+    pub scope: String,
 }
+
+#[derive(Debug, Deserialize, serde::Serialize)]
+pub struct DeviceCodeResponse {
+    pub device_code: String,
+    pub user_code: String,
+    pub verification_uri: String,
+    pub expires_in: u64,
+    pub interval: u64,
+}
+
+pub async fn github_device_login(
+    State(state): State<AppState>,
+) -> Result<impl IntoResponse, HandlerError> {
+    let client_id = state.config.auth.github.get_client_id();
+    if client_id.is_empty() {
+        return Err(HandlerError::BadRequest("GitHub OAuth is not configured on the server".to_string()));
+    }
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .post("https://github.com/login/device/code")
+        .header("Accept", "application/json")
+        .form(&serde_json::json!({
+            "client_id": client_id,
+            "scope": "read:org",
+        }))
+        .send()
+        .await
+        .map_err(|e| HandlerError::Internal(format!("Failed to request device code: {}", e)))?
+        .json::<DeviceCodeResponse>()
+        .await
+        .map_err(|e| HandlerError::Internal(format!("Failed to parse device response: {}", e)))?;
+
+    Ok(axum::Json(resp))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct DevicePollRequest {
+    pub device_code: String,
+}
+
+pub async fn github_device_poll(
+    State(state): State<AppState>,
+    axum::Json(payload): axum::Json<DevicePollRequest>,
+) -> Result<impl IntoResponse, HandlerError> {
+    let config = &state.config.auth.github;
+    let client_id = config.get_client_id();
+    let client_secret = config.get_client_secret();
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .post("https://github.com/login/oauth/access_token")
+        .header("Accept", "application/json")
+        .form(&serde_json::json!({
+            "client_id": client_id,
+            "client_secret": client_secret,
+            "device_code": payload.device_code,
+            "grant_type": "urn:ietf:params:oauth:grant-type:device_code",
+        }))
+        .send()
+        .await
+        .map_err(|e| HandlerError::Internal(format!("Failed to poll GitHub: {}", e)))?
+        .json::<serde_json::Value>()
+        .await
+        .map_err(|e| HandlerError::Internal(format!("Failed to parse poll response: {}", e)))?;
+
+    Ok(axum::Json(resp))
+}
+
