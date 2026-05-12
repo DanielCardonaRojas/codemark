@@ -6,7 +6,7 @@ use crate::storage::registry::{self, UserUpsert};
 use axum::{
     extract::{Query, State},
     http::{HeaderMap, StatusCode},
-    response::{IntoResponse, Redirect, Response},
+    response::{Html, IntoResponse, Redirect, Response},
 };
 use serde::Deserialize;
 use uuid::Uuid;
@@ -182,13 +182,88 @@ pub async fn github_callback(
     // Generate JWT session token
     let session_token = generate_jwt(&user_id, config)?;
 
-    // Return the session token as JSON
-    Ok((
-        StatusCode::OK,
-        [(("content-type"), "application/json")],
-        serde_json::json!({ "token": session_token }).to_string(),
-    )
-        .into_response())
+    // Check if this is a CLI request (has x-code header) or browser request
+    let is_cli_request = headers.get("x-code").is_some();
+
+    if is_cli_request {
+        // CLI flow: Return JSON as before
+        Ok((
+            StatusCode::OK,
+            [(("content-type"), "application/json")],
+            serde_json::json!({ "token": session_token }).to_string(),
+        )
+            .into_response())
+    } else {
+        // Browser flow: Return a nice HTML page
+        let html = format!(
+            r#"<!DOCTYPE html>
+<html>
+<head>
+    <title>Authentication Successful</title>
+    <style>
+        body {{
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+            background: #f5f5f5;
+        }}
+        .container {{
+            text-align: center;
+            background: white;
+            padding: 2rem 3rem;
+            border-radius: 8px;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+            max-width: 500px;
+        }}
+        .checkmark {{
+            font-size: 4rem;
+            color: #28a745;
+            margin-bottom: 1rem;
+        }}
+        h1 {{
+            color: #333;
+            margin-bottom: 0.5rem;
+            font-size: 1.5rem;
+        }}
+        p {{
+            color: #666;
+            margin: 0.5rem 0;
+            line-height: 1.5;
+        }}
+        .token-box {{
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 4px;
+            padding: 1rem;
+            margin: 1rem 0;
+            font-family: monospace;
+            font-size: 0.85rem;
+            word-break: break-all;
+            color: #495057;
+        }}
+        .note {{
+            font-size: 0.85rem;
+            color: #868e96;
+            margin-top: 1.5rem;
+        }}
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="checkmark">✓</div>
+        <h1>Authentication Successful</h1>
+        <p>You have been logged in as <strong>{}</strong>.</p>
+        <p class="note">You can close this tab and return to the terminal.</p>
+    </div>
+</body>
+</html>"#,
+            user_resp.login
+        );
+        Ok(Html::from(html).into_response())
+    }
 }
 
 /// Generate a JWT token for the user.
