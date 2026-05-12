@@ -51,3 +51,5 @@ url = "2"
 urlencoding = "2"
 axum = { workspace = true }
 tokio-util = "0.7"
+open = "5.3.5"
+copypasta = "0.10.2"

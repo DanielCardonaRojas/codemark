@@ -8,6 +8,7 @@ use axum::{
     response::IntoResponse,
     routing::get,
 };
+use copypasta::ClipboardProvider;
 use codemark_core::error::{Error, Result};
 use codemark_core::storage::registry;
 use serde::Deserialize;
@@ -107,14 +108,19 @@ async fn handle_device_login(server_url: &str, _mode: &OutputMode) -> Result<()>
         .await
         .map_err(|e| Error::Operation(format!("Failed to parse device response: {}", e)))?;
 
-    // Debug: print the full response to help diagnose the issue
-    eprintln!("DEBUG: device_resp={:?}", device_resp);
-
     let uri = device_resp["verification_uri"].as_str().ok_or_else(|| Error::Operation("Missing verification_uri".to_string()))?;
     let code = device_resp["user_code"].as_str().ok_or_else(|| Error::Operation("Missing user_code".to_string()))?;
 
-    println!("Please open: {}", uri);
-    println!("Enter code: {}", code);
+    // Attempt to copy to clipboard
+    if let Ok(mut ctx) = copypasta::ClipboardContext::new() {
+        let _ = ctx.set_contents(code.to_owned());
+    }
+
+    println!("Opening browser to authorize...");
+    let _ = open::that(uri);
+
+    println!("Verification code: {} (copied to clipboard)", code);
+    println!("Please authorize in your browser.");
 
     // 2. Poll for token
     let device_code = device_resp["device_code"].as_str().ok_or_else(|| Error::Operation("Missing device_code".to_string()))?;
