@@ -361,7 +361,7 @@ pub async fn github_device_poll(
     let client_secret = config.get_client_secret();
 
     let client = reqwest::Client::new();
-    let resp = client
+    let token_resp_bytes = client
         .post("https://github.com/login/oauth/access_token")
         .header("Accept", "application/json")
         .form(&serde_json::json!({
@@ -373,10 +373,74 @@ pub async fn github_device_poll(
         .send()
         .await
         .map_err(|e| HandlerError::Internal(format!("Failed to poll GitHub: {}", e)))?
-        .json::<serde_json::Value>()
+        .bytes()
         .await
-        .map_err(|e| HandlerError::Internal(format!("Failed to parse poll response: {}", e)))?;
+        .map_err(|e| HandlerError::Internal(format!("Failed to read response: {}", e)))?;
 
-    Ok(axum::Json(resp))
+    let token_resp: GithubTokenResponse = serde_json::from_slice(&token_resp_bytes)
+        .or_else(|_| {
+            let error_json: serde_json::Value = serde_json::from_slice(&token_resp_bytes).unwrap_or_default();
+            if error_json["error"] == "authorization_pending" {
+                return Ok(GithubTokenResponse { access_token: "pending".to_string() });
+            }
+            Err(HandlerError::Internal("Failed to parse GitHub response".to_string()))
+        })?;
+
+    if token_resp.access_token == "pending" {
+        return Ok(axum::Json(serde_json::json!({ "error": "authorization_pending" })));
+    }
+
+    // Fetch user info
+    let user_resp: GithubUser = client
+        .get("https://api.github.com/user")
+        .header("Authorization", format!("Bearer {}", token_resp.access_token))
+        .header("User-Agent", "codetours-server")
+        .send()
+        .await
+        .map_err(|e| HandlerError::Internal(format!("Failed to fetch user: {}", e)))?
+        .json()
+        .await
+        .map_err(|e| HandlerError::Internal(format!("Failed to parse user response: {}", e)))?;
+
+    let github_id = user_gp_id_to_string(&user_resp.id);
+    let user_id = format!("user-{}", Uuid::new_v4());
+    let github_login = user_resp.login.clone();
+    let access_token = token_resp.access_token.clone();
+
+    let registry_conn = state.registry.get_conn().await;
+    let user_id = registry_conn
+        .interact(move |conn| {
+            let existing_user = registry::find_user_by_github_id(conn, &github_id)
+                .map_err(|e| HandlerError::Internal(format!("Failed to query user: {}", e)))?;
+
+            if let Some(existing) = existing_user {
+                registry::upsert_user(
+                    conn,
+                    &UserUpsert {
+                        id: &existing.id,
+                        github_id: &github_id,
+                        github_login: &github_login,
+                        github_token: Some(&access_token),
+                    },
+                ).map_err(|e| HandlerError::Internal(format!("Failed to update: {}", e)))?;
+                Ok(existing.id)
+            } else {
+                registry::upsert_user(
+                    conn,
+                    &UserUpsert {
+                        id: &user_id,
+                        github_id: &github_id,
+                        github_login: &github_login,
+                        github_token: Some(&access_token),
+                    },
+                ).map_err(|e| HandlerError::Internal(format!("Failed to create: {}", e)))?;
+                Ok(user_id)
+            }
+        })
+        .await
+        .map_err(|e| HandlerError::Internal(format!("Registry failed: {}", e)))??;
+
+    let session_token = generate_jwt(&user_id, &config.get_jwt_secret(), config.session_expires_in)?;
+    Ok(axum::Json(serde_json::json!({ "token": session_token })))
 }
 

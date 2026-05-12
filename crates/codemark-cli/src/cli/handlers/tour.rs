@@ -68,13 +68,18 @@ pub async fn handle_tour_list(cli: &Cli, _mode: &OutputMode, args: &TourListArgs
         query.push(("repo_url", repo.clone()));
     }
 
+    let url = format!("{}/tours", server_url);
+    eprintln!("DEBUG: Calling URL: {}", url);
+
     let response = client
-        .get(format!("{}/tours", server_url))
+        .get(&url)
         .headers(headers)
         .query(&query)
         .send()
         .await
         .map_err(|e| Error::Operation(format!("failed to list tours: {e}")))?;
+
+    eprintln!("DEBUG: Response status: {}", response.status());
 
     if !response.status().is_success() {
         let status = response.status();

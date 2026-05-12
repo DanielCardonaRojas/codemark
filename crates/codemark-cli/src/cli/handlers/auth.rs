@@ -94,7 +94,7 @@ async fn handle_device_login(server_url: &str, _mode: &OutputMode) -> Result<()>
             .await
             .map_err(|e| Error::Operation(format!("Failed to parse poll response: {}", e)))?;
 
-        if let Some(token) = poll_resp["access_token"].as_str() {
+        if let Some(token) = poll_resp["token"].as_str() {
             let conn = registry::open_registry()?;
             registry::upsert_server(&conn, server_url, Some(token))?;
             println!("Successfully authenticated!");

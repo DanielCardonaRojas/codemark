@@ -118,44 +118,54 @@ where
 
     async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
         // First, try JWT authentication
-        if let Some(auth_header) = parts.headers.get("Authorization") {
+        let mut auth_attempted = false;
+        if let Some(auth_header) = parts.headers.get("Authorization") { tracing::info!("Found Authorization header");
+            auth_attempted = true;
             let auth_str = auth_header.to_str().map_err(|_| AuthError::MissingOrInvalidToken)?;
 
             if let Some(token) = auth_str.strip_prefix("Bearer ") {
+                tracing::info!("Found Bearer token: {}", token);
                 // Validate JWT token
                 let state = AppState::from_ref(_state);
                 let config = &state.config.auth.github;
 
-                if !config.jwt_secret.is_empty() {
-                    match decode_jwt(token, &config.jwt_secret) {
+                let jwt_secret = config.get_jwt_secret();
+                if !jwt_secret.is_empty() {
+                    tracing::info!("Using JWT secret of length: {} (first 3 chars: {})", jwt_secret.len(), &jwt_secret[..3.min(jwt_secret.len())]);
+                    match decode_jwt(token, &jwt_secret) {
                         Ok(user_id) => return Ok(AuthContext::Jwt { user_id }),
                         Err(e) => {
-                            tracing::debug!("JWT validation failed: {}", e);
+                            tracing::error!("JWT validation failed: {} for token: {}", e, token);
+                            return Err(e);
                         }
                     }
+                } else {
+                    tracing::error!("JWT secret is empty!");
                 }
             }
         }
 
-        // Fallback to stub auth for development
-        let token = parts
-            .headers
-            .get("X-Tour-Token")
-            .and_then(|v| v.to_str().ok());
+        // Only fall back to stub auth if no JWT was provided
+        if !auth_attempted {
+            let token = parts
+                .headers
+                .get("X-Tour-Token")
+                .and_then(|v| v.to_str().ok());
 
-        if let Some(token) = token {
-            let state = AppState::from_ref(_state);
+            if let Some(token) = token {
+                let state = AppState::from_ref(_state);
 
-            // Ensure dev_token is non-empty to prevent bypass
-            if state.config.auth.dev_token.is_empty() {
-                tracing::error!("Auth mode is 'stub' but dev_token is empty");
-                return Err(AuthError::ServerMisconfigured);
-            }
+                // Ensure dev_token is non-empty to prevent bypass
+                if state.config.auth.dev_token.is_empty() {
+                    tracing::error!("Auth mode is 'stub' but dev_token is empty");
+                    return Err(AuthError::ServerMisconfigured);
+                }
 
-            if token == state.config.auth.dev_token {
-                return Ok(AuthContext::Stub {
-                    user_id: "stub".to_string(),
-                });
+                if token == state.config.auth.dev_token {
+                    return Ok(AuthContext::Stub {
+                        user_id: "stub".to_string(),
+                    });
+                }
             }
         }
 

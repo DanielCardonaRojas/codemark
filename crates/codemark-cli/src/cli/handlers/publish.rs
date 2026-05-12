@@ -190,6 +190,7 @@ fn build_auth_headers(token: Option<&String>) -> Result<HeaderMap> {
     let mut headers = HeaderMap::new();
 
     if let Some(t) = token {
+        eprintln!("DEBUG: Building auth headers with token: {}...", &t[..10]);
         if t.starts_with("eyJ") {
             // JWT token
             headers.insert(
@@ -205,6 +206,8 @@ fn build_auth_headers(token: Option<&String>) -> Result<HeaderMap> {
                     .map_err(|_| Error::Operation("Invalid token".to_string()))?,
             );
         }
+    } else {
+        eprintln!("DEBUG: No token provided for auth headers.");
     }
 
     Ok(headers)
