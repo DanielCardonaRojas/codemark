@@ -36,7 +36,6 @@ async fn main() -> anyhow::Result<()> {
     let listener = TcpListener::bind(&addr).await?;
 
     tracing::info!("listening on {}", addr);
-    tracing::info!("JWT_SECRET length: {}", std::env::var("JWT_SECRET").unwrap_or_else(|_| "NOT SET".to_string()).len());
 
     axum::serve(listener, app).with_graceful_shutdown(shutdown_signal()).await?;
 

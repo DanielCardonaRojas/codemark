@@ -54,7 +54,6 @@ pub async fn handler(
     auth: AuthContext,
     req: Request,
 ) -> impl IntoResponse {
-    tracing::info!("Auth context: {:?}", auth);
     if !auth.is_authenticated() {
         return (StatusCode::UNAUTHORIZED, "Auth required").into_response();
     }

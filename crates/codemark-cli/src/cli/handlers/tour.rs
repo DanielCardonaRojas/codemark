@@ -69,7 +69,6 @@ pub async fn handle_tour_list(cli: &Cli, _mode: &OutputMode, args: &TourListArgs
     }
 
     let url = format!("{}/tours", server_url);
-    eprintln!("DEBUG: Calling URL: {}", url);
 
     let response = client
         .get(&url)
@@ -78,8 +77,6 @@ pub async fn handle_tour_list(cli: &Cli, _mode: &OutputMode, args: &TourListArgs
         .send()
         .await
         .map_err(|e| Error::Operation(format!("failed to list tours: {e}")))?;
-
-    eprintln!("DEBUG: Response status: {}", response.status());
 
     if !response.status().is_success() {
         let status = response.status();
