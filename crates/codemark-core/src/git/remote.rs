@@ -28,6 +28,9 @@ pub fn parse_remote_url(url: &str) -> Option<(String, String)> {
     if let Some(rest) = url.strip_prefix("git@github.com:") {
         return parse_github_url(rest);
     }
+    if let Some(rest) = url.strip_prefix("git@github:") {
+        return parse_github_url(rest);
+    }
 
     // Handle git:// protocol
     if let Some(rest) = url.strip_prefix("git://github.com/") {

@@ -129,8 +129,9 @@ where
                 let state = AppState::from_ref(_state);
                 let config = &state.config.auth.github;
 
-                if !config.jwt_secret.is_empty() {
-                    match decode_jwt(token, &config.jwt_secret) {
+                let jwt_secret = config.get_jwt_secret();
+                if !jwt_secret.is_empty() {
+                    match decode_jwt(token, &jwt_secret) {
                         Ok(user_id) => return Ok(AuthContext::Jwt { user_id }),
                         Err(e) => {
                             tracing::error!("JWT validation failed: {} for token: {}", e, token);
