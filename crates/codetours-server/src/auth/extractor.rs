@@ -119,12 +119,11 @@ where
     async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
         // First, try JWT authentication
         let mut auth_attempted = false;
-        if let Some(auth_header) = parts.headers.get("Authorization") { tracing::info!("Found Authorization header");
+        if let Some(auth_header) = parts.headers.get("Authorization") {
             auth_attempted = true;
             let auth_str = auth_header.to_str().map_err(|_| AuthError::MissingOrInvalidToken)?;
 
             if let Some(token) = auth_str.strip_prefix("Bearer ") {
-                tracing::info!("Found Bearer token: {}", token);
                 // Validate JWT token
                 let state = AppState::from_ref(_state);
                 let config = &state.config.auth.github;

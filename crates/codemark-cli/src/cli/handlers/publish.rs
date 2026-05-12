@@ -133,12 +133,10 @@ fn resolve_server_and_token(
     server_arg: Option<&str>,
     repo_url: Option<&str>,
 ) -> Result<(String, Option<String>)> {
-    eprintln!("DEBUG: Resolving server and token for repo: {:?}", repo_url);
     // If explicit server URL is provided, use it
     if let Some(server) = server_arg
         && server.starts_with("http")
     {
-        eprintln!("DEBUG: Using explicit server from args: {}", server);
         // Direct URL - check for token in registry, but don't fail if not found
         // The caller may provide a token via --token flag
         let registry_token = get_token_for_server(server).unwrap_or_default();
@@ -148,32 +146,24 @@ fn resolve_server_and_token(
     // Try to get server from registry based on current repo
     if let Ok(conn) = registry::open_registry() {
         if let Some(repo) = repo_url {
-            eprintln!("DEBUG: Looking up server for repo: {}", repo);
             // Look for a server associated with this repo
-            if let Ok(Some(known_repo)) = registry::find_repo_by_origin(&conn, repo) {
-                if let Some(ref server_url) = known_repo.server_url {
-                    eprintln!("DEBUG: Found repo-specific server: {}", server_url);
-                    let token = get_token_for_server(server_url)?;
-                    return Ok((server_url.clone(), token));
-                } else {
-                    eprintln!("DEBUG: Repo found but no server_url associated.");
-                }
-            } else {
-                eprintln!("DEBUG: Repo not found in known_repos.");
+            if let Ok(Some(known_repo)) = registry::find_repo_by_origin(&conn, repo)
+                && let Some(ref server_url) = known_repo.server_url
+            {
+                let token = get_token_for_server(server_url)?;
+                return Ok((server_url.clone(), token));
             }
         }
 
         // If no repo-specific server, check for a default server in registry
-        if let Ok(servers) = registry::list_servers(&conn) {
-            if let Some(server) = servers.first() {
-                eprintln!("DEBUG: Falling back to default server from registry: {}", server.url);
-                let token = server.token.clone();
-                return Ok((server.url.clone(), token));
-            }
+        if let Ok(servers) = registry::list_servers(&conn)
+            && let Some(server) = servers.first()
+        {
+            let token = server.token.clone();
+            return Ok((server.url.clone(), token));
         }
     }
 
-    eprintln!("DEBUG: No server found in registry, falling back to config/defaults.");
     // Fallback to config or localhost
     let config = super::load_config(cli);
     let server_name =
@@ -200,7 +190,6 @@ fn build_auth_headers(token: Option<&String>) -> Result<HeaderMap> {
     let mut headers = HeaderMap::new();
 
     if let Some(t) = token {
-        eprintln!("DEBUG: Building auth headers with token: {}...", &t[..10]);
         if t.starts_with("eyJ") {
             // JWT token
             headers.insert(
@@ -216,8 +205,6 @@ fn build_auth_headers(token: Option<&String>) -> Result<HeaderMap> {
                     .map_err(|_| Error::Operation("Invalid token".to_string()))?,
             );
         }
-    } else {
-        eprintln!("DEBUG: No token provided for auth headers.");
     }
 
     Ok(headers)
