@@ -42,8 +42,9 @@ pub async fn github_login(
     Query(params): Query<CallbackQueryParams>,
 ) -> Result<Redirect, HandlerError> {
     let config = &state.config.auth.github;
+    let client_id = config.get_client_id();
 
-    if config.client_id.is_empty() {
+    if client_id.is_empty() {
         return Err(HandlerError::BadRequest(
             "GitHub OAuth is not configured on the server".to_string(),
         ));
@@ -57,7 +58,7 @@ pub async fn github_login(
 
     let auth_url = format!(
         "https://github.com/login/oauth/authorize?client_id={}&redirect_uri={}&scope=read:org&state={}",
-        config.client_id,
+        client_id,
         urlencoding::encode(&redirect_uri),
         state_param
     );
@@ -96,6 +97,7 @@ pub async fn github_callback(
         .ok_or_else(|| HandlerError::BadRequest("Missing authorization code".to_string()))?;
 
     let config = &state.config.auth.github;
+    let client_secret = config.get_client_secret();
 
     // Exchange code for access token
     let client = reqwest::Client::new();
@@ -103,8 +105,8 @@ pub async fn github_callback(
         .post("https://github.com/login/oauth/access_token")
         .header("Accept", "application/json")
         .form(&serde_json::json!({
-            "client_id": config.client_id,
-            "client_secret": config.client_secret,
+            "client_id": config.get_client_id(),
+            "client_secret": client_secret,
             "code": code,
         }))
         .send()
@@ -180,7 +182,8 @@ pub async fn github_callback(
         .map_err(|e| HandlerError::Internal(format!("Registry operation error: {}", e)))?;
 
     // Generate JWT session token
-    let session_token = generate_jwt(&user_id, config)?;
+    let jwt_secret = config.get_jwt_secret();
+    let session_token = generate_jwt(&user_id, &jwt_secret, config.session_expires_in)?;
 
     // Check if this is a CLI request (has x-code header) or browser request
     let is_cli_request = headers.get("x-code").is_some();
@@ -269,23 +272,24 @@ pub async fn github_callback(
 /// Generate a JWT token for the user.
 fn generate_jwt(
     user_id: &str,
-    config: &crate::config::GithubAuthConfig,
+    jwt_secret: &str,
+    expires_in: u64,
 ) -> Result<String, HandlerError> {
     use jsonwebtoken::{EncodingKey, Header, encode};
 
-    if config.jwt_secret.is_empty() {
+    if jwt_secret.is_empty() {
         return Err(HandlerError::Internal("JWT secret is not configured".to_string()));
     }
 
     let claims = serde_json::json!({
         "sub": user_id,
-        "exp": chrono::Utc::now().timestamp() + config.session_expires_in as i64,
+        "exp": chrono::Utc::now().timestamp() + expires_in as i64,
     });
 
     let token = encode(
         &Header::default(),
         &claims,
-        &EncodingKey::from_secret(config.jwt_secret.as_bytes()),
+        &EncodingKey::from_secret(jwt_secret.as_bytes()),
     )
     .map_err(|e| HandlerError::Internal(format!("Failed to generate token: {}", e)))?;
 

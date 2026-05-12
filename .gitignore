@@ -17,3 +17,8 @@ dev-docs/
 
 # Codetours Server
 codetours.toml
+
+# Environment variables with secrets
+.env
+.env.local
+.env.*.local

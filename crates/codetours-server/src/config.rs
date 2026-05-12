@@ -60,6 +60,26 @@ pub struct GithubAuthConfig {
     pub session_expires_in: u64,
 }
 
+impl GithubAuthConfig {
+    /// Get client_id, prioritizing environment variable
+    pub fn get_client_id(&self) -> String {
+        std::env::var("GITHUB_CLIENT_ID")
+            .unwrap_or_else(|_| self.client_id.clone())
+    }
+
+    /// Get client_secret, prioritizing environment variable
+    pub fn get_client_secret(&self) -> String {
+        std::env::var("GITHUB_CLIENT_SECRET")
+            .unwrap_or_else(|_| self.client_secret.clone())
+    }
+
+    /// Get jwt_secret, prioritizing environment variable
+    pub fn get_jwt_secret(&self) -> String {
+        std::env::var("JWT_SECRET")
+            .unwrap_or_else(|_| self.jwt_secret.clone())
+    }
+}
+
 fn default_host() -> String {
     "127.0.0.1".to_string()
 }
