@@ -49,9 +49,12 @@ pub async fn handle_login(_cli: &Cli, mode: &OutputMode, args: &AuthLoginArgs) -
     handle_device_login(&server_url, mode).await
 }
 
-async fn handle_device_login(server_url: &str, _mode: &OutputMode) -> Result<()> {
+async fn handle_device_login(server_url: &str, mode: &OutputMode) -> Result<()> {
     let server_url = server_url.trim_end_matches('/');
-    let client = reqwest::Client::new();
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(20))
+        .build()
+        .map_err(|e| Error::Operation(format!("Failed to build HTTP client: {}", e)))?;
 
     // 1. Get device code
     let device_resp: serde_json::Value = client
@@ -75,17 +78,30 @@ async fn handle_device_login(server_url: &str, _mode: &OutputMode) -> Result<()>
         let _ = ctx.set_contents(code.to_owned());
     }
 
-    println!("Opening browser to authorize...");
-    let _ = open::that(uri);
+    if !matches!(mode, OutputMode::Json) {
+        println!("Opening browser to authorize...");
+        let _ = open::that(uri);
 
-    println!("Verification code: {} (copied to clipboard)", code);
-    println!("Please authorize in your browser.");
+        println!("Verification code: {} (copied to clipboard)", code);
+        println!("Please authorize in your browser.");
+    } else {
+        let _ = open::that(uri);
+        println!(
+            "{}",
+            serde_json::json!({
+                "status": "pending",
+                "message": "Device code received. Please authorize in your browser.",
+                "verification_uri": uri,
+                "user_code": code,
+            })
+        );
+    }
 
     // 2. Poll for token
     let device_code = device_resp["device_code"]
         .as_str()
         .ok_or_else(|| Error::Operation("Missing device_code".to_string()))?;
-    let interval = device_resp["interval"].as_u64().unwrap_or(5);
+    let mut interval = device_resp["interval"].as_u64().unwrap_or(5);
     let expires_in = device_resp["expires_in"].as_u64().unwrap_or(300); // Default 5 minutes
 
     let start_time = Instant::now();
@@ -114,15 +130,37 @@ async fn handle_device_login(server_url: &str, _mode: &OutputMode) -> Result<()>
         if let Some(token) = poll_resp["token"].as_str() {
             let conn = registry::open_registry()?;
             registry::upsert_server(&conn, server_url, Some(token))?;
-            println!("Successfully authenticated!");
+            if matches!(mode, OutputMode::Json) {
+                println!(
+                    "{}",
+                    serde_json::json!({
+                        "status": "success",
+                        "message": format!("Logged in to {}", server_url),
+                        "server": server_url,
+                        "method": "device_oauth"
+                    })
+                );
+            } else {
+                println!("Successfully authenticated!");
+            }
             return Ok(());
         }
 
         if let Some(error) = poll_resp["error"].as_str() {
-            if error == "authorization_pending" {
-                continue;
+            match error {
+                "authorization_pending" => continue,
+                "slow_down" => {
+                    // Increase interval by 5 seconds
+                    interval = interval.saturating_add(5);
+                    continue;
+                }
+                "expired_token" => {
+                    return Err(Error::Operation("Device code expired".to_string()));
+                }
+                _ => {
+                    return Err(Error::Operation(format!("Auth error: {}", error)));
+                }
             }
-            return Err(Error::Operation(format!("Auth error: {}", error)));
         }
     }
 }
