@@ -60,6 +60,8 @@ fn init_schema(conn: &Connection) -> Result<()> {
                 token           TEXT,
                 last_login      TEXT
         );
+
+        CREATE INDEX IF NOT EXISTS idx_servers_last_login ON servers(last_login);
         ",
     )?;
 
