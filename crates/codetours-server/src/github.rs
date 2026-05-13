@@ -110,14 +110,16 @@ impl GitHubVerifier {
         &self,
         state: &AppState,
         repo_url: &str,
+        user_id: &str,
     ) -> Result<bool, anyhow::Error> {
         let (owner, repo) = Self::parse_repo_url(repo_url)
             .ok_or_else(|| anyhow::anyhow!("Invalid repository URL: {}", repo_url))?;
 
-        // Check cache first
+        // Check cache first (include user_id in cache key)
+        let cache_key = format!("{}:{}:read", user_id, owner);
         {
             let cache = self.cache.read().await;
-            if let Some(entry) = cache.get(&(owner.clone(), repo.clone()))
+            if let Some(entry) = cache.get(&(cache_key.clone(), repo.clone()))
                 && entry.expires_at > chrono::Utc::now()
             {
                 return Ok(entry.has_access);
@@ -125,19 +127,16 @@ impl GitHubVerifier {
         }
 
         // Get the user's GitHub token from registry
-        let registry_conn = state.registry.get_conn().await;
+        let user_id = user_id.to_string();
+        let registry_conn = state.registry.get_conn().await?;
         let user_info = registry_conn
-            .interact(|conn| {
-                // For now, we'll use the most recently logged-in user
-                // In production, this should come from the JWT token
+            .interact(move |conn| {
                 let mut stmt = conn.prepare(
                     "SELECT id, github_token FROM users
-                     WHERE github_token IS NOT NULL
-                     ORDER BY last_login_at DESC
-                     LIMIT 1",
+                     WHERE id = ?1 AND github_token IS NOT NULL",
                 )?;
 
-                stmt.query_row([], |row| {
+                stmt.query_row([&user_id], |row| {
                     let id: String = row.get(0)?;
                     let token: String = row.get(1)?;
                     Ok((id, token))
@@ -148,7 +147,7 @@ impl GitHubVerifier {
             .map_err(|e| anyhow::anyhow!("Failed to query user: {}", e))?
             .map_err(|e| anyhow::anyhow!("Failed to execute query: {}", e))?;
 
-        let (user_id, github_token) = user_info
+        let (user_id_from_db, github_token) = user_info
             .ok_or_else(|| anyhow::anyhow!("No authenticated user with GitHub token found"))?;
 
         // Verify access via GitHub API
@@ -168,7 +167,7 @@ impl GitHubVerifier {
         // Cache the result
         let mut cache = self.cache.write().await;
         cache.insert(
-            (owner, repo),
+            (cache_key, repo),
             CacheEntry {
                 has_access,
                 expires_at: chrono::Utc::now() + chrono::Duration::seconds(self.cache_ttl_seconds),
@@ -176,7 +175,7 @@ impl GitHubVerifier {
         );
 
         tracing::info!(
-            user_id = %user_id,
+            user_id = %user_id_from_db,
             repo_url = %repo_url,
             has_access = %has_access,
             "GitHub access check completed"
@@ -198,10 +197,9 @@ impl GitHubVerifier {
             .ok_or_else(|| anyhow::anyhow!("Invalid repository URL: {}", repo_url))?;
 
         // Check cache first (include user_id in cache key since permissions vary by user)
-        let cache_key = format!("{}:{}:write", owner, repo);
+        let cache_key = format!("{}:{}:write", user_id, owner);
         {
             let cache = self.cache.read().await;
-            // We use a simple string key for write access cache
             if let Some(entry) = cache.get(&(cache_key.clone(), repo.clone()))
                 && entry.expires_at > chrono::Utc::now()
             {
@@ -211,7 +209,7 @@ impl GitHubVerifier {
 
         // Get the user's GitHub token from registry
         let user_id = user_id.to_string();
-        let registry_conn = state.registry.get_conn().await;
+        let registry_conn = state.registry.get_conn().await?;
         let user_id_for_log = user_id.clone();
         let github_token = registry_conn
             .interact(move |conn| {

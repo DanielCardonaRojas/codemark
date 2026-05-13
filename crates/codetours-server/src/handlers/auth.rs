@@ -29,7 +29,6 @@ pub struct GithubTokenResponse {
 pub struct CallbackQueryParams {
     pub code: Option<String>,
     pub state: Option<String>,
-    pub redirect_uri: Option<String>,
     pub error: Option<String>,
     pub error_description: Option<String>,
 }
@@ -39,7 +38,7 @@ pub struct CallbackQueryParams {
 /// Redirects the user to GitHub's authorization page.
 pub async fn github_login(
     State(state): State<AppState>,
-    Query(params): Query<CallbackQueryParams>,
+    Query(_params): Query<CallbackQueryParams>,
 ) -> Result<Redirect, HandlerError> {
     let config = &state.config.auth.github;
     let client_id = config.get_client_id();
@@ -53,13 +52,24 @@ pub async fn github_login(
     // Generate a state parameter for CSRF protection
     let state_param = Uuid::new_v4().to_string();
 
-    // Get redirect_uri from query params or use default
-    let redirect_uri = params.redirect_uri.clone().unwrap_or_else(|| config.callback_url.clone());
+    // Store state in registry
+    let registry_conn = state.registry.get_conn().await
+        .map_err(|e| HandlerError::Internal(format!("Failed to get registry connection: {}", e)))?;
+    
+    let state_to_store = state_param.clone();
+    registry_conn.interact(move |conn| {
+        registry::store_oauth_state(conn, &state_to_store)
+    }).await
+    .map_err(|e| HandlerError::Internal(format!("Registry operation failed: {}", e)))?
+    .map_err(|e| HandlerError::Internal(format!("Failed to store OAuth state: {}", e)))?;
+
+    // Use configured callback URL (prevent open redirect)
+    let redirect_uri = &config.callback_url;
 
     let auth_url = format!(
         "https://github.com/login/oauth/authorize?client_id={}&redirect_uri={}&scope=read:org&state={}",
         client_id,
-        urlencoding::encode(&redirect_uri),
+        urlencoding::encode(redirect_uri),
         state_param
     );
 
@@ -87,6 +97,30 @@ pub async fn github_callback(
             "GitHub authorization error: {} - {}",
             error, error_desc
         )));
+    }
+
+    // Check if this is a CLI request (has x-code header) or browser request
+    let is_cli_request = headers.get("x-code").is_some();
+
+    // Verify state parameter for CSRF protection (skip for CLI requests which don't use state flow)
+    if !is_cli_request {
+        let state_param = query.state.as_deref().ok_or_else(|| {
+            HandlerError::BadRequest("Missing state parameter".to_string())
+        })?;
+
+        let registry_conn = state.registry.get_conn().await
+            .map_err(|e| HandlerError::Internal(format!("Failed to get registry connection: {}", e)))?;
+
+        let state_to_verify = state_param.to_string();
+        let is_valid = registry_conn.interact(move |conn| {
+            registry::verify_oauth_state(conn, &state_to_verify)
+        }).await
+        .map_err(|e| HandlerError::Internal(format!("Registry operation failed: {}", e)))?
+        .map_err(|e| HandlerError::Internal(format!("Failed to verify OAuth state: {}", e)))?;
+
+        if !is_valid {
+            return Err(HandlerError::BadRequest("Invalid or expired OAuth state".to_string()));
+        }
     }
 
     // Get code from header or query params
@@ -132,13 +166,14 @@ pub async fn github_callback(
         .map_err(|e| HandlerError::Internal(format!("Failed to parse user response: {}", e)))?;
 
     // Get or create user in registry
-    let github_id = user_gp_id_to_string(&user_resp.id);
+    let github_id = user_github_id_to_string(&user_resp.id);
     let user_id = format!("user-{}", Uuid::new_v4());
     let github_login = user_resp.login.clone();
     let access_token = token_resp.access_token.clone();
 
     // Get registry connection from pool
-    let registry_conn = state.registry.get_conn().await;
+    let registry_conn = state.registry.get_conn().await
+        .map_err(|e| HandlerError::Internal(format!("Failed to get registry connection: {}", e)))?;
 
     // Use interact to run the sync registry operations
     let user_id = registry_conn
@@ -297,7 +332,7 @@ fn generate_jwt(
 }
 
 /// Convert GitHub ID (which can be a large number) to a string.
-fn user_gp_id_to_string(id: &serde_json::Number) -> String {
+fn user_github_id_to_string(id: &serde_json::Number) -> String {
     id.as_u64()
         .map(|n| n.to_string())
         .or_else(|| id.as_i64().map(|n| n.to_string()))
@@ -402,12 +437,13 @@ pub async fn github_device_poll(
         .await
         .map_err(|e| HandlerError::Internal(format!("Failed to parse user response: {}", e)))?;
 
-    let github_id = user_gp_id_to_string(&user_resp.id);
+    let github_id = user_github_id_to_string(&user_resp.id);
     let user_id = format!("user-{}", Uuid::new_v4());
     let github_login = user_resp.login.clone();
     let access_token = token_resp.access_token.clone();
 
-    let registry_conn = state.registry.get_conn().await;
+    let registry_conn = state.registry.get_conn().await
+        .map_err(|e| HandlerError::Internal(format!("Failed to get registry connection: {}", e)))?;
     let user_id = registry_conn
         .interact(move |conn| {
             let existing_user = registry::find_user_by_github_id(conn, &github_id)

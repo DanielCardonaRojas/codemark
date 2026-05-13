@@ -133,7 +133,7 @@ where
                     match decode_jwt(token, &jwt_secret) {
                         Ok(user_id) => return Ok(AuthContext::Jwt { user_id }),
                         Err(e) => {
-                            tracing::error!("JWT validation failed: {} for token: {}", e, token);
+                            tracing::error!("JWT validation failed: {}", e);
                             return Err(e);
                         }
                     }

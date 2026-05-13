@@ -1,3 +1,4 @@
+use crate::auth::AuthContext;
 use crate::github::GitHubVerifier;
 use crate::handlers::tours::create::ErrorResponse;
 use crate::router::AppState;
@@ -56,6 +57,7 @@ pub struct ListToursResponse {
 /// via GitHub API before returning tours.
 pub async fn handler(
     State(state): State<AppState>,
+    auth: AuthContext,
     Query(params): Query<ListToursParams>,
 ) -> impl IntoResponse {
     let limit = params.limit.unwrap_or(50).min(200);
@@ -63,9 +65,24 @@ pub async fn handler(
 
     // If repo_url is provided, verify GitHub access
     if let Some(ref repo_url) = params.repo_url {
+        let user_id = match auth.user_id() {
+            Some(id) => id,
+            None => {
+                return (
+                    StatusCode::UNAUTHORIZED,
+                    Json(ErrorResponse {
+                        error: "unauthorized".to_string(),
+                        reason: Some("Authentication required to filter by repository".to_string()),
+                        request_id: None,
+                    }),
+                )
+                    .into_response();
+            }
+        };
+
         let verifier = GitHubVerifier::new();
 
-        match verifier.verify_access(&state, repo_url).await {
+        match verifier.verify_access(&state, repo_url, user_id).await {
             Ok(has_access) => {
                 if !has_access {
                     tracing::warn!(
