@@ -248,7 +248,8 @@ impl GitHubVerifier {
                 (cache_key, repo.clone()),
                 CacheEntry {
                     has_access: false,
-                    expires_at: chrono::Utc::now() + chrono::Duration::seconds(self.cache_ttl_seconds),
+                    expires_at: chrono::Utc::now()
+                        + chrono::Duration::seconds(self.cache_ttl_seconds),
                 },
             );
             return Ok(false);

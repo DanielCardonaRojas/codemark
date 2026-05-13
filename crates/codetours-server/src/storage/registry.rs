@@ -312,9 +312,10 @@ pub fn verify_oauth_state(conn: &Connection, state: &str) -> Result<bool> {
 /// Delete expired OAuth states (older than 15 minutes).
 pub fn delete_expired_oauth_states(conn: &Connection) -> Result<usize> {
     let expiry = (chrono::Utc::now() - chrono::Duration::minutes(15)).to_rfc3339();
-    let count = conn
-        .execute("DELETE FROM oauth_states WHERE created_at < ?1", params![expiry])
-        .map_err(|e| ServerError::Registry(format!("Failed to delete expired oauth states: {}", e)))?;
+    let count =
+        conn.execute("DELETE FROM oauth_states WHERE created_at < ?1", params![expiry]).map_err(
+            |e| ServerError::Registry(format!("Failed to delete expired oauth states: {}", e)),
+        )?;
     Ok(count)
 }
 

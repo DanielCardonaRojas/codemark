@@ -7,8 +7,8 @@ use axum::{
     http::{StatusCode, request::Parts},
     response::{IntoResponse, Response},
 };
+use jsonwebtoken::{DecodingKey, decode};
 use serde::{Deserialize, Serialize};
-use jsonwebtoken::{decode, DecodingKey};
 
 /// Leeway for clock skew in JWT validation (30 seconds).
 const LEEWAY: u64 = 30;
@@ -145,10 +145,7 @@ where
 
         // Only fall back to stub auth if no JWT was provided
         if !auth_attempted {
-            let token = parts
-                .headers
-                .get("X-Tour-Token")
-                .and_then(|v| v.to_str().ok());
+            let token = parts.headers.get("X-Tour-Token").and_then(|v| v.to_str().ok());
 
             if let Some(token) = token {
                 let state = AppState::from_ref(_state);
@@ -160,9 +157,7 @@ where
                 }
 
                 if token == state.config.auth.dev_token {
-                    return Ok(AuthContext::Stub {
-                        user_id: "stub".to_string(),
-                    });
+                    return Ok(AuthContext::Stub { user_id: "stub".to_string() });
                 }
             }
         }
@@ -173,8 +168,8 @@ where
 
 /// Validate a JWT token and return the user ID.
 fn decode_jwt(token: &str, secret: &str) -> Result<String, AuthError> {
-    use serde_json::Value;
     use jsonwebtoken::Validation;
+    use serde_json::Value;
 
     let mut validation = Validation::new(jsonwebtoken::Algorithm::HS256);
     validation.validate_exp = true;

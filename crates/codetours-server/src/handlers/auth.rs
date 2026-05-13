@@ -53,15 +53,17 @@ pub async fn github_login(
     let state_param = Uuid::new_v4().to_string();
 
     // Store state in registry
-    let registry_conn = state.registry.get_conn().await
-        .map_err(|e| HandlerError::Internal(format!("Failed to get registry connection: {}", e)))?;
-    
+    let registry_conn =
+        state.registry.get_conn().await.map_err(|e| {
+            HandlerError::Internal(format!("Failed to get registry connection: {}", e))
+        })?;
+
     let state_to_store = state_param.clone();
-    registry_conn.interact(move |conn| {
-        registry::store_oauth_state(conn, &state_to_store)
-    }).await
-    .map_err(|e| HandlerError::Internal(format!("Registry operation failed: {}", e)))?
-    .map_err(|e| HandlerError::Internal(format!("Failed to store OAuth state: {}", e)))?;
+    registry_conn
+        .interact(move |conn| registry::store_oauth_state(conn, &state_to_store))
+        .await
+        .map_err(|e| HandlerError::Internal(format!("Registry operation failed: {}", e)))?
+        .map_err(|e| HandlerError::Internal(format!("Failed to store OAuth state: {}", e)))?;
 
     // Use configured callback URL (prevent open redirect)
     let redirect_uri = &config.callback_url;
@@ -104,19 +106,21 @@ pub async fn github_callback(
 
     // Verify state parameter for CSRF protection (skip for CLI requests which don't use state flow)
     if !is_cli_request {
-        let state_param = query.state.as_deref().ok_or_else(|| {
-            HandlerError::BadRequest("Missing state parameter".to_string())
+        let state_param = query
+            .state
+            .as_deref()
+            .ok_or_else(|| HandlerError::BadRequest("Missing state parameter".to_string()))?;
+
+        let registry_conn = state.registry.get_conn().await.map_err(|e| {
+            HandlerError::Internal(format!("Failed to get registry connection: {}", e))
         })?;
 
-        let registry_conn = state.registry.get_conn().await
-            .map_err(|e| HandlerError::Internal(format!("Failed to get registry connection: {}", e)))?;
-
         let state_to_verify = state_param.to_string();
-        let is_valid = registry_conn.interact(move |conn| {
-            registry::verify_oauth_state(conn, &state_to_verify)
-        }).await
-        .map_err(|e| HandlerError::Internal(format!("Registry operation failed: {}", e)))?
-        .map_err(|e| HandlerError::Internal(format!("Failed to verify OAuth state: {}", e)))?;
+        let is_valid = registry_conn
+            .interact(move |conn| registry::verify_oauth_state(conn, &state_to_verify))
+            .await
+            .map_err(|e| HandlerError::Internal(format!("Registry operation failed: {}", e)))?
+            .map_err(|e| HandlerError::Internal(format!("Failed to verify OAuth state: {}", e)))?;
 
         if !is_valid {
             return Err(HandlerError::BadRequest("Invalid or expired OAuth state".to_string()));
@@ -172,8 +176,10 @@ pub async fn github_callback(
     let access_token = token_resp.access_token.clone();
 
     // Get registry connection from pool
-    let registry_conn = state.registry.get_conn().await
-        .map_err(|e| HandlerError::Internal(format!("Failed to get registry connection: {}", e)))?;
+    let registry_conn =
+        state.registry.get_conn().await.map_err(|e| {
+            HandlerError::Internal(format!("Failed to get registry connection: {}", e))
+        })?;
 
     // Use interact to run the sync registry operations
     let user_id = registry_conn
@@ -305,11 +311,7 @@ pub async fn github_callback(
 }
 
 /// Generate a JWT token for the user.
-fn generate_jwt(
-    user_id: &str,
-    jwt_secret: &str,
-    expires_in: u64,
-) -> Result<String, HandlerError> {
+fn generate_jwt(user_id: &str, jwt_secret: &str, expires_in: u64) -> Result<String, HandlerError> {
     use jsonwebtoken::{EncodingKey, Header, encode};
 
     if jwt_secret.is_empty() {
@@ -321,12 +323,9 @@ fn generate_jwt(
         "exp": chrono::Utc::now().timestamp() + expires_in as i64,
     });
 
-    let token = encode(
-        &Header::default(),
-        &claims,
-        &EncodingKey::from_secret(jwt_secret.as_bytes()),
-    )
-    .map_err(|e| HandlerError::Internal(format!("Failed to generate token: {}", e)))?;
+    let token =
+        encode(&Header::default(), &claims, &EncodingKey::from_secret(jwt_secret.as_bytes()))
+            .map_err(|e| HandlerError::Internal(format!("Failed to generate token: {}", e)))?;
 
     Ok(token)
 }
@@ -338,7 +337,6 @@ fn user_github_id_to_string(id: &serde_json::Number) -> String {
         .or_else(|| id.as_i64().map(|n| n.to_string()))
         .unwrap_or_else(|| "unknown".to_string())
 }
-
 
 /// Request a device code from GitHub.
 #[derive(Debug, serde::Serialize)]
@@ -361,7 +359,9 @@ pub async fn github_device_login(
 ) -> Result<impl IntoResponse, HandlerError> {
     let client_id = state.config.auth.github.get_client_id();
     if client_id.is_empty() {
-        return Err(HandlerError::BadRequest("GitHub OAuth is not configured on the server".to_string()));
+        return Err(HandlerError::BadRequest(
+            "GitHub OAuth is not configured on the server".to_string(),
+        ));
     }
 
     let client = reqwest::Client::new();
@@ -412,9 +412,10 @@ pub async fn github_device_poll(
         .await
         .map_err(|e| HandlerError::Internal(format!("Failed to read response: {}", e)))?;
 
-    let token_resp: GithubTokenResponse = serde_json::from_slice(&token_resp_bytes)
-        .or_else(|_| {
-            let error_json: serde_json::Value = serde_json::from_slice(&token_resp_bytes).unwrap_or_default();
+    let token_resp: GithubTokenResponse =
+        serde_json::from_slice(&token_resp_bytes).or_else(|_| {
+            let error_json: serde_json::Value =
+                serde_json::from_slice(&token_resp_bytes).unwrap_or_default();
             if error_json["error"] == "authorization_pending" {
                 return Ok(GithubTokenResponse { access_token: "pending".to_string() });
             }
@@ -442,8 +443,10 @@ pub async fn github_device_poll(
     let github_login = user_resp.login.clone();
     let access_token = token_resp.access_token.clone();
 
-    let registry_conn = state.registry.get_conn().await
-        .map_err(|e| HandlerError::Internal(format!("Failed to get registry connection: {}", e)))?;
+    let registry_conn =
+        state.registry.get_conn().await.map_err(|e| {
+            HandlerError::Internal(format!("Failed to get registry connection: {}", e))
+        })?;
     let user_id = registry_conn
         .interact(move |conn| {
             let existing_user = registry::find_user_by_github_id(conn, &github_id)
@@ -458,7 +461,8 @@ pub async fn github_device_poll(
                         github_login: &github_login,
                         github_token: Some(&access_token),
                     },
-                ).map_err(|e| HandlerError::Internal(format!("Failed to update: {}", e)))?;
+                )
+                .map_err(|e| HandlerError::Internal(format!("Failed to update: {}", e)))?;
                 Ok(existing.id)
             } else {
                 registry::upsert_user(
@@ -469,14 +473,15 @@ pub async fn github_device_poll(
                         github_login: &github_login,
                         github_token: Some(&access_token),
                     },
-                ).map_err(|e| HandlerError::Internal(format!("Failed to create: {}", e)))?;
+                )
+                .map_err(|e| HandlerError::Internal(format!("Failed to create: {}", e)))?;
                 Ok(user_id)
             }
         })
         .await
         .map_err(|e| HandlerError::Internal(format!("Registry failed: {}", e)))??;
 
-    let session_token = generate_jwt(&user_id, &config.get_jwt_secret(), config.session_expires_in)?;
+    let session_token =
+        generate_jwt(&user_id, &config.get_jwt_secret(), config.session_expires_in)?;
     Ok(axum::Json(serde_json::json!({ "token": session_token })))
 }
-

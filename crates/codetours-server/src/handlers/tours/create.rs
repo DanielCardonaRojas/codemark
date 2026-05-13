@@ -4,8 +4,8 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
 };
-use rusqlite::OptionalExtension;
 use futures_util::StreamExt;
+use rusqlite::OptionalExtension;
 use serde::Serialize;
 use tokio::fs::{self, File};
 use tokio::io::AsyncWriteExt;
@@ -335,7 +335,7 @@ pub async fn handler(
         conn.query_row(
             "SELECT repo_url FROM collections WHERE visibility IS NOT NULL LIMIT 1",
             [],
-            |row| row.get::<_, Option<String>>(0)
+            |row| row.get::<_, Option<String>>(0),
         )
         .optional()
         .map(|opt| opt.flatten())
@@ -368,11 +368,14 @@ pub async fn handler(
     if let Some(ref repo_url) = repo_url {
         let user_id = auth.user_id().ok_or_else(|| {
             tracing::error!("Write access check failed: no user ID in auth context");
-            (StatusCode::UNAUTHORIZED, Json(ErrorResponse {
-                error: "unauthorized".to_string(),
-                reason: Some("User authentication required for publishing".to_string()),
-                request_id: Some(request_id.clone()),
-            }))
+            (
+                StatusCode::UNAUTHORIZED,
+                Json(ErrorResponse {
+                    error: "unauthorized".to_string(),
+                    reason: Some("User authentication required for publishing".to_string()),
+                    request_id: Some(request_id.clone()),
+                }),
+            )
         });
 
         let user_id = match user_id {
