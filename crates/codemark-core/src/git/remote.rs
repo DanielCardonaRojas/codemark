@@ -8,6 +8,7 @@ use std::path::Path;
 /// Supports various Git URL formats:
 /// - HTTPS: `https://github.com/owner/repo.git`
 /// - SSH: `git@github.com:owner/repo.git`
+/// - SSH with protocol: `ssh://git@github.com/owner/repo.git`
 /// - Git protocol: `git://github.com/owner/repo.git`
 ///
 /// Returns `Some((owner, repo))` if parsing succeeds, `None` otherwise.
@@ -29,6 +30,14 @@ pub fn parse_remote_url(url: &str) -> Option<(String, String)> {
         return parse_github_url(rest);
     }
     if let Some(rest) = url.strip_prefix("git@github:") {
+        return parse_github_url(rest);
+    }
+
+    // Handle SSH URLs with ssh:// protocol
+    if let Some(rest) = url.strip_prefix("ssh://git@github.com/") {
+        return parse_github_url(rest);
+    }
+    if let Some(rest) = url.strip_prefix("ssh://git@github/") {
         return parse_github_url(rest);
     }
 
@@ -130,6 +139,14 @@ mod tests {
     fn test_parse_ssh_url() {
         assert_eq!(
             parse_remote_url("git@github.com:owner/repo.git"),
+            Some(("owner".to_string(), "repo".to_string()))
+        );
+        assert_eq!(
+            parse_remote_url("ssh://git@github.com/owner/repo.git"),
+            Some(("owner".to_string(), "repo".to_string()))
+        );
+        assert_eq!(
+            parse_remote_url("ssh://git@github/owner/repo.git"),
             Some(("owner".to_string(), "repo".to_string()))
         );
     }
