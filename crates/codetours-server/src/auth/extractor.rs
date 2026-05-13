@@ -118,9 +118,7 @@ where
 
     async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
         // First, try JWT authentication
-        let mut auth_attempted = false;
         if let Some(auth_header) = parts.headers.get("Authorization") {
-            auth_attempted = true;
             let auth_str = auth_header.to_str().map_err(|_| AuthError::MissingOrInvalidToken)?;
 
             if let Some(token) = auth_str.strip_prefix("Bearer ") {
@@ -138,28 +136,31 @@ where
                         }
                     }
                 } else {
-                    tracing::error!("JWT secret is empty!");
+                    tracing::error!("JWT secret is missing from server configuration");
+                    return Err(AuthError::ServerMisconfigured);
                 }
+            } else {
+                tracing::warn!("Authorization header provided but missing 'Bearer ' prefix");
+                return Err(AuthError::MissingOrInvalidToken);
             }
         }
 
-        // Only fall back to stub auth if no JWT was provided
-        if !auth_attempted {
-            let token = parts.headers.get("X-Tour-Token").and_then(|v| v.to_str().ok());
+        // Fall back to stub auth if X-Tour-Token is provided
+        let token = parts.headers.get("X-Tour-Token").and_then(|v| v.to_str().ok());
 
-            if let Some(token) = token {
-                let state = AppState::from_ref(_state);
+        if let Some(token) = token {
+            let state = AppState::from_ref(_state);
 
-                // Ensure dev_token is non-empty to prevent bypass
-                if state.config.auth.dev_token.is_empty() {
-                    tracing::error!("Auth mode is 'stub' but dev_token is empty");
-                    return Err(AuthError::ServerMisconfigured);
-                }
-
-                if token == state.config.auth.dev_token {
-                    return Ok(AuthContext::Stub { user_id: "stub".to_string() });
-                }
+            // Ensure dev_token is non-empty to prevent bypass
+            if state.config.auth.dev_token.is_empty() {
+                tracing::error!("Auth mode is 'stub' but dev_token is empty");
+                return Err(AuthError::ServerMisconfigured);
             }
+
+            if token == state.config.auth.dev_token {
+                return Ok(AuthContext::Stub { user_id: "stub".to_string() });
+            }
+            return Err(AuthError::MissingOrInvalidToken);
         }
 
         Ok(AuthContext::Anonymous)

@@ -32,7 +32,7 @@ impl IntoResponse for ServerError {
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     "registry_error",
-                    format!("Registry error: {}", msg),
+                    "A registry database error occurred".to_string(),
                 )
             }
             ServerError::Storage(msg) => {
@@ -40,7 +40,7 @@ impl IntoResponse for ServerError {
                 (
                     StatusCode::INTERNAL_SERVER_ERROR,
                     "storage_error",
-                    format!("Storage error: {}", msg),
+                    "A storage database error occurred".to_string(),
                 )
             }
             ServerError::Auth(msg) => (StatusCode::UNAUTHORIZED, "auth_error", msg),

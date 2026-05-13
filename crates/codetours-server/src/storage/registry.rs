@@ -155,7 +155,6 @@ pub fn upsert_user(conn: &Connection, user: &UserUpsert<'_>) -> Result<()> {
         "INSERT INTO users (id, github_id, github_login, github_token, created_at, last_login_at)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6)
          ON CONFLICT(github_id) DO UPDATE SET
-             id = excluded.id,
              github_login = excluded.github_login,
              github_token = COALESCE(excluded.github_token, users.github_token),
              last_login_at = excluded.last_login_at",

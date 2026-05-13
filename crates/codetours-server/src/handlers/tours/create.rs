@@ -5,7 +5,6 @@ use axum::{
     response::IntoResponse,
 };
 use futures_util::StreamExt;
-use rusqlite::OptionalExtension;
 use serde::Serialize;
 use tokio::fs::{self, File};
 use tokio::io::AsyncWriteExt;
@@ -324,42 +323,40 @@ pub async fn handler(
         }
     };
 
-    // 5.5. Verify write access to the repository (if repo_url is present)
-    // Extract repo_url from the pack's collections table
-    let pack_path_for_repo = temp_path.clone();
-    let repo_url_res = tokio::task::spawn_blocking(move || {
+    // 5.5. Identify the collection to be published and verify write access
+    // We identify the same collection that will be used in the merge phase (step 6)
+    let pack_path_for_id = temp_path.clone();
+    let collection_info_res = tokio::task::spawn_blocking(move || {
         let conn = rusqlite::Connection::open_with_flags(
-            &pack_path_for_repo,
+            &pack_path_for_id,
             rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
         )?;
         conn.query_row(
-            "SELECT repo_url FROM collections WHERE visibility IS NOT NULL LIMIT 1",
+            "SELECT id, repo_url FROM collections WHERE visibility IS NOT NULL ORDER BY created_at DESC LIMIT 1",
             [],
-            |row| row.get::<_, Option<String>>(0),
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?)),
         )
-        .optional()
-        .map(|opt| opt.flatten())
         .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))
     })
     .await;
 
-    let repo_url: Option<String> = match repo_url_res {
-        Ok(Ok(url)) => url,
+    let (collection_id_to_publish, repo_url) = match collection_info_res {
+        Ok(Ok(info)) => info,
         Ok(Err(e)) => {
-            tracing::error!("Failed to read repo_url from pack: {}", e);
+            tracing::error!("Failed to identify collection in pack: {}", e);
             let _ = fs::remove_file(&temp_path).await;
             return (
-                StatusCode::INTERNAL_SERVER_ERROR,
+                StatusCode::UNPROCESSABLE_ENTITY,
                 Json(ErrorResponse {
-                    error: "internal".to_string(),
-                    reason: Some("Failed to read pack metadata".to_string()),
+                    error: "invalid_pack".to_string(),
+                    reason: Some("No valid collection found in pack".to_string()),
                     request_id: Some(request_id),
                 }),
             )
                 .into_response();
         }
         Err(e) => {
-            tracing::error!("Task failed during repo_url extraction: {}", e);
+            tracing::error!("Task failed during collection identification: {}", e);
             let _ = fs::remove_file(&temp_path).await;
             return StatusCode::INTERNAL_SERVER_ERROR.into_response();
         }
@@ -430,6 +427,7 @@ pub async fn handler(
     // 6. Merge into single tenant DB
     let storage = state.storage.clone();
     let temp_path_clone = temp_path.clone();
+    let target_collection_id = collection_id_to_publish.clone();
 
     let conn = match storage.get_conn().await {
         Ok(c) => c,
@@ -463,12 +461,8 @@ pub async fn handler(
             conn.execute_batch("PRAGMA foreign_keys = OFF;")?;
 
             let res = (|| -> rusqlite::Result<(CreateTourResponse, bool)> {
-            // Get the collection ID from the pack
-            let collection_id: String = conn.query_row(
-                "SELECT id FROM pack.collections WHERE visibility IS NOT NULL ORDER BY created_at DESC LIMIT 1",
-                [],
-                |row| row.get(0)
-            )?;
+            // Use the target_collection_id verified earlier
+            let collection_id = target_collection_id;
 
             let tx = conn.transaction()?;
 

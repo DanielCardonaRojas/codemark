@@ -63,17 +63,26 @@ pub struct GithubAuthConfig {
 impl GithubAuthConfig {
     /// Get client_id, prioritizing environment variable
     pub fn get_client_id(&self) -> String {
-        std::env::var("GITHUB_CLIENT_ID").unwrap_or_else(|_| self.client_id.clone())
+        std::env::var("GITHUB_CLIENT_ID")
+            .ok()
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| self.client_id.clone())
     }
 
     /// Get client_secret, prioritizing environment variable
     pub fn get_client_secret(&self) -> String {
-        std::env::var("GITHUB_CLIENT_SECRET").unwrap_or_else(|_| self.client_secret.clone())
+        std::env::var("GITHUB_CLIENT_SECRET")
+            .ok()
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| self.client_secret.clone())
     }
 
     /// Get jwt_secret, prioritizing environment variable
     pub fn get_jwt_secret(&self) -> String {
-        std::env::var("JWT_SECRET").unwrap_or_else(|_| self.jwt_secret.clone())
+        std::env::var("JWT_SECRET")
+            .ok()
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| self.jwt_secret.clone())
     }
 }
 
