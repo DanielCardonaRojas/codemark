@@ -24,6 +24,7 @@ use codemark_core::parser::languages::Language;
 use codemark_core::storage::{SemanticRepo, db::Database};
 
 // Handler submodules
+pub mod auth;
 pub mod bookmark;
 pub mod collection;
 pub mod maintenance;
@@ -66,6 +67,7 @@ pub async fn dispatch(cli: &Cli) -> Result<()> {
         Command::Health(args) => dispatch_health(cli, &mode, args).await,
         Command::Data(args) => dispatch_data(cli, &mode, args).await,
         Command::Repo(args) => repo::handle_repo(cli, &mode, args).await,
+        Command::Auth(args) => auth::handle_auth(cli, &mode, args).await,
     }
 }
 

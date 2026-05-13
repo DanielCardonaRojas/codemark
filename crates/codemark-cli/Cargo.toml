@@ -46,3 +46,10 @@ chrono = { workspace = true }
 reqwest = { version = "0.12", features = ["json", "stream"] }
 zstd = "0.13"
 rusqlite = { workspace = true }
+webbrowser = "1"
+url = "2"
+urlencoding = "2"
+axum = { workspace = true }
+tokio-util = "0.7"
+open = "5.3.5"
+copypasta = "0.10.2"
