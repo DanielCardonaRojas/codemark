@@ -94,10 +94,14 @@ pub fn get_origin_url(repo_path: &Path) -> Result<String> {
 /// Parse the current repository's origin remote into (owner, repo).
 ///
 /// This is a convenience function that combines `get_origin_url` and `parse_remote_url`.
+/// Supports GitHub.com and GitHub Enterprise URLs.
 pub fn parse_current_repo(repo_path: &Path) -> Result<(String, String)> {
     let url = get_origin_url(repo_path)?;
     parse_remote_url(&url).ok_or_else(|| {
-        Error::Git(format!("Could not parse repository URL: {} (expected GitHub URL format)", url))
+        Error::Git(format!(
+            "Could not parse repository URL: {} (expected GitHub or GitHub Enterprise URL format)",
+            url
+        ))
     })
 }
 
