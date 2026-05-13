@@ -2,6 +2,12 @@
 //!
 //! The registry is stored in the global config directory as `registry.db` and maintains
 //! a cross-repository index of all projects that use codemark.
+//!
+//! # Security Note
+//!
+//! Server authentication tokens are stored in plain text in this database. This is a known
+//! limitation that should be addressed in future versions by using the system keychain
+//! (macOS Keychain, Windows Credential Manager, etc.) or encrypted storage.
 
 use crate::config::global_config_dir;
 use crate::error::{Error, Result};
@@ -54,6 +60,14 @@ fn init_schema(conn: &Connection) -> Result<()> {
         CREATE INDEX IF NOT EXISTS idx_known_repos_origin ON known_repos(origin_url);
         CREATE INDEX IF NOT EXISTS idx_known_repos_root ON known_repos(repo_root);
         CREATE INDEX IF NOT EXISTS idx_known_repos_owner_name ON known_repos(repo_owner, repo_name);
+
+        CREATE TABLE IF NOT EXISTS servers (
+            url             TEXT PRIMARY KEY,
+                token           TEXT,
+                last_login      TEXT
+        );
+
+        CREATE INDEX IF NOT EXISTS idx_servers_last_login ON servers(last_login);
         ",
     )?;
 
@@ -85,6 +99,20 @@ pub struct RepoUpsert<'a> {
     pub db_owner_email: &'a str,
     pub db_owner_name: Option<&'a str>,
     pub server_url: Option<&'a str>,
+}
+
+/// Server authentication information.
+///
+/// # Security Warning
+///
+/// The `token` field is stored in plain text in the registry database. This is a
+/// known limitation. Users should ensure their config directory has appropriate
+/// file permissions to restrict access.
+#[derive(Debug, Clone)]
+pub struct Server {
+    pub url: String,
+    pub token: Option<String>,
+    pub last_login: Option<String>,
 }
 
 /// Register or update a repository in the global registry.
@@ -190,6 +218,18 @@ pub fn get_server_url(conn: &Connection, repo_root: &str) -> Result<Option<Strin
         .unwrap_or(None);
 
     Ok(url)
+}
+
+/// Find a repository by its origin URL.
+pub fn find_repo_by_origin(conn: &Connection, origin_url: &str) -> Result<Option<KnownRepo>> {
+    conn.query_row(
+        "SELECT id, repo_owner, repo_name, origin_url, repo_root, db_owner_email, db_owner_name, detected_at, last_seen_at, server_url
+         FROM known_repos WHERE origin_url = ?1",
+        params![origin_url],
+        row_to_known_repo,
+    )
+    .optional()
+    .map_err(|e| Error::Database(e.to_string()))
 }
 
 /// Resolve multiple repository references (owner/name) to their local paths.
@@ -362,5 +402,200 @@ mod tests {
         ];
         let resolved = resolve_repos(&conn, &repo_refs).unwrap();
         assert_eq!(resolved.len(), 2); // Only the two existing repos
+    }
+
+    #[test]
+    fn test_find_repo_by_origin() {
+        let conn = test_registry().unwrap();
+
+        upsert_repo(
+            &conn,
+            &RepoUpsert {
+                id: "test-origin",
+                repo_owner: "owner",
+                repo_name: "repo",
+                origin_url: Some("https://github.com/owner/repo.git"),
+                repo_root: "/path/to/repo",
+                db_owner_email: "owner@example.com",
+                db_owner_name: None,
+                server_url: None,
+            },
+        )
+        .unwrap();
+
+        // Find by origin URL
+        let repo =
+            find_repo_by_origin(&conn, "https://github.com/owner/repo.git").unwrap().unwrap();
+        assert_eq!(repo.repo_owner, "owner");
+        assert_eq!(repo.repo_name, "repo");
+
+        // Non-existent origin URL
+        assert!(
+            find_repo_by_origin(&conn, "https://github.com/nonexistent/repo.git")
+                .unwrap()
+                .is_none()
+        );
+    }
+}
+
+/// Register or update a server in the registry.
+///
+/// If a server with the same URL already exists and `token` is `None`,
+/// the existing token is preserved (only `last_login` is updated).
+pub fn upsert_server(conn: &Connection, url: &str, token: Option<&str>) -> Result<()> {
+    let now = chrono::Utc::now().to_rfc3339();
+
+    conn.execute(
+        "INSERT INTO servers (url, token, last_login)
+         VALUES (?1, ?2, ?3)
+         ON CONFLICT(url) DO UPDATE SET
+             token = COALESCE(excluded.token, servers.token),
+             last_login = excluded.last_login",
+        params![url, token, now],
+    )?;
+
+    Ok(())
+}
+
+/// Get a server by URL.
+pub fn get_server(conn: &Connection, url: &str) -> Result<Option<Server>> {
+    conn.query_row(
+        "SELECT url, token, last_login FROM servers WHERE url = ?1",
+        params![url],
+        |row| Ok(Server { url: row.get(0)?, token: row.get(1)?, last_login: row.get(2)? }),
+    )
+    .optional()
+    .map_err(|e| Error::Database(e.to_string()))
+}
+
+/// List all servers.
+pub fn list_servers(conn: &Connection) -> Result<Vec<Server>> {
+    let mut stmt = conn.prepare("SELECT url, token, last_login FROM servers ORDER BY url")?;
+
+    let servers = stmt
+        .query_map([], |row| {
+            Ok(Server { url: row.get(0)?, token: row.get(1)?, last_login: row.get(2)? })
+        })?
+        .collect::<std::result::Result<Vec<_>, _>>()?;
+
+    Ok(servers)
+}
+
+/// Delete a server by URL.
+///
+/// This will also clear any references to this server in the `known_repos` table
+/// by setting `server_url` to NULL for repositories that reference this server.
+pub fn delete_server(conn: &Connection, url: &str) -> Result<()> {
+    // First, clear any dangling references in known_repos
+    conn.execute("UPDATE known_repos SET server_url = NULL WHERE server_url = ?1", params![url])?;
+
+    // Then delete the server
+    conn.execute("DELETE FROM servers WHERE url = ?1", params![url])?;
+
+    Ok(())
+}
+
+#[cfg(test)]
+mod server_tests {
+    use super::*;
+
+    fn test_registry() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        init_schema(&conn).unwrap();
+        conn
+    }
+
+    #[test]
+    fn test_server_upsert_and_get() {
+        let conn = test_registry();
+
+        upsert_server(&conn, "https://codemark.example.com", Some("token123")).unwrap();
+
+        let server = get_server(&conn, "https://codemark.example.com").unwrap().unwrap();
+        assert_eq!(server.url, "https://codemark.example.com");
+        assert_eq!(server.token, Some("token123".to_string()));
+        assert!(server.last_login.is_some());
+
+        // Update with new token
+        upsert_server(&conn, "https://codemark.example.com", Some("new_token")).unwrap();
+        let server = get_server(&conn, "https://codemark.example.com").unwrap().unwrap();
+        assert_eq!(server.token, Some("new_token".to_string()));
+    }
+
+    #[test]
+    fn test_list_servers() {
+        let conn = test_registry();
+
+        upsert_server(&conn, "https://server1.com", Some("token1")).unwrap();
+        upsert_server(&conn, "https://server2.com", Some("token2")).unwrap();
+
+        let servers = list_servers(&conn).unwrap();
+        assert_eq!(servers.len(), 2);
+        assert_eq!(servers[0].url, "https://server1.com");
+        assert_eq!(servers[1].url, "https://server2.com");
+    }
+
+    #[test]
+    fn test_delete_server() {
+        let conn = test_registry();
+
+        upsert_server(&conn, "https://server.com", Some("token")).unwrap();
+        assert!(get_server(&conn, "https://server.com").unwrap().is_some());
+
+        delete_server(&conn, "https://server.com").unwrap();
+        assert!(get_server(&conn, "https://server.com").unwrap().is_none());
+    }
+
+    #[test]
+    fn test_delete_server_clears_dangling_references() {
+        let conn = test_registry();
+
+        // Insert a server and a repository that references it
+        upsert_server(&conn, "https://server.com", Some("token")).unwrap();
+        upsert_repo(
+            &conn,
+            &RepoUpsert {
+                id: "test-id",
+                repo_owner: "owner",
+                repo_name: "repo",
+                origin_url: None,
+                repo_root: "/path/to/repo",
+                db_owner_email: "user@example.com",
+                db_owner_name: None,
+                server_url: Some("https://server.com"),
+            },
+        )
+        .unwrap();
+
+        // Verify the repo references the server
+        let repo = find_repo_by_root(&conn, "/path/to/repo").unwrap().unwrap();
+        assert_eq!(repo.server_url, Some("https://server.com".to_string()));
+
+        // Delete the server
+        delete_server(&conn, "https://server.com").unwrap();
+
+        // Verify the server is deleted
+        assert!(get_server(&conn, "https://server.com").unwrap().is_none());
+
+        // Verify the repo's server_url is now NULL
+        let repo = find_repo_by_root(&conn, "/path/to/repo").unwrap().unwrap();
+        assert!(repo.server_url.is_none());
+    }
+
+    #[test]
+    fn test_upsert_server_preserves_token_when_none() {
+        let conn = test_registry();
+
+        // Insert with a token
+        upsert_server(&conn, "https://server.com", Some("initial_token")).unwrap();
+        let server = get_server(&conn, "https://server.com").unwrap().unwrap();
+        assert_eq!(server.token, Some("initial_token".to_string()));
+
+        // Update with None - token should be preserved
+        upsert_server(&conn, "https://server.com", None).unwrap();
+        let server = get_server(&conn, "https://server.com").unwrap().unwrap();
+        assert_eq!(server.token, Some("initial_token".to_string()));
+        // But last_login should be updated
+        assert!(server.last_login.is_some());
     }
 }
