@@ -2,8 +2,12 @@ use crate::cli::output::OutputMode;
 use crate::cli::*;
 use codemark_core::error::{Error, Result};
 use comfy_table::Table;
-use reqwest::header::{HeaderMap, HeaderValue};
 use serde::Deserialize;
+
+// Re-export auth resolution helpers
+use crate::cli::handlers::auth_resolve::{
+    build_auth_headers, detect_current_repo, resolve_server_and_token,
+};
 
 #[derive(Debug, Deserialize)]
 #[allow(dead_code)]
@@ -25,39 +29,32 @@ struct ListToursResponse {
 }
 
 pub async fn handle_tour_list(cli: &Cli, _mode: &OutputMode, args: &TourListArgs) -> Result<()> {
-    let config = super::load_config(cli);
-
-    // 1. Resolve server and token
-    let server_name =
-        args.server.as_deref().or(config.codetours.default_server.as_deref()).unwrap_or("default");
-
-    let (server_url, token) = if server_name.starts_with("http") {
-        (server_name.to_string(), None)
+    // 1. Determine the repository URL to filter by
+    let repo_url = if let Some(ref repo) = args.repo {
+        // User provided explicit repo URL
+        Some(repo.clone())
     } else {
-        let s =
-            config.codetours.servers.iter().find(|s| s.name == server_name).ok_or_else(|| {
-                Error::Input(format!("server '{}' not found in config", server_name))
-            })?;
-        (s.url.clone(), s.token.clone())
+        // Try to detect from current git repository
+        detect_current_repo()?
     };
 
-    // 2. Query server
+    // 2. Resolve server and token from registry
+    let (server_url, token) =
+        resolve_server_and_token(cli, args.server.as_deref(), repo_url.as_deref())?;
+
+    // 3. Query server
     let client = reqwest::Client::new();
-    let mut headers = HeaderMap::new();
-    if let Some(t) = &token {
-        headers.insert(
-            "X-Tour-Token",
-            HeaderValue::from_str(t).map_err(|_| Error::Operation("Invalid token".to_string()))?,
-        );
-    }
+    let headers = build_auth_headers(token.as_ref())?;
 
     let mut query = vec![("limit", args.limit.to_string()), ("offset", args.offset.to_string())];
-    if let Some(repo) = &args.repo {
+    if let Some(ref repo) = repo_url {
         query.push(("repo_url", repo.clone()));
     }
 
+    let url = format!("{}/tours", server_url);
+
     let response = client
-        .get(format!("{}/tours", server_url))
+        .get(&url)
         .headers(headers)
         .query(&query)
         .send()
@@ -66,7 +63,9 @@ pub async fn handle_tour_list(cli: &Cli, _mode: &OutputMode, args: &TourListArgs
 
     if !response.status().is_success() {
         let status = response.status();
-        return Err(Error::Operation(format!("server returned {status}")));
+        let error_body =
+            response.text().await.unwrap_or_else(|_| "unable to read error".to_string());
+        return Err(Error::Operation(format!("server returned {}: {}", status, error_body)));
     }
 
     let res: ListToursResponse = response
@@ -84,7 +83,7 @@ pub async fn handle_tour_list(cli: &Cli, _mode: &OutputMode, args: &TourListArgs
 
     for tour in &res.tours {
         table.add_row(vec![
-            &tour.tour_id[..8],
+            &tour.tour_id[..8.min(tour.tour_id.len())],
             &tour.title,
             tour.repo_url.as_deref().unwrap_or("-"),
             &tour.updated_at,
