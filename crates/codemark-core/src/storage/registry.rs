@@ -101,6 +101,20 @@ pub struct RepoUpsert<'a> {
     pub server_url: Option<&'a str>,
 }
 
+/// Server authentication information.
+///
+/// # Security Warning
+///
+/// The `token` field is stored in plain text in the registry database. This is a
+/// known limitation. Users should ensure their config directory has appropriate
+/// file permissions to restrict access.
+#[derive(Debug, Clone)]
+pub struct Server {
+    pub url: String,
+    pub token: Option<String>,
+    pub last_login: Option<String>,
+}
+
 /// Register or update a repository in the global registry.
 pub fn upsert_repo(conn: &Connection, repo: &RepoUpsert<'_>) -> Result<()> {
     let now = chrono::Utc::now().to_rfc3339();
@@ -419,20 +433,6 @@ mod tests {
             .unwrap()
             .is_none());
     }
-}
-
-/// Server authentication information.
-///
-/// # Security Warning
-///
-/// The `token` field is stored in plain text in the registry database. This is a
-/// known limitation. Users should ensure their config directory has appropriate
-/// file permissions to restrict access.
-#[derive(Debug, Clone)]
-pub struct Server {
-    pub url: String,
-    pub token: Option<String>,
-    pub last_login: Option<String>,
 }
 
 /// Register or update a server in the registry.
