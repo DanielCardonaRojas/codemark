@@ -2,6 +2,12 @@
 //!
 //! The registry is stored in the global config directory as `registry.db` and maintains
 //! a cross-repository index of all projects that use codemark.
+//!
+//! # Security Note
+//!
+//! Server authentication tokens are stored in plain text in this database. This is a known
+//! limitation that should be addressed in future versions by using the system keychain
+//! (macOS Keychain, Windows Credential Manager, etc.) or encrypted storage.
 
 use crate::config::global_config_dir;
 use crate::error::{Error, Result};
@@ -416,6 +422,12 @@ mod tests {
 }
 
 /// Server authentication information.
+///
+/// # Security Warning
+///
+/// The `token` field is stored in plain text in the registry database. This is a
+/// known limitation. Users should ensure their config directory has appropriate
+/// file permissions to restrict access.
 #[derive(Debug, Clone)]
 pub struct Server {
     pub url: String,
