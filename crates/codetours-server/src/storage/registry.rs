@@ -31,7 +31,7 @@ impl RegistryManager {
         }
 
         // Initialize the database file and schema
-        let conn = Connection::open(&path).map_err(|e| {
+        let mut conn = Connection::open(&path).map_err(|e| {
             ServerError::Registry(format!("Failed to open registry database: {}", e))
         })?;
 
@@ -39,8 +39,8 @@ impl RegistryManager {
         conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")
             .map_err(|e| ServerError::Registry(format!("Failed to enable pragmas: {}", e)))?;
 
-        // Initialize schema
-        init_schema(&conn)?;
+        // Initialize schema using migrations
+        run_migrations(&mut conn)?;
 
         // Build connection pool
         let pool_config = PoolConfig::new(path);
@@ -68,43 +68,105 @@ impl RegistryManager {
     }
 }
 
-/// Initialize the registry database schema.
-fn init_schema(conn: &Connection) -> Result<()> {
-    conn.execute_batch(
-        "CREATE TABLE IF NOT EXISTS users (
-            id              TEXT PRIMARY KEY,
-            github_id       TEXT UNIQUE NOT NULL,
-            github_login    TEXT NOT NULL,
-            github_token    TEXT,
-            created_at      TEXT NOT NULL,
-            last_login_at   TEXT
-        );
+/// Current version of the registry schema.
+const CURRENT_VERSION: i64 = 1;
 
-        CREATE TABLE IF NOT EXISTS refresh_tokens (
-            token           TEXT PRIMARY KEY,
-            user_id         TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-            expires_at      TEXT NOT NULL,
-            created_at      TEXT NOT NULL
-        );
+/// Initial migration for the registry database.
+const MIGRATION_001: &str = "
+    CREATE TABLE IF NOT EXISTS schema_meta (
+        key     TEXT PRIMARY KEY,
+        value   TEXT NOT NULL
+    );
 
-        CREATE TABLE IF NOT EXISTS tenants (
-            id              TEXT PRIMARY KEY,
-            slug            TEXT UNIQUE NOT NULL,
-            db_path         TEXT NOT NULL,
-            github_id       TEXT,
-            created_at      TEXT NOT NULL
-        );
+    CREATE TABLE IF NOT EXISTS users (
+        id              TEXT PRIMARY KEY,
+        github_id       TEXT UNIQUE NOT NULL,
+        github_login    TEXT NOT NULL,
+        github_token    TEXT,
+        created_at      TEXT NOT NULL,
+        last_login_at   TEXT
+    );
 
-        CREATE TABLE IF NOT EXISTS oauth_states (
-            state           TEXT PRIMARY KEY,
-            created_at      TEXT NOT NULL
-        );
+    CREATE TABLE IF NOT EXISTS refresh_tokens (
+        token           TEXT PRIMARY KEY,
+        user_id         TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        expires_at      TEXT NOT NULL,
+        created_at      TEXT NOT NULL
+    );
 
-        CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user ON refresh_tokens(user_id);
-        CREATE INDEX IF NOT EXISTS idx_tenants_github ON tenants(github_id);
-        ",
+    CREATE TABLE IF NOT EXISTS tenants (
+        id              TEXT PRIMARY KEY,
+        slug            TEXT UNIQUE NOT NULL,
+        db_path         TEXT NOT NULL,
+        github_id       TEXT,
+        created_at      TEXT NOT NULL
+    );
+
+    CREATE TABLE IF NOT EXISTS oauth_states (
+        state           TEXT PRIMARY KEY,
+        created_at      TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user ON refresh_tokens(user_id);
+    CREATE INDEX IF NOT EXISTS idx_tenants_github ON tenants(github_id);
+";
+
+/// Run database migrations for the registry.
+fn run_migrations(conn: &mut Connection) -> Result<()> {
+    let current_version = get_schema_version(conn);
+
+    if current_version == CURRENT_VERSION {
+        return Ok(());
+    }
+
+    let migrations = [(1, MIGRATION_001)];
+
+    for (version, sql) in migrations {
+        if current_version < version {
+            tracing::info!(version = %version, "Applying registry migration");
+            let tx = conn
+                .transaction()
+                .map_err(|e| ServerError::Registry(format!("Failed to start transaction: {}", e)))?;
+
+            tx.execute_batch(sql)
+                .map_err(|e| ServerError::Registry(format!("Failed to apply migration: {}", e)))?;
+
+            set_schema_version(&tx, version)?;
+
+            tx.commit()
+                .map_err(|e| ServerError::Registry(format!("Failed to commit migration: {}", e)))?;
+        }
+    }
+
+    Ok(())
+}
+
+fn get_schema_version(conn: &Connection) -> i64 {
+    // First try PRAGMA user_version
+    if let Ok(v @ 1..) = conn.query_row("PRAGMA user_version", [], |row| row.get::<_, i64>(0)) {
+        return v;
+    }
+
+    // Fallback to schema_meta table
+    conn.query_row(
+        "SELECT value FROM schema_meta WHERE key = 'schema_version'",
+        [],
+        |row| row.get::<_, String>(0),
     )
-    .map_err(|e| ServerError::Registry(format!("Failed to initialize schema: {}", e)))?;
+    .ok()
+    .and_then(|v| v.parse().ok())
+    .unwrap_or(0)
+}
+
+fn set_schema_version(conn: &Connection, version: i64) -> Result<()> {
+    conn.execute(
+        "INSERT OR REPLACE INTO schema_meta (key, value) VALUES ('schema_version', ?1)",
+        [version.to_string()],
+    )
+    .map_err(|e| ServerError::Registry(format!("Failed to set schema version: {}", e)))?;
+
+    conn.execute(&format!("PRAGMA user_version = {}", version), [])
+        .map_err(|e| ServerError::Registry(format!("Failed to set user_version: {}", e)))?;
 
     Ok(())
 }
@@ -344,8 +406,8 @@ mod tests {
     use super::*;
 
     fn test_registry() -> Connection {
-        let conn = Connection::open_in_memory().unwrap();
-        init_schema(&conn).unwrap();
+        let mut conn = Connection::open_in_memory().unwrap();
+        run_migrations(&mut conn).unwrap();
         conn
     }
 
