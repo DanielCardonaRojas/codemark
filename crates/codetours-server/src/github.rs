@@ -1,12 +1,38 @@
 //! GitHub API integration for repository access verification.
 
 use crate::router::AppState;
-use anyhow::Result;
 use rusqlite::OptionalExtension;
 use serde::Deserialize;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
+
+/// Error type for GitHub verification operations.
+#[derive(Debug, thiserror::Error)]
+pub enum GitHubVerifyError {
+    /// The user has no GitHub token linked to their account.
+    #[error("No GitHub token linked to user account")]
+    NoGitHubToken,
+
+    /// The repository URL is invalid.
+    #[error("Invalid repository URL: {0}")]
+    InvalidRepoUrl(String),
+
+    /// Failed to query the registry for user information.
+    #[error("Failed to query user registry: {0}")]
+    RegistryQuery(String),
+
+    /// GitHub API request failed.
+    #[error("GitHub API error: {0}")]
+    GitHubApi(String),
+
+    /// Internal error.
+    #[error("Internal error: {0}")]
+    Internal(String),
+}
+
+/// Result type for GitHub verification operations.
+pub type VerifyResult<T> = std::result::Result<T, GitHubVerifyError>;
 
 /// GitHub repository information from API.
 #[derive(Debug, Deserialize)]
@@ -111,9 +137,9 @@ impl GitHubVerifier {
         state: &AppState,
         repo_url: &str,
         user_id: &str,
-    ) -> Result<bool, anyhow::Error> {
+    ) -> VerifyResult<bool> {
         let (owner, repo) = Self::parse_repo_url(repo_url)
-            .ok_or_else(|| anyhow::anyhow!("Invalid repository URL: {}", repo_url))?;
+            .ok_or_else(|| GitHubVerifyError::InvalidRepoUrl(repo_url.to_string()))?;
 
         // Check cache first (include user_id in cache key)
         let cache_key = format!("{}:{}:read", user_id, owner);
@@ -128,13 +154,15 @@ impl GitHubVerifier {
 
         // Get the user's GitHub token from registry
         let user_id = user_id.to_string();
-        let registry_conn = state.registry.get_conn().await?;
+        let registry_conn = state.registry.get_conn().await
+            .map_err(|e| GitHubVerifyError::RegistryQuery(format!("Failed to get registry connection: {}", e)))?;
         let user_info = registry_conn
             .interact(move |conn| {
                 let mut stmt = conn.prepare(
                     "SELECT id, github_token FROM users
                      WHERE id = ?1 AND github_token IS NOT NULL",
-                )?;
+                )
+                .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
 
                 stmt.query_row([&user_id], |row| {
                     let id: String = row.get(0)?;
@@ -144,11 +172,11 @@ impl GitHubVerifier {
                 .optional()
             })
             .await
-            .map_err(|e| anyhow::anyhow!("Failed to query user: {}", e))?
-            .map_err(|e| anyhow::anyhow!("Failed to execute query: {}", e))?;
+            .map_err(|e| GitHubVerifyError::RegistryQuery(format!("Failed to execute query: {}", e)))?
+            .map_err(|e| GitHubVerifyError::RegistryQuery(format!("Registry interact failed: {}", e)))?;
 
         let (user_id_from_db, github_token) = user_info
-            .ok_or_else(|| anyhow::anyhow!("No authenticated user with GitHub token found"))?;
+            .ok_or(GitHubVerifyError::NoGitHubToken)?;
 
         // Verify access via GitHub API
         let client = reqwest::Client::new();
@@ -160,7 +188,8 @@ impl GitHubVerifier {
             .header("User-Agent", "codetours-server")
             .header("Accept", "application/vnd.github+json")
             .send()
-            .await?;
+            .await
+            .map_err(|e| GitHubVerifyError::GitHubApi(format!("Failed to call GitHub API: {}", e)))?;
 
         let has_access = resp.status().is_success();
 
@@ -192,9 +221,9 @@ impl GitHubVerifier {
         state: &AppState,
         repo_url: &str,
         user_id: &str,
-    ) -> Result<bool, anyhow::Error> {
+    ) -> VerifyResult<bool> {
         let (owner, repo) = Self::parse_repo_url(repo_url)
-            .ok_or_else(|| anyhow::anyhow!("Invalid repository URL: {}", repo_url))?;
+            .ok_or_else(|| GitHubVerifyError::InvalidRepoUrl(repo_url.to_string()))?;
 
         // Check cache first (include user_id in cache key since permissions vary by user)
         let cache_key = format!("{}:{}:write", user_id, owner);
@@ -209,14 +238,16 @@ impl GitHubVerifier {
 
         // Get the user's GitHub token from registry
         let user_id = user_id.to_string();
-        let registry_conn = state.registry.get_conn().await?;
+        let registry_conn = state.registry.get_conn().await
+            .map_err(|e| GitHubVerifyError::RegistryQuery(format!("Failed to get registry connection: {}", e)))?;
         let user_id_for_log = user_id.clone();
         let github_token = registry_conn
             .interact(move |conn| {
                 let mut stmt = conn.prepare(
                     "SELECT github_token FROM users
                      WHERE id = ?1 AND github_token IS NOT NULL",
-                )?;
+                )
+                .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
 
                 stmt.query_row([&user_id], |row| {
                     let token: String = row.get(0)?;
@@ -225,9 +256,9 @@ impl GitHubVerifier {
                 .optional()
             })
             .await
-            .map_err(|e| anyhow::anyhow!("Failed to query user: {}", e))?
-            .map_err(|e| anyhow::anyhow!("Failed to execute query: {}", e))?
-            .ok_or_else(|| anyhow::anyhow!("User not found or no GitHub token available"))?;
+            .map_err(|e| GitHubVerifyError::RegistryQuery(format!("Failed to execute query: {}", e)))?
+            .map_err(|e| GitHubVerifyError::RegistryQuery(format!("Registry interact failed: {}", e)))?
+            .ok_or(GitHubVerifyError::NoGitHubToken)?;
 
         // Verify write access via GitHub API
         let client = reqwest::Client::new();
@@ -239,7 +270,8 @@ impl GitHubVerifier {
             .header("User-Agent", "codetours-server")
             .header("Accept", "application/vnd.github+json")
             .send()
-            .await?;
+            .await
+            .map_err(|e| GitHubVerifyError::GitHubApi(format!("Failed to call GitHub API: {}", e)))?;
 
         if !resp.status().is_success() {
             // Cache the denial
@@ -255,7 +287,8 @@ impl GitHubVerifier {
             return Ok(false);
         }
 
-        let repo_info: GitHubRepo = resp.json().await?;
+        let repo_info: GitHubRepo = resp.json().await
+            .map_err(|e| GitHubVerifyError::GitHubApi(format!("Failed to parse GitHub response: {}", e)))?;
         let has_write = repo_info.permissions.push || repo_info.permissions.admin;
 
         // Cache the result

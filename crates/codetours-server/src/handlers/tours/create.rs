@@ -401,6 +401,22 @@ pub async fn handler(
                 )
                     .into_response();
             }
+            Err(crate::github::GitHubVerifyError::NoGitHubToken) => {
+                tracing::warn!(
+                    user_id = %user_id,
+                    "Write access check failed: no GitHub token linked"
+                );
+                let _ = fs::remove_file(&temp_path).await;
+                return (
+                    StatusCode::UNAUTHORIZED,
+                    Json(ErrorResponse {
+                        error: "unauthorized".to_string(),
+                        reason: Some("GitHub account must be linked to publish".to_string()),
+                        request_id: Some(request_id),
+                    }),
+                )
+                    .into_response();
+            }
             Err(e) => {
                 tracing::error!("Failed to verify write access: {}", e);
                 let _ = fs::remove_file(&temp_path).await;

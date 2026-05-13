@@ -101,6 +101,21 @@ pub async fn handler(
                 }
                 tracing::debug!(repo_url = %repo_url, "Access granted to repository");
             }
+            Err(crate::github::GitHubVerifyError::NoGitHubToken) => {
+                tracing::warn!(
+                    repo_url = %repo_url,
+                    "Access check failed: no GitHub token linked"
+                );
+                return (
+                    StatusCode::UNAUTHORIZED,
+                    Json(ErrorResponse {
+                        error: "unauthorized".to_string(),
+                        reason: Some("GitHub account must be linked to access this repository".to_string()),
+                        request_id: None,
+                    }),
+                )
+                    .into_response();
+            }
             Err(e) => {
                 tracing::error!(
                     repo_url = %repo_url,
