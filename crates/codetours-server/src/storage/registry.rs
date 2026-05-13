@@ -54,12 +54,26 @@ impl RegistryManager {
         Ok(Self { pool })
     }
 
-    /// Get a connection from the pool.
+    /// Get a connection from the pool with foreign keys enabled.
+    ///
+    /// Note: SQLite foreign_keys is a per-connection setting, so we must
+    /// enable it on each connection from the pool.
     pub async fn get_conn(&self) -> Result<deadpool_sqlite::Object> {
-        self.pool
+        let conn = self
+            .pool
             .get()
             .await
-            .map_err(|e| ServerError::Registry(format!("Failed to get connection: {}", e)))
+            .map_err(|e| ServerError::Registry(format!("Failed to get connection: {}", e)))?;
+
+        // Enable foreign keys on this connection
+        conn.interact(|conn| {
+            conn.execute("PRAGMA foreign_keys=ON", [])
+                .map_err(|e| ServerError::Registry(format!("Failed to enable foreign_keys: {}", e)))
+        })
+        .await
+        .map_err(|e| ServerError::Registry(format!("Failed to configure connection: {}", e)))??;
+
+        Ok(conn)
     }
 
     /// Get the underlying pool.

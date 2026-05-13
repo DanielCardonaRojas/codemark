@@ -18,10 +18,31 @@ pub struct GithubUser {
     pub login: String,
 }
 
+/// Result of a GitHub device flow token poll.
+#[derive(Debug)]
+pub enum DeviceFlowResult {
+    /// Authorization is still pending - CLI should continue polling.
+    Pending,
+    /// User needs to slow down - polling too frequently.
+    SlowDown,
+    /// Authorization succeeded - access token granted.
+    Success(String),
+    /// Terminal error - new device code required.
+    Terminal(String),
+}
+
 /// GitHub OAuth token response.
 #[derive(Debug, Deserialize)]
 pub struct GithubTokenResponse {
     pub access_token: String,
+}
+
+/// GitHub OAuth error response.
+#[derive(Debug, Deserialize)]
+pub struct GithubErrorResponse {
+    pub error: String,
+    pub error_description: Option<String>,
+    pub interval: Option<u64>,
 }
 
 /// Handle GitHub OAuth callback.
@@ -240,39 +261,26 @@ pub async fn github_device_poll(
         .await
         .map_err(|e| HandlerError::Internal(format!("Failed to read response: {}", e)))?;
 
-    let token_resp: GithubTokenResponse = serde_json::from_slice(&token_resp_bytes).or_else(|_| {
-        let error_json: serde_json::Value =
-            serde_json::from_slice(&token_resp_bytes).unwrap_or_default();
-        let error = error_json["error"].as_str().unwrap_or("unknown");
+    // Parse response - could be success token or error
+    let flow_result = parse_device_flow_response(&token_resp_bytes)?;
 
-        match error {
-            "authorization_pending" => Ok(GithubTokenResponse {
-                access_token: "pending".to_string(),
-            }),
-            "slow_down" => Ok(GithubTokenResponse {
-                access_token: "slow_down".to_string(),
-            }),
-            "expired_token" => Err(HandlerError::BadRequest("Device code expired".to_string())),
-            "access_denied" => Err(HandlerError::Unauthorized("Access denied by user".to_string())),
-            _ => Err(HandlerError::Internal(format!(
-                "GitHub error: {}",
-                error_json["error_description"]
-                    .as_str()
-                    .unwrap_or("Unknown error")
-            ))),
+    let access_token = match flow_result {
+        DeviceFlowResult::Pending => {
+            return Ok(axum::Json(serde_json::json!({ "error": "authorization_pending" })))
         }
-    })?;
-
-    match token_resp.access_token.as_str() {
-        "pending" => return Ok(axum::Json(serde_json::json!({ "error": "authorization_pending" }))),
-        "slow_down" => return Ok(axum::Json(serde_json::json!({ "error": "slow_down" }))),
-        _ => {}
-    }
+        DeviceFlowResult::SlowDown => {
+            return Ok(axum::Json(serde_json::json!({ "error": "slow_down" })))
+        }
+        DeviceFlowResult::Terminal(msg) => {
+            return Err(HandlerError::BadRequest(msg));
+        }
+        DeviceFlowResult::Success(token) => token,
+    };
 
     // Fetch user info
     let user_resp: GithubUser = client
         .get("https://api.github.com/user")
-        .header("Authorization", format!("Bearer {}", token_resp.access_token))
+        .header("Authorization", format!("Bearer {}", access_token))
         .header("User-Agent", "codetours-server")
         .send()
         .await
@@ -284,12 +292,12 @@ pub async fn github_device_poll(
     let github_id = user_github_id_to_string(&user_resp.id);
     let user_id = format!("user-{}", Uuid::new_v4());
     let github_login = user_resp.login.clone();
-    let access_token = token_resp.access_token.clone();
 
     let registry_conn =
         state.registry.get_conn().await.map_err(|e| {
             HandlerError::Internal(format!("Failed to get registry connection: {}", e))
         })?;
+
     let user_id = registry_conn
         .interact(move |conn| {
             let existing_user = registry::find_user_by_github_id(conn, &github_id)
@@ -327,4 +335,43 @@ pub async fn github_device_poll(
     let session_token =
         generate_jwt(&user_id, &config.get_jwt_secret(), config.session_expires_in)?;
     Ok(axum::Json(serde_json::json!({ "token": session_token })))
+}
+
+/// Parse the device flow response from GitHub, handling all documented error codes.
+fn parse_device_flow_response(bytes: &[u8]) -> Result<DeviceFlowResult, HandlerError> {
+    // First try to parse as success response
+    if let Ok(token_resp) = serde_json::from_slice::<GithubTokenResponse>(bytes) {
+        return Ok(DeviceFlowResult::Success(token_resp.access_token));
+    }
+
+    // Otherwise parse as error response
+    let error_resp: GithubErrorResponse = serde_json::from_slice(bytes)
+        .map_err(|_| HandlerError::Internal("Invalid response from GitHub".to_string()))?;
+
+    match error_resp.error.as_str() {
+        "authorization_pending" => Ok(DeviceFlowResult::Pending),
+        "slow_down" => Ok(DeviceFlowResult::SlowDown),
+        "expired_token" => Ok(DeviceFlowResult::Terminal(
+            "Device code has expired. Please request a new device code.".to_string(),
+        )),
+        "access_denied" => Ok(DeviceFlowResult::Terminal(
+            "Access denied by user.".to_string(),
+        )),
+        "incorrect_device_code" => Ok(DeviceFlowResult::Terminal(
+            "Invalid device code. Please request a new device code.".to_string(),
+        )),
+        "incorrect_client_credentials" => Ok(DeviceFlowResult::Terminal(
+            "Invalid client credentials.".to_string(),
+        )),
+        "device_flow_disabled" => Ok(DeviceFlowResult::Terminal(
+            "Device flow is disabled for this application.".to_string(),
+        )),
+        "unsupported_grant_type" => Ok(DeviceFlowResult::Terminal(
+            "Unsupported grant type.".to_string(),
+        )),
+        other => Ok(DeviceFlowResult::Terminal(format!(
+            "GitHub error: {}",
+            error_resp.error_description.as_deref().unwrap_or(other)
+        ))),
+    }
 }
