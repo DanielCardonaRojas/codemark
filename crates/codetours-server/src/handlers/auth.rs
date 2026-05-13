@@ -412,18 +412,33 @@ pub async fn github_device_poll(
         .await
         .map_err(|e| HandlerError::Internal(format!("Failed to read response: {}", e)))?;
 
-    let token_resp: GithubTokenResponse =
-        serde_json::from_slice(&token_resp_bytes).or_else(|_| {
-            let error_json: serde_json::Value =
-                serde_json::from_slice(&token_resp_bytes).unwrap_or_default();
-            if error_json["error"] == "authorization_pending" {
-                return Ok(GithubTokenResponse { access_token: "pending".to_string() });
-            }
-            Err(HandlerError::Internal("Failed to parse GitHub response".to_string()))
-        })?;
+    let token_resp: GithubTokenResponse = serde_json::from_slice(&token_resp_bytes).or_else(|_| {
+        let error_json: serde_json::Value =
+            serde_json::from_slice(&token_resp_bytes).unwrap_or_default();
+        let error = error_json["error"].as_str().unwrap_or("unknown");
 
-    if token_resp.access_token == "pending" {
-        return Ok(axum::Json(serde_json::json!({ "error": "authorization_pending" })));
+        match error {
+            "authorization_pending" => Ok(GithubTokenResponse {
+                access_token: "pending".to_string(),
+            }),
+            "slow_down" => Ok(GithubTokenResponse {
+                access_token: "slow_down".to_string(),
+            }),
+            "expired_token" => Err(HandlerError::BadRequest("Device code expired".to_string())),
+            "access_denied" => Err(HandlerError::Unauthorized("Access denied by user".to_string())),
+            _ => Err(HandlerError::Internal(format!(
+                "GitHub error: {}",
+                error_json["error_description"]
+                    .as_str()
+                    .unwrap_or("Unknown error")
+            ))),
+        }
+    })?;
+
+    match token_resp.access_token.as_str() {
+        "pending" => return Ok(axum::Json(serde_json::json!({ "error": "authorization_pending" }))),
+        "slow_down" => return Ok(axum::Json(serde_json::json!({ "error": "slow_down" }))),
+        _ => {}
     }
 
     // Fetch user info
