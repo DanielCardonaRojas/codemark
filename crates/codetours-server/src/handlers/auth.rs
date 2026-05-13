@@ -109,41 +109,20 @@ pub async fn github_callback(
         })?;
 
     // Use interact to run the sync registry operations
+    // The upsert_user_returning_id function is atomic and eliminates the race
+    // condition between checking for user existence and inserting/updating.
     let user_id = registry_conn
         .interact(move |conn| {
-            // Check if user exists
-            let existing_user = registry::find_user_by_github_id(conn, &github_id)
-                .map_err(|e| HandlerError::Internal(format!("Failed to query user: {}", e)))?;
-
-            let user_id = if let Some(existing) = existing_user {
-                // Update last login and token
-                registry::upsert_user(
-                    conn,
-                    &UserUpsert {
-                        id: &existing.id,
-                        github_id: &github_id,
-                        github_login: &github_login,
-                        github_token: Some(&access_token),
-                    },
-                )
-                .map_err(|e| HandlerError::Internal(format!("Failed to update user: {}", e)))?;
-                existing.id
-            } else {
-                // Create new user
-                registry::upsert_user(
-                    conn,
-                    &UserUpsert {
-                        id: &user_id,
-                        github_id: &github_id,
-                        github_login: &github_login,
-                        github_token: Some(&access_token),
-                    },
-                )
-                .map_err(|e| HandlerError::Internal(format!("Failed to create user: {}", e)))?;
-                user_id
-            };
-
-            Ok::<String, HandlerError>(user_id)
+            registry::upsert_user_returning_id(
+                conn,
+                &UserUpsert {
+                    id: &user_id,
+                    github_id: &github_id,
+                    github_login: &github_login,
+                    github_token: Some(&access_token),
+                },
+            )
+            .map_err(|e| HandlerError::Internal(format!("Failed to upsert user: {}", e)))
         })
         .await
         .map_err(|e| HandlerError::Internal(format!("Registry operation failed: {}", e)))?
@@ -300,34 +279,16 @@ pub async fn github_device_poll(
 
     let user_id = registry_conn
         .interact(move |conn| {
-            let existing_user = registry::find_user_by_github_id(conn, &github_id)
-                .map_err(|e| HandlerError::Internal(format!("Failed to query user: {}", e)))?;
-
-            if let Some(existing) = existing_user {
-                registry::upsert_user(
-                    conn,
-                    &UserUpsert {
-                        id: &existing.id,
-                        github_id: &github_id,
-                        github_login: &github_login,
-                        github_token: Some(&access_token),
-                    },
-                )
-                .map_err(|e| HandlerError::Internal(format!("Failed to update: {}", e)))?;
-                Ok(existing.id)
-            } else {
-                registry::upsert_user(
-                    conn,
-                    &UserUpsert {
-                        id: &user_id,
-                        github_id: &github_id,
-                        github_login: &github_login,
-                        github_token: Some(&access_token),
-                    },
-                )
-                .map_err(|e| HandlerError::Internal(format!("Failed to create: {}", e)))?;
-                Ok(user_id)
-            }
+            registry::upsert_user_returning_id(
+                conn,
+                &UserUpsert {
+                    id: &user_id,
+                    github_id: &github_id,
+                    github_login: &github_login,
+                    github_token: Some(&access_token),
+                },
+            )
+            .map_err(|e| HandlerError::Internal(format!("Failed to upsert user: {}", e)))
         })
         .await
         .map_err(|e| HandlerError::Internal(format!("Registry failed: {}", e)))??;

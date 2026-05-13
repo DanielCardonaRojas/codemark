@@ -220,20 +220,37 @@ pub struct UserUpsert<'a> {
 
 /// Create or update a user in the registry.
 pub fn upsert_user(conn: &Connection, user: &UserUpsert<'_>) -> Result<()> {
+    upsert_user_returning_id(conn, user)?;
+    Ok(())
+}
+
+/// Create or update a user in the registry, returning the canonical user ID.
+///
+/// This atomic operation eliminates race conditions between checking for a user's
+/// existence and inserting/updating them. Two concurrent logins for the same
+/// github_id will both result in the same canonical user ID being returned.
+pub fn upsert_user_returning_id(conn: &Connection, user: &UserUpsert<'_>) -> Result<String> {
     let now = chrono::Utc::now().to_rfc3339();
 
-    conn.execute(
+    // Use INSERT ... ON CONFLICT ... UPDATE with RETURNING to atomically
+    // insert or update the user and get back the canonical user ID.
+    // Note: We don't update the id field in the DO UPDATE clause - the id
+    // is immutable after creation. We return the users.id which will be the
+    // existing id on conflict or the newly inserted id on success.
+    let id: String = conn.query_row(
         "INSERT INTO users (id, github_id, github_login, github_token, created_at, last_login_at)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6)
          ON CONFLICT(github_id) DO UPDATE SET
              github_login = excluded.github_login,
              github_token = COALESCE(excluded.github_token, users.github_token),
-             last_login_at = excluded.last_login_at",
+             last_login_at = excluded.last_login_at
+         RETURNING id",
         params![user.id, user.github_id, user.github_login, user.github_token, now, now,],
+        |row| row.get(0),
     )
     .map_err(|e| ServerError::Registry(format!("Failed to upsert user: {}", e)))?;
 
-    Ok(())
+    Ok(id)
 }
 
 /// Find a user by their GitHub ID.
