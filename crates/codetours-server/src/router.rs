@@ -32,11 +32,9 @@ impl AppState {
 pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/health", get(handlers::health::handler))
-        .route("/auth/github", get(auth::github_login))
         .route("/auth/github/device", get(auth::github_device_login))
         .route("/auth/github/device/poll", post(auth::github_device_poll))
         .route("/auth/github/callback", get(auth::github_callback))
-        .route("/callback", get(auth::github_callback))
         .route("/tours", get(tours::list::handler).post(tours::create::handler))
         .route("/tours/:id", get(tours::get::handler).delete(tours::delete::handler))
         .layer(TraceLayer::new_for_http())

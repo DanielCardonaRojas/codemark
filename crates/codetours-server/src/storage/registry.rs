@@ -102,11 +102,6 @@ const MIGRATION_001: &str = "
         created_at      TEXT NOT NULL
     );
 
-    CREATE TABLE IF NOT EXISTS oauth_states (
-        state           TEXT PRIMARY KEY,
-        created_at      TEXT NOT NULL
-    );
-
     CREATE INDEX IF NOT EXISTS idx_refresh_tokens_user ON refresh_tokens(user_id);
     CREATE INDEX IF NOT EXISTS idx_tenants_github ON tenants(github_id);
 ";
@@ -339,45 +334,6 @@ pub fn find_tenant_by_github_id(conn: &Connection, github_id: &str) -> Result<Op
     )
     .optional()
     .map_err(|e| ServerError::Registry(format!("Failed to find tenant by github_id: {}", e)))
-}
-
-/// Store an OAuth state for CSRF protection.
-pub fn store_oauth_state(conn: &Connection, state: &str) -> Result<()> {
-    let now = chrono::Utc::now().to_rfc3339();
-    conn.execute(
-        "INSERT INTO oauth_states (state, created_at) VALUES (?1, ?2)",
-        params![state, now],
-    )
-    .map_err(|e| ServerError::Registry(format!("Failed to store oauth state: {}", e)))?;
-    Ok(())
-}
-
-/// Verify and consume an OAuth state.
-pub fn verify_oauth_state(conn: &Connection, state: &str) -> Result<bool> {
-    let exists: bool = conn
-        .query_row(
-            "SELECT EXISTS(SELECT 1 FROM oauth_states WHERE state = ?1)",
-            params![state],
-            |row| row.get(0),
-        )
-        .map_err(|e| ServerError::Registry(format!("Failed to verify oauth state: {}", e)))?;
-
-    if exists {
-        conn.execute("DELETE FROM oauth_states WHERE state = ?1", params![state])
-            .map_err(|e| ServerError::Registry(format!("Failed to delete oauth state: {}", e)))?;
-    }
-
-    Ok(exists)
-}
-
-/// Delete expired OAuth states (older than 15 minutes).
-pub fn delete_expired_oauth_states(conn: &Connection) -> Result<usize> {
-    let expiry = (chrono::Utc::now() - chrono::Duration::minutes(15)).to_rfc3339();
-    let count =
-        conn.execute("DELETE FROM oauth_states WHERE created_at < ?1", params![expiry]).map_err(
-            |e| ServerError::Registry(format!("Failed to delete expired oauth states: {}", e)),
-        )?;
-    Ok(count)
 }
 
 fn row_to_user(row: &rusqlite::Row) -> rusqlite::Result<User> {

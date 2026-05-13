@@ -49,9 +49,6 @@ pub struct GithubAuthConfig {
     /// GitHub OAuth client secret
     #[serde(default)]
     pub client_secret: String,
-    /// OAuth redirect URI (e.g., http://localhost:8080/auth/github/callback)
-    #[serde(default = "default_callback_url")]
-    pub callback_url: String,
     /// JWT secret for signing session tokens
     #[serde(default)]
     pub jwt_secret: String,
@@ -118,10 +115,6 @@ fn default_auth_mode() -> String {
     "stub".to_string()
 }
 
-fn default_callback_url() -> String {
-    "http://localhost:8080/auth/github/callback".to_string()
-}
-
 fn default_session_expires() -> u64 {
     7 * 24 * 60 * 60 // 7 days
 }
@@ -152,7 +145,6 @@ impl Default for GithubAuthConfig {
         Self {
             client_id: String::new(),
             client_secret: String::new(),
-            callback_url: default_callback_url(),
             jwt_secret: String::new(),
             session_expires_in: default_session_expires(),
         }
