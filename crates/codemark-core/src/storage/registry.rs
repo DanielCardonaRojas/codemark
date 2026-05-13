@@ -392,6 +392,9 @@ pub struct Server {
 }
 
 /// Register or update a server in the registry.
+///
+/// If a server with the same URL already exists and `token` is `None`,
+/// the existing token is preserved (only `last_login` is updated).
 pub fn upsert_server(conn: &Connection, url: &str, token: Option<&str>) -> Result<()> {
     let now = chrono::Utc::now().to_rfc3339();
 
