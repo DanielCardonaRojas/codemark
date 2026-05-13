@@ -161,6 +161,12 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_empty_string() {
+        assert_eq!(parse_remote_url(""), None);
+        assert_eq!(parse_remote_url("   "), None);
+    }
+
+    #[test]
     fn test_build_github_url() {
         assert_eq!(build_github_url("owner", "repo"), "https://github.com/owner/repo.git");
     }

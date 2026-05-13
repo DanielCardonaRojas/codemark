@@ -383,6 +383,36 @@ mod tests {
         let resolved = resolve_repos(&conn, &repo_refs).unwrap();
         assert_eq!(resolved.len(), 2); // Only the two existing repos
     }
+
+    #[test]
+    fn test_find_repo_by_origin() {
+        let conn = test_registry().unwrap();
+
+        upsert_repo(
+            &conn,
+            &RepoUpsert {
+                id: "test-origin",
+                repo_owner: "owner",
+                repo_name: "repo",
+                origin_url: Some("https://github.com/owner/repo.git"),
+                repo_root: "/path/to/repo",
+                db_owner_email: "owner@example.com",
+                db_owner_name: None,
+                server_url: None,
+            },
+        )
+        .unwrap();
+
+        // Find by origin URL
+        let repo = find_repo_by_origin(&conn, "https://github.com/owner/repo.git").unwrap().unwrap();
+        assert_eq!(repo.repo_owner, "owner");
+        assert_eq!(repo.repo_name, "repo");
+
+        // Non-existent origin URL
+        assert!(find_repo_by_origin(&conn, "https://github.com/nonexistent/repo.git")
+            .unwrap()
+            .is_none());
+    }
 }
 
 /// Server authentication information.
@@ -492,5 +522,22 @@ mod server_tests {
 
         delete_server(&conn, "https://server.com").unwrap();
         assert!(get_server(&conn, "https://server.com").unwrap().is_none());
+    }
+
+    #[test]
+    fn test_upsert_server_preserves_token_when_none() {
+        let conn = test_registry();
+
+        // Insert with a token
+        upsert_server(&conn, "https://server.com", Some("initial_token")).unwrap();
+        let server = get_server(&conn, "https://server.com").unwrap().unwrap();
+        assert_eq!(server.token, Some("initial_token".to_string()));
+
+        // Update with None - token should be preserved
+        upsert_server(&conn, "https://server.com", None).unwrap();
+        let server = get_server(&conn, "https://server.com").unwrap().unwrap();
+        assert_eq!(server.token, Some("initial_token".to_string()));
+        // But last_login should be updated
+        assert!(server.last_login.is_some());
     }
 }
