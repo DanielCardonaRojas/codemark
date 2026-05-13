@@ -54,6 +54,8 @@ pub fn parse_remote_url(url: &str) -> Option<(String, String)> {
 
 /// Parse the path portion of a GitHub URL.
 fn parse_github_url(path: &str) -> Option<(String, String)> {
+    // Remove trailing slash first (so we can handle "owner/repo.git/")
+    let path = path.trim_end_matches('/');
     // Remove .git suffix if present
     let path = path.strip_suffix(".git").unwrap_or(path);
 
@@ -133,6 +135,18 @@ mod tests {
         assert_eq!(
             parse_remote_url("https://github.com/owner-org/repo-name.git"),
             Some(("owner-org".to_string(), "repo-name".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_parse_with_trailing_slash() {
+        assert_eq!(
+            parse_remote_url("https://github.com/owner/repo/"),
+            Some(("owner".to_string(), "repo".to_string()))
+        );
+        assert_eq!(
+            parse_remote_url("https://github.com/owner/repo.git/"),
+            Some(("owner".to_string(), "repo".to_string()))
         );
     }
 
