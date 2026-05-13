@@ -291,13 +291,15 @@ pub fn store_refresh_token(conn: &Connection, token: &RefreshToken) -> Result<()
 
 /// Find a refresh token and its associated user.
 pub fn find_refresh_token(conn: &Connection, token: &str) -> Result<Option<(RefreshToken, User)>> {
+    let now = chrono::Utc::now().to_rfc3339();
     conn.query_row(
         "SELECT rt.token, rt.user_id, rt.expires_at, rt.created_at,
                 u.id, u.github_id, u.github_login, u.github_token, u.created_at, u.last_login_at
          FROM refresh_tokens rt
          JOIN users u ON rt.user_id = u.id
-         WHERE rt.token = ?1",
-        params![token],
+         WHERE rt.token = ?1
+           AND datetime(rt.expires_at) > datetime(?2)",
+        params![token, now],
         |row| {
             Ok((
                 RefreshToken {
@@ -323,9 +325,11 @@ pub fn find_refresh_token(conn: &Connection, token: &str) -> Result<Option<(Refr
 
 /// Delete expired refresh tokens.
 pub fn delete_expired_tokens(conn: &Connection) -> Result<usize> {
-    let now = chrono::Utc::now().to_rfc3339();
     let count = conn
-        .execute("DELETE FROM refresh_tokens WHERE expires_at < ?1", params![now])
+        .execute(
+            "DELETE FROM refresh_tokens WHERE datetime(expires_at) <= datetime('now')",
+            [],
+        )
         .map_err(|e| ServerError::Registry(format!("Failed to delete expired tokens: {}", e)))?;
 
     Ok(count)
