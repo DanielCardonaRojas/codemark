@@ -424,14 +424,17 @@ mod tests {
         .unwrap();
 
         // Find by origin URL
-        let repo = find_repo_by_origin(&conn, "https://github.com/owner/repo.git").unwrap().unwrap();
+        let repo =
+            find_repo_by_origin(&conn, "https://github.com/owner/repo.git").unwrap().unwrap();
         assert_eq!(repo.repo_owner, "owner");
         assert_eq!(repo.repo_name, "repo");
 
         // Non-existent origin URL
-        assert!(find_repo_by_origin(&conn, "https://github.com/nonexistent/repo.git")
-            .unwrap()
-            .is_none());
+        assert!(
+            find_repo_by_origin(&conn, "https://github.com/nonexistent/repo.git")
+                .unwrap()
+                .is_none()
+        );
     }
 }
 
@@ -484,10 +487,7 @@ pub fn list_servers(conn: &Connection) -> Result<Vec<Server>> {
 /// by setting `server_url` to NULL for repositories that reference this server.
 pub fn delete_server(conn: &Connection, url: &str) -> Result<()> {
     // First, clear any dangling references in known_repos
-    conn.execute(
-        "UPDATE known_repos SET server_url = NULL WHERE server_url = ?1",
-        params![url],
-    )?;
+    conn.execute("UPDATE known_repos SET server_url = NULL WHERE server_url = ?1", params![url])?;
 
     // Then delete the server
     conn.execute("DELETE FROM servers WHERE url = ?1", params![url])?;
