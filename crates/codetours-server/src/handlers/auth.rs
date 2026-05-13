@@ -56,10 +56,9 @@ pub async fn github_callback(
     headers: HeaderMap,
 ) -> Result<impl IntoResponse, HandlerError> {
     // Get code from header
-    let code = headers
-        .get("x-code")
-        .and_then(|h| h.to_str().ok())
-        .ok_or_else(|| HandlerError::BadRequest("Missing authorization code in x-code header".to_string()))?;
+    let code = headers.get("x-code").and_then(|h| h.to_str().ok()).ok_or_else(|| {
+        HandlerError::BadRequest("Missing authorization code in x-code header".to_string())
+    })?;
 
     let config = &state.config.auth.github;
     let client_secret = config.get_client_secret();
@@ -132,10 +131,7 @@ pub async fn github_callback(
     let jwt_secret = config.get_jwt_secret();
     let session_token = generate_jwt(&user_id, &jwt_secret, config.session_expires_in)?;
 
-    Ok((
-        StatusCode::OK,
-        axum::Json(serde_json::json!({ "token": session_token })),
-    ))
+    Ok((StatusCode::OK, axum::Json(serde_json::json!({ "token": session_token }))))
 }
 
 /// Generate a JWT token for the user.
@@ -245,10 +241,10 @@ pub async fn github_device_poll(
 
     let access_token = match flow_result {
         DeviceFlowResult::Pending => {
-            return Ok(axum::Json(serde_json::json!({ "error": "authorization_pending" })))
+            return Ok(axum::Json(serde_json::json!({ "error": "authorization_pending" })));
         }
         DeviceFlowResult::SlowDown => {
-            return Ok(axum::Json(serde_json::json!({ "error": "slow_down" })))
+            return Ok(axum::Json(serde_json::json!({ "error": "slow_down" })));
         }
         DeviceFlowResult::Terminal(msg) => {
             return Err(HandlerError::BadRequest(msg));
@@ -315,21 +311,19 @@ fn parse_device_flow_response(bytes: &[u8]) -> Result<DeviceFlowResult, HandlerE
         "expired_token" => Ok(DeviceFlowResult::Terminal(
             "Device code has expired. Please request a new device code.".to_string(),
         )),
-        "access_denied" => Ok(DeviceFlowResult::Terminal(
-            "Access denied by user.".to_string(),
-        )),
+        "access_denied" => Ok(DeviceFlowResult::Terminal("Access denied by user.".to_string())),
         "incorrect_device_code" => Ok(DeviceFlowResult::Terminal(
             "Invalid device code. Please request a new device code.".to_string(),
         )),
-        "incorrect_client_credentials" => Ok(DeviceFlowResult::Terminal(
-            "Invalid client credentials.".to_string(),
-        )),
+        "incorrect_client_credentials" => {
+            Ok(DeviceFlowResult::Terminal("Invalid client credentials.".to_string()))
+        }
         "device_flow_disabled" => Ok(DeviceFlowResult::Terminal(
             "Device flow is disabled for this application.".to_string(),
         )),
-        "unsupported_grant_type" => Ok(DeviceFlowResult::Terminal(
-            "Unsupported grant type.".to_string(),
-        )),
+        "unsupported_grant_type" => {
+            Ok(DeviceFlowResult::Terminal("Unsupported grant type.".to_string()))
+        }
         other => Ok(DeviceFlowResult::Terminal(format!(
             "GitHub error: {}",
             error_resp.error_description.as_deref().unwrap_or(other)

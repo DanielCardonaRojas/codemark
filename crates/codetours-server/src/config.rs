@@ -55,6 +55,9 @@ pub struct GithubAuthConfig {
     /// Session token expiration in seconds (default: 7 days)
     #[serde(default = "default_session_expires")]
     pub session_expires_in: u64,
+    /// OAuth callback URL (optional, defaults to http://host:port/auth/github/callback)
+    #[serde(default)]
+    pub callback_url: Option<String>,
 }
 
 impl GithubAuthConfig {
@@ -80,6 +83,13 @@ impl GithubAuthConfig {
             .ok()
             .filter(|s| !s.is_empty())
             .unwrap_or_else(|| self.jwt_secret.clone())
+    }
+
+    /// Get the callback URL, using the configured value or building from host/port
+    pub fn get_callback_url(&self, host: &str, port: u16) -> String {
+        self.callback_url
+            .clone()
+            .unwrap_or_else(|| format!("http://{}:{}/auth/github/callback", host, port))
     }
 }
 
@@ -147,6 +157,7 @@ impl Default for GithubAuthConfig {
             client_secret: String::new(),
             jwt_secret: String::new(),
             session_expires_in: default_session_expires(),
+            callback_url: None,
         }
     }
 }

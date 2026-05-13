@@ -110,7 +110,9 @@ pub async fn handler(
                     StatusCode::UNAUTHORIZED,
                     Json(ErrorResponse {
                         error: "unauthorized".to_string(),
-                        reason: Some("GitHub account must be linked to access this repository".to_string()),
+                        reason: Some(
+                            "GitHub account must be linked to access this repository".to_string(),
+                        ),
                         request_id: None,
                     }),
                 )

@@ -154,15 +154,17 @@ impl GitHubVerifier {
 
         // Get the user's GitHub token from registry
         let user_id = user_id.to_string();
-        let registry_conn = state.registry.get_conn().await
-            .map_err(|e| GitHubVerifyError::RegistryQuery(format!("Failed to get registry connection: {}", e)))?;
+        let registry_conn = state.registry.get_conn().await.map_err(|e| {
+            GitHubVerifyError::RegistryQuery(format!("Failed to get registry connection: {}", e))
+        })?;
         let user_info = registry_conn
             .interact(move |conn| {
-                let mut stmt = conn.prepare(
-                    "SELECT id, github_token FROM users
+                let mut stmt = conn
+                    .prepare(
+                        "SELECT id, github_token FROM users
                      WHERE id = ?1 AND github_token IS NOT NULL",
-                )
-                .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
+                    )
+                    .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
 
                 stmt.query_row([&user_id], |row| {
                     let id: String = row.get(0)?;
@@ -172,11 +174,14 @@ impl GitHubVerifier {
                 .optional()
             })
             .await
-            .map_err(|e| GitHubVerifyError::RegistryQuery(format!("Failed to execute query: {}", e)))?
-            .map_err(|e| GitHubVerifyError::RegistryQuery(format!("Registry interact failed: {}", e)))?;
+            .map_err(|e| {
+                GitHubVerifyError::RegistryQuery(format!("Failed to execute query: {}", e))
+            })?
+            .map_err(|e| {
+                GitHubVerifyError::RegistryQuery(format!("Registry interact failed: {}", e))
+            })?;
 
-        let (user_id_from_db, github_token) = user_info
-            .ok_or(GitHubVerifyError::NoGitHubToken)?;
+        let (user_id_from_db, github_token) = user_info.ok_or(GitHubVerifyError::NoGitHubToken)?;
 
         // Verify access via GitHub API
         let client = reqwest::Client::new();
@@ -189,7 +194,9 @@ impl GitHubVerifier {
             .header("Accept", "application/vnd.github+json")
             .send()
             .await
-            .map_err(|e| GitHubVerifyError::GitHubApi(format!("Failed to call GitHub API: {}", e)))?;
+            .map_err(|e| {
+                GitHubVerifyError::GitHubApi(format!("Failed to call GitHub API: {}", e))
+            })?;
 
         let has_access = resp.status().is_success();
 
@@ -238,16 +245,18 @@ impl GitHubVerifier {
 
         // Get the user's GitHub token from registry
         let user_id = user_id.to_string();
-        let registry_conn = state.registry.get_conn().await
-            .map_err(|e| GitHubVerifyError::RegistryQuery(format!("Failed to get registry connection: {}", e)))?;
+        let registry_conn = state.registry.get_conn().await.map_err(|e| {
+            GitHubVerifyError::RegistryQuery(format!("Failed to get registry connection: {}", e))
+        })?;
         let user_id_for_log = user_id.clone();
         let github_token = registry_conn
             .interact(move |conn| {
-                let mut stmt = conn.prepare(
-                    "SELECT github_token FROM users
+                let mut stmt = conn
+                    .prepare(
+                        "SELECT github_token FROM users
                      WHERE id = ?1 AND github_token IS NOT NULL",
-                )
-                .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
+                    )
+                    .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
 
                 stmt.query_row([&user_id], |row| {
                     let token: String = row.get(0)?;
@@ -256,8 +265,12 @@ impl GitHubVerifier {
                 .optional()
             })
             .await
-            .map_err(|e| GitHubVerifyError::RegistryQuery(format!("Failed to execute query: {}", e)))?
-            .map_err(|e| GitHubVerifyError::RegistryQuery(format!("Registry interact failed: {}", e)))?
+            .map_err(|e| {
+                GitHubVerifyError::RegistryQuery(format!("Failed to execute query: {}", e))
+            })?
+            .map_err(|e| {
+                GitHubVerifyError::RegistryQuery(format!("Registry interact failed: {}", e))
+            })?
             .ok_or(GitHubVerifyError::NoGitHubToken)?;
 
         // Verify write access via GitHub API
@@ -271,7 +284,9 @@ impl GitHubVerifier {
             .header("Accept", "application/vnd.github+json")
             .send()
             .await
-            .map_err(|e| GitHubVerifyError::GitHubApi(format!("Failed to call GitHub API: {}", e)))?;
+            .map_err(|e| {
+                GitHubVerifyError::GitHubApi(format!("Failed to call GitHub API: {}", e))
+            })?;
 
         if !resp.status().is_success() {
             // Cache the denial
@@ -287,8 +302,9 @@ impl GitHubVerifier {
             return Ok(false);
         }
 
-        let repo_info: GitHubRepo = resp.json().await
-            .map_err(|e| GitHubVerifyError::GitHubApi(format!("Failed to parse GitHub response: {}", e)))?;
+        let repo_info: GitHubRepo = resp.json().await.map_err(|e| {
+            GitHubVerifyError::GitHubApi(format!("Failed to parse GitHub response: {}", e))
+        })?;
         let has_write = repo_info.permissions.push || repo_info.permissions.admin;
 
         // Cache the result

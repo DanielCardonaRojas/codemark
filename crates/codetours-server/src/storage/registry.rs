@@ -133,9 +133,9 @@ fn run_migrations(conn: &mut Connection) -> Result<()> {
     for (version, sql) in migrations {
         if current_version < version {
             tracing::info!(version = %version, "Applying registry migration");
-            let tx = conn
-                .transaction()
-                .map_err(|e| ServerError::Registry(format!("Failed to start transaction: {}", e)))?;
+            let tx = conn.transaction().map_err(|e| {
+                ServerError::Registry(format!("Failed to start transaction: {}", e))
+            })?;
 
             tx.execute_batch(sql)
                 .map_err(|e| ServerError::Registry(format!("Failed to apply migration: {}", e)))?;
@@ -157,11 +157,9 @@ fn get_schema_version(conn: &Connection) -> i64 {
     }
 
     // Fallback to schema_meta table
-    conn.query_row(
-        "SELECT value FROM schema_meta WHERE key = 'schema_version'",
-        [],
-        |row| row.get::<_, String>(0),
-    )
+    conn.query_row("SELECT value FROM schema_meta WHERE key = 'schema_version'", [], |row| {
+        row.get::<_, String>(0)
+    })
     .ok()
     .and_then(|v| v.parse().ok())
     .unwrap_or(0)
@@ -326,10 +324,7 @@ pub fn find_refresh_token(conn: &Connection, token: &str) -> Result<Option<(Refr
 /// Delete expired refresh tokens.
 pub fn delete_expired_tokens(conn: &Connection) -> Result<usize> {
     let count = conn
-        .execute(
-            "DELETE FROM refresh_tokens WHERE datetime(expires_at) <= datetime('now')",
-            [],
-        )
+        .execute("DELETE FROM refresh_tokens WHERE datetime(expires_at) <= datetime('now')", [])
         .map_err(|e| ServerError::Registry(format!("Failed to delete expired tokens: {}", e)))?;
 
     Ok(count)
