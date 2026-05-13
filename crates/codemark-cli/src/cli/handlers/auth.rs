@@ -21,7 +21,7 @@ pub async fn handle_auth(cli: &Cli, mode: &OutputMode, args: &AuthArgs) -> Resul
 /// If a token is provided directly, store it.
 /// Otherwise, initiate the device OAuth flow.
 pub async fn handle_login(_cli: &Cli, mode: &OutputMode, args: &AuthLoginArgs) -> Result<()> {
-    let server_url = normalize_server_url(&args.server);
+    let server_url = normalize_server_url(&args.server)?;
 
     // If a token is provided directly, use it
     if let Some(token) = &args.token {
@@ -167,7 +167,7 @@ async fn handle_device_login(server_url: &str, mode: &OutputMode) -> Result<()> 
 
 /// Handle logout from a server.
 pub async fn handle_logout(_cli: &Cli, mode: &OutputMode, args: &AuthLogoutArgs) -> Result<()> {
-    let server_url = normalize_server_url(&args.server);
+    let server_url = normalize_server_url(&args.server)?;
 
     let conn = registry::open_registry()?;
 
@@ -251,7 +251,9 @@ pub async fn handle_list(_cli: &Cli, mode: &OutputMode) -> Result<()> {
 }
 
 /// Normalize a server URL by removing trailing slash and ensuring https:// if no scheme.
-fn normalize_server_url(url: &str) -> String {
+///
+/// Returns an error if the URL uses an insecure (non-TLS) scheme for non-localhost addresses.
+fn normalize_server_url(url: &str) -> Result<String> {
     let mut url = url.trim().to_string();
 
     // Remove trailing slash
@@ -264,5 +266,16 @@ fn normalize_server_url(url: &str) -> String {
         url = format!("https://{}", url);
     }
 
-    url
+    // Reject non-TLS URLs for non-localhost addresses
+    if url.starts_with("http://")
+        && !url.starts_with("http://localhost")
+        && !url.starts_with("http://127.0.0.1")
+        && !url.starts_with("http://[::1]")
+        && !url.starts_with("http://[::1]")
+    // IPv6 localhost
+    {
+        return Err(Error::Input("insecure server URL: use https://".to_string()));
+    }
+
+    Ok(url)
 }
