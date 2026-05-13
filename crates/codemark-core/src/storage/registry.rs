@@ -479,7 +479,17 @@ pub fn list_servers(conn: &Connection) -> Result<Vec<Server>> {
 }
 
 /// Delete a server by URL.
+///
+/// This will also clear any references to this server in the `known_repos` table
+/// by setting `server_url` to NULL for repositories that reference this server.
 pub fn delete_server(conn: &Connection, url: &str) -> Result<()> {
+    // First, clear any dangling references in known_repos
+    conn.execute(
+        "UPDATE known_repos SET server_url = NULL WHERE server_url = ?1",
+        params![url],
+    )?;
+
+    // Then delete the server
     conn.execute("DELETE FROM servers WHERE url = ?1", params![url])?;
 
     Ok(())
@@ -534,6 +544,42 @@ mod server_tests {
 
         delete_server(&conn, "https://server.com").unwrap();
         assert!(get_server(&conn, "https://server.com").unwrap().is_none());
+    }
+
+    #[test]
+    fn test_delete_server_clears_dangling_references() {
+        let conn = test_registry();
+
+        // Insert a server and a repository that references it
+        upsert_server(&conn, "https://server.com", Some("token")).unwrap();
+        upsert_repo(
+            &conn,
+            &RepoUpsert {
+                id: "test-id",
+                repo_owner: "owner",
+                repo_name: "repo",
+                origin_url: None,
+                repo_root: "/path/to/repo",
+                db_owner_email: "user@example.com",
+                db_owner_name: None,
+                server_url: Some("https://server.com"),
+            },
+        )
+        .unwrap();
+
+        // Verify the repo references the server
+        let repo = find_repo_by_root(&conn, "/path/to/repo").unwrap().unwrap();
+        assert_eq!(repo.server_url, Some("https://server.com".to_string()));
+
+        // Delete the server
+        delete_server(&conn, "https://server.com").unwrap();
+
+        // Verify the server is deleted
+        assert!(get_server(&conn, "https://server.com").unwrap().is_none());
+
+        // Verify the repo's server_url is now NULL
+        let repo = find_repo_by_root(&conn, "/path/to/repo").unwrap().unwrap();
+        assert!(repo.server_url.is_none());
     }
 
     #[test]
