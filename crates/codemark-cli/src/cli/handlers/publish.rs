@@ -3,10 +3,14 @@ use crate::cli::*;
 use codemark_core::engine::snapshot::build_snapshot;
 use codemark_core::error::{Error, Result};
 use codemark_core::storage::pack::Packer;
-use codemark_core::storage::registry;
-use reqwest::header::{CONTENT_TYPE, HeaderMap, HeaderValue};
+use reqwest::header::{CONTENT_TYPE, HeaderValue};
 use rusqlite::params;
 use serde_json::Value;
+
+// Re-export auth resolution helpers
+use crate::cli::handlers::auth_resolve::{
+    build_auth_headers, detect_current_repo, resolve_server_and_token,
+};
 
 pub async fn handle_publish(cli: &Cli, mode: &OutputMode, args: &PublishArgs) -> Result<()> {
     let db = super::open_db_for_write(cli)?;
@@ -101,120 +105,4 @@ pub async fn handle_publish(cli: &Cli, mode: &OutputMode, args: &PublishArgs) ->
     // 9. Cleanup
     let _ = tokio::fs::remove_file(&result_path).await;
     res
-}
-
-/// Detect the current repository's GitHub URL.
-fn detect_current_repo() -> Result<Option<String>> {
-    use codemark_core::git::remote;
-
-    // Get the current directory
-    let current_dir = std::env::current_dir()
-        .map_err(|e| Error::Operation(format!("Failed to get current directory: {}", e)))?;
-
-    // Try to parse the git remote
-    match remote::parse_current_repo(&current_dir) {
-        Ok((owner, repo)) => {
-            let url = remote::build_github_url(&owner, &repo);
-            Ok(Some(url))
-        }
-        Err(_) => Ok(None),
-    }
-}
-
-/// Resolve server URL and token from registry.
-///
-/// Priority:
-/// 1. Explicit server URL from args
-/// 2. Server URL from local registry for current repo
-/// 3. Default server from config
-/// 4. Fallback to localhost
-fn resolve_server_and_token(
-    cli: &Cli,
-    server_arg: Option<&str>,
-    repo_url: Option<&str>,
-) -> Result<(String, Option<String>)> {
-    // If explicit server URL is provided, use it
-    if let Some(server) = server_arg
-        && server.starts_with("http")
-    {
-        // Direct URL - check for token in registry, but don't fail if not found
-        // The caller may provide a token via --token flag
-        let registry_token = get_token_for_server(server).unwrap_or_default();
-        return Ok((server.to_string(), registry_token));
-    }
-
-    // Try to get server from registry based on current repo
-    if let Ok(conn) = registry::open_registry() {
-        if let Some(repo) = repo_url {
-            // Look for a server associated with this repo
-            if let Ok(Some(known_repo)) = registry::find_repo_by_origin(&conn, repo)
-                && let Some(ref server_url) = known_repo.server_url
-            {
-                let token = get_token_for_server(server_url)?;
-                return Ok((server_url.clone(), token));
-            }
-        }
-
-        // If no repo-specific server, check for a default server in registry
-        if let Ok(servers) = registry::list_servers(&conn)
-            && let Some(server) = servers.first()
-        {
-            let token = server.token.clone();
-            return Ok((server.url.clone(), token));
-        }
-    }
-
-    // Fallback to config or localhost
-    let config = super::load_config(cli);
-    let server_name =
-        server_arg.or(config.codetours.default_server.as_deref()).unwrap_or("default");
-
-    if server_name.starts_with("http") {
-        return Ok((server_name.to_string(), None));
-    }
-
-    let s = config
-        .codetours
-        .servers
-        .iter()
-        .find(|s| s.name == server_name)
-        .ok_or_else(|| Error::Input(format!("server '{}' not found in config", server_name)))?;
-
-    Ok((s.url.clone(), s.token.clone()))
-}
-
-/// Build authorization headers for a server request.
-///
-/// Uses Bearer token for JWT-based auth, fallback to X-Tour-Token for legacy.
-fn build_auth_headers(token: Option<&String>) -> Result<HeaderMap> {
-    let mut headers = HeaderMap::new();
-
-    if let Some(t) = token {
-        if t.starts_with("eyJ") {
-            // JWT token
-            headers.insert(
-                "Authorization",
-                HeaderValue::from_str(&format!("Bearer {}", t))
-                    .map_err(|_| Error::Operation("Invalid token".to_string()))?,
-            );
-        } else {
-            // Legacy token
-            headers.insert(
-                "X-Tour-Token",
-                HeaderValue::from_str(t)
-                    .map_err(|_| Error::Operation("Invalid token".to_string()))?,
-            );
-        }
-    }
-
-    Ok(headers)
-}
-
-/// Get auth token for a server from the registry.
-fn get_token_for_server(server_url: &str) -> Result<Option<String>> {
-    let conn = registry::open_registry()?;
-    let server = registry::get_server(&conn, server_url)
-        .map_err(|e| Error::Database(format!("Failed to query server: {}", e)))?;
-
-    Ok(server.and_then(|s| s.token))
 }

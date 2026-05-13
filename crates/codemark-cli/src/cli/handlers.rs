@@ -25,6 +25,7 @@ use codemark_core::storage::{SemanticRepo, db::Database};
 
 // Handler submodules
 pub mod auth;
+pub mod auth_resolve;
 pub mod bookmark;
 pub mod collection;
 pub mod maintenance;

@@ -2,11 +2,13 @@ use crate::cli::output::{OutputMode, write_success};
 use crate::cli::*;
 use codemark_core::error::{Error, Result};
 use codemark_core::storage::pack::{PackReader, inspect, pre_inspect};
-use codemark_core::storage::registry;
 use comfy_table::Table;
-use reqwest::header::{ACCEPT, HeaderMap, HeaderValue};
+use reqwest::header::{ACCEPT, HeaderValue};
 use std::collections::HashMap;
 use std::time::Duration;
+
+// Re-export auth resolution helpers
+use crate::cli::handlers::auth_resolve::build_auth_headers;
 
 /// Builds a reqwest client with reasonable timeouts for pulling tours.
 fn build_pull_http_client() -> Result<reqwest::Client> {
@@ -321,6 +323,8 @@ async fn handle_display_pulled(_mode: &OutputMode, pack_path: &std::path::Path) 
 }
 
 fn resolve_pull_params(cli: &Cli, args: &PullArgs) -> Result<(String, Option<String>, String)> {
+    use crate::cli::handlers::auth_resolve::get_token_for_server;
+
     if args.tour.starts_with("http://") || args.tour.starts_with("https://") {
         // Parse URL: http://server/tours/id
         let url = args.tour.clone();
@@ -373,40 +377,4 @@ fn resolve_pull_params(cli: &Cli, args: &PullArgs) -> Result<(String, Option<Str
     let token = args.token.as_ref().or(s.token.as_ref()).or(registry_token.as_ref()).cloned();
 
     Ok((s.url.clone(), token, args.tour.clone()))
-}
-
-/// Build authorization headers for a server request.
-///
-/// Uses Bearer token for JWT-based auth, fallback to X-Tour-Token for legacy.
-fn build_auth_headers(token: Option<&String>) -> Result<HeaderMap> {
-    let mut headers = HeaderMap::new();
-
-    if let Some(t) = token {
-        if t.starts_with("eyJ") {
-            // JWT token
-            headers.insert(
-                "Authorization",
-                HeaderValue::from_str(&format!("Bearer {}", t))
-                    .map_err(|_| Error::Operation("Invalid token".to_string()))?,
-            );
-        } else {
-            // Legacy token
-            headers.insert(
-                "X-Tour-Token",
-                HeaderValue::from_str(t)
-                    .map_err(|_| Error::Operation("Invalid token".to_string()))?,
-            );
-        }
-    }
-
-    Ok(headers)
-}
-
-/// Get auth token for a server from the registry.
-fn get_token_for_server(server_url: &str) -> Result<Option<String>> {
-    let conn = registry::open_registry()?;
-    let server = registry::get_server(&conn, server_url)
-        .map_err(|e| Error::Database(format!("Failed to query server: {}", e)))?;
-
-    Ok(server.and_then(|s| s.token))
 }
