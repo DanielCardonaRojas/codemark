@@ -2,10 +2,10 @@
 
 use crate::cli::output::OutputMode;
 use crate::cli::{AuthArgs, AuthCommand, AuthLoginArgs, AuthLogoutArgs, Cli};
-use copypasta::ClipboardProvider;
 use codemark_core::error::{Error, Result};
 use codemark_core::storage::registry;
-use std::time::Duration;
+use copypasta::ClipboardProvider;
+use std::time::{Duration, Instant};
 
 /// Handle auth commands.
 pub async fn handle_auth(cli: &Cli, mode: &OutputMode, args: &AuthArgs) -> Result<()> {
@@ -63,8 +63,12 @@ async fn handle_device_login(server_url: &str, _mode: &OutputMode) -> Result<()>
         .await
         .map_err(|e| Error::Operation(format!("Failed to parse device response: {}", e)))?;
 
-    let uri = device_resp["verification_uri"].as_str().ok_or_else(|| Error::Operation("Missing verification_uri".to_string()))?;
-    let code = device_resp["user_code"].as_str().ok_or_else(|| Error::Operation("Missing user_code".to_string()))?;
+    let uri = device_resp["verification_uri"]
+        .as_str()
+        .ok_or_else(|| Error::Operation("Missing verification_uri".to_string()))?;
+    let code = device_resp["user_code"]
+        .as_str()
+        .ok_or_else(|| Error::Operation("Missing user_code".to_string()))?;
 
     // Attempt to copy to clipboard
     if let Ok(mut ctx) = copypasta::ClipboardContext::new() {
@@ -78,12 +82,25 @@ async fn handle_device_login(server_url: &str, _mode: &OutputMode) -> Result<()>
     println!("Please authorize in your browser.");
 
     // 2. Poll for token
-    let device_code = device_resp["device_code"].as_str().ok_or_else(|| Error::Operation("Missing device_code".to_string()))?;
+    let device_code = device_resp["device_code"]
+        .as_str()
+        .ok_or_else(|| Error::Operation("Missing device_code".to_string()))?;
     let interval = device_resp["interval"].as_u64().unwrap_or(5);
+    let expires_in = device_resp["expires_in"].as_u64().unwrap_or(300); // Default 5 minutes
+
+    let start_time = Instant::now();
+    let timeout = Duration::from_secs(expires_in);
 
     loop {
+        // Check if we've exceeded the timeout
+        if start_time.elapsed() > timeout {
+            return Err(Error::Operation(
+                "Authentication timed out. Please try again.".to_string(),
+            ));
+        }
+
         tokio::time::sleep(Duration::from_secs(interval)).await;
-        
+
         let poll_resp: serde_json::Value = client
             .post(format!("{}/auth/github/device/poll", server_url))
             .json(&serde_json::json!({ "device_code": device_code }))

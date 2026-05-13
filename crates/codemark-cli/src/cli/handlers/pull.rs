@@ -320,10 +320,7 @@ async fn handle_display_pulled(_mode: &OutputMode, pack_path: &std::path::Path) 
     Ok(())
 }
 
-fn resolve_pull_params(
-    cli: &Cli,
-    args: &PullArgs,
-) -> Result<(String, Option<String>, String)> {
+fn resolve_pull_params(cli: &Cli, args: &PullArgs) -> Result<(String, Option<String>, String)> {
     if args.tour.starts_with("http://") || args.tour.starts_with("https://") {
         // Parse URL: http://server/tours/id
         let url = args.tour.clone();
@@ -348,7 +345,10 @@ fn resolve_pull_params(
         server.clone()
     } else {
         let config = super::load_config(cli);
-        config.codetours.default_server.clone()
+        config
+            .codetours
+            .default_server
+            .clone()
             .ok_or_else(|| Error::Input("server is required when pull by ID".to_string()))?
     };
 
@@ -361,16 +361,16 @@ fn resolve_pull_params(
 
     // Look up server in config
     let config = super::load_config(cli);
-    let s = config.codetours.servers.iter().find(|s| s.name == server_name).ok_or_else(|| {
-        Error::Input(format!("server '{}' not found in config", server_name))
-    })?;
+    let s = config
+        .codetours
+        .servers
+        .iter()
+        .find(|s| s.name == server_name)
+        .ok_or_else(|| Error::Input(format!("server '{}' not found in config", server_name)))?;
 
     // Priority: CLI flag > Server config > Registry
     let registry_token = get_token_for_server(&s.url).ok().flatten();
-    let token = args.token.as_ref()
-        .or(s.token.as_ref())
-        .or(registry_token.as_ref())
-        .cloned();
+    let token = args.token.as_ref().or(s.token.as_ref()).or(registry_token.as_ref()).cloned();
 
     Ok((s.url.clone(), token, args.tour.clone()))
 }
