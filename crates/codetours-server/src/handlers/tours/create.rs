@@ -377,7 +377,10 @@ pub async fn handler(
 
         let user_id = match user_id {
             Ok(id) => id,
-            Err(e) => return e.into_response(),
+            Err(e) => {
+                let _ = fs::remove_file(&temp_path).await;
+                return e.into_response();
+            }
         };
 
         // Verify write access using GitHubVerifier

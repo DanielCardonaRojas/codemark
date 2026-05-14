@@ -48,32 +48,27 @@ impl RegistryManager {
             .builder(Runtime::Tokio1)
             .map_err(|e| ServerError::Registry(format!("Failed to create builder: {}", e)))?
             .max_size(5) // Small pool for auth operations
+            .post_create(deadpool_sqlite::Hook::AsyncFn(Box::new(|conn, _| {
+                Box::pin(async move {
+                    conn.interact(|conn| conn.execute("PRAGMA foreign_keys=ON", []))
+                        .await
+                        .map_err(|e| deadpool_sqlite::HookError::message(e.to_string()))?
+                        .map_err(|e| deadpool_sqlite::HookError::message(e.to_string()))?;
+                    Ok(())
+                })
+            })))
             .build()
             .map_err(|e| ServerError::Registry(format!("Failed to build pool: {}", e)))?;
 
         Ok(Self { pool })
     }
 
-    /// Get a connection from the pool with foreign keys enabled.
-    ///
-    /// Note: SQLite foreign_keys is a per-connection setting, so we must
-    /// enable it on each connection from the pool.
+    /// Get a connection from the pool.
     pub async fn get_conn(&self) -> Result<deadpool_sqlite::Object> {
-        let conn = self
-            .pool
+        self.pool
             .get()
             .await
-            .map_err(|e| ServerError::Registry(format!("Failed to get connection: {}", e)))?;
-
-        // Enable foreign keys on this connection
-        conn.interact(|conn| {
-            conn.execute("PRAGMA foreign_keys=ON", [])
-                .map_err(|e| ServerError::Registry(format!("Failed to enable foreign_keys: {}", e)))
-        })
-        .await
-        .map_err(|e| ServerError::Registry(format!("Failed to configure connection: {}", e)))??;
-
-        Ok(conn)
+            .map_err(|e| ServerError::Registry(format!("Failed to get connection: {}", e)))
     }
 
     /// Get the underlying pool.
