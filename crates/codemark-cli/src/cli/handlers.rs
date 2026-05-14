@@ -33,6 +33,7 @@ pub mod publish;
 pub mod pull;
 pub mod repo;
 pub mod search;
+pub mod sync;
 pub mod tour;
 
 /// Dispatch a parsed CLI command to its handler.
