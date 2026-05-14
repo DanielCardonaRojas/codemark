@@ -29,6 +29,10 @@ rusqlite = { workspace = true }
 deadpool-sqlite = { workspace = true }
 futures-util = "0.3"
 zstd = "0.13"
+jsonwebtoken = "9"
+reqwest = { version = "0.12", features = ["json"] }
+urlencoding = "2"
+dotenvy = "0.15.7"
 
 [dev-dependencies]
 tempfile = { workspace = true }

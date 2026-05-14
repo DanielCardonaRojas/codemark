@@ -1,0 +1,16 @@
+# Codetours Server Configuration
+
+host = "127.0.0.1"
+port = 8080
+
+[auth]
+mode = "github"
+dev_token = ""
+
+[auth.github]
+# client_id and client_secret should be set via environment variables:
+# export GITHUB_CLIENT_ID="your_client_id"
+# export GITHUB_CLIENT_SECRET="your_client_secret"
+# export JWT_SECRET="your_jwt_secret_at_least_32_chars"
+callback_url = "http://localhost:8080/auth/github/callback"
+session_expires_in = 604800  # 7 days in seconds

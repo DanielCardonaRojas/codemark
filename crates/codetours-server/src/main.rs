@@ -9,11 +9,11 @@ use codetours_server::{
     shutdown::shutdown_signal,
     storage::StorageManager,
 };
-use std::sync::Arc;
 use tokio::net::TcpListener;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
+    dotenvy::dotenv().ok();
     BOOT_TIME.set(Utc::now()).ok();
     let cli = Cli::parse();
 
@@ -28,7 +28,7 @@ async fn main() -> anyhow::Result<()> {
         return Ok(());
     }
 
-    let state = AppState { config: Arc::new(config.clone()), storage: Arc::new(storage) };
+    let state = AppState::new(config.clone(), storage)?;
 
     let app = router(state);
 

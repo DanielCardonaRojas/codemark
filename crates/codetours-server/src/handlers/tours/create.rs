@@ -323,9 +323,130 @@ pub async fn handler(
         }
     };
 
+    // 5.5. Identify the collection to be published and verify write access
+    // We identify the same collection that will be used in the merge phase (step 6)
+    let pack_path_for_id = temp_path.clone();
+    let collection_info_res = tokio::task::spawn_blocking(move || {
+        let conn = rusqlite::Connection::open_with_flags(
+            &pack_path_for_id,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+        )?;
+        conn.query_row(
+            "SELECT id, repo_url FROM collections WHERE visibility IS NOT NULL ORDER BY created_at DESC LIMIT 1",
+            [],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, Option<String>>(1)?)),
+        )
+        .map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))
+    })
+    .await;
+
+    let (collection_id_to_publish, repo_url) = match collection_info_res {
+        Ok(Ok(info)) => info,
+        Ok(Err(e)) => {
+            tracing::error!("Failed to identify collection in pack: {}", e);
+            let _ = fs::remove_file(&temp_path).await;
+            return (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                Json(ErrorResponse {
+                    error: "invalid_pack".to_string(),
+                    reason: Some("No valid collection found in pack".to_string()),
+                    request_id: Some(request_id),
+                }),
+            )
+                .into_response();
+        }
+        Err(e) => {
+            tracing::error!("Task failed during collection identification: {}", e);
+            let _ = fs::remove_file(&temp_path).await;
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
+    };
+
+    if let Some(ref repo_url) = repo_url {
+        let user_id = auth.user_id().ok_or_else(|| {
+            tracing::error!("Write access check failed: no user ID in auth context");
+            (
+                StatusCode::UNAUTHORIZED,
+                Json(ErrorResponse {
+                    error: "unauthorized".to_string(),
+                    reason: Some("User authentication required for publishing".to_string()),
+                    request_id: Some(request_id.clone()),
+                }),
+            )
+        });
+
+        let user_id = match user_id {
+            Ok(id) => id,
+            Err(e) => {
+                let _ = fs::remove_file(&temp_path).await;
+                return e.into_response();
+            }
+        };
+
+        // Verify write access using GitHubVerifier
+        let verifier = crate::github::GitHubVerifier::new();
+        let has_write_access = match verifier.verify_write_access(&state, repo_url, user_id).await {
+            Ok(true) => true,
+            Ok(false) => {
+                tracing::warn!(
+                    user_id = %user_id,
+                    repo_url = %repo_url,
+                    "Write access denied for user"
+                );
+                let _ = fs::remove_file(&temp_path).await;
+                return (
+                    StatusCode::FORBIDDEN,
+                    Json(ErrorResponse {
+                        error: "forbidden".to_string(),
+                        reason: Some("You do not have write access to this repository".to_string()),
+                        request_id: Some(request_id),
+                    }),
+                )
+                    .into_response();
+            }
+            Err(crate::github::GitHubVerifyError::NoGitHubToken) => {
+                tracing::warn!(
+                    user_id = %user_id,
+                    "Write access check failed: no GitHub token linked"
+                );
+                let _ = fs::remove_file(&temp_path).await;
+                return (
+                    StatusCode::UNAUTHORIZED,
+                    Json(ErrorResponse {
+                        error: "unauthorized".to_string(),
+                        reason: Some("GitHub account must be linked to publish".to_string()),
+                        request_id: Some(request_id),
+                    }),
+                )
+                    .into_response();
+            }
+            Err(e) => {
+                tracing::error!("Failed to verify write access: {}", e);
+                let _ = fs::remove_file(&temp_path).await;
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(ErrorResponse {
+                        error: "internal".to_string(),
+                        reason: Some("Failed to verify repository access".to_string()),
+                        request_id: Some(request_id),
+                    }),
+                )
+                    .into_response();
+            }
+        };
+
+        tracing::info!(
+            user_id = %user_id,
+            repo_url = %repo_url,
+            has_write_access = %has_write_access,
+            "Write access verification passed"
+        );
+    }
+
     // 6. Merge into single tenant DB
     let storage = state.storage.clone();
     let temp_path_clone = temp_path.clone();
+    let target_collection_id = collection_id_to_publish.clone();
 
     let conn = match storage.get_conn().await {
         Ok(c) => c,
@@ -359,12 +480,8 @@ pub async fn handler(
             conn.execute_batch("PRAGMA foreign_keys = OFF;")?;
 
             let res = (|| -> rusqlite::Result<(CreateTourResponse, bool)> {
-            // Get the collection ID from the pack
-            let collection_id: String = conn.query_row(
-                "SELECT id FROM pack.collections WHERE visibility IS NOT NULL ORDER BY created_at DESC LIMIT 1",
-                [],
-                |row| row.get(0)
-            )?;
+            // Use the target_collection_id verified earlier
+            let collection_id = target_collection_id;
 
             let tx = conn.transaction()?;
 

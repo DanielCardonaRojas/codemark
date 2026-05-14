@@ -36,6 +36,61 @@ pub struct AuthConfig {
     pub mode: String,
     #[serde(default)]
     pub dev_token: String,
+    #[serde(default)]
+    pub github: GithubAuthConfig,
+}
+
+#[derive(Deserialize, Debug, Clone)]
+#[serde(deny_unknown_fields)]
+pub struct GithubAuthConfig {
+    /// GitHub OAuth client ID
+    #[serde(default)]
+    pub client_id: String,
+    /// GitHub OAuth client secret
+    #[serde(default)]
+    pub client_secret: String,
+    /// JWT secret for signing session tokens
+    #[serde(default)]
+    pub jwt_secret: String,
+    /// Session token expiration in seconds (default: 7 days)
+    #[serde(default = "default_session_expires")]
+    pub session_expires_in: u64,
+    /// OAuth callback URL (optional, defaults to http://host:port/auth/github/callback)
+    #[serde(default)]
+    pub callback_url: Option<String>,
+}
+
+impl GithubAuthConfig {
+    /// Get client_id, prioritizing environment variable
+    pub fn get_client_id(&self) -> String {
+        std::env::var("GITHUB_CLIENT_ID")
+            .ok()
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| self.client_id.clone())
+    }
+
+    /// Get client_secret, prioritizing environment variable
+    pub fn get_client_secret(&self) -> String {
+        std::env::var("GITHUB_CLIENT_SECRET")
+            .ok()
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| self.client_secret.clone())
+    }
+
+    /// Get jwt_secret, prioritizing environment variable
+    pub fn get_jwt_secret(&self) -> String {
+        std::env::var("JWT_SECRET")
+            .ok()
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| self.jwt_secret.clone())
+    }
+
+    /// Get the callback URL, using the configured value or building from host/port
+    pub fn get_callback_url(&self, host: &str, port: u16) -> String {
+        self.callback_url
+            .clone()
+            .unwrap_or_else(|| format!("http://{}:{}/auth/github/callback", host, port))
+    }
 }
 
 fn default_host() -> String {
@@ -70,6 +125,10 @@ fn default_auth_mode() -> String {
     "stub".to_string()
 }
 
+fn default_session_expires() -> u64 {
+    7 * 24 * 60 * 60 // 7 days
+}
+
 impl Default for Config {
     fn default() -> Self {
         Self {
@@ -91,9 +150,25 @@ impl Default for StorageConfig {
     }
 }
 
+impl Default for GithubAuthConfig {
+    fn default() -> Self {
+        Self {
+            client_id: String::new(),
+            client_secret: String::new(),
+            jwt_secret: String::new(),
+            session_expires_in: default_session_expires(),
+            callback_url: None,
+        }
+    }
+}
+
 impl Default for AuthConfig {
     fn default() -> Self {
-        Self { mode: default_auth_mode(), dev_token: String::new() }
+        Self {
+            mode: default_auth_mode(),
+            dev_token: String::new(),
+            github: GithubAuthConfig::default(),
+        }
     }
 }
 

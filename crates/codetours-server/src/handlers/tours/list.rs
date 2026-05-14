@@ -1,3 +1,5 @@
+use crate::auth::AuthContext;
+use crate::github::GitHubVerifier;
 use crate::handlers::tours::create::ErrorResponse;
 use crate::router::AppState;
 use axum::{
@@ -50,12 +52,83 @@ pub struct ListToursResponse {
 }
 
 /// Handler for GET /tours. Lists public tours with filtering and pagination.
+///
+/// When `repo_url` is provided, verifies the user has access to that repository
+/// via GitHub API before returning tours.
 pub async fn handler(
     State(state): State<AppState>,
+    auth: AuthContext,
     Query(params): Query<ListToursParams>,
 ) -> impl IntoResponse {
     let limit = params.limit.unwrap_or(50).min(200);
     let offset = params.offset.unwrap_or(0);
+
+    // If repo_url is provided, verify GitHub access
+    if let Some(ref repo_url) = params.repo_url {
+        let user_id = match auth.user_id() {
+            Some(id) => id,
+            None => {
+                return (
+                    StatusCode::UNAUTHORIZED,
+                    Json(ErrorResponse {
+                        error: "unauthorized".to_string(),
+                        reason: Some("Authentication required to filter by repository".to_string()),
+                        request_id: None,
+                    }),
+                )
+                    .into_response();
+            }
+        };
+
+        let verifier = GitHubVerifier::new();
+
+        match verifier.verify_access(&state, repo_url, user_id).await {
+            Ok(has_access) => {
+                if !has_access {
+                    tracing::warn!(
+                        repo_url = %repo_url,
+                        "Access denied: user does not have access to repository"
+                    );
+                    return (
+                        StatusCode::FORBIDDEN,
+                        Json(ErrorResponse {
+                            error: "access_denied".to_string(),
+                            reason: Some("You do not have access to this repository".to_string()),
+                            request_id: None,
+                        }),
+                    )
+                        .into_response();
+                }
+                tracing::debug!(repo_url = %repo_url, "Access granted to repository");
+            }
+            Err(crate::github::GitHubVerifyError::NoGitHubToken) => {
+                tracing::warn!(
+                    repo_url = %repo_url,
+                    "Access check failed: no GitHub token linked"
+                );
+                return (
+                    StatusCode::UNAUTHORIZED,
+                    Json(ErrorResponse {
+                        error: "unauthorized".to_string(),
+                        reason: Some(
+                            "GitHub account must be linked to access this repository".to_string(),
+                        ),
+                        request_id: None,
+                    }),
+                )
+                    .into_response();
+            }
+            Err(e) => {
+                tracing::error!(
+                    repo_url = %repo_url,
+                    error = %e,
+                    "Failed to verify GitHub access"
+                );
+                // For now, allow access if verification fails (graceful degradation)
+                // In production, you might want to fail closed
+            }
+        }
+    }
 
     let storage = state.storage.clone();
 
@@ -69,7 +142,7 @@ pub async fn handler(
 
     let result = conn
         .interact(move |conn| {
-            let mut query = "SELECT id, name, repo_url, updated_at FROM collections 
+            let mut query = "SELECT id, name, repo_url, updated_at FROM collections
                          WHERE visibility = 'public' AND status = 'ready'"
                 .to_string();
 
