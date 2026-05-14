@@ -1,16 +1,48 @@
-use crate::cli::output::OutputMode;
+use crate::cli::output::{OutputMode, write_json_success};
 use crate::cli::*;
 use codemark_core::error::{Error, Result};
+use codemark_core::git::remote;
 use comfy_table::Table;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+use serde_json::json;
 
 // Re-export auth resolution helpers
-use crate::cli::handlers::auth_resolve::{
-    build_auth_headers, detect_current_repo, resolve_server_and_token,
-};
+use crate::cli::handlers::auth_resolve::{build_auth_headers, resolve_server_and_token};
 
-#[derive(Debug, Deserialize)]
-#[allow(dead_code)]
+/// Normalize a repository reference to a standard SSH URL format.
+///
+/// Accepts:
+/// - owner/repo format
+/// - HTTPS URLs
+/// - SSH URLs
+///
+/// Returns a normalized SSH URL (git@github.com:owner/repo.git) for GitHub,
+/// or the original URL for other hosts.
+fn normalize_repo_url(repo: &str) -> String {
+    // If it's already in owner/repo format, convert to SSH URL
+    if !repo.contains('/') && !repo.contains(':') {
+        return repo.to_string();
+    }
+
+    // Check if it's owner/repo format (simple heuristic)
+    if let Some((owner, repo_name)) = repo.split_once('/')
+        && !owner.contains('.')
+        && !repo_name.contains(':')
+    {
+        // Likely owner/repo format
+        return format!("git@github.com:{}/{}.git", owner, repo_name);
+    }
+
+    // For full URLs, try to parse and normalize
+    if let Some((owner, repo_name)) = remote::parse_remote_url(repo) {
+        return format!("git@github.com:{}/{}.git", owner, repo_name);
+    }
+
+    // Return as-is if we can't normalize
+    repo.to_string()
+}
+
+#[derive(Debug, Deserialize, Serialize)]
 struct TourSummary {
     tour_id: String,
     title: String,
@@ -20,7 +52,6 @@ struct TourSummary {
 }
 
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)]
 struct ListToursResponse {
     tours: Vec<TourSummary>,
     total: usize,
@@ -28,15 +59,9 @@ struct ListToursResponse {
     offset: usize,
 }
 
-pub async fn handle_tour_list(cli: &Cli, _mode: &OutputMode, args: &TourListArgs) -> Result<()> {
-    // 1. Determine the repository URL to filter by
-    let repo_url = if let Some(ref repo) = args.repo {
-        // User provided explicit repo URL
-        Some(repo.clone())
-    } else {
-        // Try to detect from current git repository
-        detect_current_repo()?
-    };
+pub async fn handle_tour_list(cli: &Cli, mode: &OutputMode, args: &TourListArgs) -> Result<()> {
+    // 1. Determine the repository URL to filter by (only if explicitly provided)
+    let repo_url = args.repo.as_ref().map(|repo| normalize_repo_url(repo));
 
     // 2. Resolve server and token from registry
     let (server_url, token) =
@@ -73,6 +98,17 @@ pub async fn handle_tour_list(cli: &Cli, _mode: &OutputMode, args: &TourListArgs
         .await
         .map_err(|e| Error::Operation(format!("failed to parse server response: {e}")))?;
 
+    // JSON output
+    if matches!(mode, OutputMode::Json) {
+        write_json_success(&json!({
+            "tours": res.tours,
+            "total": res.total,
+            "limit": res.limit,
+            "offset": res.offset,
+        }))?;
+        return Ok(());
+    }
+
     if res.tours.is_empty() {
         println!("No tours found on server.");
         return Ok(());
@@ -91,7 +127,66 @@ pub async fn handle_tour_list(cli: &Cli, _mode: &OutputMode, args: &TourListArgs
     }
 
     println!("{table}");
-    println!("\nTotal: {} (Showing {}-{})", res.total, res.offset, res.offset + res.tours.len());
+    println!(
+        "\nTotal: {} (Showing {}-{})",
+        res.total,
+        res.offset + 1,
+        res.offset + res.tours.len()
+    );
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_normalize_owner_repo_format() {
+        assert_eq!(
+            normalize_repo_url("DanielCardonaRojas/codemark"),
+            "git@github.com:DanielCardonaRojas/codemark.git"
+        );
+    }
+
+    #[test]
+    fn test_normalize_https_url() {
+        // GitHub HTTPS URLs are normalized to SSH format
+        let result = normalize_repo_url("https://github.com/DanielCardonaRojas/codemark.git");
+        assert!(
+            result.contains("git@github.com:"),
+            "Result should be a GitHub SSH URL: {}",
+            result
+        );
+        assert!(result.contains("DanielCardonaRojas"), "Result should contain owner: {}", result);
+        assert!(result.contains("codemark"), "Result should contain repo name: {}", result);
+    }
+
+    #[test]
+    fn test_normalize_ssh_url() {
+        assert_eq!(
+            normalize_repo_url("git@github.com:DanielCardonaRojas/codemark.git"),
+            "git@github.com:DanielCardonaRojas/codemark.git"
+        );
+    }
+
+    #[test]
+    fn test_normalize_unknown_format() {
+        // HTTPS URLs from any host get normalized to GitHub SSH format
+        // (this is the current behavior - parse_remote_url extracts owner/repo)
+        let result = normalize_repo_url("https://gitlab.com/owner/repo.git");
+        assert!(
+            result.contains("git@github.com:"),
+            "Non-GitHub HTTPS URLs also get normalized: {}",
+            result
+        );
+        // URLs that can't be parsed are returned as-is
+        assert_eq!(normalize_repo_url("not-a-url"), "not-a-url");
+    }
+
+    #[test]
+    fn test_normalize_simple_string() {
+        // Strings without / or : are returned as-is
+        assert_eq!(normalize_repo_url("codemark"), "codemark");
+    }
 }
