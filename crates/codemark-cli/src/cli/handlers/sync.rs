@@ -5,8 +5,8 @@
 //! The server preserves the collection_id, so we use it as the unified
 //! identifier for both directions.
 
-use crate::cli::output::OutputMode;
 use crate::cli::Cli;
+use crate::cli::output::OutputMode;
 use codemark_core::engine::snapshot::build_snapshot;
 use codemark_core::error::{Error, Result};
 use codemark_core::storage::db::Database;
@@ -376,7 +376,8 @@ async fn sync_pull(cli: &Cli, mode: &OutputMode, opts: SyncOptions) -> Result<()
 
     let res = async {
         // Download pack
-        let decompressed_bytes = download_pack(&opts.server_url, &opts.collection_id, opts.token.as_ref()).await?;
+        let decompressed_bytes =
+            download_pack(&opts.server_url, &opts.collection_id, opts.token.as_ref()).await?;
 
         tokio::fs::write(&pack_path, decompressed_bytes)
             .await
@@ -396,7 +397,9 @@ async fn sync_pull(cli: &Cli, mode: &OutputMode, opts: SyncOptions) -> Result<()
                 Ok::<_, Error>(())
             })
             .await
-            .map_err(|_| Error::Operation("Blocking task panicked during migration".to_string()))??;
+            .map_err(|_| {
+                Error::Operation("Blocking task panicked during migration".to_string())
+            })??;
         }
 
         // Full inspection after potential migration
@@ -420,7 +423,10 @@ async fn sync_pull(cli: &Cli, mode: &OutputMode, opts: SyncOptions) -> Result<()
                 let db = super::open_db_for_write(cli)?;
                 let source_url = format!("{}/tours/{}", opts.server_url, opts.collection_id);
                 import_pack(&db, &pack_path, Some(name), &source_url).await?;
-                crate::cli::output::write_success(mode, &format!("Saved as collection '{}'", name))?;
+                crate::cli::output::write_success(
+                    mode,
+                    &format!("Saved as collection '{}'", name),
+                )?;
             }
         }
 
@@ -435,9 +441,7 @@ async fn sync_pull(cli: &Cli, mode: &OutputMode, opts: SyncOptions) -> Result<()
 
 /// Handle pushing a collection to the server.
 async fn sync_push(cli: &Cli, mode: &OutputMode, opts: SyncOptions) -> Result<()> {
-    let db = opts
-        .db
-        .ok_or_else(|| Error::Operation("database required for push".to_string()))?;
+    let db = opts.db.ok_or_else(|| Error::Operation("database required for push".to_string()))?;
     let project_root = opts
         .project_root
         .ok_or_else(|| Error::Operation("project_root required for push".to_string()))?;
@@ -456,9 +460,8 @@ async fn sync_push(cli: &Cli, mode: &OutputMode, opts: SyncOptions) -> Result<()
         payload.collection.description = Some(desc.clone());
     }
     if let Some(ref visibility) = opts.visibility {
-        payload.collection.visibility = visibility
-            .parse()
-            .map_err(|e| Error::Input(format!("invalid visibility: {e}")))?;
+        payload.collection.visibility =
+            visibility.parse().map_err(|e| Error::Input(format!("invalid visibility: {e}")))?;
     }
 
     // Create pack
@@ -474,7 +477,14 @@ async fn sync_push(cli: &Cli, mode: &OutputMode, opts: SyncOptions) -> Result<()
         }
 
         // Upload pack
-        let tour_id = upload_pack(&result_path, &opts.server_url, opts.token.as_ref(), &db, &opts.collection_id).await?;
+        let tour_id = upload_pack(
+            &result_path,
+            &opts.server_url,
+            opts.token.as_ref(),
+            &db,
+            &opts.collection_id,
+        )
+        .await?;
 
         crate::cli::output::write_success(
             mode,

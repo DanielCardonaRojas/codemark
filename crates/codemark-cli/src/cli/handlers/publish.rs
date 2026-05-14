@@ -4,7 +4,7 @@ use codemark_core::error::{Error, Result};
 
 // Re-export auth resolution helpers
 use crate::cli::handlers::auth_resolve::{detect_current_repo, resolve_server_and_token};
-use crate::cli::handlers::sync::{sync, SyncDirection, SyncOptions};
+use crate::cli::handlers::sync::{SyncDirection, SyncOptions, sync};
 
 pub async fn handle_publish(cli: &Cli, mode: &OutputMode, args: &PublishArgs) -> Result<()> {
     let db = super::open_db_for_write(cli)?;

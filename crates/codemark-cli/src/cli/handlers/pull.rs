@@ -4,7 +4,7 @@ use codemark_core::error::{Error, Result};
 
 // Re-export auth resolution helpers
 use crate::cli::handlers::auth_resolve::get_token_for_server;
-use crate::cli::handlers::sync::{build_sync_http_client, sync, SyncDirection, SyncOptions};
+use crate::cli::handlers::sync::{SyncDirection, SyncOptions, build_sync_http_client, sync};
 
 pub async fn handle_pull(cli: &Cli, mode: &OutputMode, args: &PullArgs) -> Result<()> {
     // 1. Resolve server and token
@@ -55,9 +55,8 @@ pub async fn handle_pull(cli: &Cli, mode: &OutputMode, args: &PullArgs) -> Resul
     }
 
     // 3. Use unified sync interface
-    let save_name = args.save.as_ref().map(|s| {
-        if s.is_empty() { "".to_string() } else { s.clone() }
-    });
+    let save_name =
+        args.save.as_ref().map(|s| if s.is_empty() { "".to_string() } else { s.clone() });
 
     let sync_opts = SyncOptions {
         collection_id,
