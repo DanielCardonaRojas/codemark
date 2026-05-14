@@ -26,10 +26,12 @@ fn normalize_repo_url(repo: &str) -> String {
 
     // Check if it's owner/repo format (simple heuristic)
     if let Some((owner, repo_name)) = repo.split_once('/')
-        && !owner.contains('.') && !repo_name.contains(':') {
-            // Likely owner/repo format
-            return format!("git@github.com:{}/{}.git", owner, repo_name);
-        }
+        && !owner.contains('.')
+        && !repo_name.contains(':')
+    {
+        // Likely owner/repo format
+        return format!("git@github.com:{}/{}.git", owner, repo_name);
+    }
 
     // For full URLs, try to parse and normalize
     if let Some((owner, repo_name)) = remote::parse_remote_url(repo) {
@@ -133,4 +135,58 @@ pub async fn handle_tour_list(cli: &Cli, mode: &OutputMode, args: &TourListArgs)
     );
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_normalize_owner_repo_format() {
+        assert_eq!(
+            normalize_repo_url("DanielCardonaRojas/codemark"),
+            "git@github.com:DanielCardonaRojas/codemark.git"
+        );
+    }
+
+    #[test]
+    fn test_normalize_https_url() {
+        // GitHub HTTPS URLs are normalized to SSH format
+        let result = normalize_repo_url("https://github.com/DanielCardonaRojas/codemark.git");
+        assert!(
+            result.contains("git@github.com:"),
+            "Result should be a GitHub SSH URL: {}",
+            result
+        );
+        assert!(result.contains("DanielCardonaRojas"), "Result should contain owner: {}", result);
+        assert!(result.contains("codemark"), "Result should contain repo name: {}", result);
+    }
+
+    #[test]
+    fn test_normalize_ssh_url() {
+        assert_eq!(
+            normalize_repo_url("git@github.com:DanielCardonaRojas/codemark.git"),
+            "git@github.com:DanielCardonaRojas/codemark.git"
+        );
+    }
+
+    #[test]
+    fn test_normalize_unknown_format() {
+        // HTTPS URLs from any host get normalized to GitHub SSH format
+        // (this is the current behavior - parse_remote_url extracts owner/repo)
+        let result = normalize_repo_url("https://gitlab.com/owner/repo.git");
+        assert!(
+            result.contains("git@github.com:"),
+            "Non-GitHub HTTPS URLs also get normalized: {}",
+            result
+        );
+        // URLs that can't be parsed are returned as-is
+        assert_eq!(normalize_repo_url("not-a-url"), "not-a-url");
+    }
+
+    #[test]
+    fn test_normalize_simple_string() {
+        // Strings without / or : are returned as-is
+        assert_eq!(normalize_repo_url("codemark"), "codemark");
+    }
 }
