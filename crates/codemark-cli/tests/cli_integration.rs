@@ -3091,14 +3091,17 @@ fn collection_list_with_repo_flag() {
     let cm2 = Codemark::with_git_repo();
 
     // Create collections in the first repo (this creates repo metadata)
-    let json = cm1.run_json(&["collection", "create", "test-col-1", "--description", "Test collection 1"]);
+    let json =
+        cm1.run_json(&["collection", "create", "test-col-1", "--description", "Test collection 1"]);
     assert_eq!(json["success"], true);
 
-    let json = cm1.run_json(&["collection", "create", "test-col-2", "--description", "Test collection 2"]);
+    let json =
+        cm1.run_json(&["collection", "create", "test-col-2", "--description", "Test collection 2"]);
     assert_eq!(json["success"], true);
 
     // Create collections in the second repo
-    let json = cm2.run_json(&["collection", "create", "test-col-3", "--description", "Test collection 3"]);
+    let json =
+        cm2.run_json(&["collection", "create", "test-col-3", "--description", "Test collection 3"]);
     assert_eq!(json["success"], true);
 
     // Get repo info from first repo
@@ -3155,5 +3158,9 @@ fn collection_list_with_repo_flag() {
     let json = cm1.run_json(&["collection", "list", "--repo", &repo_ref2]);
     let collections = json["data"].as_array().unwrap();
     // Should have 2 from cm1 + 1 from cm2 = 3 total
-    assert_eq!(collections.len(), 3, "Should list collections from both current repo (2) and specified repo (1)");
+    assert_eq!(
+        collections.len(),
+        3,
+        "Should list collections from both current repo (2) and specified repo (1)"
+    );
 }

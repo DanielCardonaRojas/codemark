@@ -13,7 +13,10 @@ use codemark_core::engine::bookmark::{
 use codemark_core::error::{Error, Result};
 use codemark_core::git::context as git_context;
 
-use super::{find_bookmark, now_iso, open_all_dbs_with_extra_and_repos, open_db, open_db_for_write, resolve_batch};
+use super::{
+    find_bookmark, now_iso, open_all_dbs_with_extra_and_repos, open_db, open_db_for_write,
+    resolve_batch,
+};
 
 /// Create a new bookmark collection.
 pub async fn handle_collection_create(
@@ -373,7 +376,8 @@ pub async fn handle_collection_list(
 
         match mode {
             OutputMode::Json => {
-                let collections: Vec<&Collection> = all_collections.iter().map(|(c, _)| c).collect();
+                let collections: Vec<&Collection> =
+                    all_collections.iter().map(|(c, _)| c).collect();
                 write_json_success(&collections)?
             }
             OutputMode::Table => {
@@ -459,8 +463,10 @@ pub async fn handle_collection_list(
 
         match mode {
             OutputMode::Json => {
-                let with_counts: Vec<CollectionWithCount> =
-                    all_collections.iter().map(|(c, count, _)| CollectionWithCount::from((c.clone(), *count))).collect();
+                let with_counts: Vec<CollectionWithCount> = all_collections
+                    .iter()
+                    .map(|(c, count, _)| CollectionWithCount::from((c.clone(), *count)))
+                    .collect();
                 write_json_success(&with_counts)?
             }
             OutputMode::Table => {
@@ -752,7 +758,8 @@ pub async fn handle_collection_list_v2(
     }
 
     // Convert TourListArgs to CollectionListArgs
-    let list_args = CollectionListArgs { bookmark: None, repo: vec![], line_format: args.line_format.clone() };
+    let list_args =
+        CollectionListArgs { bookmark: None, repo: vec![], line_format: args.line_format.clone() };
     handle_collection_list(cli, mode, &list_args).await
 }
 
