@@ -113,7 +113,8 @@ async fn test_pull_migration_forward() {
     handlers::dispatch(&publish_cli).await.unwrap();
 
     // 3. Overwrite the pack on server with an OLD version (v1)
-    let pack_path = server_dir.path().join("pack-cache").join("tours").join(format!("{}.sqlite", col_id));
+    let pack_path =
+        server_dir.path().join("pack-cache").join("tours").join(format!("{}.sqlite", col_id));
     assert!(pack_path.exists(), "Pack should exist after publish");
 
     {
@@ -137,7 +138,9 @@ async fn test_pull_migration_forward() {
         ").unwrap();
         drop(conn);
 
-        let mut encoder = zstd::stream::write::Encoder::new(std::fs::File::create(&pack_path).unwrap(), 0).unwrap();
+        let mut encoder =
+            zstd::stream::write::Encoder::new(std::fs::File::create(&pack_path).unwrap(), 0)
+                .unwrap();
         let mut source = std::fs::File::open(&v1_pack_path).unwrap();
         std::io::copy(&mut source, &mut encoder).unwrap();
         encoder.finish().unwrap();
@@ -161,8 +164,11 @@ async fn test_pull_migration_forward() {
 
     // 5. Verify migrated collection in local DB
     let db = Database::open(&db_path).unwrap();
-    let col = db.get_collection_by_name("migrated-collection").unwrap().expect("migrated collection not found");
+    let col = db
+        .get_collection_by_name("migrated-collection")
+        .unwrap()
+        .expect("migrated collection not found");
     assert_eq!(col.name, "migrated-collection");
     assert!(col.imported_from_url.is_some());
-    assert_eq!(col.visibility, Visibility::Private); // Migrated default from V10
+    assert_eq!(col.visibility, Visibility::Private); // Default visibility after v1 migration
 }

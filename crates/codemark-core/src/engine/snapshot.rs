@@ -174,15 +174,15 @@ pub async fn build_snapshot(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::bookmark::{BookmarkHealth, Visibility};
     use crate::storage::db::Database;
-    use crate::engine::bookmark::{Visibility, BookmarkHealth};
     use tempfile::tempdir;
     use uuid::Uuid;
 
     #[tokio::test]
     async fn test_build_snapshot_basic() {
         let tmp = tempdir().unwrap();
-        
+
         // Initialize git repo so resolve_bookmark_file_path finds it
         git2::Repository::init(tmp.path()).unwrap();
 
@@ -231,7 +231,7 @@ mod tests {
             comments: vec![],
         };
         db.insert_bookmark(&bookmark).unwrap();
-        db.add_to_collection(&col_id, &[bm_id.clone()]).unwrap();
+        db.add_to_collection(&col_id, std::slice::from_ref(&bm_id)).unwrap();
 
         // Create the file so resolution succeeds
         let src_dir = tmp.path().join("src");
@@ -239,7 +239,7 @@ mod tests {
         std::fs::write(src_dir.join("main.rs"), "fn main() {}").unwrap();
 
         let config = Config::default();
-        let payload = build_snapshot(&db, &col_id, &db_path, &config).await.unwrap();
+        let payload = build_snapshot(&db, &col_id, tmp.path(), &config).await.unwrap();
 
         assert_eq!(payload.collection.id, col_id);
         assert_eq!(payload.bookmarks.len(), 1);

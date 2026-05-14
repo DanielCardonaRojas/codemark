@@ -11,7 +11,9 @@ pub use writer::Packer;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engine::bookmark::{Bookmark, Collection, Visibility, BookmarkHealth, ResolutionMethod};
+    use crate::engine::bookmark::{
+        Bookmark, BookmarkHealth, Collection, ResolutionMethod, Visibility,
+    };
     use crate::engine::snapshot::SnapshotPayload;
     use crate::storage::db::Database;
     use tempfile::tempdir;
@@ -25,7 +27,7 @@ mod tests {
 
         let col_id = Uuid::new_v4().to_string();
         let bm_id = Uuid::new_v4().to_string();
-        
+
         let payload = SnapshotPayload {
             collection: Collection {
                 id: col_id.clone(),
@@ -106,7 +108,9 @@ mod tests {
 
         let decompressed_path = tmp.path().join("decompressed.sqlite");
         {
-            let mut decoder = zstd::stream::read::Decoder::new(std::fs::File::open(&result_path).unwrap()).unwrap();
+            let mut decoder =
+                zstd::stream::read::Decoder::new(std::fs::File::open(&result_path).unwrap())
+                    .unwrap();
             let mut out = std::fs::File::create(&decompressed_path).unwrap();
             std::io::copy(&mut decoder, &mut out).unwrap();
         }
@@ -124,10 +128,16 @@ mod tests {
         assert_eq!(resolutions[0].commit_hash, Some("abc".to_string()));
 
         // Check tags and comments via raw SQL since PackReader might not have helpers for them yet
-        let tags: i64 = reader.conn().query_row("SELECT COUNT(*) FROM bookmark_tags", [], |r| r.get(0)).unwrap();
+        let tags: i64 = reader
+            .conn()
+            .query_row("SELECT COUNT(*) FROM bookmark_tags", [], |r| r.get(0))
+            .unwrap();
         assert_eq!(tags, 1);
 
-        let comments: i64 = reader.conn().query_row("SELECT COUNT(*) FROM bookmark_comments", [], |r| r.get(0)).unwrap();
+        let comments: i64 = reader
+            .conn()
+            .query_row("SELECT COUNT(*) FROM bookmark_comments", [], |r| r.get(0))
+            .unwrap();
         assert_eq!(comments, 1);
     }
 }
