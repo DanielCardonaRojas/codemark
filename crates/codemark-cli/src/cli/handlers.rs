@@ -99,7 +99,7 @@ async fn dispatch_tour(cli: &Cli, mode: &OutputMode, args: &TourArgs) -> Result<
 async fn dispatch_tour_v2(cli: &Cli, mode: &OutputMode, args: &TourArgs) -> Result<()> {
     use crate::cli::TourCommand;
     match &args.command {
-        TourCommand::List(a) => collection::handle_collection_list_v2(cli, mode, a).await,
+        TourCommand::List(a) => tour::handle_tour_list(cli, mode, a).await,
         TourCommand::Create(a) => collection::handle_collection_create(cli, mode, a).await,
         TourCommand::Add(a) => collection::handle_collection_add(cli, mode, a).await,
         TourCommand::Remove(a) => collection::handle_collection_remove(cli, mode, a).await,
