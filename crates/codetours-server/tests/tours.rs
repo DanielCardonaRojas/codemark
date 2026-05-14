@@ -252,6 +252,58 @@ async fn test_publish_too_large() {
     assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
 }
 
+/// Tests that a non-SQLite pack is rejected.
+#[tokio::test]
+async fn test_publish_garbage_pack() {
+    let (app, _tmp) = setup_app().await;
+    let req = Request::builder()
+        .method("POST")
+        .uri("/tours")
+        .header("X-Tour-Token", DEV_TOKEN)
+        .header(header::CONTENT_TYPE, "application/vnd.codetours.pack+sqlite")
+        .body(Body::from(vec![0x47, 0x41, 0x52, 0x42, 0x41, 0x47, 0x45])) // "GARBAGE"
+        .unwrap();
+
+    let response = app.oneshot(req).await.unwrap();
+    // It returns 422 because pre_inspect fails to open it as SQLite
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+}
+
+/// Tests that a pack with invalid metadata is rejected.
+#[tokio::test]
+async fn test_publish_invalid_metadata() {
+    let (app, _tmp) = setup_app().await;
+    let pack_path = _tmp.path().join("invalid_meta.pack.sqlite");
+    {
+        let conn = rusqlite::Connection::open(&pack_path).unwrap();
+        conn.execute_batch("PRAGMA user_version = 22;
+             CREATE TABLE schema_meta (key TEXT PRIMARY KEY, value TEXT);
+             INSERT INTO schema_meta (key, value) VALUES ('schema_version', '22');
+             CREATE TABLE collections (id TEXT PRIMARY KEY, name TEXT, visibility TEXT, created_at TEXT, status TEXT);
+             CREATE TABLE bookmarks (id TEXT PRIMARY KEY, file_path TEXT, query TEXT, language TEXT, created_at TEXT);
+             CREATE TABLE collection_bookmarks (collection_id TEXT, bookmark_id TEXT, added_at TEXT);
+             CREATE TABLE _pack_meta (pack_id TEXT PRIMARY KEY, protocol_version INTEGER, purpose TEXT, source_client TEXT, generated_at TEXT);
+             
+             INSERT INTO collections (id, name, visibility, created_at, status) VALUES ('C1', 'Invalid Meta Tour', 'public', '2026-05-01', 'ready');
+             -- Missing _pack_meta row
+        ").unwrap();
+    }
+
+    let pack_bytes = std::fs::read(&pack_path).unwrap();
+    let req = Request::builder()
+        .method("POST")
+        .uri("/tours")
+        .header("X-Tour-Token", DEV_TOKEN)
+        .header(header::CONTENT_TYPE, "application/vnd.codetours.pack+sqlite")
+        .body(Body::from(pack_bytes))
+        .unwrap();
+
+    let response = app.oneshot(req).await.unwrap();
+    assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    let body = ax_body_to_json(response).await;
+    assert_eq!(body["error"], "invalid_metadata");
+}
+
 async fn ax_body_to_json(response: axum::response::Response) -> Value {
     let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
     serde_json::from_slice(&body).unwrap()

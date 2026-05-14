@@ -170,3 +170,90 @@ pub async fn build_snapshot(
         collection_links,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::storage::db::Database;
+    use crate::engine::bookmark::{Visibility, BookmarkHealth};
+    use tempfile::tempdir;
+    use uuid::Uuid;
+
+    #[tokio::test]
+    async fn test_build_snapshot_basic() {
+        let tmp = tempdir().unwrap();
+        
+        // Initialize git repo so resolve_bookmark_file_path finds it
+        git2::Repository::init(tmp.path()).unwrap();
+
+        let db_path = tmp.path().join(".codemark").join("test.db");
+        let db = Database::create(&db_path).unwrap();
+
+        let col_id = Uuid::new_v4().to_string();
+        let collection = Collection {
+            id: col_id.clone(),
+            name: "Test Col".to_string(),
+            description: None,
+            visibility: Visibility::Public,
+            created_at: "2024-01-01T00:00:00Z".to_string(),
+            created_by: None,
+            created_branch: None,
+            published_at: None,
+            published_commit_sha: None,
+            repo_url: None,
+            repo_id: None,
+            status: None,
+            health: None,
+            health_computed_at: None,
+            updated_at: None,
+            imported_from_url: None,
+        };
+        db.insert_collection(&collection).unwrap();
+
+        let bm_id = Uuid::new_v4().to_string();
+        let bookmark = Bookmark {
+            id: bm_id.clone(),
+            query: "fn main".to_string(),
+            language: "rust".to_string(),
+            file_path: "src/main.rs".to_string(),
+            content_hash: None,
+            commit_hash: None,
+            health: BookmarkHealth::Active,
+            resolution_method: None,
+            last_resolved_at: None,
+            stale_since: None,
+            created_at: "2024-01-01T00:00:00Z".to_string(),
+            created_by: None,
+            current_resolution_id: None,
+            repo_id: None,
+            tags: vec![],
+            annotations: vec![],
+            comments: vec![],
+        };
+        db.insert_bookmark(&bookmark).unwrap();
+        db.add_to_collection(&col_id, &[bm_id.clone()]).unwrap();
+
+        // Create the file so resolution succeeds
+        let src_dir = tmp.path().join("src");
+        std::fs::create_dir_all(&src_dir).unwrap();
+        std::fs::write(src_dir.join("main.rs"), "fn main() {}").unwrap();
+
+        let config = Config::default();
+        let payload = build_snapshot(&db, &col_id, &db_path, &config).await.unwrap();
+
+        assert_eq!(payload.collection.id, col_id);
+        assert_eq!(payload.bookmarks.len(), 1);
+        assert_eq!(payload.bookmarks[0].id, bm_id);
+        assert_eq!(payload.resolutions.len(), 1);
+        assert_eq!(payload.resolutions[0].bookmark_id, bm_id);
+    }
+
+    #[tokio::test]
+    async fn test_build_snapshot_missing_collection() {
+        let tmp = tempdir().unwrap();
+        let db = Database::open_in_memory().unwrap();
+        let config = Config::default();
+        let result = build_snapshot(&db, "nonexistent", tmp.path(), &config).await;
+        assert!(result.is_err());
+    }
+}
