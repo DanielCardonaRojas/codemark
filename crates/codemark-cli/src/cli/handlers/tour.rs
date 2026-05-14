@@ -7,9 +7,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 // Re-export auth resolution helpers
-use crate::cli::handlers::auth_resolve::{
-    build_auth_headers, resolve_server_and_token,
-};
+use crate::cli::handlers::auth_resolve::{build_auth_headers, resolve_server_and_token};
 
 /// Normalize a repository reference to a standard SSH URL format.
 ///
@@ -27,12 +25,11 @@ fn normalize_repo_url(repo: &str) -> String {
     }
 
     // Check if it's owner/repo format (simple heuristic)
-    if let Some((owner, repo_name)) = repo.split_once('/') {
-        if !owner.contains('.') && !repo_name.contains(':') {
+    if let Some((owner, repo_name)) = repo.split_once('/')
+        && !owner.contains('.') && !repo_name.contains(':') {
             // Likely owner/repo format
             return format!("git@github.com:{}/{}.git", owner, repo_name);
         }
-    }
 
     // For full URLs, try to parse and normalize
     if let Some((owner, repo_name)) = remote::parse_remote_url(repo) {
@@ -128,7 +125,12 @@ pub async fn handle_tour_list(cli: &Cli, mode: &OutputMode, args: &TourListArgs)
     }
 
     println!("{table}");
-    println!("\nTotal: {} (Showing {}-{})", res.total, res.offset + 1, res.offset + res.tours.len());
+    println!(
+        "\nTotal: {} (Showing {}-{})",
+        res.total,
+        res.offset + 1,
+        res.offset + res.tours.len()
+    );
 
     Ok(())
 }
