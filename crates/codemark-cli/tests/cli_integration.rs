@@ -3080,3 +3080,87 @@ async fn test_no_past_resolution() {
         heal_result.stdout
     );
 }
+
+#[test]
+fn collection_list_with_repo_flag() {
+    use codemark_core::storage::db::Database;
+    use codemark_core::storage::registry;
+
+    // Create two separate git repos to simulate different repositories
+    let cm1 = Codemark::with_git_repo();
+    let cm2 = Codemark::with_git_repo();
+
+    // Create collections in the first repo (this creates repo metadata)
+    let json =
+        cm1.run_json(&["collection", "create", "test-col-1", "--description", "Test collection 1"]);
+    assert_eq!(json["success"], true);
+
+    let json =
+        cm1.run_json(&["collection", "create", "test-col-2", "--description", "Test collection 2"]);
+    assert_eq!(json["success"], true);
+
+    // Create collections in the second repo
+    let json =
+        cm2.run_json(&["collection", "create", "test-col-3", "--description", "Test collection 3"]);
+    assert_eq!(json["success"], true);
+
+    // Get repo info from first repo
+    let db1 = Database::open(&cm1.db_path).unwrap();
+    let repos1 = db1.list_repos().unwrap();
+    let repo1 = repos1.first().expect("Repo 1 should have metadata after collection create");
+
+    // Get repo info from second repo
+    let db2 = Database::open(&cm2.db_path).unwrap();
+    let repos2 = db2.list_repos().unwrap();
+    let repo2 = repos2.first().expect("Repo 2 should have metadata after collection create");
+
+    // Register both repos in the global registry
+    let registry_conn = registry::open_registry().unwrap();
+    let repo1_root = cm1.work_dir.to_string_lossy().to_string();
+    let repo2_root = cm2.work_dir.to_string_lossy().to_string();
+
+    let _ = registry::upsert_repo(
+        &registry_conn,
+        &registry::RepoUpsert {
+            id: &repo1.id,
+            repo_owner: &repo1.repo_owner,
+            repo_name: &repo1.repo_name,
+            origin_url: repo1.origin_url.as_deref(),
+            repo_root: &repo1_root,
+            db_owner_email: &repo1.db_owner_email,
+            db_owner_name: repo1.db_owner_name.as_deref(),
+            server_url: None,
+        },
+    );
+
+    let _ = registry::upsert_repo(
+        &registry_conn,
+        &registry::RepoUpsert {
+            id: &repo2.id,
+            repo_owner: &repo2.repo_owner,
+            repo_name: &repo2.repo_name,
+            origin_url: repo2.origin_url.as_deref(),
+            repo_root: &repo2_root,
+            db_owner_email: &repo2.db_owner_email,
+            db_owner_name: repo2.db_owner_name.as_deref(),
+            server_url: None,
+        },
+    );
+
+    // Test 1: List collections without --repo flag (should use current repo only)
+    let json = cm1.run_json(&["collection", "list"]);
+    let collections = json["data"].as_array().unwrap();
+    assert_eq!(collections.len(), 2, "Should list 2 collections from current repo");
+
+    // Test 2: List collections with --repo flag pointing to second repo (from first repo's context)
+    // This should show collections from both current repo AND the specified repo
+    let repo_ref2 = format!("{}/{}", repo2.repo_owner, repo2.repo_name);
+    let json = cm1.run_json(&["collection", "list", "--repo", &repo_ref2]);
+    let collections = json["data"].as_array().unwrap();
+    // Should have 2 from cm1 + 1 from cm2 = 3 total
+    assert_eq!(
+        collections.len(),
+        3,
+        "Should list collections from both current repo (2) and specified repo (1)"
+    );
+}
