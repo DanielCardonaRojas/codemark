@@ -13,7 +13,7 @@ use codemark_core::engine::bookmark::{
 use codemark_core::error::{Error, Result};
 use codemark_core::git::context as git_context;
 
-use super::{find_bookmark, now_iso, open_db, open_db_for_write, resolve_batch};
+use super::{find_bookmark, now_iso, open_all_dbs_with_extra_and_repos, open_db, open_db_for_write, resolve_batch};
 
 /// Create a new bookmark collection.
 pub async fn handle_collection_create(
@@ -305,16 +305,41 @@ pub async fn handle_collection_list(
     mode: &OutputMode,
     args: &CollectionListArgs,
 ) -> Result<()> {
-    let db = open_db(cli)?;
+    let dbs = if args.repo.is_empty() {
+        vec![("local".to_string(), open_db(cli)?)]
+    } else {
+        open_all_dbs_with_extra_and_repos(cli, &[], &args.repo)?
+    };
 
     if let Some(ref bookmark_id) = args.bookmark {
-        let bm = find_bookmark(&db, bookmark_id)?;
-        let collections = db.list_collections_for_bookmark(&bm.id)?;
+        let bm = if dbs.len() == 1 {
+            find_bookmark(&dbs[0].1, bookmark_id)?
+        } else {
+            // Search across all databases for the bookmark
+            let mut found = None;
+            for (_, db) in &dbs {
+                if let Ok(b) = find_bookmark(db, bookmark_id) {
+                    found = Some(b);
+                    break;
+                }
+            }
+            found.ok_or_else(|| Error::Input(format!("bookmark '{}' not found", bookmark_id)))?
+        };
+
+        // Collect collections from all databases that contain this bookmark
+        let mut all_collections: Vec<(Collection, String)> = Vec::new();
+        for (label, db) in &dbs {
+            if let Ok(collections) = db.list_collections_for_bookmark(&bm.id) {
+                for c in collections {
+                    all_collections.push((c, label.clone()));
+                }
+            }
+        }
 
         // Custom line format for bookmark's collections
         if let Some(ref template) = args.line_format {
             let mut stdout = std::io::stdout().lock();
-            for c in &collections {
+            for (c, _label) in &all_collections {
                 let short_id = output::short_id(&c.id);
                 let line = template
                     .replace("{ID}", short_id)
@@ -347,11 +372,14 @@ pub async fn handle_collection_list(
         }
 
         match mode {
-            OutputMode::Json => write_json_success(&collections)?,
+            OutputMode::Json => {
+                let collections: Vec<&Collection> = all_collections.iter().map(|(c, _)| c).collect();
+                write_json_success(&collections)?
+            }
             OutputMode::Table => {
                 let mut table = comfy_table::Table::new();
                 table.set_header(vec!["Name", "Health", "Branch", "Description", "Created"]);
-                for c in &collections {
+                for (c, _label) in &all_collections {
                     table.add_row(vec![
                         &c.name,
                         &c.health
@@ -367,7 +395,7 @@ pub async fn handle_collection_list(
             }
             _ => {
                 let mut stdout = std::io::stdout().lock();
-                for c in &collections {
+                for (c, _label) in &all_collections {
                     writeln!(
                         stdout,
                         "{}\t{}\t{}",
@@ -379,12 +407,23 @@ pub async fn handle_collection_list(
             }
         }
     } else {
-        let collections = db.list_collections()?;
+        // Collect collections from all databases
+        let mut all_collections: Vec<(Collection, usize, String)> = Vec::new();
+        for (label, db) in &dbs {
+            if let Ok(collections) = db.list_collections() {
+                for (c, count) in collections {
+                    all_collections.push((c, count, label.clone()));
+                }
+            }
+        }
+
+        // Sort by name for consistent output
+        all_collections.sort_by(|a, b| a.0.name.cmp(&b.0.name));
 
         // Custom line format for collections with counts
         if let Some(ref template) = args.line_format {
             let mut stdout = std::io::stdout().lock();
-            for (c, count) in &collections {
+            for (c, count, _label) in &all_collections {
                 let short_id = output::short_id(&c.id);
                 let line = template
                     .replace("{ID}", short_id)
@@ -421,7 +460,7 @@ pub async fn handle_collection_list(
         match mode {
             OutputMode::Json => {
                 let with_counts: Vec<CollectionWithCount> =
-                    collections.iter().map(CollectionWithCount::from).collect();
+                    all_collections.iter().map(|(c, count, _)| CollectionWithCount::from((c.clone(), *count))).collect();
                 write_json_success(&with_counts)?
             }
             OutputMode::Table => {
@@ -434,7 +473,7 @@ pub async fn handle_collection_list(
                     "Description",
                     "Created",
                 ]);
-                for (c, count) in &collections {
+                for (c, count, _label) in &all_collections {
                     table.add_row(vec![
                         c.name.clone(),
                         c.health.as_ref().map(|h| h.to_string()).unwrap_or_else(|| "-".to_string()),
@@ -448,7 +487,7 @@ pub async fn handle_collection_list(
             }
             _ => {
                 let mut stdout = std::io::stdout().lock();
-                for (c, count) in &collections {
+                for (c, count, _label) in &all_collections {
                     writeln!(
                         stdout,
                         "{}\t{}\t{}\t{}",
@@ -713,7 +752,7 @@ pub async fn handle_collection_list_v2(
     }
 
     // Convert TourListArgs to CollectionListArgs
-    let list_args = CollectionListArgs { bookmark: None, line_format: args.line_format.clone() };
+    let list_args = CollectionListArgs { bookmark: None, repo: vec![], line_format: args.line_format.clone() };
     handle_collection_list(cli, mode, &list_args).await
 }
 

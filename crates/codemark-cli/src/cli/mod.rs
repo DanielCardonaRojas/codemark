@@ -702,6 +702,10 @@ pub struct CollectionListArgs {
     #[arg(long)]
     pub bookmark: Option<String>,
 
+    /// Repository reference (owner/name) for identity-based discovery; repeatable
+    #[arg(long, value_name = "OWNER/NAME")]
+    pub repo: Vec<String>,
+
     /// Custom line format template (placeholders: {ID}, {NAME}, {COUNT}, {DESCRIPTION}, {CREATED})
     #[arg(long)]
     pub line_format: Option<String>,
