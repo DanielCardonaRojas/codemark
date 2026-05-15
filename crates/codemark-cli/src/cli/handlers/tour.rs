@@ -203,4 +203,17 @@ mod tests {
         // Strings without / or : are returned as-is
         assert_eq!(normalize_repo_url("codemark"), "codemark");
     }
+
+    #[test]
+    fn test_normalize_then_parse_roundtrip() {
+        // Verify that normalized SSH URLs can be parsed back to owner/name
+        // This is the key flow for --repo flag to work with find_repo_by_origin
+        let input = "DanielCardonaRojas/codemark";
+        let normalized = normalize_repo_url(input);
+        assert_eq!(normalized, "git@github.com:DanielCardonaRojas/codemark.git");
+
+        // The normalized URL should be parsable back to owner/name
+        let parsed = remote::parse_remote_url(&normalized);
+        assert_eq!(parsed, Some(("DanielCardonaRojas".to_string(), "codemark".to_string())));
+    }
 }
