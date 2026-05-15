@@ -71,7 +71,7 @@ pub async fn handle_tour_list(
         .repo
         .as_ref()
         .map(|repo| normalize_repo_url(repo))
-        .or_else(|| detected_repo.map(|repo| normalize_repo_url(repo)));
+        .or_else(|| detected_repo.map(normalize_repo_url));
 
     // 2. Resolve server and token from registry
     let (server_url, token) =
