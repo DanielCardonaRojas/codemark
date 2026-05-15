@@ -56,7 +56,7 @@ pub async fn handle_pull(cli: &Cli, mode: &OutputMode, args: &PullArgs) -> Resul
 
     // 3. Use unified sync interface
     // Pull is now persistent by default - save with original name or custom name
-    let save_name = args.name.as_ref().map(|s| s.clone());
+    let save_name = args.name.clone();
 
     let sync_opts = SyncOptions {
         collection_id,

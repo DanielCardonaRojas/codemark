@@ -455,8 +455,7 @@ mod tests {
         );
 
         // Test cross-format matching: repo stored with HTTPS URL can be found via SSH URL
-        let repo =
-            find_repo_by_origin(&conn, "git@github.com:owner/repo.git").unwrap().unwrap();
+        let repo = find_repo_by_origin(&conn, "git@github.com:owner/repo.git").unwrap().unwrap();
         assert_eq!(repo.repo_owner, "owner");
         assert_eq!(repo.repo_name, "repo");
 
