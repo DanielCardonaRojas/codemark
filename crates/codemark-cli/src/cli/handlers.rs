@@ -1890,3 +1890,79 @@ pub async fn handle_open(cli: &Cli, args: &OpenArgs) -> Result<()> {
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_detect_tour_list_repo_with_all_flag() {
+        // When --all is specified, detection should be bypassed
+        let args = TourListArgs {
+            server: None,
+            repo: None,
+            all: true,
+            limit: 50,
+            offset: 0,
+            line_format: None,
+        };
+        assert!(detect_tour_list_repo(&args).is_none());
+    }
+
+    #[test]
+    fn test_detect_tour_list_repo_with_explicit_repo() {
+        // When --repo is explicitly provided, don't override it
+        let args = TourListArgs {
+            server: None,
+            repo: Some("owner/repo".to_string()),
+            all: false,
+            limit: 50,
+            offset: 0,
+            line_format: None,
+        };
+        assert!(detect_tour_list_repo(&args).is_none());
+    }
+
+    #[test]
+    fn test_detect_tour_list_repo_priority_all_over_repo() {
+        // --all takes precedence even if --repo is provided (enforced by clap conflicts_with)
+        let args = TourListArgs {
+            server: None,
+            repo: Some("owner/repo".to_string()),
+            all: true,
+            limit: 50,
+            offset: 0,
+            line_format: None,
+        };
+        assert!(detect_tour_list_repo(&args).is_none());
+    }
+
+    #[test]
+    fn test_detect_tour_list_repo_no_flags_attempts_detection() {
+        // Without --all or --repo, detection is attempted
+        // This test verifies the function doesn't panic and either returns
+        // a normalized repo URL (if in a git repo with origin) or None (if not)
+        let args = TourListArgs {
+            server: None,
+            repo: None,
+            all: false,
+            limit: 50,
+            offset: 0,
+            line_format: None,
+        };
+        let result = detect_tour_list_repo(&args);
+        // We can't assert a specific value since tests may run from different contexts
+        // Just verify it returns either None or a valid-looking repo URL
+        match result {
+            None => {} // Not in a git repo or detection failed (expected in some contexts)
+            Some(url) => {
+                // If detection succeeded, verify it's a normalized URL
+                assert!(
+                    url.contains("git@github.com:") || url.contains("git@"),
+                    "Detected URL should be normalized: {}",
+                    url
+                );
+            }
+        }
+    }
+}
