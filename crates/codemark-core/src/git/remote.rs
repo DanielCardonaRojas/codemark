@@ -58,6 +58,19 @@ pub fn parse_remote_url(url: &str) -> Option<(String, String)> {
         }
     }
 
+    // Handle simple owner/repo format (for cases like --repo flag in tour list)
+    if !url.contains("://")
+        && !url.contains('@')
+        && url.contains('/')
+        && let Some(idx) = url.find('/')
+    {
+        let owner = &url[..idx];
+        let repo = &url[idx + 1..];
+        if !owner.is_empty() && !repo.is_empty() {
+            return Some((owner.to_string(), repo.to_string()));
+        }
+    }
+
     None
 }
 
@@ -181,6 +194,19 @@ mod tests {
     fn test_parse_empty_string() {
         assert_eq!(parse_remote_url(""), None);
         assert_eq!(parse_remote_url("   "), None);
+    }
+
+    #[test]
+    fn test_parse_owner_repo_format() {
+        // Simple owner/repo format (used in --repo flag)
+        assert_eq!(parse_remote_url("owner/repo"), Some(("owner".to_string(), "repo".to_string())));
+        assert_eq!(
+            parse_remote_url("owner-org/repo-name"),
+            Some(("owner-org".to_string(), "repo-name".to_string()))
+        );
+        // Edge cases
+        assert_eq!(parse_remote_url("/repo"), None); // Missing owner
+        assert_eq!(parse_remote_url("owner/"), None); // Missing repo
     }
 
     #[test]
