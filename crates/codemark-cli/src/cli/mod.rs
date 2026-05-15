@@ -1054,6 +1054,10 @@ pub struct TourListArgs {
     #[arg(long)]
     pub repo: Option<String>,
 
+    /// List all tours, ignoring the current repository context
+    #[arg(long, conflicts_with = "repo")]
+    pub all: bool,
+
     /// Maximum results to return
     #[arg(long, default_value = "50")]
     pub limit: usize,
