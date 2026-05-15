@@ -119,6 +119,7 @@ async fn test_cli_publish_pull_roundtrip() {
 
     // 4. Verify publication in server (via tour list)
     // We'll use the CLI to list tours
+    // Use --all to bypass auto-detection (test runs from codemark project dir)
     let list_cli = Cli {
         db: vec![db_path.clone()],
         repo: vec![],
@@ -128,6 +129,7 @@ async fn test_cli_publish_pull_roundtrip() {
             command: codemark_cli::cli::TourCommand::List(codemark_cli::cli::TourListArgs {
                 server: Some(server_url.clone()),
                 repo: None,
+                all: true,
                 limit: 10,
                 offset: 0,
                 line_format: None,

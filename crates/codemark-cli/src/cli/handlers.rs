@@ -20,6 +20,7 @@ use codemark_core::engine::bookmark::{
 use codemark_core::engine::{health, resolution};
 use codemark_core::error::{Error, Result};
 use codemark_core::git::context as git_context;
+use codemark_core::git::remote;
 use codemark_core::parser::languages::Language;
 use codemark_core::storage::{SemanticRepo, db::Database};
 
@@ -35,6 +36,40 @@ pub mod repo;
 pub mod search;
 pub mod sync;
 pub mod tour;
+
+/// Pre-flight detection for `tour list` command.
+///
+/// Automatically detects the current Git repository's origin URL and injects it
+/// as the `--repo` flag value if:
+/// - The command is `tour list`
+/// - `--repo` was not explicitly provided
+/// - `--all` flag was not provided (to bypass auto-detection)
+/// - A Git repository with a valid origin URL is detected
+///
+/// This implements repo-context-aware defaults for the tour list command.
+/// Returns `None` if detection fails or should be bypassed (fail-soft behavior).
+pub fn detect_tour_list_repo(args: &TourListArgs) -> Option<String> {
+    // If --all is specified, bypass auto-detection (opt-out mechanism)
+    if args.all {
+        return None;
+    }
+
+    // If --repo was explicitly provided, don't override it
+    if args.repo.is_some() {
+        return None;
+    }
+
+    // Attempt to detect the current Git repository
+    let cwd = std::env::current_dir().ok()?;
+    let ctx = git_context::detect_context(&cwd)?;
+
+    // Get the origin URL from the Git repository
+    let origin_url = remote::get_origin_url(&ctx.repo_root).ok()?;
+
+    // Normalize the URL using the existing normalize_repo_url logic
+    // (re-exported from the tour handler module)
+    Some(tour::normalize_repo_url(&origin_url))
+}
 
 /// Dispatch a parsed CLI command to its handler.
 pub async fn dispatch(cli: &Cli) -> Result<()> {
@@ -91,7 +126,11 @@ async fn dispatch_collection(cli: &Cli, mode: &OutputMode, args: &CollectionArgs
 #[allow(dead_code)]
 async fn dispatch_tour(cli: &Cli, mode: &OutputMode, args: &TourArgs) -> Result<()> {
     match &args.command {
-        TourCommand::List(a) => tour::handle_tour_list(cli, mode, a).await,
+        TourCommand::List(a) => {
+            // Pre-flight: inject detected repo URL if applicable
+            let detected_repo = detect_tour_list_repo(a);
+            tour::handle_tour_list(cli, mode, a, detected_repo.as_deref()).await
+        }
         _ => dispatch_tour_v2(cli, mode, args).await,
     }
 }
@@ -99,7 +138,11 @@ async fn dispatch_tour(cli: &Cli, mode: &OutputMode, args: &TourArgs) -> Result<
 async fn dispatch_tour_v2(cli: &Cli, mode: &OutputMode, args: &TourArgs) -> Result<()> {
     use crate::cli::TourCommand;
     match &args.command {
-        TourCommand::List(a) => tour::handle_tour_list(cli, mode, a).await,
+        TourCommand::List(a) => {
+            // Pre-flight: inject detected repo URL if applicable
+            let detected_repo = detect_tour_list_repo(a);
+            tour::handle_tour_list(cli, mode, a, detected_repo.as_deref()).await
+        }
         TourCommand::Create(a) => collection::handle_collection_create(cli, mode, a).await,
         TourCommand::Add(a) => collection::handle_collection_add(cli, mode, a).await,
         TourCommand::Remove(a) => collection::handle_collection_remove(cli, mode, a).await,

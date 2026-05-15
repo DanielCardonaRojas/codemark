@@ -18,7 +18,7 @@ use crate::cli::handlers::auth_resolve::{build_auth_headers, resolve_server_and_
 ///
 /// Returns a normalized SSH URL (git@github.com:owner/repo.git) for GitHub,
 /// or the original URL for other hosts.
-fn normalize_repo_url(repo: &str) -> String {
+pub fn normalize_repo_url(repo: &str) -> String {
     // If it's already in owner/repo format, convert to SSH URL
     if !repo.contains('/') && !repo.contains(':') {
         return repo.to_string();
@@ -59,9 +59,19 @@ struct ListToursResponse {
     offset: usize,
 }
 
-pub async fn handle_tour_list(cli: &Cli, mode: &OutputMode, args: &TourListArgs) -> Result<()> {
-    // 1. Determine the repository URL to filter by (only if explicitly provided)
-    let repo_url = args.repo.as_ref().map(|repo| normalize_repo_url(repo));
+pub async fn handle_tour_list(
+    cli: &Cli,
+    mode: &OutputMode,
+    args: &TourListArgs,
+    detected_repo: Option<&str>,
+) -> Result<()> {
+    // 1. Determine the repository URL to filter by
+    // Priority: explicitly provided --repo flag > auto-detected repo > none (global list)
+    let repo_url = args
+        .repo
+        .as_ref()
+        .map(|repo| normalize_repo_url(repo))
+        .or_else(|| detected_repo.map(|repo| normalize_repo_url(repo)));
 
     // 2. Resolve server and token from registry
     let (server_url, token) =
@@ -110,7 +120,11 @@ pub async fn handle_tour_list(cli: &Cli, mode: &OutputMode, args: &TourListArgs)
     }
 
     if res.tours.is_empty() {
-        println!("No tours found on server.");
+        if repo_url.is_some() {
+            println!("No tours found for repository on server.");
+        } else {
+            println!("No tours found on server.");
+        }
         return Ok(());
     }
 
