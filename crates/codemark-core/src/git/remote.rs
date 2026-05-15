@@ -59,14 +59,17 @@ pub fn parse_remote_url(url: &str) -> Option<(String, String)> {
     }
 
     // Handle simple owner/repo format (for cases like --repo flag in tour list)
-    if !url.contains("://") && !url.contains('@') && url.contains('/')
-        && let Some(idx) = url.find('/') {
-            let owner = &url[..idx];
-            let repo = &url[idx + 1..];
-            if !owner.is_empty() && !repo.is_empty() {
-                return Some((owner.to_string(), repo.to_string()));
-            }
+    if !url.contains("://")
+        && !url.contains('@')
+        && url.contains('/')
+        && let Some(idx) = url.find('/')
+    {
+        let owner = &url[..idx];
+        let repo = &url[idx + 1..];
+        if !owner.is_empty() && !repo.is_empty() {
+            return Some((owner.to_string(), repo.to_string()));
         }
+    }
 
     None
 }
