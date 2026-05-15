@@ -221,7 +221,25 @@ pub fn get_server_url(conn: &Connection, repo_root: &str) -> Result<Option<Strin
 }
 
 /// Find a repository by its origin URL.
+///
+/// This function performs a normalized comparison to match repositories regardless
+/// of the URL format used (HTTPS, SSH, owner/repo, etc.). It parses the input URL
+/// to extract the owner and name, then queries by those fields.
 pub fn find_repo_by_origin(conn: &Connection, origin_url: &str) -> Result<Option<KnownRepo>> {
+    // Try to parse the URL to extract owner/name for flexible matching
+    if let Some((owner, repo_name)) = crate::git::remote::parse_remote_url(origin_url) {
+        return conn
+            .query_row(
+                "SELECT id, repo_owner, repo_name, origin_url, repo_root, db_owner_email, db_owner_name, detected_at, last_seen_at, server_url
+                 FROM known_repos WHERE repo_owner = ?1 AND repo_name = ?2",
+                params![owner, repo_name],
+                row_to_known_repo,
+            )
+            .optional()
+            .map_err(|e| Error::Database(e.to_string()));
+    }
+
+    // Fallback to exact match if parsing fails (e.g., non-GitHub URLs)
     conn.query_row(
         "SELECT id, repo_owner, repo_name, origin_url, repo_root, db_owner_email, db_owner_name, detected_at, last_seen_at, server_url
          FROM known_repos WHERE origin_url = ?1",
@@ -435,6 +453,17 @@ mod tests {
                 .unwrap()
                 .is_none()
         );
+
+        // Test cross-format matching: repo stored with HTTPS URL can be found via SSH URL
+        let repo =
+            find_repo_by_origin(&conn, "git@github.com:owner/repo.git").unwrap().unwrap();
+        assert_eq!(repo.repo_owner, "owner");
+        assert_eq!(repo.repo_name, "repo");
+
+        // Also test with owner/repo format (after normalization in tour.rs)
+        let repo = find_repo_by_origin(&conn, "owner/repo").unwrap().unwrap();
+        assert_eq!(repo.repo_owner, "owner");
+        assert_eq!(repo.repo_name, "repo");
     }
 }
 
