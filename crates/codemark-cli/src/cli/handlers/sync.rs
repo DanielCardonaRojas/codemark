@@ -53,7 +53,7 @@ pub struct SyncOptions {
     pub dry_run: bool,
 
     /// Save name for pulled collection (for pull)
-    /// Empty string means use original name, None means display only
+    /// Empty string means use original name, Some(name) means custom name
     pub save_name: Option<String>,
 
     /// Database reference (required for push)
@@ -276,37 +276,6 @@ async fn import_pack(
     Ok(())
 }
 
-/// Display pack information without saving.
-async fn display_pack(pack_path: &std::path::Path) -> Result<()> {
-    let reader = PackReader::open(pack_path)?;
-    let tours = reader.tours()?;
-    if tours.is_empty() {
-        println!("Pack contains no tours.");
-        return Ok(());
-    }
-
-    for tour in tours {
-        println!("Tour: {} ({})", tour.name, tour.id);
-        if let Some(desc) = &tour.description {
-            println!("Description: {}", desc);
-        }
-        println!();
-
-        let bookmarks = reader.bookmarks_for_collection(&tour.id)?;
-        let mut table = comfy_table::Table::new();
-        table.set_header(vec!["File", "Line", "Headline"]);
-
-        for bm in bookmarks {
-            let res = reader.resolutions(&bm.id)?;
-            let line = res.first().and_then(|r| r.line_range.as_deref()).unwrap_or("?");
-            let headline = res.first().and_then(|r| r.headline.as_deref()).unwrap_or("");
-            table.add_row(vec![&bm.file_path, line, headline]);
-        }
-        println!("{table}");
-    }
-    Ok(())
-}
-
 /// Upload a pack to the server.
 async fn upload_pack(
     pack_path: &std::path::Path,
@@ -406,27 +375,23 @@ async fn sync_pull(cli: &Cli, mode: &OutputMode, opts: SyncOptions) -> Result<()
         inspect(&pack_path)
             .map_err(|e| Error::Operation(format!("pack inspection failed: {e}")))?;
 
+        // Pull is now persistent by default - always save locally
+        let db = super::open_db_for_write(cli)?;
+        let source_url = format!("{}/tours/{}", opts.server_url, opts.collection_id);
+
         match &opts.save_name {
-            None => {
-                // Display only
-                display_pack(&pack_path).await?;
-            }
-            Some(name) if name.is_empty() => {
-                // Save with original name
-                let db = super::open_db_for_write(cli)?;
-                let source_url = format!("{}/tours/{}", opts.server_url, opts.collection_id);
-                import_pack(&db, &pack_path, None, &source_url).await?;
-                crate::cli::output::write_success(mode, "Collection imported successfully")?;
-            }
-            Some(name) => {
+            Some(name) if !name.is_empty() => {
                 // Save with custom name
-                let db = super::open_db_for_write(cli)?;
-                let source_url = format!("{}/tours/{}", opts.server_url, opts.collection_id);
                 import_pack(&db, &pack_path, Some(name), &source_url).await?;
                 crate::cli::output::write_success(
                     mode,
                     &format!("Saved as collection '{}'", name),
                 )?;
+            }
+            _ => {
+                // Save with original name
+                import_pack(&db, &pack_path, None, &source_url).await?;
+                crate::cli::output::write_success(mode, "Collection imported successfully")?;
             }
         }
 

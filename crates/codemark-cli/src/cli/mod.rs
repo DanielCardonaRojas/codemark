@@ -988,9 +988,9 @@ pub struct PullArgs {
     #[arg(long)]
     pub token: Option<String>,
 
-    /// Save the tour locally as a collection. If no name is provided, uses the tour's title.
-    #[arg(long, num_args = 0..=1, default_missing_value = "")]
-    pub save: Option<String>,
+    /// Save the tour locally as a collection with a custom name (defaults to tour's title)
+    #[arg(long)]
+    pub name: Option<String>,
 }
 
 #[derive(Debug, clap::Args)]

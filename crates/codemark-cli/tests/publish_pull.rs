@@ -138,7 +138,7 @@ async fn test_cli_publish_pull_roundtrip() {
     };
     handlers::dispatch(&list_cli).await.unwrap();
 
-    // 5. Run Pull
+    // 5. Run Pull (now persistent by default, with custom name)
     let pull_cli = Cli {
         db: vec![db_path.clone()],
         repo: vec![],
@@ -148,7 +148,7 @@ async fn test_cli_publish_pull_roundtrip() {
             tour: format!("{}/tours/{}", server_url, col_id),
             server: None,
             token: Some("test-token".to_string()),
-            save: Some("pulled-collection".to_string()),
+            name: Some("pulled-collection".to_string()),
         }),
     };
     handlers::dispatch(&pull_cli).await.unwrap();
