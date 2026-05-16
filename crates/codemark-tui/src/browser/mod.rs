@@ -114,6 +114,8 @@ struct TourInfo {
     step_count: usize,
     /// Description
     description: Option<String>,
+    /// Tags associated with this tour
+    tags: Vec<String>,
     /// Whether the panel is focused
     focused: bool,
     /// Last rendered area
@@ -907,6 +909,7 @@ impl TourInfo {
             author: "Claude Code".to_string(),
             step_count: 5,
             description: Some("Authentication flow tour".to_string()),
+            tags: vec!["#auth".to_string(), "#backend".to_string(), "#security".to_string()],
             focused: false,
             last_area: std::cell::Cell::new(Rect::default()),
         }
@@ -950,7 +953,7 @@ impl TourInfo {
         block.render(area, buf);
 
         // Build info content
-        let info_lines = vec![
+        let mut info_lines = vec![
             Line::from(vec![
                 Span::styled("Branch: ", Style::default().fg(Color::DarkGray)),
                 Span::styled(&self.branch, Style::default().fg(Color::Cyan)),
@@ -971,6 +974,24 @@ impl TourInfo {
                 ),
             ]),
         ];
+
+        // Add tags line
+        if !self.tags.is_empty() {
+            let mut tag_spans = vec![Span::styled("Tags: ", Style::default().fg(Color::DarkGray))];
+            for (i, tag) in self.tags.iter().enumerate() {
+                if i > 0 {
+                    tag_spans.push(Span::raw(" "));
+                }
+                let color = match i % 4 {
+                    0 => Color::Cyan,
+                    1 => Color::Magenta,
+                    2 => Color::Yellow,
+                    _ => Color::Green,
+                };
+                tag_spans.push(Span::styled(tag, Style::default().fg(color)));
+            }
+            info_lines.push(Line::from(tag_spans));
+        }
 
         let paragraph = Paragraph::new(info_lines)
             .wrap(Wrap { trim: false })
