@@ -46,6 +46,8 @@ struct RightPane {
     pager_total: usize,
     /// Pager current page
     pager_current: usize,
+    /// Last rendered area
+    last_area: std::cell::Cell<Rect>,
 }
 
 /// Focus areas within the right pane.
@@ -69,6 +71,8 @@ struct TourInfo {
     description: Option<String>,
     /// Whether the panel is focused
     focused: bool,
+    /// Last rendered area
+    last_area: std::cell::Cell<Rect>,
 }
 
 /// Areas that can be focused in the browser.
@@ -123,6 +127,8 @@ struct TabbedPanel {
     panels: Vec<Panel>,
     /// Currently focused
     focused: bool,
+    /// Last rendered area
+    last_area: std::cell::Cell<Rect>,
 }
 
 impl BrowserLayout {
@@ -301,12 +307,110 @@ impl BrowserLayout {
 
     /// Handle an event.
     pub fn handle_event(&mut self, event: &Event) -> bool {
-        match self.focus {
-            FocusArea::Search => self.left_pane.search.handle_event(event),
-            FocusArea::Panel1 => self.left_pane.panel1.handle_event(event),
-            FocusArea::Panel2 => self.left_pane.panel2.handle_event(event),
-            FocusArea::Panel3 => self.left_pane.panel3.handle_event(event),
-            FocusArea::Main => self.right_pane.handle_event(event),
+        // 1. Handle mouse clicks for focus switching
+        if let Event::Mouse(mouse) = event {
+            if let ratatui::crossterm::event::MouseEventKind::Down(ratatui::crossterm::event::MouseButton::Left) = mouse.kind {
+                let col = mouse.column;
+                let row = mouse.row;
+                
+                // Check each section for focus switching
+                let search_area = self.left_pane.search.last_area();
+                if col >= search_area.x && col < search_area.x + search_area.width &&
+                   row >= search_area.y && row < search_area.y + search_area.height {
+                    self.set_focus(FocusArea::Search);
+                } else {
+                    let p1_area = self.left_pane.panel1.last_area();
+                    if col >= p1_area.x && col < p1_area.x + p1_area.width &&
+                       row >= p1_area.y && row < p1_area.y + p1_area.height {
+                        self.set_focus(FocusArea::Panel1);
+                    } else {
+                        let p2_area = self.left_pane.panel2.last_area();
+                        if col >= p2_area.x && col < p2_area.x + p2_area.width &&
+                           row >= p2_area.y && row < p2_area.y + p2_area.height {
+                            self.set_focus(FocusArea::Panel2);
+                        } else {
+                            let p3_area = self.left_pane.panel3.last_area();
+                            if col >= p3_area.x && col < p3_area.x + p3_area.width &&
+                               row >= p3_area.y && row < p3_area.y + p3_area.height {
+                                self.set_focus(FocusArea::Panel3);
+                            } else {
+                                let right_area = self.right_pane.last_area();
+                                if col >= right_area.x && col < right_area.x + right_area.width &&
+                                   row >= right_area.y && row < right_area.y + right_area.height {
+                                    self.set_focus(FocusArea::Main);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 2. Handle focus cycling and number shortcuts (Keys only)
+        if let Event::Key(key) = event {
+            match key.code {
+                ratatui::crossterm::event::KeyCode::Tab => {
+                    self.next_focus();
+                    return true;
+                }
+                ratatui::crossterm::event::KeyCode::BackTab => {
+                    self.previous_focus();
+                    return true;
+                }
+                // Number keys for direct section access
+                ratatui::crossterm::event::KeyCode::Char('1') => {
+                    self.focus = FocusArea::Search;
+                    self.update_focus_state();
+                    return true;
+                }
+                ratatui::crossterm::event::KeyCode::Char('2') => {
+                    self.focus = FocusArea::Panel1;
+                    self.update_focus_state();
+                    return true;
+                }
+                ratatui::crossterm::event::KeyCode::Char('3') => {
+                    self.focus = FocusArea::Panel2;
+                    self.update_focus_state();
+                    return true;
+                }
+                ratatui::crossterm::event::KeyCode::Char('4') => {
+                    self.focus = FocusArea::Panel3;
+                    self.update_focus_state();
+                    return true;
+                }
+                ratatui::crossterm::event::KeyCode::Char('5') => {
+                    self.focus = FocusArea::Main;
+                    self.right_pane.focus_steps();
+                    self.update_focus_state();
+                    return true;
+                }
+                ratatui::crossterm::event::KeyCode::Char('6') => {
+                    self.focus = FocusArea::Main;
+                    self.right_pane.focus_tour_info();
+                    self.update_focus_state();
+                    return true;
+                }
+                _ => {}
+            }
+        }
+
+        // 3. Delegate to panes
+        // If it's a mouse event, we delegate to ALL panes so they can check bounds
+        // If it's a key event, we only delegate to the focused pane
+        match event {
+            Event::Mouse(_) => {
+                self.left_pane.handle_event(event) || self.right_pane.handle_event(event)
+            }
+            Event::Key(_) => {
+                match self.focus {
+                    FocusArea::Search => self.left_pane.search.handle_event(event),
+                    FocusArea::Panel1 => self.left_pane.panel1.handle_event(event),
+                    FocusArea::Panel2 => self.left_pane.panel2.handle_event(event),
+                    FocusArea::Panel3 => self.left_pane.panel3.handle_event(event),
+                    FocusArea::Main => self.right_pane.handle_event(event),
+                }
+            }
+            _ => false,
         }
     }
 }
@@ -406,6 +510,7 @@ impl TabbedPanel {
             tabs,
             panels: vec![repos, accounts],
             focused: false,
+            last_area: std::cell::Cell::new(Rect::default()),
         }
     }
 
@@ -438,6 +543,7 @@ impl TabbedPanel {
             tabs,
             panels: vec![tags, branches],
             focused: false,
+            last_area: std::cell::Cell::new(Rect::default()),
         }
     }
 
@@ -479,12 +585,19 @@ impl TabbedPanel {
             tabs,
             panels: vec![tours, collections, bookmarks],
             focused: false,
+            last_area: std::cell::Cell::new(Rect::default()),
         }
+    }
+
+    /// Get the last rendered area.
+    pub fn last_area(&self) -> Rect {
+        self.last_area.get()
     }
 
     /// Render the tabbed panel.
     fn render(&self, area: Rect, buf: &mut Buffer) {
-        // Build the tab titles as a single line for the border
+        self.last_area.set(area);
+        // ... (rest of render)
         let tab_titles = self.tabs.render_as_titles(self.focused);
 
         // Render outer border for the entire panel area with inline tabs
@@ -586,11 +699,13 @@ impl RightPane {
             focused: RightPaneFocus::Steps,
             pager_total: 5,
             pager_current: 0,
+            last_area: std::cell::Cell::new(Rect::default()),
         }
     }
 
     /// Render the right pane.
     fn render(&self, area: Rect, buf: &mut Buffer) {
+        self.last_area.set(area);
         // Split vertically: steps (flex), pager (1 row), tour info (fixed height)
         let chunks = Layout::default()
             .direction(Direction::Vertical)
@@ -615,6 +730,26 @@ impl RightPane {
 
     /// Handle an event.
     fn handle_event(&mut self, event: &Event) -> bool {
+        // Handle mouse clicks for internal focus switching
+        if let Event::Mouse(mouse) = event {
+            if let ratatui::crossterm::event::MouseEventKind::Down(ratatui::crossterm::event::MouseButton::Left) = mouse.kind {
+                let col = mouse.column;
+                let row = mouse.row;
+
+                let steps_area = self.steps.last_area();
+                if col >= steps_area.x && col < steps_area.x + steps_area.width &&
+                   row >= steps_area.y && row < steps_area.y + steps_area.height {
+                    self.focus_steps();
+                } else {
+                    let info_area = self.tour_info.last_area();
+                    if col >= info_area.x && col < info_area.x + info_area.width &&
+                       row >= info_area.y && row < info_area.y + info_area.height {
+                        self.focus_tour_info();
+                    }
+                }
+            }
+        }
+
         // Forward to focused component first
         let handled = match self.focused {
             RightPaneFocus::Steps => self.steps.handle_event(event),
@@ -625,9 +760,10 @@ impl RightPane {
             return true;
         }
 
-        // Handle section switching within right pane if not handled by components
+        // Handle tab switching within right pane
         if let Event::Key(key) = event {
             match key.code {
+
                 ratatui::crossterm::event::KeyCode::Left | ratatui::crossterm::event::KeyCode::Char('h') => {
                     if self.focused == RightPaneFocus::Steps {
                         self.pager_current = self.pager_current.saturating_sub(1);
@@ -686,6 +822,11 @@ impl RightPane {
         self.tour_info.set_focus(true);
         self.steps.set_focus(false);
     }
+
+    /// Get the last rendered area.
+    pub fn last_area(&self) -> Rect {
+        self.last_area.get()
+    }
 }
 
 impl TourInfo {
@@ -698,6 +839,7 @@ impl TourInfo {
             step_count: 5,
             description: Some("Authentication flow tour".to_string()),
             focused: false,
+            last_area: std::cell::Cell::new(Rect::default()),
         }
     }
 
@@ -714,8 +856,14 @@ impl TourInfo {
         self.description = description;
     }
 
+    /// Get the last rendered area.
+    pub fn last_area(&self) -> Rect {
+        self.last_area.get()
+    }
+
     /// Render the tour info panel.
     fn render(&self, area: Rect, buf: &mut Buffer) {
+        self.last_area.set(area);
         // Render border
         let border_style = if self.focused {
             Style::default().fg(Color::Green)
@@ -780,54 +928,6 @@ impl Component for BrowserLayout {
     }
 
     fn handle_event(&mut self, event: &Event) -> bool {
-        // Handle focus cycling and number shortcuts
-        if let Event::Key(key) = event {
-            match key.code {
-                ratatui::crossterm::event::KeyCode::Tab => {
-                    self.next_focus();
-                    return true;
-                }
-                ratatui::crossterm::event::KeyCode::BackTab => {
-                    self.previous_focus();
-                    return true;
-                }
-                // Number keys for direct section access
-                ratatui::crossterm::event::KeyCode::Char('1') => {
-                    self.focus = FocusArea::Search;
-                    self.update_focus_state();
-                    return true;
-                }
-                ratatui::crossterm::event::KeyCode::Char('2') => {
-                    self.focus = FocusArea::Panel1;
-                    self.update_focus_state();
-                    return true;
-                }
-                ratatui::crossterm::event::KeyCode::Char('3') => {
-                    self.focus = FocusArea::Panel2;
-                    self.update_focus_state();
-                    return true;
-                }
-                ratatui::crossterm::event::KeyCode::Char('4') => {
-                    self.focus = FocusArea::Panel3;
-                    self.update_focus_state();
-                    return true;
-                }
-                ratatui::crossterm::event::KeyCode::Char('5') => {
-                    self.focus = FocusArea::Main;
-                    self.right_pane.focus_steps();
-                    self.update_focus_state();
-                    return true;
-                }
-                ratatui::crossterm::event::KeyCode::Char('6') => {
-                    self.focus = FocusArea::Main;
-                    self.right_pane.focus_tour_info();
-                    self.update_focus_state();
-                    return true;
-                }
-                _ => {}
-            }
-        }
-
         self.handle_event(event)
     }
 

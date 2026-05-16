@@ -24,6 +24,8 @@ pub struct SearchBar {
     cursor: usize,
     /// Current filter mode
     mode: SearchMode,
+    /// Last rendered area
+    last_area: std::cell::Cell<Rect>,
 }
 
 /// Search mode for filtering.
@@ -46,7 +48,13 @@ impl SearchBar {
             focused: false,
             cursor: 0,
             mode: SearchMode::All,
+            last_area: std::cell::Cell::new(Rect::default()),
         }
+    }
+
+    /// Get the last rendered area.
+    pub fn last_area(&self) -> Rect {
+        self.last_area.get()
     }
 
     /// Get the current search query.
@@ -151,6 +159,7 @@ impl Default for SearchBar {
 
 impl Component for SearchBar {
     fn render(&self, area: Rect, buf: &mut Buffer) {
+        self.last_area.set(area);
         // Render border
         let border_style = if self.focused {
             Style::default().fg(Color::Green)

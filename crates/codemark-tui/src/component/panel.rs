@@ -17,6 +17,8 @@ use ratatui::{
 use super::{Component, SizeConstraints};
 use crate::event::Event;
 
+use std::cell::Cell;
+
 /// A scrollable panel component.
 ///
 /// Panels display a list of items with a title and optional border.
@@ -49,6 +51,8 @@ pub struct Panel {
     show_scrollbar: bool,
     /// The type of border to render
     border_type: BorderType,
+    /// Last rendered area for mouse handling
+    last_area: Cell<Rect>,
 }
 
 /// Health status indicator for an item.
@@ -259,7 +263,13 @@ impl Panel {
             selected_style: Style::default().bg(Color::Blue).fg(Color::White),
             show_scrollbar: true,
             border_type: BorderType::Rounded,
+            last_area: Cell::new(Rect::default()),
         }
+    }
+
+    /// Get the last rendered area.
+    pub fn last_area(&self) -> Rect {
+        self.last_area.get()
     }
 
     /// Add an item to the panel.
@@ -436,6 +446,7 @@ impl Panel {
 
 impl Component for Panel {
     fn render(&self, area: Rect, buf: &mut Buffer) {
+        self.last_area.set(area);
         // Calculate inner area (excluding borders)
         let inner = if self.bordered {
             area.inner(Margin::new(1, 1))
@@ -568,8 +579,39 @@ impl Component for Panel {
                 _ => false,
             },
             Event::Mouse(mouse) => {
-                // Handle scroll wheel
                 match mouse.kind {
+                    ratatui::crossterm::event::MouseEventKind::Down(button) => {
+                        if button == ratatui::crossterm::event::MouseButton::Left {
+                            let area = self.last_area.get();
+                            if mouse.column >= area.x
+                                && mouse.column < area.x + area.width
+                                && mouse.row >= area.y
+                                && mouse.row < area.y + area.height
+                            {
+                                // Calculate inner area to get correct item index
+                                let inner = if self.bordered {
+                                    area.inner(Margin::new(1, 1))
+                                } else {
+                                    area
+                                };
+
+                                if mouse.column >= inner.x
+                                    && mouse.column < inner.x + inner.width
+                                    && mouse.row >= inner.y
+                                    && mouse.row < inner.y + inner.height
+                                {
+                                    let relative_row = mouse.row.saturating_sub(inner.y) as usize;
+                                    let item_idx = relative_row + self.scroll_offset;
+                                    if item_idx < self.items.len() {
+                                        self.selected = Some(item_idx);
+                                        return true;
+                                    }
+                                }
+                                return true;
+                            }
+                        }
+                        false
+                    }
                     ratatui::crossterm::event::MouseEventKind::ScrollDown => {
                         self.select_next();
                         true
