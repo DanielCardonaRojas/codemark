@@ -9,7 +9,7 @@ use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Margin, Rect},
     style::{Color, Style, Stylize},
     text::{Line, Span, Text},
-    widgets::{Block, Paragraph, Widget, Wrap},
+    widgets::{Block, Clear, Paragraph, Widget, Wrap},
     Frame, Terminal,
 };
 
@@ -132,6 +132,9 @@ pub fn render_command_line(area: Rect, buf: &mut Buffer, prompt: &str, input: &s
 ///
 /// Displays a table of key bindings and their actions.
 pub fn render_help_panel(area: Rect, buf: &mut Buffer, bindings: &[(&str, &str)]) {
+    // Clear the background to avoid overlap with border
+    Widget::render(Clear, area, buf);
+
     let mut text = Text::default();
 
     for (key, action) in bindings {
@@ -162,6 +165,9 @@ pub fn render_confirmation(area: Rect, buf: &mut Buffer, message: &str) {
         width,
         height,
     };
+
+    // Clear the background to avoid overlap
+    Widget::render(Clear, dialog_area, buf);
 
     let text = Text::from(vec![
         Line::from(""),
@@ -204,6 +210,9 @@ pub fn render_popup(area: Rect, buf: &mut Buffer, title: &str, content: &Text) {
         height,
     };
 
+    // Clear the background to avoid overlap
+    Widget::render(Clear, popup_area, buf);
+
     let paragraph = Paragraph::new(content.clone())
         .block(
             Block::bordered()
@@ -244,6 +253,7 @@ pub fn render_notification(area: Rect, buf: &mut Buffer, message: &str, notifica
         height: 1,
     };
 
+    Widget::render(Clear, notification_area, buf);
     paragraph.render(notification_area, buf);
 }
 
