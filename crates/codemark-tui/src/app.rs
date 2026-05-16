@@ -188,6 +188,7 @@ impl App {
             self.state.mode(),
             &bindings,
             None,
+            self.state.get_string("search_query"),
         );
     }
 
@@ -220,6 +221,7 @@ impl App {
             state.mode(),
             &bindings,
             None,
+            state.get_string("search_query"),
         );
     }
 

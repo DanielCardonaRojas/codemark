@@ -101,6 +101,7 @@ async fn run_app() -> Result<()> {
                     state.mode(),
                     &layout.get_status_bindings(),
                     Some(layout.get_status_metadata()),
+                    state.get_string("filter_buffer"),
                 );
 
                 // Draw help overlay
@@ -123,6 +124,7 @@ async fn run_app() -> Result<()> {
                     state.mode(),
                     &layout.get_status_bindings(),
                     Some(layout.get_status_metadata()),
+                    state.get_string("filter_buffer"),
                 );
             }
 
@@ -157,17 +159,9 @@ async fn run_app() -> Result<()> {
                                 }
                                 event::KeyCode::Tab => {
                                     layout.next_focus();
-                                    notification = Some((
-                                        format!("Focus: {:?}", layout.focus()),
-                                        NotificationType::Info,
-                                    ));
                                 }
                                 event::KeyCode::BackTab => {
                                     layout.previous_focus();
-                                    notification = Some((
-                                        format!("Focus: {:?}", layout.focus()),
-                                        NotificationType::Info,
-                                    ));
                                 }
                                 event::KeyCode::Esc => {
                                     notification = None;
@@ -196,8 +190,12 @@ async fn run_app() -> Result<()> {
                 _ => {}
             }
 
-            // Let state handle the event too
+            // Let state handle the event too (captures keys for Search mode)
             state.handle_event(&event);
+
+            // Update filter based on active_filter (committed via Enter)
+            let query = state.get_string("active_filter").unwrap_or("");
+            layout.apply_filter(query);
         }
 
         // Small sleep to prevent busy-waiting
