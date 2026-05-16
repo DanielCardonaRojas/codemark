@@ -16,7 +16,6 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Paragraph, Wrap, Widget},
 };
-
 use crate::component::{Component, HealthStatus, Panel, PanelItem, SyncDirection};
 use crate::event::Event;
 use crate::ui::KeyBinding;
@@ -34,10 +33,54 @@ pub struct BrowserLayout {
     focus: FocusArea,
 }
 
+/// Areas that can be focused in the browser.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FocusArea {
+    /// Search bar is focused
+    Search,
+    /// Tabbed panel 1 (Repos/Accounts) is focused
+    Panel1,
+    /// Tabbed panel 2 (Tags/Branches) is focused
+    Panel2,
+    /// Tabbed panel 3 (Tours/Collections/Bookmarks) is focused
+    Panel3,
+    /// Right main panel is focused
+    Main,
+}
+
+/// Configuration for a sidebar section's height.
+struct SectionConfig {
+    /// Minimum height when unfocused
+    min: u16,
+    /// Maximum height when focused
+    max: u16,
+}
+
+impl SectionConfig {
+    fn new(min: u16, max: u16) -> Self {
+        Self { min, max }
+    }
+}
+
+/// Left sidebar containing search and three tabbed panels.
+struct LeftPane {
+    /// Search bar component
+    search: SearchBar,
+    /// First tabbed panel (Repos/Accounts)
+    panel1: TabbedPanel,
+    /// Second tabbed panel (Tags/Branches)
+    panel2: TabbedPanel,
+    /// Third tabbed panel (Tours/Collections/Bookmarks)
+    panel3: TabbedPanel,
+    /// Section height configurations
+    panel1_config: SectionConfig,
+    panel2_config: SectionConfig,
+}
+
 /// Right pane containing Steps and Tour Info sections.
 struct RightPane {
-    /// Steps panel showing tour steps
-    steps: Panel,
+    /// Steps tabbed panel (Steps/Info)
+    steps: TabbedPanel,
     /// Tour info panel showing metadata
     tour_info: TourInfo,
     /// Currently focused section
@@ -75,50 +118,6 @@ struct TourInfo {
     last_area: std::cell::Cell<Rect>,
 }
 
-/// Areas that can be focused in the browser.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum FocusArea {
-    /// Search bar is focused
-    Search,
-    /// Tabbed panel 1 (Repos/Accounts) is focused
-    Panel1,
-    /// Tabbed panel 2 (Tags/Branches) is focused
-    Panel2,
-    /// Tabbed panel 3 (Tours/Collections/Bookmarks) is focused
-    Panel3,
-    /// Right main panel is focused
-    Main,
-}
-
-/// Left sidebar containing search and three tabbed panels.
-struct LeftPane {
-    /// Search bar component
-    search: SearchBar,
-    /// First tabbed panel (Repos/Accounts)
-    panel1: TabbedPanel,
-    /// Second tabbed panel (Tags/Branches)
-    panel2: TabbedPanel,
-    /// Third tabbed panel (Tours/Collections/Bookmarks)
-    panel3: TabbedPanel,
-    /// Section height configurations
-    panel1_config: SectionConfig,
-    panel2_config: SectionConfig,
-}
-
-/// Configuration for a sidebar section's height.
-struct SectionConfig {
-    /// Minimum height when unfocused
-    min: u16,
-    /// Maximum height when focused
-    max: u16,
-}
-
-impl SectionConfig {
-    fn new(min: u16, max: u16) -> Self {
-        Self { min, max }
-    }
-}
-
 /// A tabbed panel component with multiple content panels.
 struct TabbedPanel {
     /// Tab selection
@@ -134,11 +133,13 @@ struct TabbedPanel {
 impl BrowserLayout {
     /// Create a new browser layout.
     pub fn new() -> Self {
-        Self {
+        let mut layout = Self {
             left_pane: LeftPane::new(),
             right_pane: RightPane::new(),
-            focus: FocusArea::Search,
-        }
+            focus: FocusArea::Panel3,
+        };
+        layout.update_focus_state();
+        layout
     }
 
     /// Get the current focus area.
@@ -225,7 +226,9 @@ impl BrowserLayout {
                 }
             }
             FocusArea::Main => {
-                self.right_pane.steps.set_filter(query);
+                if let Some(panel) = self.right_pane.steps.active_panel_mut() {
+                    panel.set_filter(query);
+                }
             }
             _ => {}
         }
@@ -476,6 +479,144 @@ impl LeftPane {
     }
 }
 
+impl RightPane {
+    /// Create a new right pane.
+    fn new() -> Self {
+        Self {
+            steps: TabbedPanel::new_steps_info(),
+            tour_info: TourInfo::new(),
+            focused: RightPaneFocus::Steps,
+            pager_total: 5,
+            pager_current: 0,
+            last_area: std::cell::Cell::new(Rect::default()),
+        }
+    }
+
+    /// Render the right pane.
+    fn render(&self, area: Rect, buf: &mut Buffer) {
+        self.last_area.set(area);
+        // Split vertically: steps (flex), pager (1 row), tour info (fixed height)
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Min(0),
+                Constraint::Length(1),
+                Constraint::Length(8),
+            ])
+            .split(area);
+
+        // Render steps tabbed panel
+        self.steps.render(chunks[0], buf);
+
+        // Render pager
+        use crate::component::Pager;
+        let pager = Pager::new(self.pager_total, self.pager_current);
+        pager.render(chunks[1], buf);
+
+        // Render tour info
+        self.tour_info.render(chunks[2], buf);
+    }
+
+    /// Handle an event.
+    fn handle_event(&mut self, event: &Event) -> bool {
+        // Handle mouse clicks for internal focus switching
+        if let Event::Mouse(mouse) = event {
+            if let ratatui::crossterm::event::MouseEventKind::Down(ratatui::crossterm::event::MouseButton::Left) = mouse.kind {
+                let col = mouse.column;
+                let row = mouse.row;
+
+                let steps_area = self.steps.last_area();
+                if col >= steps_area.x && col < steps_area.x + steps_area.width &&
+                   row >= steps_area.y && row < steps_area.y + steps_area.height {
+                    self.focus_steps();
+                } else {
+                    let info_area = self.tour_info.last_area();
+                    if col >= info_area.x && col < info_area.x + info_area.width &&
+                       row >= info_area.y && row < info_area.y + info_area.height {
+                        self.focus_tour_info();
+                    }
+                }
+            }
+        }
+
+        // Forward to focused component first
+        let handled = match self.focused {
+            RightPaneFocus::Steps => self.steps.handle_event(event),
+            RightPaneFocus::TourInfo => false, // Tour info doesn't handle events
+        };
+
+        if handled {
+            return true;
+        }
+
+        // Handle navigation within right pane if not handled by components
+        if let Event::Key(key) = event {
+            match key.code {
+                ratatui::crossterm::event::KeyCode::Left | ratatui::crossterm::event::KeyCode::Char('h') => {
+                    if self.focused == RightPaneFocus::Steps {
+                        self.pager_current = self.pager_current.saturating_sub(1);
+                        return true;
+                    }
+                }
+                ratatui::crossterm::event::KeyCode::Right | ratatui::crossterm::event::KeyCode::Char('l') => {
+                    if self.focused == RightPaneFocus::Steps {
+                        if self.pager_current + 1 < self.pager_total {
+                            self.pager_current += 1;
+                        }
+                        return true;
+                    }
+                }
+                ratatui::crossterm::event::KeyCode::Down => {
+                    if self.focused == RightPaneFocus::Steps {
+                        self.focused = RightPaneFocus::TourInfo;
+                        self.steps.set_focus(false);
+                        self.tour_info.set_focus(true);
+                        return true;
+                    }
+                }
+                ratatui::crossterm::event::KeyCode::Up => {
+                    if self.focused == RightPaneFocus::TourInfo {
+                        self.focused = RightPaneFocus::Steps;
+                        self.tour_info.set_focus(false);
+                        self.steps.set_focus(true);
+                        return true;
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        false
+    }
+
+    /// Set focus state.
+    fn set_focus(&mut self, focused: bool) {
+        match self.focused {
+            RightPaneFocus::Steps => self.steps.set_focus(focused),
+            RightPaneFocus::TourInfo => self.tour_info.set_focus(focused),
+        }
+    }
+
+    /// Focus the steps section.
+    pub fn focus_steps(&mut self) {
+        self.focused = RightPaneFocus::Steps;
+        self.steps.set_focus(true);
+        self.tour_info.set_focus(false);
+    }
+
+    /// Focus the tour info section.
+    pub fn focus_tour_info(&mut self) {
+        self.focused = RightPaneFocus::TourInfo;
+        self.tour_info.set_focus(true);
+        self.steps.set_focus(false);
+    }
+
+    /// Get the last rendered area.
+    pub fn last_area(&self) -> Rect {
+        self.last_area.get()
+    }
+}
+
 impl TabbedPanel {
     /// Get the currently active panel for modification.
     pub fn active_panel_mut(&mut self) -> Option<&mut Panel> {
@@ -553,7 +694,7 @@ impl TabbedPanel {
             .items(vec![
                 PanelItem::new("Authentication flow").health(HealthStatus::Healthy).sync_direction(Some(SyncDirection::Push)),
                 PanelItem::new("Onboarding").health(HealthStatus::Healthy).sync_direction(Some(SyncDirection::Pull)),
-                PanelItem::new("API tutorial").health(HealthStatus::Warning).sync_direction(None), // No indicator when synced
+                PanelItem::new("API tutorial").health(HealthStatus::Warning).sync_direction(None),
                 PanelItem::new("Rust patterns").health(HealthStatus::Error).sync_direction(Some(SyncDirection::Push)),
                 PanelItem::new("TCA basics").health(HealthStatus::Unknown).sync_direction(Some(SyncDirection::Pull)),
             ])
@@ -589,6 +730,33 @@ impl TabbedPanel {
         }
     }
 
+    /// Create steps/info tabs for right pane.
+    fn new_steps_info() -> Self {
+        let steps = Panel::new("")
+            .items(vec![
+                PanelItem::new("Step 1:").secondary_text("Login button"),
+                PanelItem::new("Step 2:").secondary_text("Network call"),
+                PanelItem::new("Step 3:").secondary_text("Validation"),
+            ])
+            .bordered(false);
+
+        let info = Panel::new("")
+            .items(vec![])
+            .bordered(false);
+
+        let tabs = TabSelection::new(vec![
+            Tab::new("Steps").badge("3"),
+            Tab::new("Info"),
+        ]);
+
+        Self {
+            tabs,
+            panels: vec![steps, info],
+            focused: false,
+            last_area: std::cell::Cell::new(Rect::default()),
+        }
+    }
+
     /// Get the last rendered area.
     pub fn last_area(&self) -> Rect {
         self.last_area.get()
@@ -597,7 +765,6 @@ impl TabbedPanel {
     /// Render the tabbed panel.
     fn render(&self, area: Rect, buf: &mut Buffer) {
         self.last_area.set(area);
-        // ... (rest of render)
         let tab_titles = self.tabs.render_as_titles(self.focused);
 
         // Render outer border for the entire panel area with inline tabs
@@ -681,151 +848,6 @@ impl TabbedPanel {
         for panel in &mut self.panels {
             panel.set_focus(focused);
         }
-    }
-}
-
-impl RightPane {
-    /// Create a new right pane.
-    fn new() -> Self {
-        Self {
-            steps: Panel::new("Steps")
-                .items(vec![
-                    PanelItem::new("Step 1:").secondary_text("Login button"),
-                    PanelItem::new("Step 2:").secondary_text("Network call"),
-                    PanelItem::new("Step 3:").secondary_text("Validation"),
-                ])
-                .bordered(true),
-            tour_info: TourInfo::new(),
-            focused: RightPaneFocus::Steps,
-            pager_total: 5,
-            pager_current: 0,
-            last_area: std::cell::Cell::new(Rect::default()),
-        }
-    }
-
-    /// Render the right pane.
-    fn render(&self, area: Rect, buf: &mut Buffer) {
-        self.last_area.set(area);
-        // Split vertically: steps (flex), pager (1 row), tour info (fixed height)
-        let chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Min(0),
-                Constraint::Length(1),
-                Constraint::Length(8),
-            ])
-            .split(area);
-
-        // Render steps
-        self.steps.render(chunks[0], buf);
-
-        // Render pager
-        use crate::component::Pager;
-        let pager = Pager::new(self.pager_total, self.pager_current);
-        pager.render(chunks[1], buf);
-
-        // Render tour info
-        self.tour_info.render(chunks[2], buf);
-    }
-
-    /// Handle an event.
-    fn handle_event(&mut self, event: &Event) -> bool {
-        // Handle mouse clicks for internal focus switching
-        if let Event::Mouse(mouse) = event {
-            if let ratatui::crossterm::event::MouseEventKind::Down(ratatui::crossterm::event::MouseButton::Left) = mouse.kind {
-                let col = mouse.column;
-                let row = mouse.row;
-
-                let steps_area = self.steps.last_area();
-                if col >= steps_area.x && col < steps_area.x + steps_area.width &&
-                   row >= steps_area.y && row < steps_area.y + steps_area.height {
-                    self.focus_steps();
-                } else {
-                    let info_area = self.tour_info.last_area();
-                    if col >= info_area.x && col < info_area.x + info_area.width &&
-                       row >= info_area.y && row < info_area.y + info_area.height {
-                        self.focus_tour_info();
-                    }
-                }
-            }
-        }
-
-        // Forward to focused component first
-        let handled = match self.focused {
-            RightPaneFocus::Steps => self.steps.handle_event(event),
-            RightPaneFocus::TourInfo => false, // Tour info doesn't handle events
-        };
-
-        if handled {
-            return true;
-        }
-
-        // Handle tab switching within right pane
-        if let Event::Key(key) = event {
-            match key.code {
-
-                ratatui::crossterm::event::KeyCode::Left | ratatui::crossterm::event::KeyCode::Char('h') => {
-                    if self.focused == RightPaneFocus::Steps {
-                        self.pager_current = self.pager_current.saturating_sub(1);
-                        return true;
-                    }
-                }
-                ratatui::crossterm::event::KeyCode::Right | ratatui::crossterm::event::KeyCode::Char('l') => {
-                    if self.focused == RightPaneFocus::Steps {
-                        if self.pager_current + 1 < self.pager_total {
-                            self.pager_current += 1;
-                        }
-                        return true;
-                    }
-                }
-                ratatui::crossterm::event::KeyCode::Down => {
-                    if self.focused == RightPaneFocus::Steps {
-                        self.focused = RightPaneFocus::TourInfo;
-                        self.steps.set_focus(false);
-                        self.tour_info.set_focus(true);
-                        return true;
-                    }
-                }
-                ratatui::crossterm::event::KeyCode::Up => {
-                    if self.focused == RightPaneFocus::TourInfo {
-                        self.focused = RightPaneFocus::Steps;
-                        self.tour_info.set_focus(false);
-                        self.steps.set_focus(true);
-                        return true;
-                    }
-                }
-                _ => {}
-            }
-        }
-
-        false
-    }
-
-    /// Set focus state.
-    fn set_focus(&mut self, focused: bool) {
-        match self.focused {
-            RightPaneFocus::Steps => self.steps.set_focus(focused),
-            RightPaneFocus::TourInfo => self.tour_info.set_focus(focused),
-        }
-    }
-
-    /// Focus the steps section.
-    pub fn focus_steps(&mut self) {
-        self.focused = RightPaneFocus::Steps;
-        self.steps.set_focus(true);
-        self.tour_info.set_focus(false);
-    }
-
-    /// Focus the tour info section.
-    pub fn focus_tour_info(&mut self) {
-        self.focused = RightPaneFocus::TourInfo;
-        self.tour_info.set_focus(true);
-        self.steps.set_focus(false);
-    }
-
-    /// Get the last rendered area.
-    pub fn last_area(&self) -> Rect {
-        self.last_area.get()
     }
 }
 
