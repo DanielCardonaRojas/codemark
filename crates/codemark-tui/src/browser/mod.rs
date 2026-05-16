@@ -91,6 +91,8 @@ struct RightPane {
     pager_current: usize,
     /// Last rendered area
     last_area: std::cell::Cell<Rect>,
+    /// Tour info height configuration
+    info_config: SectionConfig,
 }
 
 /// Focus areas within the right pane.
@@ -489,19 +491,27 @@ impl RightPane {
             pager_total: 5,
             pager_current: 0,
             last_area: std::cell::Cell::new(Rect::default()),
+            info_config: SectionConfig::new(4, 10),
         }
     }
 
     /// Render the right pane.
     fn render(&self, area: Rect, buf: &mut Buffer) {
         self.last_area.set(area);
-        // Split vertically: steps (flex), pager (1 row), tour info (fixed height)
+
+        let info_height = if self.focused == RightPaneFocus::TourInfo {
+            self.info_config.max
+        } else {
+            self.info_config.min
+        };
+
+        // Split vertically: steps (flex), pager (1 row), tour info (dynamic height)
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
                 Constraint::Min(0),
                 Constraint::Length(1),
-                Constraint::Length(8),
+                Constraint::Length(info_height),
             ])
             .split(area);
 
