@@ -25,8 +25,12 @@ use crate::event::Event;
 pub struct Panel {
     /// The title displayed at the top of the panel
     title: String,
-    /// The items to display in the panel
+    /// The items to display in the panel (possibly filtered)
     items: Vec<PanelItem>,
+    /// All items in the panel before filtering
+    all_items: Vec<PanelItem>,
+    /// Current filter query
+    filter_query: String,
     /// The index of the currently selected item
     selected: Option<usize>,
     /// The scroll offset (vertical position)
@@ -244,6 +248,8 @@ impl Panel {
         Self {
             title: title.into(),
             items: Vec::new(),
+            all_items: Vec::new(),
+            filter_query: String::new(),
             selected: None,
             scroll_offset: 0,
             bordered: true,
@@ -258,8 +264,9 @@ impl Panel {
 
     /// Add an item to the panel.
     pub fn add_item(mut self, item: PanelItem) -> Self {
-        self.items.push(item);
-        if self.selected.is_none() {
+        self.all_items.push(item);
+        self.apply_filter();
+        if self.selected.is_none() && !self.items.is_empty() {
             self.selected = Some(0);
         }
         self
@@ -267,12 +274,43 @@ impl Panel {
 
     /// Add multiple items to the panel.
     pub fn items(mut self, items: impl IntoIterator<Item = PanelItem>) -> Self {
-        let count = self.items.len();
-        self.items.extend(items);
+        self.all_items.extend(items);
+        self.apply_filter();
         if self.selected.is_none() && !self.items.is_empty() {
-            self.selected = Some(count);
+            self.selected = Some(0);
         }
         self
+    }
+
+    /// Set the filter query and apply it.
+    pub fn set_filter(&mut self, query: &str) {
+        self.filter_query = query.to_string();
+        self.apply_filter();
+    }
+
+    /// Apply the current filter to all_items.
+    fn apply_filter(&mut self) {
+        if self.filter_query.is_empty() {
+            self.items = self.all_items.clone();
+        } else {
+            let query = self.filter_query.to_lowercase();
+            self.items = self.all_items
+                .iter()
+                .filter(|item| item.text.to_lowercase().contains(&query))
+                .cloned()
+                .collect();
+        }
+
+        // Adjust selection if it's now out of bounds
+        if let Some(sel) = self.selected {
+            if sel >= self.items.len() {
+                self.selected = if self.items.is_empty() { None } else { Some(0) };
+            }
+        } else if !self.items.is_empty() {
+            self.selected = Some(0);
+        }
+        
+        self.scroll_offset = 0;
     }
 
     /// Set whether the panel has a border.
@@ -368,14 +406,17 @@ impl Panel {
     /// Clear all items from the panel.
     pub fn clear(&mut self) {
         self.items.clear();
+        self.all_items.clear();
         self.selected = None;
         self.scroll_offset = 0;
+        self.filter_query.clear();
     }
 
     /// Update the items in the panel, preserving selection if possible.
     pub fn set_items(&mut self, items: Vec<PanelItem>) {
         let selected_text = self.selected.and_then(|idx| self.items.get(idx).map(|i| i.text.clone()));
-        self.items = items;
+        self.all_items = items;
+        self.apply_filter();
 
         if !self.items.is_empty() {
             // Try to restore the selection
@@ -383,13 +424,13 @@ impl Panel {
                 self.items
                     .iter()
                     .position(|item| item.text == text)
+                    .or(Some(0))
             } else {
                 Some(0)
             };
         } else {
             self.selected = None;
         }
-        self.scroll_offset = 0;
     }
 }
 

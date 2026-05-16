@@ -269,6 +269,7 @@ impl AppState {
                             }
                             ratatui::crossterm::event::KeyCode::Char('/') => {
                                 self.set_mode(AppMode::Search);
+                                self.set_string("filter_buffer", "");
                                 true
                             }
                             ratatui::crossterm::event::KeyCode::Char('i') => {
@@ -276,7 +277,8 @@ impl AppState {
                                 true
                             }
                             ratatui::crossterm::event::KeyCode::Esc => {
-                                self.set_mode(AppMode::Normal);
+                                // Clear active filter in Normal mode
+                                self.set_string("active_filter", "");
                                 true
                             }
                             _ => false,
@@ -285,8 +287,41 @@ impl AppState {
                     AppMode::Command | AppMode::Search | AppMode::Insert => {
                         // In input modes, Esc returns to normal
                         if key.code == ratatui::crossterm::event::KeyCode::Esc {
+                            if self.mode == AppMode::Search {
+                                self.set_string("filter_buffer", "");
+                                // We don't clear active_filter here, so user can cancel a new search
+                                // while keeping the previous results.
+                            }
                             self.set_mode(AppMode::Normal);
                             true
+                        }
+ else if key.code == ratatui::crossterm::event::KeyCode::Enter {
+                            if self.mode == AppMode::Search {
+                                let buffer = self.get_string("filter_buffer").unwrap_or("").to_string();
+                                self.set_string("active_filter", buffer);
+                                self.set_mode(AppMode::Normal);
+                                true
+                            } else {
+                                false
+                            }
+                        } else if let ratatui::crossterm::event::KeyCode::Char(c) = key.code {
+                            if self.mode == AppMode::Search {
+                                let mut query = self.get_string("filter_buffer").unwrap_or("").to_string();
+                                query.push(c);
+                                self.set_string("filter_buffer", query);
+                                true
+                            } else {
+                                false
+                            }
+                        } else if key.code == ratatui::crossterm::event::KeyCode::Backspace {
+                            if self.mode == AppMode::Search {
+                                let mut query = self.get_string("filter_buffer").unwrap_or("").to_string();
+                                query.pop();
+                                self.set_string("filter_buffer", query);
+                                true
+                            } else {
+                                false
+                            }
                         } else {
                             false
                         }

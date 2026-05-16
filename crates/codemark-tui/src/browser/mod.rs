@@ -139,6 +139,7 @@ impl BrowserLayout {
     /// Get context-aware keybindings for the status bar.
     pub fn get_status_bindings(&self) -> Vec<KeyBinding> {
         let mut bindings = vec![
+            KeyBinding::new("/", "Filter"),
             KeyBinding::new("?", "Help"),
             KeyBinding::new("q", "Quit"),
         ];
@@ -195,6 +196,31 @@ impl BrowserLayout {
         ].into()
     }
 
+    /// Apply a filter to the currently focused panel.
+    pub fn apply_filter(&mut self, query: &str) {
+        match self.focus {
+            FocusArea::Panel1 => {
+                if let Some(panel) = self.left_pane.panel1.active_panel_mut() {
+                    panel.set_filter(query);
+                }
+            }
+            FocusArea::Panel2 => {
+                if let Some(panel) = self.left_pane.panel2.active_panel_mut() {
+                    panel.set_filter(query);
+                }
+            }
+            FocusArea::Panel3 => {
+                if let Some(panel) = self.left_pane.panel3.active_panel_mut() {
+                    panel.set_filter(query);
+                }
+            }
+            FocusArea::Main => {
+                self.right_pane.steps.set_filter(query);
+            }
+            _ => {}
+        }
+    }
+
     /// Set the focus area.
     pub fn set_focus(&mut self, focus: FocusArea) {
         self.focus = focus;
@@ -207,7 +233,7 @@ impl BrowserLayout {
             FocusArea::Search => FocusArea::Panel1,
             FocusArea::Panel1 => FocusArea::Panel2,
             FocusArea::Panel2 => FocusArea::Panel3,
-            FocusArea::Panel3 => FocusArea::Search,
+            FocusArea::Panel3 => FocusArea::Main,
             FocusArea::Main => FocusArea::Search,
         };
         self.update_focus_state();
@@ -216,11 +242,11 @@ impl BrowserLayout {
     /// Cycle to the previous focusable area.
     pub fn previous_focus(&mut self) {
         self.focus = match self.focus {
-            FocusArea::Search => FocusArea::Panel3,
+            FocusArea::Search => FocusArea::Main,
+            FocusArea::Main => FocusArea::Panel3,
             FocusArea::Panel3 => FocusArea::Panel2,
             FocusArea::Panel2 => FocusArea::Panel1,
             FocusArea::Panel1 => FocusArea::Search,
-            FocusArea::Main => FocusArea::Search,
         };
         self.update_focus_state();
     }
@@ -343,6 +369,12 @@ impl LeftPane {
 }
 
 impl TabbedPanel {
+    /// Get the currently active panel for modification.
+    pub fn active_panel_mut(&mut self) -> Option<&mut Panel> {
+        let active_index = self.tabs.selected_index();
+        self.panels.get_mut(active_index)
+    }
+
     /// Create panel 1 with Repos/Accounts tabs.
     fn new_repos_accounts() -> Self {
         let repos = Panel::new("")
@@ -571,6 +603,16 @@ impl RightPane {
 
     /// Handle an event.
     fn handle_event(&mut self, event: &Event) -> bool {
+        // Forward to focused component first
+        let handled = match self.focused {
+            RightPaneFocus::Steps => self.steps.handle_event(event),
+            RightPaneFocus::TourInfo => false, // Tour info doesn't handle events
+        };
+
+        if handled {
+            return true;
+        }
+
         // Handle tab switching within right pane
         if let Event::Key(key) = event {
             match key.code {
@@ -594,11 +636,7 @@ impl RightPane {
             }
         }
 
-        // Forward to focused component
-        match self.focused {
-            RightPaneFocus::Steps => self.steps.handle_event(event),
-            RightPaneFocus::TourInfo => false, // Tour info doesn't handle events
-        }
+        false
     }
 
     /// Set focus state.

@@ -52,12 +52,24 @@ impl KeyBinding {
 pub fn render_status_bar(
     area: Rect,
     buf: &mut Buffer,
-    _mode: AppMode,
+    mode: AppMode,
     bindings: &[KeyBinding],
     right_text: Option<Line>,
+    search_query: Option<&str>,
 ) {
     // Fill background
     buf.set_style(area, Style::default().bg(Color::DarkGray));
+
+    if mode == AppMode::Search {
+        let query = search_query.unwrap_or("");
+        let text = Line::from(vec![
+            Span::styled("Filter: ", Style::default().fg(Color::Cyan).bold()),
+            Span::raw(query),
+        ]);
+        let para = Paragraph::new(text).style(Style::default().bg(Color::DarkGray));
+        para.render(area.inner(Margin { horizontal: 1, vertical: 0 }), buf);
+        return;
+    }
 
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
