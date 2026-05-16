@@ -42,6 +42,10 @@ struct RightPane {
     tour_info: TourInfo,
     /// Currently focused section
     focused: RightPaneFocus,
+    /// Pager total pages
+    pager_total: usize,
+    /// Pager current page
+    pager_current: usize,
 }
 
 /// Focus areas within the right pane.
@@ -580,16 +584,19 @@ impl RightPane {
                 .bordered(true),
             tour_info: TourInfo::new(),
             focused: RightPaneFocus::Steps,
+            pager_total: 5,
+            pager_current: 0,
         }
     }
 
     /// Render the right pane.
     fn render(&self, area: Rect, buf: &mut Buffer) {
-        // Split vertically: steps (flex), tour info (fixed height)
+        // Split vertically: steps (flex), pager (1 row), tour info (fixed height)
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
                 Constraint::Min(0),
+                Constraint::Length(1),
                 Constraint::Length(8),
             ])
             .split(area);
@@ -597,8 +604,13 @@ impl RightPane {
         // Render steps
         self.steps.render(chunks[0], buf);
 
+        // Render pager
+        use crate::component::Pager;
+        let pager = Pager::new(self.pager_total, self.pager_current);
+        pager.render(chunks[1], buf);
+
         // Render tour info
-        self.tour_info.render(chunks[1], buf);
+        self.tour_info.render(chunks[2], buf);
     }
 
     /// Handle an event.
@@ -613,9 +625,23 @@ impl RightPane {
             return true;
         }
 
-        // Handle tab switching within right pane
+        // Handle section switching within right pane if not handled by components
         if let Event::Key(key) = event {
             match key.code {
+                ratatui::crossterm::event::KeyCode::Left | ratatui::crossterm::event::KeyCode::Char('h') => {
+                    if self.focused == RightPaneFocus::Steps {
+                        self.pager_current = self.pager_current.saturating_sub(1);
+                        return true;
+                    }
+                }
+                ratatui::crossterm::event::KeyCode::Right | ratatui::crossterm::event::KeyCode::Char('l') => {
+                    if self.focused == RightPaneFocus::Steps {
+                        if self.pager_current + 1 < self.pager_total {
+                            self.pager_current += 1;
+                        }
+                        return true;
+                    }
+                }
                 ratatui::crossterm::event::KeyCode::Down => {
                     if self.focused == RightPaneFocus::Steps {
                         self.focused = RightPaneFocus::TourInfo;

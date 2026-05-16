@@ -179,6 +179,56 @@ impl Component for Label {
     }
 }
 
+/// A pager component that shows horizontal dots for pagination.
+#[derive(Debug, Clone, Copy)]
+pub struct Pager {
+    /// Total number of pages
+    pub total: usize,
+    /// Currently active page (0-indexed)
+    pub current: usize,
+}
+
+impl Pager {
+    /// Create a new pager.
+    pub fn new(total: usize, current: usize) -> Self {
+        Self { total, current }
+    }
+}
+
+impl Component for Pager {
+    fn render(&self, area: Rect, buf: &mut Buffer) {
+        if self.total == 0 {
+            return;
+        }
+
+        use ratatui::layout::Alignment;
+        use ratatui::widgets::Paragraph;
+        use ratatui::style::Color;
+        use ratatui::text::Span;
+
+        let mut spans = Vec::with_capacity(self.total * 2);
+        for i in 0..self.total {
+            if i > 0 {
+                spans.push(Span::raw(" "));
+            }
+            if i == self.current {
+                spans.push(Span::styled("●", Style::default().fg(Color::Green)));
+            } else {
+                spans.push(Span::styled("○", Style::default().fg(Color::DarkGray)));
+            }
+        }
+
+        let p = Paragraph::new(Line::from(spans)).alignment(Alignment::Center);
+        p.render(area, buf);
+    }
+
+    fn handle_event(&mut self, _event: &Event) -> bool {
+        false
+    }
+
+    fn set_focus(&mut self, _focused: bool) {}
+}
+
 /// A simple spacer component that takes up space but renders nothing.
 ///
 /// Useful for creating gaps between components in layouts.
