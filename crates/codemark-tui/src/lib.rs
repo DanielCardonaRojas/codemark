@@ -28,6 +28,7 @@
 //! ```
 
 pub mod app;
+pub mod browser;
 pub mod component;
 pub mod event;
 pub mod layout;
@@ -36,7 +37,8 @@ pub mod ui;
 
 // Re-export commonly used types
 pub use app::{App, AppBuilder};
-pub use component::{Component, Label, Panel, PanelItem, SizeConstraints, Spacer};
+pub use browser::{BrowserLayout, FocusArea, SearchBar, Tab, TabSelection};
+pub use component::{Component, HealthStatus, Label, Panel, PanelItem, SizeConstraints, Spacer, SyncDirection};
 pub use event::{Event, EventHandler, EventHandlerConfig, KeyBindings};
 pub use layout::{helpers, LayoutChild, LayoutManager, SplitLayout};
 pub use state::{AppMode, AppState, FocusManager, StateData, Storeable};

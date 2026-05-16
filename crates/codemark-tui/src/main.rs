@@ -13,9 +13,8 @@ use std::io;
 use std::time::Duration;
 
 use codemark_tui::{
-    component::{Panel, PanelItem},
+    browser::BrowserLayout,
     event::{Event, EventHandlerConfig},
-    layout::helpers,
     state::{AppMode, AppState, FocusManager},
     ui::{self, NotificationType},
 };
@@ -47,42 +46,8 @@ async fn run_app() -> Result<()> {
     // Create app state
     let mut state = AppState::new();
 
-    // Create demo panels
-    let left_panel = Panel::new("Navigation")
-        .items(vec![
-            PanelItem::new("Bookmarks").secondary_text("12 items"),
-            PanelItem::new("Collections").secondary_text("5 collections"),
-            PanelItem::new("Recent").secondary_text("3 items"),
-            PanelItem::new("Settings").secondary_text(""),
-            PanelItem::new("Help").secondary_text("Press ?"),
-        ])
-        .bordered(true);
-
-    let main_panel = Panel::new("Bookmarks")
-        .items(vec![
-            PanelItem::new("src/main.rs").secondary_text("fn main").metadata("Rust"),
-            PanelItem::new("src/lib.rs").secondary_text("pub fn process").metadata("Rust"),
-            PanelItem::new("tests/test.rs").secondary_text("test case").metadata("Rust"),
-            PanelItem::new("README.md").secondary_text("documentation").metadata("Markdown"),
-            PanelItem::new("Cargo.toml").secondary_text("config").metadata("TOML"),
-            PanelItem::new("src/cli.rs").secondary_text("fn parse_args").metadata("Rust"),
-            PanelItem::new("src/config.rs").secondary_text("struct Config").metadata("Rust"),
-        ])
-        .bordered(true);
-
-    let right_panel = Panel::new("Details")
-        .items(vec![
-            PanelItem::new("File:").secondary_text("src/main.rs"),
-            PanelItem::new("Function:").secondary_text("fn main"),
-            PanelItem::new("Lines:").secondary_text("1-25"),
-            PanelItem::new("Language:").secondary_text("Rust"),
-            PanelItem::new("Tags:").secondary_text("entry-point"),
-            PanelItem::new("Created:").secondary_text("2024-01-15"),
-        ])
-        .bordered(true);
-
-    // Create the main layout
-    let mut layout = helpers::three_panel(left_panel, main_panel, right_panel);
+    // Create the browser layout
+    let mut layout = BrowserLayout::new();
 
     // Setup focus manager
     let mut focus_manager = FocusManager::new();
@@ -134,7 +99,8 @@ async fn run_app() -> Result<()> {
                     chunks[1],
                     f.buffer_mut(),
                     state.mode(),
-                    notification.as_ref().map(|(msg, _)| msg.as_str()),
+                    &layout.get_status_bindings(),
+                    Some(layout.get_status_metadata()),
                 );
 
                 // Draw help overlay
@@ -155,7 +121,8 @@ async fn run_app() -> Result<()> {
                     chunks[1],
                     f.buffer_mut(),
                     state.mode(),
-                    notification.as_ref().map(|(msg, _)| msg.as_str()),
+                    &layout.get_status_bindings(),
+                    Some(layout.get_status_metadata()),
                 );
             }
 
@@ -189,16 +156,16 @@ async fn run_app() -> Result<()> {
                                     state.set_mode(AppMode::Command);
                                 }
                                 event::KeyCode::Tab => {
-                                    focus_manager.next();
+                                    layout.next_focus();
                                     notification = Some((
-                                        format!("Focus: {}", focus_manager.focused().unwrap_or("none")),
+                                        format!("Focus: {:?}", layout.focus()),
                                         NotificationType::Info,
                                     ));
                                 }
                                 event::KeyCode::BackTab => {
-                                    focus_manager.previous();
+                                    layout.previous_focus();
                                     notification = Some((
-                                        format!("Focus: {}", focus_manager.focused().unwrap_or("none")),
+                                        format!("Focus: {:?}", layout.focus()),
                                         NotificationType::Info,
                                     ));
                                 }

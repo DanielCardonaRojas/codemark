@@ -5,10 +5,13 @@
 
 use ratatui::{
     buffer::Buffer,
-    layout::{Alignment, Margin, Rect},
+    layout::{Margin, Rect},
     style::{Color, Modifier, Style, Stylize},
-    text::{Line, Span, Text},
-    widgets::{Block, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, StatefulWidget, Widget, Wrap},
+    text::{Line, Span},
+    widgets::{
+        Block, BorderType, List, ListItem, Scrollbar, ScrollbarOrientation,
+        ScrollbarState, StatefulWidget, Widget,
+    },
 };
 
 use super::{Component, SizeConstraints};
@@ -40,6 +43,38 @@ pub struct Panel {
     selected_style: Style,
     /// Whether to show a scrollbar
     show_scrollbar: bool,
+    /// The type of border to render
+    border_type: BorderType,
+}
+
+/// Health status indicator for an item.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HealthStatus {
+    /// Healthy - green
+    Healthy,
+    /// Warning - yellow
+    Warning,
+    /// Error/Unhealthy - red
+    Error,
+    /// Unknown/Gray - gray
+    Unknown,
+}
+
+impl HealthStatus {
+    /// Get the color for this health status.
+    fn color(&self) -> Color {
+        match self {
+            HealthStatus::Healthy => Color::Green,
+            HealthStatus::Warning => Color::Yellow,
+            HealthStatus::Error => Color::Red,
+            HealthStatus::Unknown => Color::DarkGray,
+        }
+    }
+
+    /// Get the symbol for this health status.
+    fn symbol(&self) -> &'static str {
+        "●"
+    }
 }
 
 /// An item in a panel.
@@ -51,6 +86,25 @@ pub struct PanelItem {
     secondary_text: Option<String>,
     /// Optional metadata associated with this item
     metadata: Option<String>,
+    /// Health status indicator
+    health: Option<HealthStatus>,
+    /// Primary text color
+    text_color: Option<Color>,
+    /// Whether the item has a trailing checkmark (e.g., published tour)
+    checkmark: bool,
+    /// Sync direction indicator for tours (push/pull)
+    sync_direction: Option<SyncDirection>,
+}
+
+/// Sync direction indicator for tours.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SyncDirection {
+    /// Tour can be pushed up (local changes need to be published)
+    Push,
+    /// Tour can be pulled down (remote updates available)
+    Pull,
+    /// Tour is in sync
+    Synced,
 }
 
 impl PanelItem {
@@ -60,6 +114,10 @@ impl PanelItem {
             text: text.into(),
             secondary_text: None,
             metadata: None,
+            health: Some(HealthStatus::Unknown),
+            text_color: None,
+            checkmark: false,
+            sync_direction: None,
         }
     }
 
@@ -75,10 +133,58 @@ impl PanelItem {
         self
     }
 
+    /// Set the health status.
+    pub fn health(mut self, health: HealthStatus) -> Self {
+        self.health = Some(health);
+        self
+    }
+
+    /// Set the health status to None (hide the indicator).
+    pub fn no_health(mut self) -> Self {
+        self.health = None;
+        self
+    }
+
+    /// Set the primary text color.
+    pub fn color(mut self, color: Color) -> Self {
+        self.text_color = Some(color);
+        self
+    }
+
+    /// Set whether to show a trailing checkmark (e.g., for published tours).
+    pub fn checkmark(mut self, checkmark: bool) -> Self {
+        self.checkmark = checkmark;
+        self
+    }
+
+    /// Set the sync direction indicator for tours.
+    pub fn sync_direction(mut self, direction: Option<SyncDirection>) -> Self {
+        self.sync_direction = direction;
+        self
+    }
+
     /// Render this item as a Line.
     fn to_line(&self, selected: bool, focused: bool) -> Line {
-        let mut spans = vec![Span::raw(&self.text)];
+        let mut spans = Vec::new();
 
+        // Add health status indicator if present
+        if let Some(health) = self.health {
+            spans.push(Span::styled(
+                health.symbol(),
+                Style::default().fg(health.color()),
+            ));
+            spans.push(Span::raw(" "));
+        }
+
+        // Add primary text
+        let primary_style = if let Some(color) = self.text_color {
+            Style::default().fg(color)
+        } else {
+            Style::default()
+        };
+        spans.push(Span::styled(&self.text, primary_style));
+
+        // Add secondary text if present
         if let Some(secondary) = &self.secondary_text {
             spans.push(Span::raw(" "));
             spans.push(Span::styled(
@@ -87,12 +193,47 @@ impl PanelItem {
             ));
         }
 
+        // Add metadata if present
+        if let Some(metadata) = &self.metadata {
+            spans.push(Span::raw(" "));
+            spans.push(Span::styled(
+                metadata,
+                Style::default().fg(Color::Cyan),
+            ));
+        }
+
+        // Add sync direction arrow for tours (omit if synced)
+        if let Some(direction) = &self.sync_direction {
+            match direction {
+                SyncDirection::Synced => {
+                    // Don't show anything when synced
+                }
+                _ => {
+                    spans.push(Span::raw(" "));
+                    let (arrow, color) = match direction {
+                        SyncDirection::Push => ("↑", Color::Cyan),
+                        SyncDirection::Pull => ("↓", Color::Yellow),
+                        SyncDirection::Synced => unreachable!(),
+                    };
+                    spans.push(Span::styled(arrow, Style::default().fg(color)));
+                }
+            }
+        }
+
+        // Add trailing checkmark if enabled
+        if self.checkmark {
+            spans.push(Span::raw(" "));
+            spans.push(Span::styled(
+                "✓",
+                Style::default().fg(Color::Green),
+            ));
+        }
+
+        let line = Line::from(spans);
         if selected && focused {
-            Line::from(spans).bg(Color::Blue).fg(Color::White)
-        } else if selected {
-            Line::from(spans).bg(Color::DarkGray).fg(Color::White)
+            line.bold()
         } else {
-            Line::from(spans)
+            line
         }
     }
 }
@@ -108,9 +249,10 @@ impl Panel {
             bordered: true,
             focused: false,
             focus_style: Style::default().fg(Color::Green),
-            normal_style: Style::default().fg(Color::White),
+            normal_style: Style::default().fg(Color::DarkGray),
             selected_style: Style::default().bg(Color::Blue).fg(Color::White),
             show_scrollbar: true,
+            border_type: BorderType::Rounded,
         }
     }
 
@@ -154,6 +296,12 @@ impl Panel {
     /// Set whether to show the scrollbar.
     pub fn show_scrollbar(mut self, show: bool) -> Self {
         self.show_scrollbar = show;
+        self
+    }
+
+    /// Set the border type.
+    pub fn border_type(mut self, border_type: BorderType) -> Self {
+        self.border_type = border_type;
         self
     }
 
@@ -256,23 +404,35 @@ impl Component for Panel {
 
         let height = inner.height as usize;
 
-        // Build the text to display
-        let mut text = Text::default();
+        // Build the items to display
         let visible_start = self.scroll_offset;
         let visible_end = (self.scroll_offset + height).min(self.items.len());
 
-        for (i, item) in self.items
+        let list_items: Vec<ListItem> = self.items
             .iter()
             .enumerate()
             .skip(visible_start)
             .take(visible_end.saturating_sub(visible_start))
-        {
-            let is_selected = self.selected == Some(i);
-            text.push_line(item.to_line(is_selected, self.focused));
-        }
+            .map(|(i, item)| {
+                let is_selected = self.selected == Some(i);
+                let line = item.to_line(is_selected, self.focused);
+                let mut list_item = ListItem::new(line);
+                
+                if is_selected {
+                    let bg_color = if self.focused {
+                        Color::Rgb(50, 50, 50)  // Light gray highlight for focused
+                    } else {
+                        Color::Rgb(35, 35, 35)  // Darker gray for unfocused
+                    };
+                    list_item = list_item.style(Style::default().bg(bg_color));
+                }
+                list_item
+            })
+            .collect();
 
         // Create the block with border
         let block = Block::bordered()
+            .border_type(self.border_type)
             .title(self.title.as_str())
             .title_style(if self.focused {
                 self.focus_style.add_modifier(Modifier::BOLD)
@@ -285,18 +445,14 @@ impl Component for Panel {
                 self.normal_style
             });
 
-        // Render the panel
-        let paragraph = Paragraph::new(text)
-            .wrap(Wrap { trim: false })
-            .alignment(Alignment::Left);
+        // Render the list
+        let list = List::new(list_items);
 
-        let paragraph = if self.bordered {
-            paragraph.block(block)
+        if self.bordered {
+            Widget::render(list.block(block), area, buf);
         } else {
-            paragraph
+            Widget::render(list, area, buf);
         };
-
-        paragraph.render(area, buf);
 
         // Render scrollbar if needed
         if self.show_scrollbar && !self.items.is_empty() && self.items.len() > height {
@@ -326,6 +482,30 @@ impl Component for Panel {
             };
 
             scrollbar.render(scrollbar_area, buf, &mut scrollbar_state);
+        }
+
+        // Render selection indicator on bottom border (e.g., "3 of 15")
+        if self.bordered && !self.items.is_empty() {
+            let current = self.selected.map_or(0, |i| i + 1);
+            let total = self.items.len();
+            let indicator = format!(" {current} of {total} ");
+
+            let indicator_width = indicator.len() as u16;
+
+            // Position on bottom border, aligned right (shift left by 1 to avoid corner)
+            let x = area.right().saturating_sub(indicator_width + 1);
+            let y = area.bottom() - 1;
+
+            if x > area.left() {
+                // Text characters
+                for (i, c) in indicator.chars().enumerate() {
+                    let cx = x + i as u16;
+                    if let Some(cell) = buf.cell_mut((cx, y)) {
+                        cell.set_char(c);
+                        cell.set_fg(Color::DarkGray);
+                    }
+                }
+            }
         }
     }
 

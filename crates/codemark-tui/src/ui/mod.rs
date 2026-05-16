@@ -29,38 +29,71 @@ pub fn render_ui<B: Backend>(
     Ok(())
 }
 
+/// A key binding for the status bar.
+#[derive(Debug, Clone)]
+pub struct KeyBinding {
+    pub key: String,
+    pub description: String,
+}
+
+impl KeyBinding {
+    pub fn new(key: impl Into<String>, description: impl Into<String>) -> Self {
+        Self {
+            key: key.into(),
+            description: description.into(),
+        }
+    }
+}
+
 /// Render a status bar at the bottom of the screen.
 ///
-/// The status bar shows the current mode and optional message.
-pub fn render_status_bar(area: Rect, buf: &mut Buffer, mode: AppMode, message: Option<&str>) {
+/// The status bar shows mode, context-aware keybindings on the left,
+/// and active filters/metadata on the right.
+pub fn render_status_bar(
+    area: Rect,
+    buf: &mut Buffer,
+    _mode: AppMode,
+    bindings: &[KeyBinding],
+    right_text: Option<Line>,
+) {
+    // Fill background
+    buf.set_style(area, Style::default().bg(Color::DarkGray));
+
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Length(15), Constraint::Min(0)])
+        .constraints([
+            Constraint::Min(0),      // Keybindings
+            Constraint::Length(40), // Metadata (right side)
+        ])
         .split(area);
 
-    // Mode indicator
-    let mode_style = match mode {
-        AppMode::Normal => Style::default().fg(Color::Green),
-        AppMode::Insert => Style::default().fg(Color::Yellow),
-        AppMode::Command => Style::default().fg(Color::Cyan),
-        AppMode::Search => Style::default().fg(Color::Magenta),
-        AppMode::Help => Style::default().fg(Color::Blue),
-        AppMode::Confirm => Style::default().fg(Color::Red),
-    };
+    // 1. Keybindings (Left side)
+    let mut left_spans = Vec::new();
+    for (i, binding) in bindings.iter().enumerate() {
+        if i > 0 {
+            left_spans.push(Span::styled(" | ", Style::default().fg(Color::Gray)));
+        }
+        left_spans.push(Span::styled(&binding.description, Style::default().fg(Color::White)));
+        left_spans.push(Span::raw(": "));
+        left_spans.push(Span::styled(&binding.key, Style::default().fg(Color::Rgb(150, 150, 255)).bold()));
+    }
 
-    let mode_text = Paragraph::new(mode.indicator())
-        .style(mode_style.bg(Color::DarkGray).bold())
-        .alignment(Alignment::Center);
+    let left_text = Paragraph::new(Line::from(left_spans))
+        .alignment(Alignment::Left)
+        .style(Style::default().bg(Color::DarkGray));
 
-    mode_text.render(chunks[0], buf);
+    // Add some padding
+    let left_area = chunks[0].inner(Margin { horizontal: 1, vertical: 0 });
+    left_text.render(left_area, buf);
 
-    // Message area
-    if let Some(msg) = message {
-        let msg_text = Paragraph::new(msg)
-            .style(Style::default().fg(Color::White))
-            .alignment(Alignment::Left);
+    // 2. Metadata (Right side)
+    if let Some(meta) = right_text {
+        let right_para = Paragraph::new(meta)
+            .alignment(Alignment::Right)
+            .style(Style::default().bg(Color::DarkGray));
 
-        msg_text.render(chunks[1], buf);
+        let right_area = chunks[1].inner(Margin { horizontal: 1, vertical: 0 });
+        right_para.render(right_area, buf);
     }
 }
 
