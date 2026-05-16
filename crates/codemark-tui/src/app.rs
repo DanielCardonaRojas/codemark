@@ -174,12 +174,20 @@ impl App {
         // Render the main layout
         self.layout.render(chunks[0], f.buffer_mut());
 
+        // In a real app, we'd get these from the active layout/component
+        // For this scaffold, we'll use some defaults or mock data
+        let bindings = vec![
+            ui::KeyBinding::new("?", "Help"),
+            ui::KeyBinding::new("q", "Quit"),
+        ];
+
         // Render status bar
         ui::render_status_bar(
             chunks[1],
             f.buffer_mut(),
             self.state.mode(),
-            self.notification.as_ref().map(|(msg, _)| msg.as_str()),
+            &bindings,
+            None,
         );
     }
 
@@ -199,11 +207,18 @@ impl App {
         // Render the main layout
         layout.render(chunks[0], f.buffer_mut());
 
+        // For the static version in the demo, we use placeholder bindings
+        let bindings = vec![
+            ui::KeyBinding::new("?", "Help"),
+            ui::KeyBinding::new("q", "Quit"),
+        ];
+
         // Render status bar
         ui::render_status_bar(
             chunks[1],
             f.buffer_mut(),
             state.mode(),
+            &bindings,
             None,
         );
     }

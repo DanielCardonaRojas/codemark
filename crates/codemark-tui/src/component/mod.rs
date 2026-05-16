@@ -6,7 +6,7 @@
 pub mod panel;
 
 // Re-export panel types for convenience
-pub use panel::{Panel, PanelItem};
+pub use panel::{HealthStatus, Panel, PanelItem, SyncDirection};
 
 use ratatui::{
     buffer::Buffer,
