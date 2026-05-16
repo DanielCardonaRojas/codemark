@@ -3,6 +3,7 @@ members = [
     "crates/codemark-core",
     "crates/codemark-cli",
     "crates/codetours-server",
+    "crates/codemark-tui",
 ]
 resolver = "2"
 

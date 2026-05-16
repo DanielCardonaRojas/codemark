@@ -1,0 +1,443 @@
+//! Scrollable panel component for displaying lists of items.
+//!
+//! Panels are the primary container component for displaying scrollable
+//! content with headers and borders.
+
+use ratatui::{
+    buffer::Buffer,
+    layout::{Alignment, Margin, Rect},
+    style::{Color, Modifier, Style, Stylize},
+    text::{Line, Span, Text},
+    widgets::{Block, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, StatefulWidget, Widget, Wrap},
+};
+
+use super::{Component, SizeConstraints};
+use crate::event::Event;
+
+/// A scrollable panel component.
+///
+/// Panels display a list of items with a title and optional border.
+/// They support scrolling, selection, and custom styling.
+#[derive(Debug, Clone)]
+pub struct Panel {
+    /// The title displayed at the top of the panel
+    title: String,
+    /// The items to display in the panel
+    items: Vec<PanelItem>,
+    /// The index of the currently selected item
+    selected: Option<usize>,
+    /// The scroll offset (vertical position)
+    scroll_offset: usize,
+    /// Whether the panel has a border
+    bordered: bool,
+    /// Whether the panel is focused
+    focused: bool,
+    /// Custom style for the panel border when focused
+    focus_style: Style,
+    /// Custom style for the panel border when not focused
+    normal_style: Style,
+    /// Custom style for selected item
+    selected_style: Style,
+    /// Whether to show a scrollbar
+    show_scrollbar: bool,
+}
+
+/// An item in a panel.
+#[derive(Debug, Clone)]
+pub struct PanelItem {
+    /// The primary text to display
+    text: String,
+    /// Optional secondary text (shown in a different color)
+    secondary_text: Option<String>,
+    /// Optional metadata associated with this item
+    metadata: Option<String>,
+}
+
+impl PanelItem {
+    /// Create a new panel item.
+    pub fn new(text: impl Into<String>) -> Self {
+        Self {
+            text: text.into(),
+            secondary_text: None,
+            metadata: None,
+        }
+    }
+
+    /// Set the secondary text.
+    pub fn secondary_text(mut self, text: impl Into<String>) -> Self {
+        self.secondary_text = Some(text.into());
+        self
+    }
+
+    /// Set the metadata.
+    pub fn metadata(mut self, metadata: impl Into<String>) -> Self {
+        self.metadata = Some(metadata.into());
+        self
+    }
+
+    /// Render this item as a Line.
+    fn to_line(&self, selected: bool, focused: bool) -> Line {
+        let mut spans = vec![Span::raw(&self.text)];
+
+        if let Some(secondary) = &self.secondary_text {
+            spans.push(Span::raw(" "));
+            spans.push(Span::styled(
+                secondary,
+                Style::default().fg(Color::DarkGray),
+            ));
+        }
+
+        if selected && focused {
+            Line::from(spans).bg(Color::Blue).fg(Color::White)
+        } else if selected {
+            Line::from(spans).bg(Color::DarkGray).fg(Color::White)
+        } else {
+            Line::from(spans)
+        }
+    }
+}
+
+impl Panel {
+    /// Create a new panel with the given title.
+    pub fn new(title: impl Into<String>) -> Self {
+        Self {
+            title: title.into(),
+            items: Vec::new(),
+            selected: None,
+            scroll_offset: 0,
+            bordered: true,
+            focused: false,
+            focus_style: Style::default().fg(Color::Green),
+            normal_style: Style::default().fg(Color::White),
+            selected_style: Style::default().bg(Color::Blue).fg(Color::White),
+            show_scrollbar: true,
+        }
+    }
+
+    /// Add an item to the panel.
+    pub fn add_item(mut self, item: PanelItem) -> Self {
+        self.items.push(item);
+        if self.selected.is_none() {
+            self.selected = Some(0);
+        }
+        self
+    }
+
+    /// Add multiple items to the panel.
+    pub fn items(mut self, items: impl IntoIterator<Item = PanelItem>) -> Self {
+        let count = self.items.len();
+        self.items.extend(items);
+        if self.selected.is_none() && !self.items.is_empty() {
+            self.selected = Some(count);
+        }
+        self
+    }
+
+    /// Set whether the panel has a border.
+    pub fn bordered(mut self, bordered: bool) -> Self {
+        self.bordered = bordered;
+        self
+    }
+
+    /// Set the focus style.
+    pub fn focus_style(mut self, style: Style) -> Self {
+        self.focus_style = style;
+        self
+    }
+
+    /// Set the normal (unfocused) style.
+    pub fn normal_style(mut self, style: Style) -> Self {
+        self.normal_style = style;
+        self
+    }
+
+    /// Set whether to show the scrollbar.
+    pub fn show_scrollbar(mut self, show: bool) -> Self {
+        self.show_scrollbar = show;
+        self
+    }
+
+    /// Get the number of items in the panel.
+    pub fn len(&self) -> usize {
+        self.items.len()
+    }
+
+    /// Check if the panel is empty.
+    pub fn is_empty(&self) -> bool {
+        self.items.is_empty()
+    }
+
+    /// Get the currently selected item.
+    pub fn selected(&self) -> Option<&PanelItem> {
+        self.selected.and_then(|idx| self.items.get(idx))
+    }
+
+    /// Get the index of the currently selected item.
+    pub fn selected_index(&self) -> Option<usize> {
+        self.selected
+    }
+
+    /// Set the selected item by index.
+    pub fn set_selected(&mut self, idx: usize) {
+        if idx < self.items.len() {
+            self.selected = Some(idx);
+            self.scroll_to_selection();
+        }
+    }
+
+    /// Select the next item.
+    pub fn select_next(&mut self) {
+        if self.items.is_empty() {
+            return;
+        }
+        let next = self.selected.map_or(0, |i| i.saturating_add(1) % self.items.len());
+        self.selected = Some(next);
+        self.scroll_to_selection();
+    }
+
+    /// Select the previous item.
+    pub fn select_previous(&mut self) {
+        if self.items.is_empty() {
+            return;
+        }
+        let prev = self.selected.map_or(
+            self.items.len() - 1,
+            |i| if i == 0 { self.items.len() - 1 } else { i - 1 },
+        );
+        self.selected = Some(prev);
+        self.scroll_to_selection();
+    }
+
+    /// Scroll to make the selected item visible.
+    fn scroll_to_selection(&mut self) {
+        if let Some(_selected) = self.selected {
+            // This will be updated during render based on visible area
+            // For now, just ensure the offset is valid
+            self.scroll_offset = self.scroll_offset.min(self.items.len().saturating_sub(1));
+        }
+    }
+
+    /// Clear all items from the panel.
+    pub fn clear(&mut self) {
+        self.items.clear();
+        self.selected = None;
+        self.scroll_offset = 0;
+    }
+
+    /// Update the items in the panel, preserving selection if possible.
+    pub fn set_items(&mut self, items: Vec<PanelItem>) {
+        let selected_text = self.selected.and_then(|idx| self.items.get(idx).map(|i| i.text.clone()));
+        self.items = items;
+
+        if !self.items.is_empty() {
+            // Try to restore the selection
+            self.selected = if let Some(text) = selected_text {
+                self.items
+                    .iter()
+                    .position(|item| item.text == text)
+            } else {
+                Some(0)
+            };
+        } else {
+            self.selected = None;
+        }
+        self.scroll_offset = 0;
+    }
+}
+
+impl Component for Panel {
+    fn render(&self, area: Rect, buf: &mut Buffer) {
+        // Calculate inner area (excluding borders)
+        let inner = if self.bordered {
+            area.inner(Margin::new(1, 1))
+        } else {
+            area
+        };
+
+        let height = inner.height as usize;
+
+        // Build the text to display
+        let mut text = Text::default();
+        let visible_start = self.scroll_offset;
+        let visible_end = (self.scroll_offset + height).min(self.items.len());
+
+        for (i, item) in self.items
+            .iter()
+            .enumerate()
+            .skip(visible_start)
+            .take(visible_end.saturating_sub(visible_start))
+        {
+            let is_selected = self.selected == Some(i);
+            text.push_line(item.to_line(is_selected, self.focused));
+        }
+
+        // Create the block with border
+        let block = Block::bordered()
+            .title(self.title.as_str())
+            .title_style(if self.focused {
+                self.focus_style.add_modifier(Modifier::BOLD)
+            } else {
+                self.normal_style
+            })
+            .border_style(if self.focused {
+                self.focus_style
+            } else {
+                self.normal_style
+            });
+
+        // Render the panel
+        let paragraph = Paragraph::new(text)
+            .wrap(Wrap { trim: false })
+            .alignment(Alignment::Left);
+
+        let paragraph = if self.bordered {
+            paragraph.block(block)
+        } else {
+            paragraph
+        };
+
+        paragraph.render(area, buf);
+
+        // Render scrollbar if needed
+        if self.show_scrollbar && !self.items.is_empty() && self.items.len() > height {
+            let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+                .begin_symbol(None)
+                .end_symbol(None)
+                .track_symbol(None)
+                .thumb_symbol("||");
+
+            let mut scrollbar_state = ScrollbarState::new(self.items.len())
+                .position(self.scroll_offset);
+
+            let scrollbar_area = if self.bordered {
+                Rect {
+                    x: area.right() - 1,
+                    y: area.top() + 1,
+                    width: 1,
+                    height: area.height.saturating_sub(2),
+                }
+            } else {
+                Rect {
+                    x: area.right() - 1,
+                    y: area.top(),
+                    width: 1,
+                    height: area.height,
+                }
+            };
+
+            scrollbar.render(scrollbar_area, buf, &mut scrollbar_state);
+        }
+    }
+
+    fn handle_event(&mut self, event: &Event) -> bool {
+        if !self.focused {
+            return false;
+        }
+
+        match event {
+            Event::Key(key) => match key.code {
+                ratatui::crossterm::event::KeyCode::Down | ratatui::crossterm::event::KeyCode::Char('j') => {
+                    self.select_next();
+                    true
+                }
+                ratatui::crossterm::event::KeyCode::Up | ratatui::crossterm::event::KeyCode::Char('k') => {
+                    self.select_previous();
+                    true
+                }
+                _ => false,
+            },
+            Event::Mouse(mouse) => {
+                // Handle scroll wheel
+                match mouse.kind {
+                    ratatui::crossterm::event::MouseEventKind::ScrollDown => {
+                        self.select_next();
+                        true
+                    }
+                    ratatui::crossterm::event::MouseEventKind::ScrollUp => {
+                        self.select_previous();
+                        true
+                    }
+                    _ => false,
+                }
+            }
+            _ => false,
+        }
+    }
+
+    fn focused(&self) -> bool {
+        self.focused
+    }
+
+    fn set_focus(&mut self, focused: bool) {
+        self.focused = focused;
+    }
+
+    fn size_constraints(&self) -> SizeConstraints {
+        SizeConstraints::min(10, 5)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_panel_item_creation() {
+        let item = PanelItem::new("test").secondary_text("secondary").metadata("meta");
+        assert_eq!(item.text, "test");
+        assert_eq!(item.secondary_text, Some("secondary".to_string()));
+        assert_eq!(item.metadata, Some("meta".to_string()));
+    }
+
+    #[test]
+    fn test_panel_navigation() {
+        let mut panel = Panel::new("Test")
+            .items(vec![
+                PanelItem::new("item1"),
+                PanelItem::new("item2"),
+                PanelItem::new("item3"),
+            ]);
+
+        assert_eq!(panel.selected_index(), Some(0));
+
+        panel.select_next();
+        assert_eq!(panel.selected_index(), Some(1));
+
+        panel.select_next();
+        assert_eq!(panel.selected_index(), Some(2));
+
+        panel.select_next(); // Should wrap to 0
+        assert_eq!(panel.selected_index(), Some(0));
+
+        panel.select_previous(); // Should wrap to 2
+        assert_eq!(panel.selected_index(), Some(2));
+    }
+
+    #[test]
+    fn test_panel_empty() {
+        let panel = Panel::new("Test");
+        assert!(panel.is_empty());
+        assert_eq!(panel.len(), 0);
+    }
+
+    #[test]
+    fn test_panel_set_items() {
+        let mut panel = Panel::new("Test")
+            .items(vec![
+                PanelItem::new("item1"),
+                PanelItem::new("item2"),
+            ]);
+
+        panel.set_selected(1);
+
+        panel.set_items(vec![
+            PanelItem::new("new1"),
+            PanelItem::new("item2"), // Same text, should preserve selection
+            PanelItem::new("new3"),
+        ]);
+
+        assert_eq!(panel.len(), 3);
+        // Should preserve selection based on text match
+        assert_eq!(panel.selected_index(), Some(1));
+    }
+}
