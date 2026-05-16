@@ -242,27 +242,41 @@ impl BrowserLayout {
         self.update_focus_state();
     }
 
-    /// Cycle to the next focusable area.
+    /// Cycle to the next focusable area within the current pane.
     pub fn next_focus(&mut self) {
-        self.focus = match self.focus {
-            FocusArea::Search => FocusArea::Panel1,
-            FocusArea::Panel1 => FocusArea::Panel2,
-            FocusArea::Panel2 => FocusArea::Panel3,
-            FocusArea::Panel3 => FocusArea::Main,
-            FocusArea::Main => FocusArea::Search,
-        };
+        match self.focus {
+            FocusArea::Main => {
+                self.right_pane.toggle_internal_focus();
+            }
+            _ => {
+                self.focus = match self.focus {
+                    FocusArea::Search => FocusArea::Panel1,
+                    FocusArea::Panel1 => FocusArea::Panel2,
+                    FocusArea::Panel2 => FocusArea::Panel3,
+                    FocusArea::Panel3 => FocusArea::Search,
+                    _ => FocusArea::Panel3,
+                };
+            }
+        }
         self.update_focus_state();
     }
 
-    /// Cycle to the previous focusable area.
+    /// Cycle to the previous focusable area within the current pane.
     pub fn previous_focus(&mut self) {
-        self.focus = match self.focus {
-            FocusArea::Search => FocusArea::Main,
-            FocusArea::Main => FocusArea::Panel3,
-            FocusArea::Panel3 => FocusArea::Panel2,
-            FocusArea::Panel2 => FocusArea::Panel1,
-            FocusArea::Panel1 => FocusArea::Search,
-        };
+        match self.focus {
+            FocusArea::Main => {
+                self.right_pane.toggle_internal_focus();
+            }
+            _ => {
+                self.focus = match self.focus {
+                    FocusArea::Search => FocusArea::Panel3,
+                    FocusArea::Panel3 => FocusArea::Panel2,
+                    FocusArea::Panel2 => FocusArea::Panel1,
+                    FocusArea::Panel1 => FocusArea::Search,
+                    _ => FocusArea::Panel3,
+                };
+            }
+        }
         self.update_focus_state();
     }
 
@@ -361,6 +375,21 @@ impl BrowserLayout {
                 ratatui::crossterm::event::KeyCode::BackTab => {
                     self.previous_focus();
                     return true;
+                }
+                // H/L or Left/Right to switch between Left sidebar and Right main area
+                ratatui::crossterm::event::KeyCode::Left | ratatui::crossterm::event::KeyCode::Char('h') => {
+                    if self.focus == FocusArea::Main {
+                        self.focus = FocusArea::Panel3; // Return to tours by default
+                        self.update_focus_state();
+                        return true;
+                    }
+                }
+                ratatui::crossterm::event::KeyCode::Right | ratatui::crossterm::event::KeyCode::Char('l') => {
+                    if self.focus != FocusArea::Main {
+                        self.focus = FocusArea::Main;
+                        self.update_focus_state();
+                        return true;
+                    }
                 }
                 // Number keys for direct section access
                 ratatui::crossterm::event::KeyCode::Char('1') => {
@@ -624,6 +653,14 @@ impl RightPane {
     /// Get the last rendered area.
     pub fn last_area(&self) -> Rect {
         self.last_area.get()
+    }
+
+    /// Toggle internal focus between Steps and Tour Info.
+    pub fn toggle_internal_focus(&mut self) {
+        match self.focused {
+            RightPaneFocus::Steps => self.focus_tour_info(),
+            RightPaneFocus::TourInfo => self.focus_steps(),
+        }
     }
 }
 
