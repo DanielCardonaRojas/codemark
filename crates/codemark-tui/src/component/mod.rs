@@ -180,23 +180,30 @@ impl Component for Label {
 }
 
 /// A pager component that shows horizontal dots for pagination.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub struct Pager {
     /// Total number of pages
     pub total: usize,
     /// Currently active page (0-indexed)
     pub current: usize,
+    /// Last rendered area
+    last_area: std::cell::Cell<Rect>,
 }
 
 impl Pager {
     /// Create a new pager.
     pub fn new(total: usize, current: usize) -> Self {
-        Self { total, current }
+        Self {
+            total,
+            current,
+            last_area: std::cell::Cell::new(Rect::default()),
+        }
     }
 }
 
 impl Component for Pager {
     fn render(&self, area: Rect, buf: &mut Buffer) {
+        self.last_area.set(area);
         if self.total == 0 {
             return;
         }
@@ -222,7 +229,23 @@ impl Component for Pager {
         p.render(area, buf);
     }
 
-    fn handle_event(&mut self, _event: &Event) -> bool {
+    fn handle_event(&mut self, event: &Event) -> bool {
+        if let Event::Mouse(mouse) = event {
+            if let ratatui::crossterm::event::MouseEventKind::Down(ratatui::crossterm::event::MouseButton::Left) = mouse.kind {
+                let area = self.last_area.get();
+                if mouse.column >= area.x && mouse.column < area.x + area.width &&
+                   mouse.row >= area.y && mouse.row < area.y + area.height {
+                    // Simple logic: clicking left half goes back, right half goes forward
+                    let center_x = area.x + area.width / 2;
+                    if mouse.column < center_x {
+                        self.current = self.current.saturating_sub(1);
+                    } else if self.current + 1 < self.total {
+                        self.current += 1;
+                    }
+                    return true;
+                }
+            }
+        }
         false
     }
 

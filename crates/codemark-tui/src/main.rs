@@ -14,6 +14,7 @@ use std::time::Duration;
 
 use codemark_tui::{
     browser::BrowserLayout,
+    component::Component,
     event::{Event, EventHandlerConfig},
     state::{AppMode, AppState, FocusManager},
     ui::{self, NotificationType},
@@ -141,7 +142,9 @@ async fn run_app() -> Result<()> {
         })?;
 
         // Handle events
-        if let Ok(event) = event_rx.try_recv() {
+        while let Ok(event) = event_rx.try_recv() {
+            let mut handled = false;
+
             match &event {
                 Event::Key(key) => {
                     match state.mode() {
@@ -150,36 +153,41 @@ async fn run_app() -> Result<()> {
                             match key.code {
                                 event::KeyCode::Char('q') => {
                                     state.quit();
+                                    handled = true;
                                 }
                                 event::KeyCode::Char('?') => {
                                     show_help = !show_help;
+                                    handled = true;
                                 }
                                 event::KeyCode::Char(':') => {
                                     state.set_mode(AppMode::Command);
+                                    handled = true;
                                 }
                                 event::KeyCode::Tab => {
                                     layout.next_focus();
+                                    handled = true;
                                 }
                                 event::KeyCode::BackTab => {
                                     layout.previous_focus();
+                                    handled = true;
                                 }
                                 event::KeyCode::Esc => {
                                     notification = None;
+                                    handled = true;
                                 }
-                                _ => {
-                                    // Pass to layout
-                                    layout.handle_event(&event);
-                                }
+                                _ => {}
                             }
                         }
                         AppMode::Command => {
                             if key.code == event::KeyCode::Esc {
                                 state.set_mode(AppMode::Normal);
+                                handled = true;
                             }
                         }
                         _ => {
                             if key.code == event::KeyCode::Esc {
                                 state.set_mode(AppMode::Normal);
+                                handled = true;
                             }
                         }
                     }
@@ -188,6 +196,11 @@ async fn run_app() -> Result<()> {
                     state.set_size(*width, *height);
                 }
                 _ => {}
+            }
+
+            // If not handled by global keys, pass to layout (includes mouse events)
+            if !handled {
+                layout.handle_event(&event);
             }
 
             // Let state handle the event too (captures keys for Search mode)
