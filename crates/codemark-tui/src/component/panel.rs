@@ -512,11 +512,18 @@ impl Component for Panel {
 
         // Render scrollbar if needed
         if self.show_scrollbar && !self.items.is_empty() && self.items.len() > height {
+            let scrollbar_style = if self.focused {
+                self.focus_style
+            } else {
+                self.normal_style
+            };
+
             let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
                 .begin_symbol(None)
                 .end_symbol(None)
                 .track_symbol(None)
-                .thumb_symbol("||");
+                .thumb_symbol("┃")
+                .style(scrollbar_style);
 
             let mut scrollbar_state = ScrollbarState::new(self.items.len())
                 .position(state.offset());
@@ -553,12 +560,18 @@ impl Component for Panel {
             let y = area.bottom() - 1;
 
             if x > area.left() {
+                let indicator_style = if self.focused {
+                    self.focus_style.add_modifier(Modifier::BOLD)
+                } else {
+                    self.normal_style
+                };
+
                 // Text characters
                 for (i, c) in indicator.chars().enumerate() {
                     let cx = x + i as u16;
                     if let Some(cell) = buf.cell_mut((cx, y)) {
                         cell.set_char(c);
-                        cell.set_fg(Color::DarkGray);
+                        cell.set_style(indicator_style);
                     }
                 }
             }
