@@ -689,12 +689,9 @@ pub fn open_all_dbs_with_extra(
     cli: &Cli,
     extra_db_paths: &[String],
 ) -> Result<Vec<(String, Database)>> {
-    let mut opts = OpenDbOptions {
-        explicit_paths: cli.db.clone(),
-        repo_refs: cli.repo.clone(),
-    };
+    let mut opts = OpenDbOptions { explicit_paths: cli.db.clone(), repo_refs: cli.repo.clone() };
     opts.explicit_paths.extend(extra_db_paths.iter().map(std::path::PathBuf::from));
-    
+
     Workspace::open_all(&opts)
 }
 
@@ -706,10 +703,7 @@ pub fn open_all_dbs_with_extra_and_repos(
     extra_db_paths: &[String],
     extra_repo_refs: &[String],
 ) -> Result<Vec<(String, Database)>> {
-    let mut opts = OpenDbOptions {
-        explicit_paths: cli.db.clone(),
-        repo_refs: cli.repo.clone(),
-    };
+    let mut opts = OpenDbOptions { explicit_paths: cli.db.clone(), repo_refs: cli.repo.clone() };
     opts.explicit_paths.extend(extra_db_paths.iter().map(std::path::PathBuf::from));
     opts.repo_refs.extend(extra_repo_refs.iter().cloned());
 

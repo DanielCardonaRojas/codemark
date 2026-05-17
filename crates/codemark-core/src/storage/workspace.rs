@@ -82,7 +82,8 @@ impl Workspace {
 
         if resolved.is_empty() {
             return Err(Error::Input(
-                "no valid repositories found; run 'codemark repo list' to see known repositories".into(),
+                "no valid repositories found; run 'codemark repo list' to see known repositories"
+                    .into(),
             ));
         }
 
@@ -156,10 +157,10 @@ impl Workspace {
             for path in additional_paths {
                 if path.exists() {
                     let label = Self::source_label_from_path(&path);
-                    if !dbs.iter().any(|(l, _)| l == &label) {
-                        if let Ok(db) = Database::open(&path) {
-                            dbs.push((label, db));
-                        }
+                    if !dbs.iter().any(|(l, _)| l == &label)
+                        && let Ok(db) = Database::open(&path)
+                    {
+                        dbs.push((label, db));
                     }
                 }
             }
