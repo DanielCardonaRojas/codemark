@@ -67,12 +67,22 @@ impl Workspace {
     /// Determine the source label from a db path.
     pub fn source_label_from_path(path: &Path) -> String {
         let resolved = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
-        resolved
-            .parent() // .codemark/
-            .and_then(|p| p.parent()) // repo dir
-            .and_then(|p| p.file_name())
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_else(|| path.to_string_lossy().to_string())
+
+        // Try to get a nice label: "parent-dir/repo-dir" if possible
+        if let Some(repo_dir) = resolved.parent().and_then(|p| p.parent()) {
+            let repo_name = repo_dir.file_name().map(|n| n.to_string_lossy().to_string());
+            if let Some(name) = repo_name {
+                // Check if we can get the parent of the repo for more context (helps in tests)
+                if let Some(parent) = repo_dir.parent() {
+                    if let Some(parent_name) = parent.file_name() {
+                        return format!("{}/{}", parent_name.to_string_lossy(), name);
+                    }
+                }
+                return name;
+            }
+        }
+
+        path.to_string_lossy().to_string()
     }
 
     /// Open databases for repositories specified by owner/name references via the global registry.
@@ -91,11 +101,8 @@ impl Workspace {
         for (repo_ref, repo_root) in resolved {
             let db_path = repo_root.join(".codemark").join("codemark.db");
             if db_path.exists() {
-                let label = format!(
-                    "{}/{}",
-                    repo_ref,
-                    repo_root.file_name().and_then(|n| n.to_str()).unwrap_or("unknown")
-                );
+                // For registry repos, the label is the owner/name reference
+                let label = repo_ref.clone();
                 if let Ok(db) = Database::open(&db_path) {
                     dbs.push((label, db));
                 }
@@ -115,9 +122,16 @@ impl Workspace {
 
     /// Open all specified databases based on options.
     pub fn open_all(opts: &OpenDbOptions) -> Result<Vec<(String, Database)>> {
-        // If explicit paths provided, use only those
-        if !opts.explicit_paths.is_empty() {
-            let mut dbs = Vec::new();
+        let mut dbs = Vec::new();
+        let primary_db = Self::open_primary()?;
+        let primary_path = primary_db.path().to_path_buf();
+
+        // 1. Determine if we are in override mode
+        // Override mode is only active if explicit_paths is provided and it doesn't just contain the primary DB
+        let is_override = !opts.explicit_paths.is_empty()
+            && (opts.explicit_paths.len() > 1 || opts.explicit_paths[0] != primary_path);
+
+        if is_override {
             for path in &opts.explicit_paths {
                 if path.exists() {
                     let label = Self::source_label_from_path(path);
@@ -127,28 +141,12 @@ impl Workspace {
             return Ok(dbs);
         }
 
-        // If repo refs provided, resolve via registry
-        if !opts.repo_refs.is_empty() {
-            return Self::open_repos_from_registry(&opts.repo_refs);
-        }
+        // 2. Additive mode: start with auto-detected primary
+        // The primary DB gets the "local" label by default (legacy behavior)
+        dbs.push(("local".to_string(), primary_db));
 
-        // Use auto-detected primary + configured additional
-        let mut dbs = Vec::new();
-
-        // Always include primary DB
+        // Load additional DBs from local config
         let cwd = std::env::current_dir().unwrap_or_default();
-        let primary_db = Self::open_primary()?;
-        let primary_label = if let Some(ctx) = crate::git::context::detect_context(&cwd) {
-            ctx.repo_root
-                .file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_else(|| "local".to_string())
-        } else {
-            "local".to_string()
-        };
-        dbs.push((primary_label, primary_db));
-
-        // Load additional DBs from config
         if let Some(ctx) = crate::git::context::detect_context(&cwd) {
             let codemark_dir = ctx.repo_root.join(".codemark");
             let config = crate::config::Config::load_layered(&codemark_dir);
@@ -157,11 +155,23 @@ impl Workspace {
             for path in additional_paths {
                 if path.exists() {
                     let label = Self::source_label_from_path(&path);
-                    if !dbs.iter().any(|(l, _)| l == &label)
+                    // Avoid duplicates by path check since labels might collide
+                    if !dbs.iter().any(|(_, db)| db.path() == path)
                         && let Ok(db) = Database::open(&path)
                     {
                         dbs.push((label, db));
                     }
+                }
+            }
+        }
+
+        // 3. Add any repositories specified by references via the registry
+        if !opts.repo_refs.is_empty() {
+            let extra_repos = Self::open_repos_from_registry(&opts.repo_refs)?;
+            for (label, db) in extra_repos {
+                // Avoid duplicates by path check
+                if !dbs.iter().any(|(_, d)| d.path() == db.path()) {
+                    dbs.push((label, db));
                 }
             }
         }
