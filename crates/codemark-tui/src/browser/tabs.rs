@@ -214,7 +214,7 @@ mod tests {
 
     #[test]
     fn test_tab_selection() {
-        let tabs = TabSelection::new(vec![
+        let mut tabs = TabSelection::new(vec![
             Tab::new("Local"),
             Tab::new("Remote"),
         ]);
