@@ -441,12 +441,23 @@ impl Panel {
                         item.active = !item.active;
                     }
                 } else {
-                    // Deactivate all and activate only the selected one
+                    // Determine if the target item is already active
+                    let was_active = self.all_items.iter()
+                        .find(|i| i.text == text)
+                        .map(|i| i.active)
+                        .unwrap_or(false);
+
+                    // Deactivate all
                     for item in &mut self.all_items {
                         item.active = false;
                     }
-                    if let Some(item) = self.all_items.iter_mut().find(|i| i.text == text) {
-                        item.active = true;
+
+                    // If it wasn't active before, activate it now.
+                    // If it was active, it remains inactive (toggled off).
+                    if !was_active {
+                        if let Some(item) = self.all_items.iter_mut().find(|i| i.text == text) {
+                            item.active = true;
+                        }
                     }
                 }
 
