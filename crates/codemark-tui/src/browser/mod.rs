@@ -249,6 +249,7 @@ impl BrowserLayout {
             FocusArea::Main => {
                 bindings.insert(0, KeyBinding::new("Enter", "Select Step"));
                 bindings.insert(1, KeyBinding::new("o", "Open File"));
+                bindings.insert(2, KeyBinding::new("Esc", "Back to Tours"));
             }
         }
 
@@ -427,7 +428,7 @@ impl BrowserLayout {
         // 2. Handle focus cycling and number shortcuts (Keys only)
         if let Event::Key(key) = event {
             match key.code {
-                ratatui::crossterm::event::KeyCode::Enter => {
+                ratatui::crossterm::event::KeyCode::Enter | ratatui::crossterm::event::KeyCode::Char(' ') => {
                     if self.focus == FocusArea::Panel1 {
                         if let Some(panel) = self.left_pane.panel1.active_panel_mut() {
                             panel.activate_selected();
@@ -442,6 +443,7 @@ impl BrowserLayout {
                                     let tour_name = selected.text().to_string();
                                     panel.activate_selected(); // Mark as active in current panel
                                     self.right_pane.load_tour(&self.db, &tour_name);
+                                    
                                     self.set_focus(FocusArea::Main);
                                     return true;
                                 }
@@ -456,6 +458,12 @@ impl BrowserLayout {
                 ratatui::crossterm::event::KeyCode::BackTab => {
                     self.previous_focus();
                     return true;
+                }
+                ratatui::crossterm::event::KeyCode::Esc => {
+                    if self.focus == FocusArea::Main {
+                        self.set_focus(FocusArea::Panel3);
+                        return true;
+                    }
                 }
                 // Number keys for direct section access
                 ratatui::crossterm::event::KeyCode::Char('1') => {

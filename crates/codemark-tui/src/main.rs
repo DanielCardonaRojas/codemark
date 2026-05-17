@@ -166,10 +166,11 @@ async fn run_app() -> Result<()> {
                                 event::KeyCode::Esc => {
                                     if show_help {
                                         show_help = false;
-                                    } else {
+                                        handled = true;
+                                    } else if notification.is_some() {
                                         notification = None;
+                                        handled = true;
                                     }
-                                    handled = true;
                                 }
                                 _ => {}
                             }
