@@ -428,12 +428,19 @@ impl BrowserLayout {
         if let Event::Key(key) = event {
             match key.code {
                 ratatui::crossterm::event::KeyCode::Enter => {
+                    if self.focus == FocusArea::Panel1 {
+                        if let Some(panel) = self.left_pane.panel1.active_panel_mut() {
+                            panel.activate_selected();
+                            return true;
+                        }
+                    }
                     if self.focus == FocusArea::Panel3 {
                         let active_tab = self.left_pane.panel3.tabs.selected_index();
-                        if active_tab == 0 { // Tours
+                        if active_tab == 0 || active_tab == 1 { // Tours or Collections
                             if let Some(panel) = self.left_pane.panel3.active_panel_mut() {
                                 if let Some(selected) = panel.selected() {
                                     let tour_name = selected.text().to_string();
+                                    panel.activate_selected(); // Mark as active in current panel
                                     self.right_pane.load_tour(&self.db, &tour_name);
                                     self.set_focus(FocusArea::Main);
                                     return true;

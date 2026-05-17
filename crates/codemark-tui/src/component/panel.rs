@@ -189,12 +189,8 @@ impl PanelItem {
     fn to_line(&self, selected: bool, focused: bool) -> Line {
         let mut spans = Vec::new();
 
-        // Add active indicator prefix (always present for alignment)
-        let prefix = if self.active { "* " } else { "  " };
-        spans.push(Span::styled(
-            prefix,
-            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
-        ));
+        // Add padding prefix for alignment
+        spans.push(Span::raw("  "));
 
         // Add health status indicator if present
         if let Some(health) = self.health {
@@ -249,12 +245,12 @@ impl PanelItem {
             }
         }
 
-        // Add trailing checkmark if enabled
-        if self.checkmark {
+        // Add trailing checkmark if enabled or active
+        if self.checkmark || self.active {
             spans.push(Span::raw(" "));
             spans.push(Span::styled(
                 "✓",
-                Style::default().fg(Color::Green),
+                Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
             ));
         }
 
