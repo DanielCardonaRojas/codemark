@@ -61,6 +61,10 @@ async fn run_app() -> Result<()> {
         EventHandlerConfig::default().tick_rate(Duration::from_millis(100)),
     )?;
 
+    // Initialize Codemark Core Database
+    use codemark_core::storage::Workspace;
+    let _db = Workspace::open_primary()?;
+
     // Notification state
     let mut notification: Option<(String, NotificationType)> = None;
 
@@ -141,8 +145,8 @@ async fn run_app() -> Result<()> {
             }
         })?;
 
-        // Handle events
-        while let Ok(event) = event_rx.try_recv() {
+        // Handle events (blocking wait for next event)
+        if let Some(event) = event_rx.recv().await {
             let mut handled = false;
 
             match &event {
@@ -202,9 +206,6 @@ async fn run_app() -> Result<()> {
             let query = state.get_string("active_filter").unwrap_or("");
             layout.apply_filter(query);
         }
-
-        // Small sleep to prevent busy-waiting
-        tokio::time::sleep(Duration::from_millis(10)).await;
     }
 
     Ok(())

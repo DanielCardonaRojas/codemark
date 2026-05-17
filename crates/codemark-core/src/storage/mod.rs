@@ -14,4 +14,4 @@ pub mod workspace;
 pub use pack::Packer;
 pub use registry::*;
 pub use semantic_repo::SemanticRepo;
-pub use workspace::{OpenDbOptions, Workspace};
+pub use workspace::Workspace;

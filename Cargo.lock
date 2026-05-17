@@ -570,6 +570,7 @@ name = "codemark-tui"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "codemark-core",
  "crossterm 0.28.1",
  "futures",
  "ratatui",
