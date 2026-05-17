@@ -16,11 +16,13 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Paragraph, Wrap, Widget},
 };
-use crate::component::{Component, HealthStatus, Panel, PanelItem, CodePreview};
+use crate::component::{
+    Component, HealthStatus, Panel, PanelItem, SyncDirection, CodePreview, MarkdownPanel,
+};
 use crate::event::Event;
 use crate::ui::KeyBinding;
 use codemark_core::storage::db::Database;
-use codemark_core::engine::bookmark::BookmarkFilter;
+use codemark_core::engine::bookmark::{Bookmark, BookmarkFilter, Resolution};
 
 /// The main browser layout.
 ///
@@ -87,6 +89,10 @@ struct StepData {
     file_path: String,
     /// Line number to jump to (0-indexed)
     line_number: usize,
+    /// Real bookmark data
+    bookmark: Bookmark,
+    /// Resolution data if available
+    resolution: Option<Resolution>,
 }
 
 /// Right pane containing Steps and Tour Info sections.
@@ -142,6 +148,8 @@ enum TabContent {
     List(Panel),
     /// A code preview
     Preview(CodePreview),
+    /// A markdown panel
+    Markdown(MarkdownPanel),
 }
 
 impl TabContent {
@@ -149,6 +157,7 @@ impl TabContent {
         match self {
             TabContent::List(p) => p.render(area, buf),
             TabContent::Preview(p) => p.render(area, buf),
+            TabContent::Markdown(p) => p.render(area, buf),
         }
     }
 
@@ -156,6 +165,7 @@ impl TabContent {
         match self {
             TabContent::List(p) => p.handle_event(event),
             TabContent::Preview(p) => p.handle_event(event),
+            TabContent::Markdown(p) => p.handle_event(event),
         }
     }
 
@@ -163,6 +173,7 @@ impl TabContent {
         match self {
             TabContent::List(p) => p.set_focus(focused),
             TabContent::Preview(p) => p.set_focus(focused),
+            TabContent::Markdown(p) => p.set_focus(focused),
         }
     }
 }
@@ -557,6 +568,15 @@ impl LeftPane {
             || self.panel3.handle_event(event)
     }
 }
+/// Escape special markdown characters.
+fn escape_markdown(text: &str) -> String {
+    text.replace('_', "\\_")
+        .replace('*', "\\*")
+        .replace('[', "\\[")
+        .replace(']', "\\]")
+        .replace('#', "\\#")
+}
+
 impl RightPane {
     /// Create a new right pane.
     fn new(db: &Database) -> Self {
@@ -598,7 +618,61 @@ impl RightPane {
                 preview.set_extension(ext.to_string());
                 preview.jump_to_line(step.line_number);
             }
+
+            // Update Info tab with markdown
+            let markdown = self.generate_bookmark_markdown(&step.bookmark, step.resolution.as_ref());
+            if let Some(md_panel) = self.steps.get_markdown_mut() {
+                md_panel.set_markdown(markdown);
+            }
         }
+    }
+
+    /// Generate markdown for a bookmark.
+    fn generate_bookmark_markdown(&self, bm: &Bookmark, res: Option<&Resolution>) -> String {
+        let mut md = String::new();
+        md.push_str(&format!("# Bookmark: {}\n\n", &bm.id[..8.min(bm.id.len())]));
+
+        md.push_str("## Metadata\n\n");
+        md.push_str("| Property | Value |\n");
+        md.push_str("|----------|-------|\n");
+        md.push_str(&format!("| **File** | {} |\n", escape_markdown(&bm.file_path)));
+        md.push_str(&format!("| **Language** | {} |\n", bm.language));
+        md.push_str(&format!("| **Health** | {} |\n", bm.health));
+        md.push_str(&format!("| **Created** | {} |\n", bm.created_at));
+
+        if let Some(ref author) = bm.created_by {
+            md.push_str(&format!("| **Author** | {} |\n", escape_markdown(author)));
+        }
+
+        if let Some(ref res) = res {
+            if let Some(ref commit) = res.commit_hash {
+                md.push_str(&format!("| **Commit** | `{}` |\n", &commit[..8.min(commit.len())]));
+            }
+            if let Some(ref lr) = res.line_range {
+                md.push_str(&format!("| **Lines** | {} |\n", lr));
+            }
+        }
+
+        md.push('\n');
+
+        if !bm.tags.is_empty() {
+            md.push_str("## Tags\n\n");
+            for tag in &bm.tags {
+                md.push_str(&format!("- #{} \n", tag));
+            }
+            md.push('\n');
+        }
+
+        if !bm.annotations.is_empty() {
+            md.push_str("## Notes\n\n");
+            for ann in &bm.annotations {
+                if let Some(ref notes) = ann.notes {
+                    md.push_str(&format!("> {}\n\n", notes));
+                }
+            }
+        }
+
+        md
     }
 
     /// Load a tour and its steps from the database.
@@ -609,18 +683,20 @@ impl RightPane {
                 for bm in bookmarks {
                     let mut line_number = 0;
                     let mut file_path = bm.file_path.clone();
+                    let mut resolution = None;
 
                     // Try to get resolution data for better accuracy
-                    if let Some(res_id) = bm.current_resolution_id {
-                        if let Ok(Some(res)) = db.get_resolution(&res_id) {
-                            if let Some(lr) = res.line_range {
+                    if let Some(res_id) = bm.current_resolution_id.as_ref() {
+                        if let Ok(Some(res)) = db.get_resolution(res_id) {
+                            if let Some(lr) = res.line_range.as_ref() {
                                 if let Some(start) = lr.split('-').next().and_then(|s| s.parse::<usize>().ok()) {
                                     line_number = start.saturating_sub(1);
                                 }
                             }
-                            if let Some(fp) = res.file_path {
-                                file_path = fp;
+                            if let Some(fp) = res.file_path.as_ref() {
+                                file_path = fp.clone();
                             }
+                            resolution = Some(res);
                         }
                     }
 
@@ -629,6 +705,8 @@ impl RightPane {
                         new_steps.push(StepData {
                             file_path: abs_path.to_string_lossy().to_string(),
                             line_number,
+                            bookmark: bm,
+                            resolution,
                         });
                     }
                 }
@@ -796,6 +874,16 @@ impl TabbedPanel {
         None
     }
 
+    /// Get the currently active markdown panel for modification.
+    pub fn get_markdown_mut(&mut self) -> Option<&mut MarkdownPanel> {
+        for panel in &mut self.panels {
+            if let TabContent::Markdown(p) = panel {
+                return Some(p);
+            }
+        }
+        None
+    }
+
     /// Get the currently active panel for modification.
     pub fn active_panel_mut(&mut self) -> Option<&mut Panel> {
         let active_index = self.tabs.selected_index();
@@ -941,9 +1029,7 @@ impl TabbedPanel {
         let mut preview = CodePreview::new(code, "rs");
         preview.jump_to_line(49); // Jump to line 50 (0-indexed)
 
-        let info = Panel::new("")
-            .items(vec![])
-            .bordered(false);
+        let info = MarkdownPanel::new();
 
         let tabs = TabSelection::new(vec![
             Tab::new("Steps"),
@@ -952,7 +1038,7 @@ impl TabbedPanel {
 
         Self {
             tabs,
-            panels: vec![TabContent::Preview(preview), TabContent::List(info)],
+            panels: vec![TabContent::Preview(preview), TabContent::Markdown(info)],
             focused: false,
             last_area: std::cell::Cell::new(Rect::default()),
         }
