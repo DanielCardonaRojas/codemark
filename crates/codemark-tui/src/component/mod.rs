@@ -4,9 +4,11 @@
 //! for rendering itself to a specific area of the terminal and handling events.
 
 pub mod panel;
+pub mod code_preview;
 
-// Re-export panel types for convenience
+// Re-export types for convenience
 pub use panel::{HealthStatus, Panel, PanelItem, SyncDirection};
+pub use code_preview::CodePreview;
 
 use ratatui::{
     buffer::Buffer,

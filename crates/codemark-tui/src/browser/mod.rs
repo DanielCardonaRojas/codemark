@@ -12,11 +12,11 @@ pub use tabs::{Tab, TabSelection};
 use ratatui::{
     buffer::Buffer,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
-    style::{Color, Style, Stylize},
+    style::{Color, Modifier, Style, Stylize},
     text::{Line, Span},
     widgets::{Paragraph, Wrap, Widget},
 };
-use crate::component::{Component, HealthStatus, Panel, PanelItem, SyncDirection};
+use crate::component::{Component, HealthStatus, Panel, PanelItem, SyncDirection, CodePreview};
 use crate::event::Event;
 use crate::ui::KeyBinding;
 
@@ -122,12 +122,43 @@ struct TourInfo {
     last_area: std::cell::Cell<Rect>,
 }
 
+/// Content for a tabbed panel.
+enum TabContent {
+    /// A list of items
+    List(Panel),
+    /// A code preview
+    Preview(CodePreview),
+}
+
+impl TabContent {
+    fn render(&self, area: Rect, buf: &mut Buffer) {
+        match self {
+            TabContent::List(p) => p.render(area, buf),
+            TabContent::Preview(p) => p.render(area, buf),
+        }
+    }
+
+    fn handle_event(&mut self, event: &Event) -> bool {
+        match self {
+            TabContent::List(p) => p.handle_event(event),
+            TabContent::Preview(p) => p.handle_event(event),
+        }
+    }
+
+    fn set_focus(&mut self, focused: bool) {
+        match self {
+            TabContent::List(p) => p.set_focus(focused),
+            TabContent::Preview(p) => p.set_focus(focused),
+        }
+    }
+}
+
 /// A tabbed panel component with multiple content panels.
 struct TabbedPanel {
     /// Tab selection
     tabs: TabSelection,
     /// Content panels for each tab
-    panels: Vec<Panel>,
+    panels: Vec<TabContent>,
     /// Currently focused
     focused: bool,
     /// Last rendered area
@@ -670,7 +701,10 @@ impl TabbedPanel {
     /// Get the currently active panel for modification.
     pub fn active_panel_mut(&mut self) -> Option<&mut Panel> {
         let active_index = self.tabs.selected_index();
-        self.panels.get_mut(active_index)
+        match self.panels.get_mut(active_index) {
+            Some(TabContent::List(p)) => Some(p),
+            _ => None,
+        }
     }
 
     /// Create panel 1 with Repos/Accounts tabs.
@@ -710,7 +744,7 @@ impl TabbedPanel {
 
         Self {
             tabs,
-            panels: vec![repos, accounts],
+            panels: vec![TabContent::List(repos), TabContent::List(accounts)],
             focused: false,
             last_area: std::cell::Cell::new(Rect::default()),
         }
@@ -743,7 +777,7 @@ impl TabbedPanel {
 
         Self {
             tabs,
-            panels: vec![tags, branches],
+            panels: vec![TabContent::List(tags), TabContent::List(branches)],
             focused: false,
             last_area: std::cell::Cell::new(Rect::default()),
         }
@@ -785,7 +819,7 @@ impl TabbedPanel {
 
         Self {
             tabs,
-            panels: vec![tours, collections, bookmarks],
+            panels: vec![TabContent::List(tours), TabContent::List(collections), TabContent::List(bookmarks)],
             focused: false,
             last_area: std::cell::Cell::new(Rect::default()),
         }
@@ -793,26 +827,26 @@ impl TabbedPanel {
 
     /// Create steps/info tabs for right pane.
     fn new_steps_info() -> Self {
-        let steps = Panel::new("")
-            .items(vec![
-                PanelItem::new("Step 1:").secondary_text("Login button"),
-                PanelItem::new("Step 2:").secondary_text("Network call"),
-                PanelItem::new("Step 3:").secondary_text("Validation"),
-            ])
-            .bordered(false);
+        use crate::component::CodePreview;
+        let fixture_path = "tests/fixtures/rust/api_client.rs";
+        let code = std::fs::read_to_string(fixture_path)
+            .unwrap_or_else(|_| "Error: Could not load fixture tests/fixtures/rust/api_client.rs".to_string());
+            
+        let mut preview = CodePreview::new(code, "rs");
+        preview.jump_to_line(49); // Jump to line 50 (0-indexed)
 
         let info = Panel::new("")
             .items(vec![])
             .bordered(false);
 
         let tabs = TabSelection::new(vec![
-            Tab::new("Steps").badge("3"),
+            Tab::new("Steps"),
             Tab::new("Info"),
         ]);
 
         Self {
             tabs,
-            panels: vec![steps, info],
+            panels: vec![TabContent::Preview(preview), TabContent::List(info)],
             focused: false,
             last_area: std::cell::Cell::new(Rect::default()),
         }
@@ -852,7 +886,7 @@ impl TabbedPanel {
         }
 
         // Render selection indicator on bottom border
-        if let Some(panel) = self.panels.get(active_index) {
+        if let Some(TabContent::List(panel)) = self.panels.get(active_index) {
             if !panel.is_empty() {
                 let current = panel.selected_index().map_or(0, |i| i + 1);
                 let total = panel.len();
@@ -864,12 +898,18 @@ impl TabbedPanel {
                 let y = area.bottom() - 1;
 
                 if x > area.left() {
+                    let indicator_style = if self.focused {
+                        Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default().fg(Color::DarkGray)
+                    };
+
                     // Render the indicator by modifying the border cells
                     for (i, c) in indicator.chars().enumerate() {
                         let cx = x + i as u16;
                         if let Some(cell) = buf.cell_mut((cx, y)) {
                             cell.set_char(c);
-                            cell.set_fg(Color::DarkGray);
+                            cell.set_style(indicator_style);
                         }
                     }
                 }
