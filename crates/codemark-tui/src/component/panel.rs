@@ -9,15 +9,15 @@ use ratatui::{
     style::{Color, Modifier, Style, Stylize},
     text::{Line, Span},
     widgets::{
-        Block, BorderType, List, ListItem, Scrollbar, ScrollbarOrientation,
-        ScrollbarState, StatefulWidget, Widget,
+        Block, BorderType, List, ListItem, ListState, Scrollbar, ScrollbarOrientation,
+        ScrollbarState, StatefulWidget,
     },
 };
 
 use super::{Component, SizeConstraints};
 use crate::event::Event;
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 
 /// A scrollable panel component.
 ///
@@ -33,10 +33,8 @@ pub struct Panel {
     all_items: Vec<PanelItem>,
     /// Current filter query
     filter_query: String,
-    /// The index of the currently selected item
-    selected: Option<usize>,
-    /// The scroll offset (vertical position)
-    scroll_offset: usize,
+    /// The state of the list (handles selection and scrolling)
+    list_state: RefCell<ListState>,
     /// Whether the panel has a border
     bordered: bool,
     /// Whether the panel is focused
@@ -270,8 +268,7 @@ impl Panel {
             items: Vec::new(),
             all_items: Vec::new(),
             filter_query: String::new(),
-            selected: None,
-            scroll_offset: 0,
+            list_state: RefCell::new(ListState::default()),
             bordered: true,
             focused: false,
             focus_style: Style::default().fg(Color::Green),
@@ -292,8 +289,8 @@ impl Panel {
     pub fn add_item(mut self, item: PanelItem) -> Self {
         self.all_items.push(item);
         self.apply_filter();
-        if self.selected.is_none() && !self.items.is_empty() {
-            self.selected = Some(0);
+        if self.selected_index().is_none() && !self.items.is_empty() {
+            self.set_selected(0);
         }
         self
     }
@@ -302,8 +299,8 @@ impl Panel {
     pub fn items(mut self, items: impl IntoIterator<Item = PanelItem>) -> Self {
         self.all_items.extend(items);
         self.apply_filter();
-        if self.selected.is_none() && !self.items.is_empty() {
-            self.selected = Some(0);
+        if self.selected_index().is_none() && !self.items.is_empty() {
+            self.set_selected(0);
         }
         self
     }
@@ -327,16 +324,20 @@ impl Panel {
                 .collect();
         }
 
+        let mut state = self.list_state.borrow_mut();
         // Adjust selection if it's now out of bounds
-        if let Some(sel) = self.selected {
+        if let Some(sel) = state.selected() {
             if sel >= self.items.len() {
-                self.selected = if self.items.is_empty() { None } else { Some(0) };
+                state.select(if self.items.is_empty() { None } else { Some(0) });
             }
         } else if !self.items.is_empty() {
-            self.selected = Some(0);
+            state.select(Some(0));
         }
         
-        self.scroll_offset = 0;
+        // Reset scroll offset on filter change by creating a new state but preserving selection
+        let selected = state.selected();
+        *state = ListState::default();
+        state.select(selected);
     }
 
     /// Set whether the panel has a border.
@@ -381,19 +382,18 @@ impl Panel {
 
     /// Get the currently selected item.
     pub fn selected(&self) -> Option<&PanelItem> {
-        self.selected.and_then(|idx| self.items.get(idx))
+        self.list_state.borrow().selected().and_then(|idx| self.items.get(idx))
     }
 
     /// Get the index of the currently selected item.
     pub fn selected_index(&self) -> Option<usize> {
-        self.selected
+        self.list_state.borrow().selected()
     }
 
     /// Set the selected item by index.
     pub fn set_selected(&mut self, idx: usize) {
         if idx < self.items.len() {
-            self.selected = Some(idx);
-            self.scroll_to_selection();
+            self.list_state.borrow_mut().select(Some(idx));
         }
     }
 
@@ -402,9 +402,9 @@ impl Panel {
         if self.items.is_empty() {
             return;
         }
-        let next = self.selected.map_or(0, |i| i.saturating_add(1) % self.items.len());
-        self.selected = Some(next);
-        self.scroll_to_selection();
+        let mut state = self.list_state.borrow_mut();
+        let next = state.selected().map_or(0, |i| i.saturating_add(1) % self.items.len());
+        state.select(Some(next));
     }
 
     /// Select the previous item.
@@ -412,41 +412,32 @@ impl Panel {
         if self.items.is_empty() {
             return;
         }
-        let prev = self.selected.map_or(
+        let mut state = self.list_state.borrow_mut();
+        let prev = state.selected().map_or(
             self.items.len() - 1,
             |i| if i == 0 { self.items.len() - 1 } else { i - 1 },
         );
-        self.selected = Some(prev);
-        self.scroll_to_selection();
-    }
-
-    /// Scroll to make the selected item visible.
-    fn scroll_to_selection(&mut self) {
-        if let Some(_selected) = self.selected {
-            // This will be updated during render based on visible area
-            // For now, just ensure the offset is valid
-            self.scroll_offset = self.scroll_offset.min(self.items.len().saturating_sub(1));
-        }
+        state.select(Some(prev));
     }
 
     /// Clear all items from the panel.
     pub fn clear(&mut self) {
         self.items.clear();
         self.all_items.clear();
-        self.selected = None;
-        self.scroll_offset = 0;
+        self.list_state.borrow_mut().select(None);
         self.filter_query.clear();
     }
 
     /// Update the items in the panel, preserving selection if possible.
     pub fn set_items(&mut self, items: Vec<PanelItem>) {
-        let selected_text = self.selected.and_then(|idx| self.items.get(idx).map(|i| i.text.clone()));
+        let selected_text = self.list_state.borrow().selected().and_then(|idx| self.items.get(idx).map(|i| i.text.clone()));
         self.all_items = items;
         self.apply_filter();
 
+        let mut state = self.list_state.borrow_mut();
         if !self.items.is_empty() {
             // Try to restore the selection
-            self.selected = if let Some(text) = selected_text {
+            let new_sel = if let Some(text) = selected_text {
                 self.items
                     .iter()
                     .position(|item| item.text == text)
@@ -454,8 +445,9 @@ impl Panel {
             } else {
                 Some(0)
             };
+            state.select(new_sel);
         } else {
-            self.selected = None;
+            state.select(None);
         }
     }
 }
@@ -472,17 +464,12 @@ impl Component for Panel {
 
         let height = inner.height as usize;
 
-        // Build the items to display
-        let visible_start = self.scroll_offset;
-        let visible_end = (self.scroll_offset + height).min(self.items.len());
-
+        // Build all items (Ratatui List handles scrolling internally via ListState)
         let list_items: Vec<ListItem> = self.items
             .iter()
             .enumerate()
-            .skip(visible_start)
-            .take(visible_end.saturating_sub(visible_start))
             .map(|(i, item)| {
-                let is_selected = self.selected == Some(i);
+                let is_selected = self.list_state.borrow().selected() == Some(i);
                 let line = item.to_line(is_selected, self.focused);
                 let mut list_item = ListItem::new(line);
                 
@@ -513,13 +500,14 @@ impl Component for Panel {
                 self.normal_style
             });
 
-        // Render the list
+        // Render the list using StatefulWidget for native scrolling
         let list = List::new(list_items);
 
+        let mut state = self.list_state.borrow_mut();
         if self.bordered {
-            Widget::render(list.block(block), area, buf);
+            StatefulWidget::render(list.block(block), area, buf, &mut *state);
         } else {
-            Widget::render(list, area, buf);
+            StatefulWidget::render(list, area, buf, &mut *state);
         };
 
         // Render scrollbar if needed
@@ -531,7 +519,7 @@ impl Component for Panel {
                 .thumb_symbol("||");
 
             let mut scrollbar_state = ScrollbarState::new(self.items.len())
-                .position(self.scroll_offset);
+                .position(state.offset());
 
             let scrollbar_area = if self.bordered {
                 Rect {
@@ -554,7 +542,7 @@ impl Component for Panel {
 
         // Render selection indicator on bottom border (e.g., "3 of 15")
         if self.bordered && !self.items.is_empty() {
-            let current = self.selected.map_or(0, |i| i + 1);
+            let current = state.selected().map_or(0, |i| i + 1);
             let total = self.items.len();
             let indicator = format!(" {current} of {total} ");
 
@@ -617,9 +605,9 @@ impl Component for Panel {
                                     && mouse.row < inner.y + inner.height
                                 {
                                     let relative_row = mouse.row.saturating_sub(inner.y) as usize;
-                                    let item_idx = relative_row + self.scroll_offset;
+                                    let item_idx = relative_row + self.list_state.borrow().offset();
                                     if item_idx < self.items.len() {
-                                        self.selected = Some(item_idx);
+                                        self.list_state.borrow_mut().select(Some(item_idx));
                                         return true;
                                     }
                                 }
