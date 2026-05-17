@@ -419,21 +419,6 @@ impl BrowserLayout {
                     self.previous_focus();
                     return true;
                 }
-                // H/L or Left/Right to switch between Left sidebar and Right main area
-                ratatui::crossterm::event::KeyCode::Left | ratatui::crossterm::event::KeyCode::Char('h') => {
-                    if self.focus == FocusArea::Main {
-                        self.focus = FocusArea::Panel3; // Return to tours by default
-                        self.update_focus_state();
-                        return true;
-                    }
-                }
-                ratatui::crossterm::event::KeyCode::Right | ratatui::crossterm::event::KeyCode::Char('l') => {
-                    if self.focus != FocusArea::Main {
-                        self.focus = FocusArea::Main;
-                        self.update_focus_state();
-                        return true;
-                    }
-                }
                 // Number keys for direct section access
                 ratatui::crossterm::event::KeyCode::Char('1') => {
                     self.focus = FocusArea::Search;
