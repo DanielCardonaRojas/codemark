@@ -77,12 +77,22 @@ struct LeftPane {
     panel2_config: SectionConfig,
 }
 
+/// Data for a single step in a tour.
+struct StepData {
+    /// Path to the file for this step
+    file_path: String,
+    /// Line number to jump to (0-indexed)
+    line_number: usize,
+}
+
 /// Right pane containing Steps and Tour Info sections.
 struct RightPane {
     /// Steps tabbed panel (Steps/Info)
     steps: TabbedPanel,
     /// Tour info panel showing metadata
     tour_info: TourInfo,
+    /// Data for each step in the current tour
+    steps_data: Vec<StepData>,
     /// Currently focused section
     focused: RightPaneFocus,
     /// Pager total pages
@@ -542,18 +552,48 @@ impl LeftPane {
             || self.panel3.handle_event(event)
     }
 }
-
 impl RightPane {
     /// Create a new right pane.
     fn new() -> Self {
-        Self {
+        let steps_data = vec![
+            StepData { file_path: "tests/fixtures/rust/api_client.rs".to_string(), line_number: 49 },
+            StepData { file_path: "tests/fixtures/python/auth_service.py".to_string(), line_number: 19 },
+            StepData { file_path: "tests/fixtures/typescript/auth_service.ts".to_string(), line_number: 35 },
+            StepData { file_path: "tests/fixtures/rust/auth_service.rs".to_string(), line_number: 12 },
+            StepData { file_path: "tests/fixtures/swift/api_client.swift".to_string(), line_number: 25 },
+        ];
+        let pager_total = steps_data.len();
+
+        let mut pane = Self {
             steps: TabbedPanel::new_steps_info(),
             tour_info: TourInfo::new(),
+            steps_data,
             focused: RightPaneFocus::Steps,
-            pager_total: 5,
+            pager_total,
             pager_current: 0,
             last_area: std::cell::Cell::new(Rect::default()),
             info_config: SectionConfig::new(4, 10),
+        };
+        pane.update_preview();
+        pane
+    }
+
+    /// Update the code preview based on current step.
+    fn update_preview(&mut self) {
+        if let Some(step) = self.steps_data.get(self.pager_current) {
+            let code = std::fs::read_to_string(&step.file_path)
+                .unwrap_or_else(|_| format!("Error: Could not load file {}", step.file_path));
+
+            let ext = std::path::Path::new(&step.file_path)
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("txt");
+
+            if let Some(preview) = self.steps.get_preview_mut() {
+                preview.set_code(code);
+                preview.set_extension(ext.to_string());
+                preview.jump_to_line(step.line_number);
+            }
         }
     }
 
@@ -627,6 +667,7 @@ impl RightPane {
                 ratatui::crossterm::event::KeyCode::Left | ratatui::crossterm::event::KeyCode::Char('h') => {
                     if self.focused == RightPaneFocus::Steps {
                         self.pager_current = self.pager_current.saturating_sub(1);
+                        self.update_preview();
                         return true;
                     }
                 }
@@ -634,6 +675,7 @@ impl RightPane {
                     if self.focused == RightPaneFocus::Steps {
                         if self.pager_current + 1 < self.pager_total {
                             self.pager_current += 1;
+                            self.update_preview();
                         }
                         return true;
                     }
@@ -698,6 +740,16 @@ impl RightPane {
 }
 
 impl TabbedPanel {
+    /// Get the currently active preview for modification.
+    pub fn get_preview_mut(&mut self) -> Option<&mut CodePreview> {
+        for panel in &mut self.panels {
+            if let TabContent::Preview(p) = panel {
+                return Some(p);
+            }
+        }
+        None
+    }
+
     /// Get the currently active panel for modification.
     pub fn active_panel_mut(&mut self) -> Option<&mut Panel> {
         let active_index = self.tabs.selected_index();
