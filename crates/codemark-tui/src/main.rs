@@ -52,7 +52,7 @@ async fn run_app() -> Result<()> {
     let db = Workspace::open_primary()?;
 
     // Create the browser layout
-    let mut layout = BrowserLayout::new(&db);
+    let mut layout = BrowserLayout::new(db);
 
     // Setup focus manager
     let mut focus_manager = FocusManager::new();

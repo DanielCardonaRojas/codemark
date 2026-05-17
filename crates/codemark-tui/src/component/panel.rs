@@ -138,6 +138,11 @@ impl PanelItem {
         self
     }
 
+    /// Get the item text.
+    pub fn text(&self) -> &str {
+        &self.text
+    }
+
     /// Set the secondary text.
     pub fn secondary_text(mut self, text: impl Into<String>) -> Self {
         self.secondary_text = Some(text.into());

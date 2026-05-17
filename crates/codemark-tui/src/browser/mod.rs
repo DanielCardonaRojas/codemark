@@ -27,6 +27,8 @@ use codemark_core::engine::bookmark::BookmarkFilter;
 /// Splits the screen vertically with a left sidebar (40%) and right main area (60%).
 /// Each section has numbered tabs that can be cycled with `[` and `]`.
 pub struct BrowserLayout {
+    /// Database connection
+    db: Database,
     /// Left sidebar components
     left_pane: LeftPane,
     /// Right main content area
@@ -179,11 +181,12 @@ struct TabbedPanel {
 
 impl BrowserLayout {
     /// Create a new browser layout.
-    pub fn new(db: &Database) -> Self {
+    pub fn new(db: Database) -> Self {
         let mut layout = Self {
-            left_pane: LeftPane::new(db),
-            right_pane: RightPane::new(db),
+            left_pane: LeftPane::new(&db),
+            right_pane: RightPane::new(&db),
             focus: FocusArea::Panel3,
+            db,
         };
         layout.update_focus_state();
         layout
@@ -413,6 +416,21 @@ impl BrowserLayout {
         // 2. Handle focus cycling and number shortcuts (Keys only)
         if let Event::Key(key) = event {
             match key.code {
+                ratatui::crossterm::event::KeyCode::Enter => {
+                    if self.focus == FocusArea::Panel3 {
+                        let active_tab = self.left_pane.panel3.tabs.selected_index();
+                        if active_tab == 0 { // Tours
+                            if let Some(panel) = self.left_pane.panel3.active_panel_mut() {
+                                if let Some(selected) = panel.selected() {
+                                    let tour_name = selected.text().to_string();
+                                    self.right_pane.load_tour(&self.db, &tour_name);
+                                    self.set_focus(FocusArea::Main);
+                                    return true;
+                                }
+                            }
+                        }
+                    }
+                }
                 ratatui::crossterm::event::KeyCode::Tab => {
                     self.next_focus();
                     return true;
@@ -542,26 +560,25 @@ impl LeftPane {
 impl RightPane {
     /// Create a new right pane.
     fn new(db: &Database) -> Self {
-        let steps_data = vec![
-            StepData { file_path: "tests/fixtures/rust/api_client.rs".to_string(), line_number: 49 },
-            StepData { file_path: "tests/fixtures/python/auth_service.py".to_string(), line_number: 19 },
-            StepData { file_path: "tests/fixtures/typescript/auth_service.ts".to_string(), line_number: 35 },
-            StepData { file_path: "tests/fixtures/rust/auth_service.rs".to_string(), line_number: 12 },
-            StepData { file_path: "tests/fixtures/swift/api_client.swift".to_string(), line_number: 25 },
-        ];
-        let pager_total = steps_data.len();
-
         let mut pane = Self {
             steps: TabbedPanel::new_steps_info(db),
             tour_info: TourInfo::new(),
-            steps_data,
+            steps_data: Vec::new(),
             focused: RightPaneFocus::Steps,
-            pager_total,
+            pager_total: 0,
             pager_current: 0,
             last_area: std::cell::Cell::new(Rect::default()),
             info_config: SectionConfig::new(4, 10),
         };
-        pane.update_preview();
+
+        // Try to load the first tour automatically
+        if let Ok(collections) = db.list_collections() {
+            if let Some((first_tour, _)) = collections.first() {
+                let name = first_tour.name.clone();
+                pane.load_tour(db, &name);
+            }
+        }
+        
         pane
     }
 
@@ -580,6 +597,48 @@ impl RightPane {
                 preview.set_code(code);
                 preview.set_extension(ext.to_string());
                 preview.jump_to_line(step.line_number);
+            }
+        }
+    }
+
+    /// Load a tour and its steps from the database.
+    pub fn load_tour(&mut self, db: &Database, tour_name: &str) {
+        if let Ok(Some(collection)) = db.get_collection_by_name(tour_name) {
+            if let Ok(bookmarks) = db.list_bookmarks_in_collection(&collection.id) {
+                let mut new_steps = Vec::new();
+                for bm in bookmarks {
+                    let mut line_number = 0;
+                    let mut file_path = bm.file_path.clone();
+
+                    // Try to get resolution data for better accuracy
+                    if let Some(res_id) = bm.current_resolution_id {
+                        if let Ok(Some(res)) = db.get_resolution(&res_id) {
+                            if let Some(lr) = res.line_range {
+                                if let Some(start) = lr.split('-').next().and_then(|s| s.parse::<usize>().ok()) {
+                                    line_number = start.saturating_sub(1);
+                                }
+                            }
+                            if let Some(fp) = res.file_path {
+                                file_path = fp;
+                            }
+                        }
+                    }
+
+                    // Resolve absolute path
+                    if let Ok(abs_path) = codemark_core::git::context::resolve_bookmark_file_path(&file_path, db.path()) {
+                        new_steps.push(StepData {
+                            file_path: abs_path.to_string_lossy().to_string(),
+                            line_number,
+                        });
+                    }
+                }
+
+                if !new_steps.is_empty() {
+                    self.steps_data = new_steps;
+                    self.pager_total = self.steps_data.len();
+                    self.pager_current = 0;
+                    self.update_preview();
+                }
             }
         }
     }
