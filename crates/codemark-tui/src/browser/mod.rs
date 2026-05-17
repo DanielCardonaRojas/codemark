@@ -790,6 +790,7 @@ impl TabbedPanel {
     /// Create panel 2 with Tags/Branches tabs.
     fn new_tags_branches() -> Self {
         let tags = Panel::new("")
+            .multi_select(true)
             .items(vec![
                 PanelItem::new("#ui").no_health().color(Color::Cyan),
                 PanelItem::new("#backend").no_health().color(Color::Magenta),
