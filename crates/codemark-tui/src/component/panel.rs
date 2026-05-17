@@ -420,6 +420,34 @@ impl Panel {
         state.select(Some(prev));
     }
 
+    /// Set the currently selected item as active and deactivate all others.
+    pub fn activate_selected(&mut self) {
+        if let Some(idx) = self.selected_index() {
+            if let Some(item) = self.items.get(idx) {
+                let text = item.text.clone();
+                // Deactivate all in all_items
+                for item in &mut self.all_items {
+                    item.active = false;
+                }
+                // Activate the one that matches text in all_items
+                if let Some(item) = self.all_items.iter_mut().find(|i| i.text == text) {
+                    item.active = true;
+                }
+                // Sync items with all_items (preserving current filter and list state)
+                let query = self.filter_query.to_lowercase();
+                if query.is_empty() {
+                    self.items = self.all_items.clone();
+                } else {
+                    self.items = self.all_items
+                        .iter()
+                        .filter(|item| item.text.to_lowercase().contains(&query))
+                        .cloned()
+                        .collect();
+                }
+            }
+        }
+    }
+
     /// Clear all items from the panel.
     pub fn clear(&mut self) {
         self.items.clear();
@@ -591,6 +619,10 @@ impl Component for Panel {
                 }
                 ratatui::crossterm::event::KeyCode::Up | ratatui::crossterm::event::KeyCode::Char('k') => {
                     self.select_previous();
+                    true
+                }
+                ratatui::crossterm::event::KeyCode::Char(' ') => {
+                    self.activate_selected();
                     true
                 }
                 _ => false,
