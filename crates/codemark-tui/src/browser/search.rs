@@ -98,10 +98,10 @@ impl SearchBar {
         let width = area.width as usize;
 
         // Build the display text
-        let mode_icon = match self.mode {
-            SearchMode::All => "1 🔍",
-            SearchMode::Repos => "1 📦",
-            SearchMode::Tours => "1 🗺️",
+        let mode_label = match self.mode {
+            SearchMode::All => "1",
+            SearchMode::Repos => "2",
+            SearchMode::Tours => "3",
         };
 
         let query = if self.query.is_empty() {
@@ -110,7 +110,7 @@ impl SearchBar {
             self.query.as_str()
         };
 
-        let available_width = width.saturating_sub(2 + mode_icon.len()); // icon + space
+        let available_width = width.saturating_sub(1 + mode_label.len()); // label + space
         let truncated = if query.len() > available_width {
             let start = query.len().saturating_sub(available_width);
             &query[start..]
@@ -120,7 +120,7 @@ impl SearchBar {
 
         let line = Line::from(vec![
             Span::styled(
-                mode_icon,
+                mode_label,
                 if self.focused {
                     Style::default().fg(Color::Green)
                 } else {
@@ -139,7 +139,7 @@ impl SearchBar {
 
         // Draw cursor if focused
         if self.focused && !self.query.is_empty() {
-            let cursor_x = area.x + 2 + self.cursor.saturating_sub(
+            let cursor_x = area.x + 1 + mode_label.len() as u16 + self.cursor.saturating_sub(
                 self.query.len().saturating_sub(available_width)
             ) as u16;
             let cursor_y = area.y;
