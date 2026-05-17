@@ -680,6 +680,18 @@ impl TabbedPanel {
                 PanelItem::new("dcardona/fix_authentication").no_health(),
                 PanelItem::new("dcardona/codemark").active(true).no_health(),
                 PanelItem::new("anthropics/claude-code").no_health(),
+                PanelItem::new("rust-lang/rust").no_health(),
+                PanelItem::new("facebook/react").no_health(),
+                PanelItem::new("microsoft/vscode").no_health(),
+                PanelItem::new("apple/swift").no_health(),
+                PanelItem::new("google/go").no_health(),
+                PanelItem::new("tensorflow/tensorflow").no_health(),
+                PanelItem::new("twbs/bootstrap").no_health(),
+                PanelItem::new("vuejs/vue").no_health(),
+                PanelItem::new("angular/angular").no_health(),
+                PanelItem::new("django/django").no_health(),
+                PanelItem::new("rails/rails").no_health(),
+                PanelItem::new("laravel/laravel").no_health(),
             ])
             .bordered(false);
 
@@ -692,7 +704,7 @@ impl TabbedPanel {
             .bordered(false);
 
         let tabs = TabSelection::new(vec![
-            Tab::new("Repos").badge("3"),
+            Tab::new("Repos").badge("15"),
             Tab::new("Accounts").badge("3"),
         ]);
 
