@@ -22,7 +22,7 @@ use codemark_core::error::{Error, Result};
 use codemark_core::git::context as git_context;
 use codemark_core::git::remote;
 use codemark_core::parser::languages::Language;
-use codemark_core::storage::{SemanticRepo, db::Database};
+use codemark_core::storage::{OpenDbOptions, SemanticRepo, Workspace, db::Database};
 
 // Handler submodules
 pub mod auth;

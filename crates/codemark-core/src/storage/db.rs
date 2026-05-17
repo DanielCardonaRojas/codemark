@@ -331,7 +331,7 @@ impl Database {
     /// List all unique tags across bookmarks and collections.
     pub fn list_all_tags(&self) -> Result<Vec<String>> {
         let mut stmt = self.conn.prepare(
-            "SELECT DISTINCT tag FROM tags
+            "SELECT DISTINCT tag FROM bookmark_tags
              UNION
              SELECT DISTINCT tag FROM collection_tags
              ORDER BY tag",
@@ -347,9 +347,7 @@ impl Database {
     /// List all unique branches across bookmarks and collections.
     pub fn list_all_branches(&self) -> Result<Vec<String>> {
         let mut stmt = self.conn.prepare(
-            "SELECT DISTINCT created_branch FROM bookmarks
-             UNION
-             SELECT DISTINCT created_branch FROM collections
+            "SELECT DISTINCT created_branch FROM collections
              WHERE created_branch IS NOT NULL
              ORDER BY created_branch",
         )?;

@@ -842,19 +842,35 @@ impl TabbedPanel {
     /// Create panel 2 with Tags/Branches tabs.
     fn new_tags_branches(db: &Database) -> Self {
         let mut tags_panel = Panel::new("").multi_select(true).bordered(false);
-        if let Ok(tags) = db.list_all_tags() {
-            let items: Vec<PanelItem> = tags.into_iter().map(|tag| {
-                PanelItem::new(format!("#{tag}")).no_health().color(Color::Cyan)
-            }).collect();
-            tags_panel = tags_panel.items(items);
+        match db.list_all_tags() {
+            Ok(tags) if !tags.is_empty() => {
+                let items: Vec<PanelItem> = tags.into_iter().map(|tag| {
+                    PanelItem::new(format!("#{tag}")).no_health().color(Color::Cyan)
+                }).collect();
+                tags_panel = tags_panel.items(items);
+            }
+            Ok(_) => {
+                tags_panel = tags_panel.add_item(PanelItem::new("No tags found").no_health().color(Color::DarkGray));
+            }
+            Err(e) => {
+                tags_panel = tags_panel.add_item(PanelItem::new(format!("Error: {e}")).no_health().color(Color::Red));
+            }
         }
 
         let mut branches_panel = Panel::new("").bordered(false);
-        if let Ok(branches) = db.list_all_branches() {
-            let items: Vec<PanelItem> = branches.into_iter().map(|branch| {
-                PanelItem::new(branch)
-            }).collect();
-            branches_panel = branches_panel.items(items);
+        match db.list_all_branches() {
+            Ok(branches) if !branches.is_empty() => {
+                let items: Vec<PanelItem> = branches.into_iter().map(|branch| {
+                    PanelItem::new(branch)
+                }).collect();
+                branches_panel = branches_panel.items(items);
+            }
+            Ok(_) => {
+                branches_panel = branches_panel.add_item(PanelItem::new("No branches found").no_health().color(Color::DarkGray));
+            }
+            Err(e) => {
+                branches_panel = branches_panel.add_item(PanelItem::new(format!("Error: {e}")).no_health().color(Color::Red));
+            }
         }
 
         let tabs = TabSelection::new(vec![
