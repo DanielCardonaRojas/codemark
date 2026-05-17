@@ -47,6 +47,8 @@ pub struct Panel {
     selected_style: Style,
     /// Whether to show a scrollbar
     show_scrollbar: bool,
+    /// Whether multiple items can be active at once
+    multi_select: bool,
     /// The type of border to render
     border_type: BorderType,
     /// Last rendered area for mouse handling
@@ -275,9 +277,16 @@ impl Panel {
             normal_style: Style::default().fg(Color::DarkGray),
             selected_style: Style::default().bg(Color::Blue).fg(Color::White),
             show_scrollbar: true,
+            multi_select: false,
             border_type: BorderType::Rounded,
             last_area: Cell::new(Rect::default()),
         }
+    }
+
+    /// Set whether the panel supports multi-selection.
+    pub fn multi_select(mut self, multi_select: bool) -> Self {
+        self.multi_select = multi_select;
+        self
     }
 
     /// Get the last rendered area.
@@ -420,19 +429,27 @@ impl Panel {
         state.select(Some(prev));
     }
 
-    /// Set the currently selected item as active and deactivate all others.
+    /// Set the currently selected item as active and deactivate all others (or toggle in multi-select mode).
     pub fn activate_selected(&mut self) {
         if let Some(idx) = self.selected_index() {
             if let Some(item) = self.items.get(idx) {
                 let text = item.text.clone();
-                // Deactivate all in all_items
-                for item in &mut self.all_items {
-                    item.active = false;
+                
+                if self.multi_select {
+                    // Toggle in all_items
+                    if let Some(item) = self.all_items.iter_mut().find(|i| i.text == text) {
+                        item.active = !item.active;
+                    }
+                } else {
+                    // Deactivate all and activate only the selected one
+                    for item in &mut self.all_items {
+                        item.active = false;
+                    }
+                    if let Some(item) = self.all_items.iter_mut().find(|i| i.text == text) {
+                        item.active = true;
+                    }
                 }
-                // Activate the one that matches text in all_items
-                if let Some(item) = self.all_items.iter_mut().find(|i| i.text == text) {
-                    item.active = true;
-                }
+
                 // Sync items with all_items (preserving current filter and list state)
                 let query = self.filter_query.to_lowercase();
                 if query.is_empty() {
