@@ -159,20 +159,12 @@ async fn run_app() -> Result<()> {
                                     show_help = !show_help;
                                     handled = true;
                                 }
-                                event::KeyCode::Char(':') => {
-                                    state.set_mode(AppMode::Command);
-                                    handled = true;
-                                }
-                                event::KeyCode::Tab => {
-                                    layout.next_focus();
-                                    handled = true;
-                                }
-                                event::KeyCode::BackTab => {
-                                    layout.previous_focus();
-                                    handled = true;
-                                }
                                 event::KeyCode::Esc => {
-                                    notification = None;
+                                    if show_help {
+                                        show_help = false;
+                                    } else {
+                                        notification = None;
+                                    }
                                     handled = true;
                                 }
                                 _ => {}
