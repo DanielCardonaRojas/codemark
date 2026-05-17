@@ -47,8 +47,12 @@ async fn run_app() -> Result<()> {
     // Create app state
     let mut state = AppState::new();
 
+    // Initialize Codemark Core Database
+    use codemark_core::storage::Workspace;
+    let db = Workspace::open_primary()?;
+
     // Create the browser layout
-    let mut layout = BrowserLayout::new();
+    let mut layout = BrowserLayout::new(&db);
 
     // Setup focus manager
     let mut focus_manager = FocusManager::new();
@@ -60,10 +64,6 @@ async fn run_app() -> Result<()> {
     let (mut event_rx, _) = codemark_tui::event::EventHandler::with_receiver(
         EventHandlerConfig::default().tick_rate(Duration::from_millis(100)),
     )?;
-
-    // Initialize Codemark Core Database
-    use codemark_core::storage::Workspace;
-    let _db = Workspace::open_primary()?;
 
     // Notification state
     let mut notification: Option<(String, NotificationType)> = None;

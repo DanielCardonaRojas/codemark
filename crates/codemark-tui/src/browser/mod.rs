@@ -16,9 +16,11 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Paragraph, Wrap, Widget},
 };
-use crate::component::{Component, HealthStatus, Panel, PanelItem, SyncDirection, CodePreview};
+use crate::component::{Component, HealthStatus, Panel, PanelItem, CodePreview};
 use crate::event::Event;
 use crate::ui::KeyBinding;
+use codemark_core::storage::db::Database;
+use codemark_core::engine::bookmark::BookmarkFilter;
 
 /// The main browser layout.
 ///
@@ -177,10 +179,10 @@ struct TabbedPanel {
 
 impl BrowserLayout {
     /// Create a new browser layout.
-    pub fn new() -> Self {
+    pub fn new(db: &Database) -> Self {
         let mut layout = Self {
-            left_pane: LeftPane::new(),
-            right_pane: RightPane::new(),
+            left_pane: LeftPane::new(db),
+            right_pane: RightPane::new(db),
             focus: FocusArea::Panel3,
         };
         layout.update_focus_state();
@@ -479,12 +481,12 @@ impl BrowserLayout {
 
 impl LeftPane {
     /// Create a new left pane.
-    fn new() -> Self {
+    fn new(db: &Database) -> Self {
         Self {
             search: SearchBar::new(),
-            panel1: TabbedPanel::new_repos_accounts(),
-            panel2: TabbedPanel::new_tags_branches(),
-            panel3: TabbedPanel::new_tours_collections_bookmarks(),
+            panel1: TabbedPanel::new_repos_accounts(db),
+            panel2: TabbedPanel::new_tags_branches(db),
+            panel3: TabbedPanel::new_tours_collections_bookmarks(db),
             panel1_config: SectionConfig::new(4, 6),
             panel2_config: SectionConfig::new(4, 8),
         }
@@ -539,7 +541,7 @@ impl LeftPane {
 }
 impl RightPane {
     /// Create a new right pane.
-    fn new() -> Self {
+    fn new(db: &Database) -> Self {
         let steps_data = vec![
             StepData { file_path: "tests/fixtures/rust/api_client.rs".to_string(), line_number: 49 },
             StepData { file_path: "tests/fixtures/python/auth_service.py".to_string(), line_number: 19 },
@@ -550,7 +552,7 @@ impl RightPane {
         let pager_total = steps_data.len();
 
         let mut pane = Self {
-            steps: TabbedPanel::new_steps_info(),
+            steps: TabbedPanel::new_steps_info(db),
             tour_info: TourInfo::new(),
             steps_data,
             focused: RightPaneFocus::Steps,
@@ -745,26 +747,16 @@ impl TabbedPanel {
     }
 
     /// Create panel 1 with Repos/Accounts tabs.
-    fn new_repos_accounts() -> Self {
-        let repos = Panel::new("")
-            .items(vec![
-                PanelItem::new("dcardona/fix_authentication").no_health(),
-                PanelItem::new("dcardona/codemark").active(true).no_health(),
-                PanelItem::new("anthropics/claude-code").no_health(),
-                PanelItem::new("rust-lang/rust").no_health(),
-                PanelItem::new("facebook/react").no_health(),
-                PanelItem::new("microsoft/vscode").no_health(),
-                PanelItem::new("apple/swift").no_health(),
-                PanelItem::new("google/go").no_health(),
-                PanelItem::new("tensorflow/tensorflow").no_health(),
-                PanelItem::new("twbs/bootstrap").no_health(),
-                PanelItem::new("vuejs/vue").no_health(),
-                PanelItem::new("angular/angular").no_health(),
-                PanelItem::new("django/django").no_health(),
-                PanelItem::new("rails/rails").no_health(),
-                PanelItem::new("laravel/laravel").no_health(),
-            ])
-            .bordered(false);
+    fn new_repos_accounts(db: &Database) -> Self {
+        let mut repos_panel = Panel::new("").bordered(false);
+        if let Ok(repos) = db.list_repos() {
+            let items: Vec<PanelItem> = repos.into_iter().map(|repo| {
+                PanelItem::new(repo.repo_name)
+                    .secondary_text(repo.repo_owner)
+                    .no_health()
+            }).collect();
+            repos_panel = repos_panel.items(items);
+        }
 
         let accounts = Panel::new("")
             .items(vec![
@@ -774,97 +766,98 @@ impl TabbedPanel {
             ])
             .bordered(false);
 
+        let repos_count = repos_panel.len().to_string();
         let tabs = TabSelection::new(vec![
-            Tab::new("Repos").badge("15"),
+            Tab::new("Repos").badge(repos_count),
             Tab::new("Accounts").badge("3"),
         ]);
 
         Self {
             tabs,
-            panels: vec![TabContent::List(repos), TabContent::List(accounts)],
+            panels: vec![TabContent::List(repos_panel), TabContent::List(accounts)],
             focused: false,
             last_area: std::cell::Cell::new(Rect::default()),
         }
     }
 
     /// Create panel 2 with Tags/Branches tabs.
-    fn new_tags_branches() -> Self {
-        let tags = Panel::new("")
-            .multi_select(true)
-            .items(vec![
-                PanelItem::new("#ui").no_health().color(Color::Cyan),
-                PanelItem::new("#backend").no_health().color(Color::Magenta),
-                PanelItem::new("#authentication").no_health().color(Color::Yellow),
-                PanelItem::new("#mylibrary").no_health().color(Color::Green),
-            ])
-            .bordered(false);
+    fn new_tags_branches(db: &Database) -> Self {
+        let mut tags_panel = Panel::new("").multi_select(true).bordered(false);
+        if let Ok(tags) = db.list_all_tags() {
+            let items: Vec<PanelItem> = tags.into_iter().map(|tag| {
+                PanelItem::new(format!("#{tag}")).no_health().color(Color::Cyan)
+            }).collect();
+            tags_panel = tags_panel.items(items);
+        }
 
-        let branches = Panel::new("")
-            .items(vec![
-                PanelItem::new("main"),
-                PanelItem::new("develop"),
-                PanelItem::new("feature/auth-tui"),
-                PanelItem::new("fix/lifetime-error"),
-            ])
-            .bordered(false);
+        let mut branches_panel = Panel::new("").bordered(false);
+        if let Ok(branches) = db.list_all_branches() {
+            let items: Vec<PanelItem> = branches.into_iter().map(|branch| {
+                PanelItem::new(branch)
+            }).collect();
+            branches_panel = branches_panel.items(items);
+        }
 
         let tabs = TabSelection::new(vec![
-            Tab::new("Tags").badge("4"),
-            Tab::new("Branches").badge("4"),
+            Tab::new("Tags").badge(tags_panel.len().to_string()),
+            Tab::new("Branches").badge(branches_panel.len().to_string()),
         ]);
 
         Self {
             tabs,
-            panels: vec![TabContent::List(tags), TabContent::List(branches)],
+            panels: vec![TabContent::List(tags_panel), TabContent::List(branches_panel)],
             focused: false,
             last_area: std::cell::Cell::new(Rect::default()),
         }
     }
 
     /// Create panel 3 with Tours/Collections/Bookmarks tabs.
-    fn new_tours_collections_bookmarks() -> Self {
-        let tours = Panel::new("")
-            .items(vec![
-                PanelItem::new("Authentication flow").health(HealthStatus::Healthy).sync_direction(Some(SyncDirection::Push)),
-                PanelItem::new("Onboarding").health(HealthStatus::Healthy).sync_direction(Some(SyncDirection::Pull)),
-                PanelItem::new("API tutorial").health(HealthStatus::Warning).sync_direction(None),
-                PanelItem::new("Rust patterns").health(HealthStatus::Error).sync_direction(Some(SyncDirection::Push)),
-                PanelItem::new("TCA basics").health(HealthStatus::Unknown).sync_direction(Some(SyncDirection::Pull)),
-            ])
-            .bordered(false);
+    fn new_tours_collections_bookmarks(db: &Database) -> Self {
+        let mut collections_panel = Panel::new("").bordered(false);
+        if let Ok(collections) = db.list_collections() {
+            let items: Vec<PanelItem> = collections.into_iter().map(|(c, count)| {
+                let health = match c.health {
+                    Some(h) => match h.to_string().as_str() {
+                        "Healthy" => HealthStatus::Healthy,
+                        "Error" => HealthStatus::Error,
+                        _ => HealthStatus::Warning,
+                    },
+                    None => HealthStatus::Unknown,
+                };
+                PanelItem::new(c.name)
+                    .secondary_text(c.created_branch.unwrap_or_else(|| "main".to_string()))
+                    .metadata(format!("{count} steps"))
+                    .health(health)
+            }).collect();
+            collections_panel = collections_panel.items(items);
+        }
 
-        let collections = Panel::new("")
-            .items(vec![
-                PanelItem::new("My Collection").health(HealthStatus::Healthy).checkmark(true),
-                PanelItem::new("Shared Tours").health(HealthStatus::Healthy).checkmark(true),
-                PanelItem::new("Favorites").health(HealthStatus::Warning),
-            ])
-            .bordered(false);
-
-        let bookmarks = Panel::new("")
-            .items(vec![
-                PanelItem::new("Login Component").health(HealthStatus::Healthy),
-                PanelItem::new("API Handler").health(HealthStatus::Error),
-                PanelItem::new("Auth Middleware").health(HealthStatus::Unknown),
-            ])
-            .bordered(false);
+        let mut bookmarks_panel = Panel::new("").bordered(false);
+        if let Ok(bookmarks) = db.list_bookmarks(&BookmarkFilter::default()) {
+            let items: Vec<PanelItem> = bookmarks.into_iter().map(|bm| {
+                PanelItem::new(bm.file_path)
+                    .secondary_text(format!("L{}", bm.query))
+                    .metadata(bm.created_by.unwrap_or_default())
+            }).collect();
+            bookmarks_panel = bookmarks_panel.items(items);
+        }
 
         let tabs = TabSelection::new(vec![
-            Tab::new("Tours").badge("5"),
-            Tab::new("Collections").badge("3"),
-            Tab::new("Bookmarks").badge("3"),
+            Tab::new("Tours").badge(collections_panel.len().to_string()),
+            Tab::new("Collections").badge(collections_panel.len().to_string()),
+            Tab::new("Bookmarks").badge(bookmarks_panel.len().to_string()),
         ]);
 
         Self {
             tabs,
-            panels: vec![TabContent::List(tours), TabContent::List(collections), TabContent::List(bookmarks)],
+            panels: vec![TabContent::List(collections_panel.clone()), TabContent::List(collections_panel), TabContent::List(bookmarks_panel)],
             focused: false,
             last_area: std::cell::Cell::new(Rect::default()),
         }
     }
 
     /// Create steps/info tabs for right pane.
-    fn new_steps_info() -> Self {
+    fn new_steps_info(_db: &Database) -> Self {
         use crate::component::CodePreview;
         let fixture_path = "tests/fixtures/rust/api_client.rs";
         let code = std::fs::read_to_string(fixture_path)
@@ -1093,12 +1086,6 @@ impl TourInfo {
     /// Set focus state.
     fn set_focus(&mut self, focused: bool) {
         self.focused = focused;
-    }
-}
-
-impl Default for BrowserLayout {
-    fn default() -> Self {
-        Self::new()
     }
 }
 

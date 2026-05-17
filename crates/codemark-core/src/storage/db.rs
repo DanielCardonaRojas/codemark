@@ -327,6 +327,39 @@ impl Database {
         conn.execute(&format!("PRAGMA user_version = {version}"), [])?;
         Ok(())
     }
+
+    /// List all unique tags across bookmarks and collections.
+    pub fn list_all_tags(&self) -> Result<Vec<String>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT DISTINCT tag FROM tags
+             UNION
+             SELECT DISTINCT tag FROM collection_tags
+             ORDER BY tag",
+        )?;
+        let rows = stmt.query_map([], |row| row.get(0))?;
+        let mut tags = Vec::new();
+        for tag in rows {
+            tags.push(tag?);
+        }
+        Ok(tags)
+    }
+
+    /// List all unique branches across bookmarks and collections.
+    pub fn list_all_branches(&self) -> Result<Vec<String>> {
+        let mut stmt = self.conn.prepare(
+            "SELECT DISTINCT created_branch FROM bookmarks
+             UNION
+             SELECT DISTINCT created_branch FROM collections
+             WHERE created_branch IS NOT NULL
+             ORDER BY created_branch",
+        )?;
+        let rows = stmt.query_map([], |row| row.get(0))?;
+        let mut branches = Vec::new();
+        for branch in rows {
+            branches.push(branch?);
+        }
+        Ok(branches)
+    }
 }
 
 #[cfg(test)]
