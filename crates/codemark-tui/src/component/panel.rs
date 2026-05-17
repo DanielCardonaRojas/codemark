@@ -102,6 +102,8 @@ pub struct PanelItem {
     checkmark: bool,
     /// Sync direction indicator for tours (push/pull)
     sync_direction: Option<SyncDirection>,
+    /// Whether this item is currently active (e.g., active workspace)
+    active: bool,
 }
 
 /// Sync direction indicator for tours.
@@ -126,7 +128,14 @@ impl PanelItem {
             text_color: None,
             checkmark: false,
             sync_direction: None,
+            active: false,
         }
+    }
+
+    /// Set whether this item is active.
+    pub fn active(mut self, active: bool) -> Self {
+        self.active = active;
+        self
     }
 
     /// Set the secondary text.
@@ -174,6 +183,13 @@ impl PanelItem {
     /// Render this item as a Line.
     fn to_line(&self, selected: bool, focused: bool) -> Line {
         let mut spans = Vec::new();
+
+        // Add active indicator prefix (always present for alignment)
+        let prefix = if self.active { "* " } else { "  " };
+        spans.push(Span::styled(
+            prefix,
+            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+        ));
 
         // Add health status indicator if present
         if let Some(health) = self.health {

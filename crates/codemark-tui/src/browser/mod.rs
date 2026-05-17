@@ -677,17 +677,17 @@ impl TabbedPanel {
     fn new_repos_accounts() -> Self {
         let repos = Panel::new("")
             .items(vec![
-                PanelItem::new("dcardona/fix_authentication"),
-                PanelItem::new("dcardona/codemark"),
-                PanelItem::new("anthropics/claude-code"),
+                PanelItem::new("dcardona/fix_authentication").no_health(),
+                PanelItem::new("dcardona/codemark").active(true).no_health(),
+                PanelItem::new("anthropics/claude-code").no_health(),
             ])
             .bordered(false);
 
         let accounts = Panel::new("")
             .items(vec![
-                PanelItem::new("GitHub"),
-                PanelItem::new("GitLab"),
-                PanelItem::new("Bitbucket"),
+                PanelItem::new("GitHub").no_health(),
+                PanelItem::new("GitLab").no_health(),
+                PanelItem::new("Bitbucket").no_health(),
             ])
             .bordered(false);
 
