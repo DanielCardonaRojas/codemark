@@ -14,7 +14,6 @@ use std::time::Duration;
 
 use codemark_tui::{
     browser::BrowserLayout,
-    component::Component,
     event::{Event, EventHandlerConfig},
     state::{AppMode, AppState, FocusManager},
     ui::{self, NotificationType},
@@ -147,65 +146,74 @@ async fn run_app() -> Result<()> {
 
         // Handle events (blocking wait for next event)
         if let Some(event) = event_rx.recv().await {
-            let mut handled = false;
+            let mut events = vec![event];
+            
+            // Drain any other pending events to process them all before next draw
+            while let Ok(ev) = event_rx.try_recv() {
+                events.push(ev);
+            }
 
-            match &event {
-                Event::Key(key) => {
-                    match state.mode() {
-                        AppMode::Normal => {
-                            // Handle global key bindings
-                            match key.code {
-                                event::KeyCode::Char('q') => {
-                                    state.quit();
-                                    handled = true;
-                                }
-                                event::KeyCode::Char('?') => {
-                                    show_help = !show_help;
-                                    handled = true;
-                                }
-                                event::KeyCode::Esc => {
-                                    if show_help {
-                                        show_help = false;
-                                        handled = true;
-                                    } else if notification.is_some() {
-                                        notification = None;
+            for event in events {
+                let mut handled = false;
+
+                match &event {
+                    Event::Key(key) => {
+                        match state.mode() {
+                            AppMode::Normal => {
+                                // Handle global key bindings
+                                match key.code {
+                                    event::KeyCode::Char('q') => {
+                                        state.quit();
                                         handled = true;
                                     }
+                                    event::KeyCode::Char('?') => {
+                                        show_help = !show_help;
+                                        handled = true;
+                                    }
+                                    event::KeyCode::Esc => {
+                                        if show_help {
+                                            show_help = false;
+                                            handled = true;
+                                        } else if notification.is_some() {
+                                            notification = None;
+                                            handled = true;
+                                        }
+                                    }
+                                    _ => {}
                                 }
-                                _ => {}
                             }
-                        }
-                        AppMode::Command => {
-                            if key.code == event::KeyCode::Esc {
-                                state.set_mode(AppMode::Normal);
-                                handled = true;
+                            AppMode::Command => {
+                                if key.code == event::KeyCode::Esc {
+                                    state.set_mode(AppMode::Normal);
+                                    handled = true;
+                                }
                             }
-                        }
-                        _ => {
-                            if key.code == event::KeyCode::Esc {
-                                state.set_mode(AppMode::Normal);
-                                handled = true;
+                            _ => {
+                                if key.code == event::KeyCode::Esc {
+                                    state.set_mode(AppMode::Normal);
+                                    handled = true;
+                                }
                             }
                         }
                     }
+                    Event::Resize(width, height) => {
+                        state.set_size(*width, *height);
+                    }
+                    _ => {}
                 }
-                Event::Resize(width, height) => {
-                    state.set_size(*width, *height);
+
+                // If not handled by global keys, pass to layout (includes mouse events)
+                if !handled {
+                    layout.handle_event(&event);
                 }
-                _ => {}
+
+                // Let state handle the event too (captures keys for Search mode)
+                state.handle_event(&event);
+
+                // Update filter based on active_filter (committed via Enter)
+                let query = state.get_string("active_filter").unwrap_or("");
+                layout.apply_filter(query);
             }
-
-            // If not handled by global keys, pass to layout (includes mouse events)
-            if !handled {
-                layout.handle_event(&event);
-            }
-
-            // Let state handle the event too (captures keys for Search mode)
-            state.handle_event(&event);
-
-            // Update filter based on active_filter (committed via Enter)
-            let query = state.get_string("active_filter").unwrap_or("");
-            layout.apply_filter(query);
         }
     }
 

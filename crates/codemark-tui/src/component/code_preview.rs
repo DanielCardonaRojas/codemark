@@ -15,9 +15,13 @@ use syntect::easy::HighlightLines;
 use syntect::highlighting::{Style as SyntectStyle, ThemeSet};
 use syntect::parsing::SyntaxSet;
 use syntect::util::LinesWithEndings;
+use std::sync::LazyLock;
 
 use super::Component;
 use crate::event::Event;
+
+static SYNTAX_SET: LazyLock<SyntaxSet> = LazyLock::new(|| SyntaxSet::load_defaults_newlines());
+static THEME_SET: LazyLock<ThemeSet> = LazyLock::new(|| ThemeSet::load_defaults());
 
 /// A component for displaying syntax-highlighted code with line numbers.
 #[derive(Debug, Clone)]
@@ -32,59 +36,56 @@ pub struct CodePreview {
     focused: bool,
     /// Last rendered area
     last_area: std::cell::Cell<Rect>,
+    /// Cache for highlighted lines to avoid re-highlighting on every frame
+    cached_lines: RefCell<Vec<Line<'static>>>,
 }
 
 impl CodePreview {
     /// Create a new code preview.
     pub fn new(code: impl Into<String>, extension: impl Into<String>) -> Self {
-        Self {
-            code: code.into(),
-            extension: extension.into(),
+        let code = code.into();
+        let extension = extension.into();
+        let preview = Self {
+            code,
+            extension,
             list_state: RefCell::new(ListState::default()),
             focused: false,
             last_area: std::cell::Cell::new(Rect::default()),
-        }
+            cached_lines: RefCell::new(Vec::new()),
+        };
+        preview.refresh_cache();
+        preview
     }
 
     /// Set the code to display.
     pub fn set_code(&mut self, code: String) {
         self.code = code;
         *self.list_state.borrow_mut() = ListState::default();
+        self.refresh_cache();
     }
 
     /// Set the file extension.
     pub fn set_extension(&mut self, extension: String) {
-        self.extension = extension;
-    }
-
-    /// Jump to and select a specific line index (0-indexed).
-    pub fn jump_to_line(&mut self, line_index: usize) {
-        let line_count = self.code.lines().count();
-        if line_count > 0 {
-            let target = line_index.min(line_count - 1);
-            self.list_state.borrow_mut().select(Some(target));
+        if self.extension != extension {
+            self.extension = extension;
+            self.refresh_cache();
         }
     }
-}
 
-impl Component for CodePreview {
-    fn render(&self, area: Rect, buf: &mut Buffer) {
-        self.last_area.set(area);
-        
-        let ps = SyntaxSet::load_defaults_newlines();
-        let ts = ThemeSet::load_defaults();
+    /// Refresh the syntax highlighting cache.
+    fn refresh_cache(&self) {
+        let ps = &*SYNTAX_SET;
+        let ts = &*THEME_SET;
         let syntax = ps
             .find_syntax_by_extension(&self.extension)
             .unwrap_or_else(|| ps.find_syntax_plain_text());
         let theme = &ts.themes["base16-ocean.dark"];
 
         let mut h = HighlightLines::new(syntax, theme);
-        let mut list_items = Vec::new();
-
-        let selected = self.list_state.borrow().selected();
+        let mut highlighted = Vec::new();
 
         for (i, line) in LinesWithEndings::from(&self.code).enumerate() {
-            let ranges: Vec<(SyntectStyle, &str)> = h.highlight_line(line, &ps).unwrap_or_default();
+            let ranges: Vec<(SyntectStyle, &str)> = h.highlight_line(line, ps).unwrap_or_default();
             let mut spans = Vec::new();
 
             // Add line number (gutter)
@@ -97,10 +98,40 @@ impl Component for CodePreview {
             // Convert syntect style to ratatui style
             for (style, text) in ranges {
                 let fg = Color::Rgb(style.foreground.r, style.foreground.g, style.foreground.b);
-                spans.push(Span::styled(text.trim_end_matches(['\n', '\r']), Style::default().fg(fg)));
+                spans.push(Span::styled(
+                    text.trim_end_matches(['\n', '\r']).to_string(),
+                    Style::default().fg(fg),
+                ));
             }
+            highlighted.push(Line::from(spans));
+        }
+        *self.cached_lines.borrow_mut() = highlighted;
+    }
 
-            let mut list_item = ListItem::new(Line::from(spans));
+    /// Jump to and select a specific line index (0-indexed).
+    pub fn jump_to_line(&mut self, line_index: usize) {
+        let line_count = self.code.lines().count();
+        if line_count > 0 {
+            let target = line_index.min(line_count - 1);
+            self.list_state.borrow_mut().select(Some(target));
+        }
+    }
+
+    /// Get the last rendered area.
+    pub fn last_area(&self) -> Rect {
+        self.last_area.get()
+    }
+}
+
+impl Component for CodePreview {
+    fn render(&self, area: Rect, buf: &mut Buffer) {
+        self.last_area.set(area);
+        
+        let cached = self.cached_lines.borrow();
+        let selected = self.list_state.borrow().selected();
+
+        let list_items: Vec<ListItem> = cached.iter().enumerate().map(|(i, line)| {
+            let mut list_item = ListItem::new(line.clone());
             if selected == Some(i) {
                 let bg_color = if self.focused {
                     Color::Rgb(50, 50, 50)  // Light gray highlight for focused
@@ -109,8 +140,8 @@ impl Component for CodePreview {
                 };
                 list_item = list_item.style(Style::default().bg(bg_color));
             }
-            list_items.push(list_item);
-        }
+            list_item
+        }).collect();
 
         let inner = area; // Assuming no border for now as TabbedPanel handles it
         let height = inner.height as usize;
