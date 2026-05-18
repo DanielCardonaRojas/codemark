@@ -407,6 +407,15 @@ impl Panel {
         }
     }
 
+    /// Get all currently active items in the entire list (regardless of filtering).
+    pub fn active_items(&self) -> Vec<String> {
+        self.all_items
+            .iter()
+            .filter(|i| i.active)
+            .map(|i| i.text.clone())
+            .collect()
+    }
+
     /// Select the next item.
     pub fn select_next(&mut self) {
         if self.items.is_empty() {

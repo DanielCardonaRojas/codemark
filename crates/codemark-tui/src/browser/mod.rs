@@ -296,6 +296,81 @@ impl BrowserLayout {
         }
     }
 
+    /// Update the Tours/Collections/Bookmarks panel based on active filters (tags/branches).
+    fn update_tours_collections(&mut self) {
+        let active_tags = self.left_pane.panel2.panels.get(0)
+            .and_then(|c| match c { TabContent::List(p) => Some(p.active_items()), _ => None })
+            .unwrap_or_default();
+            
+        let active_branches = self.left_pane.panel2.panels.get(1)
+            .and_then(|c| match c { TabContent::List(p) => Some(p.active_items()), _ => None })
+            .unwrap_or_default();
+
+        // 1. Update Tours/Collections (Panel 3, tabs 0 and 1)
+        if let Ok(collections) = self.db.list_collections() {
+            let filtered_items: Vec<PanelItem> = collections.into_iter()
+                .filter(|(c, _count)| {
+                    // Filter by branch if any are active
+                    let branch_match = active_branches.is_empty() || 
+                        c.created_branch.as_ref().map_or(false, |b| active_branches.contains(b));
+                    
+                    // Filter by tags if any are active (requires fetching collection tags)
+                    let tag_match = active_tags.is_empty() || {
+                        if let Ok(c_tags) = self.db.list_tags_for_collection(&c.id) {
+                            c_tags.iter().any(|t| active_tags.contains(&t.tag))
+                        } else {
+                            false
+                        }
+                    };
+
+                    branch_match && tag_match
+                })
+                .map(|(c, count)| {
+                    let health = match c.health {
+                        Some(h) => match h.to_string().as_str() {
+                            "Healthy" => HealthStatus::Healthy,
+                            "Error" => HealthStatus::Error,
+                            _ => HealthStatus::Warning,
+                        },
+                        None => HealthStatus::Unknown,
+                    };
+                    PanelItem::new(c.name)
+                        .secondary_text(c.created_branch.unwrap_or_else(|| "main".to_string()))
+                        .metadata(format!("{count} steps"))
+                        .health(health)
+                })
+                .collect();
+
+            if let Some(TabContent::List(p)) = self.left_pane.panel3.panels.get_mut(0) {
+                p.set_items(filtered_items.clone());
+            }
+            if let Some(TabContent::List(p)) = self.left_pane.panel3.panels.get_mut(1) {
+                p.set_items(filtered_items);
+            }
+        }
+
+        // 2. Update Bookmarks (Panel 3, tab 2)
+        use codemark_core::engine::bookmark::BookmarkFilter;
+        if let Ok(bookmarks) = self.db.list_bookmarks(&BookmarkFilter::default()) {
+            let filtered_items: Vec<PanelItem> = bookmarks.into_iter()
+                .filter(|bm| {
+                    let branch_match = active_branches.is_empty(); // Bookmarks don't have direct branch column in this version
+                    let tag_match = active_tags.is_empty() || bm.tags.iter().any(|t| active_tags.contains(t));
+                    branch_match && tag_match
+                })
+                .map(|bm| {
+                    PanelItem::new(bm.file_path)
+                        .secondary_text(format!("L{}", bm.query))
+                        .metadata(bm.created_by.unwrap_or_default())
+                })
+                .collect();
+
+            if let Some(TabContent::List(p)) = self.left_pane.panel3.panels.get_mut(2) {
+                p.set_items(filtered_items);
+            }
+        }
+    }
+
     /// Set the focus area.
     pub fn set_focus(&mut self, focus: FocusArea) {
         self.focus = focus;
@@ -432,6 +507,13 @@ impl BrowserLayout {
                     if self.focus == FocusArea::Panel1 {
                         if let Some(panel) = self.left_pane.panel1.active_panel_mut() {
                             panel.activate_selected();
+                            return true;
+                        }
+                    }
+                    if self.focus == FocusArea::Panel2 {
+                        if let Some(panel) = self.left_pane.panel2.active_panel_mut() {
+                            panel.activate_selected();
+                            self.update_tours_collections();
                             return true;
                         }
                     }
