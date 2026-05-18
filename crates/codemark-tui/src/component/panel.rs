@@ -104,6 +104,8 @@ pub struct PanelItem {
     sync_direction: Option<SyncDirection>,
     /// Whether this item is currently active (e.g., active workspace)
     active: bool,
+    /// Optional hidden user data (e.g., database ID)
+    pub user_data: Option<String>,
 }
 
 /// Sync direction indicator for tours.
@@ -129,7 +131,14 @@ impl PanelItem {
             checkmark: false,
             sync_direction: None,
             active: false,
+            user_data: None,
         }
+    }
+
+    /// Set hidden user data.
+    pub fn user_data(mut self, data: impl Into<String>) -> Self {
+        self.user_data = Some(data.into());
+        self
     }
 
     /// Set whether this item is active.

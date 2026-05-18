@@ -17,7 +17,7 @@ use ratatui::{
     widgets::{Paragraph, Wrap, Widget},
 };
 use crate::component::{
-    Component, HealthStatus, Panel, PanelItem, SyncDirection, CodePreview, MarkdownPanel,
+    Component, HealthStatus, Panel, PanelItem, CodePreview, MarkdownPanel,
 };
 use crate::event::Event;
 use crate::ui::KeyBinding;
@@ -190,6 +190,15 @@ struct TabbedPanel {
     last_area: std::cell::Cell<Rect>,
 }
 
+/// Escape special markdown characters.
+fn escape_markdown(text: &str) -> String {
+    text.replace('_', "\\_")
+        .replace('*', "\\*")
+        .replace('[', "\\[")
+        .replace(']', "\\]")
+        .replace('#', "\\#")
+}
+
 impl BrowserLayout {
     /// Create a new browser layout.
     pub fn new(db: Database) -> Self {
@@ -350,7 +359,6 @@ impl BrowserLayout {
         }
 
         // 2. Update Bookmarks (Panel 3, tab 2)
-        use codemark_core::engine::bookmark::BookmarkFilter;
         if let Ok(bookmarks) = self.db.list_bookmarks(&BookmarkFilter::default()) {
             let filtered_items: Vec<PanelItem> = bookmarks.into_iter()
                 .filter(|bm| {
@@ -362,6 +370,7 @@ impl BrowserLayout {
                     PanelItem::new(bm.file_path)
                         .secondary_text(format!("L{}", bm.query))
                         .metadata(bm.created_by.unwrap_or_default())
+                        .user_data(bm.id)
                 })
                 .collect();
 
@@ -530,6 +539,17 @@ impl BrowserLayout {
                                     return true;
                                 }
                             }
+                        } else if active_tab == 2 { // Bookmarks
+                            if let Some(panel) = self.left_pane.panel3.active_panel_mut() {
+                                if let Some(selected) = panel.selected() {
+                                    if let Some(id) = selected.user_data.clone() {
+                                        panel.activate_selected();
+                                        self.right_pane.load_bookmark(&self.db, &id);
+                                        self.set_focus(FocusArea::Main);
+                                        return true;
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -585,8 +605,6 @@ impl BrowserLayout {
         }
 
         // 3. Delegate to panes
-        // If it's a mouse event, we delegate to ALL panes so they can check bounds
-        // If it's a key event, we only delegate to the focused pane
         match event {
             Event::Mouse(_) => {
                 self.left_pane.handle_event(event) || self.right_pane.handle_event(event)
@@ -665,14 +683,6 @@ impl LeftPane {
             || self.panel3.handle_event(event)
     }
 }
-/// Escape special markdown characters.
-fn escape_markdown(text: &str) -> String {
-    text.replace('_', "\\_")
-        .replace('*', "\\*")
-        .replace('[', "\\[")
-        .replace(']', "\\]")
-        .replace('#', "\\#")
-}
 
 impl RightPane {
     /// Create a new right pane.
@@ -720,6 +730,87 @@ impl RightPane {
             let markdown = self.generate_bookmark_markdown(&step.bookmark, step.resolution.as_ref());
             if let Some(md_panel) = self.steps.get_markdown_mut() {
                 md_panel.set_markdown(markdown);
+            }
+        }
+    }
+
+    /// Load a single bookmark for previewing.
+    pub fn load_bookmark(&mut self, db: &Database, bookmark_id: &str) {
+        if let Ok(Some(bm)) = db.get_bookmark(bookmark_id) {
+            let mut line_number = 0;
+            let mut file_path = bm.file_path.clone();
+            let mut resolution = None;
+
+            if let Some(res_id) = bm.current_resolution_id.as_ref() {
+                if let Ok(Some(res)) = db.get_resolution(res_id) {
+                    if let Some(lr) = res.line_range.as_ref() {
+                        if let Some(start) = lr.split('-').next().and_then(|s| s.parse::<usize>().ok()) {
+                            line_number = start.saturating_sub(1);
+                        }
+                    }
+                    if let Some(fp) = res.file_path.as_ref() {
+                        file_path = fp.clone();
+                    }
+                    resolution = Some(res);
+                }
+            }
+
+            if let Ok(abs_path) = codemark_core::git::context::resolve_bookmark_file_path(&file_path, db.path()) {
+                self.steps_data = vec![StepData {
+                    file_path: abs_path.to_string_lossy().to_string(),
+                    line_number,
+                    bookmark: bm,
+                    resolution,
+                }];
+                self.pager_total = 1;
+                self.pager_current = 0;
+                self.update_preview();
+            }
+        }
+    }
+
+    /// Load a tour and its steps from the database.
+    pub fn load_tour(&mut self, db: &Database, tour_name: &str) {
+        if let Ok(Some(collection)) = db.get_collection_by_name(tour_name) {
+            if let Ok(bookmarks) = db.list_bookmarks_in_collection(&collection.id) {
+                let mut new_steps = Vec::new();
+                for bm in bookmarks {
+                    let mut line_number = 0;
+                    let mut file_path = bm.file_path.clone();
+                    let mut resolution = None;
+
+                    // Try to get resolution data for better accuracy
+                    if let Some(res_id) = bm.current_resolution_id.as_ref() {
+                        if let Ok(Some(res)) = db.get_resolution(res_id) {
+                            if let Some(lr) = res.line_range.as_ref() {
+                                if let Some(start) = lr.split('-').next().and_then(|s| s.parse::<usize>().ok()) {
+                                    line_number = start.saturating_sub(1);
+                                }
+                            }
+                            if let Some(fp) = res.file_path.as_ref() {
+                                file_path = fp.clone();
+                            }
+                            resolution = Some(res);
+                        }
+                    }
+
+                    // Resolve absolute path
+                    if let Ok(abs_path) = codemark_core::git::context::resolve_bookmark_file_path(&file_path, db.path()) {
+                        new_steps.push(StepData {
+                            file_path: abs_path.to_string_lossy().to_string(),
+                            line_number,
+                            bookmark: bm,
+                            resolution,
+                        });
+                    }
+                }
+
+                if !new_steps.is_empty() {
+                    self.steps_data = new_steps;
+                    self.pager_total = self.steps_data.len();
+                    self.pager_current = 0;
+                    self.update_preview();
+                }
             }
         }
     }
@@ -772,52 +863,6 @@ impl RightPane {
         md
     }
 
-    /// Load a tour and its steps from the database.
-    pub fn load_tour(&mut self, db: &Database, tour_name: &str) {
-        if let Ok(Some(collection)) = db.get_collection_by_name(tour_name) {
-            if let Ok(bookmarks) = db.list_bookmarks_in_collection(&collection.id) {
-                let mut new_steps = Vec::new();
-                for bm in bookmarks {
-                    let mut line_number = 0;
-                    let mut file_path = bm.file_path.clone();
-                    let mut resolution = None;
-
-                    // Try to get resolution data for better accuracy
-                    if let Some(res_id) = bm.current_resolution_id.as_ref() {
-                        if let Ok(Some(res)) = db.get_resolution(res_id) {
-                            if let Some(lr) = res.line_range.as_ref() {
-                                if let Some(start) = lr.split('-').next().and_then(|s| s.parse::<usize>().ok()) {
-                                    line_number = start.saturating_sub(1);
-                                }
-                            }
-                            if let Some(fp) = res.file_path.as_ref() {
-                                file_path = fp.clone();
-                            }
-                            resolution = Some(res);
-                        }
-                    }
-
-                    // Resolve absolute path
-                    if let Ok(abs_path) = codemark_core::git::context::resolve_bookmark_file_path(&file_path, db.path()) {
-                        new_steps.push(StepData {
-                            file_path: abs_path.to_string_lossy().to_string(),
-                            line_number,
-                            bookmark: bm,
-                            resolution,
-                        });
-                    }
-                }
-
-                if !new_steps.is_empty() {
-                    self.steps_data = new_steps;
-                    self.pager_total = self.steps_data.len();
-                    self.pager_current = 0;
-                    self.update_preview();
-                }
-            }
-        }
-    }
-
     /// Render the right pane.
     fn render(&self, area: Rect, buf: &mut Buffer) {
         self.last_area.set(area);
@@ -828,23 +873,36 @@ impl RightPane {
             self.info_config.min
         };
 
-        // Split vertically: steps (flex), pager (1 row), tour info (dynamic height)
-        let chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
+        // If only one step, hide the pager
+        let constraints = if self.pager_total > 1 {
+            vec![
                 Constraint::Min(0),
                 Constraint::Length(1),
                 Constraint::Length(info_height),
-            ])
+            ]
+        } else {
+            vec![
+                Constraint::Min(0),
+                Constraint::Length(0),
+                Constraint::Length(info_height),
+            ]
+        };
+
+        // Split vertically: steps (flex), pager (1 row or 0), tour info (dynamic height)
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints(constraints)
             .split(area);
 
         // Render steps tabbed panel
         self.steps.render(chunks[0], buf);
 
-        // Render pager
-        use crate::component::Pager;
-        let pager = Pager::new(self.pager_total, self.pager_current);
-        pager.render(chunks[1], buf);
+        // Render pager if needed
+        if self.pager_total > 1 {
+            use crate::component::Pager;
+            let pager = Pager::new(self.pager_total, self.pager_current);
+            pager.render(chunks[1], buf);
+        }
 
         // Render tour info
         self.tour_info.render(chunks[2], buf);
@@ -1098,6 +1156,7 @@ impl TabbedPanel {
                 PanelItem::new(bm.file_path)
                     .secondary_text(format!("L{}", bm.query))
                     .metadata(bm.created_by.unwrap_or_default())
+                    .user_data(bm.id)
             }).collect();
             bookmarks_panel = bookmarks_panel.items(items);
         }
