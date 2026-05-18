@@ -108,12 +108,12 @@ struct StepData {
     resolution: Option<Resolution>,
 }
 
-/// Right pane containing Steps and Tour Info sections.
+/// Right pane containing Steps and Details sections.
 struct RightPane {
     /// Steps tabbed panel (Steps/Info)
     steps: TabbedPanel,
-    /// Tour info panel showing metadata
-    tour_info: TourInfo,
+    /// Details panel showing bookmark metadata
+    details: DetailsPanel,
     /// Data for each step in the current tour
     steps_data: Vec<StepData>,
     /// Currently focused section
@@ -124,7 +124,7 @@ struct RightPane {
     pager_current: usize,
     /// Last rendered area
     last_area: std::cell::Cell<Rect>,
-    /// Tour info height configuration
+    /// Details height configuration
     info_config: SectionConfig,
 }
 
@@ -132,20 +132,22 @@ struct RightPane {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RightPaneFocus {
     Steps,
-    TourInfo,
+    Details,
 }
 
-/// Tour info component displaying tour metadata.
-struct TourInfo {
-    /// Tour ID
+/// Details panel displaying bookmark metadata.
+struct DetailsPanel {
+    /// Bookmark ID (short)
     id: String,
-    /// Branch name
-    branch: String,
     /// Author
     author: String,
-    /// Step count
-    step_count: usize,
-    /// Tags associated with this tour
+    /// Health status
+    health: String,
+    /// Commit hash
+    commit: String,
+    /// Creation date
+    created_at: String,
+    /// Tags associated with this bookmark
     tags: Vec<String>,
     /// Whether the panel is focused
     focused: bool,
@@ -763,7 +765,7 @@ impl BrowserLayout {
                 }
                 ratatui::crossterm::event::KeyCode::Char('6') => {
                     self.focus = FocusArea::Main;
-                    self.right_pane.focus_tour_info();
+                    self.right_pane.focus_details();
                     self.update_focus_state();
                     return true;
                 }
@@ -852,7 +854,7 @@ impl RightPane {
     fn new(db: &Database) -> Self {
         let mut pane = Self {
             steps: TabbedPanel::new_steps_info(db),
-            tour_info: TourInfo::new(),
+            details: DetailsPanel::new(),
             steps_data: Vec::new(),
             focused: RightPaneFocus::Steps,
             pager_total: 0,
@@ -895,6 +897,9 @@ impl RightPane {
             if let Some(md_panel) = self.steps.get_markdown_mut() {
                 md_panel.set_markdown(markdown);
             }
+
+            // Update Details panel
+            self.details.set_bookmark(&step.bookmark, step.resolution.as_ref());
         }
     }
 
@@ -1036,7 +1041,7 @@ impl RightPane {
     fn render(&self, area: Rect, buf: &mut Buffer) {
         self.last_area.set(area);
 
-        let info_height = if self.focused == RightPaneFocus::TourInfo {
+        let info_height = if self.focused == RightPaneFocus::Details {
             self.info_config.max
         } else {
             self.info_config.min
@@ -1049,7 +1054,7 @@ impl RightPane {
             vec![Constraint::Min(0), Constraint::Length(0), Constraint::Length(info_height)]
         };
 
-        // Split vertically: steps (flex), pager (1 row or 0), tour info (dynamic height)
+        // Split vertically: steps (flex), pager (1 row or 0), details (dynamic height)
         let chunks =
             Layout::default().direction(Direction::Vertical).constraints(constraints).split(area);
 
@@ -1063,8 +1068,8 @@ impl RightPane {
             pager.render(chunks[1], buf);
         }
 
-        // Render tour info
-        self.tour_info.render(chunks[2], buf);
+        // Render details
+        self.details.render(chunks[2], buf);
     }
 
     /// Handle an event.
@@ -1086,13 +1091,13 @@ impl RightPane {
             {
                 self.focus_steps();
             } else {
-                let info_area = self.tour_info.last_area();
+                let info_area = self.details.last_area();
                 if col >= info_area.x
                     && col < info_area.x + info_area.width
                     && row >= info_area.y
                     && row < info_area.y + info_area.height
                 {
-                    self.focus_tour_info();
+                    self.focus_details();
                 }
             }
         }
@@ -1100,7 +1105,7 @@ impl RightPane {
         // Forward to focused component first
         let handled = match self.focused {
             RightPaneFocus::Steps => self.steps.handle_event(event),
-            RightPaneFocus::TourInfo => false, // Tour info doesn't handle events
+            RightPaneFocus::Details => false, // Details doesn't handle events
         };
 
         if handled {
@@ -1130,17 +1135,13 @@ impl RightPane {
                 }
                 ratatui::crossterm::event::KeyCode::Down => {
                     if self.focused == RightPaneFocus::Steps {
-                        self.focused = RightPaneFocus::TourInfo;
-                        self.steps.set_focus(false);
-                        self.tour_info.set_focus(true);
+                        self.focus_details();
                         return true;
                     }
                 }
                 ratatui::crossterm::event::KeyCode::Up => {
-                    if self.focused == RightPaneFocus::TourInfo {
-                        self.focused = RightPaneFocus::Steps;
-                        self.tour_info.set_focus(false);
-                        self.steps.set_focus(true);
+                    if self.focused == RightPaneFocus::Details {
+                        self.focus_steps();
                         return true;
                     }
                 }
@@ -1155,7 +1156,7 @@ impl RightPane {
     fn set_focus(&mut self, focused: bool) {
         match self.focused {
             RightPaneFocus::Steps => self.steps.set_focus(focused),
-            RightPaneFocus::TourInfo => self.tour_info.set_focus(focused),
+            RightPaneFocus::Details => self.details.set_focus(focused),
         }
     }
 
@@ -1163,13 +1164,13 @@ impl RightPane {
     pub fn focus_steps(&mut self) {
         self.focused = RightPaneFocus::Steps;
         self.steps.set_focus(true);
-        self.tour_info.set_focus(false);
+        self.details.set_focus(false);
     }
 
-    /// Focus the tour info section.
-    pub fn focus_tour_info(&mut self) {
-        self.focused = RightPaneFocus::TourInfo;
-        self.tour_info.set_focus(true);
+    /// Focus the details section.
+    pub fn focus_details(&mut self) {
+        self.focused = RightPaneFocus::Details;
+        self.details.set_focus(true);
         self.steps.set_focus(false);
     }
 
@@ -1178,11 +1179,11 @@ impl RightPane {
         self.last_area.get()
     }
 
-    /// Toggle internal focus between Steps and Tour Info.
+    /// Toggle internal focus between Steps and Details.
     pub fn toggle_internal_focus(&mut self) {
         match self.focused {
-            RightPaneFocus::Steps => self.focus_tour_info(),
-            RightPaneFocus::TourInfo => self.focus_steps(),
+            RightPaneFocus::Steps => self.focus_details(),
+            RightPaneFocus::Details => self.focus_steps(),
         }
     }
 }
@@ -1496,26 +1497,39 @@ impl TabbedPanel {
     }
 }
 
-impl TourInfo {
-    /// Create a new tour info panel.
+impl DetailsPanel {
+    /// Create a new details panel.
     fn new() -> Self {
         Self {
-            id: "a2nsg-k2est".to_string(),
-            branch: "main".to_string(),
-            author: "Claude Code".to_string(),
-            step_count: 5,
-            tags: vec!["#auth".to_string(), "#backend".to_string(), "#security".to_string()],
+            id: String::new(),
+            author: String::new(),
+            health: String::new(),
+            commit: String::new(),
+            created_at: String::new(),
+            tags: Vec::new(),
             focused: false,
             last_area: std::cell::Cell::new(Rect::default()),
         }
     }
 
+/// Set bookmark data.
+pub fn set_bookmark(&mut self, bm: &Bookmark, res: Option<&Resolution>) {
+    self.id = bm.id[..8.min(bm.id.len())].to_string();
+    self.author = bm.created_by.clone().unwrap_or_else(|| "Unknown".to_string());
+    self.health = bm.health.to_string();
+    self.created_at = bm.created_at.to_string();
+    self.tags = bm.tags.iter().map(|t| format!("#{}", t)).collect();
+    self.commit = res
+        .and_then(|r| r.commit_hash.as_ref())
+        .map(|c| c[..8.min(c.len())].to_string())
+        .unwrap_or_else(|| "N/A".to_string());
+}
     /// Get the last rendered area.
     pub fn last_area(&self) -> Rect {
         self.last_area.get()
     }
 
-    /// Render the tour info panel.
+    /// Render the details panel.
     fn render(&self, area: Rect, buf: &mut Buffer) {
         self.last_area.set(area);
         // Render border
@@ -1527,30 +1541,45 @@ impl TourInfo {
 
         let block = ratatui::widgets::Block::bordered()
             .border_type(ratatui::widgets::BorderType::Rounded)
-            .title("Tour info")
+            .title("Details")
             .title_style(Style::default().bold())
             .border_style(border_style);
 
         let inner = block.inner(area);
         block.render(area, buf);
 
+        if self.id.is_empty() {
+            return;
+        }
+
         // Build info content
         let mut info_lines = vec![
             Line::from(vec![
-                Span::styled("Branch: ", Style::default().fg(Color::DarkGray)),
-                Span::styled(&self.branch, Style::default().fg(Color::Cyan)),
+                Span::styled("ID:      ", Style::default().fg(Color::DarkGray)),
+                Span::styled(&self.id, Style::default().fg(Color::Yellow)),
             ]),
             Line::from(vec![
-                Span::styled("Author: ", Style::default().fg(Color::DarkGray)),
+                Span::styled("Author:  ", Style::default().fg(Color::DarkGray)),
                 Span::styled(&self.author, Style::default().fg(Color::Cyan)),
             ]),
             Line::from(vec![
-                Span::styled("Steps: ", Style::default().fg(Color::DarkGray)),
-                Span::styled(format!("{}", self.step_count), Style::default().fg(Color::Cyan)),
+                Span::styled("Health:  ", Style::default().fg(Color::DarkGray)),
+                Span::styled(
+                    &self.health,
+                    Style::default().fg(match self.health.as_str() {
+                        "Active" | "Healthy" => Color::Green,
+                        "Error" | "Stale" => Color::Red,
+                        _ => Color::Yellow,
+                    }),
+                ),
             ]),
             Line::from(vec![
-                Span::styled("Id: ", Style::default().fg(Color::DarkGray)),
-                Span::styled(self.id.clone(), Style::default().fg(Color::Yellow).dim()),
+                Span::styled("Commit:  ", Style::default().fg(Color::DarkGray)),
+                Span::styled(&self.commit, Style::default().fg(Color::Magenta)),
+            ]),
+            Line::from(vec![
+                Span::styled("Created: ", Style::default().fg(Color::DarkGray)),
+                Span::styled(&self.created_at, Style::default().fg(Color::Gray)),
             ]),
         ];
 
