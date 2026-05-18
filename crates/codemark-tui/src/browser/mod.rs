@@ -96,12 +96,15 @@ struct LeftPane {
     panel2_config: SectionConfig,
 }
 
+// @lat: [[tui-line-range-selection#StepData struct]]
 /// Data for a single step in a tour.
 struct StepData {
     /// Path to the file for this step
     file_path: String,
     /// Line number to jump to (0-indexed)
     line_number: usize,
+    /// Optional end line number for range highlighting (0-indexed, inclusive)
+    line_end: Option<usize>,
     /// Real bookmark data
     bookmark: Bookmark,
     /// Resolution data if available
@@ -910,7 +913,7 @@ impl RightPane {
             if let Some(preview) = self.steps.get_step_preview_mut() {
                 preview.set_code(code);
                 preview.set_extension(ext.to_string());
-                preview.jump_to_line(step.line_number);
+                preview.jump_to_range(step.line_number, step.line_end);
             }
 
             // Update Info tab with markdown
@@ -931,25 +934,36 @@ impl RightPane {
         }
     }
 
+    // @lat: [[tui-line-range-selection#Load bookmark with range]]
     /// Load a single bookmark for previewing.
     pub fn load_bookmark(&mut self, db: &Database, bookmark_id: &str) {
         if let Ok(Some(bm)) = db.get_bookmark(bookmark_id) {
             let mut line_number = 0;
+            let mut line_end = None;
             let mut file_path = bm.file_path.clone();
-            let mut resolution = None;
 
-            if let Some(res_id) = bm.current_resolution_id.as_ref()
-                && let Ok(Some(res)) = db.get_resolution(res_id)
-            {
-                if let Some(lr) = res.line_range.as_ref()
-                    && let Some(start) = lr.split('-').next().and_then(|s| s.parse::<usize>().ok())
-                {
-                    line_number = start.saturating_sub(1);
-                }
+            // Get the best resolution for preview (from nearest ancestor commit)
+            let resolution = db.get_preview_resolution(&bm.id).ok().flatten();
+
+            // Extract line_range and file_path from the resolution
+            if let Some(ref res) = resolution {
                 if let Some(fp) = res.file_path.as_ref() {
                     file_path = fp.clone();
                 }
-                resolution = Some(res);
+                if let Some(lr) = res.line_range.as_ref() {
+                    let parts: Vec<&str> = lr.split('-').collect();
+                    if let (Some(start), Some(end)) = (
+                        parts.first().and_then(|s| s.parse::<usize>().ok()),
+                        parts.get(1).and_then(|s| s.parse::<usize>().ok())
+                    ) {
+                        line_number = start.saturating_sub(1);
+                        line_end = Some(end.saturating_sub(1));
+                    } else if let Some(start) =
+                        parts.first().and_then(|s| s.parse::<usize>().ok())
+                    {
+                        line_number = start.saturating_sub(1);
+                    }
+                }
             }
 
             if let Ok(abs_path) =
@@ -958,6 +972,7 @@ impl RightPane {
                 self.steps_data = vec![StepData {
                     file_path: abs_path.to_string_lossy().to_string(),
                     line_number,
+                    line_end,
                     bookmark: bm,
                     resolution,
                 }];
@@ -976,23 +991,31 @@ impl RightPane {
             let mut new_steps = Vec::new();
             for bm in bookmarks {
                 let mut line_number = 0;
+                let mut line_end = None;
                 let mut file_path = bm.file_path.clone();
-                let mut resolution = None;
 
-                // Try to get resolution data for better accuracy
-                if let Some(res_id) = bm.current_resolution_id.as_ref()
-                    && let Ok(Some(res)) = db.get_resolution(res_id)
-                {
-                    if let Some(lr) = res.line_range.as_ref()
-                        && let Some(start) =
-                            lr.split('-').next().and_then(|s| s.parse::<usize>().ok())
-                    {
-                        line_number = start.saturating_sub(1);
-                    }
+                // Get the best resolution for preview (from nearest ancestor commit)
+                let resolution = db.get_preview_resolution(&bm.id).ok().flatten();
+
+                // Extract line_range and file_path from the resolution
+                if let Some(ref res) = resolution {
                     if let Some(fp) = res.file_path.as_ref() {
                         file_path = fp.clone();
                     }
-                    resolution = Some(res);
+                    if let Some(lr) = res.line_range.as_ref() {
+                        let parts: Vec<&str> = lr.split('-').collect();
+                        if let (Some(start), Some(end)) = (
+                            parts.first().and_then(|s| s.parse::<usize>().ok()),
+                            parts.get(1).and_then(|s| s.parse::<usize>().ok())
+                        ) {
+                            line_number = start.saturating_sub(1);
+                            line_end = Some(end.saturating_sub(1));
+                        } else if let Some(start) =
+                            parts.first().and_then(|s| s.parse::<usize>().ok())
+                        {
+                            line_number = start.saturating_sub(1);
+                        }
+                    }
                 }
 
                 // Resolve absolute path
@@ -1002,6 +1025,7 @@ impl RightPane {
                     new_steps.push(StepData {
                         file_path: abs_path.to_string_lossy().to_string(),
                         line_number,
+                        line_end,
                         bookmark: bm,
                         resolution,
                     });

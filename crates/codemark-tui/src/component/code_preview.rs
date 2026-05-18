@@ -23,6 +23,7 @@ use crate::event::Event;
 static SYNTAX_SET: LazyLock<SyntaxSet> = LazyLock::new(SyntaxSet::load_defaults_newlines);
 static THEME_SET: LazyLock<ThemeSet> = LazyLock::new(ThemeSet::load_defaults);
 
+// @lat: [[tui-line-range-selection#CodePreview component]]
 /// A component for displaying syntax-highlighted code with line numbers.
 #[derive(Debug, Clone)]
 pub struct CodePreview {
@@ -34,6 +35,8 @@ pub struct CodePreview {
     scroll_offset: u16,
     /// Currently highlighted line (0-indexed)
     selected_line: Option<usize>,
+    /// Currently highlighted range (start, end inclusive, 0-indexed)
+    selected_range: Option<(usize, usize)>,
     /// Whether the component is focused
     focused: bool,
     /// Last rendered area
@@ -52,6 +55,7 @@ impl CodePreview {
             extension,
             scroll_offset: 0,
             selected_line: None,
+            selected_range: None,
             focused: false,
             last_area: std::cell::Cell::new(Rect::default()),
             cached_lines: RefCell::new(Vec::new()),
@@ -65,6 +69,7 @@ impl CodePreview {
         self.code = code;
         self.scroll_offset = 0;
         self.selected_line = None;
+        self.selected_range = None;
         self.refresh_cache();
     }
 
@@ -112,19 +117,56 @@ impl CodePreview {
         *self.cached_lines.borrow_mut() = highlighted;
     }
 
+    // @lat: [[tui-line-range-selection#CodePreview Component#Jump to Range]]
     /// Jump to and select a specific line index (0-indexed).
     pub fn jump_to_line(&mut self, line_index: usize) {
+        self.jump_to_range(line_index, None);
+    }
+
+    /// Jump to and select a line range (0-indexed).
+    /// If end is None, only the start line is highlighted.
+    pub fn jump_to_range(&mut self, start: usize, end: Option<usize>) {
         let line_count = self.code.lines().count();
         if line_count > 0 {
-            let target = line_index.min(line_count - 1);
-            self.selected_line = Some(target);
-            
-            // Adjust scroll to center the line
-            let height = self.last_area.get().height as usize;
-            if height > 0 {
-                let half_height = height / 2;
-                self.scroll_offset = target.saturating_sub(half_height) as u16;
+            let start = start.min(line_count - 1);
+            let end_value = end.map(|e| e.min(line_count - 1)).unwrap_or(start);
+
+            self.selected_line = Some(start);
+            // Always set selected_range if we have a multi-line range
+            self.selected_range = if let Some(e) = end {
+                if start != e {
+                    Some((start.min(e), e))
+                } else {
+                    None
+                }
+            } else {
+                None
+            };
+
+            // Adjust scroll offset immediately if we have area info
+            let area_height = self.last_area.get().height as usize;
+
+            if area_height > 0 {
+                self.scroll_offset = self.calculate_scroll_offset(start, end_value, area_height);
+            } else {
+                // No area info yet - set a reasonable default
+                self.scroll_offset = start.saturating_sub(2) as u16;
             }
+        }
+    }
+
+    /// Calculate the scroll offset for a given range.
+    fn calculate_scroll_offset(&self, start: usize, end: usize, area_height: usize) -> u16 {
+        let range_height = end.saturating_sub(start) + 1;
+
+        if range_height >= area_height {
+            // Range is larger than viewport, show from start with minimal padding
+            start.saturating_sub(1) as u16
+        } else {
+            // Center the range in viewport
+            let range_mid = start + range_height / 2;
+            let half_height = area_height / 2;
+            range_mid.saturating_sub(half_height) as u16
         }
     }
 
@@ -137,33 +179,44 @@ impl CodePreview {
 impl Component for CodePreview {
     fn render(&self, area: Rect, buf: &mut Buffer) {
         self.last_area.set(area);
-        
+
         let cached = self.cached_lines.borrow();
         let selected = self.selected_line;
+        let selected_range = self.selected_range;
+        let list_len = cached.len();
+        let height = area.height as usize;
 
-        // Apply highlighting to the selected line
-        let mut text_lines = Vec::with_capacity(cached.len());
+        // Apply highlighting to the selected line or range
+        let mut text_lines = Vec::with_capacity(list_len);
         for (i, line) in cached.iter().enumerate() {
-            let mut line = line.clone();
-            if selected == Some(i) {
-                let bg_color = if self.focused {
-                    Color::Rgb(50, 50, 50)  // Light gray highlight for focused
+            let is_selected = selected == Some(i);
+            let in_range = selected_range.map_or(false, |(start, end)| i >= start && i <= end);
+
+            if is_selected || in_range {
+                let bg_color = if in_range && !is_selected {
+                    // Lighter background for range (excluding the selected line itself)
+                    Color::Rgb(70, 70, 90)
                 } else {
-                    Color::Rgb(35, 35, 35)  // Darker gray for unfocused
+                    // Standard highlight for selected line
+                    Color::Rgb(90, 90, 110)
                 };
-                line = line.style(Style::default().bg(bg_color));
+                // Clone the line and apply style
+                let mut styled_line = line.clone();
+                styled_line = styled_line.style(Style::default().bg(bg_color));
+                text_lines.push(styled_line);
+            } else {
+                text_lines.push(line.clone());
             }
-            text_lines.push(line);
         }
+
+        drop(cached); // Drop cached before rendering
 
         let paragraph = ratatui::widgets::Paragraph::new(text_lines)
             .scroll((self.scroll_offset, 0));
-        
+
         paragraph.render(area, buf);
 
         // Render scrollbar
-        let list_len = cached.len();
-        let height = area.height as usize;
         if !self.code.is_empty() && list_len > height {
             let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
                 .begin_symbol(None)
@@ -198,7 +251,9 @@ impl Component for CodePreview {
                     if line_count > 0 {
                         let next = self.selected_line.map_or(0, |i| (i + 1).min(line_count - 1));
                         self.selected_line = Some(next);
-                        
+                        // Clear range when manually navigating
+                        self.selected_range = None;
+
                         // Auto-scroll if selection goes off screen
                         let height = self.last_area.get().height as usize;
                         if next >= self.scroll_offset as usize + height {
@@ -213,6 +268,8 @@ impl Component for CodePreview {
                 | ratatui::crossterm::event::KeyCode::Char('k') => {
                     let next = self.selected_line.map_or(0, |i| i.saturating_sub(1));
                     self.selected_line = Some(next);
+                    // Clear range when manually navigating
+                    self.selected_range = None;
 
                     // Auto-scroll if selection goes off screen
                     if next < self.scroll_offset as usize {
