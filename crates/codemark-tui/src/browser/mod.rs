@@ -12,7 +12,7 @@ pub use tabs::{Tab, TabSelection};
 use crate::component::{CodePreview, Component, HealthStatus, MarkdownPanel, Panel, PanelItem};
 use crate::event::Event;
 use crate::ui::KeyBinding;
-use codemark_core::engine::bookmark::{Bookmark, BookmarkFilter, Resolution};
+use codemark_core::engine::bookmark::{Bookmark, BookmarkFilter, BookmarkHealth, Resolution};
 use codemark_core::storage::db::Database;
 use ratatui::{
     buffer::Buffer,
@@ -1368,9 +1368,21 @@ impl TabbedPanel {
             Ok(bookmarks) => bookmarks
                 .into_iter()
                 .map(|bm| {
+                    // Get the best resolution for preview to determine health status
+                    let health = db.get_preview_resolution(&bm.id)
+                        .ok()
+                        .flatten()
+                        .map(|res| match res.health {
+                            BookmarkHealth::Active => HealthStatus::Healthy,
+                            BookmarkHealth::Drifted => HealthStatus::Warning,
+                            BookmarkHealth::Stale | BookmarkHealth::Archived => HealthStatus::Error,
+                        })
+                        .unwrap_or(HealthStatus::Unknown);
+
                     PanelItem::new(bm.file_path)
                         .secondary_text(format!("L{}", bm.query))
                         .metadata(bm.created_by.unwrap_or_default())
+                        .health(health)
                         .user_data(bm.id)
                 })
                 .collect(),
