@@ -1342,10 +1342,10 @@ impl TabbedPanel {
         if let Ok(collections) = db.list_collections() {
             for (c, count) in collections {
                 let health = match c.health {
-                    Some(h) => match h.to_string().as_str() {
-                        "Healthy" => HealthStatus::Healthy,
-                        "Error" => HealthStatus::Error,
-                        _ => HealthStatus::Warning,
+                    Some(h) => match h {
+                        codemark_core::engine::bookmark::CollectionHealth::Active => HealthStatus::Healthy,
+                        codemark_core::engine::bookmark::CollectionHealth::Drifted => HealthStatus::Warning,
+                        codemark_core::engine::bookmark::CollectionHealth::Stale => HealthStatus::Error,
                     },
                     None => HealthStatus::Unknown,
                 };
