@@ -345,6 +345,7 @@ impl BrowserLayout {
                         // Bookmarks
                         bindings.push(("Enter", "Preview bookmark"));
                         bindings.push(("o", "Open in editor"));
+                        bindings.push(("d", "Delete bookmark"));
                     }
                     _ => {}
                 }
@@ -404,6 +405,7 @@ impl BrowserLayout {
                         // Bookmarks
                         bindings.insert(0, KeyBinding::new("o", "Open"));
                         bindings.insert(1, KeyBinding::new("Enter", "Preview"));
+                        bindings.insert(2, KeyBinding::new("d", "Delete"));
                     }
                     _ => {}
                 }
@@ -869,17 +871,30 @@ impl BrowserLayout {
                     self.open_in_editor();
                     return true;
                 }
-                // Delete collection when in Collections tab (Panel 3, tab 1)
+                // Delete collection when in Collections tab (Panel 3, tab 1) or bookmarks (tab 2)
                 ratatui::crossterm::event::KeyCode::Char('d') => {
-                    if self.focus == FocusArea::Panel3
-                        && self.left_pane.panel3.tabs.selected_index() == 1
-                    {
-                        if let Some(panel) = self.left_pane.panel3.active_panel_mut()
-                            && let Some(selected) = panel.selected()
-                        {
-                            let collection_name = selected.text().to_string();
-                            if let Ok(Some(_collection)) = self.db.get_collection_by_name(&collection_name) {
-                                let _ = self.db.delete_collection(&collection_name);
+                    if self.focus == FocusArea::Panel3 {
+                        let active_tab = self.left_pane.panel3.tabs.selected_index();
+                        if active_tab == 1 {
+                            // Collections
+                            if let Some(panel) = self.left_pane.panel3.active_panel_mut()
+                                && let Some(selected) = panel.selected()
+                            {
+                                let collection_name = selected.text().to_string();
+                                if let Ok(Some(_collection)) = self.db.get_collection_by_name(&collection_name) {
+                                    let _ = self.db.delete_collection(&collection_name);
+                                    // Refresh panels after deletion
+                                    self.refresh_all_panels();
+                                    return true;
+                                }
+                            }
+                        } else if active_tab == 2 {
+                            // Bookmarks
+                            if let Some(panel) = self.left_pane.panel3.active_panel_mut()
+                                && let Some(selected) = panel.selected()
+                                && let Some(id) = selected.user_data.clone()
+                            {
+                                let _ = self.db.delete_bookmark(&id);
                                 // Refresh panels after deletion
                                 self.refresh_all_panels();
                                 return true;
