@@ -298,6 +298,76 @@ impl BrowserLayout {
 
     /// Get context-aware keybindings for the status bar.
     pub fn get_status_bindings(&self) -> Vec<KeyBinding> {
+        self.get_context_bindings()
+    }
+
+    /// Get context-aware keybindings for help display.
+    ///
+    /// Returns a list of (key, description) tuples suitable for display in the help panel.
+    /// The bindings are contextual based on the current focus area and active tab.
+    pub fn get_help_bindings(&self) -> Vec<(&'static str, &'static str)> {
+        let mut bindings = vec![
+            ("q", "Quit"),
+            ("?", "Toggle help"),
+            ("Tab", "Cycle focus"),
+            ("Esc", "Back/Cancel"),
+            ("/", "Search"),
+            ("[", "Previous tab"),
+            ("]", "Next tab"),
+        ];
+
+        match self.focus {
+            FocusArea::Search => {
+                bindings.push(("Enter", "Search"));
+            }
+            FocusArea::Panel1 => {
+                bindings.push(("Enter", "Select repo"));
+            }
+            FocusArea::Panel2 => {
+                bindings.push(("Enter", "Toggle filter"));
+                bindings.push(("Space", "Toggle filter"));
+            }
+            FocusArea::Panel3 => {
+                let active_tab = self.left_pane.panel3.tabs.selected_index();
+                match active_tab {
+                    0 => {
+                        // Tours
+                        bindings.push(("Enter", "Open tour"));
+                        bindings.push(("p", "Pull tour"));
+                        bindings.push(("P", "Push tour"));
+                    }
+                    1 => {
+                        // Collections
+                        bindings.push(("Enter", "Open collection"));
+                        bindings.push(("d", "Delete collection"));
+                    }
+                    2 => {
+                        // Bookmarks
+                        bindings.push(("Enter", "Preview bookmark"));
+                        bindings.push(("o", "Open in editor"));
+                    }
+                    _ => {}
+                }
+            }
+            FocusArea::Main => {
+                bindings.push(("Enter", "Go to step"));
+                bindings.push(("o", "Open in editor"));
+                bindings.push(("←/h", "Previous step"));
+                bindings.push(("→/l", "Next step"));
+                bindings.push(("↑", "Focus steps"));
+                bindings.push(("↓", "Focus details"));
+            }
+        }
+
+        // Navigation keys (always available)
+        bindings.push(("j/↓", "Move down"));
+        bindings.push(("k/↑", "Move up"));
+
+        bindings
+    }
+
+    /// Get context-aware bindings as KeyBinding structs.
+    fn get_context_bindings(&self) -> Vec<KeyBinding> {
         let mut bindings = vec![
             KeyBinding::new("/", "Filter"),
             KeyBinding::new("?", "Help"),

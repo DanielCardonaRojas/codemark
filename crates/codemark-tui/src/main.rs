@@ -77,7 +77,7 @@ async fn run_app() -> Result<()> {
 
             if show_help {
                 // Draw help overlay
-                let bindings = ui::common_key_bindings();
+                let bindings = layout.get_help_bindings();
                 let help_width = 50.min(size.width.saturating_sub(4));
                 let help_height = (bindings.len() as u16 + 4).min(size.height.saturating_sub(4));
 
@@ -109,7 +109,9 @@ async fn run_app() -> Result<()> {
                 );
 
                 // Draw help overlay
-                ui::render_help_panel(help_area, f.buffer_mut(), &bindings);
+                // Convert &[(&str, &str)] to &[(&str, &str)] - compatible types
+                let bindings_refs: Vec<(&str, &str)> = bindings.iter().map(|(k, v)| (*k, *v)).collect();
+                ui::render_help_panel(help_area, f.buffer_mut(), &bindings_refs);
             } else {
                 // Draw normal UI
                 let chunks = ratatui::layout::Layout::default()
