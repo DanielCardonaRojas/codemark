@@ -97,6 +97,14 @@ impl CodePreview {
             let ranges: Vec<(SyntectStyle, &str)> = h.highlight_line(line, ps).unwrap_or_default();
             let mut spans = Vec::new();
 
+            // Add sign column indicator (1 char) + line number (4 chars) + space (1 char) = 6 chars total gutter
+            // Sign column shows: '■' for single line, '├' for start, '│' for middle, '└' for end of range
+            let sign = " "; // Default: no mark
+            spans.push(Span::styled(
+                sign,
+                Style::default().fg(Color::DarkGray),
+            ));
+
             // Add line number (gutter)
             let line_num = format!("{:>3} ", i + 1);
             spans.push(Span::styled(
@@ -181,32 +189,42 @@ impl Component for CodePreview {
         self.last_area.set(area);
 
         let cached = self.cached_lines.borrow();
-        let selected = self.selected_line;
         let selected_range = self.selected_range;
         let list_len = cached.len();
         let height = area.height as usize;
 
-        // Apply highlighting to the selected line or range
+        // Build text lines with sign column indicators
         let mut text_lines = Vec::with_capacity(list_len);
         for (i, line) in cached.iter().enumerate() {
-            let is_selected = selected == Some(i);
             let in_range = selected_range.map_or(false, |(start, end)| i >= start && i <= end);
 
-            if is_selected || in_range {
-                let bg_color = if in_range && !is_selected {
-                    // Lighter background for range (excluding the selected line itself)
-                    Color::Rgb(70, 70, 90)
-                } else {
-                    // Standard highlight for selected line
-                    Color::Rgb(90, 90, 110)
-                };
-                // Clone the line and apply style
-                let mut styled_line = line.clone();
-                styled_line = styled_line.style(Style::default().bg(bg_color));
-                text_lines.push(styled_line);
+            // Sign indicator: show │ for range lines (independent of current selection)
+            let sign = if in_range {
+                "│" // Vertical bar for lines in the bookmark range
             } else {
-                text_lines.push(line.clone());
+                " "
+            };
+
+            // Sign color: cyan for range lines, regardless of current selection
+            let sign_color = if in_range {
+                Color::Cyan
+            } else {
+                Color::DarkGray
+            };
+
+            // Rebuild the line with the correct sign indicator
+            // The cached line has: sign (1 char) + line number (4 chars) + content
+            // We need to replace just the sign span
+            let mut new_spans = Vec::new();
+            new_spans.push(Span::styled(sign, Style::default().fg(sign_color)));
+
+            // Add the rest of the line (line number + content), skipping the original sign span
+            if line.spans.len() > 1 {
+                for span in &line.spans[1..] {
+                    new_spans.push(span.clone());
+                }
             }
+            text_lines.push(Line::from(new_spans));
         }
 
         drop(cached); // Drop cached before rendering
@@ -251,8 +269,6 @@ impl Component for CodePreview {
                     if line_count > 0 {
                         let next = self.selected_line.map_or(0, |i| (i + 1).min(line_count - 1));
                         self.selected_line = Some(next);
-                        // Clear range when manually navigating
-                        self.selected_range = None;
 
                         // Auto-scroll if selection goes off screen
                         let height = self.last_area.get().height as usize;
@@ -268,8 +284,6 @@ impl Component for CodePreview {
                 | ratatui::crossterm::event::KeyCode::Char('k') => {
                     let next = self.selected_line.map_or(0, |i| i.saturating_sub(1));
                     self.selected_line = Some(next);
-                    // Clear range when manually navigating
-                    self.selected_range = None;
 
                     // Auto-scroll if selection goes off screen
                     if next < self.scroll_offset as usize {
