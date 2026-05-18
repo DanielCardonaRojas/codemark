@@ -220,6 +220,18 @@ impl Component for CodePreview {
                     }
                     true
                 }
+                ratatui::crossterm::event::KeyCode::Char('J') => {
+                    let line_count = self.code.lines().count();
+                    self.scroll_offset = self
+                        .scroll_offset
+                        .saturating_add(5)
+                        .min(line_count.saturating_sub(1) as u16);
+                    true
+                }
+                ratatui::crossterm::event::KeyCode::Char('K') => {
+                    self.scroll_offset = self.scroll_offset.saturating_sub(5);
+                    true
+                }
                 _ => false,
             },
             Event::Mouse(mouse) => match mouse.kind {
