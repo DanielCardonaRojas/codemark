@@ -140,9 +140,7 @@ impl EventHandler {
             crossterm::execute!(std::io::stdout(), crossterm::event::EnableMouseCapture)?;
         }
 
-        Ok(Self {
-            tx: Arc::new(tx),
-        })
+        Ok(Self { tx: Arc::new(tx) })
     }
 
     /// Get the next event.
@@ -155,7 +153,9 @@ impl EventHandler {
     }
 
     /// Create a new event handler and return a receiver.
-    pub fn with_receiver(config: EventHandlerConfig) -> anyhow::Result<(mpsc::Receiver<Event>, Self)> {
+    pub fn with_receiver(
+        config: EventHandlerConfig,
+    ) -> anyhow::Result<(mpsc::Receiver<Event>, Self)> {
         let (tx, rx) = mpsc::channel(config.channel_capacity);
 
         // Enable mouse events if configured
@@ -171,34 +171,25 @@ impl EventHandler {
         // Spawn the event loop task
         tokio::spawn(event_loop_with_sender(config.tick_rate, tx.clone()));
 
-        let handler = Self {
-            tx: Arc::new(mpsc::unbounded_channel().0),
-        };
+        let handler = Self { tx: Arc::new(mpsc::unbounded_channel().0) };
 
         Ok((rx, handler))
     }
 }
 
 /// The main event loop that polls for crossterm events.
-async fn event_loop(
-    _config: EventHandlerConfig,
-    _rx: mpsc::UnboundedReceiver<Event>,
-) {
+async fn event_loop(_config: EventHandlerConfig, _rx: mpsc::UnboundedReceiver<Event>) {
     // This would continuously poll for events and send them to the channel
     // Implementation depends on the specific requirements
 }
 
 /// Event loop that sends to an mpsc channel.
-async fn event_loop_with_sender(
-    tick_rate: Duration,
-    tx: mpsc::Sender<Event>,
-) {
+async fn event_loop_with_sender(tick_rate: Duration, tx: mpsc::Sender<Event>) {
     let mut last_tick = std::time::Instant::now();
 
     loop {
-        let timeout = tick_rate
-            .checked_sub(last_tick.elapsed())
-            .unwrap_or_else(|| Duration::from_secs(0));
+        let timeout =
+            tick_rate.checked_sub(last_tick.elapsed()).unwrap_or_else(|| Duration::from_secs(0));
 
         if crossterm::event::poll(timeout).unwrap_or(false) {
             if let Ok(crossterm_event) = crossterm::event::read() {
@@ -340,13 +331,20 @@ mod tests {
 
     #[test]
     fn test_event_is_navigation() {
-        let up_event = Event::Key(KeyEvent::new(KeyCode::Up, ratatui::crossterm::event::KeyModifiers::NONE));
+        let up_event =
+            Event::Key(KeyEvent::new(KeyCode::Up, ratatui::crossterm::event::KeyModifiers::NONE));
         assert!(up_event.is_navigation());
 
-        let k_event = Event::Key(KeyEvent::new(KeyCode::Char('k'), ratatui::crossterm::event::KeyModifiers::NONE));
+        let k_event = Event::Key(KeyEvent::new(
+            KeyCode::Char('k'),
+            ratatui::crossterm::event::KeyModifiers::NONE,
+        ));
         assert!(k_event.is_navigation());
 
-        let q_event = Event::Key(KeyEvent::new(KeyCode::Char('q'), ratatui::crossterm::event::KeyModifiers::NONE));
+        let q_event = Event::Key(KeyEvent::new(
+            KeyCode::Char('q'),
+            ratatui::crossterm::event::KeyModifiers::NONE,
+        ));
         assert!(!q_event.is_navigation());
     }
 
@@ -355,7 +353,8 @@ mod tests {
         let bindings = KeyBindings::default();
 
         let up_key = KeyEvent::new(KeyCode::Up, ratatui::crossterm::event::KeyModifiers::NONE);
-        let k_key = KeyEvent::new(KeyCode::Char('k'), ratatui::crossterm::event::KeyModifiers::NONE);
+        let k_key =
+            KeyEvent::new(KeyCode::Char('k'), ratatui::crossterm::event::KeyModifiers::NONE);
 
         assert!(bindings.matches(&up_key, KeyAction::Up));
         assert!(bindings.matches(&k_key, KeyAction::Up));

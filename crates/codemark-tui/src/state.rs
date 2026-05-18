@@ -53,10 +53,7 @@ impl Default for AppMode {
 impl AppMode {
     /// Check if this is a mode that accepts text input.
     pub fn is_input_mode(&self) -> bool {
-        matches!(
-            self,
-            Self::Insert | Self::Command | Self::Search | Self::Confirm
-        )
+        matches!(self, Self::Insert | Self::Command | Self::Search | Self::Confirm)
     }
 
     /// Get the mode indicator string for display in the UI.
@@ -294,10 +291,10 @@ impl AppState {
                             }
                             self.set_mode(AppMode::Normal);
                             true
-                        }
- else if key.code == ratatui::crossterm::event::KeyCode::Enter {
+                        } else if key.code == ratatui::crossterm::event::KeyCode::Enter {
                             if self.mode == AppMode::Search {
-                                let buffer = self.get_string("filter_buffer").unwrap_or("").to_string();
+                                let buffer =
+                                    self.get_string("filter_buffer").unwrap_or("").to_string();
                                 self.set_string("active_filter", buffer);
                                 self.set_mode(AppMode::Normal);
                                 true
@@ -306,7 +303,8 @@ impl AppState {
                             }
                         } else if let ratatui::crossterm::event::KeyCode::Char(c) = key.code {
                             if self.mode == AppMode::Search {
-                                let mut query = self.get_string("filter_buffer").unwrap_or("").to_string();
+                                let mut query =
+                                    self.get_string("filter_buffer").unwrap_or("").to_string();
                                 query.push(c);
                                 self.set_string("filter_buffer", query);
                                 true
@@ -315,7 +313,8 @@ impl AppState {
                             }
                         } else if key.code == ratatui::crossterm::event::KeyCode::Backspace {
                             if self.mode == AppMode::Search {
-                                let mut query = self.get_string("filter_buffer").unwrap_or("").to_string();
+                                let mut query =
+                                    self.get_string("filter_buffer").unwrap_or("").to_string();
                                 query.pop();
                                 self.set_string("filter_buffer", query);
                                 true
@@ -401,10 +400,7 @@ pub struct FocusManager {
 impl FocusManager {
     /// Create a new focus manager.
     pub fn new() -> Self {
-        Self {
-            components: Vec::new(),
-            focused: None,
-        }
+        Self { components: Vec::new(), focused: None }
     }
 
     /// Add a component to the focus order.
@@ -443,9 +439,7 @@ impl FocusManager {
 
     /// Get the currently focused component ID.
     pub fn focused(&self) -> Option<&str> {
-        self.focused
-            .and_then(|i| self.components.get(i))
-            .map(String::as_str)
+        self.focused.and_then(|i| self.components.get(i)).map(String::as_str)
     }
 
     /// Set the focused component by ID.

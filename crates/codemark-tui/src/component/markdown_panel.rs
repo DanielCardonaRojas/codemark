@@ -1,5 +1,7 @@
 //! A component for rendering simple Markdown-like text for bookmark info.
 
+use crate::component::Component;
+use crate::event::Event;
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
@@ -7,8 +9,6 @@ use ratatui::{
     text::{Line, Span, Text},
     widgets::{Paragraph, Widget},
 };
-use crate::component::Component;
-use crate::event::Event;
 
 /// A component that renders simple markdown-style text.
 #[derive(Debug, Clone, Default)]
@@ -40,20 +40,27 @@ impl MarkdownPanel {
         for line in self.content.lines() {
             if line.starts_with("# ") {
                 // H1
-                lines.push(Line::from(vec![
-                    Span::styled(&line[2..], Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD | Modifier::UNDERLINED)),
-                ]));
+                lines.push(Line::from(vec![Span::styled(
+                    &line[2..],
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
+                )]));
                 lines.push(Line::from(""));
             } else if line.starts_with("## ") {
                 // H2
-                lines.push(Line::from(vec![
-                    Span::styled(&line[3..], Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
-                ]));
+                lines.push(Line::from(vec![Span::styled(
+                    &line[3..],
+                    Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+                )]));
             } else if line.starts_with("> ") {
                 // Blockquote
                 lines.push(Line::from(vec![
                     Span::styled("┃ ", Style::default().fg(Color::DarkGray)),
-                    Span::styled(&line[2..], Style::default().fg(Color::Gray).add_modifier(Modifier::ITALIC)),
+                    Span::styled(
+                        &line[2..],
+                        Style::default().fg(Color::Gray).add_modifier(Modifier::ITALIC),
+                    ),
                 ]));
             } else if line.starts_with("- ") {
                 // List item
@@ -74,7 +81,10 @@ impl MarkdownPanel {
                     if i == 0 {
                         // Key
                         let clean_key = text.trim_matches('*');
-                        spans.push(Span::styled(format!("{:<15}", clean_key), Style::default().fg(Color::DarkGray)));
+                        spans.push(Span::styled(
+                            format!("{:<15}", clean_key),
+                            Style::default().fg(Color::DarkGray),
+                        ));
                     } else {
                         // Value
                         spans.push(Span::raw(text));
@@ -94,9 +104,8 @@ impl MarkdownPanel {
 impl Component for MarkdownPanel {
     fn render(&self, area: Rect, buf: &mut Buffer) {
         let text = self.parse_to_text();
-        let paragraph = Paragraph::new(text)
-            .scroll((self.scroll_offset, 0));
-        
+        let paragraph = Paragraph::new(text).scroll((self.scroll_offset, 0));
+
         paragraph.render(area, buf);
     }
 
@@ -107,11 +116,13 @@ impl Component for MarkdownPanel {
 
         if let Event::Key(key) = event {
             match key.code {
-                ratatui::crossterm::event::KeyCode::Down | ratatui::crossterm::event::KeyCode::Char('j') => {
+                ratatui::crossterm::event::KeyCode::Down
+                | ratatui::crossterm::event::KeyCode::Char('j') => {
                     self.scroll_offset = self.scroll_offset.saturating_add(1);
                     true
                 }
-                ratatui::crossterm::event::KeyCode::Up | ratatui::crossterm::event::KeyCode::Char('k') => {
+                ratatui::crossterm::event::KeyCode::Up
+                | ratatui::crossterm::event::KeyCode::Char('k') => {
                     self.scroll_offset = self.scroll_offset.saturating_sub(1);
                     true
                 }

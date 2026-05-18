@@ -9,13 +9,13 @@ use std::time::Duration;
 use crossterm::{
     event::{DisableMouseCapture, EnableMouseCapture},
     execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
-use ratatui::{backend::CrosstermBackend, Terminal};
+use ratatui::{Terminal, backend::CrosstermBackend};
 
 use crate::component::{Panel, PanelItem};
 use crate::event::{Event, EventHandler, EventHandlerConfig};
-use crate::layout::{helpers, LayoutManager};
+use crate::layout::{LayoutManager, helpers};
 use crate::state::{AppState, FocusManager};
 use crate::ui::{self, NotificationType};
 
@@ -141,7 +141,12 @@ impl App {
                         width: size.width,
                         height: 1,
                     };
-                    ui::render_notification(notification_area, f.buffer_mut(), msg, *notification_type);
+                    ui::render_notification(
+                        notification_area,
+                        f.buffer_mut(),
+                        msg,
+                        *notification_type,
+                    );
                 }
             })?;
 
@@ -176,10 +181,7 @@ impl App {
 
         // In a real app, we'd get these from the active layout/component
         // For this scaffold, we'll use some defaults or mock data
-        let bindings = vec![
-            ui::KeyBinding::new("?", "Help"),
-            ui::KeyBinding::new("q", "Quit"),
-        ];
+        let bindings = vec![ui::KeyBinding::new("?", "Help"), ui::KeyBinding::new("q", "Quit")];
 
         // Render status bar
         ui::render_status_bar(
@@ -209,10 +211,7 @@ impl App {
         layout.render(chunks[0], f.buffer_mut());
 
         // For the static version in the demo, we use placeholder bindings
-        let bindings = vec![
-            ui::KeyBinding::new("?", "Help"),
-            ui::KeyBinding::new("q", "Quit"),
-        ];
+        let bindings = vec![ui::KeyBinding::new("?", "Help"), ui::KeyBinding::new("q", "Quit")];
 
         // Render status bar
         ui::render_status_bar(
@@ -352,12 +351,7 @@ impl Drop for App {
     fn drop(&mut self) {
         // Restore terminal state
         disable_raw_mode().ok();
-        execute!(
-            self.terminal.backend_mut(),
-            LeaveAlternateScreen,
-            DisableMouseCapture
-        )
-        .ok();
+        execute!(self.terminal.backend_mut(), LeaveAlternateScreen, DisableMouseCapture).ok();
     }
 }
 
@@ -369,10 +363,7 @@ pub struct AppBuilder {
 
 impl Default for AppBuilder {
     fn default() -> Self {
-        Self {
-            tick_rate: Duration::from_millis(250),
-            enable_mouse: true,
-        }
+        Self { tick_rate: Duration::from_millis(250), enable_mouse: true }
     }
 }
 
@@ -408,9 +399,7 @@ mod tests {
 
     #[test]
     fn test_app_builder() {
-        let builder = AppBuilder::new()
-            .tick_rate(Duration::from_millis(100))
-            .enable_mouse(false);
+        let builder = AppBuilder::new().tick_rate(Duration::from_millis(100)).enable_mouse(false);
 
         assert_eq!(builder.tick_rate, Duration::from_millis(100));
         assert!(!builder.enable_mouse);

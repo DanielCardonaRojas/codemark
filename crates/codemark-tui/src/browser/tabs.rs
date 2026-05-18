@@ -20,10 +20,7 @@ pub struct Tab {
 impl Tab {
     /// Create a new tab.
     pub fn new(label: impl Into<String>) -> Self {
-        Self {
-            label: label.into(),
-            badge_text: None,
-        }
+        Self { label: label.into(), badge_text: None }
     }
 
     /// Set a badge for this tab.
@@ -59,10 +56,7 @@ impl Tab {
         ];
 
         if let Some(badge) = &self.badge_text {
-            spans.push(Span::styled(
-                format!(" ({badge})"),
-                base_style,
-            ));
+            spans.push(Span::styled(format!(" ({badge})"), base_style));
         }
 
         spans.push(Span::styled(" ", base_style));
@@ -85,11 +79,7 @@ pub struct TabSelection {
 impl TabSelection {
     /// Create a new tab selection.
     pub fn new(tabs: Vec<Tab>) -> Self {
-        Self {
-            tabs,
-            selected: 0,
-            focused: false,
-        }
+        Self { tabs, selected: 0, focused: false }
     }
 
     /// Get the selected tab index.
@@ -114,11 +104,8 @@ impl TabSelection {
     /// Select the previous tab.
     pub fn previous(&mut self) {
         if !self.tabs.is_empty() {
-            self.selected = if self.selected == 0 {
-                self.tabs.len() - 1
-            } else {
-                self.selected - 1
-            };
+            self.selected =
+                if self.selected == 0 { self.tabs.len() - 1 } else { self.selected - 1 };
         }
     }
 
@@ -214,10 +201,7 @@ mod tests {
 
     #[test]
     fn test_tab_selection() {
-        let mut tabs = TabSelection::new(vec![
-            Tab::new("Local"),
-            Tab::new("Remote"),
-        ]);
+        let mut tabs = TabSelection::new(vec![Tab::new("Local"), Tab::new("Remote")]);
 
         assert_eq!(tabs.selected_index(), 0);
 

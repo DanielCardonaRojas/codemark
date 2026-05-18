@@ -1,21 +1,20 @@
 //! Code preview component with syntax highlighting and line numbers.
 
-use std::cell::RefCell;
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
     style::{Color, Style},
     text::{Line, Span},
     widgets::{
-        List, ListItem, ListState, Scrollbar, ScrollbarOrientation,
-        ScrollbarState, StatefulWidget,
+        List, ListItem, ListState, Scrollbar, ScrollbarOrientation, ScrollbarState, StatefulWidget,
     },
 };
+use std::cell::RefCell;
+use std::sync::LazyLock;
 use syntect::easy::HighlightLines;
 use syntect::highlighting::{Style as SyntectStyle, ThemeSet};
 use syntect::parsing::SyntaxSet;
 use syntect::util::LinesWithEndings;
-use std::sync::LazyLock;
 
 use super::Component;
 use crate::event::Event;
@@ -90,10 +89,7 @@ impl CodePreview {
 
             // Add line number (gutter)
             let line_num = format!("{:>3} ", i + 1);
-            spans.push(Span::styled(
-                line_num,
-                Style::default().fg(Color::DarkGray),
-            ));
+            spans.push(Span::styled(line_num, Style::default().fg(Color::DarkGray)));
 
             // Convert syntect style to ratatui style
             for (style, text) in ranges {
@@ -126,22 +122,26 @@ impl CodePreview {
 impl Component for CodePreview {
     fn render(&self, area: Rect, buf: &mut Buffer) {
         self.last_area.set(area);
-        
+
         let cached = self.cached_lines.borrow();
         let selected = self.list_state.borrow().selected();
 
-        let list_items: Vec<ListItem> = cached.iter().enumerate().map(|(i, line)| {
-            let mut list_item = ListItem::new(line.clone());
-            if selected == Some(i) {
-                let bg_color = if self.focused {
-                    Color::Rgb(50, 50, 50)  // Light gray highlight for focused
-                } else {
-                    Color::Rgb(35, 35, 35)  // Darker gray for unfocused
-                };
-                list_item = list_item.style(Style::default().bg(bg_color));
-            }
-            list_item
-        }).collect();
+        let list_items: Vec<ListItem> = cached
+            .iter()
+            .enumerate()
+            .map(|(i, line)| {
+                let mut list_item = ListItem::new(line.clone());
+                if selected == Some(i) {
+                    let bg_color = if self.focused {
+                        Color::Rgb(50, 50, 50) // Light gray highlight for focused
+                    } else {
+                        Color::Rgb(35, 35, 35) // Darker gray for unfocused
+                    };
+                    list_item = list_item.style(Style::default().bg(bg_color));
+                }
+                list_item
+            })
+            .collect();
 
         let inner = area; // Assuming no border for now as TabbedPanel handles it
         let height = inner.height as usize;
@@ -149,7 +149,7 @@ impl Component for CodePreview {
 
         let list = List::new(list_items);
         let mut state = self.list_state.borrow_mut();
-        
+
         StatefulWidget::render(list, inner, buf, &mut *state);
 
         // Render scrollbar
@@ -160,8 +160,7 @@ impl Component for CodePreview {
                 .track_symbol(None)
                 .thumb_symbol("┃");
 
-            let mut scrollbar_state = ScrollbarState::new(list_len)
-                .position(state.offset());
+            let mut scrollbar_state = ScrollbarState::new(list_len).position(state.offset());
 
             let scrollbar_area = Rect {
                 x: area.right().saturating_sub(1),
@@ -181,7 +180,8 @@ impl Component for CodePreview {
 
         if let Event::Key(key) = event {
             match key.code {
-                ratatui::crossterm::event::KeyCode::Down | ratatui::crossterm::event::KeyCode::Char('j') => {
+                ratatui::crossterm::event::KeyCode::Down
+                | ratatui::crossterm::event::KeyCode::Char('j') => {
                     let mut state = self.list_state.borrow_mut();
                     let line_count = self.code.lines().count();
                     if line_count > 0 {
@@ -190,7 +190,8 @@ impl Component for CodePreview {
                     }
                     true
                 }
-                ratatui::crossterm::event::KeyCode::Up | ratatui::crossterm::event::KeyCode::Char('k') => {
+                ratatui::crossterm::event::KeyCode::Up
+                | ratatui::crossterm::event::KeyCode::Char('k') => {
                     let mut state = self.list_state.borrow_mut();
                     let next = state.selected().map_or(0, |i| i.saturating_sub(1));
                     state.select(Some(next));

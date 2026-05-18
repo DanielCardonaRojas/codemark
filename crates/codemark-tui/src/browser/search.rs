@@ -104,19 +104,22 @@ impl SearchBar {
 
         let control_spans = vec![
             Span::styled("[ ", normal_style),
-            Span::styled("FTS", if self.mode == SearchMode::Fts { active_style } else { normal_style }),
+            Span::styled(
+                "FTS",
+                if self.mode == SearchMode::Fts { active_style } else { normal_style },
+            ),
             Span::styled(" | ", normal_style),
-            Span::styled("Sem", if self.mode == SearchMode::Semantic { active_style } else { normal_style }),
+            Span::styled(
+                "Sem",
+                if self.mode == SearchMode::Semantic { active_style } else { normal_style },
+            ),
             Span::styled(" ]", normal_style),
         ];
         let control_width = 13; // "[ FTS | Sem ]".len()
 
         // 2. Build the search query part
-        let query = if self.query.is_empty() {
-            self.placeholder.as_str()
-        } else {
-            self.query.as_str()
-        };
+        let query =
+            if self.query.is_empty() { self.placeholder.as_str() } else { self.query.as_str() };
 
         // padding(1) + query + padding(1) + control
         let available_width = width.saturating_sub(control_width + 2);
@@ -140,19 +143,15 @@ impl SearchBar {
         // Render control right-aligned
         let control_x = area.right().saturating_sub(control_width as u16 + 1);
         let control_line = Line::from(control_spans);
-        let control_area = Rect {
-            x: control_x,
-            y: area.y,
-            width: control_width as u16,
-            height: 1,
-        };
+        let control_area = Rect { x: control_x, y: area.y, width: control_width as u16, height: 1 };
         Paragraph::new(control_line).render(control_area, buf);
 
         // 3. Draw cursor if focused
         if self.focused {
-            let cursor_x = area.x + 1 + self.cursor.saturating_sub(
-                self.query.len().saturating_sub(available_width)
-            ) as u16;
+            let cursor_x = area.x
+                + 1
+                + self.cursor.saturating_sub(self.query.len().saturating_sub(available_width))
+                    as u16;
             let cursor_y = area.y;
             let x = cursor_x.min(control_x.saturating_sub(1));
             if let Some(cell) = buf.cell_mut((x, cursor_y)) {
@@ -196,8 +195,10 @@ impl Component for SearchBar {
 
         match event {
             Event::Key(key) => match key.code {
-                ratatui::crossterm::event::KeyCode::Char('s') | ratatui::crossterm::event::KeyCode::Char('S') 
-                    if key.modifiers.contains(ratatui::crossterm::event::KeyModifiers::CONTROL) => {
+                ratatui::crossterm::event::KeyCode::Char('s')
+                | ratatui::crossterm::event::KeyCode::Char('S')
+                    if key.modifiers.contains(ratatui::crossterm::event::KeyModifiers::CONTROL) =>
+                {
                     self.cycle_mode();
                     true
                 }
@@ -243,9 +244,11 @@ impl Component for SearchBar {
                         let area = self.last_area.get();
                         let control_width = 13;
                         let control_start_x = area.right().saturating_sub(control_width as u16 + 1);
-                        
-                        if mouse.column >= control_start_x && mouse.column < area.right() 
-                           && mouse.row == area.y + 1 {
+
+                        if mouse.column >= control_start_x
+                            && mouse.column < area.right()
+                            && mouse.row == area.y + 1
+                        {
                             self.cycle_mode();
                             return true;
                         }

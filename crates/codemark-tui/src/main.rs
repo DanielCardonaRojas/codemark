@@ -6,9 +6,9 @@ use anyhow::Result;
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture},
     execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
-use ratatui::{backend::CrosstermBackend, Terminal};
+use ratatui::{Terminal, backend::CrosstermBackend};
 use std::io;
 use std::time::Duration;
 
@@ -147,7 +147,7 @@ async fn run_app() -> Result<()> {
         // Handle events (blocking wait for next event)
         if let Some(event) = event_rx.recv().await {
             let mut events = vec![event];
-            
+
             // Drain any other pending events to process them all before next draw
             while let Ok(ev) = event_rx.try_recv() {
                 events.push(ev);
@@ -231,9 +231,5 @@ fn setup_panic_handler() {
 /// Restore terminal state.
 fn restore_terminal() {
     let _ = disable_raw_mode();
-    let _ = execute!(
-        io::stdout(),
-        LeaveAlternateScreen,
-        DisableMouseCapture
-    );
+    let _ = execute!(io::stdout(), LeaveAlternateScreen, DisableMouseCapture);
 }

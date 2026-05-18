@@ -4,13 +4,13 @@
 //! the main frame rendering, status bars, and other common UI elements.
 
 use ratatui::{
+    Frame, Terminal,
     backend::Backend,
     buffer::Buffer,
     layout::{Alignment, Constraint, Direction, Layout, Margin, Rect},
     style::{Color, Style, Stylize},
     text::{Line, Span, Text},
     widgets::{Block, Clear, Paragraph, Widget, Wrap},
-    Frame, Terminal,
 };
 
 use crate::state::{AppMode, AppState};
@@ -38,10 +38,7 @@ pub struct KeyBinding {
 
 impl KeyBinding {
     pub fn new(key: impl Into<String>, description: impl Into<String>) -> Self {
-        Self {
-            key: key.into(),
-            description: description.into(),
-        }
+        Self { key: key.into(), description: description.into() }
     }
 }
 
@@ -74,7 +71,7 @@ pub fn render_status_bar(
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
-            Constraint::Min(0),      // Keybindings
+            Constraint::Min(0),     // Keybindings
             Constraint::Length(40), // Metadata (right side)
         ])
         .split(area);
@@ -87,7 +84,10 @@ pub fn render_status_bar(
         }
         left_spans.push(Span::styled(&binding.description, Style::default().fg(Color::White)));
         left_spans.push(Span::raw(": "));
-        left_spans.push(Span::styled(&binding.key, Style::default().fg(Color::Rgb(150, 150, 255)).bold()));
+        left_spans.push(Span::styled(
+            &binding.key,
+            Style::default().fg(Color::Rgb(150, 150, 255)).bold(),
+        ));
     }
 
     let left_text = Paragraph::new(Line::from(left_spans))
@@ -112,15 +112,18 @@ pub fn render_status_bar(
 /// Render a command line input area.
 ///
 /// Used for command mode and search mode.
-pub fn render_command_line(area: Rect, buf: &mut Buffer, prompt: &str, input: &str, _cursor_pos: usize) {
-    let text = Line::from(vec![
-        Span::styled(prompt, Style::default().fg(Color::Cyan)),
-        Span::raw(input),
-    ]);
+pub fn render_command_line(
+    area: Rect,
+    buf: &mut Buffer,
+    prompt: &str,
+    input: &str,
+    _cursor_pos: usize,
+) {
+    let text =
+        Line::from(vec![Span::styled(prompt, Style::default().fg(Color::Cyan)), Span::raw(input)]);
 
-    let paragraph = Paragraph::new(text)
-        .style(Style::default().fg(Color::White))
-        .wrap(Wrap { trim: false });
+    let paragraph =
+        Paragraph::new(text).style(Style::default().fg(Color::White)).wrap(Wrap { trim: false });
 
     paragraph.render(area, buf);
 
@@ -228,7 +231,12 @@ pub fn render_popup(area: Rect, buf: &mut Buffer, title: &str, content: &Text) {
 /// Render a notification/toast message.
 ///
 /// Notifications appear briefly at the bottom or top of the screen.
-pub fn render_notification(area: Rect, buf: &mut Buffer, message: &str, notification_type: NotificationType) {
+pub fn render_notification(
+    area: Rect,
+    buf: &mut Buffer,
+    message: &str,
+    notification_type: NotificationType,
+) {
     let (style, icon) = match notification_type {
         NotificationType::Info => (Style::default().fg(Color::Blue), ""),
         NotificationType::Success => (Style::default().fg(Color::Green), "✓ "),
@@ -236,22 +244,14 @@ pub fn render_notification(area: Rect, buf: &mut Buffer, message: &str, notifica
         NotificationType::Error => (Style::default().fg(Color::Red), "✗ "),
     };
 
-    let text = Line::from(vec![
-        Span::styled(icon, style),
-        Span::styled(message, style),
-    ]);
+    let text = Line::from(vec![Span::styled(icon, style), Span::styled(message, style)]);
 
-    let paragraph = Paragraph::new(text)
-        .style(style.bg(Color::DarkGray))
-        .alignment(Alignment::Left);
+    let paragraph =
+        Paragraph::new(text).style(style.bg(Color::DarkGray)).alignment(Alignment::Left);
 
     // Render at the bottom of the area
-    let notification_area = Rect {
-        x: area.x,
-        y: area.bottom().saturating_sub(1),
-        width: area.width,
-        height: 1,
-    };
+    let notification_area =
+        Rect { x: area.x, y: area.bottom().saturating_sub(1), width: area.width, height: 1 };
 
     Widget::render(Clear, notification_area, buf);
     paragraph.render(notification_area, buf);
@@ -308,12 +308,7 @@ pub fn render_progress_bar(area: Rect, buf: &mut Buffer, progress: f64, label: O
 
     // Draw the filled portion
     if filled_width > 0 {
-        let filled_area = Rect {
-            x: area.x,
-            y: area.y,
-            width: filled_width,
-            height: area.height,
-        };
+        let filled_area = Rect { x: area.x, y: area.y, width: filled_width, height: area.height };
         let filled_style = Style::default().bg(Color::Green);
         buf.set_style(filled_area, filled_style);
     }
@@ -331,19 +326,12 @@ pub fn render_progress_bar(area: Rect, buf: &mut Buffer, progress: f64, label: O
 ///
 /// Returns a Rect representing the inner area of the frame.
 pub fn bordered_frame(area: Rect, buf: &mut Buffer, title: Option<&str>) -> Rect {
-    let block = if let Some(t) = title {
-        Block::bordered().title(t)
-    } else {
-        Block::bordered()
-    };
+    let block = if let Some(t) = title { Block::bordered().title(t) } else { Block::bordered() };
 
     block.render(area, buf);
 
     // Return the inner area (excluding borders)
-    area.inner(Margin {
-        horizontal: 1,
-        vertical: 1,
-    })
+    area.inner(Margin { horizontal: 1, vertical: 1 })
 }
 
 /// Common key bindings to display in help.

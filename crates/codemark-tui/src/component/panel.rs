@@ -203,10 +203,7 @@ impl PanelItem {
 
         // Add health status indicator if present
         if let Some(health) = self.health {
-            spans.push(Span::styled(
-                health.symbol(),
-                Style::default().fg(health.color()),
-            ));
+            spans.push(Span::styled(health.symbol(), Style::default().fg(health.color())));
             spans.push(Span::raw(" "));
         }
 
@@ -221,19 +218,13 @@ impl PanelItem {
         // Add secondary text if present
         if let Some(secondary) = &self.secondary_text {
             spans.push(Span::raw(" "));
-            spans.push(Span::styled(
-                secondary,
-                Style::default().fg(Color::DarkGray),
-            ));
+            spans.push(Span::styled(secondary, Style::default().fg(Color::DarkGray)));
         }
 
         // Add metadata if present
         if let Some(metadata) = &self.metadata {
             spans.push(Span::raw(" "));
-            spans.push(Span::styled(
-                metadata,
-                Style::default().fg(Color::Cyan),
-            ));
+            spans.push(Span::styled(metadata, Style::default().fg(Color::Cyan)));
         }
 
         // Add sync direction arrow for tours (omit if synced)
@@ -264,11 +255,7 @@ impl PanelItem {
         }
 
         let line = Line::from(spans);
-        if selected && focused {
-            line.bold()
-        } else {
-            line
-        }
+        if selected && focused { line.bold() } else { line }
     }
 }
 
@@ -336,7 +323,8 @@ impl Panel {
             self.items = self.all_items.clone();
         } else {
             let query = self.filter_query.to_lowercase();
-            self.items = self.all_items
+            self.items = self
+                .all_items
                 .iter()
                 .filter(|item| item.text.to_lowercase().contains(&query))
                 .cloned()
@@ -352,7 +340,7 @@ impl Panel {
         } else if !self.items.is_empty() {
             state.select(Some(0));
         }
-        
+
         // Reset scroll offset on filter change by creating a new state but preserving selection
         let selected = state.selected();
         *state = ListState::default();
@@ -418,11 +406,7 @@ impl Panel {
 
     /// Get all currently active items in the entire list (regardless of filtering).
     pub fn active_items(&self) -> Vec<String> {
-        self.all_items
-            .iter()
-            .filter(|i| i.active)
-            .map(|i| i.text.clone())
-            .collect()
+        self.all_items.iter().filter(|i| i.active).map(|i| i.text.clone()).collect()
     }
 
     /// Select the next item.
@@ -441,10 +425,9 @@ impl Panel {
             return;
         }
         let mut state = self.list_state.borrow_mut();
-        let prev = state.selected().map_or(
-            self.items.len() - 1,
-            |i| if i == 0 { self.items.len() - 1 } else { i - 1 },
-        );
+        let prev = state
+            .selected()
+            .map_or(self.items.len() - 1, |i| if i == 0 { self.items.len() - 1 } else { i - 1 });
         state.select(Some(prev));
     }
 
@@ -453,7 +436,7 @@ impl Panel {
         if let Some(idx) = self.selected_index() {
             if let Some(item) = self.items.get(idx) {
                 let text = item.text.clone();
-                
+
                 if self.multi_select {
                     // Toggle in all_items
                     if let Some(item) = self.all_items.iter_mut().find(|i| i.text == text) {
@@ -461,7 +444,9 @@ impl Panel {
                     }
                 } else {
                     // Determine if the target item is already active
-                    let was_active = self.all_items.iter()
+                    let was_active = self
+                        .all_items
+                        .iter()
                         .find(|i| i.text == text)
                         .map(|i| i.active)
                         .unwrap_or(false);
@@ -485,7 +470,8 @@ impl Panel {
                 if query.is_empty() {
                     self.items = self.all_items.clone();
                 } else {
-                    self.items = self.all_items
+                    self.items = self
+                        .all_items
                         .iter()
                         .filter(|item| item.text.to_lowercase().contains(&query))
                         .cloned()
@@ -505,7 +491,11 @@ impl Panel {
 
     /// Update the items in the panel, preserving selection if possible.
     pub fn set_items(&mut self, items: Vec<PanelItem>) {
-        let selected_text = self.list_state.borrow().selected().and_then(|idx| self.items.get(idx).map(|i| i.text.clone()));
+        let selected_text = self
+            .list_state
+            .borrow()
+            .selected()
+            .and_then(|idx| self.items.get(idx).map(|i| i.text.clone()));
         self.all_items = items;
         self.apply_filter();
 
@@ -513,10 +503,7 @@ impl Panel {
         if !self.items.is_empty() {
             // Try to restore the selection
             let new_sel = if let Some(text) = selected_text {
-                self.items
-                    .iter()
-                    .position(|item| item.text == text)
-                    .or(Some(0))
+                self.items.iter().position(|item| item.text == text).or(Some(0))
             } else {
                 Some(0)
             };
@@ -531,28 +518,25 @@ impl Component for Panel {
     fn render(&self, area: Rect, buf: &mut Buffer) {
         self.last_area.set(area);
         // Calculate inner area (excluding borders)
-        let inner = if self.bordered {
-            area.inner(Margin::new(1, 1))
-        } else {
-            area
-        };
+        let inner = if self.bordered { area.inner(Margin::new(1, 1)) } else { area };
 
         let height = inner.height as usize;
 
         // Build all items (Ratatui List handles scrolling internally via ListState)
-        let list_items: Vec<ListItem> = self.items
+        let list_items: Vec<ListItem> = self
+            .items
             .iter()
             .enumerate()
             .map(|(i, item)| {
                 let is_selected = self.list_state.borrow().selected() == Some(i);
                 let line = item.to_line(is_selected, self.focused);
                 let mut list_item = ListItem::new(line);
-                
+
                 if is_selected {
                     let bg_color = if self.focused {
-                        Color::Rgb(50, 50, 50)  // Light gray highlight for focused
+                        Color::Rgb(50, 50, 50) // Light gray highlight for focused
                     } else {
-                        Color::Rgb(35, 35, 35)  // Darker gray for unfocused
+                        Color::Rgb(35, 35, 35) // Darker gray for unfocused
                     };
                     list_item = list_item.style(Style::default().bg(bg_color));
                 }
@@ -569,11 +553,7 @@ impl Component for Panel {
             } else {
                 self.normal_style
             })
-            .border_style(if self.focused {
-                self.focus_style
-            } else {
-                self.normal_style
-            });
+            .border_style(if self.focused { self.focus_style } else { self.normal_style });
 
         // Render the list using StatefulWidget for native scrolling
         let list = List::new(list_items);
@@ -587,11 +567,7 @@ impl Component for Panel {
 
         // Render scrollbar if needed
         if self.show_scrollbar && !self.items.is_empty() && self.items.len() > height {
-            let scrollbar_style = if self.focused {
-                self.focus_style
-            } else {
-                self.normal_style
-            };
+            let scrollbar_style = if self.focused { self.focus_style } else { self.normal_style };
 
             let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
                 .begin_symbol(None)
@@ -600,8 +576,8 @@ impl Component for Panel {
                 .thumb_symbol("┃")
                 .style(scrollbar_style);
 
-            let mut scrollbar_state = ScrollbarState::new(self.items.len())
-                .position(state.offset());
+            let mut scrollbar_state =
+                ScrollbarState::new(self.items.len()).position(state.offset());
 
             let scrollbar_area = if self.bordered {
                 Rect {
@@ -611,12 +587,7 @@ impl Component for Panel {
                     height: area.height.saturating_sub(2),
                 }
             } else {
-                Rect {
-                    x: area.right() - 1,
-                    y: area.top(),
-                    width: 1,
-                    height: area.height,
-                }
+                Rect { x: area.right() - 1, y: area.top(), width: 1, height: area.height }
             };
 
             scrollbar.render(scrollbar_area, buf, &mut scrollbar_state);
@@ -660,11 +631,13 @@ impl Component for Panel {
 
         match event {
             Event::Key(key) => match key.code {
-                ratatui::crossterm::event::KeyCode::Down | ratatui::crossterm::event::KeyCode::Char('j') => {
+                ratatui::crossterm::event::KeyCode::Down
+                | ratatui::crossterm::event::KeyCode::Char('j') => {
                     self.select_next();
                     true
                 }
-                ratatui::crossterm::event::KeyCode::Up | ratatui::crossterm::event::KeyCode::Char('k') => {
+                ratatui::crossterm::event::KeyCode::Up
+                | ratatui::crossterm::event::KeyCode::Char('k') => {
                     self.select_previous();
                     true
                 }
@@ -750,12 +723,11 @@ mod tests {
 
     #[test]
     fn test_panel_navigation() {
-        let mut panel = Panel::new("Test")
-            .items(vec![
-                PanelItem::new("item1"),
-                PanelItem::new("item2"),
-                PanelItem::new("item3"),
-            ]);
+        let mut panel = Panel::new("Test").items(vec![
+            PanelItem::new("item1"),
+            PanelItem::new("item2"),
+            PanelItem::new("item3"),
+        ]);
 
         assert_eq!(panel.selected_index(), Some(0));
 
@@ -781,11 +753,8 @@ mod tests {
 
     #[test]
     fn test_panel_set_items() {
-        let mut panel = Panel::new("Test")
-            .items(vec![
-                PanelItem::new("item1"),
-                PanelItem::new("item2"),
-            ]);
+        let mut panel =
+            Panel::new("Test").items(vec![PanelItem::new("item1"), PanelItem::new("item2")]);
 
         panel.set_selected(1);
 

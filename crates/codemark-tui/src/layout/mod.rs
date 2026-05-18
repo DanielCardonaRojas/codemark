@@ -132,16 +132,14 @@ impl LayoutManager {
 
     /// Get the combined size constraints for all children.
     pub fn size_constraints(&self) -> SizeConstraints {
-        self.children
-            .iter()
-            .fold(SizeConstraints::default(), |acc, child| {
-                let child_constraints = child.constraints();
-                SizeConstraints {
-                    min_width: acc.min_width.saturating_add(child_constraints.min_width),
-                    min_height: acc.min_height.saturating_add(child_constraints.min_height),
-                    ..Default::default()
-                }
-            })
+        self.children.iter().fold(SizeConstraints::default(), |acc, child| {
+            let child_constraints = child.constraints();
+            SizeConstraints {
+                min_width: acc.min_width.saturating_add(child_constraints.min_width),
+                min_height: acc.min_height.saturating_add(child_constraints.min_height),
+                ..Default::default()
+            }
+        })
     }
 
     /// Calculate constraints for layout children.
@@ -299,20 +297,12 @@ pub struct SplitLayout {
 impl SplitLayout {
     /// Create a new horizontal split layout.
     pub fn horizontal(constraints: Vec<Constraint>) -> Self {
-        Self {
-            direction: LayoutDirection::Horizontal,
-            constraints,
-            children: Vec::new(),
-        }
+        Self { direction: LayoutDirection::Horizontal, constraints, children: Vec::new() }
     }
 
     /// Create a new vertical split layout.
     pub fn vertical(constraints: Vec<Constraint>) -> Self {
-        Self {
-            direction: LayoutDirection::Vertical,
-            constraints,
-            children: Vec::new(),
-        }
+        Self { direction: LayoutDirection::Vertical, constraints, children: Vec::new() }
     }
 
     /// Add a child to a specific section.
@@ -412,10 +402,7 @@ pub mod helpers {
     ) -> LayoutManager {
         LayoutManager::horizontal()
             .gap(1)
-            .children(vec![
-                LayoutChild::component(sidebar),
-                LayoutChild::component(main),
-            ])
+            .children(vec![LayoutChild::component(sidebar), LayoutChild::component(main)])
     }
 
     /// Create a three-panel layout (left, middle, right).
@@ -424,13 +411,11 @@ pub mod helpers {
         middle: impl Component + 'static,
         right: impl Component + 'static,
     ) -> LayoutManager {
-        LayoutManager::horizontal()
-            .gap(1)
-            .children(vec![
-                LayoutChild::component(left),
-                LayoutChild::component(middle),
-                LayoutChild::component(right),
-            ])
+        LayoutManager::horizontal().gap(1).children(vec![
+            LayoutChild::component(left),
+            LayoutChild::component(middle),
+            LayoutChild::component(right),
+        ])
     }
 
     /// Create a layout with top header and bottom content.
@@ -440,10 +425,7 @@ pub mod helpers {
     ) -> LayoutManager {
         LayoutManager::vertical()
             .gap(1)
-            .children(vec![
-                LayoutChild::component(header),
-                LayoutChild::component(content),
-            ])
+            .children(vec![LayoutChild::component(header), LayoutChild::component(content)])
     }
 }
 

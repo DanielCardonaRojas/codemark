@@ -3,22 +3,16 @@
 //! Components are the building blocks of the TUI. Each component is responsible
 //! for rendering itself to a specific area of the terminal and handling events.
 
-pub mod panel;
 pub mod code_preview;
 pub mod markdown_panel;
+pub mod panel;
 
 // Re-export types for convenience
-pub use panel::{HealthStatus, Panel, PanelItem, SyncDirection};
 pub use code_preview::CodePreview;
 pub use markdown_panel::MarkdownPanel;
+pub use panel::{HealthStatus, Panel, PanelItem, SyncDirection};
 
-use ratatui::{
-    buffer::Buffer,
-    layout::Rect,
-    style::Style,
-    text::Line,
-    widgets::Widget,
-};
+use ratatui::{buffer::Buffer, layout::Rect, style::Style, text::Line, widgets::Widget};
 
 use crate::event::Event;
 
@@ -78,42 +72,24 @@ pub struct SizeConstraints {
 
 impl Default for SizeConstraints {
     fn default() -> Self {
-        Self {
-            min_width: 0,
-            min_height: 0,
-            max_width: 0,
-            max_height: 0,
-        }
+        Self { min_width: 0, min_height: 0, max_width: 0, max_height: 0 }
     }
 }
 
 impl SizeConstraints {
     /// Create new size constraints.
     pub fn new(min_width: u16, min_height: u16, max_width: u16, max_height: u16) -> Self {
-        Self {
-            min_width,
-            min_height,
-            max_width,
-            max_height,
-        }
+        Self { min_width, min_height, max_width, max_height }
     }
 
     /// Create constraints with only minimum sizes.
     pub fn min(min_width: u16, min_height: u16) -> Self {
-        Self {
-            min_width,
-            min_height,
-            ..Default::default()
-        }
+        Self { min_width, min_height, ..Default::default() }
     }
 
     /// Create constraints with only maximum sizes.
     pub fn max(max_width: u16, max_height: u16) -> Self {
-        Self {
-            max_width,
-            max_height,
-            ..Default::default()
-        }
+        Self { max_width, max_height, ..Default::default() }
     }
 
     /// Check if a given size satisfies the constraints.
@@ -138,10 +114,7 @@ pub struct Label {
 impl Label {
     /// Create a new label with the given text.
     pub fn new(text: impl Into<String>) -> Self {
-        Self {
-            text: text.into(),
-            style: Style::default(),
-        }
+        Self { text: text.into(), style: Style::default() }
     }
 
     /// Set the label's style.
@@ -163,9 +136,7 @@ impl Label {
 
 impl Component for Label {
     fn render(&self, area: Rect, buf: &mut Buffer) {
-        Line::raw(&self.text)
-            .style(self.style)
-            .render(area, buf);
+        Line::raw(&self.text).style(self.style).render(area, buf);
     }
 
     fn handle_event(&mut self, _event: &Event) -> bool {
@@ -197,11 +168,7 @@ pub struct Pager {
 impl Pager {
     /// Create a new pager.
     pub fn new(total: usize, current: usize) -> Self {
-        Self {
-            total,
-            current,
-            last_area: std::cell::Cell::new(Rect::default()),
-        }
+        Self { total, current, last_area: std::cell::Cell::new(Rect::default()) }
     }
 }
 
@@ -213,9 +180,9 @@ impl Component for Pager {
         }
 
         use ratatui::layout::Alignment;
-        use ratatui::widgets::Paragraph;
         use ratatui::style::Color;
         use ratatui::text::Span;
+        use ratatui::widgets::Paragraph;
 
         let mut spans = Vec::with_capacity(self.total * 2);
         for i in 0..self.total {
@@ -235,10 +202,16 @@ impl Component for Pager {
 
     fn handle_event(&mut self, event: &Event) -> bool {
         if let Event::Mouse(mouse) = event {
-            if let ratatui::crossterm::event::MouseEventKind::Down(ratatui::crossterm::event::MouseButton::Left) = mouse.kind {
+            if let ratatui::crossterm::event::MouseEventKind::Down(
+                ratatui::crossterm::event::MouseButton::Left,
+            ) = mouse.kind
+            {
                 let area = self.last_area.get();
-                if mouse.column >= area.x && mouse.column < area.x + area.width &&
-                   mouse.row >= area.y && mouse.row < area.y + area.height {
+                if mouse.column >= area.x
+                    && mouse.column < area.x + area.width
+                    && mouse.row >= area.y
+                    && mouse.row < area.y + area.height
+                {
                     // Simple logic: clicking left half goes back, right half goes forward
                     let center_x = area.x + area.width / 2;
                     if mouse.column < center_x {
@@ -273,18 +246,12 @@ impl Spacer {
 
     /// Create a horizontal spacer (width only).
     pub fn horizontal(width: u16) -> Self {
-        Self {
-            width,
-            height: 1,
-        }
+        Self { width, height: 1 }
     }
 
     /// Create a vertical spacer (height only).
     pub fn vertical(height: u16) -> Self {
-        Self {
-            width: 1,
-            height,
-        }
+        Self { width: 1, height }
     }
 }
 
