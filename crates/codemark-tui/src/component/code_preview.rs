@@ -1,20 +1,21 @@
 //! Code preview component with syntax highlighting and line numbers.
 
+use std::cell::RefCell;
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
     style::{Color, Style},
     text::{Line, Span},
     widgets::{
-        List, ListItem, ListState, Scrollbar, ScrollbarOrientation, ScrollbarState, StatefulWidget,
+        Scrollbar, ScrollbarOrientation,
+        ScrollbarState, Widget, StatefulWidget,
     },
 };
-use std::cell::RefCell;
-use std::sync::LazyLock;
 use syntect::easy::HighlightLines;
 use syntect::highlighting::{Style as SyntectStyle, ThemeSet};
 use syntect::parsing::SyntaxSet;
 use syntect::util::LinesWithEndings;
+use std::sync::LazyLock;
 
 use super::Component;
 use crate::event::Event;
@@ -29,8 +30,10 @@ pub struct CodePreview {
     code: String,
     /// File extension for syntax detection
     extension: String,
-    /// List state for scrolling
-    list_state: RefCell<ListState>,
+    /// Vertical scroll offset
+    scroll_offset: u16,
+    /// Currently highlighted line (0-indexed)
+    selected_line: Option<usize>,
     /// Whether the component is focused
     focused: bool,
     /// Last rendered area
@@ -47,7 +50,8 @@ impl CodePreview {
         let preview = Self {
             code,
             extension,
-            list_state: RefCell::new(ListState::default()),
+            scroll_offset: 0,
+            selected_line: None,
             focused: false,
             last_area: std::cell::Cell::new(Rect::default()),
             cached_lines: RefCell::new(Vec::new()),
@@ -59,7 +63,8 @@ impl CodePreview {
     /// Set the code to display.
     pub fn set_code(&mut self, code: String) {
         self.code = code;
-        *self.list_state.borrow_mut() = ListState::default();
+        self.scroll_offset = 0;
+        self.selected_line = None;
         self.refresh_cache();
     }
 
@@ -89,7 +94,10 @@ impl CodePreview {
 
             // Add line number (gutter)
             let line_num = format!("{:>3} ", i + 1);
-            spans.push(Span::styled(line_num, Style::default().fg(Color::DarkGray)));
+            spans.push(Span::styled(
+                line_num,
+                Style::default().fg(Color::DarkGray),
+            ));
 
             // Convert syntect style to ratatui style
             for (style, text) in ranges {
@@ -109,7 +117,14 @@ impl CodePreview {
         let line_count = self.code.lines().count();
         if line_count > 0 {
             let target = line_index.min(line_count - 1);
-            self.list_state.borrow_mut().select(Some(target));
+            self.selected_line = Some(target);
+            
+            // Adjust scroll to center the line
+            let height = self.last_area.get().height as usize;
+            if height > 0 {
+                let half_height = height / 2;
+                self.scroll_offset = target.saturating_sub(half_height) as u16;
+            }
         }
     }
 
@@ -122,37 +137,33 @@ impl CodePreview {
 impl Component for CodePreview {
     fn render(&self, area: Rect, buf: &mut Buffer) {
         self.last_area.set(area);
-
+        
         let cached = self.cached_lines.borrow();
-        let selected = self.list_state.borrow().selected();
+        let selected = self.selected_line;
 
-        let list_items: Vec<ListItem> = cached
-            .iter()
-            .enumerate()
-            .map(|(i, line)| {
-                let mut list_item = ListItem::new(line.clone());
-                if selected == Some(i) {
-                    let bg_color = if self.focused {
-                        Color::Rgb(50, 50, 50) // Light gray highlight for focused
-                    } else {
-                        Color::Rgb(35, 35, 35) // Darker gray for unfocused
-                    };
-                    list_item = list_item.style(Style::default().bg(bg_color));
-                }
-                list_item
-            })
-            .collect();
+        // Apply highlighting to the selected line
+        let mut text_lines = Vec::with_capacity(cached.len());
+        for (i, line) in cached.iter().enumerate() {
+            let mut line = line.clone();
+            if selected == Some(i) {
+                let bg_color = if self.focused {
+                    Color::Rgb(50, 50, 50)  // Light gray highlight for focused
+                } else {
+                    Color::Rgb(35, 35, 35)  // Darker gray for unfocused
+                };
+                line = line.style(Style::default().bg(bg_color));
+            }
+            text_lines.push(line);
+        }
 
-        let inner = area; // Assuming no border for now as TabbedPanel handles it
-        let height = inner.height as usize;
-        let list_len = list_items.len();
-
-        let list = List::new(list_items);
-        let mut state = self.list_state.borrow_mut();
-
-        StatefulWidget::render(list, inner, buf, &mut *state);
+        let paragraph = ratatui::widgets::Paragraph::new(text_lines)
+            .scroll((self.scroll_offset, 0));
+        
+        paragraph.render(area, buf);
 
         // Render scrollbar
+        let list_len = cached.len();
+        let height = area.height as usize;
         if !self.code.is_empty() && list_len > height {
             let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
                 .begin_symbol(None)
@@ -160,7 +171,8 @@ impl Component for CodePreview {
                 .track_symbol(None)
                 .thumb_symbol("┃");
 
-            let mut scrollbar_state = ScrollbarState::new(list_len).position(state.offset());
+            let mut scrollbar_state = ScrollbarState::new(list_len)
+                .position(self.scroll_offset as usize);
 
             let scrollbar_area = Rect {
                 x: area.right().saturating_sub(1),
@@ -178,29 +190,52 @@ impl Component for CodePreview {
             return false;
         }
 
-        if let Event::Key(key) = event {
-            match key.code {
+        match event {
+            Event::Key(key) => match key.code {
                 ratatui::crossterm::event::KeyCode::Down
                 | ratatui::crossterm::event::KeyCode::Char('j') => {
-                    let mut state = self.list_state.borrow_mut();
                     let line_count = self.code.lines().count();
                     if line_count > 0 {
-                        let next = state.selected().map_or(0, |i| (i + 1).min(line_count - 1));
-                        state.select(Some(next));
+                        let next = self.selected_line.map_or(0, |i| (i + 1).min(line_count - 1));
+                        self.selected_line = Some(next);
+                        
+                        // Auto-scroll if selection goes off screen
+                        let height = self.last_area.get().height as usize;
+                        if next >= self.scroll_offset as usize + height {
+                            self.scroll_offset = (next - height + 1) as u16;
+                        } else if next < self.scroll_offset as usize {
+                            self.scroll_offset = next as u16;
+                        }
                     }
                     true
                 }
                 ratatui::crossterm::event::KeyCode::Up
                 | ratatui::crossterm::event::KeyCode::Char('k') => {
-                    let mut state = self.list_state.borrow_mut();
-                    let next = state.selected().map_or(0, |i| i.saturating_sub(1));
-                    state.select(Some(next));
+                    let next = self.selected_line.map_or(0, |i| i.saturating_sub(1));
+                    self.selected_line = Some(next);
+
+                    // Auto-scroll if selection goes off screen
+                    if next < self.scroll_offset as usize {
+                        self.scroll_offset = next as u16;
+                    }
                     true
                 }
                 _ => false,
-            }
-        } else {
-            false
+            },
+            Event::Mouse(mouse) => match mouse.kind {
+                ratatui::crossterm::event::MouseEventKind::ScrollDown => {
+                    let line_count = self.code.lines().count();
+                    self.scroll_offset = self.scroll_offset.saturating_add(1)
+                        .min(line_count.saturating_sub(1) as u16);
+                    true
+                }
+                ratatui::crossterm::event::MouseEventKind::ScrollUp => {
+                    self.scroll_offset = self.scroll_offset.saturating_sub(1);
+                    true
+                }
+                _ => false,
+            },
+            _ => false,
         }
     }
 

@@ -114,8 +114,8 @@ impl Component for MarkdownPanel {
             return false;
         }
 
-        if let Event::Key(key) = event {
-            match key.code {
+        match event {
+            Event::Key(key) => match key.code {
                 ratatui::crossterm::event::KeyCode::Down
                 | ratatui::crossterm::event::KeyCode::Char('j') => {
                     self.scroll_offset = self.scroll_offset.saturating_add(1);
@@ -135,9 +135,19 @@ impl Component for MarkdownPanel {
                     true
                 }
                 _ => false,
-            }
-        } else {
-            false
+            },
+            Event::Mouse(mouse) => match mouse.kind {
+                ratatui::crossterm::event::MouseEventKind::ScrollDown => {
+                    self.scroll_offset = self.scroll_offset.saturating_add(1);
+                    true
+                }
+                ratatui::crossterm::event::MouseEventKind::ScrollUp => {
+                    self.scroll_offset = self.scroll_offset.saturating_sub(1);
+                    true
+                }
+                _ => false,
+            },
+            _ => false,
         }
     }
 
