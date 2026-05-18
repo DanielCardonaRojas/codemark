@@ -885,7 +885,7 @@ impl RightPane {
                 .and_then(|e| e.to_str())
                 .unwrap_or("txt");
 
-            if let Some(preview) = self.steps.get_preview_mut() {
+            if let Some(preview) = self.steps.get_step_preview_mut() {
                 preview.set_code(code);
                 preview.set_extension(ext.to_string());
                 preview.jump_to_line(step.line_number);
@@ -896,6 +896,12 @@ impl RightPane {
                 self.generate_bookmark_markdown(&step.bookmark, step.resolution.as_ref());
             if let Some(md_panel) = self.steps.get_markdown_mut() {
                 md_panel.set_markdown(markdown);
+            }
+
+            // Update Query tab
+            if let Some(query_preview) = self.steps.get_query_preview_mut() {
+                query_preview.set_code(step.bookmark.query.clone());
+                query_preview.set_extension("scm".to_string());
             }
 
             // Update Details panel
@@ -1189,14 +1195,20 @@ impl RightPane {
 }
 
 impl TabbedPanel {
-    /// Get the currently active preview for modification.
-    pub fn get_preview_mut(&mut self) -> Option<&mut CodePreview> {
-        for panel in &mut self.panels {
-            if let TabContent::Preview(p) = panel {
-                return Some(p);
-            }
+    /// Get the step preview for modification.
+    pub fn get_step_preview_mut(&mut self) -> Option<&mut CodePreview> {
+        match self.panels.get_mut(0) {
+            Some(TabContent::Preview(p)) => Some(p),
+            _ => None,
         }
-        None
+    }
+
+    /// Get the query preview for modification.
+    pub fn get_query_preview_mut(&mut self) -> Option<&mut CodePreview> {
+        match self.panels.get_mut(2) {
+            Some(TabContent::Preview(p)) => Some(p),
+            _ => None,
+        }
     }
 
     /// Get the currently active markdown panel for modification.
@@ -1374,7 +1386,7 @@ impl TabbedPanel {
         }
     }
 
-    /// Create steps/info tabs for right pane.
+    /// Create steps/info/query tabs for right pane.
     fn new_steps_info(_db: &Database) -> Self {
         use crate::component::CodePreview;
         let fixture_path = "tests/fixtures/rust/api_client.rs";
@@ -1387,11 +1399,17 @@ impl TabbedPanel {
 
         let info = MarkdownPanel::new();
 
-        let tabs = TabSelection::new(vec![Tab::new("Steps"), Tab::new("Info")]);
+        let query_preview = CodePreview::new("(node) @cap", "scm");
+
+        let tabs = TabSelection::new(vec![Tab::new("Steps"), Tab::new("Info"), Tab::new("Query")]);
 
         Self {
             tabs,
-            panels: vec![TabContent::Preview(preview), TabContent::Markdown(info)],
+            panels: vec![
+                TabContent::Preview(preview),
+                TabContent::Markdown(info),
+                TabContent::Preview(query_preview),
+            ],
             focused: false,
             last_area: std::cell::Cell::new(Rect::default()),
         }
