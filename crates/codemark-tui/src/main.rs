@@ -15,7 +15,7 @@ use std::time::Duration;
 use codemark_tui::{
     browser::BrowserLayout,
     event::{Event, EventHandlerConfig},
-    state::{AppMode, AppState, FocusManager},
+    state::{AppMode, AppState},
     ui::{self, NotificationType},
 };
 
@@ -50,19 +50,13 @@ async fn run_app() -> Result<()> {
     use codemark_core::storage::Workspace;
     let db = Workspace::open_primary()?;
 
-    // Create the browser layout
-    let mut layout = BrowserLayout::new(db);
-
-    // Setup focus manager
-    let mut focus_manager = FocusManager::new();
-    focus_manager.add("left");
-    focus_manager.add("main");
-    focus_manager.add("right");
-
     // Setup event receiver
-    let (mut event_rx, _) = codemark_tui::event::EventHandler::with_receiver(
+    let (mut event_rx, event_handler) = codemark_tui::event::EventHandler::with_receiver(
         EventHandlerConfig::default().tick_rate(Duration::from_millis(100)),
     )?;
+
+    // Create the browser layout
+    let mut layout = BrowserLayout::new(db, event_handler);
 
     // Notification state
     let mut notification: Option<(String, NotificationType)> = None;
@@ -162,13 +156,14 @@ async fn run_app() -> Result<()> {
                     Event::Key(key) => {
                         match state.mode() {
                             AppMode::Normal => {
-                                // Handle global key bindings
+                                // Handle global key bindings (disabled when Search is focused)
+                                let search_focused = layout.focus() == codemark_tui::browser::FocusArea::Search;
                                 match key.code {
-                                    event::KeyCode::Char('q') => {
+                                    event::KeyCode::Char('q') if !search_focused => {
                                         state.quit();
                                         handled = true;
                                     }
-                                    event::KeyCode::Char('?') => {
+                                    event::KeyCode::Char('?') if !search_focused => {
                                         show_help = !show_help;
                                         handled = true;
                                     }

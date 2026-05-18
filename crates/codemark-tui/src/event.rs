@@ -3,6 +3,7 @@
 //! This module provides types and utilities for handling terminal events
 //! including keyboard input, mouse events, and terminal resize events.
 
+use codemark_core::engine::bookmark::Bookmark;
 use ratatui::crossterm::event::{Event as CrosstermEvent, KeyEvent, MouseEvent};
 use std::sync::Arc;
 use std::time::Duration;
@@ -25,6 +26,10 @@ pub enum Event {
     FocusLost,
     /// A paste event (clipboard content).
     Paste(String),
+    /// Search results returned from background task.
+    SearchResults(Vec<Bookmark>),
+    /// Search failed with an error message.
+    SearchError(String),
 }
 
 impl Event {
@@ -171,9 +176,27 @@ impl EventHandler {
         // Spawn the event loop task
         tokio::spawn(event_loop_with_sender(config.tick_rate, tx.clone()));
 
-        let handler = Self { _tx: Arc::new(mpsc::unbounded_channel().0) };
+        // Create an unbounded channel for custom events that we can send from anywhere
+        let (unbounded_tx, mut unbounded_rx) = mpsc::unbounded_channel();
+
+        // Forward unbounded events to the main channel
+        let tx_clone = tx.clone();
+        tokio::spawn(async move {
+            while let Some(event) = unbounded_rx.recv().await {
+                if tx_clone.send(event).await.is_err() {
+                    break;
+                }
+            }
+        });
+
+        let handler = Self { _tx: Arc::new(unbounded_tx) };
 
         Ok((rx, handler))
+    }
+
+    /// Send a custom event.
+    pub fn send(&self, event: Event) -> anyhow::Result<()> {
+        self._tx.send(event).map_err(|e| anyhow::anyhow!("Failed to send event: {}", e))
     }
 }
 

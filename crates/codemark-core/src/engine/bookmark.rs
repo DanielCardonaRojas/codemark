@@ -185,7 +185,7 @@ impl FromStr for Visibility {
 
 // --- Domain structs ---
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct BookmarkComment {
     pub id: String,
     pub bookmark_id: String,
@@ -195,7 +195,7 @@ pub struct BookmarkComment {
     pub parent_id: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Annotation {
     pub id: String,
     pub bookmark_id: String,
@@ -206,7 +206,7 @@ pub struct Annotation {
     pub source: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Tag {
     pub bookmark_id: String,
     pub tag: String,
@@ -214,7 +214,7 @@ pub struct Tag {
     pub added_by: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CollectionTag {
     pub collection_id: String,
     pub tag: String,
@@ -222,7 +222,7 @@ pub struct CollectionTag {
     pub added_by: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CollectionLink {
     pub id: String,
     pub collection_id: String,
@@ -234,7 +234,7 @@ pub struct CollectionLink {
     pub added_by: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Bookmark {
     pub id: String,
     pub query: String,
@@ -259,7 +259,7 @@ pub struct Bookmark {
     pub comments: Vec<BookmarkComment>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Resolution {
     pub id: String,
     pub bookmark_id: String,
@@ -277,7 +277,7 @@ pub struct Resolution {
     pub breadcrumbs: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Collection {
     pub id: String,
     pub name: String,

@@ -6,14 +6,16 @@
 mod search;
 mod tabs;
 
-pub use search::SearchBar;
+pub use search::{SearchBar, SearchMode};
 pub use tabs::{Panel2Tab, Panel3Tab, Tab, TabSelection};
 
 use crate::component::{CodePreview, Component, HealthStatus, MarkdownPanel, Panel, PanelItem};
 use crate::event::Event;
 use crate::ui::KeyBinding;
+use codemark_core::config::Config;
+use codemark_core::embeddings::config::EmbeddingModel;
 use codemark_core::engine::bookmark::{Bookmark, BookmarkFilter, BookmarkHealth, Resolution};
-use codemark_core::storage::db::Database;
+use codemark_core::storage::{SemanticRepo, db::Database};
 use ratatui::{
     buffer::Buffer,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
@@ -50,6 +52,8 @@ pub struct BrowserLayout {
     focus: FocusArea,
     /// Pending external command to be executed
     pending_command: Option<ExternalCommand>,
+    /// Event handler for sending custom events
+    event_handler: crate::event::EventHandler,
 }
 
 /// Areas that can be focused in the browser.
@@ -227,7 +231,7 @@ fn escape_markdown(text: &str) -> String {
 
 impl BrowserLayout {
     /// Create a new browser layout.
-    pub fn new(db: Database) -> Self {
+    pub fn new(db: Database, event_handler: crate::event::EventHandler) -> Self {
         use codemark_core::storage::registry;
         let registry = registry::open_registry().expect("Failed to open global registry");
 
@@ -238,6 +242,7 @@ impl BrowserLayout {
             db,
             registry,
             pending_command: None,
+            event_handler,
         };
         layout.update_focus_state();
         layout
@@ -266,6 +271,88 @@ impl BrowserLayout {
     /// Take the pending external command, if any.
     pub fn take_pending_command(&mut self) -> Option<ExternalCommand> {
         self.pending_command.take()
+    }
+
+    /// Execute a search based on the current search bar query and mode.
+    pub fn execute_search(&self) {
+        let query = self.left_pane.search.query().to_string();
+        if query.is_empty() {
+            return;
+        }
+
+        let mode = self.left_pane.search.mode();
+        let db_path = self.db.path().to_path_buf();
+        let event_handler = self.event_handler.clone();
+
+        match mode {
+            SearchMode::Fts => {
+                // FTS search can be done synchronously as it's usually fast
+                let bookmarks = self.db.search_bookmarks(
+                    Some(&query),
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                    None,
+                );
+                match bookmarks {
+                    Ok(bm) => {
+                        let _ = event_handler.send(Event::SearchResults(bm));
+                    }
+                    Err(e) => {
+                        let _ = event_handler.send(Event::SearchError(e.to_string()));
+                    }
+                }
+            }
+            SearchMode::Semantic => {
+                // Load config to get semantic settings
+                let Some(codemark_dir) = self.db.path().parent() else {
+                    return;
+                };
+                let config = Config::load_layered(codemark_dir);
+
+                tokio::task::spawn_blocking(move || {
+                    // Open a new DB connection for the background task to avoid !Send issues
+                    let Ok(db) = Database::open(&db_path) else {
+                        let _ = event_handler.send(Event::SearchError(
+                            "Failed to open database for search".to_string(),
+                        ));
+                        return;
+                    };
+
+                    let model = config
+                        .semantic
+                        .model
+                        .as_deref()
+                        .and_then(|m| m.parse::<EmbeddingModel>().ok())
+                        .unwrap_or(EmbeddingModel::AllMiniLmL6V2);
+
+                    let distance_metric = config.semantic.get_distance_metric();
+                    let threshold = config.semantic.threshold;
+                    let models_dir = config.semantic.get_models_dir();
+
+                    let semantic_repo =
+                        SemanticRepo::with_config(models_dir, model, distance_metric, threshold);
+
+                    let handle = tokio::runtime::Handle::current();
+                    match handle.block_on(semantic_repo.search(db.conn(), &query, 20)) {
+                        Ok(results) => {
+                            let mut bookmarks = Vec::new();
+                            for result in results {
+                                if let Ok(Some(bm)) = db.get_bookmark(&result.bookmark_id) {
+                                    bookmarks.push(bm);
+                                }
+                            }
+                            let _ = event_handler.send(Event::SearchResults(bookmarks));
+                        }
+                        Err(e) => {
+                            let _ = event_handler.send(Event::SearchError(e.to_string()));
+                        }
+                    }
+                });
+            }
+        }
     }
 
     /// Switch the active database to a specific repository root.
@@ -737,6 +824,35 @@ impl BrowserLayout {
 
     /// Handle an event.
     pub fn handle_event(&mut self, event: &Event) -> bool {
+        // Handle search results and errors
+        match event {
+            Event::SearchResults(bookmarks) => {
+                let items: Vec<PanelItem> = bookmarks
+                    .iter()
+                    .map(|bm| {
+                        PanelItem::new(bm.file_path.clone())
+                            .secondary_text(format!("L{}", bm.query))
+                            .metadata(bm.created_by.clone().unwrap_or_default())
+                            .user_data(bm.id.clone())
+                    })
+                    .collect();
+
+                if let Some(TabContent::List(p)) = self.left_pane.panel3.panels.get_mut(2) {
+                    p.set_items(items);
+                    // Select the first bookmark result
+                    p.set_selected(0);
+                    // Ensure the Bookmarks tab is selected
+                    self.left_pane.panel3.tabs.set_selected(2);
+                }
+                return true;
+            }
+            Event::SearchError(_) => {
+                // Return true to indicate we handled the event (consumed it)
+                return true;
+            }
+            _ => {}
+        }
+
         // 1. Handle mouse clicks for focus switching
         if let Event::Mouse(mouse) = event
             && let ratatui::crossterm::event::MouseEventKind::Down(
@@ -796,8 +912,60 @@ impl BrowserLayout {
         // 2. Handle focus cycling and number shortcuts (Keys only)
         if let Event::Key(key) = event {
             match key.code {
-                ratatui::crossterm::event::KeyCode::Enter
-                | ratatui::crossterm::event::KeyCode::Char(' ') => {
+                ratatui::crossterm::event::KeyCode::Enter => {
+                    if self.focus == FocusArea::Search {
+                        self.execute_search();
+                        return true;
+                    }
+                    if self.focus == FocusArea::Panel1
+                        && let Some(panel) = self.left_pane.panel1.active_panel_mut()
+                        && let Some(selected) = panel.selected()
+                        && let Some(root) = selected.user_data.as_ref()
+                    {
+                        let root = root.clone();
+                        panel.activate_selected();
+                        let _ = self.switch_database(&root);
+                        return true;
+                    }
+                    if self.focus == FocusArea::Panel2
+                        && let Some(panel) = self.left_pane.panel2.active_panel_mut()
+                    {
+                        panel.activate_selected();
+                        self.update_tours_collections();
+                        return true;
+                    }
+                    if self.focus == FocusArea::Panel3 {
+                        match Panel3Tab::from_index(self.left_pane.panel3.tabs.selected_index()) {
+                            Some(Panel3Tab::Tours) | Some(Panel3Tab::Collections) => {
+                                // Tours or Collections
+                                if let Some(panel) = self.left_pane.panel3.active_panel_mut()
+                                    && let Some(selected) = panel.selected()
+                                {
+                                    let tour_name = selected.text().to_string();
+                                    panel.activate_selected(); // Mark as active in current panel
+                                    self.right_pane.load_tour(&self.db, &tour_name);
+
+                                    self.set_focus(FocusArea::Main);
+                                    return true;
+                                }
+                            }
+                            Some(Panel3Tab::Bookmarks) => {
+                                // Bookmarks
+                                if let Some(panel) = self.left_pane.panel3.active_panel_mut()
+                                    && let Some(selected) = panel.selected()
+                                    && let Some(id) = selected.user_data.clone()
+                                {
+                                    panel.activate_selected();
+                                    self.right_pane.load_bookmark(&self.db, &id);
+                                    self.set_focus(FocusArea::Main);
+                                    return true;
+                                }
+                            }
+                            None => {}
+                        }
+                    }
+                }
+                ratatui::crossterm::event::KeyCode::Char(' ') => {
                     if self.focus == FocusArea::Panel1
                         && let Some(panel) = self.left_pane.panel1.active_panel_mut()
                         && let Some(selected) = panel.selected()
@@ -855,50 +1023,57 @@ impl BrowserLayout {
                     return true;
                 }
                 ratatui::crossterm::event::KeyCode::Esc => {
+                    if self.focus == FocusArea::Search {
+                        // Clear search results and restore original lists
+                        self.left_pane.search.clear();
+                        self.refresh_all_panels();
+                        self.set_focus(FocusArea::Panel3);
+                        return true;
+                    }
                     if self.focus == FocusArea::Main {
                         self.set_focus(FocusArea::Panel3);
                         return true;
                     }
                 }
-                // Number keys for direct section access
-                ratatui::crossterm::event::KeyCode::Char('1') => {
+                // Number keys for direct section access (disabled when search is focused)
+                ratatui::crossterm::event::KeyCode::Char('1') if self.focus != FocusArea::Search => {
                     self.focus = FocusArea::Search;
                     self.update_focus_state();
                     return true;
                 }
-                ratatui::crossterm::event::KeyCode::Char('2') => {
+                ratatui::crossterm::event::KeyCode::Char('2') if self.focus != FocusArea::Search => {
                     self.focus = FocusArea::Panel1;
                     self.update_focus_state();
                     return true;
                 }
-                ratatui::crossterm::event::KeyCode::Char('3') => {
+                ratatui::crossterm::event::KeyCode::Char('3') if self.focus != FocusArea::Search => {
                     self.focus = FocusArea::Panel2;
                     self.update_focus_state();
                     return true;
                 }
-                ratatui::crossterm::event::KeyCode::Char('4') => {
+                ratatui::crossterm::event::KeyCode::Char('4') if self.focus != FocusArea::Search => {
                     self.focus = FocusArea::Panel3;
                     self.update_focus_state();
                     return true;
                 }
-                ratatui::crossterm::event::KeyCode::Char('5') => {
+                ratatui::crossterm::event::KeyCode::Char('5') if self.focus != FocusArea::Search => {
                     self.focus = FocusArea::Main;
                     self.right_pane.focus_steps();
                     self.update_focus_state();
                     return true;
                 }
-                ratatui::crossterm::event::KeyCode::Char('6') => {
+                ratatui::crossterm::event::KeyCode::Char('6') if self.focus != FocusArea::Search => {
                     self.focus = FocusArea::Main;
                     self.right_pane.focus_details();
                     self.update_focus_state();
                     return true;
                 }
-                ratatui::crossterm::event::KeyCode::Char('o') => {
+                ratatui::crossterm::event::KeyCode::Char('o') if self.focus != FocusArea::Search => {
                     self.open_in_editor();
                     return true;
                 }
                 // Delete collection or bookmark based on active tab
-                ratatui::crossterm::event::KeyCode::Char('d') => {
+                ratatui::crossterm::event::KeyCode::Char('d') if self.focus != FocusArea::Search => {
                     if self.focus == FocusArea::Panel3 {
                         match Panel3Tab::from_index(self.left_pane.panel3.tabs.selected_index()) {
                             Some(Panel3Tab::Collections) => {

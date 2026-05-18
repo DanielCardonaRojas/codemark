@@ -236,6 +236,10 @@ impl Component for SearchBar {
                     self.cursor = self.query.len();
                     true
                 }
+                ratatui::crossterm::event::KeyCode::Esc => {
+                    self.clear();
+                    true
+                }
                 _ => false,
             },
             Event::Mouse(mouse) => {
