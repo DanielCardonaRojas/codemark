@@ -19,8 +19,8 @@ use syntect::util::LinesWithEndings;
 use super::Component;
 use crate::event::Event;
 
-static SYNTAX_SET: LazyLock<SyntaxSet> = LazyLock::new(|| SyntaxSet::load_defaults_newlines());
-static THEME_SET: LazyLock<ThemeSet> = LazyLock::new(|| ThemeSet::load_defaults());
+static SYNTAX_SET: LazyLock<SyntaxSet> = LazyLock::new(SyntaxSet::load_defaults_newlines);
+static THEME_SET: LazyLock<ThemeSet> = LazyLock::new(ThemeSet::load_defaults);
 
 /// A component for displaying syntax-highlighted code with line numbers.
 #[derive(Debug, Clone)]

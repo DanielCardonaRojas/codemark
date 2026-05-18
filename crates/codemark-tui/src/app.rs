@@ -163,37 +163,6 @@ impl App {
         Ok(())
     }
 
-    /// Render the main UI.
-    fn render_main(&self, f: &mut ratatui::Frame) {
-        let size = f.area();
-
-        // Split into main content and status bar
-        let chunks = ratatui::layout::Layout::default()
-            .direction(ratatui::layout::Direction::Vertical)
-            .constraints([
-                ratatui::layout::Constraint::Min(0),
-                ratatui::layout::Constraint::Length(1),
-            ])
-            .split(size);
-
-        // Render the main layout
-        self.layout.render(chunks[0], f.buffer_mut());
-
-        // In a real app, we'd get these from the active layout/component
-        // For this scaffold, we'll use some defaults or mock data
-        let bindings = vec![ui::KeyBinding::new("?", "Help"), ui::KeyBinding::new("q", "Quit")];
-
-        // Render status bar
-        ui::render_status_bar(
-            chunks[1],
-            f.buffer_mut(),
-            self.state.mode(),
-            &bindings,
-            None,
-            self.state.get_string("search_query"),
-        );
-    }
-
     /// Static version of render_main for use in draw closure.
     fn render_main_static(f: &mut ratatui::Frame, layout: &LayoutManager, state: &AppState) {
         let size = f.area();
@@ -224,26 +193,6 @@ impl App {
         );
     }
 
-    /// Render the help panel.
-    fn render_help(&self, f: &mut ratatui::Frame) {
-        let size = f.area();
-
-        let bindings = ui::common_key_bindings();
-
-        // Calculate help panel dimensions
-        let width = 50.min(size.width.saturating_sub(4));
-        let height = (bindings.len() as u16 + 4).min(size.height.saturating_sub(4));
-
-        let help_area = ratatui::layout::Rect {
-            x: (size.width - width) / 2,
-            y: (size.height - height) / 2,
-            width,
-            height,
-        };
-
-        ui::render_help_panel(help_area, f.buffer_mut(), &bindings);
-    }
-
     /// Static version of render_help for use in draw closure.
     fn render_help_static(f: &mut ratatui::Frame, _layout: &LayoutManager) {
         let size = f.area();
@@ -272,35 +221,32 @@ impl App {
         }
 
         // Handle mode-specific events
-        match self.state.mode() {
-            crate::state::AppMode::Normal => {
-                if let Event::Key(key) = event {
-                    match key.code {
-                        ratatui::crossterm::event::KeyCode::Char('?') => {
-                            self.show_help = !self.show_help;
-                            return Ok(true);
-                        }
-                        ratatui::crossterm::event::KeyCode::Tab => {
-                            self.focus_manager.next();
-                            if let Some(focused) = self.focus_manager.focused() {
-                                self.state.set_focus(focused);
-                                self.update_focus();
-                            }
-                            return Ok(true);
-                        }
-                        ratatui::crossterm::event::KeyCode::BackTab => {
-                            self.focus_manager.previous();
-                            if let Some(focused) = self.focus_manager.focused() {
-                                self.state.set_focus(focused);
-                                self.update_focus();
-                            }
-                            return Ok(true);
-                        }
-                        _ => {}
-                    }
+        if self.state.mode() == crate::state::AppMode::Normal
+            && let Event::Key(key) = event
+        {
+            match key.code {
+                ratatui::crossterm::event::KeyCode::Char('?') => {
+                    self.show_help = !self.show_help;
+                    return Ok(true);
                 }
+                ratatui::crossterm::event::KeyCode::Tab => {
+                    self.focus_manager.cycle_next();
+                    if let Some(focused) = self.focus_manager.focused() {
+                        self.state.set_focus(focused);
+                        self.update_focus();
+                    }
+                    return Ok(true);
+                }
+                ratatui::crossterm::event::KeyCode::BackTab => {
+                    self.focus_manager.previous();
+                    if let Some(focused) = self.focus_manager.focused() {
+                        self.state.set_focus(focused);
+                        self.update_focus();
+                    }
+                    return Ok(true);
+                }
+                _ => {}
             }
-            _ => {}
         }
 
         // Handle events in layout components

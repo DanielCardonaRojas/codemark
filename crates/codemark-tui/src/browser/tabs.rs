@@ -40,7 +40,7 @@ impl Tab {
     }
 
     /// Render this tab as a Line with its index number.
-    fn render(&self, index: usize, selected: bool, focused: bool) -> Line {
+    fn render(&self, index: usize, selected: bool, focused: bool) -> Line<'_> {
         let base_style = if selected && focused {
             Style::default().fg(Color::Black).bg(Color::Green)
         } else if selected {

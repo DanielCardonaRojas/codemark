@@ -28,9 +28,10 @@ pub struct AppState {
 /// The current mode of the application.
 ///
 /// Modes determine how events are handled and what is displayed.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub enum AppMode {
     /// Normal mode - default browsing mode.
+    #[default]
     Normal,
     /// Insert mode - for entering text.
     Insert,
@@ -42,12 +43,6 @@ pub enum AppMode {
     Help,
     /// Confirm mode - confirming an action.
     Confirm,
-}
-
-impl Default for AppMode {
-    fn default() -> Self {
-        Self::Normal
-    }
 }
 
 impl AppMode {
@@ -453,7 +448,7 @@ impl FocusManager {
     }
 
     /// Focus the next component.
-    pub fn next(&mut self) -> bool {
+    pub fn cycle_next(&mut self) -> bool {
         if self.components.is_empty() {
             return false;
         }

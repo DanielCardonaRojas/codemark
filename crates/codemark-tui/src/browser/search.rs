@@ -239,19 +239,19 @@ impl Component for SearchBar {
                 _ => false,
             },
             Event::Mouse(mouse) => {
-                if let ratatui::crossterm::event::MouseEventKind::Down(button) = mouse.kind {
-                    if button == ratatui::crossterm::event::MouseButton::Left {
-                        let area = self.last_area.get();
-                        let control_width = 13;
-                        let control_start_x = area.right().saturating_sub(control_width as u16 + 1);
+                if let ratatui::crossterm::event::MouseEventKind::Down(button) = mouse.kind
+                    && button == ratatui::crossterm::event::MouseButton::Left
+                {
+                    let area = self.last_area.get();
+                    let control_width = 13;
+                    let control_start_x = area.right().saturating_sub(control_width as u16 + 1);
 
-                        if mouse.column >= control_start_x
-                            && mouse.column < area.right()
-                            && mouse.row == area.y + 1
-                        {
-                            self.cycle_mode();
-                            return true;
-                        }
+                    if mouse.column >= control_start_x
+                        && mouse.column < area.right()
+                        && mouse.row == area.y + 1
+                    {
+                        self.cycle_mode();
+                        return true;
                     }
                 }
                 false

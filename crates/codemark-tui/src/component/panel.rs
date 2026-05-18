@@ -43,8 +43,6 @@ pub struct Panel {
     focus_style: Style,
     /// Custom style for the panel border when not focused
     normal_style: Style,
-    /// Custom style for selected item
-    selected_style: Style,
     /// Whether to show a scrollbar
     show_scrollbar: bool,
     /// Whether multiple items can be active at once
@@ -195,7 +193,7 @@ impl PanelItem {
     }
 
     /// Render this item as a Line.
-    fn to_line(&self, selected: bool, focused: bool) -> Line {
+    fn to_line(&self, selected: bool, focused: bool) -> Line<'_> {
         let mut spans = Vec::new();
 
         // Add padding prefix for alignment
@@ -272,7 +270,6 @@ impl Panel {
             focused: false,
             focus_style: Style::default().fg(Color::Green),
             normal_style: Style::default().fg(Color::DarkGray),
-            selected_style: Style::default().bg(Color::Blue).fg(Color::White),
             show_scrollbar: true,
             multi_select: false,
             border_type: BorderType::Rounded,
@@ -433,50 +430,50 @@ impl Panel {
 
     /// Set the currently selected item as active and deactivate all others (or toggle in multi-select mode).
     pub fn activate_selected(&mut self) {
-        if let Some(idx) = self.selected_index() {
-            if let Some(item) = self.items.get(idx) {
-                let text = item.text.clone();
+        if let Some(idx) = self.selected_index()
+            && let Some(item) = self.items.get(idx)
+        {
+            let text = item.text.clone();
 
-                if self.multi_select {
-                    // Toggle in all_items
-                    if let Some(item) = self.all_items.iter_mut().find(|i| i.text == text) {
-                        item.active = !item.active;
-                    }
-                } else {
-                    // Determine if the target item is already active
-                    let was_active = self
-                        .all_items
-                        .iter()
-                        .find(|i| i.text == text)
-                        .map(|i| i.active)
-                        .unwrap_or(false);
+            if self.multi_select {
+                // Toggle in all_items
+                if let Some(item) = self.all_items.iter_mut().find(|i| i.text == text) {
+                    item.active = !item.active;
+                }
+            } else {
+                // Determine if the target item is already active
+                let was_active = self
+                    .all_items
+                    .iter()
+                    .find(|i| i.text == text)
+                    .map(|i| i.active)
+                    .unwrap_or(false);
 
-                    // Deactivate all
-                    for item in &mut self.all_items {
-                        item.active = false;
-                    }
-
-                    // If it wasn't active before, activate it now.
-                    // If it was active, it remains inactive (toggled off).
-                    if !was_active {
-                        if let Some(item) = self.all_items.iter_mut().find(|i| i.text == text) {
-                            item.active = true;
-                        }
-                    }
+                // Deactivate all
+                for item in &mut self.all_items {
+                    item.active = false;
                 }
 
-                // Sync items with all_items (preserving current filter and list state)
-                let query = self.filter_query.to_lowercase();
-                if query.is_empty() {
-                    self.items = self.all_items.clone();
-                } else {
-                    self.items = self
-                        .all_items
-                        .iter()
-                        .filter(|item| item.text.to_lowercase().contains(&query))
-                        .cloned()
-                        .collect();
+                // If it wasn't active before, activate it now.
+                // If it was active, it remains inactive (toggled off).
+                if !was_active
+                    && let Some(item) = self.all_items.iter_mut().find(|i| i.text == text)
+                {
+                    item.active = true;
                 }
+            }
+
+            // Sync items with all_items (preserving current filter and list state)
+            let query = self.filter_query.to_lowercase();
+            if query.is_empty() {
+                self.items = self.all_items.clone();
+            } else {
+                self.items = self
+                    .all_items
+                    .iter()
+                    .filter(|item| item.text.to_lowercase().contains(&query))
+                    .cloned()
+                    .collect();
             }
         }
     }

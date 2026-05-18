@@ -132,8 +132,6 @@ struct TourInfo {
     author: String,
     /// Step count
     step_count: usize,
-    /// Description
-    description: Option<String>,
     /// Tags associated with this tour
     tags: Vec<String>,
     /// Whether the panel is focused
@@ -311,7 +309,7 @@ impl BrowserLayout {
     }
 
     /// Get current filters/metadata for the status bar.
-    pub fn get_status_metadata(&self) -> Line {
+    pub fn get_status_metadata(&self) -> Line<'_> {
         vec![
             Span::styled("Repo: ", Style::default().fg(Color::DarkGray)),
             Span::styled("codemark", Style::default().fg(Color::Cyan)),
@@ -357,7 +355,7 @@ impl BrowserLayout {
             .left_pane
             .panel2
             .panels
-            .get(0)
+            .first()
             .and_then(|c| match c {
                 TabContent::List(p) => Some(p.active_items()),
                 _ => None,
@@ -382,7 +380,7 @@ impl BrowserLayout {
                 .filter(|(c, _count)| {
                     // Filter by branch if any are active
                     let branch_match = active_branches.is_empty()
-                        || c.created_branch.as_ref().map_or(false, |b| active_branches.contains(b));
+                        || c.created_branch.as_ref().is_some_and(|b| active_branches.contains(b));
 
                     // Filter by tags if any are active (requires fetching collection tags)
                     let tag_match = active_tags.is_empty() || {
@@ -534,55 +532,54 @@ impl BrowserLayout {
     /// Handle an event.
     pub fn handle_event(&mut self, event: &Event) -> bool {
         // 1. Handle mouse clicks for focus switching
-        if let Event::Mouse(mouse) = event {
-            if let ratatui::crossterm::event::MouseEventKind::Down(
+        if let Event::Mouse(mouse) = event
+            && let ratatui::crossterm::event::MouseEventKind::Down(
                 ratatui::crossterm::event::MouseButton::Left,
             ) = mouse.kind
-            {
-                let col = mouse.column;
-                let row = mouse.row;
+        {
+            let col = mouse.column;
+            let row = mouse.row;
 
-                // Check each section for focus switching
-                let search_area = self.left_pane.search.last_area();
-                if col >= search_area.x
-                    && col < search_area.x + search_area.width
-                    && row >= search_area.y
-                    && row < search_area.y + search_area.height
+            // Check each section for focus switching
+            let search_area = self.left_pane.search.last_area();
+            if col >= search_area.x
+                && col < search_area.x + search_area.width
+                && row >= search_area.y
+                && row < search_area.y + search_area.height
+            {
+                self.set_focus(FocusArea::Search);
+            } else {
+                let p1_area = self.left_pane.panel1.last_area();
+                if col >= p1_area.x
+                    && col < p1_area.x + p1_area.width
+                    && row >= p1_area.y
+                    && row < p1_area.y + p1_area.height
                 {
-                    self.set_focus(FocusArea::Search);
+                    self.set_focus(FocusArea::Panel1);
                 } else {
-                    let p1_area = self.left_pane.panel1.last_area();
-                    if col >= p1_area.x
-                        && col < p1_area.x + p1_area.width
-                        && row >= p1_area.y
-                        && row < p1_area.y + p1_area.height
+                    let p2_area = self.left_pane.panel2.last_area();
+                    if col >= p2_area.x
+                        && col < p2_area.x + p2_area.width
+                        && row >= p2_area.y
+                        && row < p2_area.y + p2_area.height
                     {
-                        self.set_focus(FocusArea::Panel1);
+                        self.set_focus(FocusArea::Panel2);
                     } else {
-                        let p2_area = self.left_pane.panel2.last_area();
-                        if col >= p2_area.x
-                            && col < p2_area.x + p2_area.width
-                            && row >= p2_area.y
-                            && row < p2_area.y + p2_area.height
+                        let p3_area = self.left_pane.panel3.last_area();
+                        if col >= p3_area.x
+                            && col < p3_area.x + p3_area.width
+                            && row >= p3_area.y
+                            && row < p3_area.y + p3_area.height
                         {
-                            self.set_focus(FocusArea::Panel2);
+                            self.set_focus(FocusArea::Panel3);
                         } else {
-                            let p3_area = self.left_pane.panel3.last_area();
-                            if col >= p3_area.x
-                                && col < p3_area.x + p3_area.width
-                                && row >= p3_area.y
-                                && row < p3_area.y + p3_area.height
+                            let right_area = self.right_pane.last_area();
+                            if col >= right_area.x
+                                && col < right_area.x + right_area.width
+                                && row >= right_area.y
+                                && row < right_area.y + right_area.height
                             {
-                                self.set_focus(FocusArea::Panel3);
-                            } else {
-                                let right_area = self.right_pane.last_area();
-                                if col >= right_area.x
-                                    && col < right_area.x + right_area.width
-                                    && row >= right_area.y
-                                    && row < right_area.y + right_area.height
-                                {
-                                    self.set_focus(FocusArea::Main);
-                                }
+                                self.set_focus(FocusArea::Main);
                             }
                         }
                     }
@@ -595,50 +592,47 @@ impl BrowserLayout {
             match key.code {
                 ratatui::crossterm::event::KeyCode::Enter
                 | ratatui::crossterm::event::KeyCode::Char(' ') => {
-                    if self.focus == FocusArea::Panel1 {
-                        if let Some(panel) = self.left_pane.panel1.active_panel_mut() {
-                            if let Some(selected) = panel.selected() {
-                                if let Some(root) = selected.user_data.as_ref() {
-                                    let root = root.clone();
-                                    panel.activate_selected();
-                                    let _ = self.switch_database(&root);
-                                    return true;
-                                }
-                            }
-                        }
+                    if self.focus == FocusArea::Panel1
+                        && let Some(panel) = self.left_pane.panel1.active_panel_mut()
+                        && let Some(selected) = panel.selected()
+                        && let Some(root) = selected.user_data.as_ref()
+                    {
+                        let root = root.clone();
+                        panel.activate_selected();
+                        let _ = self.switch_database(&root);
+                        return true;
                     }
-                    if self.focus == FocusArea::Panel2 {
-                        if let Some(panel) = self.left_pane.panel2.active_panel_mut() {
-                            panel.activate_selected();
-                            self.update_tours_collections();
-                            return true;
-                        }
+                    if self.focus == FocusArea::Panel2
+                        && let Some(panel) = self.left_pane.panel2.active_panel_mut()
+                    {
+                        panel.activate_selected();
+                        self.update_tours_collections();
+                        return true;
                     }
                     if self.focus == FocusArea::Panel3 {
                         let active_tab = self.left_pane.panel3.tabs.selected_index();
                         if active_tab == 0 || active_tab == 1 {
                             // Tours or Collections
-                            if let Some(panel) = self.left_pane.panel3.active_panel_mut() {
-                                if let Some(selected) = panel.selected() {
-                                    let tour_name = selected.text().to_string();
-                                    panel.activate_selected(); // Mark as active in current panel
-                                    self.right_pane.load_tour(&self.db, &tour_name);
+                            if let Some(panel) = self.left_pane.panel3.active_panel_mut()
+                                && let Some(selected) = panel.selected()
+                            {
+                                let tour_name = selected.text().to_string();
+                                panel.activate_selected(); // Mark as active in current panel
+                                self.right_pane.load_tour(&self.db, &tour_name);
 
-                                    self.set_focus(FocusArea::Main);
-                                    return true;
-                                }
+                                self.set_focus(FocusArea::Main);
+                                return true;
                             }
                         } else if active_tab == 2 {
                             // Bookmarks
-                            if let Some(panel) = self.left_pane.panel3.active_panel_mut() {
-                                if let Some(selected) = panel.selected() {
-                                    if let Some(id) = selected.user_data.clone() {
-                                        panel.activate_selected();
-                                        self.right_pane.load_bookmark(&self.db, &id);
-                                        self.set_focus(FocusArea::Main);
-                                        return true;
-                                    }
-                                }
+                            if let Some(panel) = self.left_pane.panel3.active_panel_mut()
+                                && let Some(selected) = panel.selected()
+                                && let Some(id) = selected.user_data.clone()
+                            {
+                                panel.activate_selected();
+                                self.right_pane.load_bookmark(&self.db, &id);
+                                self.set_focus(FocusArea::Main);
+                                return true;
                             }
                         }
                     }
@@ -781,11 +775,11 @@ impl RightPane {
         };
 
         // Try to load the first tour automatically
-        if let Ok(collections) = db.list_collections() {
-            if let Some((first_tour, _)) = collections.first() {
-                let name = first_tour.name.clone();
-                pane.load_tour(db, &name);
-            }
+        if let Ok(collections) = db.list_collections()
+            && let Some((first_tour, _)) = collections.first()
+        {
+            let name = first_tour.name.clone();
+            pane.load_tour(db, &name);
         }
 
         pane
@@ -824,20 +818,18 @@ impl RightPane {
             let mut file_path = bm.file_path.clone();
             let mut resolution = None;
 
-            if let Some(res_id) = bm.current_resolution_id.as_ref() {
-                if let Ok(Some(res)) = db.get_resolution(res_id) {
-                    if let Some(lr) = res.line_range.as_ref() {
-                        if let Some(start) =
-                            lr.split('-').next().and_then(|s| s.parse::<usize>().ok())
-                        {
-                            line_number = start.saturating_sub(1);
-                        }
-                    }
-                    if let Some(fp) = res.file_path.as_ref() {
-                        file_path = fp.clone();
-                    }
-                    resolution = Some(res);
+            if let Some(res_id) = bm.current_resolution_id.as_ref()
+                && let Ok(Some(res)) = db.get_resolution(res_id)
+            {
+                if let Some(lr) = res.line_range.as_ref()
+                    && let Some(start) = lr.split('-').next().and_then(|s| s.parse::<usize>().ok())
+                {
+                    line_number = start.saturating_sub(1);
                 }
+                if let Some(fp) = res.file_path.as_ref() {
+                    file_path = fp.clone();
+                }
+                resolution = Some(res);
             }
 
             if let Ok(abs_path) =
@@ -858,51 +850,49 @@ impl RightPane {
 
     /// Load a tour and its steps from the database.
     pub fn load_tour(&mut self, db: &Database, tour_name: &str) {
-        if let Ok(Some(collection)) = db.get_collection_by_name(tour_name) {
-            if let Ok(bookmarks) = db.list_bookmarks_in_collection(&collection.id) {
-                let mut new_steps = Vec::new();
-                for bm in bookmarks {
-                    let mut line_number = 0;
-                    let mut file_path = bm.file_path.clone();
-                    let mut resolution = None;
+        if let Ok(Some(collection)) = db.get_collection_by_name(tour_name)
+            && let Ok(bookmarks) = db.list_bookmarks_in_collection(&collection.id)
+        {
+            let mut new_steps = Vec::new();
+            for bm in bookmarks {
+                let mut line_number = 0;
+                let mut file_path = bm.file_path.clone();
+                let mut resolution = None;
 
-                    // Try to get resolution data for better accuracy
-                    if let Some(res_id) = bm.current_resolution_id.as_ref() {
-                        if let Ok(Some(res)) = db.get_resolution(res_id) {
-                            if let Some(lr) = res.line_range.as_ref() {
-                                if let Some(start) =
-                                    lr.split('-').next().and_then(|s| s.parse::<usize>().ok())
-                                {
-                                    line_number = start.saturating_sub(1);
-                                }
-                            }
-                            if let Some(fp) = res.file_path.as_ref() {
-                                file_path = fp.clone();
-                            }
-                            resolution = Some(res);
-                        }
+                // Try to get resolution data for better accuracy
+                if let Some(res_id) = bm.current_resolution_id.as_ref()
+                    && let Ok(Some(res)) = db.get_resolution(res_id)
+                {
+                    if let Some(lr) = res.line_range.as_ref()
+                        && let Some(start) =
+                            lr.split('-').next().and_then(|s| s.parse::<usize>().ok())
+                    {
+                        line_number = start.saturating_sub(1);
                     }
-
-                    // Resolve absolute path
-                    if let Ok(abs_path) = codemark_core::git::context::resolve_bookmark_file_path(
-                        &file_path,
-                        db.path(),
-                    ) {
-                        new_steps.push(StepData {
-                            file_path: abs_path.to_string_lossy().to_string(),
-                            line_number,
-                            bookmark: bm,
-                            resolution,
-                        });
+                    if let Some(fp) = res.file_path.as_ref() {
+                        file_path = fp.clone();
                     }
+                    resolution = Some(res);
                 }
 
-                if !new_steps.is_empty() {
-                    self.steps_data = new_steps;
-                    self.pager_total = self.steps_data.len();
-                    self.pager_current = 0;
-                    self.update_preview();
+                // Resolve absolute path
+                if let Ok(abs_path) =
+                    codemark_core::git::context::resolve_bookmark_file_path(&file_path, db.path())
+                {
+                    new_steps.push(StepData {
+                        file_path: abs_path.to_string_lossy().to_string(),
+                        line_number,
+                        bookmark: bm,
+                        resolution,
+                    });
                 }
+            }
+
+            if !new_steps.is_empty() {
+                self.steps_data = new_steps;
+                self.pager_total = self.steps_data.len();
+                self.pager_current = 0;
+                self.update_preview();
             }
         }
     }
@@ -924,7 +914,7 @@ impl RightPane {
             md.push_str(&format!("| **Author** | {} |\n", escape_markdown(author)));
         }
 
-        if let Some(ref res) = res {
+        if let Some(res) = res {
             if let Some(ref commit) = res.commit_hash {
                 md.push_str(&format!("| **Commit** | `{}` |\n", &commit[..8.min(commit.len())]));
             }
@@ -993,30 +983,29 @@ impl RightPane {
     /// Handle an event.
     fn handle_event(&mut self, event: &Event) -> bool {
         // Handle mouse clicks for internal focus switching
-        if let Event::Mouse(mouse) = event {
-            if let ratatui::crossterm::event::MouseEventKind::Down(
+        if let Event::Mouse(mouse) = event
+            && let ratatui::crossterm::event::MouseEventKind::Down(
                 ratatui::crossterm::event::MouseButton::Left,
             ) = mouse.kind
-            {
-                let col = mouse.column;
-                let row = mouse.row;
+        {
+            let col = mouse.column;
+            let row = mouse.row;
 
-                let steps_area = self.steps.last_area();
-                if col >= steps_area.x
-                    && col < steps_area.x + steps_area.width
-                    && row >= steps_area.y
-                    && row < steps_area.y + steps_area.height
+            let steps_area = self.steps.last_area();
+            if col >= steps_area.x
+                && col < steps_area.x + steps_area.width
+                && row >= steps_area.y
+                && row < steps_area.y + steps_area.height
+            {
+                self.focus_steps();
+            } else {
+                let info_area = self.tour_info.last_area();
+                if col >= info_area.x
+                    && col < info_area.x + info_area.width
+                    && row >= info_area.y
+                    && row < info_area.y + info_area.height
                 {
-                    self.focus_steps();
-                } else {
-                    let info_area = self.tour_info.last_area();
-                    if col >= info_area.x
-                        && col < info_area.x + info_area.width
-                        && row >= info_area.y
-                        && row < info_area.y + info_area.height
-                    {
-                        self.focus_tour_info();
-                    }
+                    self.focus_tour_info();
                 }
             }
         }
@@ -1214,8 +1203,7 @@ impl TabbedPanel {
         let mut branches_panel = Panel::new("").bordered(false);
         match db.list_all_branches() {
             Ok(branches) if !branches.is_empty() => {
-                let items: Vec<PanelItem> =
-                    branches.into_iter().map(|branch| PanelItem::new(branch)).collect();
+                let items: Vec<PanelItem> = branches.into_iter().map(PanelItem::new).collect();
                 branches_panel = branches_panel.items(items);
             }
             Ok(_) => {
@@ -1355,31 +1343,31 @@ impl TabbedPanel {
         }
 
         // Render selection indicator on bottom border
-        if let Some(TabContent::List(panel)) = self.panels.get(active_index) {
-            if !panel.is_empty() {
-                let current = panel.selected_index().map_or(0, |i| i + 1);
-                let total = panel.len();
-                let indicator = format!(" {current} of {total} ");
-                let indicator_width = indicator.len() as u16;
+        if let Some(TabContent::List(panel)) = self.panels.get(active_index)
+            && !panel.is_empty()
+        {
+            let current = panel.selected_index().map_or(0, |i| i + 1);
+            let total = panel.len();
+            let indicator = format!(" {current} of {total} ");
+            let indicator_width = indicator.len() as u16;
 
-                // Position on bottom border, aligned right (shift left by 1 to avoid corner)
-                let x = area.right().saturating_sub(indicator_width + 1);
-                let y = area.bottom() - 1;
+            // Position on bottom border, aligned right (shift left by 1 to avoid corner)
+            let x = area.right().saturating_sub(indicator_width + 1);
+            let y = area.bottom() - 1;
 
-                if x > area.left() {
-                    let indicator_style = if self.focused {
-                        Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)
-                    } else {
-                        Style::default().fg(Color::DarkGray)
-                    };
+            if x > area.left() {
+                let indicator_style = if self.focused {
+                    Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(Color::DarkGray)
+                };
 
-                    // Render the indicator by modifying the border cells
-                    for (i, c) in indicator.chars().enumerate() {
-                        let cx = x + i as u16;
-                        if let Some(cell) = buf.cell_mut((cx, y)) {
-                            cell.set_char(c);
-                            cell.set_style(indicator_style);
-                        }
+                // Render the indicator by modifying the border cells
+                for (i, c) in indicator.chars().enumerate() {
+                    let cx = x + i as u16;
+                    if let Some(cell) = buf.cell_mut((cx, y)) {
+                        cell.set_char(c);
+                        cell.set_style(indicator_style);
                     }
                 }
             }
@@ -1429,30 +1417,10 @@ impl TourInfo {
             branch: "main".to_string(),
             author: "Claude Code".to_string(),
             step_count: 5,
-            description: Some("Authentication flow tour".to_string()),
             tags: vec!["#auth".to_string(), "#backend".to_string(), "#security".to_string()],
             focused: false,
             last_area: std::cell::Cell::new(Rect::default()),
         }
-    }
-
-    /// Set tour data.
-    pub fn set_tour(
-        &mut self,
-        id: impl Into<String>,
-        branch: impl Into<String>,
-        author: impl Into<String>,
-        step_count: usize,
-    ) {
-        self.id = id.into();
-        self.branch = branch.into();
-        self.author = author.into();
-        self.step_count = step_count;
-    }
-
-    /// Set description.
-    pub fn set_description(&mut self, description: Option<String>) {
-        self.description = description;
     }
 
     /// Get the last rendered area.

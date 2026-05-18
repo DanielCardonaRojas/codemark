@@ -34,41 +34,41 @@ impl MarkdownPanel {
     }
 
     /// Convert the simple markdown string into Ratatui Text.
-    fn parse_to_text(&self) -> Text {
+    fn parse_to_text(&self) -> Text<'_> {
         let mut lines = Vec::new();
 
         for line in self.content.lines() {
-            if line.starts_with("# ") {
+            if let Some(stripped) = line.strip_prefix("# ") {
                 // H1
                 lines.push(Line::from(vec![Span::styled(
-                    &line[2..],
+                    stripped,
                     Style::default()
                         .fg(Color::Yellow)
                         .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
                 )]));
                 lines.push(Line::from(""));
-            } else if line.starts_with("## ") {
+            } else if let Some(stripped) = line.strip_prefix("## ") {
                 // H2
                 lines.push(Line::from(vec![Span::styled(
-                    &line[3..],
+                    stripped,
                     Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
                 )]));
-            } else if line.starts_with("> ") {
+            } else if let Some(stripped) = line.strip_prefix("> ") {
                 // Blockquote
                 lines.push(Line::from(vec![
                     Span::styled("┃ ", Style::default().fg(Color::DarkGray)),
                     Span::styled(
-                        &line[2..],
+                        stripped,
                         Style::default().fg(Color::Gray).add_modifier(Modifier::ITALIC),
                     ),
                 ]));
-            } else if line.starts_with("- ") {
+            } else if let Some(stripped) = line.strip_prefix("- ") {
                 // List item
                 lines.push(Line::from(vec![
                     Span::styled("• ", Style::default().fg(Color::Green)),
-                    Span::raw(&line[2..]),
+                    Span::raw(stripped),
                 ]));
-            } else if line.starts_with("|") {
+            } else if line.starts_with('|') {
                 // Table line (simple parsing)
                 if line.contains("---") {
                     // Ignore separator

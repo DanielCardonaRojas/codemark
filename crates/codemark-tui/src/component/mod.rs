@@ -58,7 +58,7 @@ pub trait Component {
 ///
 /// Layout managers use these constraints to determine how much space
 /// to allocate to each component.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct SizeConstraints {
     /// Minimum width (0 = no minimum)
     pub min_width: u16,
@@ -68,12 +68,6 @@ pub struct SizeConstraints {
     pub max_width: u16,
     /// Maximum height (0 = no maximum)
     pub max_height: u16,
-}
-
-impl Default for SizeConstraints {
-    fn default() -> Self {
-        Self { min_width: 0, min_height: 0, max_width: 0, max_height: 0 }
-    }
 }
 
 impl SizeConstraints {
@@ -201,26 +195,25 @@ impl Component for Pager {
     }
 
     fn handle_event(&mut self, event: &Event) -> bool {
-        if let Event::Mouse(mouse) = event {
-            if let ratatui::crossterm::event::MouseEventKind::Down(
+        if let Event::Mouse(mouse) = event
+            && let ratatui::crossterm::event::MouseEventKind::Down(
                 ratatui::crossterm::event::MouseButton::Left,
             ) = mouse.kind
+        {
+            let area = self.last_area.get();
+            if mouse.column >= area.x
+                && mouse.column < area.x + area.width
+                && mouse.row >= area.y
+                && mouse.row < area.y + area.height
             {
-                let area = self.last_area.get();
-                if mouse.column >= area.x
-                    && mouse.column < area.x + area.width
-                    && mouse.row >= area.y
-                    && mouse.row < area.y + area.height
-                {
-                    // Simple logic: clicking left half goes back, right half goes forward
-                    let center_x = area.x + area.width / 2;
-                    if mouse.column < center_x {
-                        self.current = self.current.saturating_sub(1);
-                    } else if self.current + 1 < self.total {
-                        self.current += 1;
-                    }
-                    return true;
+                // Simple logic: clicking left half goes back, right half goes forward
+                let center_x = area.x + area.width / 2;
+                if mouse.column < center_x {
+                    self.current = self.current.saturating_sub(1);
+                } else if self.current + 1 < self.total {
+                    self.current += 1;
                 }
+                return true;
             }
         }
         false
@@ -234,24 +227,24 @@ impl Component for Pager {
 /// Useful for creating gaps between components in layouts.
 #[derive(Debug, Clone, Copy)]
 pub struct Spacer {
-    width: u16,
-    height: u16,
+    _width: u16,
+    _height: u16,
 }
 
 impl Spacer {
     /// Create a new spacer with the given dimensions.
     pub fn new(width: u16, height: u16) -> Self {
-        Self { width, height }
+        Self { _width: width, _height: height }
     }
 
     /// Create a horizontal spacer (width only).
     pub fn horizontal(width: u16) -> Self {
-        Self { width, height: 1 }
+        Self { _width: width, _height: 1 }
     }
 
     /// Create a vertical spacer (height only).
     pub fn vertical(height: u16) -> Self {
-        Self { width: 1, height }
+        Self { _width: 1, _height: height }
     }
 }
 

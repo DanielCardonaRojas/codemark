@@ -127,7 +127,7 @@ impl EventHandlerConfig {
 /// A handle to the event handler that can be cloned across threads.
 #[derive(Debug, Clone)]
 pub struct EventHandler {
-    tx: Arc<mpsc::UnboundedSender<Event>>,
+    _tx: Arc<mpsc::UnboundedSender<Event>>,
 }
 
 impl EventHandler {
@@ -140,7 +140,7 @@ impl EventHandler {
             crossterm::execute!(std::io::stdout(), crossterm::event::EnableMouseCapture)?;
         }
 
-        Ok(Self { tx: Arc::new(tx) })
+        Ok(Self { _tx: Arc::new(tx) })
     }
 
     /// Get the next event.
@@ -171,16 +171,10 @@ impl EventHandler {
         // Spawn the event loop task
         tokio::spawn(event_loop_with_sender(config.tick_rate, tx.clone()));
 
-        let handler = Self { tx: Arc::new(mpsc::unbounded_channel().0) };
+        let handler = Self { _tx: Arc::new(mpsc::unbounded_channel().0) };
 
         Ok((rx, handler))
     }
-}
-
-/// The main event loop that polls for crossterm events.
-async fn event_loop(_config: EventHandlerConfig, _rx: mpsc::UnboundedReceiver<Event>) {
-    // This would continuously poll for events and send them to the channel
-    // Implementation depends on the specific requirements
 }
 
 /// Event loop that sends to an mpsc channel.
@@ -192,13 +186,12 @@ async fn event_loop_with_sender(tick_rate: Duration, tx: mpsc::Sender<Event>) {
             tick_rate.checked_sub(last_tick.elapsed()).unwrap_or_else(|| Duration::from_secs(0));
 
         if crossterm::event::poll(timeout).unwrap_or(false) {
-            if let Ok(crossterm_event) = crossterm::event::read() {
-                if let Some(event) = Event::from_crossterm(crossterm_event) {
-                    if tx.send(event).await.is_err() {
-                        // Channel closed, exit the loop
-                        return;
-                    }
-                }
+            if let Ok(crossterm_event) = crossterm::event::read()
+                && let Some(event) = Event::from_crossterm(crossterm_event)
+                && tx.send(event).await.is_err()
+            {
+                // Channel closed, exit the loop
+                return;
             }
         } else if last_tick.elapsed() >= tick_rate {
             if tx.send(Event::Tick).await.is_err() {
