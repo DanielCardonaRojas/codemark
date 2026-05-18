@@ -31,6 +31,8 @@ use codemark_core::engine::bookmark::{Bookmark, BookmarkFilter, Resolution};
 pub struct BrowserLayout {
     /// Database connection
     db: Database,
+    /// Global repository registry
+    registry: rusqlite::Connection,
     /// Left sidebar components
     left_pane: LeftPane,
     /// Right main content area
@@ -202,14 +204,56 @@ fn escape_markdown(text: &str) -> String {
 impl BrowserLayout {
     /// Create a new browser layout.
     pub fn new(db: Database) -> Self {
+        use codemark_core::storage::registry;
+        let registry = registry::open_registry().expect("Failed to open global registry");
+
         let mut layout = Self {
-            left_pane: LeftPane::new(&db),
+            left_pane: LeftPane::new(&db, &registry),
             right_pane: RightPane::new(&db),
             focus: FocusArea::Panel3,
             db,
+            registry,
         };
         layout.update_focus_state();
         layout
+    }
+
+    /// Switch the active database to a specific repository root.
+    pub fn switch_database(&mut self, repo_root: &str) -> codemark_core::error::Result<()> {
+        let db_path = std::path::Path::new(repo_root).join(".codemark").join("codemark.db");
+        if db_path.exists() {
+            self.db = Database::open(&db_path)?;
+            self.refresh_all_panels();
+        }
+        Ok(())
+    }
+
+    /// Refresh all panels from the current active database.
+    pub fn refresh_all_panels(&mut self) {
+        // 1. Update Panel 1 Repos (to refresh checkmarks)
+        self.left_pane.panel1 = TabbedPanel::new_repos_accounts(&self.db, &self.registry);
+        self.left_pane.panel1.set_focus(self.focus == FocusArea::Panel1);
+
+        // 2. Update Tags/Branches (Panel 2)
+        self.left_pane.panel2 = TabbedPanel::new_tags_branches(&self.db);
+        self.left_pane.panel2.set_focus(self.focus == FocusArea::Panel2);
+
+        // 3. Update Tours/Collections/Bookmarks (Panel 3)
+        self.left_pane.panel3 = TabbedPanel::new_tours_collections_bookmarks(&self.db);
+        self.left_pane.panel3.set_focus(self.focus == FocusArea::Panel3);
+
+        // 4. Update Step previews (Right Pane)
+        if let Ok(collections) = self.db.list_collections() {
+            if let Some((first_tour, _)) = collections.first() {
+                let name = first_tour.name.clone();
+                self.right_pane.load_tour(&self.db, &name);
+            } else {
+                // Clear steps if no tours found
+                self.right_pane.steps_data.clear();
+                self.right_pane.pager_total = 0;
+                self.right_pane.pager_current = 0;
+            }
+        }
     }
 
     /// Get the current focus area.
@@ -515,8 +559,14 @@ impl BrowserLayout {
                 ratatui::crossterm::event::KeyCode::Enter | ratatui::crossterm::event::KeyCode::Char(' ') => {
                     if self.focus == FocusArea::Panel1 {
                         if let Some(panel) = self.left_pane.panel1.active_panel_mut() {
-                            panel.activate_selected();
-                            return true;
+                            if let Some(selected) = panel.selected() {
+                                if let Some(root) = selected.user_data.as_ref() {
+                                    let root = root.clone();
+                                    panel.activate_selected();
+                                    let _ = self.switch_database(&root);
+                                    return true;
+                                }
+                            }
                         }
                     }
                     if self.focus == FocusArea::Panel2 {
@@ -625,10 +675,10 @@ impl BrowserLayout {
 
 impl LeftPane {
     /// Create a new left pane.
-    fn new(db: &Database) -> Self {
+    fn new(db: &Database, registry: &rusqlite::Connection) -> Self {
         Self {
             search: SearchBar::new(),
-            panel1: TabbedPanel::new_repos_accounts(db),
+            panel1: TabbedPanel::new_repos_accounts(db, registry),
             panel2: TabbedPanel::new_tags_branches(db),
             panel3: TabbedPanel::new_tours_collections_bookmarks(db),
             panel1_config: SectionConfig::new(4, 6),
@@ -1049,12 +1099,22 @@ impl TabbedPanel {
     }
 
     /// Create panel 1 with Repos/Accounts tabs.
-    fn new_repos_accounts(db: &Database) -> Self {
+    fn new_repos_accounts(db: &Database, registry: &rusqlite::Connection) -> Self {
+        use codemark_core::storage::registry;
         let mut repos_panel = Panel::new("").bordered(false);
-        if let Ok(repos) = db.list_repos() {
+        
+        if let Ok(repos) = registry::list_repos(registry) {
+            let active_root = db.path().parent() // .codemark/
+                .and_then(|p| p.parent()) // repo_root/
+                .map(|p| p.to_path_buf())
+                .unwrap_or_default();
+
             let items: Vec<PanelItem> = repos.into_iter().map(|repo| {
+                let is_active = repo.repo_root == active_root;
                 PanelItem::new(repo.repo_name)
                     .secondary_text(repo.repo_owner)
+                    .user_data(repo.repo_root.to_string_lossy().to_string())
+                    .active(is_active)
                     .no_health()
             }).collect();
             repos_panel = repos_panel.items(items);
