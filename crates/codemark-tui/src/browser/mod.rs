@@ -328,6 +328,7 @@ impl BrowserLayout {
                     1 => {
                         // Collections
                         bindings.insert(0, KeyBinding::new("Enter", "Open"));
+                        bindings.insert(1, KeyBinding::new("d", "Delete"));
                     }
                     2 => {
                         // Bookmarks
@@ -797,6 +798,24 @@ impl BrowserLayout {
                 ratatui::crossterm::event::KeyCode::Char('o') => {
                     self.open_in_editor();
                     return true;
+                }
+                // Delete collection when in Collections tab (Panel 3, tab 1)
+                ratatui::crossterm::event::KeyCode::Char('d') => {
+                    if self.focus == FocusArea::Panel3
+                        && self.left_pane.panel3.tabs.selected_index() == 1
+                    {
+                        if let Some(panel) = self.left_pane.panel3.active_panel_mut()
+                            && let Some(selected) = panel.selected()
+                        {
+                            let collection_name = selected.text().to_string();
+                            if let Ok(Some(_collection)) = self.db.get_collection_by_name(&collection_name) {
+                                let _ = self.db.delete_collection(&collection_name);
+                                // Refresh panels after deletion
+                                self.refresh_all_panels();
+                                return true;
+                            }
+                        }
+                    }
                 }
                 _ => {}
             }
