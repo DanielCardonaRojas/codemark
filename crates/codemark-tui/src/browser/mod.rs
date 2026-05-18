@@ -247,17 +247,32 @@ impl BrowserLayout {
 
     /// Refresh all panels from the current active database.
     pub fn refresh_all_panels(&mut self) {
-        // 1. Update Panel 1 Repos (to refresh checkmarks)
-        self.left_pane.panel1 = TabbedPanel::new_repos_accounts(&self.db, &self.registry);
-        self.left_pane.panel1.set_focus(self.focus == FocusArea::Panel1);
+        // 1. Update Panel 1 Repos (in-place to preserve selection)
+        let repo_items = TabbedPanel::build_repo_items(&self.db, &self.registry);
+        if let Some(p) = self.left_pane.panel1.get_list_panel_mut(0) {
+            p.set_items(repo_items);
+        }
 
-        // 2. Update Tags/Branches (Panel 2)
-        self.left_pane.panel2 = TabbedPanel::new_tags_branches(&self.db);
-        self.left_pane.panel2.set_focus(self.focus == FocusArea::Panel2);
+        // 2. Update Tags/Branches (in-place)
+        let (tags, branches) = TabbedPanel::build_tags_branches_items(&self.db);
+        if let Some(p) = self.left_pane.panel2.get_list_panel_mut(0) {
+            p.set_items(tags);
+        }
+        if let Some(p) = self.left_pane.panel2.get_list_panel_mut(1) {
+            p.set_items(branches);
+        }
 
-        // 3. Update Tours/Collections/Bookmarks (Panel 3)
-        self.left_pane.panel3 = TabbedPanel::new_tours_collections_bookmarks(&self.db);
-        self.left_pane.panel3.set_focus(self.focus == FocusArea::Panel3);
+        // 3. Update Tours/Collections/Bookmarks (in-place)
+        let (tours, collections, bookmarks) = TabbedPanel::build_panel3_items(&self.db);
+        if let Some(p) = self.left_pane.panel3.get_list_panel_mut(0) {
+            p.set_items(tours);
+        }
+        if let Some(p) = self.left_pane.panel3.get_list_panel_mut(1) {
+            p.set_items(collections);
+        }
+        if let Some(p) = self.left_pane.panel3.get_list_panel_mut(2) {
+            p.set_items(bookmarks);
+        }
 
         // 4. Update Step previews (Right Pane)
         if let Ok(collections) = self.db.list_collections() {
@@ -460,25 +475,24 @@ impl BrowserLayout {
 
         // 1. Update Tours/Collections (Panel 3, tabs 0 and 1)
         if let Ok(collections) = self.db.list_collections() {
-            let filtered_items: Vec<PanelItem> = collections
-                .into_iter()
-                .filter(|(c, _count)| {
-                    // Filter by branch if any are active
-                    let branch_match = active_branches.is_empty()
-                        || c.created_branch.as_ref().is_some_and(|b| active_branches.contains(b));
+            let mut collection_items = Vec::new();
+            let mut tour_items = Vec::new();
 
-                    // Filter by tags if any are active (requires fetching collection tags)
-                    let tag_match = active_tags.is_empty() || {
-                        if let Ok(c_tags) = self.db.list_tags_for_collection(&c.id) {
-                            c_tags.iter().any(|t| active_tags.contains(&t.tag))
-                        } else {
-                            false
-                        }
-                    };
+            for (c, count) in collections {
+                // Filter by branch if any are active
+                let branch_match = active_branches.is_empty()
+                    || c.created_branch.as_ref().is_some_and(|b| active_branches.contains(b));
 
-                    branch_match && tag_match
-                })
-                .map(|(c, count)| {
+                // Filter by tags if any are active
+                let tag_match = active_tags.is_empty() || {
+                    if let Ok(c_tags) = self.db.list_tags_for_collection(&c.id) {
+                        c_tags.iter().any(|t| active_tags.contains(&t.tag))
+                    } else {
+                        false
+                    }
+                };
+
+                if branch_match && tag_match {
                     let health = match c.health {
                         Some(h) => match h.to_string().as_str() {
                             "Healthy" => HealthStatus::Healthy,
@@ -487,18 +501,26 @@ impl BrowserLayout {
                         },
                         None => HealthStatus::Unknown,
                     };
-                    PanelItem::new(c.name)
+
+                    let is_published = c.published_at.is_some();
+                    let item = PanelItem::new(c.name)
                         .secondary_text(c.created_branch.unwrap_or_else(|| "main".to_string()))
                         .metadata(format!("{count} steps"))
                         .health(health)
-                })
-                .collect();
+                        .published(is_published);
+
+                    collection_items.push(item.clone());
+                    if is_published {
+                        tour_items.push(item);
+                    }
+                }
+            }
 
             if let Some(TabContent::List(p)) = self.left_pane.panel3.panels.get_mut(0) {
-                p.set_items(filtered_items.clone());
+                p.set_items(tour_items);
             }
             if let Some(TabContent::List(p)) = self.left_pane.panel3.panels.get_mut(1) {
-                p.set_items(filtered_items);
+                p.set_items(collection_items);
             }
         }
 
@@ -1230,11 +1252,17 @@ impl TabbedPanel {
         }
     }
 
-    /// Create panel 1 with Repos/Accounts tabs.
-    fn new_repos_accounts(db: &Database, registry: &rusqlite::Connection) -> Self {
-        use codemark_core::storage::registry;
-        let mut repos_panel = Panel::new("").bordered(false);
+    /// Get a specific list panel by index for modification.
+    pub fn get_list_panel_mut(&mut self, index: usize) -> Option<&mut Panel> {
+        match self.panels.get_mut(index) {
+            Some(TabContent::List(p)) => Some(p),
+            _ => None,
+        }
+    }
 
+    /// Build the list of repository items.
+    fn build_repo_items(db: &Database, registry: &rusqlite::Connection) -> Vec<PanelItem> {
+        use codemark_core::storage::registry;
         if let Ok(repos) = registry::list_repos(registry) {
             let active_root = db
                 .path()
@@ -1243,7 +1271,7 @@ impl TabbedPanel {
                 .map(|p| p.to_path_buf())
                 .unwrap_or_default();
 
-            let items: Vec<PanelItem> = repos
+            repos
                 .into_iter()
                 .map(|repo| {
                     let is_active = repo.repo_root == active_root;
@@ -1253,9 +1281,86 @@ impl TabbedPanel {
                         .active(is_active)
                         .no_health()
                 })
-                .collect();
-            repos_panel = repos_panel.items(items);
+                .collect()
+        } else {
+            Vec::new()
         }
+    }
+
+    /// Build tags and branches items.
+    fn build_tags_branches_items(db: &Database) -> (Vec<PanelItem>, Vec<PanelItem>) {
+        let tags = match db.list_all_tags() {
+            Ok(tags) if !tags.is_empty() => tags
+                .into_iter()
+                .map(|tag| PanelItem::new(format!("#{tag}")).no_health().color(Color::Cyan))
+                .collect(),
+            Ok(_) => vec![PanelItem::new("No tags found").no_health().color(Color::DarkGray)],
+            Err(e) => vec![PanelItem::new(format!("Error: {e}")).no_health().color(Color::Red)],
+        };
+
+        let branches = match db.list_all_branches() {
+            Ok(branches) if !branches.is_empty() => branches
+                .into_iter()
+                .map(|branch| PanelItem::new(branch).health(HealthStatus::Branch))
+                .collect(),
+            Ok(_) => vec![PanelItem::new("No branches found").no_health().color(Color::DarkGray)],
+            Err(e) => vec![PanelItem::new(format!("Error: {e}")).no_health().color(Color::Red)],
+        };
+
+        (tags, branches)
+    }
+
+    /// Build tours, collections, and bookmarks items.
+    fn build_panel3_items(db: &Database) -> (Vec<PanelItem>, Vec<PanelItem>, Vec<PanelItem>) {
+        let mut collections_items = Vec::new();
+        let mut tours_items = Vec::new();
+
+        if let Ok(collections) = db.list_collections() {
+            for (c, count) in collections {
+                let health = match c.health {
+                    Some(h) => match h.to_string().as_str() {
+                        "Healthy" => HealthStatus::Healthy,
+                        "Error" => HealthStatus::Error,
+                        _ => HealthStatus::Warning,
+                    },
+                    None => HealthStatus::Unknown,
+                };
+
+                let is_published = c.published_at.is_some();
+                let item = PanelItem::new(c.name)
+                    .secondary_text(c.created_branch.unwrap_or_else(|| "main".to_string()))
+                    .metadata(format!("{count} steps"))
+                    .health(health)
+                    .published(is_published);
+
+                collections_items.push(item.clone());
+                if is_published {
+                    tours_items.push(item);
+                }
+            }
+        }
+
+        let bookmarks = match db.list_bookmarks(&BookmarkFilter::default()) {
+            Ok(bookmarks) => bookmarks
+                .into_iter()
+                .map(|bm| {
+                    PanelItem::new(bm.file_path)
+                        .secondary_text(format!("L{}", bm.query))
+                        .metadata(bm.created_by.unwrap_or_default())
+                        .user_data(bm.id)
+                })
+                .collect(),
+            Err(_) => Vec::new(),
+        };
+
+        (tours_items, collections_items, bookmarks)
+    }
+
+    /// Create panel 1 with Repos/Accounts tabs.
+    fn new_repos_accounts(db: &Database, registry: &rusqlite::Connection) -> Self {
+        let repos_items = TabbedPanel::build_repo_items(db, registry);
+        let mut repos_panel = Panel::new("").bordered(false);
+        repos_panel = repos_panel.items(repos_items);
 
         let accounts = Panel::new("")
             .items(vec![
@@ -1281,44 +1386,9 @@ impl TabbedPanel {
 
     /// Create panel 2 with Tags/Branches tabs.
     fn new_tags_branches(db: &Database) -> Self {
-        let mut tags_panel = Panel::new("").multi_select(true).bordered(false);
-        match db.list_all_tags() {
-            Ok(tags) if !tags.is_empty() => {
-                let items: Vec<PanelItem> = tags
-                    .into_iter()
-                    .map(|tag| PanelItem::new(format!("#{tag}")).no_health().color(Color::Cyan))
-                    .collect();
-                tags_panel = tags_panel.items(items);
-            }
-            Ok(_) => {
-                tags_panel = tags_panel
-                    .add_item(PanelItem::new("No tags found").no_health().color(Color::DarkGray));
-            }
-            Err(e) => {
-                tags_panel = tags_panel
-                    .add_item(PanelItem::new(format!("Error: {e}")).no_health().color(Color::Red));
-            }
-        }
-
-        let mut branches_panel = Panel::new("").bordered(false);
-        match db.list_all_branches() {
-            Ok(branches) if !branches.is_empty() => {
-                let items: Vec<PanelItem> = branches
-                    .into_iter()
-                    .map(|branch| PanelItem::new(branch).health(HealthStatus::Branch))
-                    .collect();
-                branches_panel = branches_panel.items(items);
-            }
-            Ok(_) => {
-                branches_panel = branches_panel.add_item(
-                    PanelItem::new("No branches found").no_health().color(Color::DarkGray),
-                );
-            }
-            Err(e) => {
-                branches_panel = branches_panel
-                    .add_item(PanelItem::new(format!("Error: {e}")).no_health().color(Color::Red));
-            }
-        }
+        let (tags_items, branches_items) = TabbedPanel::build_tags_branches_items(db);
+        let tags_panel = Panel::new("").multi_select(true).bordered(false).items(tags_items);
+        let branches_panel = Panel::new("").bordered(false).items(branches_items);
 
         let tabs = TabSelection::new(vec![
             Tab::new("Tags").badge(tags_panel.len().to_string()),
@@ -1335,44 +1405,13 @@ impl TabbedPanel {
 
     /// Create panel 3 with Tours/Collections/Bookmarks tabs.
     fn new_tours_collections_bookmarks(db: &Database) -> Self {
-        let mut collections_panel = Panel::new("").bordered(false);
-        if let Ok(collections) = db.list_collections() {
-            let items: Vec<PanelItem> = collections
-                .into_iter()
-                .map(|(c, count)| {
-                    let health = match c.health {
-                        Some(h) => match h.to_string().as_str() {
-                            "Healthy" => HealthStatus::Healthy,
-                            "Error" => HealthStatus::Error,
-                            _ => HealthStatus::Warning,
-                        },
-                        None => HealthStatus::Unknown,
-                    };
-                    PanelItem::new(c.name)
-                        .secondary_text(c.created_branch.unwrap_or_else(|| "main".to_string()))
-                        .metadata(format!("{count} steps"))
-                        .health(health)
-                })
-                .collect();
-            collections_panel = collections_panel.items(items);
-        }
-
-        let mut bookmarks_panel = Panel::new("").bordered(false);
-        if let Ok(bookmarks) = db.list_bookmarks(&BookmarkFilter::default()) {
-            let items: Vec<PanelItem> = bookmarks
-                .into_iter()
-                .map(|bm| {
-                    PanelItem::new(bm.file_path)
-                        .secondary_text(format!("L{}", bm.query))
-                        .metadata(bm.created_by.unwrap_or_default())
-                        .user_data(bm.id)
-                })
-                .collect();
-            bookmarks_panel = bookmarks_panel.items(items);
-        }
+        let (tours_items, collections_items, bookmarks_items) = TabbedPanel::build_panel3_items(db);
+        let tours_panel = Panel::new("").bordered(false).items(tours_items);
+        let collections_panel = Panel::new("").bordered(false).items(collections_items);
+        let bookmarks_panel = Panel::new("").bordered(false).items(bookmarks_items);
 
         let tabs = TabSelection::new(vec![
-            Tab::new("Tours").badge(collections_panel.len().to_string()),
+            Tab::new("Tours").badge(tours_panel.len().to_string()),
             Tab::new("Collections").badge(collections_panel.len().to_string()),
             Tab::new("Bookmarks").badge(bookmarks_panel.len().to_string()),
         ]);
@@ -1380,7 +1419,7 @@ impl TabbedPanel {
         Self {
             tabs,
             panels: vec![
-                TabContent::List(collections_panel.clone()),
+                TabContent::List(tours_panel),
                 TabContent::List(collections_panel),
                 TabContent::List(bookmarks_panel),
             ],

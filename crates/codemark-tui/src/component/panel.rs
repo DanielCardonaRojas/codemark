@@ -108,6 +108,8 @@ pub struct PanelItem {
     sync_direction: Option<SyncDirection>,
     /// Whether this item is currently active (e.g., active workspace)
     active: bool,
+    /// Whether the item is published to a server (shows cloud icon)
+    published: bool,
     /// Optional hidden user data (e.g., database ID)
     pub user_data: Option<String>,
 }
@@ -135,6 +137,7 @@ impl PanelItem {
             checkmark: false,
             sync_direction: None,
             active: false,
+            published: false,
             user_data: None,
         }
     }
@@ -148,6 +151,12 @@ impl PanelItem {
     /// Set whether this item is active.
     pub fn active(mut self, active: bool) -> Self {
         self.active = active;
+        self
+    }
+
+    /// Set whether the item is published.
+    pub fn published(mut self, published: bool) -> Self {
+        self.published = published;
         self
     }
 
@@ -248,7 +257,6 @@ impl PanelItem {
                 }
             }
         }
-
         // Add trailing checkmark if enabled or active
         if self.checkmark || self.active {
             spans.push(Span::raw(" "));
@@ -258,8 +266,17 @@ impl PanelItem {
             ));
         }
 
-        let line = Line::from(spans);
-        if selected && focused { line.bold() } else { line }
+        // Add cloud icon if published
+        if self.published {
+            spans.push(Span::raw(" "));
+            spans.push(Span::styled("\u{f0c2}", Style::default().fg(Color::Cyan)));
+        }
+
+        let mut line = Line::from(spans);
+        if selected && focused {
+            line = line.bold();
+        }
+        line
     }
 }
 
