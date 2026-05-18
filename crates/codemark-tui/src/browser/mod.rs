@@ -1303,7 +1303,10 @@ impl TabbedPanel {
         let mut branches_panel = Panel::new("").bordered(false);
         match db.list_all_branches() {
             Ok(branches) if !branches.is_empty() => {
-                let items: Vec<PanelItem> = branches.into_iter().map(PanelItem::new).collect();
+                let items: Vec<PanelItem> = branches
+                    .into_iter()
+                    .map(|branch| PanelItem::new(branch).health(HealthStatus::Branch))
+                    .collect();
                 branches_panel = branches_panel.items(items);
             }
             Ok(_) => {

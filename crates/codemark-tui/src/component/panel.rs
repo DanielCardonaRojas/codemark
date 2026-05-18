@@ -64,6 +64,8 @@ pub enum HealthStatus {
     Error,
     /// Unknown/Gray - gray
     Unknown,
+    /// Branch icon
+    Branch,
 }
 
 impl HealthStatus {
@@ -74,12 +76,16 @@ impl HealthStatus {
             HealthStatus::Warning => Color::Yellow,
             HealthStatus::Error => Color::Red,
             HealthStatus::Unknown => Color::DarkGray,
+            HealthStatus::Branch => Color::Yellow,
         }
     }
 
     /// Get the symbol for this health status.
     fn symbol(&self) -> &'static str {
-        "●"
+        match self {
+            HealthStatus::Branch => "",
+            _ => "●",
+        }
     }
 }
 
