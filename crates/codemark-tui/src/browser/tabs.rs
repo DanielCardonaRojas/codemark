@@ -8,12 +8,12 @@ use ratatui::{
     widgets::{Widget, Wrap},
 };
 
-/// Panel 3 tabs (Tours/Collections/Bookmarks).
+/// Panel 3 tabs (Bookmarks/Collections/Tours).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Panel3Tab {
-    Tours = 0,
+    Bookmarks = 0,
     Collections = 1,
-    Bookmarks = 2,
+    Tours = 2,
 }
 
 impl Panel3Tab {
@@ -24,24 +24,24 @@ impl Panel3Tab {
 
     /// Get all tabs in order.
     pub fn all() -> &'static [Panel3Tab] {
-        &[Panel3Tab::Tours, Panel3Tab::Collections, Panel3Tab::Bookmarks]
+        &[Panel3Tab::Bookmarks, Panel3Tab::Collections, Panel3Tab::Tours]
     }
 
     /// Get the tab label.
     pub fn label(self) -> &'static str {
         match self {
-            Panel3Tab::Tours => "Tours",
-            Panel3Tab::Collections => "Collections",
             Panel3Tab::Bookmarks => "Bookmarks",
+            Panel3Tab::Collections => "Collections",
+            Panel3Tab::Tours => "Tours",
         }
     }
 
     /// Try to convert an index to a Panel3Tab.
     pub fn from_index(index: usize) -> Option<Self> {
         match index {
-            0 => Some(Panel3Tab::Tours),
+            0 => Some(Panel3Tab::Bookmarks),
             1 => Some(Panel3Tab::Collections),
-            2 => Some(Panel3Tab::Bookmarks),
+            2 => Some(Panel3Tab::Tours),
             _ => None,
         }
     }

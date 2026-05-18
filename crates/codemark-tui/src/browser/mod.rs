@@ -256,7 +256,7 @@ impl BrowserLayout {
 
         match Panel3Tab::from_index(self.left_pane.panel3.tabs.selected_index()) {
             Some(Panel3Tab::Bookmarks) => {
-                if let Some(TabContent::List(panel)) = self.left_pane.panel3.panels.get(2) {
+                if let Some(TabContent::List(panel)) = self.left_pane.panel3.panels.get(0) {
                     if let Some(selected) = panel.selected() {
                         if let Some(ref id) = selected.user_data {
                             self.right_pane.load_bookmark(&self.db, id);
@@ -382,16 +382,16 @@ impl BrowserLayout {
             p.set_items(branches);
         }
 
-        // 3. Update Tours/Collections/Bookmarks (in-place)
+        // 3. Update Bookmarks/Collections/Tours (in-place)
         let (tours, collections, bookmarks) = TabbedPanel::build_panel3_items(&self.db);
         if let Some(p) = self.left_pane.panel3.get_list_panel_mut(0) {
-            p.set_items(tours);
+            p.set_items(bookmarks);
         }
         if let Some(p) = self.left_pane.panel3.get_list_panel_mut(1) {
             p.set_items(collections);
         }
         if let Some(p) = self.left_pane.panel3.get_list_panel_mut(2) {
-            p.set_items(bookmarks);
+            p.set_items(tours);
         }
 
         // 4. Update Step previews (Right Pane)
@@ -701,7 +701,7 @@ impl BrowserLayout {
                 }
             }
 
-            if let Some(TabContent::List(p)) = self.left_pane.panel3.panels.get_mut(0) {
+            if let Some(TabContent::List(p)) = self.left_pane.panel3.panels.get_mut(2) {
                 p.set_items(tour_items);
             }
             if let Some(TabContent::List(p)) = self.left_pane.panel3.panels.get_mut(1) {
@@ -709,7 +709,7 @@ impl BrowserLayout {
             }
         }
 
-        // 2. Update Bookmarks (Panel 3, tab 2)
+        // 2. Update Bookmarks (Panel 3, tab 0)
         if let Ok(bookmarks) = self.db.list_bookmarks(&BookmarkFilter::default()) {
             let filtered_items: Vec<PanelItem> = bookmarks
                 .into_iter()
@@ -727,7 +727,7 @@ impl BrowserLayout {
                 })
                 .collect();
 
-            if let Some(TabContent::List(p)) = self.left_pane.panel3.panels.get_mut(2) {
+            if let Some(TabContent::List(p)) = self.left_pane.panel3.panels.get_mut(0) {
                 p.set_items(filtered_items);
             }
         }
@@ -837,12 +837,12 @@ impl BrowserLayout {
                     })
                     .collect();
 
-                if let Some(TabContent::List(p)) = self.left_pane.panel3.panels.get_mut(2) {
+                if let Some(TabContent::List(p)) = self.left_pane.panel3.panels.get_mut(0) {
                     p.set_items(items);
                     // Select the first bookmark result
                     p.set_selected(0);
                     // Ensure the Bookmarks tab is selected
-                    self.left_pane.panel3.tabs.set_selected(2);
+                    self.left_pane.panel3.tabs.set_selected(0);
                 }
                 return true;
             }
@@ -1763,7 +1763,7 @@ impl TabbedPanel {
         }
     }
 
-    /// Create panel 3 with Tours/Collections/Bookmarks tabs.
+    /// Create panel 3 with Bookmarks/Collections/Tours tabs.
     fn new_tours_collections_bookmarks(db: &Database) -> Self {
         let (tours_items, collections_items, bookmarks_items) = TabbedPanel::build_panel3_items(db);
         let tours_panel = Panel::new("").bordered(false).items(tours_items);
@@ -1771,17 +1771,17 @@ impl TabbedPanel {
         let bookmarks_panel = Panel::new("").bordered(false).items(bookmarks_items);
 
         let tabs = TabSelection::new(vec![
-            Tab::new("Tours").badge(tours_panel.len().to_string()),
-            Tab::new("Collections").badge(collections_panel.len().to_string()),
             Tab::new("Bookmarks").badge(bookmarks_panel.len().to_string()),
+            Tab::new("Collections").badge(collections_panel.len().to_string()),
+            Tab::new("Tours").badge(tours_panel.len().to_string()),
         ]);
 
         Self {
             tabs,
             panels: vec![
-                TabContent::List(tours_panel),
-                TabContent::List(collections_panel),
                 TabContent::List(bookmarks_panel),
+                TabContent::List(collections_panel),
+                TabContent::List(tours_panel),
             ],
             focused: false,
             last_area: std::cell::Cell::new(Rect::default()),
@@ -1915,9 +1915,9 @@ impl TabbedPanel {
             true
         };
 
-        // Check if this is the bookmarks panel (index 2) and selection changed (or tab switched to it)
-        if active_index == 2 {
-            if let Some(panel) = self.panels.get_mut(2) {
+        // Check if this is the bookmarks panel (index 0) and selection changed (or tab switched to it)
+        if active_index == 0 {
+            if let Some(panel) = self.panels.get_mut(0) {
                 if let Some(id) = panel.take_selection_change() {
                     self.pending_selection_change.set(Some(id));
                 }
