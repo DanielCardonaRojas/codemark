@@ -8,6 +8,81 @@ use ratatui::{
     widgets::{Widget, Wrap},
 };
 
+/// Panel 3 tabs (Tours/Collections/Bookmarks).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Panel3Tab {
+    Tours = 0,
+    Collections = 1,
+    Bookmarks = 2,
+}
+
+impl Panel3Tab {
+    /// Get the index of this tab.
+    pub fn index(self) -> usize {
+        self as usize
+    }
+
+    /// Get all tabs in order.
+    pub fn all() -> &'static [Panel3Tab] {
+        &[Panel3Tab::Tours, Panel3Tab::Collections, Panel3Tab::Bookmarks]
+    }
+
+    /// Get the tab label.
+    pub fn label(self) -> &'static str {
+        match self {
+            Panel3Tab::Tours => "Tours",
+            Panel3Tab::Collections => "Collections",
+            Panel3Tab::Bookmarks => "Bookmarks",
+        }
+    }
+
+    /// Try to convert an index to a Panel3Tab.
+    pub fn from_index(index: usize) -> Option<Self> {
+        match index {
+            0 => Some(Panel3Tab::Tours),
+            1 => Some(Panel3Tab::Collections),
+            2 => Some(Panel3Tab::Bookmarks),
+            _ => None,
+        }
+    }
+}
+
+/// Panel 2 tabs (Tags/Branches).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Panel2Tab {
+    Tags = 0,
+    Branches = 1,
+}
+
+impl Panel2Tab {
+    /// Get the index of this tab.
+    pub fn index(self) -> usize {
+        self as usize
+    }
+
+    /// Get all tabs in order.
+    pub fn all() -> &'static [Panel2Tab] {
+        &[Panel2Tab::Tags, Panel2Tab::Branches]
+    }
+
+    /// Get the tab label.
+    pub fn label(self) -> &'static str {
+        match self {
+            Panel2Tab::Tags => "Tags",
+            Panel2Tab::Branches => "Branches",
+        }
+    }
+
+    /// Try to convert an index to a Panel2Tab.
+    pub fn from_index(index: usize) -> Option<Self> {
+        match index {
+            0 => Some(Panel2Tab::Tags),
+            1 => Some(Panel2Tab::Branches),
+            _ => None,
+        }
+    }
+}
+
 /// A single tab.
 #[derive(Debug, Clone)]
 pub struct Tab {

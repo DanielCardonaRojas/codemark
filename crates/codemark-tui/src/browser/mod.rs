@@ -7,7 +7,7 @@ mod search;
 mod tabs;
 
 pub use search::SearchBar;
-pub use tabs::{Tab, TabSelection};
+pub use tabs::{Panel2Tab, Panel3Tab, Tab, TabSelection};
 
 use crate::component::{CodePreview, Component, HealthStatus, MarkdownPanel, Panel, PanelItem};
 use crate::event::Event;
@@ -328,26 +328,22 @@ impl BrowserLayout {
                 bindings.push(("Space", "Toggle filter"));
             }
             FocusArea::Panel3 => {
-                let active_tab = self.left_pane.panel3.tabs.selected_index();
-                match active_tab {
-                    0 => {
-                        // Tours
+                match Panel3Tab::from_index(self.left_pane.panel3.tabs.selected_index()) {
+                    Some(Panel3Tab::Tours) => {
                         bindings.push(("Enter", "Open tour"));
                         bindings.push(("p", "Pull tour"));
                         bindings.push(("P", "Push tour"));
                     }
-                    1 => {
-                        // Collections
+                    Some(Panel3Tab::Collections) => {
                         bindings.push(("Enter", "Open collection"));
                         bindings.push(("d", "Delete collection"));
                     }
-                    2 => {
-                        // Bookmarks
+                    Some(Panel3Tab::Bookmarks) => {
                         bindings.push(("Enter", "Preview bookmark"));
                         bindings.push(("o", "Open in editor"));
                         bindings.push(("d", "Delete bookmark"));
                     }
-                    _ => {}
+                    None => {}
                 }
             }
             FocusArea::Main => {
@@ -389,25 +385,21 @@ impl BrowserLayout {
             }
             FocusArea::Panel3 => {
                 // Tours / Collections / Bookmarks
-                let active_tab = self.left_pane.panel3.tabs.selected_index();
-                match active_tab {
-                    0 => {
-                        // Tours
+                match Panel3Tab::from_index(self.left_pane.panel3.tabs.selected_index()) {
+                    Some(Panel3Tab::Tours) => {
                         bindings.insert(0, KeyBinding::new("p", "Pull"));
                         bindings.insert(1, KeyBinding::new("P", "Push"));
                     }
-                    1 => {
-                        // Collections
+                    Some(Panel3Tab::Collections) => {
                         bindings.insert(0, KeyBinding::new("Enter", "Open"));
                         bindings.insert(1, KeyBinding::new("d", "Delete"));
                     }
-                    2 => {
-                        // Bookmarks
+                    Some(Panel3Tab::Bookmarks) => {
                         bindings.insert(0, KeyBinding::new("o", "Open"));
                         bindings.insert(1, KeyBinding::new("Enter", "Preview"));
                         bindings.insert(2, KeyBinding::new("d", "Delete"));
                     }
-                    _ => {}
+                    None => {}
                 }
             }
             FocusArea::Main => {
@@ -793,30 +785,33 @@ impl BrowserLayout {
                         return true;
                     }
                     if self.focus == FocusArea::Panel3 {
-                        let active_tab = self.left_pane.panel3.tabs.selected_index();
-                        if active_tab == 0 || active_tab == 1 {
-                            // Tours or Collections
-                            if let Some(panel) = self.left_pane.panel3.active_panel_mut()
-                                && let Some(selected) = panel.selected()
-                            {
-                                let tour_name = selected.text().to_string();
-                                panel.activate_selected(); // Mark as active in current panel
-                                self.right_pane.load_tour(&self.db, &tour_name);
+                        match Panel3Tab::from_index(self.left_pane.panel3.tabs.selected_index()) {
+                            Some(Panel3Tab::Tours) | Some(Panel3Tab::Collections) => {
+                                // Tours or Collections
+                                if let Some(panel) = self.left_pane.panel3.active_panel_mut()
+                                    && let Some(selected) = panel.selected()
+                                {
+                                    let tour_name = selected.text().to_string();
+                                    panel.activate_selected(); // Mark as active in current panel
+                                    self.right_pane.load_tour(&self.db, &tour_name);
 
-                                self.set_focus(FocusArea::Main);
-                                return true;
+                                    self.set_focus(FocusArea::Main);
+                                    return true;
+                                }
                             }
-                        } else if active_tab == 2 {
-                            // Bookmarks
-                            if let Some(panel) = self.left_pane.panel3.active_panel_mut()
-                                && let Some(selected) = panel.selected()
-                                && let Some(id) = selected.user_data.clone()
-                            {
-                                panel.activate_selected();
-                                self.right_pane.load_bookmark(&self.db, &id);
-                                self.set_focus(FocusArea::Main);
-                                return true;
+                            Some(Panel3Tab::Bookmarks) => {
+                                // Bookmarks
+                                if let Some(panel) = self.left_pane.panel3.active_panel_mut()
+                                    && let Some(selected) = panel.selected()
+                                    && let Some(id) = selected.user_data.clone()
+                                {
+                                    panel.activate_selected();
+                                    self.right_pane.load_bookmark(&self.db, &id);
+                                    self.set_focus(FocusArea::Main);
+                                    return true;
+                                }
                             }
+                            None => {}
                         }
                     }
                 }
@@ -871,34 +866,33 @@ impl BrowserLayout {
                     self.open_in_editor();
                     return true;
                 }
-                // Delete collection when in Collections tab (Panel 3, tab 1) or bookmarks (tab 2)
+                // Delete collection or bookmark based on active tab
                 ratatui::crossterm::event::KeyCode::Char('d') => {
                     if self.focus == FocusArea::Panel3 {
-                        let active_tab = self.left_pane.panel3.tabs.selected_index();
-                        if active_tab == 1 {
-                            // Collections
-                            if let Some(panel) = self.left_pane.panel3.active_panel_mut()
-                                && let Some(selected) = panel.selected()
-                            {
-                                let collection_name = selected.text().to_string();
-                                if let Ok(Some(_collection)) = self.db.get_collection_by_name(&collection_name) {
-                                    let _ = self.db.delete_collection(&collection_name);
-                                    // Refresh panels after deletion
+                        match Panel3Tab::from_index(self.left_pane.panel3.tabs.selected_index()) {
+                            Some(Panel3Tab::Collections) => {
+                                if let Some(panel) = self.left_pane.panel3.active_panel_mut()
+                                    && let Some(selected) = panel.selected()
+                                {
+                                    let collection_name = selected.text().to_string();
+                                    if let Ok(Some(_collection)) = self.db.get_collection_by_name(&collection_name) {
+                                        let _ = self.db.delete_collection(&collection_name);
+                                        self.refresh_all_panels();
+                                        return true;
+                                    }
+                                }
+                            }
+                            Some(Panel3Tab::Bookmarks) => {
+                                if let Some(panel) = self.left_pane.panel3.active_panel_mut()
+                                    && let Some(selected) = panel.selected()
+                                    && let Some(id) = selected.user_data.clone()
+                                {
+                                    let _ = self.db.delete_bookmark(&id);
                                     self.refresh_all_panels();
                                     return true;
                                 }
                             }
-                        } else if active_tab == 2 {
-                            // Bookmarks
-                            if let Some(panel) = self.left_pane.panel3.active_panel_mut()
-                                && let Some(selected) = panel.selected()
-                                && let Some(id) = selected.user_data.clone()
-                            {
-                                let _ = self.db.delete_bookmark(&id);
-                                // Refresh panels after deletion
-                                self.refresh_all_panels();
-                                return true;
-                            }
+                            _ => {}
                         }
                     }
                 }
