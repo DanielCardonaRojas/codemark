@@ -192,6 +192,14 @@ impl TabContent {
             TabContent::Markdown(p) => p.set_focus(focused),
         }
     }
+
+    /// Check for selection changes (for live preview).
+    fn take_selection_change(&mut self) -> Option<String> {
+        match self {
+            TabContent::List(p) => p.take_selection_change(),
+            _ => None,
+        }
+    }
 }
 
 /// A tabbed panel component with multiple content panels.
@@ -204,6 +212,8 @@ struct TabbedPanel {
     focused: bool,
     /// Last rendered area
     last_area: std::cell::Cell<Rect>,
+    /// Pending selection change (bookmark ID) to be retrieved after event handling
+    pending_selection_change: std::cell::Cell<Option<String>>,
 }
 
 /// Escape special markdown characters.
@@ -231,6 +241,26 @@ impl BrowserLayout {
         };
         layout.update_focus_state();
         layout
+    }
+
+    /// Update live preview for bookmarks panel when on the bookmarks tab.
+    fn update_bookmarks_live_preview(&mut self) {
+        if self.focus != FocusArea::Panel3 {
+            return;
+        }
+
+        match Panel3Tab::from_index(self.left_pane.panel3.tabs.selected_index()) {
+            Some(Panel3Tab::Bookmarks) => {
+                if let Some(TabContent::List(panel)) = self.left_pane.panel3.panels.get(2) {
+                    if let Some(selected) = panel.selected() {
+                        if let Some(ref id) = selected.user_data {
+                            self.right_pane.load_bookmark(&self.db, id);
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
     }
 
     /// Take the pending external command, if any.
@@ -682,6 +712,7 @@ impl BrowserLayout {
             }
             FocusArea::Panel3 => {
                 self.left_pane.panel3.set_focus(true);
+                self.update_bookmarks_live_preview();
             }
             FocusArea::Main => {
                 self.right_pane.set_focus(true);
@@ -903,13 +934,31 @@ impl BrowserLayout {
         // 3. Delegate to panes
         match event {
             Event::Mouse(_) => {
-                self.left_pane.handle_event(event) || self.right_pane.handle_event(event)
+                let handled = self.left_pane.handle_event(event) || self.right_pane.handle_event(event);
+                // Check for bookmark selection changes for live preview after mouse events
+                if self.focus == FocusArea::Panel3 {
+                    if let Some(id) = self.left_pane.panel3.take_selection_change() {
+                        self.right_pane.load_bookmark(&self.db, &id);
+                    } else if handled {
+                        self.update_bookmarks_live_preview();
+                    }
+                }
+                handled
             }
             Event::Key(_) => match self.focus {
                 FocusArea::Search => self.left_pane.search.handle_event(event),
                 FocusArea::Panel1 => self.left_pane.panel1.handle_event(event),
                 FocusArea::Panel2 => self.left_pane.panel2.handle_event(event),
-                FocusArea::Panel3 => self.left_pane.panel3.handle_event(event),
+                FocusArea::Panel3 => {
+                    let handled = self.left_pane.panel3.handle_event(event);
+                    // Check for bookmark selection changes for live preview
+                    if let Some(id) = self.left_pane.panel3.take_selection_change() {
+                        self.right_pane.load_bookmark(&self.db, &id);
+                    } else if handled {
+                        self.update_bookmarks_live_preview();
+                    }
+                    handled
+                }
                 FocusArea::Main => self.right_pane.handle_event(event),
             },
             _ => false,
@@ -1515,6 +1564,7 @@ impl TabbedPanel {
             panels: vec![TabContent::List(repos_panel), TabContent::List(accounts)],
             focused: false,
             last_area: std::cell::Cell::new(Rect::default()),
+            pending_selection_change: std::cell::Cell::new(None),
         }
     }
 
@@ -1534,6 +1584,7 @@ impl TabbedPanel {
             panels: vec![TabContent::List(tags_panel), TabContent::List(branches_panel)],
             focused: false,
             last_area: std::cell::Cell::new(Rect::default()),
+            pending_selection_change: std::cell::Cell::new(None),
         }
     }
 
@@ -1559,6 +1610,7 @@ impl TabbedPanel {
             ],
             focused: false,
             last_area: std::cell::Cell::new(Rect::default()),
+            pending_selection_change: std::cell::Cell::new(None),
         }
     }
 
@@ -1588,6 +1640,7 @@ impl TabbedPanel {
             ],
             focused: false,
             last_area: std::cell::Cell::new(Rect::default()),
+            pending_selection_change: std::cell::Cell::new(None),
         }
     }
 
@@ -1657,17 +1710,19 @@ impl TabbedPanel {
     }
 
     /// Handle an event.
+    /// Returns true if event was handled.
     fn handle_event(&mut self, event: &Event) -> bool {
         // Check for tab switching with [ and ]
+        let mut tab_changed = false;
         if let Event::Key(key) = event {
             match key.code {
                 ratatui::crossterm::event::KeyCode::Char(']') => {
                     self.tabs.next();
-                    return true;
+                    tab_changed = true;
                 }
                 ratatui::crossterm::event::KeyCode::Char('[') => {
                     self.tabs.previous();
-                    return true;
+                    tab_changed = true;
                 }
                 _ => {}
             }
@@ -1675,11 +1730,31 @@ impl TabbedPanel {
 
         // Forward to active panel
         let active_index = self.tabs.selected_index();
-        if let Some(panel) = self.panels.get_mut(active_index) {
-            panel.handle_event(event)
+        let handled = if !tab_changed {
+            if let Some(panel) = self.panels.get_mut(active_index) {
+                panel.handle_event(event)
+            } else {
+                false
+            }
         } else {
-            false
+            true
+        };
+
+        // Check if this is the bookmarks panel (index 2) and selection changed (or tab switched to it)
+        if active_index == 2 {
+            if let Some(panel) = self.panels.get_mut(2) {
+                if let Some(id) = panel.take_selection_change() {
+                    self.pending_selection_change.set(Some(id));
+                }
+            }
         }
+
+        handled
+    }
+
+    /// Take the pending selection change (bookmark ID) if any.
+    fn take_selection_change(&self) -> Option<String> {
+        self.pending_selection_change.take()
     }
 
     /// Set focus state.

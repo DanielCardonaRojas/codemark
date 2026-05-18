@@ -23,7 +23,6 @@ use std::cell::{Cell, RefCell};
 ///
 /// Panels display a list of items with a title and optional border.
 /// They support scrolling, selection, and custom styling.
-#[derive(Debug, Clone)]
 pub struct Panel {
     /// The title displayed at the top of the panel
     title: String,
@@ -51,6 +50,8 @@ pub struct Panel {
     border_type: BorderType,
     /// Last rendered area for mouse handling
     last_area: Cell<Rect>,
+    /// Track the last selected index to detect changes
+    last_selected_index: Cell<Option<usize>>,
 }
 
 /// Health status indicator for an item.
@@ -297,6 +298,7 @@ impl Panel {
             multi_select: false,
             border_type: BorderType::Rounded,
             last_area: Cell::new(Rect::default()),
+            last_selected_index: Cell::new(None),
         }
     }
 
@@ -430,25 +432,31 @@ impl Panel {
     }
 
     /// Select the next item.
-    pub fn select_next(&mut self) {
+    /// Returns true if selection changed.
+    pub fn select_next(&mut self) -> bool {
         if self.items.is_empty() {
-            return;
+            return false;
         }
         let mut state = self.list_state.borrow_mut();
         let next = state.selected().map_or(0, |i| i.saturating_add(1) % self.items.len());
+        let old_index = state.selected();
         state.select(Some(next));
+        old_index != Some(next)
     }
 
     /// Select the previous item.
-    pub fn select_previous(&mut self) {
+    /// Returns true if selection changed.
+    pub fn select_previous(&mut self) -> bool {
         if self.items.is_empty() {
-            return;
+            return false;
         }
         let mut state = self.list_state.borrow_mut();
         let prev = state
             .selected()
             .map_or(self.items.len() - 1, |i| if i == 0 { self.items.len() - 1 } else { i - 1 });
+        let old_index = state.selected();
         state.select(Some(prev));
+        old_index != Some(prev)
     }
 
     /// Set the currently selected item as active and deactivate all others (or toggle in multi-select mode).
@@ -726,6 +734,22 @@ impl Component for Panel {
 
     fn size_constraints(&self) -> SizeConstraints {
         SizeConstraints::min(10, 5)
+    }
+}
+
+impl Panel {
+    /// Check if selection changed (for live preview).
+    /// Returns the selected item's user data if changed, None otherwise.
+    pub fn take_selection_change(&mut self) -> Option<String> {
+        let current = self.list_state.borrow().selected();
+        let last = self.last_selected_index.get();
+
+        if current != last {
+            self.last_selected_index.set(current);
+            current.and_then(|idx| self.items.get(idx)?.user_data.clone())
+        } else {
+            None
+        }
     }
 }
 
