@@ -213,6 +213,46 @@ async fn run_app() -> Result<()> {
                 // Update filter based on active_filter (committed via Enter)
                 let query = state.get_string("active_filter").unwrap_or("");
                 layout.apply_filter(query);
+
+                // Handle external commands (e.g. Open in Editor)
+                if let Some(cmd) = layout.take_pending_command() {
+                    if cmd.should_wait {
+                        // Terminal editor: exit TUI and replace process
+                        restore_terminal();
+
+                        #[cfg(unix)]
+                        {
+                            use std::os::unix::process::CommandExt;
+                            let err = std::process::Command::new(&cmd.program)
+                                .args(&cmd.args)
+                                .exec();
+
+                            // If exec returns, it failed
+                            eprintln!("Failed to run editor: {}", err);
+                            std::process::exit(1);
+                        }
+
+                        #[cfg(not(unix))]
+                        {
+                            let _ = std::process::Command::new(&cmd.program)
+                                .args(&cmd.args)
+                                .status();
+                            std::process::exit(0);
+                        }
+                    } else {
+                        // GUI editor: spawn in background
+                        let status = std::process::Command::new(&cmd.program)
+                            .args(&cmd.args)
+                            .spawn();
+
+                        if let Err(e) = status {
+                            notification = Some((
+                                format!("Failed to spawn editor: {}", e),
+                                NotificationType::Error,
+                            ));
+                        }
+                    }
+                }
             }
         }
     }

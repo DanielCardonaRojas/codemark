@@ -23,6 +23,7 @@ rusqlite = { workspace = true }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
 serde = { workspace = true }
+shlex = "1.3"
 unicode-segmentation = "1"
 unicode-width = "0.2"
 futures = "0.3"

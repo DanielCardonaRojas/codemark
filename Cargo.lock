@@ -576,6 +576,7 @@ dependencies = [
  "ratatui",
  "rusqlite",
  "serde",
+ "shlex",
  "syntect",
  "tempfile",
  "thiserror 2.0.18",

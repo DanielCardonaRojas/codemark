@@ -22,6 +22,17 @@ use ratatui::{
     widgets::{Paragraph, Widget, Wrap},
 };
 
+/// An external command to be executed by the TUI host.
+#[derive(Debug, Clone)]
+pub struct ExternalCommand {
+    /// The program to execute
+    pub program: String,
+    /// Arguments for the program
+    pub args: Vec<String>,
+    /// Whether the TUI should wait for this command to complete (terminal editors)
+    pub should_wait: bool,
+}
+
 /// The main browser layout.
 ///
 /// Splits the screen vertically with a left sidebar (40%) and right main area (60%).
@@ -37,6 +48,8 @@ pub struct BrowserLayout {
     right_pane: RightPane,
     /// Current focus area
     focus: FocusArea,
+    /// Pending external command to be executed
+    pending_command: Option<ExternalCommand>,
 }
 
 /// Areas that can be focused in the browser.
@@ -209,9 +222,15 @@ impl BrowserLayout {
             focus: FocusArea::Panel3,
             db,
             registry,
+            pending_command: None,
         };
         layout.update_focus_state();
         layout
+    }
+
+    /// Take the pending external command, if any.
+    pub fn take_pending_command(&mut self) -> Option<ExternalCommand> {
+        self.pending_command.take()
     }
 
     /// Switch the active database to a specific repository root.
@@ -320,6 +339,70 @@ impl BrowserLayout {
             Span::styled("#ui", Style::default().fg(Color::Magenta)),
         ]
         .into()
+    }
+
+    /// Open the currently selected bookmark or tour step in the editor.
+    pub fn open_in_editor(&mut self) {
+        use codemark_core::config::Config;
+
+        // For now, only support opening from the right pane (Main)
+        let step = if self.focus == FocusArea::Main {
+            self.right_pane.steps_data.get(self.right_pane.pager_current)
+        } else {
+            None
+        };
+
+        let Some(step) = step else {
+            return;
+        };
+
+        let Some(codemark_dir) = self.db.path().parent() else {
+            return;
+        };
+        let config = Config::load_layered(codemark_dir);
+
+        let extension = std::path::Path::new(&step.file_path)
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("");
+
+        let command_template = if let Some(cmd) = config
+            .open
+            .get_command_for_extension(extension)
+            .or(config.open.default.as_ref())
+        {
+            cmd.clone()
+        } else {
+            let editor = std::env::var("EDITOR").unwrap_or_else(|_| "vim".to_string());
+            format!("{} {{FILE}}", editor)
+        };
+
+        // Substitute placeholders
+        // Note: StepData already has resolved absolute path and line number
+        let line_start = step.line_number + 1;
+        let substituted = command_template
+            .replace("{FILE}", &step.file_path)
+            .replace("{LINE_START}", &line_start.to_string())
+            .replace("{LINE_END}", &line_start.to_string())
+            .replace("{ID}", &step.bookmark.id);
+
+        if let Some(tokens) = shlex::split(&substituted) {
+            if !tokens.is_empty() {
+                let program = tokens[0].clone();
+                let args = tokens[1..].to_vec();
+                let program_name = std::path::Path::new(&program)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("");
+                let should_wait = config.open.should_wait_for_editor(program_name);
+
+                self.pending_command = Some(ExternalCommand {
+                    program,
+                    args,
+                    should_wait,
+                });
+            }
+        }
     }
 
     /// Apply a filter to the currently focused panel.
@@ -682,6 +765,10 @@ impl BrowserLayout {
                     self.focus = FocusArea::Main;
                     self.right_pane.focus_tour_info();
                     self.update_focus_state();
+                    return true;
+                }
+                ratatui::crossterm::event::KeyCode::Char('o') => {
+                    self.open_in_editor();
                     return true;
                 }
                 _ => {}
