@@ -150,46 +150,76 @@ impl Workspace {
 
     /// Open all specified databases based on options.
     pub fn open_all(opts: &OpenDbOptions) -> Result<Vec<(String, Database)>> {
-        // 1. If explicit paths are provided, use only those (override mode)
-        if !opts.explicit_paths.is_empty() {
-            let mut dbs = Vec::new();
+        let mut dbs = Vec::new();
+        let primary_db = Self::open_primary(None)?;
+        let primary_path = primary_db.path().to_path_buf();
+        let canonical_primary =
+            std::fs::canonicalize(&primary_path).unwrap_or_else(|_| primary_path.clone());
+
+        // 1. Determine if we are in override mode for explicit paths
+        // Override mode is only active if explicit_paths is provided and it doesn't just contain the primary DB
+        let is_override = !opts.explicit_paths.is_empty() && {
+            if opts.explicit_paths.len() > 1 {
+                true
+            } else {
+                let explicit_path = std::fs::canonicalize(&opts.explicit_paths[0])
+                    .unwrap_or_else(|_| opts.explicit_paths[0].clone());
+                explicit_path != canonical_primary
+            }
+        };
+
+        if is_override {
             for path in &opts.explicit_paths {
                 if path.exists() {
                     let label = Self::source_label_from_path(path);
                     dbs.push((label, Database::open(path)?));
                 }
             }
-            return Ok(dbs);
-        }
+            // Fall through to add repo_refs if any
+        } else {
+            // Additive mode: start with auto-detected primary
+            // The primary DB gets the "local" label by default (legacy behavior)
+            dbs.push(("local".to_string(), primary_db));
 
-        // 2. If repo references are provided, resolve via registry (override mode)
-        if !opts.repo_refs.is_empty() {
-            return Self::open_repos_from_registry(&opts.repo_refs);
-        }
+            // Load additional DBs from local config
+            let cwd = std::env::current_dir().unwrap_or_default();
+            if let Some(ctx) = crate::git::context::detect_context(&cwd) {
+                let codemark_dir = ctx.repo_root.join(".codemark");
+                let config = crate::config::Config::load_layered(&codemark_dir);
+                let additional_paths = config.databases.resolve_additional_paths(&ctx.repo_root);
 
-        // 3. Additive mode: start with auto-detected primary + configured additional
-        let mut dbs = Vec::new();
-        let primary_label = Self::primary_label();
-        let primary_db = Self::open_primary(None)?;
-        dbs.push((primary_label, primary_db));
-
-        // Load additional DBs from local config
-        let cwd = std::env::current_dir().unwrap_or_default();
-        if let Some(ctx) = crate::git::context::detect_context(&cwd) {
-            let codemark_dir = ctx.repo_root.join(".codemark");
-            let config = crate::config::Config::load_layered(&codemark_dir);
-            let additional_paths = config.databases.resolve_additional_paths(&ctx.repo_root);
-
-            for path in additional_paths {
-                if path.exists() {
-                    let label = Self::source_label_from_path(&path);
-                    // Avoid duplicates by path check since labels might collide
-                    if !dbs.iter().any(|(_, db)| db.path() == path) {
-                        // Silently skip databases that fail to open (e.g., locked, corrupted)
-                        if let Ok(db) = Database::open(&path) {
-                            dbs.push((label, db));
+                for path in additional_paths {
+                    if path.exists() {
+                        let label = Self::source_label_from_path(&path);
+                        // Avoid duplicates by path check since labels might collide
+                        let canonical_path =
+                            std::fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
+                        if !dbs.iter().any(|(_, db)| {
+                            std::fs::canonicalize(db.path())
+                                .unwrap_or_else(|_| db.path().to_path_buf())
+                                == canonical_path
+                        }) {
+                            if let Ok(db) = Database::open(&path) {
+                                dbs.push((label, db));
+                            }
                         }
                     }
+                }
+            }
+        }
+
+        // 3. Add any repositories specified by references via the registry
+        if !opts.repo_refs.is_empty() {
+            let extra_repos = Self::open_repos_from_registry(&opts.repo_refs)?;
+            for (label, db) in extra_repos {
+                // Avoid duplicates by path check
+                let canonical_db_path =
+                    std::fs::canonicalize(db.path()).unwrap_or_else(|_| db.path().to_path_buf());
+                if !dbs.iter().any(|(_, d)| {
+                    std::fs::canonicalize(d.path()).unwrap_or_else(|_| d.path().to_path_buf())
+                        == canonical_db_path
+                }) {
+                    dbs.push((label, db));
                 }
             }
         }

@@ -323,6 +323,21 @@ impl Database {
         let results: Vec<String> = rows.filter_map(|r| r.ok()).collect();
         Ok(results)
     }
+
+    /// List all unique branches across bookmarks and collections.
+    pub fn list_all_branches(&self) -> Result<Vec<String>> {
+        let mut stmt = self.conn().prepare(
+            "SELECT DISTINCT created_branch FROM collections
+             WHERE created_branch IS NOT NULL
+             ORDER BY created_branch",
+        )?;
+        let rows = stmt.query_map([], |row| row.get(0))?;
+        let mut branches = Vec::new();
+        for branch in rows {
+            branches.push(branch?);
+        }
+        Ok(branches)
+    }
 }
 
 fn row_to_collection(row: &rusqlite::Row) -> rusqlite::Result<Collection> {

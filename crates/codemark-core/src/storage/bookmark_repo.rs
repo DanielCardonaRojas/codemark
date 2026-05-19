@@ -550,6 +550,18 @@ impl Database {
             BookmarkFilter { collection_id: Some(collection_id.to_string()), ..Default::default() };
         self.list_bookmarks(&filter)
     }
+
+    /// List all unique tags used in bookmarks.
+    pub fn list_bookmark_tags(&self) -> Result<Vec<String>> {
+        let mut stmt =
+            self.conn().prepare("SELECT DISTINCT tag FROM bookmark_tags ORDER BY tag")?;
+        let rows = stmt.query_map([], |row| row.get(0))?;
+        let mut tags = Vec::new();
+        for tag in rows {
+            tags.push(tag?);
+        }
+        Ok(tags)
+    }
 }
 
 fn row_to_bookmark_base(row: &rusqlite::Row) -> rusqlite::Result<Bookmark> {
