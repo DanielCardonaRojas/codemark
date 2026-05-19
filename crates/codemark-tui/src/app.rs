@@ -120,7 +120,8 @@ impl App {
     /// with proper async event handling, see main.rs which uses the tokio
     /// runtime and properly integrates with the event receiver.
     pub fn run(&mut self) -> anyhow::Result<()> {
-        let (mut event_rx, _event_handler) = EventHandler::with_receiver(EventHandlerConfig::default())?;
+        let (mut event_rx, _event_handler) =
+            EventHandler::with_receiver(EventHandlerConfig::default())?;
 
         self.state.set_mode(crate::state::AppMode::Normal);
 

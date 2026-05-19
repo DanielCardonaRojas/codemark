@@ -210,7 +210,8 @@ impl Database {
         // Try to find resolution from nearest ancestor commit
         // Derive the repository root from the database path instead of using current_dir()
         // to ensure correct behavior in multi-repo workflows
-        let repo_ctx_path = self.path()
+        let repo_ctx_path = self
+            .path()
             .parent() // .codemark/
             .and_then(|codemark_dir| {
                 // Check if the parent directory is named ".codemark"

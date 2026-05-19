@@ -159,10 +159,7 @@ impl EventHandler {
             crossterm::execute!(std::io::stdout(), crossterm::event::EnableMouseCapture)?;
         }
 
-        Ok(Self {
-            _tx: Arc::new(tx),
-            rx: Some(Arc::new(tokio::sync::Mutex::new(rx))),
-        })
+        Ok(Self { _tx: Arc::new(tx), rx: Some(Arc::new(tokio::sync::Mutex::new(rx))) })
     }
 
     /// Get the next event.
@@ -172,11 +169,7 @@ impl EventHandler {
     /// not on clones. For better control, use EventHandler::with_receiver().
     pub async fn next(&self) -> anyhow::Result<Event> {
         if let Some(rx) = &self.rx {
-            rx.lock()
-                .await
-                .recv()
-                .await
-                .ok_or_else(|| anyhow::anyhow!("Event channel closed"))
+            rx.lock().await.recv().await.ok_or_else(|| anyhow::anyhow!("Event channel closed"))
         } else {
             Err(anyhow::anyhow!(
                 "Cannot receive events on cloned EventHandler. Use EventHandler::with_receiver() instead."

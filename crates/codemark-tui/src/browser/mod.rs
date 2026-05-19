@@ -254,7 +254,8 @@ impl BrowserLayout {
             return;
         }
 
-        if let Some(Panel3Tab::Bookmarks) = Panel3Tab::from_index(self.left_pane.panel3.tabs.selected_index())
+        if let Some(Panel3Tab::Bookmarks) =
+            Panel3Tab::from_index(self.left_pane.panel3.tabs.selected_index())
             && let Some(TabContent::List(panel)) = self.left_pane.panel3.panels.first()
             && let Some(selected) = panel.selected()
             && let Some(ref id) = selected.user_data
@@ -591,8 +592,11 @@ impl BrowserLayout {
         use codemark_core::config::Config;
 
         // Special handling for Panel3 bookmarks: open directly without StepData
-        if self.focus == FocusArea::Panel3 {
-            if let Some(bookmark) = self.left_pane.panel3.active_panel_mut()
+        if self.focus == FocusArea::Panel3
+            && let Some(bookmark) = self
+                .left_pane
+                .panel3
+                .active_panel_mut()
                 .and_then(|panel| panel.selected())
                 .and_then(|item| {
                     // Get the bookmark ID from user_data
@@ -600,10 +604,9 @@ impl BrowserLayout {
                     // Get the bookmark (flatten Result<Option<Bookmark>>)
                     self.db.get_bookmark(bookmark_id).ok().flatten()
                 })
-            {
-                self.open_bookmark_in_editor(bookmark);
-                return;
-            }
+        {
+            self.open_bookmark_in_editor(bookmark);
+            return;
         }
 
         // Default: get step from the right pane (Main)
@@ -644,10 +647,8 @@ impl BrowserLayout {
         {
             let program = tokens[0].clone();
             let args = tokens[1..].to_vec();
-            let program_name = std::path::Path::new(&program)
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("");
+            let program_name =
+                std::path::Path::new(&program).file_name().and_then(|n| n.to_str()).unwrap_or("");
             let should_wait = config.open.should_wait_for_editor(program_name);
 
             self.pending_command = Some(ExternalCommand { program, args, should_wait });
@@ -664,30 +665,30 @@ impl BrowserLayout {
         let config = Config::load_layered(codemark_dir);
 
         // Resolve the file path and line number from the bookmark
-        let (file_path, line_number) = if let Ok(Some(resolution)) = self.db.get_resolution(&bookmark.id) {
-            (
-                resolution.file_path.clone().unwrap_or_else(|| bookmark.file_path.clone()),
-                resolution.line_range
-                    .and_then(|r| {
-                        // Parse "(start,end)" format
-                        let parts: Vec<&str> = r.split(',').collect();
-                        if parts.len() == 2 {
-                            parts[0].trim().trim_start_matches('(').parse::<usize>().ok()
-                        } else {
-                            None
-                        }
-                    })
-                    .unwrap_or(0),
-            )
-        } else {
-            // Fallback to bookmark file path
-            (bookmark.file_path.clone(), 0)
-        };
+        let (file_path, line_number) =
+            if let Ok(Some(resolution)) = self.db.get_resolution(&bookmark.id) {
+                (
+                    resolution.file_path.clone().unwrap_or_else(|| bookmark.file_path.clone()),
+                    resolution
+                        .line_range
+                        .and_then(|r| {
+                            // Parse "(start,end)" format
+                            let parts: Vec<&str> = r.split(',').collect();
+                            if parts.len() == 2 {
+                                parts[0].trim().trim_start_matches('(').parse::<usize>().ok()
+                            } else {
+                                None
+                            }
+                        })
+                        .unwrap_or(0),
+                )
+            } else {
+                // Fallback to bookmark file path
+                (bookmark.file_path.clone(), 0)
+            };
 
-        let extension = std::path::Path::new(&file_path)
-            .extension()
-            .and_then(|e| e.to_str())
-            .unwrap_or("");
+        let extension =
+            std::path::Path::new(&file_path).extension().and_then(|e| e.to_str()).unwrap_or("");
 
         let command_template = if let Some(cmd) =
             config.open.get_command_for_extension(extension).or(config.open.default.as_ref())
@@ -711,10 +712,8 @@ impl BrowserLayout {
         {
             let program = tokens[0].clone();
             let args = tokens[1..].to_vec();
-            let program_name = std::path::Path::new(&program)
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("");
+            let program_name =
+                std::path::Path::new(&program).file_name().and_then(|n| n.to_str()).unwrap_or("");
             let should_wait = config.open.should_wait_for_editor(program_name);
 
             self.pending_command = Some(ExternalCommand { program, args, should_wait });
@@ -1202,36 +1201,34 @@ impl BrowserLayout {
                 }
                 // Delete collection or bookmark based on active tab
                 ratatui::crossterm::event::KeyCode::Char('d')
-                    if self.focus != FocusArea::Search =>
+                    if self.focus != FocusArea::Search && self.focus == FocusArea::Panel3 =>
                 {
-                    if self.focus == FocusArea::Panel3 {
-                        match Panel3Tab::from_index(self.left_pane.panel3.tabs.selected_index()) {
-                            Some(Panel3Tab::Collections) => {
-                                if let Some(panel) = self.left_pane.panel3.active_panel_mut()
-                                    && let Some(selected) = panel.selected()
+                    match Panel3Tab::from_index(self.left_pane.panel3.tabs.selected_index()) {
+                        Some(Panel3Tab::Collections) => {
+                            if let Some(panel) = self.left_pane.panel3.active_panel_mut()
+                                && let Some(selected) = panel.selected()
+                            {
+                                let collection_name = selected.text().to_string();
+                                if let Ok(Some(_collection)) =
+                                    self.db.get_collection_by_name(&collection_name)
                                 {
-                                    let collection_name = selected.text().to_string();
-                                    if let Ok(Some(_collection)) =
-                                        self.db.get_collection_by_name(&collection_name)
-                                    {
-                                        let _ = self.db.delete_collection(&collection_name);
-                                        self.refresh_all_panels();
-                                        return true;
-                                    }
-                                }
-                            }
-                            Some(Panel3Tab::Bookmarks) => {
-                                if let Some(panel) = self.left_pane.panel3.active_panel_mut()
-                                    && let Some(selected) = panel.selected()
-                                    && let Some(id) = selected.user_data.clone()
-                                {
-                                    let _ = self.db.delete_bookmark(&id);
+                                    let _ = self.db.delete_collection(&collection_name);
                                     self.refresh_all_panels();
                                     return true;
                                 }
                             }
-                            _ => {}
                         }
+                        Some(Panel3Tab::Bookmarks) => {
+                            if let Some(panel) = self.left_pane.panel3.active_panel_mut()
+                                && let Some(selected) = panel.selected()
+                                && let Some(id) = selected.user_data.clone()
+                            {
+                                let _ = self.db.delete_bookmark(&id);
+                                self.refresh_all_panels();
+                                return true;
+                            }
+                        }
+                        _ => {}
                     }
                 }
                 _ => {}
@@ -1639,34 +1636,34 @@ impl RightPane {
         if let Event::Key(key) = event {
             match key.code {
                 ratatui::crossterm::event::KeyCode::Left
-                | ratatui::crossterm::event::KeyCode::Char('h') => {
-                    if self.focused == RightPaneFocus::Steps {
-                        self.pager_current = self.pager_current.saturating_sub(1);
-                        self.update_preview();
-                        return true;
-                    }
+                | ratatui::crossterm::event::KeyCode::Char('h')
+                    if self.focused == RightPaneFocus::Steps =>
+                {
+                    self.pager_current = self.pager_current.saturating_sub(1);
+                    self.update_preview();
+                    return true;
                 }
                 ratatui::crossterm::event::KeyCode::Right
-                | ratatui::crossterm::event::KeyCode::Char('l') => {
-                    if self.focused == RightPaneFocus::Steps {
-                        if self.pager_current + 1 < self.pager_total {
-                            self.pager_current += 1;
-                            self.update_preview();
-                        }
-                        return true;
+                | ratatui::crossterm::event::KeyCode::Char('l')
+                    if self.focused == RightPaneFocus::Steps =>
+                {
+                    if self.pager_current + 1 < self.pager_total {
+                        self.pager_current += 1;
+                        self.update_preview();
                     }
+                    return true;
                 }
-                ratatui::crossterm::event::KeyCode::Down => {
-                    if self.focused == RightPaneFocus::Steps {
-                        self.focus_details();
-                        return true;
-                    }
+                ratatui::crossterm::event::KeyCode::Down
+                    if self.focused == RightPaneFocus::Steps =>
+                {
+                    self.focus_details();
+                    return true;
                 }
-                ratatui::crossterm::event::KeyCode::Up => {
-                    if self.focused == RightPaneFocus::Details {
-                        self.focus_steps();
-                        return true;
-                    }
+                ratatui::crossterm::event::KeyCode::Up
+                    if self.focused == RightPaneFocus::Details =>
+                {
+                    self.focus_steps();
+                    return true;
                 }
                 _ => {}
             }

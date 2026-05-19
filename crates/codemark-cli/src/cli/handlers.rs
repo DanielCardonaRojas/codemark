@@ -605,10 +605,7 @@ fn sync_to_global_registry(
 /// 2. If CLI `--repo` is specified, resolves repo references via the global registry
 /// 3. Otherwise, uses auto-detected primary DB + configured additional databases
 pub fn open_all_dbs(cli: &Cli) -> Result<Vec<(String, Database)>> {
-    let opts = OpenDbOptions {
-        explicit_paths: cli.db.clone(),
-        repo_refs: cli.repo.clone(),
-    };
+    let opts = OpenDbOptions { explicit_paths: cli.db.clone(), repo_refs: cli.repo.clone() };
     Workspace::open_all(&opts)
 }
 

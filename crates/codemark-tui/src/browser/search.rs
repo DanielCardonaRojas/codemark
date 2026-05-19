@@ -212,7 +212,8 @@ impl Component for SearchBar {
                     let char_count = self.query.chars().count();
                     if self.cursor <= char_count {
                         // Find the byte position corresponding to the character position
-                        let byte_pos = self.query.chars().take(self.cursor).map(|c| c.len_utf8()).sum();
+                        let byte_pos =
+                            self.query.chars().take(self.cursor).map(|c| c.len_utf8()).sum();
                         self.query.insert(byte_pos, c);
                         self.cursor += 1;
                     }
@@ -221,10 +222,8 @@ impl Component for SearchBar {
                 ratatui::crossterm::event::KeyCode::Backspace => {
                     // Character-aware removal for UTF-8 safety
                     if self.cursor > 0 {
-                        let char_indices: Vec<(usize, usize)> = self.query
-                            .char_indices()
-                            .map(|(i, c)| (i, c.len_utf8()))
-                            .collect();
+                        let char_indices: Vec<(usize, usize)> =
+                            self.query.char_indices().map(|(i, c)| (i, c.len_utf8())).collect();
 
                         if self.cursor <= char_indices.len() {
                             // Find the byte position of the character before cursor
@@ -241,10 +240,8 @@ impl Component for SearchBar {
                     // Character-aware removal for UTF-8 safety
                     let char_count = self.query.chars().count();
                     if self.cursor < char_count {
-                        let char_indices: Vec<(usize, usize)> = self.query
-                            .char_indices()
-                            .map(|(i, c)| (i, c.len_utf8()))
-                            .collect();
+                        let char_indices: Vec<(usize, usize)> =
+                            self.query.char_indices().map(|(i, c)| (i, c.len_utf8())).collect();
 
                         if let Some(&(byte_start, char_len)) = char_indices.get(self.cursor) {
                             self.query.replace_range(byte_start..byte_start + char_len, "");

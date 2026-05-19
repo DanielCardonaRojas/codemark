@@ -236,7 +236,8 @@ async fn run_app() -> Result<()> {
 
                         #[cfg(not(unix))]
                         {
-                            match std::process::Command::new(&cmd.program).args(&cmd.args).status() {
+                            match std::process::Command::new(&cmd.program).args(&cmd.args).status()
+                            {
                                 Ok(status) if status.success() => std::process::exit(0),
                                 Ok(status) => {
                                     let code = status.code().unwrap_or(1);

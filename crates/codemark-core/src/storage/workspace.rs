@@ -97,10 +97,10 @@ impl Workspace {
             let repo_name = repo_dir.file_name().map(|n| n.to_string_lossy().to_string());
             if let Some(name) = repo_name {
                 // Check if we can get the parent of the repo for more context (helps in tests)
-                if let Some(parent) = repo_dir.parent() {
-                    if let Some(parent_name) = parent.file_name() {
-                        return format!("{}/{}", parent_name.to_string_lossy(), name);
-                    }
+                if let Some(parent) = repo_dir.parent()
+                    && let Some(parent_name) = parent.file_name()
+                {
+                    return format!("{}/{}", parent_name.to_string_lossy(), name);
                 }
                 return name;
             }
@@ -198,10 +198,9 @@ impl Workspace {
                             std::fs::canonicalize(db.path())
                                 .unwrap_or_else(|_| db.path().to_path_buf())
                                 == canonical_path
-                        }) {
-                            if let Ok(db) = Database::open(&path) {
-                                dbs.push((label, db));
-                            }
+                        }) && let Ok(db) = Database::open(&path)
+                        {
+                            dbs.push((label, db));
                         }
                     }
                 }

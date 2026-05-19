@@ -488,12 +488,8 @@ impl Panel {
                 }
             } else {
                 // Determine if the target item is already active
-                let was_active = self
-                    .all_items
-                    .iter()
-                    .find(|i| matches(i))
-                    .map(|i| i.active)
-                    .unwrap_or(false);
+                let was_active =
+                    self.all_items.iter().find(|i| matches(i)).map(|i| i.active).unwrap_or(false);
 
                 // Deactivate all
                 for item in &mut self.all_items {
@@ -502,9 +498,7 @@ impl Panel {
 
                 // If it wasn't active before, activate it now.
                 // If it was active, it remains inactive (toggled off).
-                if !was_active
-                    && let Some(item) = self.all_items.iter_mut().find(|i| matches(i))
-                {
+                if !was_active && let Some(item) = self.all_items.iter_mut().find(|i| matches(i)) {
                     item.active = true;
                 }
             }
