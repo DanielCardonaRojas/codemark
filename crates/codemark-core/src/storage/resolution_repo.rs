@@ -209,12 +209,12 @@ impl Database {
 
         // Try to find resolution from nearest ancestor commit
         if let Ok(cwd) = std::env::current_dir() {
-            let commit_hashes: Vec<String> = all_resolutions
-                .iter()
-                .filter_map(|r| r.commit_hash.clone())
-                .collect();
+            let commit_hashes: Vec<String> =
+                all_resolutions.iter().filter_map(|r| r.commit_hash.clone()).collect();
 
-            if let Ok(Some(nearest_commit)) = crate::git::context::find_nearest_ancestor(&cwd, &commit_hashes) {
+            if let Ok(Some(nearest_commit)) =
+                crate::git::context::find_nearest_ancestor(&cwd, &commit_hashes)
+            {
                 // Find the resolution with this commit hash
                 if let Some(res) = all_resolutions
                     .iter()

@@ -287,15 +287,8 @@ impl BrowserLayout {
         match mode {
             SearchMode::Fts => {
                 // FTS search can be done synchronously as it's usually fast
-                let bookmarks = self.db.search_bookmarks(
-                    Some(&query),
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                    None,
-                );
+                let bookmarks =
+                    self.db.search_bookmarks(Some(&query), None, None, None, None, None, None);
                 match bookmarks {
                     Ok(bm) => {
                         let _ = event_handler.send(Event::SearchResults(bm));
@@ -583,7 +576,8 @@ impl BrowserLayout {
         if !active_branches.is_empty() {
             spans.push(Span::styled(" | ", Style::default().fg(Color::Gray)));
             spans.push(Span::styled("Branch: ", Style::default().fg(Color::DarkGray)));
-            spans.push(Span::styled(active_branches.join(", "), Style::default().fg(Color::Yellow)));
+            spans
+                .push(Span::styled(active_branches.join(", "), Style::default().fg(Color::Yellow)));
         }
 
         if !active_tags.is_empty() {
@@ -622,10 +616,8 @@ impl BrowserLayout {
             .and_then(|e| e.to_str())
             .unwrap_or("");
 
-        let command_template = if let Some(cmd) = config
-            .open
-            .get_command_for_extension(extension)
-            .or(config.open.default.as_ref())
+        let command_template = if let Some(cmd) =
+            config.open.get_command_for_extension(extension).or(config.open.default.as_ref())
         {
             cmd.clone()
         } else {
@@ -652,11 +644,7 @@ impl BrowserLayout {
                     .unwrap_or("");
                 let should_wait = config.open.should_wait_for_editor(program_name);
 
-                self.pending_command = Some(ExternalCommand {
-                    program,
-                    args,
-                    should_wait,
-                });
+                self.pending_command = Some(ExternalCommand { program, args, should_wait });
             }
         }
     }
@@ -1090,44 +1078,60 @@ impl BrowserLayout {
                     }
                 }
                 // Number keys for direct section access (disabled when search is focused)
-                ratatui::crossterm::event::KeyCode::Char('1') if self.focus != FocusArea::Search => {
+                ratatui::crossterm::event::KeyCode::Char('1')
+                    if self.focus != FocusArea::Search =>
+                {
                     self.focus = FocusArea::Search;
                     self.update_focus_state();
                     return true;
                 }
-                ratatui::crossterm::event::KeyCode::Char('2') if self.focus != FocusArea::Search => {
+                ratatui::crossterm::event::KeyCode::Char('2')
+                    if self.focus != FocusArea::Search =>
+                {
                     self.focus = FocusArea::Panel1;
                     self.update_focus_state();
                     return true;
                 }
-                ratatui::crossterm::event::KeyCode::Char('3') if self.focus != FocusArea::Search => {
+                ratatui::crossterm::event::KeyCode::Char('3')
+                    if self.focus != FocusArea::Search =>
+                {
                     self.focus = FocusArea::Panel2;
                     self.update_focus_state();
                     return true;
                 }
-                ratatui::crossterm::event::KeyCode::Char('4') if self.focus != FocusArea::Search => {
+                ratatui::crossterm::event::KeyCode::Char('4')
+                    if self.focus != FocusArea::Search =>
+                {
                     self.focus = FocusArea::Panel3;
                     self.update_focus_state();
                     return true;
                 }
-                ratatui::crossterm::event::KeyCode::Char('5') if self.focus != FocusArea::Search => {
+                ratatui::crossterm::event::KeyCode::Char('5')
+                    if self.focus != FocusArea::Search =>
+                {
                     self.focus = FocusArea::Main;
                     self.right_pane.focus_steps();
                     self.update_focus_state();
                     return true;
                 }
-                ratatui::crossterm::event::KeyCode::Char('6') if self.focus != FocusArea::Search => {
+                ratatui::crossterm::event::KeyCode::Char('6')
+                    if self.focus != FocusArea::Search =>
+                {
                     self.focus = FocusArea::Main;
                     self.right_pane.focus_details();
                     self.update_focus_state();
                     return true;
                 }
-                ratatui::crossterm::event::KeyCode::Char('o') if self.focus != FocusArea::Search => {
+                ratatui::crossterm::event::KeyCode::Char('o')
+                    if self.focus != FocusArea::Search =>
+                {
                     self.open_in_editor();
                     return true;
                 }
                 // Delete collection or bookmark based on active tab
-                ratatui::crossterm::event::KeyCode::Char('d') if self.focus != FocusArea::Search => {
+                ratatui::crossterm::event::KeyCode::Char('d')
+                    if self.focus != FocusArea::Search =>
+                {
                     if self.focus == FocusArea::Panel3 {
                         match Panel3Tab::from_index(self.left_pane.panel3.tabs.selected_index()) {
                             Some(Panel3Tab::Collections) => {
@@ -1135,7 +1139,9 @@ impl BrowserLayout {
                                     && let Some(selected) = panel.selected()
                                 {
                                     let collection_name = selected.text().to_string();
-                                    if let Ok(Some(_collection)) = self.db.get_collection_by_name(&collection_name) {
+                                    if let Ok(Some(_collection)) =
+                                        self.db.get_collection_by_name(&collection_name)
+                                    {
                                         let _ = self.db.delete_collection(&collection_name);
                                         self.refresh_all_panels();
                                         return true;
@@ -1164,7 +1170,8 @@ impl BrowserLayout {
         match event {
             Event::Mouse(_) => {
                 let old_tab = self.left_pane.panel3.tabs.selected_index();
-                let handled = self.left_pane.handle_event(event) || self.right_pane.handle_event(event);
+                let handled =
+                    self.left_pane.handle_event(event) || self.right_pane.handle_event(event);
 
                 // Refresh tags if Panel 3 tab changed via mouse
                 if self.left_pane.panel3.tabs.selected_index() != old_tab {
@@ -1347,12 +1354,11 @@ impl RightPane {
                     let parts: Vec<&str> = lr.split('-').collect();
                     if let (Some(start), Some(end)) = (
                         parts.first().and_then(|s| s.parse::<usize>().ok()),
-                        parts.get(1).and_then(|s| s.parse::<usize>().ok())
+                        parts.get(1).and_then(|s| s.parse::<usize>().ok()),
                     ) {
                         line_number = start.saturating_sub(1);
                         line_end = Some(end.saturating_sub(1));
-                    } else if let Some(start) =
-                        parts.first().and_then(|s| s.parse::<usize>().ok())
+                    } else if let Some(start) = parts.first().and_then(|s| s.parse::<usize>().ok())
                     {
                         line_number = start.saturating_sub(1);
                     }
@@ -1399,7 +1405,7 @@ impl RightPane {
                         let parts: Vec<&str> = lr.split('-').collect();
                         if let (Some(start), Some(end)) = (
                             parts.first().and_then(|s| s.parse::<usize>().ok()),
-                            parts.get(1).and_then(|s| s.parse::<usize>().ok())
+                            parts.get(1).and_then(|s| s.parse::<usize>().ok()),
                         ) {
                             line_number = start.saturating_sub(1);
                             line_end = Some(end.saturating_sub(1));
@@ -1718,10 +1724,7 @@ impl TabbedPanel {
             Ok(tags) if !tags.is_empty() => tags
                 .into_iter()
                 .map(|tag| {
-                    PanelItem::new(format!("#{tag}"))
-                        .user_data(tag)
-                        .no_health()
-                        .color(Color::Cyan)
+                    PanelItem::new(format!("#{tag}")).user_data(tag).no_health().color(Color::Cyan)
                 })
                 .collect(),
             Ok(_) => vec![PanelItem::new("No tags found").no_health().color(Color::DarkGray)],
@@ -1749,9 +1752,15 @@ impl TabbedPanel {
             for (c, count) in collections {
                 let health = match c.health {
                     Some(h) => match h {
-                        codemark_core::engine::bookmark::CollectionHealth::Active => HealthStatus::Healthy,
-                        codemark_core::engine::bookmark::CollectionHealth::Drifted => HealthStatus::Warning,
-                        codemark_core::engine::bookmark::CollectionHealth::Stale => HealthStatus::Error,
+                        codemark_core::engine::bookmark::CollectionHealth::Active => {
+                            HealthStatus::Healthy
+                        }
+                        codemark_core::engine::bookmark::CollectionHealth::Drifted => {
+                            HealthStatus::Warning
+                        }
+                        codemark_core::engine::bookmark::CollectionHealth::Stale => {
+                            HealthStatus::Error
+                        }
                     },
                     None => HealthStatus::Unknown,
                 };
@@ -1775,7 +1784,8 @@ impl TabbedPanel {
                 .into_iter()
                 .map(|bm| {
                     // Get the best resolution for preview to determine health status
-                    let health = db.get_preview_resolution(&bm.id)
+                    let health = db
+                        .get_preview_resolution(&bm.id)
                         .ok()
                         .flatten()
                         .map(|res| match res.health {
@@ -1830,14 +1840,9 @@ impl TabbedPanel {
     /// Create panel 2 with Tags/Branches tabs.
     fn new_tags_branches(db: &Database, active_tab: Panel3Tab) -> Self {
         let (tags_items, branches_items) = TabbedPanel::build_tags_branches_items(db, active_tab);
-        let tags_panel = Panel::new("")
-            .bordered(false)
-            .multi_select(true)
-            .items(tags_items);
-        let branches_panel = Panel::new("")
-            .bordered(false)
-            .multi_select(true)
-            .items(branches_items);
+        let tags_panel = Panel::new("").bordered(false).multi_select(true).items(tags_items);
+        let branches_panel =
+            Panel::new("").bordered(false).multi_select(true).items(branches_items);
 
         let tabs = TabSelection::new(vec![
             Tab::new("Tags").badge(tags_panel.len().to_string()),
@@ -2046,18 +2051,18 @@ impl DetailsPanel {
         }
     }
 
-/// Set bookmark data.
-pub fn set_bookmark(&mut self, bm: &Bookmark, res: Option<&Resolution>) {
-    self.id = bm.id[..8.min(bm.id.len())].to_string();
-    self.author = bm.created_by.clone().unwrap_or_else(|| "Unknown".to_string());
-    self.health = bm.health.to_string();
-    self.created_at = bm.created_at.to_string();
-    self.tags = bm.tags.iter().map(|t| format!("#{}", t)).collect();
-    self.commit = res
-        .and_then(|r| r.commit_hash.as_ref())
-        .map(|c| c[..8.min(c.len())].to_string())
-        .unwrap_or_else(|| "N/A".to_string());
-}
+    /// Set bookmark data.
+    pub fn set_bookmark(&mut self, bm: &Bookmark, res: Option<&Resolution>) {
+        self.id = bm.id[..8.min(bm.id.len())].to_string();
+        self.author = bm.created_by.clone().unwrap_or_else(|| "Unknown".to_string());
+        self.health = bm.health.to_string();
+        self.created_at = bm.created_at.to_string();
+        self.tags = bm.tags.iter().map(|t| format!("#{}", t)).collect();
+        self.commit = res
+            .and_then(|r| r.commit_hash.as_ref())
+            .map(|c| c[..8.min(c.len())].to_string())
+            .unwrap_or_else(|| "N/A".to_string());
+    }
     /// Get the last rendered area.
     pub fn last_area(&self) -> Rect {
         self.last_area.get()

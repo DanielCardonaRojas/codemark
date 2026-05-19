@@ -104,7 +104,8 @@ async fn run_app() -> Result<()> {
 
                 // Draw help overlay
                 // Convert &[(&str, &str)] to &[(&str, &str)] - compatible types
-                let bindings_refs: Vec<(&str, &str)> = bindings.iter().map(|(k, v)| (*k, *v)).collect();
+                let bindings_refs: Vec<(&str, &str)> =
+                    bindings.iter().map(|(k, v)| (*k, *v)).collect();
                 ui::render_help_panel(help_area, f.buffer_mut(), &bindings_refs);
             } else {
                 // Draw normal UI
@@ -157,7 +158,8 @@ async fn run_app() -> Result<()> {
                         match state.mode() {
                             AppMode::Normal => {
                                 // Handle global key bindings (disabled when Search is focused)
-                                let search_focused = layout.focus() == codemark_tui::browser::FocusArea::Search;
+                                let search_focused =
+                                    layout.focus() == codemark_tui::browser::FocusArea::Search;
                                 match key.code {
                                     event::KeyCode::Char('q') if !search_focused => {
                                         state.quit();
@@ -220,9 +222,8 @@ async fn run_app() -> Result<()> {
                         #[cfg(unix)]
                         {
                             use std::os::unix::process::CommandExt;
-                            let err = std::process::Command::new(&cmd.program)
-                                .args(&cmd.args)
-                                .exec();
+                            let err =
+                                std::process::Command::new(&cmd.program).args(&cmd.args).exec();
 
                             // If exec returns, it failed
                             eprintln!("Failed to run editor: {}", err);
@@ -231,16 +232,14 @@ async fn run_app() -> Result<()> {
 
                         #[cfg(not(unix))]
                         {
-                            let _ = std::process::Command::new(&cmd.program)
-                                .args(&cmd.args)
-                                .status();
+                            let _ =
+                                std::process::Command::new(&cmd.program).args(&cmd.args).status();
                             std::process::exit(0);
                         }
                     } else {
                         // GUI editor: spawn in background
-                        let status = std::process::Command::new(&cmd.program)
-                            .args(&cmd.args)
-                            .spawn();
+                        let status =
+                            std::process::Command::new(&cmd.program).args(&cmd.args).spawn();
 
                         if let Err(e) = status {
                             notification = Some((

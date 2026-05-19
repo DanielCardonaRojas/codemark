@@ -1,21 +1,18 @@
 //! Code preview component with syntax highlighting and line numbers.
 
-use std::cell::RefCell;
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
     style::{Color, Style},
     text::{Line, Span},
-    widgets::{
-        Scrollbar, ScrollbarOrientation,
-        ScrollbarState, Widget, StatefulWidget,
-    },
+    widgets::{Scrollbar, ScrollbarOrientation, ScrollbarState, StatefulWidget, Widget},
 };
+use std::cell::RefCell;
+use std::sync::LazyLock;
 use syntect::easy::HighlightLines;
 use syntect::highlighting::{Style as SyntectStyle, ThemeSet};
 use syntect::parsing::SyntaxSet;
 use syntect::util::LinesWithEndings;
-use std::sync::LazyLock;
 
 use super::Component;
 use crate::event::Event;
@@ -100,17 +97,11 @@ impl CodePreview {
             // Add sign column indicator (1 char) + line number (4 chars) + space (1 char) = 6 chars total gutter
             // Sign column shows: '■' for single line, '├' for start, '│' for middle, '└' for end of range
             let sign = " "; // Default: no mark
-            spans.push(Span::styled(
-                sign,
-                Style::default().fg(Color::DarkGray),
-            ));
+            spans.push(Span::styled(sign, Style::default().fg(Color::DarkGray)));
 
             // Add line number (gutter)
             let line_num = format!("{:>3} ", i + 1);
-            spans.push(Span::styled(
-                line_num,
-                Style::default().fg(Color::DarkGray),
-            ));
+            spans.push(Span::styled(line_num, Style::default().fg(Color::DarkGray)));
 
             // Convert syntect style to ratatui style
             for (style, text) in ranges {
@@ -142,11 +133,7 @@ impl CodePreview {
             self.selected_line = Some(start);
             // Always set selected_range if we have a multi-line range
             self.selected_range = if let Some(e) = end {
-                if start != e {
-                    Some((start.min(e), e))
-                } else {
-                    None
-                }
+                if start != e { Some((start.min(e), e)) } else { None }
             } else {
                 None
             };
@@ -206,11 +193,7 @@ impl Component for CodePreview {
             };
 
             // Sign color: cyan for range lines, regardless of current selection
-            let sign_color = if in_range {
-                Color::Cyan
-            } else {
-                Color::DarkGray
-            };
+            let sign_color = if in_range { Color::Cyan } else { Color::DarkGray };
 
             // Rebuild the line with the correct sign indicator
             // The cached line has: sign (1 char) + line number (4 chars) + content
@@ -229,8 +212,8 @@ impl Component for CodePreview {
 
         drop(cached); // Drop cached before rendering
 
-        let paragraph = ratatui::widgets::Paragraph::new(text_lines)
-            .scroll((self.scroll_offset, 0));
+        let paragraph =
+            ratatui::widgets::Paragraph::new(text_lines).scroll((self.scroll_offset, 0));
 
         paragraph.render(area, buf);
 
@@ -242,8 +225,8 @@ impl Component for CodePreview {
                 .track_symbol(None)
                 .thumb_symbol("┃");
 
-            let mut scrollbar_state = ScrollbarState::new(list_len)
-                .position(self.scroll_offset as usize);
+            let mut scrollbar_state =
+                ScrollbarState::new(list_len).position(self.scroll_offset as usize);
 
             let scrollbar_area = Rect {
                 x: area.right().saturating_sub(1),
@@ -308,7 +291,9 @@ impl Component for CodePreview {
             Event::Mouse(mouse) => match mouse.kind {
                 ratatui::crossterm::event::MouseEventKind::ScrollDown => {
                     let line_count = self.code.lines().count();
-                    self.scroll_offset = self.scroll_offset.saturating_add(1)
+                    self.scroll_offset = self
+                        .scroll_offset
+                        .saturating_add(1)
                         .min(line_count.saturating_sub(1) as u16);
                     true
                 }
