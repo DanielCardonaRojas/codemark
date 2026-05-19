@@ -662,38 +662,44 @@ impl Component for Panel {
     }
 
     fn handle_event(&mut self, event: &Event) -> bool {
-        if !self.focused {
-            return false;
-        }
-
         match event {
-            Event::Key(key) => match key.code {
-                ratatui::crossterm::event::KeyCode::Down
-                | ratatui::crossterm::event::KeyCode::Char('j') => {
-                    self.select_next();
-                    true
+            Event::Key(key) => {
+                if !self.focused {
+                    return false;
                 }
-                ratatui::crossterm::event::KeyCode::Up
-                | ratatui::crossterm::event::KeyCode::Char('k') => {
-                    self.select_previous();
-                    true
+                match key.code {
+                    ratatui::crossterm::event::KeyCode::Down
+                    | ratatui::crossterm::event::KeyCode::Char('j') => {
+                        self.select_next();
+                        true
+                    }
+                    ratatui::crossterm::event::KeyCode::Up
+                    | ratatui::crossterm::event::KeyCode::Char('k') => {
+                        self.select_previous();
+                        true
+                    }
+                    ratatui::crossterm::event::KeyCode::Char(' ') => {
+                        self.activate_selected();
+                        true
+                    }
+                    _ => false,
                 }
-                ratatui::crossterm::event::KeyCode::Char(' ') => {
-                    self.activate_selected();
-                    true
-                }
-                _ => false,
-            },
+            }
             Event::Mouse(mouse) => {
+                let area = self.last_area.get();
+                let is_hovered = mouse.column >= area.x
+                    && mouse.column < area.x + area.width
+                    && mouse.row >= area.y
+                    && mouse.row < area.y + area.height;
+
                 match mouse.kind {
                     ratatui::crossterm::event::MouseEventKind::Down(button) => {
+                        if !self.focused {
+                            return false;
+                        }
+
                         if button == ratatui::crossterm::event::MouseButton::Left {
-                            let area = self.last_area.get();
-                            if mouse.column >= area.x
-                                && mouse.column < area.x + area.width
-                                && mouse.row >= area.y
-                                && mouse.row < area.y + area.height
-                            {
+                            if is_hovered {
                                 // Calculate inner area to get correct item index
                                 let inner = if self.bordered {
                                     area.inner(Margin::new(1, 1))
@@ -719,12 +725,20 @@ impl Component for Panel {
                         false
                     }
                     ratatui::crossterm::event::MouseEventKind::ScrollDown => {
-                        self.select_next();
-                        true
+                        if is_hovered {
+                            self.select_next();
+                            true
+                        } else {
+                            false
+                        }
                     }
                     ratatui::crossterm::event::MouseEventKind::ScrollUp => {
-                        self.select_previous();
-                        true
+                        if is_hovered {
+                            self.select_previous();
+                            true
+                        } else {
+                            false
+                        }
                     }
                     _ => false,
                 }
