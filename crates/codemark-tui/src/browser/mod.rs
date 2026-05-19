@@ -531,16 +531,63 @@ impl BrowserLayout {
 
     /// Get current filters/metadata for the status bar.
     pub fn get_status_metadata(&self) -> Line<'_> {
-        vec![
+        let repo_name = self
+            .db
+            .list_repos()
+            .ok()
+            .and_then(|repos| repos.first().map(|r| r.repo_name.clone()))
+            .unwrap_or_else(|| {
+                self.db
+                    .path()
+                    .parent()
+                    .and_then(|p| p.parent())
+                    .and_then(|p| p.file_name())
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_else(|| "unknown".to_string())
+            });
+
+        let active_tags = self
+            .left_pane
+            .panel2
+            .panels
+            .first()
+            .and_then(|c| match c {
+                TabContent::List(p) => Some(p.active_items()),
+                _ => None,
+            })
+            .unwrap_or_default();
+
+        let active_branches = self
+            .left_pane
+            .panel2
+            .panels
+            .get(1)
+            .and_then(|c| match c {
+                TabContent::List(p) => Some(p.active_items()),
+                _ => None,
+            })
+            .unwrap_or_default();
+
+        let mut spans = vec![
             Span::styled("Repo: ", Style::default().fg(Color::DarkGray)),
-            Span::styled("codemark", Style::default().fg(Color::Cyan)),
-            Span::styled(" | ", Style::default().fg(Color::Gray)),
-            Span::styled("Branch: ", Style::default().fg(Color::DarkGray)),
-            Span::styled("main", Style::default().fg(Color::Yellow)),
-            Span::styled(" | ", Style::default().fg(Color::Gray)),
-            Span::styled("#ui", Style::default().fg(Color::Magenta)),
-        ]
-        .into()
+            Span::styled(repo_name, Style::default().fg(Color::Cyan)),
+        ];
+
+        if !active_branches.is_empty() {
+            spans.push(Span::styled(" | ", Style::default().fg(Color::Gray)));
+            spans.push(Span::styled("Branch: ", Style::default().fg(Color::DarkGray)));
+            spans.push(Span::styled(active_branches.join(", "), Style::default().fg(Color::Yellow)));
+        }
+
+        if !active_tags.is_empty() {
+            spans.push(Span::styled(" | ", Style::default().fg(Color::Gray)));
+            spans.push(Span::styled(
+                active_tags.join(" "),
+                Style::default().fg(Color::Magenta),
+            ));
+        }
+
+        Line::from(spans)
     }
 
     /// Open the currently selected bookmark or tour step in the editor.

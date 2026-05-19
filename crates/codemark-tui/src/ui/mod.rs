@@ -71,8 +71,8 @@ pub fn render_status_bar(
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
-            Constraint::Min(0),     // Keybindings
-            Constraint::Length(40), // Metadata (right side)
+            Constraint::Min(0),      // Keybindings
+            Constraint::Percentage(50), // Metadata (right side)
         ])
         .split(area);
 
