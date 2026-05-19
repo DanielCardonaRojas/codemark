@@ -232,7 +232,7 @@ async fn run_app() -> Result<()> {
                     }
                 }
 
-                // Update filter based on active_filter (committed via Enter)
+                // Update filter based on active_filter (live updated on each keystroke)
                 let query = state.get_string("active_filter").unwrap_or("");
                 layout.apply_filter(query);
 

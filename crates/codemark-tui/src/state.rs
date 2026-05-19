@@ -288,16 +288,13 @@ impl AppState {
                         if key.code == ratatui::crossterm::event::KeyCode::Esc {
                             if self.mode == AppMode::Search {
                                 self.set_string("filter_buffer", "");
-                                // We don't clear active_filter here, so user can cancel a new search
-                                // while keeping the previous results.
+                                self.set_string("active_filter", "");
                             }
                             self.set_mode(AppMode::Normal);
                             true
                         } else if key.code == ratatui::crossterm::event::KeyCode::Enter {
                             if self.mode == AppMode::Search {
-                                let buffer =
-                                    self.get_string("filter_buffer").unwrap_or("").to_string();
-                                self.set_string("active_filter", buffer);
+                                // Exit filter mode, keeping the current filter
                                 self.set_mode(AppMode::Normal);
                                 true
                             } else {
@@ -308,7 +305,9 @@ impl AppState {
                                 let mut query =
                                     self.get_string("filter_buffer").unwrap_or("").to_string();
                                 query.push(c);
-                                self.set_string("filter_buffer", query);
+                                self.set_string("filter_buffer", query.clone());
+                                // Update active_filter immediately for live filtering
+                                self.set_string("active_filter", query);
                                 true
                             } else {
                                 false
@@ -318,7 +317,9 @@ impl AppState {
                                 let mut query =
                                     self.get_string("filter_buffer").unwrap_or("").to_string();
                                 query.pop();
-                                self.set_string("filter_buffer", query);
+                                self.set_string("filter_buffer", query.clone());
+                                // Update active_filter immediately for live filtering
+                                self.set_string("active_filter", query);
                                 true
                             } else {
                                 false
