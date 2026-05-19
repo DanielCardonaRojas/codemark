@@ -374,13 +374,7 @@ impl BrowserLayout {
         }
 
         // 2. Update Tags/Branches (in-place)
-        let (tags, branches) = TabbedPanel::build_tags_branches_items(&self.db);
-        if let Some(p) = self.left_pane.panel2.get_list_panel_mut(0) {
-            p.set_items(tags);
-        }
-        if let Some(p) = self.left_pane.panel2.get_list_panel_mut(1) {
-            p.set_items(branches);
-        }
+        self.refresh_tags();
 
         // 3. Update Bookmarks/Collections/Tours (in-place)
         let (tours, collections, bookmarks) = TabbedPanel::build_panel3_items(&self.db);
@@ -405,6 +399,19 @@ impl BrowserLayout {
                 self.right_pane.pager_total = 0;
                 self.right_pane.pager_current = 0;
             }
+        }
+    }
+
+    /// Refresh tags in Panel 2 based on the active tab in Panel 3.
+    pub fn refresh_tags(&mut self) {
+        let active_tab = Panel3Tab::from_index(self.left_pane.panel3.tabs.selected_index())
+            .unwrap_or(Panel3Tab::Bookmarks);
+        let (tags, branches) = TabbedPanel::build_tags_branches_items(&self.db, active_tab);
+        if let Some(p) = self.left_pane.panel2.get_list_panel_mut(0) {
+            p.set_items(tags);
+        }
+        if let Some(p) = self.left_pane.panel2.get_list_panel_mut(1) {
+            p.set_items(branches);
         }
     }
 
@@ -582,7 +589,7 @@ impl BrowserLayout {
         if !active_tags.is_empty() {
             spans.push(Span::styled(" | ", Style::default().fg(Color::Gray)));
             spans.push(Span::styled(
-                active_tags.join(" "),
+                active_tags.iter().map(|t| format!("#{t}")).collect::<Vec<_>>().join(" "),
                 Style::default().fg(Color::Magenta),
             ));
         }
@@ -1156,7 +1163,14 @@ impl BrowserLayout {
         // 3. Delegate to panes
         match event {
             Event::Mouse(_) => {
+                let old_tab = self.left_pane.panel3.tabs.selected_index();
                 let handled = self.left_pane.handle_event(event) || self.right_pane.handle_event(event);
+
+                // Refresh tags if Panel 3 tab changed via mouse
+                if self.left_pane.panel3.tabs.selected_index() != old_tab {
+                    self.refresh_tags();
+                }
+
                 // Check for bookmark selection changes for live preview after mouse events
                 if self.focus == FocusArea::Panel3 {
                     if let Some(id) = self.left_pane.panel3.take_selection_change() {
@@ -1167,22 +1181,32 @@ impl BrowserLayout {
                 }
                 handled
             }
-            Event::Key(_) => match self.focus {
-                FocusArea::Search => self.left_pane.search.handle_event(event),
-                FocusArea::Panel1 => self.left_pane.panel1.handle_event(event),
-                FocusArea::Panel2 => self.left_pane.panel2.handle_event(event),
-                FocusArea::Panel3 => {
-                    let handled = self.left_pane.panel3.handle_event(event);
-                    // Check for bookmark selection changes for live preview
-                    if let Some(id) = self.left_pane.panel3.take_selection_change() {
-                        self.right_pane.load_bookmark(&self.db, &id);
-                    } else if handled {
-                        self.update_bookmarks_live_preview();
+            Event::Key(_key) => {
+                let old_tab = self.left_pane.panel3.tabs.selected_index();
+                let handled = match self.focus {
+                    FocusArea::Search => self.left_pane.search.handle_event(event),
+                    FocusArea::Panel1 => self.left_pane.panel1.handle_event(event),
+                    FocusArea::Panel2 => self.left_pane.panel2.handle_event(event),
+                    FocusArea::Panel3 => {
+                        let handled = self.left_pane.panel3.handle_event(event);
+                        // Check for bookmark selection changes for live preview
+                        if let Some(id) = self.left_pane.panel3.take_selection_change() {
+                            self.right_pane.load_bookmark(&self.db, &id);
+                        } else if handled {
+                            self.update_bookmarks_live_preview();
+                        }
+                        handled
                     }
-                    handled
+                    FocusArea::Main => self.right_pane.handle_event(event),
+                };
+
+                // Refresh tags if Panel 3 tab changed via keyboard (e.g., [ or ])
+                if self.left_pane.panel3.tabs.selected_index() != old_tab {
+                    self.refresh_tags();
                 }
-                FocusArea::Main => self.right_pane.handle_event(event),
-            },
+
+                handled
+            }
             _ => false,
         }
     }
@@ -1194,7 +1218,7 @@ impl LeftPane {
         Self {
             search: SearchBar::new(),
             panel1: TabbedPanel::new_repos_accounts(db, registry),
-            panel2: TabbedPanel::new_tags_branches(db),
+            panel2: TabbedPanel::new_tags_branches(db, Panel3Tab::Bookmarks),
             panel3: TabbedPanel::new_tours_collections_bookmarks(db),
             panel1_config: SectionConfig::new(4, 6),
             panel2_config: SectionConfig::new(4, 8),
@@ -1681,11 +1705,24 @@ impl TabbedPanel {
     }
 
     /// Build tags and branches items.
-    fn build_tags_branches_items(db: &Database) -> (Vec<PanelItem>, Vec<PanelItem>) {
-        let tags = match db.list_all_tags() {
+    fn build_tags_branches_items(
+        db: &Database,
+        active_tab: Panel3Tab,
+    ) -> (Vec<PanelItem>, Vec<PanelItem>) {
+        let tags_result = match active_tab {
+            Panel3Tab::Bookmarks => db.list_bookmark_tags(),
+            Panel3Tab::Collections | Panel3Tab::Tours => db.list_collection_tags(),
+        };
+
+        let tags = match tags_result {
             Ok(tags) if !tags.is_empty() => tags
                 .into_iter()
-                .map(|tag| PanelItem::new(format!("#{tag}")).no_health().color(Color::Cyan))
+                .map(|tag| {
+                    PanelItem::new(format!("#{tag}"))
+                        .user_data(tag)
+                        .no_health()
+                        .color(Color::Cyan)
+                })
                 .collect(),
             Ok(_) => vec![PanelItem::new("No tags found").no_health().color(Color::DarkGray)],
             Err(e) => vec![PanelItem::new(format!("Error: {e}")).no_health().color(Color::Red)],
@@ -1791,10 +1828,16 @@ impl TabbedPanel {
     }
 
     /// Create panel 2 with Tags/Branches tabs.
-    fn new_tags_branches(db: &Database) -> Self {
-        let (tags_items, branches_items) = TabbedPanel::build_tags_branches_items(db);
-        let tags_panel = Panel::new("").multi_select(true).bordered(false).items(tags_items);
-        let branches_panel = Panel::new("").bordered(false).items(branches_items);
+    fn new_tags_branches(db: &Database, active_tab: Panel3Tab) -> Self {
+        let (tags_items, branches_items) = TabbedPanel::build_tags_branches_items(db, active_tab);
+        let tags_panel = Panel::new("")
+            .bordered(false)
+            .multi_select(true)
+            .items(tags_items);
+        let branches_panel = Panel::new("")
+            .bordered(false)
+            .multi_select(true)
+            .items(branches_items);
 
         let tabs = TabSelection::new(vec![
             Tab::new("Tags").badge(tags_panel.len().to_string()),

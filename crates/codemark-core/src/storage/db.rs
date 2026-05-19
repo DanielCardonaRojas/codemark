@@ -344,6 +344,29 @@ impl Database {
         Ok(tags)
     }
 
+    /// List all unique tags used in bookmarks.
+    pub fn list_bookmark_tags(&self) -> Result<Vec<String>> {
+        let mut stmt = self.conn.prepare("SELECT DISTINCT tag FROM bookmark_tags ORDER BY tag")?;
+        let rows = stmt.query_map([], |row| row.get(0))?;
+        let mut tags = Vec::new();
+        for tag in rows {
+            tags.push(tag?);
+        }
+        Ok(tags)
+    }
+
+    /// List all unique tags used in collections.
+    pub fn list_collection_tags(&self) -> Result<Vec<String>> {
+        let mut stmt =
+            self.conn.prepare("SELECT DISTINCT tag FROM collection_tags ORDER BY tag")?;
+        let rows = stmt.query_map([], |row| row.get(0))?;
+        let mut tags = Vec::new();
+        for tag in rows {
+            tags.push(tag?);
+        }
+        Ok(tags)
+    }
+
     /// List all unique branches across bookmarks and collections.
     pub fn list_all_branches(&self) -> Result<Vec<String>> {
         let mut stmt = self.conn.prepare(

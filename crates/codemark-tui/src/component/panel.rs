@@ -427,8 +427,13 @@ impl Panel {
     }
 
     /// Get all currently active items in the entire list (regardless of filtering).
+    /// Returns user_data if available, otherwise fallback to text.
     pub fn active_items(&self) -> Vec<String> {
-        self.all_items.iter().filter(|i| i.active).map(|i| i.text.clone()).collect()
+        self.all_items
+            .iter()
+            .filter(|i| i.active)
+            .map(|i| i.user_data.clone().unwrap_or_else(|| i.text.clone()))
+            .collect()
     }
 
     /// Select the next item.
