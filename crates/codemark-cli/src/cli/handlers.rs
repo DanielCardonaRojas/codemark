@@ -303,10 +303,7 @@ pub async fn handle_edit_v2(cli: &Cli, mode: &OutputMode, args: &EditArgs) -> Re
 /// If an explicit path is provided, it will be created if it doesn't exist.
 /// For auto-detected paths, it requires the .codemark directory to exist.
 pub fn open_db_for_write(cli: &Cli) -> Result<Database> {
-    if let Some(path) = cli.db.first() {
-        return Database::create(path);
-    }
-    Workspace::open_primary_for_write()
+    Workspace::open_primary_for_write(cli.db.first().map(|p| p.as_path()))
 }
 
 /// Returns the project root (parent of .codemark) for a given database.
@@ -319,13 +316,7 @@ pub fn get_project_root(db: &Database) -> std::path::PathBuf {
 /// Returns Error::NotInitialized only if an explicit path was provided but it doesn't exist.
 /// For auto-detected paths, if the DB doesn't exist, it returns an in-memory DB (effectively empty).
 pub fn open_db(cli: &Cli) -> Result<Database> {
-    if let Some(path) = cli.db.first() {
-        if path.exists() {
-            return Database::open(path);
-        }
-        return Database::open_in_memory();
-    }
-    Workspace::open_primary()
+    Workspace::open_primary(cli.db.first().map(|p| p.as_path()))
 }
 
 /// Generate embedding for a bookmark if semantic search is enabled.
@@ -614,10 +605,8 @@ fn sync_to_global_registry(
 /// 2. If CLI `--repo` is specified, resolves repo references via the global registry
 /// 3. Otherwise, uses auto-detected primary DB + configured additional databases
 pub fn open_all_dbs(cli: &Cli) -> Result<Vec<(String, Database)>> {
-    Workspace::open_all(&OpenDbOptions {
-        explicit_paths: cli.db.clone(),
-        repo_refs: cli.repo.clone(),
-    })
+    let opts = OpenDbOptions { explicit_paths: cli.db.clone(), repo_refs: cli.repo.clone() };
+    Workspace::open_all(&opts)
 }
 
 /// Filter databases by user email (from repos table).

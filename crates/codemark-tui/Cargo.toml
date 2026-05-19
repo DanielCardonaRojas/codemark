@@ -1,0 +1,32 @@
+[package]
+name = "codemark-tui"
+version = "0.1.0"
+edition = "2024"
+description = "Terminal UI for Codemark using ratatui"
+license = "MIT"
+
+[lib]
+name = "codemark_tui"
+path = "src/lib.rs"
+
+[[bin]]
+name = "codemark-tui"
+path = "src/main.rs"
+
+[dependencies]
+ratatui = "0.29"
+crossterm = { version = "0.28", features = ["event-stream"] }
+syntect = "5.2"
+tokio = { workspace = true }
+codemark-core = { path = "../codemark-core" }
+rusqlite = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+serde = { workspace = true }
+shlex = "1.3"
+unicode-segmentation = "1"
+unicode-width = "0.2"
+futures = "0.3"
+
+[dev-dependencies]
+tempfile = { workspace = true }
