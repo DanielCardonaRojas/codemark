@@ -48,7 +48,7 @@ async fn run_app() -> Result<()> {
 
     // Initialize Codemark Core Database
     use codemark_core::storage::Workspace;
-    let db = Workspace::open_primary()?;
+    let db = Workspace::open_primary(None)?;
 
     // Setup event receiver
     let (mut event_rx, event_handler) = codemark_tui::event::EventHandler::with_receiver(

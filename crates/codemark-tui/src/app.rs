@@ -359,7 +359,7 @@ mod tests {
 
         assert_eq!(manager.focused(), Some("panel1"));
 
-        manager.next();
+        manager.cycle_next();
         assert_eq!(manager.focused(), Some("panel2"));
     }
 }

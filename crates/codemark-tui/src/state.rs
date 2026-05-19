@@ -544,13 +544,13 @@ mod tests {
 
         assert_eq!(manager.focused(), Some("component1"));
 
-        manager.next();
+        manager.cycle_next();
         assert_eq!(manager.focused(), Some("component2"));
 
-        manager.next();
+        manager.cycle_next();
         assert_eq!(manager.focused(), Some("component3"));
 
-        manager.next(); // Should wrap
+        manager.cycle_next(); // Should wrap
         assert_eq!(manager.focused(), Some("component1"));
 
         manager.previous();
@@ -571,7 +571,7 @@ mod tests {
         manager.remove("component2");
 
         assert_eq!(manager.components().len(), 2);
-        assert!(manager.next()); // Move to component3
+        assert!(manager.cycle_next()); // Move to component3
         assert_eq!(manager.focused(), Some("component3"));
     }
 }

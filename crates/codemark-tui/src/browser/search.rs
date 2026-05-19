@@ -290,7 +290,7 @@ mod tests {
         let mut bar = SearchBar::new();
         bar.set_query("test query");
         assert_eq!(bar.query(), "test query");
-        assert_eq!(bar.cursor, 11);
+        assert_eq!(bar.cursor, 10);
     }
 
     #[test]
