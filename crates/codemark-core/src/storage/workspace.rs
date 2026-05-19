@@ -17,9 +17,29 @@ pub struct OpenDbOptions {
 pub struct Workspace;
 
 impl Workspace {
+    /// Get a nice label for the primary database.
+    pub fn primary_label() -> String {
+        let cwd = std::env::current_dir().unwrap_or_default();
+        if let Some(ctx) = crate::git::context::detect_context(&cwd) {
+            ctx.repo_root
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| "local".to_string())
+        } else {
+            "local".to_string()
+        }
+    }
+
     /// Auto-detect the database from the current directory (or git root).
     /// If it doesn't exist, returns an in-memory database.
-    pub fn open_primary() -> Result<Database> {
+    pub fn open_primary(explicit_path: Option<&Path>) -> Result<Database> {
+        if let Some(path) = explicit_path {
+            if path.exists() {
+                return Database::open(path);
+            }
+            return Database::open_in_memory();
+        }
+
         let cwd = std::env::current_dir().unwrap_or_default();
         if let Some(ctx) = crate::git::context::detect_context(&cwd) {
             let db_path = ctx.repo_root.join(".codemark").join("codemark.db");
@@ -36,7 +56,11 @@ impl Workspace {
     }
 
     /// Auto-detect the database for writing (creates it if parent .codemark exists).
-    pub fn open_primary_for_write() -> Result<Database> {
+    pub fn open_primary_for_write(explicit_path: Option<&Path>) -> Result<Database> {
+        if let Some(path) = explicit_path {
+            return Database::create(path);
+        }
+
         let cwd = std::env::current_dir().unwrap_or_default();
         if let Some(ctx) = crate::git::context::detect_context(&cwd) {
             let db_path = ctx.repo_root.join(".codemark").join("codemark.db");
@@ -73,10 +97,10 @@ impl Workspace {
             let repo_name = repo_dir.file_name().map(|n| n.to_string_lossy().to_string());
             if let Some(name) = repo_name {
                 // Check if we can get the parent of the repo for more context (helps in tests)
-                if let Some(parent) = repo_dir.parent()
-                    && let Some(parent_name) = parent.file_name()
-                {
-                    return format!("{}/{}", parent_name.to_string_lossy(), name);
+                if let Some(parent) = repo_dir.parent() {
+                    if let Some(parent_name) = parent.file_name() {
+                        return format!("{}/{}", parent_name.to_string_lossy(), name);
+                    }
                 }
                 return name;
             }
@@ -101,8 +125,12 @@ impl Workspace {
         for (repo_ref, repo_root) in resolved {
             let db_path = repo_root.join(".codemark").join("codemark.db");
             if db_path.exists() {
-                // For registry repos, the label is the owner/name reference
-                let label = repo_ref.clone();
+                // For registry repos, the label is "owner/name/repo-dir" for better context
+                let label = format!(
+                    "{}/{}",
+                    repo_ref,
+                    repo_root.file_name().and_then(|n| n.to_str()).unwrap_or("unknown")
+                );
                 if let Ok(db) = Database::open(&db_path) {
                     dbs.push((label, db));
                 }
@@ -122,16 +150,9 @@ impl Workspace {
 
     /// Open all specified databases based on options.
     pub fn open_all(opts: &OpenDbOptions) -> Result<Vec<(String, Database)>> {
-        let mut dbs = Vec::new();
-        let primary_db = Self::open_primary()?;
-        let primary_path = primary_db.path().to_path_buf();
-
-        // 1. Determine if we are in override mode
-        // Override mode is only active if explicit_paths is provided and it doesn't just contain the primary DB
-        let is_override = !opts.explicit_paths.is_empty()
-            && (opts.explicit_paths.len() > 1 || opts.explicit_paths[0] != primary_path);
-
-        if is_override {
+        // 1. If explicit paths are provided, use only those (override mode)
+        if !opts.explicit_paths.is_empty() {
+            let mut dbs = Vec::new();
             for path in &opts.explicit_paths {
                 if path.exists() {
                     let label = Self::source_label_from_path(path);
@@ -141,9 +162,16 @@ impl Workspace {
             return Ok(dbs);
         }
 
-        // 2. Additive mode: start with auto-detected primary
-        // The primary DB gets the "local" label by default (legacy behavior)
-        dbs.push(("local".to_string(), primary_db));
+        // 2. If repo references are provided, resolve via registry (override mode)
+        if !opts.repo_refs.is_empty() {
+            return Self::open_repos_from_registry(&opts.repo_refs);
+        }
+
+        // 3. Additive mode: start with auto-detected primary + configured additional
+        let mut dbs = Vec::new();
+        let primary_label = Self::primary_label();
+        let primary_db = Self::open_primary(None)?;
+        dbs.push((primary_label, primary_db));
 
         // Load additional DBs from local config
         let cwd = std::env::current_dir().unwrap_or_default();
@@ -156,22 +184,12 @@ impl Workspace {
                 if path.exists() {
                     let label = Self::source_label_from_path(&path);
                     // Avoid duplicates by path check since labels might collide
-                    if !dbs.iter().any(|(_, db)| db.path() == path)
-                        && let Ok(db) = Database::open(&path)
-                    {
-                        dbs.push((label, db));
+                    if !dbs.iter().any(|(_, db)| db.path() == path) {
+                        // Silently skip databases that fail to open (e.g., locked, corrupted)
+                        if let Ok(db) = Database::open(&path) {
+                            dbs.push((label, db));
+                        }
                     }
-                }
-            }
-        }
-
-        // 3. Add any repositories specified by references via the registry
-        if !opts.repo_refs.is_empty() {
-            let extra_repos = Self::open_repos_from_registry(&opts.repo_refs)?;
-            for (label, db) in extra_repos {
-                // Avoid duplicates by path check
-                if !dbs.iter().any(|(_, d)| d.path() == db.path()) {
-                    dbs.push((label, db));
                 }
             }
         }

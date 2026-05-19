@@ -303,36 +303,12 @@ pub async fn handle_edit_v2(cli: &Cli, mode: &OutputMode, args: &EditArgs) -> Re
 /// If an explicit path is provided, it will be created if it doesn't exist.
 /// For auto-detected paths, it requires the .codemark directory to exist.
 pub fn open_db_for_write(cli: &Cli) -> Result<Database> {
-    if let Some(path) = cli.db.first() {
-        return Database::create(path);
-    }
-    // Auto-detect from git root
-    let cwd = std::env::current_dir()?;
-    if let Some(ctx) = git_context::detect_context(&cwd) {
-        let db_path = ctx.repo_root.join(".codemark").join("codemark.db");
-        if !db_path.parent().map(|p| p.exists()).unwrap_or(false) {
-            return Err(Error::NotInitialized);
-        }
-        return Database::create(&db_path);
-    }
-    // Fallback: current directory
-    let db_path = cwd.join(".codemark").join("codemark.db");
-    if !db_path.parent().map(|p| p.exists()).unwrap_or(false) {
-        return Err(Error::NotInitialized);
-    }
-    Database::create(&db_path)
+    Workspace::open_primary_for_write(cli.db.first().map(|p| p.as_path()))
 }
 
 /// Returns the project root (parent of .codemark) for a given database.
 pub fn get_project_root(db: &Database) -> std::path::PathBuf {
-    let db_path = db.path();
-    if let Some(parent) = db_path.parent() {
-        if parent.ends_with(".codemark") {
-            return parent.parent().unwrap_or(parent).to_path_buf();
-        }
-        return parent.to_path_buf();
-    }
-    std::env::current_dir().unwrap_or_default()
+    Workspace::project_root(db)
 }
 
 /// Open the primary database (for single-db reads).
@@ -340,27 +316,7 @@ pub fn get_project_root(db: &Database) -> std::path::PathBuf {
 /// Returns Error::NotInitialized only if an explicit path was provided but it doesn't exist.
 /// For auto-detected paths, if the DB doesn't exist, it returns an in-memory DB (effectively empty).
 pub fn open_db(cli: &Cli) -> Result<Database> {
-    if let Some(path) = cli.db.first() {
-        if path.exists() {
-            return Database::open(path);
-        }
-        return Database::open_in_memory();
-    }
-    // Auto-detect from git root
-    let cwd = std::env::current_dir()?;
-    if let Some(ctx) = git_context::detect_context(&cwd) {
-        let db_path = ctx.repo_root.join(".codemark").join("codemark.db");
-        if db_path.exists() {
-            return Database::open(&db_path);
-        }
-    } else {
-        // Fallback: current directory
-        let db_path = cwd.join(".codemark").join("codemark.db");
-        if db_path.exists() {
-            return Database::open(&db_path);
-        }
-    }
-    Database::open_in_memory()
+    Workspace::open_primary(cli.db.first().map(|p| p.as_path()))
 }
 
 /// Generate embedding for a bookmark if semantic search is enabled.
@@ -649,97 +605,11 @@ fn sync_to_global_registry(
 /// 2. If CLI `--repo` is specified, resolves repo references via the global registry
 /// 3. Otherwise, uses auto-detected primary DB + configured additional databases
 pub fn open_all_dbs(cli: &Cli) -> Result<Vec<(String, Database)>> {
-    // If CLI specified explicit --db paths, use only those (override mode)
-    if !cli.db.is_empty() {
-        let mut dbs = Vec::new();
-        for path in &cli.db {
-            if path.exists() {
-                let label = source_label_from_path(path);
-                dbs.push((label, Database::open(path)?));
-            }
-        }
-        return Ok(dbs);
-    }
-
-    // If CLI specified --repo references, resolve via global registry
-    if !cli.repo.is_empty() {
-        return open_repos_from_registry(&cli.repo);
-    }
-
-    // No CLI --db specified: use auto-detected primary + configured additional
-    let mut dbs = Vec::new();
-
-    // Always include primary DB (auto-detected from git root)
-    let primary_db = open_db(cli)?;
-    let primary_label = source_label_from_cli(cli);
-    dbs.push((primary_label, primary_db));
-
-    // Load additional DBs from local config
-    let cwd = std::env::current_dir()?;
-    if let Some(ctx) = git_context::detect_context(&cwd) {
-        let codemark_dir = ctx.repo_root.join(".codemark");
-        let config = Config::load_layered(&codemark_dir);
-        let additional_paths = config.databases.resolve_additional_paths(&ctx.repo_root);
-
-        for path in additional_paths {
-            if path.exists() {
-                let label = source_label_from_path(&path);
-                // Only add if not already present (avoid duplicates)
-                if !dbs.iter().any(|(l, _)| l == &label) {
-                    // Silently skip databases that fail to open (e.g., locked, corrupted)
-                    // This prevents flakiness when tests run in parallel
-                    if let Ok(db) = Database::open(&path) {
-                        dbs.push((label, db));
-                    }
-                }
-            }
-        }
-    }
-
-    Ok(dbs)
-}
-
-/// Open databases for repositories specified by owner/name references.
-///
-/// This implements RR-2.3: identity-based discovery using the global registry.
-/// Returns (source_label, database) pairs for all valid repository references.
-fn open_repos_from_registry(repo_refs: &[String]) -> Result<Vec<(String, Database)>> {
-    use codemark_core::storage::registry;
-
-    let conn = registry::open_registry()?;
-    let resolved = registry::resolve_repos(&conn, repo_refs)?;
-
-    if resolved.is_empty() {
-        return Err(Error::Input(
-            "no valid repositories found; run 'codemark repo list' to see known repositories"
-                .into(),
-        ));
-    }
-
-    let mut dbs = Vec::new();
-    for (repo_ref, repo_root) in resolved {
-        let db_path = repo_root.join(".codemark").join("codemark.db");
-        if db_path.exists() {
-            let label = format!(
-                "{}/{}",
-                repo_ref,
-                repo_root.file_name().and_then(|n| n.to_str()).unwrap_or("unknown")
-            );
-            if let Ok(db) = Database::open(&db_path) {
-                dbs.push((label, db));
-            }
-        } else {
-            eprintln!("codemark: warning: no codemark database found at {}", db_path.display());
-        }
-    }
-
-    if dbs.is_empty() {
-        return Err(Error::Input(
-            "no codemark databases found for the specified repositories".into(),
-        ));
-    }
-
-    Ok(dbs)
+    let opts = OpenDbOptions {
+        explicit_paths: cli.db.clone(),
+        repo_refs: cli.repo.clone(),
+    };
+    Workspace::open_all(&opts)
 }
 
 /// Filter databases by user email (from repos table).
@@ -837,21 +707,6 @@ pub fn open_all_dbs_with_extra_and_repos(
 /// Example: /foo/repo-name/.codemark/codemark.db -> "repo-name"
 pub fn source_label_from_path(path: &std::path::Path) -> String {
     Workspace::source_label_from_path(path)
-}
-
-fn source_label_from_cli(cli: &Cli) -> String {
-    if let Some(path) = cli.db.first() {
-        return source_label_from_path(path);
-    }
-    let cwd = std::env::current_dir().unwrap_or_default();
-    if let Some(ctx) = git_context::detect_context(&cwd) {
-        ctx.repo_root
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_else(|| "local".to_string())
-    } else {
-        "local".to_string()
-    }
 }
 
 /// Parse a range string. Supports:
