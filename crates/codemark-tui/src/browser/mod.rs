@@ -71,6 +71,8 @@ pub enum FocusArea {
     Panel3,
     /// Right main panel is focused
     Main,
+    /// Bottom filter bar is focused
+    Filter,
 }
 
 /// Configuration for a sidebar section's height.
@@ -470,6 +472,7 @@ impl BrowserLayout {
                 bindings.push(("↑", "Focus steps"));
                 bindings.push(("↓", "Focus details"));
             }
+            FocusArea::Filter => {}
         }
 
         // Navigation keys (always available)
@@ -523,6 +526,7 @@ impl BrowserLayout {
                 bindings.insert(1, KeyBinding::new("o", "Open File"));
                 bindings.insert(2, KeyBinding::new("Esc", "Back to Tours"));
             }
+            FocusArea::Filter => {}
         }
 
         bindings
@@ -725,7 +729,13 @@ impl BrowserLayout {
 
     /// Apply a filter to the currently focused panel.
     pub fn apply_filter(&mut self, query: &str) {
-        match self.focus {
+        let target_focus = if self.focus == FocusArea::Filter {
+            self.previous_focus.unwrap_or(FocusArea::Panel3)
+        } else {
+            self.focus
+        };
+
+        match target_focus {
             FocusArea::Panel1 => {
                 if let Some(panel) = self.left_pane.panel1.active_panel_mut() {
                     panel.set_filter(query);
@@ -851,6 +861,15 @@ impl BrowserLayout {
 
     /// Set the focus area.
     pub fn set_focus(&mut self, focus: FocusArea) {
+        // If we're in filter mode, we don't allow changing focus visually
+        // but we allow updating what we'll restore to when exiting filter mode.
+        if self.focus == FocusArea::Filter {
+            if focus != FocusArea::Filter && focus != FocusArea::Search {
+                self.previous_focus = Some(focus);
+            }
+            return;
+        }
+
         self.focus = focus;
         self.update_focus_state();
     }
@@ -861,8 +880,11 @@ impl BrowserLayout {
     /// It saves the current focus area so it can be restored later, and clears
     /// focus to prevent keybindings from interfering with typing.
     pub fn enter_filter_mode(&mut self) {
-        self.previous_focus = Some(self.focus);
-        // Don't set focus to any panel - this prevents keybindings from being handled
+        // Only save previous focus if it's not already Filter focus
+        if self.focus != FocusArea::Filter {
+            self.previous_focus = Some(self.focus);
+        }
+        self.focus = FocusArea::Filter;
         self.update_focus_state();
     }
 
@@ -871,10 +893,14 @@ impl BrowserLayout {
     /// This should be called when the user presses ESC or Enter to exit filtering mode.
     /// It restores the focus to the area that was focused before entering filter mode.
     pub fn exit_filter_mode(&mut self) {
-        if let Some(prev) = self.previous_focus.take() {
-            self.focus = prev;
-        } else {
-            self.focus = FocusArea::Panel3;
+        let prev = self.previous_focus.take();
+        match prev {
+            Some(FocusArea::Search) | Some(FocusArea::Filter) | None => {
+                self.focus = FocusArea::Panel3;
+            }
+            Some(f) => {
+                self.focus = f;
+            }
         }
         self.update_focus_state();
     }
@@ -934,9 +960,9 @@ impl BrowserLayout {
         self.left_pane.panel3.set_focus(false);
         self.right_pane.set_focus(false);
 
-        // If in filter mode (previous_focus is Some), don't set focus on any panel
-        // This prevents keybindings from interfering with typing
-        if self.previous_focus.is_some() {
+        // If in filter mode, don't set visual focus on any panel
+        // This keeps panes visually inactive while the user is typing in the filter bar at the bottom
+        if self.focus == FocusArea::Filter {
             return;
         }
 
@@ -958,6 +984,7 @@ impl BrowserLayout {
             FocusArea::Main => {
                 self.right_pane.set_focus(true);
             }
+            FocusArea::Filter => {} // Visual focus is handled by early return above
         }
     }
 
@@ -1322,6 +1349,7 @@ impl BrowserLayout {
                         handled
                     }
                     FocusArea::Main => self.right_pane.handle_event(event),
+                    FocusArea::Filter => false,
                 };
 
                 // Refresh tags if Panel 3 tab changed via keyboard (e.g., [ or ])
