@@ -207,10 +207,29 @@ async fn run_app() -> Result<()> {
                     layout.handle_event(&event);
                 }
 
+                // Track mode before state handles the event
+                let mode_before = state.mode();
+
                 // Let state handle the event too (captures keys for Search mode)
                 // Skip when help is shown to make help modal
                 if !show_help {
                     state.handle_event(&event);
+                }
+
+                // Track mode transitions to manage focus
+                let mode_after = state.mode();
+                if mode_before != mode_after {
+                    match (mode_before, mode_after) {
+                        (AppMode::Normal, AppMode::Search) => {
+                            // Entering filter mode - clear focus to prevent keybinding interference
+                            layout.enter_filter_mode();
+                        }
+                        (AppMode::Search, AppMode::Normal) => {
+                            // Exiting filter mode - restore previous focus
+                            layout.exit_filter_mode();
+                        }
+                        _ => {}
+                    }
                 }
 
                 // Update filter based on active_filter (committed via Enter)

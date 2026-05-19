@@ -155,6 +155,13 @@ impl AppState {
         self.mode = mode;
     }
 
+    /// Set the current mode and return the previous mode.
+    pub fn set_mode_with_previous(&mut self, mode: AppMode) -> AppMode {
+        let prev = self.mode;
+        self.mode = mode;
+        prev
+    }
+
     /// Check if the application is running.
     pub fn is_running(&self) -> bool {
         self.running

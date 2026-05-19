@@ -50,6 +50,8 @@ pub struct BrowserLayout {
     right_pane: RightPane,
     /// Current focus area
     focus: FocusArea,
+    /// Previous focus area before entering filter mode
+    previous_focus: Option<FocusArea>,
     /// Pending external command to be executed
     pending_command: Option<ExternalCommand>,
     /// Event handler for sending custom events
@@ -239,6 +241,7 @@ impl BrowserLayout {
             left_pane: LeftPane::new(&db, &registry),
             right_pane: RightPane::new(&db),
             focus: FocusArea::Panel3,
+            previous_focus: None,
             db,
             registry,
             pending_command: None,
@@ -852,6 +855,38 @@ impl BrowserLayout {
         self.update_focus_state();
     }
 
+    /// Enter filter mode, saving the current focus and clearing it.
+    ///
+    /// This should be called when the user presses `/` to enter filtering mode.
+    /// It saves the current focus area so it can be restored later, and clears
+    /// focus to prevent keybindings from interfering with typing.
+    pub fn enter_filter_mode(&mut self) {
+        self.previous_focus = Some(self.focus);
+        // Don't set focus to any panel - this prevents keybindings from being handled
+        self.update_focus_state();
+    }
+
+    /// Exit filter mode, restoring the previous focus.
+    ///
+    /// This should be called when the user presses ESC or Enter to exit filtering mode.
+    /// It restores the focus to the area that was focused before entering filter mode.
+    pub fn exit_filter_mode(&mut self) {
+        if let Some(prev) = self.previous_focus.take() {
+            self.focus = prev;
+        } else {
+            self.focus = FocusArea::Panel3;
+        }
+        self.update_focus_state();
+    }
+
+    /// Check if keybindings should be handled.
+    ///
+    /// Returns false when in filter mode (previous_focus is Some), preventing
+    /// keybindings from interfering with typing in the filter input.
+    fn should_handle_keybindings(&self) -> bool {
+        self.previous_focus.is_none()
+    }
+
     /// Cycle to the next focusable area within the current pane.
     pub fn next_focus(&mut self) {
         match self.focus {
@@ -898,6 +933,12 @@ impl BrowserLayout {
         self.left_pane.panel2.set_focus(false);
         self.left_pane.panel3.set_focus(false);
         self.right_pane.set_focus(false);
+
+        // If in filter mode (previous_focus is Some), don't set focus on any panel
+        // This prevents keybindings from interfering with typing
+        if self.previous_focus.is_some() {
+            return;
+        }
 
         // Set focus on current area
         match self.focus {
@@ -1149,37 +1190,37 @@ impl BrowserLayout {
                         return true;
                     }
                 }
-                // Number keys for direct section access (disabled when search is focused)
+                // Number keys for direct section access (disabled when in filter mode)
                 ratatui::crossterm::event::KeyCode::Char('1')
-                    if self.focus != FocusArea::Search =>
+                    if self.should_handle_keybindings() =>
                 {
                     self.focus = FocusArea::Search;
                     self.update_focus_state();
                     return true;
                 }
                 ratatui::crossterm::event::KeyCode::Char('2')
-                    if self.focus != FocusArea::Search =>
+                    if self.should_handle_keybindings() =>
                 {
                     self.focus = FocusArea::Panel1;
                     self.update_focus_state();
                     return true;
                 }
                 ratatui::crossterm::event::KeyCode::Char('3')
-                    if self.focus != FocusArea::Search =>
+                    if self.should_handle_keybindings() =>
                 {
                     self.focus = FocusArea::Panel2;
                     self.update_focus_state();
                     return true;
                 }
                 ratatui::crossterm::event::KeyCode::Char('4')
-                    if self.focus != FocusArea::Search =>
+                    if self.should_handle_keybindings() =>
                 {
                     self.focus = FocusArea::Panel3;
                     self.update_focus_state();
                     return true;
                 }
                 ratatui::crossterm::event::KeyCode::Char('5')
-                    if self.focus != FocusArea::Search =>
+                    if self.should_handle_keybindings() =>
                 {
                     self.focus = FocusArea::Main;
                     self.right_pane.focus_steps();
@@ -1187,7 +1228,7 @@ impl BrowserLayout {
                     return true;
                 }
                 ratatui::crossterm::event::KeyCode::Char('6')
-                    if self.focus != FocusArea::Search =>
+                    if self.should_handle_keybindings() =>
                 {
                     self.focus = FocusArea::Main;
                     self.right_pane.focus_details();
@@ -1195,14 +1236,14 @@ impl BrowserLayout {
                     return true;
                 }
                 ratatui::crossterm::event::KeyCode::Char('o')
-                    if self.focus != FocusArea::Search =>
+                    if self.should_handle_keybindings() =>
                 {
                     self.open_in_editor();
                     return true;
                 }
                 // Delete collection or bookmark based on active tab
                 ratatui::crossterm::event::KeyCode::Char('d')
-                    if self.focus != FocusArea::Search && self.focus == FocusArea::Panel3 =>
+                    if self.should_handle_keybindings() && self.focus == FocusArea::Panel3 =>
                 {
                     match Panel3Tab::from_index(self.left_pane.panel3.tabs.selected_index()) {
                         Some(Panel3Tab::Collections) => {
@@ -1259,6 +1300,12 @@ impl BrowserLayout {
                 handled
             }
             Event::Key(_key) => {
+                // Don't delegate key events to panels when in filter mode
+                // They should only be handled by the state handler for the filter buffer
+                if !self.should_handle_keybindings() {
+                    return false;
+                }
+
                 let old_tab = self.left_pane.panel3.tabs.selected_index();
                 let handled = match self.focus {
                     FocusArea::Search => self.left_pane.search.handle_event(event),
