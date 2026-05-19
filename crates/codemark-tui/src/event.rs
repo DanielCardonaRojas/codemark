@@ -130,31 +130,58 @@ impl EventHandlerConfig {
 }
 
 /// A handle to the event handler that can be cloned across threads.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub struct EventHandler {
     _tx: Arc<mpsc::UnboundedSender<Event>>,
+    // Optional receiver for EventHandler::new() users
+    // Using Arc<Mutex<>> to allow cloning while preserving receiver access
+    rx: Option<Arc<tokio::sync::Mutex<mpsc::UnboundedReceiver<Event>>>>,
+}
+
+// Clone implementation - the cloned handle shares the sender but not the receiver
+// (only the original EventHandler created via new() can receive events)
+impl Clone for EventHandler {
+    fn clone(&self) -> Self {
+        Self {
+            _tx: Arc::clone(&self._tx),
+            rx: None, // Clones don't get the receiver
+        }
+    }
 }
 
 impl EventHandler {
     /// Create a new event handler.
     pub fn new(config: EventHandlerConfig) -> anyhow::Result<Self> {
-        let (tx, _rx) = mpsc::unbounded_channel();
+        let (tx, rx) = mpsc::unbounded_channel();
 
         // Enable mouse events if configured
         if config.enable_mouse {
             crossterm::execute!(std::io::stdout(), crossterm::event::EnableMouseCapture)?;
         }
 
-        Ok(Self { _tx: Arc::new(tx) })
+        Ok(Self {
+            _tx: Arc::new(tx),
+            rx: Some(Arc::new(tokio::sync::Mutex::new(rx))),
+        })
     }
 
     /// Get the next event.
     ///
     /// This method is async and will wait until an event is available.
+    /// Note: Only works on the original EventHandler created via new(),
+    /// not on clones. For better control, use EventHandler::with_receiver().
     pub async fn next(&self) -> anyhow::Result<Event> {
-        // This is a placeholder - use EventHandler::with_receiver() instead
-        // which returns a receiver that can be polled
-        Err(anyhow::anyhow!("Use EventHandler::with_receiver() instead"))
+        if let Some(rx) = &self.rx {
+            rx.lock()
+                .await
+                .recv()
+                .await
+                .ok_or_else(|| anyhow::anyhow!("Event channel closed"))
+        } else {
+            Err(anyhow::anyhow!(
+                "Cannot receive events on cloned EventHandler. Use EventHandler::with_receiver() instead."
+            ))
+        }
     }
 
     /// Create a new event handler and return a receiver.
@@ -189,7 +216,7 @@ impl EventHandler {
             }
         });
 
-        let handler = Self { _tx: Arc::new(unbounded_tx) };
+        let handler = Self { _tx: Arc::new(unbounded_tx), rx: None };
 
         Ok((rx, handler))
     }
@@ -281,7 +308,7 @@ pub use ratatui::crossterm::event::KeyCode;
 impl Default for KeyBindings {
     fn default() -> Self {
         Self {
-            quit: vec![KeyCode::Char('q'), KeyCode::Char('c')],
+            quit: vec![KeyCode::Char('q')],
             up: vec![KeyCode::Char('k'), KeyCode::Up],
             down: vec![KeyCode::Char('j'), KeyCode::Down],
             left: vec![KeyCode::Char('h'), KeyCode::Left],

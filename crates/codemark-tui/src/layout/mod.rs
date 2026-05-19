@@ -133,11 +133,18 @@ impl LayoutManager {
     /// Get the combined size constraints for all children.
     pub fn size_constraints(&self) -> SizeConstraints {
         self.children.iter().fold(SizeConstraints::default(), |acc, child| {
-            let child_constraints = child.constraints();
-            SizeConstraints {
-                min_width: acc.min_width.saturating_add(child_constraints.min_width),
-                min_height: acc.min_height.saturating_add(child_constraints.min_height),
-                ..Default::default()
+            let c = child.constraints();
+            match self.direction {
+                LayoutDirection::Horizontal => SizeConstraints {
+                    min_width: acc.min_width.saturating_add(c.min_width),
+                    min_height: acc.min_height.max(c.min_height),
+                    ..Default::default()
+                },
+                LayoutDirection::Vertical => SizeConstraints {
+                    min_width: acc.min_width.max(c.min_width),
+                    min_height: acc.min_height.saturating_add(c.min_height),
+                    ..Default::default()
+                },
             }
         })
     }
@@ -173,18 +180,16 @@ impl LayoutManager {
             for (i, chunk) in raw_chunks.iter().enumerate() {
                 let mut adjusted = *chunk;
                 if i > 0 {
-                    // Shift to account for gap
+                    // Shift position to account for gap (don't also reduce size here)
                     let offset = self.gap;
                     if self.direction == LayoutDirection::Horizontal {
                         adjusted.x = adjusted.x.saturating_add(offset);
-                        adjusted.width = adjusted.width.saturating_sub(offset);
                     } else {
                         adjusted.y = adjusted.y.saturating_add(offset);
-                        adjusted.height = adjusted.height.saturating_sub(offset);
                     }
                 }
                 if i < raw_chunks.len() - 1 {
-                    // Reduce size to account for gap
+                    // Reduce size to account for trailing gap
                     if self.direction == LayoutDirection::Horizontal {
                         adjusted.width = adjusted.width.saturating_sub(self.gap);
                     } else {

@@ -131,9 +131,9 @@ impl CodePreview {
             let end_value = end.map(|e| e.min(line_count - 1)).unwrap_or(start);
 
             self.selected_line = Some(start);
-            // Always set selected_range if we have a multi-line range
-            self.selected_range = if let Some(e) = end {
-                if start != e { Some((start.min(e), e)) } else { None }
+            // Use the clamped end_value and normalize the ordering
+            self.selected_range = if end.is_some() && start != end_value {
+                Some((start.min(end_value), start.max(end_value)))
             } else {
                 None
             };

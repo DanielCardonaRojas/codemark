@@ -590,14 +590,24 @@ impl BrowserLayout {
     pub fn open_in_editor(&mut self) {
         use codemark_core::config::Config;
 
-        // For now, only support opening from the right pane (Main)
-        let step = if self.focus == FocusArea::Main {
-            self.right_pane.steps_data.get(self.right_pane.pager_current)
-        } else {
-            None
-        };
+        // Special handling for Panel3 bookmarks: open directly without StepData
+        if self.focus == FocusArea::Panel3 {
+            if let Some(bookmark) = self.left_pane.panel3.active_panel_mut()
+                .and_then(|panel| panel.selected())
+                .and_then(|item| {
+                    // Get the bookmark ID from user_data
+                    let bookmark_id = item.user_data.as_ref()?;
+                    // Get the bookmark (flatten Result<Option<Bookmark>>)
+                    self.db.get_bookmark(bookmark_id).ok().flatten()
+                })
+            {
+                self.open_bookmark_in_editor(bookmark);
+                return;
+            }
+        }
 
-        let Some(step) = step else {
+        // Default: get step from the right pane (Main)
+        let Some(step) = self.right_pane.steps_data.get(self.right_pane.pager_current) else {
             return;
         };
 
@@ -628,6 +638,73 @@ impl BrowserLayout {
             .replace("{LINE_START}", &line_start.to_string())
             .replace("{LINE_END}", &line_start.to_string())
             .replace("{ID}", &step.bookmark.id);
+
+        if let Some(tokens) = shlex::split(&substituted)
+            && !tokens.is_empty()
+        {
+            let program = tokens[0].clone();
+            let args = tokens[1..].to_vec();
+            let program_name = std::path::Path::new(&program)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("");
+            let should_wait = config.open.should_wait_for_editor(program_name);
+
+            self.pending_command = Some(ExternalCommand { program, args, should_wait });
+        }
+    }
+
+    /// Open a bookmark directly in the editor (used for Panel3 bookmarks).
+    fn open_bookmark_in_editor(&mut self, bookmark: Bookmark) {
+        use codemark_core::config::Config;
+
+        let Some(codemark_dir) = self.db.path().parent() else {
+            return;
+        };
+        let config = Config::load_layered(codemark_dir);
+
+        // Resolve the file path and line number from the bookmark
+        let (file_path, line_number) = if let Ok(Some(resolution)) = self.db.get_resolution(&bookmark.id) {
+            (
+                resolution.file_path.clone().unwrap_or_else(|| bookmark.file_path.clone()),
+                resolution.line_range
+                    .and_then(|r| {
+                        // Parse "(start,end)" format
+                        let parts: Vec<&str> = r.split(',').collect();
+                        if parts.len() == 2 {
+                            parts[0].trim().trim_start_matches('(').parse::<usize>().ok()
+                        } else {
+                            None
+                        }
+                    })
+                    .unwrap_or(0),
+            )
+        } else {
+            // Fallback to bookmark file path
+            (bookmark.file_path.clone(), 0)
+        };
+
+        let extension = std::path::Path::new(&file_path)
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("");
+
+        let command_template = if let Some(cmd) =
+            config.open.get_command_for_extension(extension).or(config.open.default.as_ref())
+        {
+            cmd.clone()
+        } else {
+            let editor = std::env::var("EDITOR").unwrap_or_else(|_| "vim".to_string());
+            format!("{} {{FILE}}", editor)
+        };
+
+        // Substitute placeholders
+        let line_start = line_number + 1;
+        let substituted = command_template
+            .replace("{FILE}", &file_path)
+            .replace("{LINE_START}", &line_start.to_string())
+            .replace("{LINE_END}", &line_start.to_string())
+            .replace("{ID}", &bookmark.id);
 
         if let Some(tokens) = shlex::split(&substituted)
             && !tokens.is_empty()

@@ -308,7 +308,7 @@ pub async fn handle_collection_list(
     mode: &OutputMode,
     args: &CollectionListArgs,
 ) -> Result<()> {
-    let dbs = if args.repo.is_empty() {
+    let dbs = if args.repo.is_empty() && cli.db.is_empty() {
         vec![("local".to_string(), open_db(cli)?)]
     } else {
         open_all_dbs_with_extra_and_repos(cli, &[], &args.repo)?

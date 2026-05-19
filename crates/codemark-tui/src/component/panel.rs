@@ -469,11 +469,21 @@ impl Panel {
         if let Some(idx) = self.selected_index()
             && let Some(item) = self.items.get(idx)
         {
-            let text = item.text.clone();
+            let key_user_data = item.user_data.clone();
+            let key_text = item.text.clone();
+
+            // Helper to match items by stable identifier (user_data) or fallback to text
+            let matches = |i: &PanelItem| -> bool {
+                if let Some(ref key) = key_user_data {
+                    i.user_data.as_ref() == Some(key)
+                } else {
+                    i.text == key_text
+                }
+            };
 
             if self.multi_select {
                 // Toggle in all_items
-                if let Some(item) = self.all_items.iter_mut().find(|i| i.text == text) {
+                if let Some(item) = self.all_items.iter_mut().find(|i| matches(i)) {
                     item.active = !item.active;
                 }
             } else {
@@ -481,7 +491,7 @@ impl Panel {
                 let was_active = self
                     .all_items
                     .iter()
-                    .find(|i| i.text == text)
+                    .find(|i| matches(i))
                     .map(|i| i.active)
                     .unwrap_or(false);
 
@@ -493,7 +503,7 @@ impl Panel {
                 // If it wasn't active before, activate it now.
                 // If it was active, it remains inactive (toggled off).
                 if !was_active
-                    && let Some(item) = self.all_items.iter_mut().find(|i| i.text == text)
+                    && let Some(item) = self.all_items.iter_mut().find(|i| matches(i))
                 {
                     item.active = true;
                 }

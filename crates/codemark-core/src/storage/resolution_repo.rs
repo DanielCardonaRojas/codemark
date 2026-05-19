@@ -208,12 +208,26 @@ impl Database {
         }
 
         // Try to find resolution from nearest ancestor commit
-        if let Ok(cwd) = std::env::current_dir() {
+        // Derive the repository root from the database path instead of using current_dir()
+        // to ensure correct behavior in multi-repo workflows
+        let repo_ctx_path = self.path()
+            .parent() // .codemark/
+            .and_then(|codemark_dir| {
+                // Check if the parent directory is named ".codemark"
+                if codemark_dir.file_name() == Some(std::ffi::OsStr::new(".codemark")) {
+                    // db is at repo/.codemark/codemark.db, return the repo root
+                    codemark_dir.parent().map(|p| p.to_path_buf())
+                } else {
+                    None
+                }
+            });
+
+        if let Some(repo_path) = repo_ctx_path {
             let commit_hashes: Vec<String> =
                 all_resolutions.iter().filter_map(|r| r.commit_hash.clone()).collect();
 
             if let Ok(Some(nearest_commit)) =
-                crate::git::context::find_nearest_ancestor(&cwd, &commit_hashes)
+                crate::git::context::find_nearest_ancestor(&repo_path, &commit_hashes)
             {
                 // Find the resolution with this commit hash
                 if let Some(res) = all_resolutions

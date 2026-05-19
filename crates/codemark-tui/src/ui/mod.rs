@@ -23,9 +23,9 @@ pub fn render_ui<B: Backend>(
     state: &AppState,
     render_fn: impl FnOnce(&mut Frame, &AppState),
 ) -> std::io::Result<()> {
-    let _ = terminal.draw(|f| {
+    terminal.draw(|f| {
         render_fn(f, state);
-    });
+    })?;
     Ok(())
 }
 
@@ -160,11 +160,11 @@ pub fn render_help_panel(area: Rect, buf: &mut Buffer, bindings: &[(&str, &str)]
 pub fn render_confirmation(area: Rect, buf: &mut Buffer, message: &str) {
     // Calculate dialog dimensions (centered, 60% of width, max 40 chars)
     let width = (area.width as f64 * 0.6).min(60.0) as u16;
-    let height = 8;
+    let height = area.height.min(8);
 
     let dialog_area = Rect {
-        x: area.x + (area.width - width) / 2,
-        y: area.y + (area.height - height) / 2,
+        x: area.x + area.width.saturating_sub(width) / 2,
+        y: area.y + area.height.saturating_sub(height) / 2,
         width,
         height,
     };

@@ -202,12 +202,16 @@ async fn run_app() -> Result<()> {
                 }
 
                 // If not handled by global keys, pass to layout (includes mouse events)
-                if !handled {
+                // Skip when help is shown to make help modal
+                if !handled && !show_help {
                     layout.handle_event(&event);
                 }
 
                 // Let state handle the event too (captures keys for Search mode)
-                state.handle_event(&event);
+                // Skip when help is shown to make help modal
+                if !show_help {
+                    state.handle_event(&event);
+                }
 
                 // Update filter based on active_filter (committed via Enter)
                 let query = state.get_string("active_filter").unwrap_or("");
@@ -232,9 +236,18 @@ async fn run_app() -> Result<()> {
 
                         #[cfg(not(unix))]
                         {
-                            let _ =
-                                std::process::Command::new(&cmd.program).args(&cmd.args).status();
-                            std::process::exit(0);
+                            match std::process::Command::new(&cmd.program).args(&cmd.args).status() {
+                                Ok(status) if status.success() => std::process::exit(0),
+                                Ok(status) => {
+                                    let code = status.code().unwrap_or(1);
+                                    eprintln!("Editor exited with status {}", code);
+                                    std::process::exit(code);
+                                }
+                                Err(e) => {
+                                    eprintln!("Failed to run editor: {}", e);
+                                    std::process::exit(1);
+                                }
+                            }
                         }
                     } else {
                         // GUI editor: spawn in background
@@ -250,6 +263,9 @@ async fn run_app() -> Result<()> {
                     }
                 }
             }
+        } else {
+            // Event channel closed, quit the app
+            state.quit();
         }
     }
 

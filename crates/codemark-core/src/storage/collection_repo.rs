@@ -324,7 +324,7 @@ impl Database {
         Ok(results)
     }
 
-    /// List all unique branches across bookmarks and collections.
+    /// List all unique branches used by collections.
     pub fn list_all_branches(&self) -> Result<Vec<String>> {
         let mut stmt = self.conn().prepare(
             "SELECT DISTINCT created_branch FROM collections

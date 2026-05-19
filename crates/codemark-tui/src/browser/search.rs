@@ -63,7 +63,7 @@ impl SearchBar {
     /// Set the search query.
     pub fn set_query(&mut self, query: impl Into<String>) {
         self.query = query.into();
-        self.cursor = self.query.len();
+        self.cursor = self.query.chars().count();
     }
 
     /// Clear the search query.
@@ -123,15 +123,17 @@ impl SearchBar {
 
         // padding(1) + query + padding(1) + control
         let available_width = width.saturating_sub(control_width + 2);
-        let truncated = if query.len() > available_width {
-            let start = query.len().saturating_sub(available_width);
-            &query[start..]
+        // Use character-aware truncation for UTF-8 safety
+        let truncated = if query.chars().count() > available_width {
+            let char_count = query.chars().count();
+            let skip_chars = char_count.saturating_sub(available_width);
+            query.chars().skip(skip_chars).collect::<String>()
         } else {
-            query
+            query.to_string()
         };
 
         let query_span = if self.query.is_empty() {
-            Span::styled(truncated, Style::default().fg(Color::DarkGray))
+            Span::styled(&truncated, Style::default().fg(Color::DarkGray))
         } else {
             Span::raw(truncated)
         };
@@ -148,10 +150,13 @@ impl SearchBar {
 
         // 3. Draw cursor if focused
         if self.focused {
-            let cursor_x = area.x
-                + 1
-                + self.cursor.saturating_sub(self.query.len().saturating_sub(available_width))
-                    as u16;
+            // Calculate visible character count before cursor
+            let cursor_char_pos = self.query.chars().count();
+            let query_char_count = self.query.chars().count();
+            let visible_start = query_char_count.saturating_sub(available_width);
+            let visible_cursor_pos = cursor_char_pos.saturating_sub(visible_start);
+
+            let cursor_x = area.x + 1 + visible_cursor_pos as u16;
             let cursor_y = area.y;
             let x = cursor_x.min(control_x.saturating_sub(1));
             if let Some(cell) = buf.cell_mut((x, cursor_y)) {
@@ -203,20 +208,47 @@ impl Component for SearchBar {
                     true
                 }
                 ratatui::crossterm::event::KeyCode::Char(c) => {
-                    self.query.insert(self.cursor, c);
-                    self.cursor += 1;
+                    // Character-aware insertion for UTF-8 safety
+                    let char_count = self.query.chars().count();
+                    if self.cursor <= char_count {
+                        // Find the byte position corresponding to the character position
+                        let byte_pos = self.query.chars().take(self.cursor).map(|c| c.len_utf8()).sum();
+                        self.query.insert(byte_pos, c);
+                        self.cursor += 1;
+                    }
                     true
                 }
                 ratatui::crossterm::event::KeyCode::Backspace => {
+                    // Character-aware removal for UTF-8 safety
                     if self.cursor > 0 {
-                        self.query.remove(self.cursor - 1);
-                        self.cursor -= 1;
+                        let char_indices: Vec<(usize, usize)> = self.query
+                            .char_indices()
+                            .map(|(i, c)| (i, c.len_utf8()))
+                            .collect();
+
+                        if self.cursor <= char_indices.len() {
+                            // Find the byte position of the character before cursor
+                            let remove_idx = self.cursor.saturating_sub(1);
+                            if let Some(&(byte_start, char_len)) = char_indices.get(remove_idx) {
+                                self.query.replace_range(byte_start..byte_start + char_len, "");
+                                self.cursor -= 1;
+                            }
+                        }
                     }
                     true
                 }
                 ratatui::crossterm::event::KeyCode::Delete => {
-                    if self.cursor < self.query.len() {
-                        self.query.remove(self.cursor);
+                    // Character-aware removal for UTF-8 safety
+                    let char_count = self.query.chars().count();
+                    if self.cursor < char_count {
+                        let char_indices: Vec<(usize, usize)> = self.query
+                            .char_indices()
+                            .map(|(i, c)| (i, c.len_utf8()))
+                            .collect();
+
+                        if let Some(&(byte_start, char_len)) = char_indices.get(self.cursor) {
+                            self.query.replace_range(byte_start..byte_start + char_len, "");
+                        }
                     }
                     true
                 }
@@ -225,7 +257,8 @@ impl Component for SearchBar {
                     true
                 }
                 ratatui::crossterm::event::KeyCode::Right => {
-                    self.cursor = self.cursor.saturating_add(1).min(self.query.len());
+                    let char_count = self.query.chars().count();
+                    self.cursor = self.cursor.saturating_add(1).min(char_count);
                     true
                 }
                 ratatui::crossterm::event::KeyCode::Home => {
@@ -233,7 +266,7 @@ impl Component for SearchBar {
                     true
                 }
                 ratatui::crossterm::event::KeyCode::End => {
-                    self.cursor = self.query.len();
+                    self.cursor = self.query.chars().count();
                     true
                 }
                 ratatui::crossterm::event::KeyCode::Esc => {

@@ -40,10 +40,19 @@ pub struct App {
 impl App {
     /// Create a new application instance.
     pub fn new() -> anyhow::Result<Self> {
+        Self::new_with_config(Duration::from_millis(250), true)
+    }
+
+    /// Create a new application instance with custom configuration.
+    pub fn new_with_config(tick_rate: Duration, enable_mouse: bool) -> anyhow::Result<Self> {
         // Setup terminal
         enable_raw_mode()?;
         let mut stdout = io::stdout();
-        execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
+        if enable_mouse {
+            execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
+        } else {
+            execute!(stdout, EnterAlternateScreen)?;
+        }
         let backend = CrosstermBackend::new(stdout);
         let terminal = Terminal::new(backend)?;
 
@@ -63,6 +72,9 @@ impl App {
         app.focus_manager.add("left_panel");
         app.focus_manager.add("main_panel");
         app.focus_manager.add("right_panel");
+
+        // Store tick rate in state for use in event loop (as milliseconds)
+        app.state.set_integer("tick_rate_ms", tick_rate.as_millis() as i64);
 
         Ok(app)
     }
@@ -103,11 +115,12 @@ impl App {
     }
 
     /// Run the application main loop.
+    ///
+    /// Note: This is a simplified demo implementation. For production usage
+    /// with proper async event handling, see main.rs which uses the tokio
+    /// runtime and properly integrates with the event receiver.
     pub fn run(&mut self) -> anyhow::Result<()> {
-        let (_event_handler, _) = EventHandler::with_receiver(EventHandlerConfig::default())?;
-
-        // Note: In a real implementation, we'd get the receiver properly
-        // For this scaffold, we'll do a simple version
+        let (mut event_rx, _event_handler) = EventHandler::with_receiver(EventHandlerConfig::default())?;
 
         self.state.set_mode(crate::state::AppMode::Normal);
 
@@ -116,7 +129,7 @@ impl App {
             self.state.set_focus(focused);
         }
 
-        // Main loop
+        // Main loop - simplified for demo purposes
         while self.state.is_running() {
             // Clone values needed for rendering
             let show_help = self.show_help;
@@ -150,14 +163,28 @@ impl App {
                 }
             })?;
 
-            // Handle events
-            // In a real implementation, we'd poll the event receiver here
-            // For this scaffold, we'll do a simple tick-based approach
+            // Handle events - use try_recv with timeout for demo
+            let deadline = std::time::Instant::now() + Duration::from_millis(100);
+            let event = loop {
+                match event_rx.try_recv() {
+                    Ok(e) => break Some(e),
+                    Err(tokio::sync::mpsc::error::TryRecvError::Empty) => {
+                        if std::time::Instant::now() >= deadline {
+                            break None;
+                        }
+                        std::thread::sleep(Duration::from_millis(10));
+                    }
+                    Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => {
+                        // Event channel closed, quit the app
+                        self.quit();
+                        break None;
+                    }
+                }
+            };
 
-            std::thread::sleep(Duration::from_millis(100));
-
-            // For demo purposes, we'll just check if we should quit
-            // Real event handling would go here
+            if let Some(event) = event {
+                let _ = self.handle_event(&event);
+            }
         }
 
         Ok(())
@@ -333,9 +360,7 @@ impl AppBuilder {
 
     /// Build the app.
     pub fn build(self) -> anyhow::Result<App> {
-        let _ = self.tick_rate; // Would be used in event handler config
-        let _ = self.enable_mouse; // Would be used in event handler config
-        App::new()
+        App::new_with_config(self.tick_rate, self.enable_mouse)
     }
 }
 
