@@ -183,7 +183,7 @@ impl Component for CodePreview {
         // Build text lines with sign column indicators
         let mut text_lines = Vec::with_capacity(list_len);
         for (i, line) in cached.iter().enumerate() {
-            let in_range = selected_range.map_or(false, |(start, end)| i >= start && i <= end);
+            let in_range = selected_range.is_some_and(|(start, end)| i >= start && i <= end);
 
             // Sign indicator: show │ for range lines (independent of current selection)
             let sign = if in_range {

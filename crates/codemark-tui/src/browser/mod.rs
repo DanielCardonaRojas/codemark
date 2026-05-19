@@ -254,17 +254,12 @@ impl BrowserLayout {
             return;
         }
 
-        match Panel3Tab::from_index(self.left_pane.panel3.tabs.selected_index()) {
-            Some(Panel3Tab::Bookmarks) => {
-                if let Some(TabContent::List(panel)) = self.left_pane.panel3.panels.get(0) {
-                    if let Some(selected) = panel.selected() {
-                        if let Some(ref id) = selected.user_data {
-                            self.right_pane.load_bookmark(&self.db, id);
-                        }
-                    }
-                }
-            }
-            _ => {}
+        if let Some(Panel3Tab::Bookmarks) = Panel3Tab::from_index(self.left_pane.panel3.tabs.selected_index())
+            && let Some(TabContent::List(panel)) = self.left_pane.panel3.panels.first()
+            && let Some(selected) = panel.selected()
+            && let Some(ref id) = selected.user_data
+        {
+            self.right_pane.load_bookmark(&self.db, id);
         }
     }
 
@@ -634,18 +629,18 @@ impl BrowserLayout {
             .replace("{LINE_END}", &line_start.to_string())
             .replace("{ID}", &step.bookmark.id);
 
-        if let Some(tokens) = shlex::split(&substituted) {
-            if !tokens.is_empty() {
-                let program = tokens[0].clone();
-                let args = tokens[1..].to_vec();
-                let program_name = std::path::Path::new(&program)
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or("");
-                let should_wait = config.open.should_wait_for_editor(program_name);
+        if let Some(tokens) = shlex::split(&substituted)
+            && !tokens.is_empty()
+        {
+            let program = tokens[0].clone();
+            let args = tokens[1..].to_vec();
+            let program_name = std::path::Path::new(&program)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("");
+            let should_wait = config.open.should_wait_for_editor(program_name);
 
-                self.pending_command = Some(ExternalCommand { program, args, should_wait });
-            }
+            self.pending_command = Some(ExternalCommand { program, args, should_wait });
         }
     }
 
@@ -2011,12 +2006,11 @@ impl TabbedPanel {
         };
 
         // Check if this is the bookmarks panel (index 0) and selection changed (or tab switched to it)
-        if active_index == 0 {
-            if let Some(panel) = self.panels.get_mut(0) {
-                if let Some(id) = panel.take_selection_change() {
-                    self.pending_selection_change.set(Some(id));
-                }
-            }
+        if active_index == 0
+            && let Some(panel) = self.panels.get_mut(0)
+            && let Some(id) = panel.take_selection_change()
+        {
+            self.pending_selection_change.set(Some(id));
         }
 
         handled
