@@ -959,8 +959,9 @@ impl BrowserLayout {
                 }
                 return true;
             }
-            Event::SearchError(_) => {
-                // Return true to indicate we handled the event (consumed it)
+            Event::SearchError(msg) => {
+                // Store the error message in the search bar for display
+                self.left_pane.search.set_error(msg.clone());
                 return true;
             }
             _ => {}
@@ -1505,6 +1506,12 @@ impl RightPane {
                 self.pager_total = self.steps_data.len();
                 self.pager_current = 0;
                 self.update_preview();
+            } else {
+                // Clear the right-pane state when no steps are available
+                self.steps_data.clear();
+                self.pager_total = 0;
+                self.pager_current = 0;
+                self.details = DetailsPanel::new();
             }
         }
     }

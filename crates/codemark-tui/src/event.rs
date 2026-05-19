@@ -222,26 +222,52 @@ impl EventHandler {
 
 /// Event loop that sends to an mpsc channel.
 async fn event_loop_with_sender(tick_rate: Duration, tx: mpsc::Sender<Event>) {
+    // Move blocking crossterm operations to a dedicated thread using spawn_blocking
+    // This prevents blocking the async executor threads with terminal I/O
+    let tx = std::sync::Arc::new(tx);
     let mut last_tick = std::time::Instant::now();
 
     loop {
         let timeout =
             tick_rate.checked_sub(last_tick.elapsed()).unwrap_or_else(|| Duration::from_secs(0));
 
-        if crossterm::event::poll(timeout).unwrap_or(false) {
-            if let Ok(crossterm_event) = crossterm::event::read()
-                && let Some(event) = Event::from_crossterm(crossterm_event)
-                && tx.send(event).await.is_err()
-            {
-                // Channel closed, exit the loop
-                return;
+        // Run the blocking crossterm poll/read in a separate thread
+        let poll_result = tokio::task::spawn_blocking(move || {
+            // crossterm::event::poll and crossterm::event::read are blocking calls
+            if crossterm::event::poll(timeout).unwrap_or(false) {
+                crossterm::event::read().ok()
+            } else {
+                None
             }
-        } else if last_tick.elapsed() >= tick_rate {
-            if tx.send(Event::Tick).await.is_err() {
-                // Channel closed, exit the loop
-                return;
+        })
+        .await;
+
+        match poll_result {
+            Ok(Some(crossterm_event)) => {
+                if let Some(event) = Event::from_crossterm(crossterm_event)
+                    && tx.send(event).await.is_err()
+                {
+                    // Channel closed, exit the loop
+                    return;
+                }
             }
-            last_tick = std::time::Instant::now();
+            Ok(None) => {
+                // Timeout occurred, send tick event if needed
+                if last_tick.elapsed() >= tick_rate {
+                    if tx.send(Event::Tick).await.is_err() {
+                        // Channel closed, exit the loop
+                        return;
+                    }
+                    last_tick = std::time::Instant::now();
+                }
+            }
+            Err(_) => {
+                // Spawn blocking task failed or was cancelled
+                if tx.send(Event::Tick).await.is_err() {
+                    return;
+                }
+                last_tick = std::time::Instant::now();
+            }
         }
     }
 }

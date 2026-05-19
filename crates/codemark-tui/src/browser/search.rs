@@ -26,6 +26,8 @@ pub struct SearchBar {
     mode: SearchMode,
     /// Last rendered area
     last_area: std::cell::Cell<Rect>,
+    /// Error message to display
+    error_message: Option<String>,
 }
 
 /// Search mode for filtering.
@@ -47,6 +49,7 @@ impl SearchBar {
             cursor: 0,
             mode: SearchMode::Fts,
             last_area: std::cell::Cell::new(Rect::default()),
+            error_message: None,
         }
     }
 
@@ -88,6 +91,21 @@ impl SearchBar {
             SearchMode::Fts => SearchMode::Semantic,
             SearchMode::Semantic => SearchMode::Fts,
         };
+    }
+
+    /// Set an error message to display.
+    pub fn set_error(&mut self, msg: impl Into<String>) {
+        self.error_message = Some(msg.into());
+    }
+
+    /// Clear any error message.
+    pub fn clear_error(&mut self) {
+        self.error_message = None;
+    }
+
+    /// Get the current error message.
+    pub fn error_message(&self) -> Option<&str> {
+        self.error_message.as_deref()
     }
 
     /// Render the search bar content.
@@ -176,7 +194,9 @@ impl Component for SearchBar {
     fn render(&self, area: Rect, buf: &mut Buffer) {
         self.last_area.set(area);
         // Render border
-        let border_style = if self.focused {
+        let border_style = if self.error_message.is_some() {
+            Style::default().fg(Color::Red)
+        } else if self.focused {
             Style::default().fg(Color::Green)
         } else {
             Style::default().fg(Color::DarkGray)
@@ -191,6 +211,22 @@ impl Component for SearchBar {
         block.render(area, buf);
 
         self.render_content(inner, buf);
+
+        // Render error message below the search bar if present
+        if let Some(ref error) = self.error_message {
+            let error_area = Rect {
+                x: area.x,
+                y: area.bottom().min(area.y.saturating_add(2)),
+                width: area.width.min(60),
+                height: 1,
+            };
+            let error_style = Style::default().fg(Color::Red).add_modifier(Modifier::BOLD);
+            Paragraph::new(Line::from(vec![
+                Span::styled("! ", error_style),
+                Span::styled(error, Style::default().fg(Color::Red)),
+            ]))
+            .render(error_area, buf);
+        }
     }
 
     fn handle_event(&mut self, event: &Event) -> bool {
@@ -208,6 +244,8 @@ impl Component for SearchBar {
                     true
                 }
                 ratatui::crossterm::event::KeyCode::Char(c) => {
+                    // Clear error on input
+                    self.clear_error();
                     // Character-aware insertion for UTF-8 safety
                     let char_count = self.query.chars().count();
                     if self.cursor <= char_count {
@@ -220,6 +258,8 @@ impl Component for SearchBar {
                     true
                 }
                 ratatui::crossterm::event::KeyCode::Backspace => {
+                    // Clear error on input
+                    self.clear_error();
                     // Character-aware removal for UTF-8 safety
                     if self.cursor > 0 {
                         let char_indices: Vec<(usize, usize)> =
@@ -237,6 +277,8 @@ impl Component for SearchBar {
                     true
                 }
                 ratatui::crossterm::event::KeyCode::Delete => {
+                    // Clear error on input
+                    self.clear_error();
                     // Character-aware removal for UTF-8 safety
                     let char_count = self.query.chars().count();
                     if self.cursor < char_count {
