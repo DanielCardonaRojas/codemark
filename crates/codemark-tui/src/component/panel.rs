@@ -571,9 +571,9 @@ impl Component for Panel {
 
                 if is_selected {
                     let bg_color = if self.focused {
-                        Color::Rgb(50, 50, 50) // Light gray highlight for focused
+                        Color::Rgb(62, 68, 81) // Light gray-blue highlight for focused (One Dark)
                     } else {
-                        Color::Rgb(35, 35, 35) // Darker gray for unfocused
+                        Color::Rgb(40, 44, 52) // Darker gray-blue for unfocused
                     };
                     list_item = list_item.style(Style::default().bg(bg_color));
                 }
