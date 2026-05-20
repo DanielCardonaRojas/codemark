@@ -1,11 +1,11 @@
+use crate::browser::{Panel3Tab, SearchBar, SectionConfig, TabbedPanel};
+use crate::component::Component;
+use crate::event::Event;
 use codemark_core::storage::db::Database;
 use ratatui::{
     buffer::Buffer,
     layout::{Constraint, Direction, Layout, Rect},
 };
-use crate::browser::{Panel3Tab, SearchBar, SectionConfig, TabbedPanel};
-use crate::event::Event;
-use crate::component::Component;
 
 /// Left sidebar containing search and three tabbed panels.
 pub struct LeftPane {

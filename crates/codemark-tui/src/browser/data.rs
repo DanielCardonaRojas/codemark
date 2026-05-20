@@ -71,7 +71,8 @@ pub async fn perform_heal(
                     let _ = event_handler.send(Event::HealComplete(msg, result.failed == 0));
                 }
                 Err(_) => {
-                    let _ = event_handler.send(Event::HealComplete("Heal failed".to_string(), false));
+                    let _ =
+                        event_handler.send(Event::HealComplete("Heal failed".to_string(), false));
                 }
             }
         }

@@ -1,14 +1,14 @@
-use codemark_core::engine::bookmark::{Bookmark, BookmarkFilter, BookmarkHealth, Resolution};
-use codemark_core::storage::db::Database;
-use ratatui::{
-    buffer::Buffer,
-    layout::{Alignment, Constraint, Direction, Layout, Rect},
-    style::{Color, Modifier, Style},
-    widgets::Widget,
-};
 use crate::browser::{Panel3Tab, Tab, TabContent, TabSelection};
 use crate::component::{CodePreview, HealthStatus, MarkdownPanel, Panel, PanelItem};
 use crate::event::Event;
+use codemark_core::engine::bookmark::{BookmarkFilter, BookmarkHealth};
+use codemark_core::storage::db::Database;
+use ratatui::{
+    buffer::Buffer,
+    layout::Rect,
+    style::{Color, Modifier, Style},
+    widgets::Widget,
+};
 
 /// A tabbed panel component with multiple content panels.
 pub struct TabbedPanel {

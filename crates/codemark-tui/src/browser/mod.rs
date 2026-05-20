@@ -22,21 +22,18 @@ pub use types::{
     escape_markdown,
 };
 
-use crate::component::{CodePreview, Component, HealthStatus, MarkdownPanel, Panel, PanelItem};
+use crate::component::{Component, HealthStatus, PanelItem};
 use crate::event::Event;
-use crate::ui::KeyBinding;
 use codemark_core::config::Config;
 use codemark_core::embeddings::config::EmbeddingModel;
-use codemark_core::engine::bookmark::{Bookmark, BookmarkFilter, BookmarkHealth, Resolution};
+use codemark_core::engine::bookmark::{Bookmark, BookmarkFilter};
 use codemark_core::storage::{SemanticRepo, db::Database};
 use ratatui::{
     buffer::Buffer,
-    layout::{Alignment, Constraint, Direction, Layout, Rect},
-    style::{Color, Modifier, Style, Stylize},
+    layout::{Constraint, Direction, Layout, Rect},
+    style::{Color, Style},
     text::{Line, Span},
-    widgets::{Paragraph, Widget, Wrap},
 };
-
 
 /// The main browser layout.
 ///
@@ -62,10 +59,6 @@ pub struct BrowserLayout {
     /// Event handler for sending custom events
     event_handler: crate::event::EventHandler,
 }
-
-
-
-
 
 impl BrowserLayout {
     /// Create a new browser layout.
@@ -327,7 +320,6 @@ impl BrowserLayout {
             p.set_items(branches);
         }
     }
-
 
     /// Get the current focus area.
     pub fn focus(&self) -> FocusArea {
@@ -1195,10 +1187,7 @@ impl BrowserLayout {
     }
 }
 
-
-
 impl Component for BrowserLayout {
-
     fn render(&self, area: Rect, buf: &mut Buffer) {
         self.render(area, buf);
     }

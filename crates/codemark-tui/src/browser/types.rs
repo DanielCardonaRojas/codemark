@@ -1,6 +1,6 @@
-use codemark_core::engine::bookmark::{Bookmark, Resolution};
 use crate::component::{CodePreview, Component, MarkdownPanel, Panel};
 use crate::event::Event;
+use codemark_core::engine::bookmark::{Bookmark, Resolution};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 

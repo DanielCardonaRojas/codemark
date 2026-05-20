@@ -1,15 +1,15 @@
+use crate::browser::{SectionConfig, StepData, TabbedPanel, escape_markdown};
+use crate::component::Component;
+use crate::event::Event;
 use codemark_core::engine::bookmark::{Bookmark, Resolution};
 use codemark_core::storage::db::Database;
 use ratatui::{
     buffer::Buffer,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
-    style::{Color, Modifier, Style, Stylize},
+    style::{Color, Style, Stylize},
     text::{Line, Span},
     widgets::{Paragraph, Widget, Wrap},
 };
-use crate::browser::{SectionConfig, StepData, TabbedPanel, escape_markdown};
-use crate::event::Event;
-use crate::component::Component;
 
 /// Focus areas within the right pane.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
