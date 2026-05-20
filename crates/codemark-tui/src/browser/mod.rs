@@ -3,6 +3,7 @@
 //! This module provides the main browser layout with a left sidebar
 //! containing search, repos, and tours, and a right main content area.
 
+mod data;
 mod search;
 mod tabs;
 
@@ -453,7 +454,7 @@ impl BrowserLayout {
         // This runs the blocking database operations on a dedicated thread pool.
         tokio::task::spawn_blocking(move || {
             let handle = tokio::runtime::Handle::current();
-            handle.block_on(perform_heal(db_path, target, event_handler))
+            handle.block_on(data::perform_heal(db_path, target, event_handler))
         });
     }
 
@@ -2504,81 +2505,4 @@ impl Component for BrowserLayout {
     fn size_constraints(&self) -> crate::component::SizeConstraints {
         crate::component::SizeConstraints::min(40, 20)
     }
-}
-
-/// Perform heal operation in a background task.
-async fn perform_heal(
-    db_path: std::path::PathBuf,
-    target: HealTarget,
-    event_handler: crate::event::EventHandler,
-) -> anyhow::Result<()> {
-    use codemark_core::config::Config;
-    use codemark_core::engine::heal;
-    use codemark_core::storage::db::Database;
-
-    let db = Database::open(&db_path)?;
-    let Some(codemark_dir) = db_path.parent() else {
-        let _ = event_handler
-            .send(Event::HealComplete("Failed to determine codemark directory".to_string(), false));
-        return Ok(());
-    };
-
-    let config = Config::load_layered(codemark_dir);
-    let heal_options = heal::HealOptions {
-        force: false,
-        auto_archive: false,
-        archive_after: config.health.auto_archive_days(),
-        validate_only: false,
-    };
-
-    match target {
-        HealTarget::Bookmark(bookmark_id) => {
-            let bm_result = db.get_bookmark(&bookmark_id);
-            if let Ok(Some(bm)) = bm_result {
-                match heal::heal_bookmark(&db, &bm, &config, &heal_options).await {
-                    Ok(result) => {
-                        let status = match result.new_health {
-                            codemark_core::engine::bookmark::BookmarkHealth::Active => "Active",
-                            codemark_core::engine::bookmark::BookmarkHealth::Drifted => "Drifted",
-                            codemark_core::engine::bookmark::BookmarkHealth::Stale => "Stale",
-                            codemark_core::engine::bookmark::BookmarkHealth::Archived => "Archived",
-                        };
-                        let _ = event_handler.send(Event::HealComplete(
-                            if result.previous_health != result.new_health {
-                                format!("Healed: {} → {}", result.previous_health, status)
-                            } else {
-                                format!("Already {}", status)
-                            },
-                            true,
-                        ));
-                    }
-                    Err(_) => {
-                        let _ = event_handler
-                            .send(Event::HealComplete("Heal failed".to_string(), false));
-                    }
-                }
-            } else {
-                let _ = event_handler
-                    .send(Event::HealComplete("Bookmark not found".to_string(), false));
-            }
-        }
-        HealTarget::Collection(collection_id) => {
-            match heal::heal_collection(&db, &collection_id, &config, &heal_options).await {
-                Ok(result) => {
-                    let msg = if result.skipped > 0 {
-                        format!("Healed {}, skipped {}", result.healed, result.skipped)
-                    } else {
-                        format!("Healed {}", result.healed)
-                    };
-                    let _ = event_handler.send(Event::HealComplete(msg, result.failed == 0));
-                }
-                Err(_) => {
-                    let _ =
-                        event_handler.send(Event::HealComplete("Heal failed".to_string(), false));
-                }
-            }
-        }
-    }
-
-    Ok(())
 }
