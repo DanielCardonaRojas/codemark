@@ -404,7 +404,9 @@ impl BrowserLayout {
                     match tabs::Panel3Tab::from_index(self.left_pane.panel3.tabs.selected_index()) {
                         Some(tabs::Panel3Tab::Bookmarks) => {
                             // Heal selected bookmark
-                            panel.selected().and_then(|s| s.user_data.clone())
+                            panel
+                                .selected()
+                                .and_then(|s| s.user_data.clone())
                                 .map(HealTarget::Bookmark)
                         }
                         Some(tabs::Panel3Tab::Collections) | Some(tabs::Panel3Tab::Tours) => {
@@ -415,7 +417,10 @@ impl BrowserLayout {
                                 } else {
                                     // Fallback to name lookup if user_data is missing
                                     let name = s.text().to_string();
-                                    self.db.get_collection_by_name(&name).ok().flatten()
+                                    self.db
+                                        .get_collection_by_name(&name)
+                                        .ok()
+                                        .flatten()
                                         .map(|c| HealTarget::Collection(c.id))
                                 }
                             })
@@ -428,7 +433,9 @@ impl BrowserLayout {
             }
             FocusArea::Main => {
                 // Heal the currently displayed bookmark in preview
-                self.right_pane.steps_data.get(self.right_pane.pager_current)
+                self.right_pane
+                    .steps_data
+                    .get(self.right_pane.pager_current)
                     .map(|step| HealTarget::Bookmark(step.bookmark.id.clone()))
             }
             _ => None,
@@ -436,10 +443,8 @@ impl BrowserLayout {
 
         let Some(target) = target else {
             // No valid target - show error
-            let _ = event_handler.send(Event::HealComplete(
-                "Nothing selected to heal".to_string(),
-                false,
-            ));
+            let _ = event_handler
+                .send(Event::HealComplete("Nothing selected to heal".to_string(), false));
             return;
         };
 
@@ -1153,10 +1158,8 @@ impl BrowserLayout {
             }
             Event::HealComplete(msg, success) => {
                 // Store the heal result as a notification
-                self.pending_notification = Some(HealNotification {
-                    message: msg.clone(),
-                    success: *success,
-                });
+                self.pending_notification =
+                    Some(HealNotification { message: msg.clone(), success: *success });
                 // Refresh panels to show updated health status
                 self.refresh_all_panels();
                 return true;
@@ -2495,10 +2498,8 @@ async fn perform_heal(
 
     let db = Database::open(&db_path)?;
     let Some(codemark_dir) = db_path.parent() else {
-        let _ = event_handler.send(Event::HealComplete(
-            "Failed to determine codemark directory".to_string(),
-            false,
-        ));
+        let _ = event_handler
+            .send(Event::HealComplete("Failed to determine codemark directory".to_string(), false));
         return Ok(());
     };
 
@@ -2530,10 +2531,8 @@ async fn perform_heal(
                         ));
                     }
                     Err(_) => {
-                        let _ = event_handler.send(Event::HealComplete(
-                            "Heal failed".to_string(),
-                            false,
-                        ));
+                        let _ = event_handler
+                            .send(Event::HealComplete("Heal failed".to_string(), false));
                     }
                 }
             }
@@ -2547,10 +2546,8 @@ async fn perform_heal(
                     ));
                 }
                 Err(_) => {
-                    let _ = event_handler.send(Event::HealComplete(
-                        "Heal failed".to_string(),
-                        false,
-                    ));
+                    let _ =
+                        event_handler.send(Event::HealComplete("Heal failed".to_string(), false));
                 }
             }
         }
