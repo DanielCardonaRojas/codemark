@@ -2508,11 +2508,13 @@ async fn perform_heal(
         force: false,
         auto_archive: false,
         archive_after: config.health.auto_archive_days(),
+        validate_only: false,
     };
 
     match target {
         HealTarget::Bookmark(bookmark_id) => {
-            if let Ok(Some(bm)) = db.get_bookmark(&bookmark_id) {
+            let bm_result = db.get_bookmark(&bookmark_id);
+            if let Ok(Some(bm)) = bm_result {
                 match heal::heal_bookmark(&db, &bm, &config, &heal_options).await {
                     Ok(result) => {
                         let status = match result.new_health {
@@ -2535,6 +2537,9 @@ async fn perform_heal(
                             .send(Event::HealComplete("Heal failed".to_string(), false));
                     }
                 }
+            } else {
+                let _ = event_handler
+                    .send(Event::HealComplete("Bookmark not found".to_string(), false));
             }
         }
         HealTarget::Collection(collection_id) => {

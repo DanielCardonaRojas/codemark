@@ -35,6 +35,8 @@ pub struct HealOptions {
     pub auto_archive: bool,
     /// Days after which to auto-archive stale bookmarks
     pub archive_after: u32,
+    /// Validate only - don't record resolutions to the database
+    pub validate_only: bool,
 }
 
 /// Heal a single bookmark.
@@ -61,23 +63,24 @@ pub async fn heal_bookmark(
         let cwd = std::env::current_dir()?;
         let current_head = git_context::detect_context(&cwd).and_then(|ctx| ctx.head_commit);
 
-        if let (Some(ref head), Some(ref res)) = (current_head, previous_resolution.as_ref().and_then(|r| r.first())) {
-            if let Some(ref res_commit) = res.commit_hash {
-                match git_context::is_ancestor(&cwd, head, res_commit) {
-                    Ok(true) => {
-                        // HEAD is ancestor of resolution (resolution is ahead)
-                        // Return early without healing
-                        return Ok(HealResult {
-                            bookmark_id: bookmark.id.clone(),
-                            resolution_id: None,
-                            previous_health,
-                            new_health: previous_health,
-                            resolution_method: ResolutionMethod::Failed,
-                        });
-                    }
-                    Ok(false) | Err(_) => {
-                        // HEAD is ahead or unrelated, or git error - proceed with heal
-                    }
+        if let (Some(ref head), Some(res)) =
+            (current_head, previous_resolution.as_ref().and_then(|r| r.first()))
+            && let Some(ref res_commit) = res.commit_hash
+        {
+            match git_context::is_ancestor(&cwd, head, res_commit) {
+                Ok(true) => {
+                    // HEAD is ancestor of resolution (resolution is ahead)
+                    // Return early without healing
+                    return Ok(HealResult {
+                        bookmark_id: bookmark.id.clone(),
+                        resolution_id: None,
+                        previous_health,
+                        new_health: previous_health,
+                        resolution_method: ResolutionMethod::Failed,
+                    });
+                }
+                Ok(false) | Err(_) => {
+                    // HEAD is ahead or unrelated, or git error - proceed with heal
                 }
             }
         }
@@ -129,40 +132,47 @@ pub async fn heal_bookmark(
         serde_json::to_string(&result.breadcrumbs).ok()
     };
 
-    // Get current commit hash
-    let commit_hash = git_context::detect_context(&std::env::current_dir()?)
-        .and_then(|ctx| ctx.head_commit);
-
-    // Create and insert resolution
-    let resolution = Resolution {
-        id: uuid::Uuid::new_v4().to_string(),
-        bookmark_id: bookmark.id.clone(),
-        resolved_at: chrono::Utc::now().to_rfc3339(),
-        health: final_status,
-        commit_hash,
-        method: result.method,
-        match_count: Some(1),
-        file_path: Some(result.file_path.clone()),
-        byte_range: Some(format!("{}-{}", result.byte_range.0, result.byte_range.1)),
-        line_range: Some(format!("{}-{}", result.start_line + 1, result.end_line + 1)),
-        content_hash: Some(result.content_hash.clone()),
-        headline: None,
-        snapshot: Some(result.matched_text.clone()),
-        breadcrumbs: breadcrumbs_json,
-    };
-
-    let resolution_id = resolution.id.clone();
-    let new_resolution_id = if db.insert_resolution_if_changed(&resolution, config.storage.max_resolutions())? {
-        // New resolution recorded, update the bookmark's current pointer
-        db.update_bookmark_resolution_id(&bookmark.id, &resolution_id)?;
-        Some(resolution_id)
+    let new_resolution_id = if options.validate_only {
+        // Skip database writes when validating
+        None
     } else {
-        // Existing resolution updated, current_resolution_id remains correct
-        bookmark.current_resolution_id.clone()
+        // Get current commit hash
+        let commit_hash =
+            git_context::detect_context(&std::env::current_dir()?).and_then(|ctx| ctx.head_commit);
+
+        // Create and insert resolution
+        let resolution = Resolution {
+            id: uuid::Uuid::new_v4().to_string(),
+            bookmark_id: bookmark.id.clone(),
+            resolved_at: chrono::Utc::now().to_rfc3339(),
+            health: final_status,
+            commit_hash,
+            method: result.method,
+            match_count: Some(1),
+            file_path: Some(result.file_path.clone()),
+            byte_range: Some(format!("{}-{}", result.byte_range.0, result.byte_range.1)),
+            line_range: Some(format!("{}-{}", result.start_line + 1, result.end_line + 1)),
+            content_hash: Some(result.content_hash.clone()),
+            headline: None,
+            snapshot: Some(result.matched_text.clone()),
+            breadcrumbs: breadcrumbs_json,
+        };
+
+        let resolution_id = resolution.id.clone();
+        if db.insert_resolution_if_changed(&resolution, config.storage.max_resolutions())? {
+            // New resolution recorded, update the bookmark's current pointer
+            db.update_bookmark_resolution_id(&bookmark.id, &resolution_id)?;
+            Some(resolution_id)
+        } else {
+            // Existing resolution updated, current_resolution_id remains correct
+            bookmark.current_resolution_id.clone()
+        }
     };
 
     // Recompute collection health for affected collections
-    if let Ok(ids) = db.list_collection_ids_for_bookmark(&bookmark.id) {
+    if !options.validate_only
+        && let Ok(ids) = db.list_collection_ids_for_bookmark(&bookmark.id)
+    {
         for collection_id in ids {
             let _ = db.recompute_collection_health(&collection_id);
         }

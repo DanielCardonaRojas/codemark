@@ -46,6 +46,7 @@ pub async fn handle_heal(cli: &Cli, mode: &OutputMode, args: &HealArgs) -> Resul
         force: args.force,
         auto_archive: args.auto_archive,
         archive_after: args.archive_after,
+        validate_only: args.validate_only,
     };
 
     for bm in &bookmarks {
