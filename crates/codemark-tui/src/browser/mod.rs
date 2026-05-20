@@ -157,6 +157,10 @@ struct RightPane {
     last_area: std::cell::Cell<Rect>,
     /// Details height configuration
     info_config: SectionConfig,
+    /// Active tour name (if a tour is loaded)
+    active_tour_name: Option<String>,
+    /// Active bookmark ID (if a single bookmark is loaded)
+    active_bookmark_id: Option<String>,
 }
 
 /// Focus areas within the right pane.
@@ -472,16 +476,27 @@ impl BrowserLayout {
         }
 
         // 4. Update Step previews (Right Pane)
-        if let Ok(collections) = self.db.list_collections() {
+        let current_step = self.right_pane.pager_current;
+        if let Some(tour_name) = self.right_pane.active_tour_name.clone() {
+            self.right_pane.load_tour(&self.db, &tour_name);
+            // Restore step if possible
+            if current_step < self.right_pane.pager_total {
+                self.right_pane.pager_current = current_step;
+                self.right_pane.update_preview();
+            }
+        } else if let Some(bm_id) = self.right_pane.active_bookmark_id.clone() {
+            self.right_pane.load_bookmark(&self.db, &bm_id);
+        } else if let Ok(collections) = self.db.list_collections() {
+            // Default to first tour only if nothing was active
             if let Some((first_tour, _)) = collections.first() {
                 let name = first_tour.name.clone();
                 self.right_pane.load_tour(&self.db, &name);
-            } else {
-                // Clear steps if no tours found
-                self.right_pane.steps_data.clear();
-                self.right_pane.pager_total = 0;
-                self.right_pane.pager_current = 0;
             }
+        } else {
+            // Clear steps if nothing found
+            self.right_pane.steps_data.clear();
+            self.right_pane.pager_total = 0;
+            self.right_pane.pager_current = 0;
         }
     }
 
@@ -1559,6 +1574,8 @@ impl RightPane {
             pager_current: 0,
             last_area: std::cell::Cell::new(Rect::default()),
             info_config: SectionConfig::new(4, 10),
+            active_tour_name: None,
+            active_bookmark_id: None,
         };
 
         // Try to load the first tour automatically
@@ -1650,6 +1667,8 @@ impl RightPane {
                 }];
                 self.pager_total = 1;
                 self.pager_current = 0;
+                self.active_bookmark_id = Some(bookmark_id.to_string());
+                self.active_tour_name = None;
                 self.update_preview();
             }
         }
@@ -1708,6 +1727,8 @@ impl RightPane {
                 self.steps_data = new_steps;
                 self.pager_total = self.steps_data.len();
                 self.pager_current = 0;
+                self.active_tour_name = Some(tour_name.to_string());
+                self.active_bookmark_id = None;
                 self.update_preview();
             } else {
                 // Clear the right-pane state when no steps are available
