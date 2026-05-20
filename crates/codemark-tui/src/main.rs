@@ -195,12 +195,13 @@ async fn run_app() -> Result<()> {
                 // If not handled by global keys, pass to layout (includes mouse events)
                 // Skip when help is shown to make help modal
                 if !handled && !show_help {
-                    layout.handle_event(&event);
+                    handled = layout.handle_event(&event);
                 }
 
                 // Let state handle the event too (captures keys for Search mode)
                 // Skip when help is shown to make help modal
-                if !show_help {
+                // Skip if layout already handled the event (prevents keybinding conflicts)
+                if !show_help && !handled {
                     state.handle_event(&event);
                 }
 

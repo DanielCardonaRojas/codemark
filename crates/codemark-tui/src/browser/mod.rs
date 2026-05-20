@@ -1217,37 +1217,37 @@ impl BrowserLayout {
                         return true;
                     }
                 }
-                // Number keys for direct section access (disabled when in filter mode)
+                // Number keys for direct section access (disabled when in filter mode or Search focused)
                 ratatui::crossterm::event::KeyCode::Char('1')
-                    if self.should_handle_keybindings() =>
+                    if self.should_handle_keybindings() && self.focus != FocusArea::Search =>
                 {
                     self.focus = FocusArea::Search;
                     self.update_focus_state();
                     return true;
                 }
                 ratatui::crossterm::event::KeyCode::Char('2')
-                    if self.should_handle_keybindings() =>
+                    if self.should_handle_keybindings() && self.focus != FocusArea::Search =>
                 {
                     self.focus = FocusArea::Panel1;
                     self.update_focus_state();
                     return true;
                 }
                 ratatui::crossterm::event::KeyCode::Char('3')
-                    if self.should_handle_keybindings() =>
+                    if self.should_handle_keybindings() && self.focus != FocusArea::Search =>
                 {
                     self.focus = FocusArea::Panel2;
                     self.update_focus_state();
                     return true;
                 }
                 ratatui::crossterm::event::KeyCode::Char('4')
-                    if self.should_handle_keybindings() =>
+                    if self.should_handle_keybindings() && self.focus != FocusArea::Search =>
                 {
                     self.focus = FocusArea::Panel3;
                     self.update_focus_state();
                     return true;
                 }
                 ratatui::crossterm::event::KeyCode::Char('5')
-                    if self.should_handle_keybindings() =>
+                    if self.should_handle_keybindings() && self.focus != FocusArea::Search =>
                 {
                     self.focus = FocusArea::Main;
                     self.right_pane.focus_steps();
@@ -1255,7 +1255,7 @@ impl BrowserLayout {
                     return true;
                 }
                 ratatui::crossterm::event::KeyCode::Char('6')
-                    if self.should_handle_keybindings() =>
+                    if self.should_handle_keybindings() && self.focus != FocusArea::Search =>
                 {
                     self.focus = FocusArea::Main;
                     self.right_pane.focus_details();
@@ -1263,7 +1263,7 @@ impl BrowserLayout {
                     return true;
                 }
                 ratatui::crossterm::event::KeyCode::Char('o')
-                    if self.should_handle_keybindings() =>
+                    if self.should_handle_keybindings() && self.focus != FocusArea::Search =>
                 {
                     self.open_in_editor();
                     return true;
