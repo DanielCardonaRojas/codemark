@@ -200,6 +200,44 @@ pub async fn heal_bookmarks(
     Ok(results)
 }
 
+/// Heal all bookmarks in a collection.
+///
+/// Returns the number of bookmarks healed and any errors encountered.
+pub async fn heal_collection(
+    db: &Database,
+    collection_id: &str,
+    config: &Config,
+    options: &HealOptions,
+) -> Result<CollectionHealResult> {
+    use crate::engine::bookmark::BookmarkFilter;
+
+    let bookmarks = db.list_bookmarks(&BookmarkFilter {
+        collection: Some(collection_id.to_string()),
+        ..Default::default()
+    })?;
+
+    let mut healed = 0;
+    let mut failed = 0;
+
+    for bookmark in &bookmarks {
+        match heal_bookmark(db, bookmark, config, options).await {
+            Ok(_) => healed += 1,
+            Err(_) => failed += 1,
+        }
+    }
+
+    Ok(CollectionHealResult { healed, failed })
+}
+
+/// Result of healing a collection.
+#[derive(Debug, Clone)]
+pub struct CollectionHealResult {
+    /// Number of bookmarks successfully healed
+    pub healed: usize,
+    /// Number of bookmarks that failed to heal
+    pub failed: usize,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
