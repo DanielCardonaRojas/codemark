@@ -298,25 +298,17 @@ impl Component for CodePreview {
                     && mouse.row < area.y + area.height;
 
                 match mouse.kind {
-                    ratatui::crossterm::event::MouseEventKind::ScrollDown => {
-                        if is_hovered {
-                            let line_count = self.code.lines().count();
-                            self.scroll_offset = self
-                                .scroll_offset
-                                .saturating_add(1)
-                                .min(line_count.saturating_sub(1) as u16);
-                            true
-                        } else {
-                            false
-                        }
+                    ratatui::crossterm::event::MouseEventKind::ScrollDown if is_hovered => {
+                        let line_count = self.code.lines().count();
+                        self.scroll_offset = self
+                            .scroll_offset
+                            .saturating_add(1)
+                            .min(line_count.saturating_sub(1) as u16);
+                        true
                     }
-                    ratatui::crossterm::event::MouseEventKind::ScrollUp => {
-                        if is_hovered {
-                            self.scroll_offset = self.scroll_offset.saturating_sub(1);
-                            true
-                        } else {
-                            false
-                        }
+                    ratatui::crossterm::event::MouseEventKind::ScrollUp if is_hovered => {
+                        self.scroll_offset = self.scroll_offset.saturating_sub(1);
+                        true
                     }
                     _ => false,
                 }

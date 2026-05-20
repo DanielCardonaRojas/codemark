@@ -698,47 +698,34 @@ impl Component for Panel {
                             return false;
                         }
 
-                        if button == ratatui::crossterm::event::MouseButton::Left {
-                            if is_hovered {
-                                // Calculate inner area to get correct item index
-                                let inner = if self.bordered {
-                                    area.inner(Margin::new(1, 1))
-                                } else {
-                                    area
-                                };
+                        if button == ratatui::crossterm::event::MouseButton::Left && is_hovered {
+                            // Calculate inner area to get correct item index
+                            let inner =
+                                if self.bordered { area.inner(Margin::new(1, 1)) } else { area };
 
-                                if mouse.column >= inner.x
-                                    && mouse.column < inner.x + inner.width
-                                    && mouse.row >= inner.y
-                                    && mouse.row < inner.y + inner.height
-                                {
-                                    let relative_row = mouse.row.saturating_sub(inner.y) as usize;
-                                    let item_idx = relative_row + self.list_state.borrow().offset();
-                                    if item_idx < self.items.len() {
-                                        self.list_state.borrow_mut().select(Some(item_idx));
-                                        return true;
-                                    }
+                            if mouse.column >= inner.x
+                                && mouse.column < inner.x + inner.width
+                                && mouse.row >= inner.y
+                                && mouse.row < inner.y + inner.height
+                            {
+                                let relative_row = mouse.row.saturating_sub(inner.y) as usize;
+                                let item_idx = relative_row + self.list_state.borrow().offset();
+                                if item_idx < self.items.len() {
+                                    self.list_state.borrow_mut().select(Some(item_idx));
+                                    return true;
                                 }
-                                return true;
                             }
+                            return true;
                         }
                         false
                     }
-                    ratatui::crossterm::event::MouseEventKind::ScrollDown => {
-                        if is_hovered {
-                            self.select_next();
-                            true
-                        } else {
-                            false
-                        }
+                    ratatui::crossterm::event::MouseEventKind::ScrollDown if is_hovered => {
+                        self.select_next();
+                        true
                     }
-                    ratatui::crossterm::event::MouseEventKind::ScrollUp => {
-                        if is_hovered {
-                            self.select_previous();
-                            true
-                        } else {
-                            false
-                        }
+                    ratatui::crossterm::event::MouseEventKind::ScrollUp if is_hovered => {
+                        self.select_previous();
+                        true
                     }
                     _ => false,
                 }

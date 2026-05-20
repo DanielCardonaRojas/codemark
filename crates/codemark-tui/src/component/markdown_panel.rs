@@ -145,21 +145,13 @@ impl Component for MarkdownPanel {
                 let is_hovered = area.contains(Position::from((mouse.column, mouse.row)));
 
                 match mouse.kind {
-                    ratatui::crossterm::event::MouseEventKind::ScrollDown => {
-                        if is_hovered {
-                            self.scroll_offset = self.scroll_offset.saturating_add(1);
-                            true
-                        } else {
-                            false
-                        }
+                    ratatui::crossterm::event::MouseEventKind::ScrollDown if is_hovered => {
+                        self.scroll_offset = self.scroll_offset.saturating_add(1);
+                        true
                     }
-                    ratatui::crossterm::event::MouseEventKind::ScrollUp => {
-                        if is_hovered {
-                            self.scroll_offset = self.scroll_offset.saturating_sub(1);
-                            true
-                        } else {
-                            false
-                        }
+                    ratatui::crossterm::event::MouseEventKind::ScrollUp if is_hovered => {
+                        self.scroll_offset = self.scroll_offset.saturating_sub(1);
+                        true
                     }
                     _ => false,
                 }
