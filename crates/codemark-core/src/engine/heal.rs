@@ -227,23 +227,34 @@ pub async fn heal_collection(
     })?;
 
     let mut healed = 0;
+    let mut skipped = 0;
     let mut failed = 0;
 
     for bookmark in &bookmarks {
         match heal_bookmark(db, bookmark, config, options).await {
-            Ok(_) => healed += 1,
+            Ok(result) => {
+                // Track whether actual work was done
+                // Skipped bookmarks have resolution_id: None
+                if result.resolution_id.is_some() {
+                    healed += 1;
+                } else {
+                    skipped += 1;
+                }
+            }
             Err(_) => failed += 1,
         }
     }
 
-    Ok(CollectionHealResult { healed, failed })
+    Ok(CollectionHealResult { healed, skipped, failed })
 }
 
 /// Result of healing a collection.
 #[derive(Debug, Clone)]
 pub struct CollectionHealResult {
-    /// Number of bookmarks successfully healed
+    /// Number of bookmarks successfully healed (actual work done)
     pub healed: usize,
+    /// Number of bookmarks that were skipped (e.g., git ancestor check)
+    pub skipped: usize,
     /// Number of bookmarks that failed to heal
     pub failed: usize,
 }
@@ -274,6 +285,7 @@ mod tests {
         let options = HealOptions::default();
         assert!(!options.force);
         assert!(!options.auto_archive);
+        assert!(!options.validate_only);
         assert_eq!(options.archive_after, 0);
     }
 }

@@ -448,12 +448,12 @@ impl BrowserLayout {
             return;
         };
 
-        // Spawn a background task to perform the heal
+        // Spawn a background task to perform the heal.
+        // Note: We use spawn_blocking because Database is not Send/Sync (rusqlite limitation).
+        // This runs the blocking database operations on a dedicated thread pool.
         tokio::task::spawn_blocking(move || {
             let handle = tokio::runtime::Handle::current();
-            handle.block_on(async {
-                let _ = perform_heal(db_path, target, event_handler).await;
-            });
+            handle.block_on(perform_heal(db_path, target, event_handler))
         });
     }
 
@@ -2545,10 +2545,12 @@ async fn perform_heal(
         HealTarget::Collection(collection_id) => {
             match heal::heal_collection(&db, &collection_id, &config, &heal_options).await {
                 Ok(result) => {
-                    let _ = event_handler.send(Event::HealComplete(
-                        format!("Healed {} bookmarks", result.healed),
-                        result.failed == 0,
-                    ));
+                    let msg = if result.skipped > 0 {
+                        format!("Healed {}, skipped {}", result.healed, result.skipped)
+                    } else {
+                        format!("Healed {}", result.healed)
+                    };
+                    let _ = event_handler.send(Event::HealComplete(msg, result.failed == 0));
                 }
                 Err(_) => {
                     let _ =
