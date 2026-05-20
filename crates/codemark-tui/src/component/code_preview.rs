@@ -240,69 +240,79 @@ impl Component for CodePreview {
     }
 
     fn handle_event(&mut self, event: &Event) -> bool {
-        if !self.focused {
-            return false;
-        }
-
         match event {
-            Event::Key(key) => match key.code {
-                ratatui::crossterm::event::KeyCode::Down
-                | ratatui::crossterm::event::KeyCode::Char('j') => {
-                    let line_count = self.code.lines().count();
-                    if line_count > 0 {
-                        let next = self.selected_line.map_or(0, |i| (i + 1).min(line_count - 1));
+            Event::Key(key) => {
+                if !self.focused {
+                    return false;
+                }
+                match key.code {
+                    ratatui::crossterm::event::KeyCode::Down
+                    | ratatui::crossterm::event::KeyCode::Char('j') => {
+                        let line_count = self.code.lines().count();
+                        if line_count > 0 {
+                            let next =
+                                self.selected_line.map_or(0, |i| (i + 1).min(line_count - 1));
+                            self.selected_line = Some(next);
+
+                            // Auto-scroll if selection goes off screen
+                            let height = self.last_area.get().height as usize;
+                            if next >= self.scroll_offset as usize + height {
+                                self.scroll_offset = (next - height + 1) as u16;
+                            } else if next < self.scroll_offset as usize {
+                                self.scroll_offset = next as u16;
+                            }
+                        }
+                        true
+                    }
+                    ratatui::crossterm::event::KeyCode::Up
+                    | ratatui::crossterm::event::KeyCode::Char('k') => {
+                        let next = self.selected_line.map_or(0, |i| i.saturating_sub(1));
                         self.selected_line = Some(next);
 
                         // Auto-scroll if selection goes off screen
-                        let height = self.last_area.get().height as usize;
-                        if next >= self.scroll_offset as usize + height {
-                            self.scroll_offset = (next - height + 1) as u16;
-                        } else if next < self.scroll_offset as usize {
+                        if next < self.scroll_offset as usize {
                             self.scroll_offset = next as u16;
                         }
+                        true
                     }
-                    true
+                    ratatui::crossterm::event::KeyCode::Char('J') => {
+                        let line_count = self.code.lines().count();
+                        self.scroll_offset = self
+                            .scroll_offset
+                            .saturating_add(5)
+                            .min(line_count.saturating_sub(1) as u16);
+                        true
+                    }
+                    ratatui::crossterm::event::KeyCode::Char('K') => {
+                        self.scroll_offset = self.scroll_offset.saturating_sub(5);
+                        true
+                    }
+                    _ => false,
                 }
-                ratatui::crossterm::event::KeyCode::Up
-                | ratatui::crossterm::event::KeyCode::Char('k') => {
-                    let next = self.selected_line.map_or(0, |i| i.saturating_sub(1));
-                    self.selected_line = Some(next);
+            }
+            Event::Mouse(mouse) => {
+                let area = self.last_area.get();
+                let is_hovered = mouse.column >= area.x
+                    && mouse.column < area.x + area.width
+                    && mouse.row >= area.y
+                    && mouse.row < area.y + area.height;
 
-                    // Auto-scroll if selection goes off screen
-                    if next < self.scroll_offset as usize {
-                        self.scroll_offset = next as u16;
+                match mouse.kind {
+                    ratatui::crossterm::event::MouseEventKind::ScrollDown if is_hovered => {
+                        let line_count = self.code.lines().count();
+                        self.scroll_offset = self
+                            .scroll_offset
+                            .saturating_add(1)
+                            .min(line_count.saturating_sub(1) as u16);
+                        true
                     }
-                    true
+                    ratatui::crossterm::event::MouseEventKind::ScrollUp if is_hovered => {
+                        self.scroll_offset = self.scroll_offset.saturating_sub(1);
+                        true
+                    }
+                    _ => false,
                 }
-                ratatui::crossterm::event::KeyCode::Char('J') => {
-                    let line_count = self.code.lines().count();
-                    self.scroll_offset = self
-                        .scroll_offset
-                        .saturating_add(5)
-                        .min(line_count.saturating_sub(1) as u16);
-                    true
-                }
-                ratatui::crossterm::event::KeyCode::Char('K') => {
-                    self.scroll_offset = self.scroll_offset.saturating_sub(5);
-                    true
-                }
-                _ => false,
-            },
-            Event::Mouse(mouse) => match mouse.kind {
-                ratatui::crossterm::event::MouseEventKind::ScrollDown => {
-                    let line_count = self.code.lines().count();
-                    self.scroll_offset = self
-                        .scroll_offset
-                        .saturating_add(1)
-                        .min(line_count.saturating_sub(1) as u16);
-                    true
-                }
-                ratatui::crossterm::event::MouseEventKind::ScrollUp => {
-                    self.scroll_offset = self.scroll_offset.saturating_sub(1);
-                    true
-                }
-                _ => false,
-            },
+            }
             _ => false,
         }
     }

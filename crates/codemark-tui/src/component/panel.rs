@@ -571,9 +571,9 @@ impl Component for Panel {
 
                 if is_selected {
                     let bg_color = if self.focused {
-                        Color::Rgb(50, 50, 50) // Light gray highlight for focused
+                        Color::Rgb(62, 68, 81) // Light gray-blue highlight for focused (One Dark)
                     } else {
-                        Color::Rgb(35, 35, 35) // Darker gray for unfocused
+                        Color::Rgb(40, 44, 52) // Darker gray-blue for unfocused
                     };
                     list_item = list_item.style(Style::default().bg(bg_color));
                 }
@@ -662,67 +662,68 @@ impl Component for Panel {
     }
 
     fn handle_event(&mut self, event: &Event) -> bool {
-        if !self.focused {
-            return false;
-        }
-
         match event {
-            Event::Key(key) => match key.code {
-                ratatui::crossterm::event::KeyCode::Down
-                | ratatui::crossterm::event::KeyCode::Char('j') => {
-                    self.select_next();
-                    true
+            Event::Key(key) => {
+                if !self.focused {
+                    return false;
                 }
-                ratatui::crossterm::event::KeyCode::Up
-                | ratatui::crossterm::event::KeyCode::Char('k') => {
-                    self.select_previous();
-                    true
-                }
-                ratatui::crossterm::event::KeyCode::Char(' ') => {
-                    self.activate_selected();
-                    true
-                }
-                _ => false,
-            },
-            Event::Mouse(mouse) => {
-                match mouse.kind {
-                    ratatui::crossterm::event::MouseEventKind::Down(button) => {
-                        if button == ratatui::crossterm::event::MouseButton::Left {
-                            let area = self.last_area.get();
-                            if mouse.column >= area.x
-                                && mouse.column < area.x + area.width
-                                && mouse.row >= area.y
-                                && mouse.row < area.y + area.height
-                            {
-                                // Calculate inner area to get correct item index
-                                let inner = if self.bordered {
-                                    area.inner(Margin::new(1, 1))
-                                } else {
-                                    area
-                                };
-
-                                if mouse.column >= inner.x
-                                    && mouse.column < inner.x + inner.width
-                                    && mouse.row >= inner.y
-                                    && mouse.row < inner.y + inner.height
-                                {
-                                    let relative_row = mouse.row.saturating_sub(inner.y) as usize;
-                                    let item_idx = relative_row + self.list_state.borrow().offset();
-                                    if item_idx < self.items.len() {
-                                        self.list_state.borrow_mut().select(Some(item_idx));
-                                        return true;
-                                    }
-                                }
-                                return true;
-                            }
-                        }
-                        false
-                    }
-                    ratatui::crossterm::event::MouseEventKind::ScrollDown => {
+                match key.code {
+                    ratatui::crossterm::event::KeyCode::Down
+                    | ratatui::crossterm::event::KeyCode::Char('j') => {
                         self.select_next();
                         true
                     }
-                    ratatui::crossterm::event::MouseEventKind::ScrollUp => {
+                    ratatui::crossterm::event::KeyCode::Up
+                    | ratatui::crossterm::event::KeyCode::Char('k') => {
+                        self.select_previous();
+                        true
+                    }
+                    ratatui::crossterm::event::KeyCode::Char(' ') => {
+                        self.activate_selected();
+                        true
+                    }
+                    _ => false,
+                }
+            }
+            Event::Mouse(mouse) => {
+                let area = self.last_area.get();
+                let is_hovered = mouse.column >= area.x
+                    && mouse.column < area.x + area.width
+                    && mouse.row >= area.y
+                    && mouse.row < area.y + area.height;
+
+                match mouse.kind {
+                    ratatui::crossterm::event::MouseEventKind::Down(button) => {
+                        if !self.focused {
+                            return false;
+                        }
+
+                        if button == ratatui::crossterm::event::MouseButton::Left && is_hovered {
+                            // Calculate inner area to get correct item index
+                            let inner =
+                                if self.bordered { area.inner(Margin::new(1, 1)) } else { area };
+
+                            if mouse.column >= inner.x
+                                && mouse.column < inner.x + inner.width
+                                && mouse.row >= inner.y
+                                && mouse.row < inner.y + inner.height
+                            {
+                                let relative_row = mouse.row.saturating_sub(inner.y) as usize;
+                                let item_idx = relative_row + self.list_state.borrow().offset();
+                                if item_idx < self.items.len() {
+                                    self.list_state.borrow_mut().select(Some(item_idx));
+                                    return true;
+                                }
+                            }
+                            return true;
+                        }
+                        false
+                    }
+                    ratatui::crossterm::event::MouseEventKind::ScrollDown if is_hovered => {
+                        self.select_next();
+                        true
+                    }
+                    ratatui::crossterm::event::MouseEventKind::ScrollUp if is_hovered => {
                         self.select_previous();
                         true
                     }

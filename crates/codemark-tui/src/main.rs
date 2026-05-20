@@ -152,6 +152,7 @@ async fn run_app() -> Result<()> {
 
             for event in events {
                 let mut handled = false;
+                let mode_before = state.mode();
 
                 match &event {
                     Event::Key(key) => {
@@ -181,18 +182,8 @@ async fn run_app() -> Result<()> {
                                     _ => {}
                                 }
                             }
-                            AppMode::Command => {
-                                if key.code == event::KeyCode::Esc {
-                                    state.set_mode(AppMode::Normal);
-                                    handled = true;
-                                }
-                            }
-                            _ => {
-                                if key.code == event::KeyCode::Esc {
-                                    state.set_mode(AppMode::Normal);
-                                    handled = true;
-                                }
-                            }
+                            AppMode::Command => {}
+                            _ => {}
                         }
                     }
                     Event::Resize(width, height) => {
@@ -203,16 +194,19 @@ async fn run_app() -> Result<()> {
 
                 // If not handled by global keys, pass to layout (includes mouse events)
                 // Skip when help is shown to make help modal
-                if !handled && !show_help {
-                    layout.handle_event(&event);
+                // In input modes (Command/Search/Insert), only pass mouse events to layout
+                // so that Esc can be handled by state to exit the mode
+                let is_input_mode =
+                    matches!(state.mode(), AppMode::Command | AppMode::Search | AppMode::Insert);
+                let is_mouse_event = matches!(event, Event::Mouse(_));
+                if !handled && !show_help && (!is_input_mode || is_mouse_event) {
+                    handled = layout.handle_event(&event);
                 }
-
-                // Track mode before state handles the event
-                let mode_before = state.mode();
 
                 // Let state handle the event too (captures keys for Search mode)
                 // Skip when help is shown to make help modal
-                if !show_help {
+                // Skip if layout already handled the event (prevents keybinding conflicts)
+                if !show_help && !handled {
                     state.handle_event(&event);
                 }
 
@@ -220,12 +214,12 @@ async fn run_app() -> Result<()> {
                 let mode_after = state.mode();
                 if mode_before != mode_after {
                     match (mode_before, mode_after) {
-                        (AppMode::Normal, AppMode::Search) => {
-                            // Entering filter mode - clear focus to prevent keybinding interference
+                        (AppMode::Normal, AppMode::Search) | (AppMode::Normal, AppMode::Insert) => {
+                            // Entering filter/input mode
                             layout.enter_filter_mode();
                         }
-                        (AppMode::Search, AppMode::Normal) => {
-                            // Exiting filter mode - restore previous focus
+                        (AppMode::Search, AppMode::Normal) | (AppMode::Insert, AppMode::Normal) => {
+                            // Exiting filter/input mode
                             layout.exit_filter_mode();
                         }
                         _ => {}

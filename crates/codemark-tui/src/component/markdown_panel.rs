@@ -4,7 +4,7 @@ use crate::component::Component;
 use crate::event::Event;
 use ratatui::{
     buffer::Buffer,
-    layout::Rect,
+    layout::{Position, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span, Text},
     widgets::{Paragraph, Widget},
@@ -19,6 +19,8 @@ pub struct MarkdownPanel {
     scroll_offset: u16,
     /// Whether the component is focused
     focused: bool,
+    /// Last rendered area
+    last_area: std::cell::Cell<Rect>,
 }
 
 impl MarkdownPanel {
@@ -103,6 +105,7 @@ impl MarkdownPanel {
 
 impl Component for MarkdownPanel {
     fn render(&self, area: Rect, buf: &mut Buffer) {
+        self.last_area.set(area);
         let text = self.parse_to_text();
         let paragraph = Paragraph::new(text).scroll((self.scroll_offset, 0));
 
@@ -110,43 +113,49 @@ impl Component for MarkdownPanel {
     }
 
     fn handle_event(&mut self, event: &Event) -> bool {
-        if !self.focused {
-            return false;
-        }
-
         match event {
-            Event::Key(key) => match key.code {
-                ratatui::crossterm::event::KeyCode::Down
-                | ratatui::crossterm::event::KeyCode::Char('j') => {
-                    self.scroll_offset = self.scroll_offset.saturating_add(1);
-                    true
+            Event::Key(key) => {
+                if !self.focused {
+                    return false;
                 }
-                ratatui::crossterm::event::KeyCode::Up
-                | ratatui::crossterm::event::KeyCode::Char('k') => {
-                    self.scroll_offset = self.scroll_offset.saturating_sub(1);
-                    true
+                match key.code {
+                    ratatui::crossterm::event::KeyCode::Down
+                    | ratatui::crossterm::event::KeyCode::Char('j') => {
+                        self.scroll_offset = self.scroll_offset.saturating_add(1);
+                        true
+                    }
+                    ratatui::crossterm::event::KeyCode::Up
+                    | ratatui::crossterm::event::KeyCode::Char('k') => {
+                        self.scroll_offset = self.scroll_offset.saturating_sub(1);
+                        true
+                    }
+                    ratatui::crossterm::event::KeyCode::Char('J') => {
+                        self.scroll_offset = self.scroll_offset.saturating_add(5);
+                        true
+                    }
+                    ratatui::crossterm::event::KeyCode::Char('K') => {
+                        self.scroll_offset = self.scroll_offset.saturating_sub(5);
+                        true
+                    }
+                    _ => false,
                 }
-                ratatui::crossterm::event::KeyCode::Char('J') => {
-                    self.scroll_offset = self.scroll_offset.saturating_add(5);
-                    true
+            }
+            Event::Mouse(mouse) => {
+                let area = self.last_area.get();
+                let is_hovered = area.contains(Position::from((mouse.column, mouse.row)));
+
+                match mouse.kind {
+                    ratatui::crossterm::event::MouseEventKind::ScrollDown if is_hovered => {
+                        self.scroll_offset = self.scroll_offset.saturating_add(1);
+                        true
+                    }
+                    ratatui::crossterm::event::MouseEventKind::ScrollUp if is_hovered => {
+                        self.scroll_offset = self.scroll_offset.saturating_sub(1);
+                        true
+                    }
+                    _ => false,
                 }
-                ratatui::crossterm::event::KeyCode::Char('K') => {
-                    self.scroll_offset = self.scroll_offset.saturating_sub(5);
-                    true
-                }
-                _ => false,
-            },
-            Event::Mouse(mouse) => match mouse.kind {
-                ratatui::crossterm::event::MouseEventKind::ScrollDown => {
-                    self.scroll_offset = self.scroll_offset.saturating_add(1);
-                    true
-                }
-                ratatui::crossterm::event::MouseEventKind::ScrollUp => {
-                    self.scroll_offset = self.scroll_offset.saturating_sub(1);
-                    true
-                }
-                _ => false,
-            },
+            }
             _ => false,
         }
     }

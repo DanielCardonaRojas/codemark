@@ -162,7 +162,6 @@ impl Codemark {
     fn run(&self, args: &[&str]) -> CmdResult {
         let output = Command::new(&self.binary)
             .envs(std::env::vars())
-            .stderr(std::io::stderr()) // Pipe stderr to parent
             .arg("--db")
             .arg(&self.db_path)
             .args(args)

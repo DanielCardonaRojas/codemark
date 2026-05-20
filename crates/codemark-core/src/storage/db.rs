@@ -95,6 +95,8 @@ impl Database {
     }
 
     fn init(&mut self) -> Result<()> {
+        // Set busy timeout to 30 seconds to handle concurrent access
+        self.conn.busy_timeout(std::time::Duration::from_secs(30))?;
         self.conn.execute_batch(
             "PRAGMA journal_mode=WAL;
              PRAGMA synchronous=NORMAL;
