@@ -4,11 +4,13 @@
 //! containing search, repos, and tours, and a right main content area.
 
 mod data;
+mod left_pane;
 mod right_pane;
 mod search;
 mod tabs;
 mod types;
 
+pub use left_pane::LeftPane;
 pub use right_pane::{RightPane, RightPaneFocus};
 pub use search::{SearchBar, SearchMode};
 pub use tabs::{Panel2Tab, Panel3Tab, Tab, TabSelection};
@@ -60,24 +62,9 @@ pub struct BrowserLayout {
 
 
 
-/// Left sidebar containing search and three tabbed panels.
-struct LeftPane {
-    /// Search bar component
-    search: SearchBar,
-    /// First tabbed panel (Repos/Accounts)
-    panel1: TabbedPanel,
-    /// Second tabbed panel (Tags/Branches)
-    panel2: TabbedPanel,
-    /// Third tabbed panel (Tours/Collections/Bookmarks)
-    panel3: TabbedPanel,
-    /// Section height configurations
-    panel1_config: SectionConfig,
-    panel2_config: SectionConfig,
-}
-
-
 
 /// A tabbed panel component with multiple content panels.
+
 pub struct TabbedPanel {
     /// Tab selection
     tabs: TabSelection,
@@ -1342,61 +1329,6 @@ impl BrowserLayout {
             }
             _ => false,
         }
-    }
-}
-
-impl LeftPane {
-    /// Create a new left pane.
-    fn new(db: &Database, registry: &rusqlite::Connection) -> Self {
-        Self {
-            search: SearchBar::new(),
-            panel1: TabbedPanel::new_repos_accounts(db, registry),
-            panel2: TabbedPanel::new_tags_branches(db, Panel3Tab::Bookmarks),
-            panel3: TabbedPanel::new_tours_collections_bookmarks(db),
-            panel1_config: SectionConfig::new(4, 6),
-            panel2_config: SectionConfig::new(4, 8),
-        }
-    }
-
-    /// Render the left pane.
-    fn render(&self, area: Rect, buf: &mut Buffer) {
-        // Calculate heights based on focus
-        let p1_height =
-            if self.panel1.focused { self.panel1_config.max } else { self.panel1_config.min };
-
-        let p2_height =
-            if self.panel2.focused { self.panel2_config.max } else { self.panel2_config.min };
-
-        // Split vertically: search (3 rows), panel1, panel2, panel3 (takes the rest)
-        let chunks = Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Length(3),         // Search bar
-                Constraint::Length(p1_height), // Panel 1 (Repos/Accounts)
-                Constraint::Length(p2_height), // Panel 2 (Tags/Branches)
-                Constraint::Min(0),            // Panel 3 (Tours/Collections/Bookmarks)
-            ])
-            .split(area);
-
-        // Render search
-        self.search.render(chunks[0], buf);
-
-        // Render panel 1
-        self.panel1.render(chunks[1], buf);
-
-        // Render panel 2
-        self.panel2.render(chunks[2], buf);
-
-        // Render panel 3
-        self.panel3.render(chunks[3], buf);
-    }
-
-    /// Handle an event.
-    fn handle_event(&mut self, event: &Event) -> bool {
-        self.search.handle_event(event)
-            || self.panel1.handle_event(event)
-            || self.panel2.handle_event(event)
-            || self.panel3.handle_event(event)
     }
 }
 
