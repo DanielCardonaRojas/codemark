@@ -28,6 +28,8 @@ pub struct HealResult {
     pub file_path: Option<String>,
     /// The resolved byte range as "start-end" (if resolution succeeded)
     pub byte_range: Option<String>,
+    /// Whether this bookmark was intentionally skipped (e.g., git ancestor check)
+    pub was_skipped: bool,
 }
 
 /// Options for healing bookmarks.
@@ -83,6 +85,7 @@ pub async fn heal_bookmark(
                         resolution_method: ResolutionMethod::Failed,
                         file_path: None,
                         byte_range: None,
+                        was_skipped: true,
                     });
                 }
                 Ok(false) | Err(_) => {
@@ -98,10 +101,11 @@ pub async fn heal_bookmark(
             bookmark_id: bookmark.id.clone(),
             resolution_id: None,
             previous_health,
-            new_health: BookmarkHealth::Stale,
+            new_health: previous_health,
             resolution_method: ResolutionMethod::Failed,
             file_path: None,
             byte_range: None,
+            was_skipped: false,
         });
     };
 
@@ -206,6 +210,7 @@ pub async fn heal_bookmark(
         resolution_method: result.method,
         file_path,
         byte_range,
+        was_skipped: false,
     })
 }
 
@@ -255,12 +260,15 @@ pub async fn heal_collection(
     for bookmark in &bookmarks {
         match heal_bookmark(db, bookmark, config, options).await {
             Ok(result) => {
-                // Track whether actual work was done
-                // Skipped bookmarks have resolution_id: None
-                if result.resolution_id.is_some() {
+                if result.was_skipped {
+                    // Intentionally skipped (e.g., git ancestor check)
+                    skipped += 1;
+                } else if result.resolution_method != ResolutionMethod::Failed {
+                    // Successfully healed (or validated with no change needed)
                     healed += 1;
                 } else {
-                    skipped += 1;
+                    // Failed to resolve (e.g., language parse error)
+                    failed += 1;
                 }
             }
             Err(_) => failed += 1,
@@ -295,6 +303,7 @@ mod tests {
             resolution_method: ResolutionMethod::Exact,
             file_path: Some("/path/to/file.rs".to_string()),
             byte_range: Some("100-200".to_string()),
+            was_skipped: false,
         };
 
         assert_eq!(result.bookmark_id, "test-bm");
