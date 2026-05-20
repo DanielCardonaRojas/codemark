@@ -194,7 +194,12 @@ async fn run_app() -> Result<()> {
 
                 // If not handled by global keys, pass to layout (includes mouse events)
                 // Skip when help is shown to make help modal
-                if !handled && !show_help {
+                // In input modes (Command/Search/Insert), only pass mouse events to layout
+                // so that Esc can be handled by state to exit the mode
+                let is_input_mode =
+                    matches!(state.mode(), AppMode::Command | AppMode::Search | AppMode::Insert);
+                let is_mouse_event = matches!(event, Event::Mouse(_));
+                if !handled && !show_help && (!is_input_mode || is_mouse_event) {
                     handled = layout.handle_event(&event);
                 }
 
