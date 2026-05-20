@@ -250,7 +250,8 @@ impl Component for CodePreview {
                     | ratatui::crossterm::event::KeyCode::Char('j') => {
                         let line_count = self.code.lines().count();
                         if line_count > 0 {
-                            let next = self.selected_line.map_or(0, |i| (i + 1).min(line_count - 1));
+                            let next =
+                                self.selected_line.map_or(0, |i| (i + 1).min(line_count - 1));
                             self.selected_line = Some(next);
 
                             // Auto-scroll if selection goes off screen

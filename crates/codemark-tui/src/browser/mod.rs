@@ -730,7 +730,14 @@ impl BrowserLayout {
     /// Apply a filter to the currently focused panel.
     pub fn apply_filter(&mut self, query: &str) {
         let target_focus = if self.focus == FocusArea::Filter {
-            self.previous_focus.unwrap_or(FocusArea::Panel3)
+            match self.previous_focus {
+                Some(FocusArea::Panel1) => FocusArea::Panel1,
+                Some(FocusArea::Panel2) => FocusArea::Panel2,
+                Some(FocusArea::Panel3) => FocusArea::Panel3,
+                Some(FocusArea::Main) => FocusArea::Main,
+                // Normalize Search and Filter to Panel3 (same as exit_filter_mode)
+                Some(FocusArea::Search) | Some(FocusArea::Filter) | None => FocusArea::Panel3,
+            }
         } else {
             self.focus
         };
@@ -1197,10 +1204,16 @@ impl BrowserLayout {
                     }
                 }
                 ratatui::crossterm::event::KeyCode::Tab => {
+                    if !self.should_handle_keybindings() {
+                        return false;
+                    }
                     self.next_focus();
                     return true;
                 }
                 ratatui::crossterm::event::KeyCode::BackTab => {
+                    if !self.should_handle_keybindings() {
+                        return false;
+                    }
                     self.previous_focus();
                     return true;
                 }
