@@ -24,6 +24,10 @@ pub struct HealResult {
     pub new_health: BookmarkHealth,
     /// Resolution method used
     pub resolution_method: ResolutionMethod,
+    /// The resolved file path (if resolution succeeded)
+    pub file_path: Option<String>,
+    /// The resolved byte range as "start-end" (if resolution succeeded)
+    pub byte_range: Option<String>,
 }
 
 /// Options for healing bookmarks.
@@ -77,6 +81,8 @@ pub async fn heal_bookmark(
                         previous_health,
                         new_health: previous_health,
                         resolution_method: ResolutionMethod::Failed,
+                        file_path: None,
+                        byte_range: None,
                     });
                 }
                 Ok(false) | Err(_) => {
@@ -94,6 +100,8 @@ pub async fn heal_bookmark(
             previous_health,
             new_health: BookmarkHealth::Stale,
             resolution_method: ResolutionMethod::Failed,
+            file_path: None,
+            byte_range: None,
         });
     };
 
@@ -174,9 +182,21 @@ pub async fn heal_bookmark(
         && let Ok(ids) = db.list_collection_ids_for_bookmark(&bookmark.id)
     {
         for collection_id in ids {
-            let _ = db.recompute_collection_health(&collection_id);
+            if let Err(e) = db.recompute_collection_health(&collection_id) {
+                eprintln!(
+                    "codemark: warning: failed to recompute health for collection {}: {}",
+                    collection_id, e
+                );
+            }
         }
     }
+
+    // Include location info in result (for validate_only mode reporting)
+    let (file_path, byte_range) = if result.method != ResolutionMethod::Failed {
+        (Some(result.file_path), Some(format!("{}-{}", result.byte_range.0, result.byte_range.1)))
+    } else {
+        (None, None)
+    };
 
     Ok(HealResult {
         bookmark_id: bookmark.id.clone(),
@@ -184,6 +204,8 @@ pub async fn heal_bookmark(
         previous_health,
         new_health: final_status,
         resolution_method: result.method,
+        file_path,
+        byte_range,
     })
 }
 
@@ -262,7 +284,6 @@ pub struct CollectionHealResult {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engine::bookmark::Bookmark;
 
     #[test]
     fn test_heal_result_creation() {
@@ -272,6 +293,8 @@ mod tests {
             previous_health: BookmarkHealth::Drifted,
             new_health: BookmarkHealth::Active,
             resolution_method: ResolutionMethod::Exact,
+            file_path: Some("/path/to/file.rs".to_string()),
+            byte_range: Some("100-200".to_string()),
         };
 
         assert_eq!(result.bookmark_id, "test-bm");

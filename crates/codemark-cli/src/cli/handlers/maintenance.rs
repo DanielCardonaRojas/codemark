@@ -88,10 +88,16 @@ pub async fn handle_heal(cli: &Cli, mode: &OutputMode, args: &HealArgs) -> Resul
         // Use the heal module to resolve and update
         let heal_result = heal::heal_bookmark(&db, bm, &config, &heal_options).await?;
 
-        // Build the new location (null if failed)
+        // Build the new location from heal result (or from DB if not validate-only)
         let new_location = if heal_result.resolution_method != ResolutionMethod::Failed {
-            // Re-resolve to get byte range (TODO: include in heal result)
-            if let Ok(Some(res)) = db.get_resolution(&bm.id) {
+            // In validate-only mode, use the location from the heal result directly.
+            // Otherwise, read from the database (where it was just written).
+            if args.validate_only {
+                heal_result
+                    .byte_range
+                    .as_ref()
+                    .and_then(|s| ByteLocation::from_str(s))
+            } else if let Ok(Some(res)) = db.get_resolution(&bm.id) {
                 res.byte_range.as_ref().and_then(|s| ByteLocation::from_str(s))
             } else {
                 None

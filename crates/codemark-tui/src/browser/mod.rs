@@ -1674,13 +1674,36 @@ impl RightPane {
                 self.active_tour_name = None;
                 self.update_preview();
             }
+        } else {
+            // Bookmark not found - clear stale preview state
+            self.clear_preview_state();
         }
+    }
+
+    /// Clear the preview state (used when a bookmark cannot be loaded).
+    fn clear_preview_state(&mut self) {
+        self.steps_data.clear();
+        self.pager_total = 0;
+        self.pager_current = 0;
+        self.active_bookmark_id = None;
+        self.active_tour_name = None;
+        self.update_preview();
     }
 
     /// Load a tour and its steps from the database.
     pub fn load_tour(&mut self, db: &Database, tour_name: &str) {
-        if let Ok(Some(collection)) = db.get_collection_by_name(tour_name)
-            && let Ok(bookmarks) = db.list_bookmarks_in_collection(&collection.id)
+        let Some(collection) = db.get_collection_by_name(tour_name).ok().flatten() else {
+            // Collection not found - clear stale preview state
+            self.clear_preview_state();
+            return;
+        };
+
+        let Ok(bookmarks) = db.list_bookmarks_in_collection(&collection.id) else {
+            // Failed to load bookmarks - clear stale preview state
+            self.clear_preview_state();
+            return;
+        };
+
         {
             let mut new_steps = Vec::new();
             for bm in bookmarks {
@@ -1735,10 +1758,7 @@ impl RightPane {
                 self.update_preview();
             } else {
                 // Clear the right-pane state when no steps are available
-                self.steps_data.clear();
-                self.pager_total = 0;
-                self.pager_current = 0;
-                self.details = DetailsPanel::new();
+                self.clear_preview_state();
             }
         }
     }
