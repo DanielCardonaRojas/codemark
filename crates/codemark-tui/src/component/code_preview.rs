@@ -17,17 +17,29 @@ use syntect::util::LinesWithEndings;
 use super::Component;
 use crate::event::Event;
 
+/// Load the syntax set from embedded syntect-assets data.
+///
+/// This is called once at startup via `LazyLock`. The data is bundled
+/// at compile time from the syntect-assets package (which sources from
+/// the bat project's syntax definitions).
 fn load_syntax_set() -> SyntaxSet {
     syntect_assets::assets::HighlightingAssets::from_binary()
         .get_syntax_set()
-        .unwrap()
+        .expect("syntect-assets binary data should always contain a valid syntax set")
         .clone()
 }
 
+/// Load the theme from embedded syntect-assets data.
+///
+/// This is called once at startup via `LazyLock`. The theme is bundled
+/// at compile time from the syntect-assets package.
+///
+/// Note: `get_theme` returns a reference to the theme directly, not a
+/// `Result`. If the theme name is not found, syntect-assets will
+/// silently fall back to a default theme. This is a known limitation
+/// of the library's API.
 fn load_theme() -> Theme {
-    syntect_assets::assets::HighlightingAssets::from_binary()
-        .get_theme("OneHalfDark")
-        .clone()
+    syntect_assets::assets::HighlightingAssets::from_binary().get_theme("OneHalfDark").clone()
 }
 
 static SYNTAX_SET: LazyLock<SyntaxSet> = LazyLock::new(load_syntax_set);
@@ -103,7 +115,8 @@ impl CodePreview {
         let mut highlighted = Vec::new();
 
         for (i, line) in LinesWithEndings::from(&self.code).enumerate() {
-            let ranges: Vec<(SyntectStyle, &str)> = h.highlight_line(line, syntax_set).unwrap_or_default();
+            let ranges: Vec<(SyntectStyle, &str)> =
+                h.highlight_line(line, syntax_set).unwrap_or_default();
             let mut spans = Vec::new();
 
             // Add sign column indicator (1 char) + line number (4 chars) + space (1 char) = 6 chars total gutter
