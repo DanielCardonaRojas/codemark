@@ -10,15 +10,40 @@ use ratatui::{
 use std::cell::RefCell;
 use std::sync::LazyLock;
 use syntect::easy::HighlightLines;
-use syntect::highlighting::{Style as SyntectStyle, ThemeSet};
+use syntect::highlighting::{Style as SyntectStyle, Theme};
 use syntect::parsing::SyntaxSet;
 use syntect::util::LinesWithEndings;
 
 use super::Component;
 use crate::event::Event;
 
-static SYNTAX_SET: LazyLock<SyntaxSet> = LazyLock::new(SyntaxSet::load_defaults_newlines);
-static THEME_SET: LazyLock<ThemeSet> = LazyLock::new(ThemeSet::load_defaults);
+/// Load the syntax set from embedded syntect-assets data.
+///
+/// This is called once at startup via `LazyLock`. The data is bundled
+/// at compile time from the syntect-assets package (which sources from
+/// the bat project's syntax definitions).
+fn load_syntax_set() -> SyntaxSet {
+    syntect_assets::assets::HighlightingAssets::from_binary()
+        .get_syntax_set()
+        .expect("syntect-assets binary data should always contain a valid syntax set")
+        .clone()
+}
+
+/// Load the theme from embedded syntect-assets data.
+///
+/// This is called once at startup via `LazyLock`. The theme is bundled
+/// at compile time from the syntect-assets package.
+///
+/// Note: `get_theme` returns a reference to the theme directly, not a
+/// `Result`. If the theme name is not found, syntect-assets will
+/// silently fall back to a default theme. This is a known limitation
+/// of the library's API.
+fn load_theme() -> Theme {
+    syntect_assets::assets::HighlightingAssets::from_binary().get_theme("OneHalfDark").clone()
+}
+
+static SYNTAX_SET: LazyLock<SyntaxSet> = LazyLock::new(load_syntax_set);
+static THEME: LazyLock<Theme> = LazyLock::new(load_theme);
 
 // @lat: [[tui-line-range-selection#CodePreview component]]
 /// A component for displaying syntax-highlighted code with line numbers.
@@ -80,18 +105,18 @@ impl CodePreview {
 
     /// Refresh the syntax highlighting cache.
     fn refresh_cache(&self) {
-        let ps = &*SYNTAX_SET;
-        let ts = &*THEME_SET;
-        let syntax = ps
+        let syntax_set = &*SYNTAX_SET;
+        let theme = &*THEME;
+        let syntax = syntax_set
             .find_syntax_by_extension(&self.extension)
-            .unwrap_or_else(|| ps.find_syntax_plain_text());
-        let theme = &ts.themes["base16-ocean.dark"];
+            .unwrap_or_else(|| syntax_set.find_syntax_plain_text());
 
         let mut h = HighlightLines::new(syntax, theme);
         let mut highlighted = Vec::new();
 
         for (i, line) in LinesWithEndings::from(&self.code).enumerate() {
-            let ranges: Vec<(SyntectStyle, &str)> = h.highlight_line(line, ps).unwrap_or_default();
+            let ranges: Vec<(SyntectStyle, &str)> =
+                h.highlight_line(line, syntax_set).unwrap_or_default();
             let mut spans = Vec::new();
 
             // Add sign column indicator (1 char) + line number (4 chars) + space (1 char) = 6 chars total gutter
