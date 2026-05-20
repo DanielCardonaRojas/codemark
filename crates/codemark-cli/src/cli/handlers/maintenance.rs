@@ -7,9 +7,9 @@ use crate::cli::output::{
 use crate::cli::*;
 use codemark_core::embeddings::config::EmbeddingModel;
 use codemark_core::engine::bookmark::{
-    Bookmark, BookmarkFilter, BookmarkHealth, Resolution, ResolutionMethod, Tag,
+    Bookmark, BookmarkFilter, BookmarkHealth, ResolutionMethod, Tag,
 };
-use codemark_core::engine::{health, resolution};
+use codemark_core::engine::{heal, health, resolution};
 use codemark_core::error::{Error, Result};
 use codemark_core::git::context as git_context;
 use codemark_core::parser::languages::{Language, ParseCache};
@@ -35,13 +35,18 @@ pub async fn handle_heal(cli: &Cli, mode: &OutputMode, args: &HealArgs) -> Resul
     let bookmarks = db.list_bookmarks(&filter)?;
     let config = load_config(cli);
 
-    // Get current HEAD once for all bookmarks
+    // Get current HEAD once for all bookmarks (for skip detection)
     let cwd = std::env::current_dir()?;
     let current_head = git_context::detect_context(&cwd).and_then(|ctx| ctx.head_commit);
 
     let mut updates = Vec::new();
     let mut skipped = 0usize;
-    let mut affected_collections = std::collections::HashSet::new();
+
+    let heal_options = heal::HealOptions {
+        force: args.force,
+        auto_archive: args.auto_archive,
+        archive_after: args.archive_after,
+    };
 
     for bm in &bookmarks {
         // Get previous resolution for location tracking
@@ -79,84 +84,17 @@ pub async fn handle_heal(cli: &Cli, mode: &OutputMode, args: &HealArgs) -> Resul
             }
         }
 
-        let Ok(lang) = bm.language.parse::<Language>() else {
-            continue;
-        };
-        let mut cache = ParseCache::new(lang)?;
-        let ts_lang = lang.tree_sitter_language();
-        let provider = codemark_core::vfs::LocalFileProvider;
-        let result = resolution::resolve(bm, &mut cache, &ts_lang, db.path(), &provider).await?;
-        let days_since = health::days_since_resolution(bm.last_resolved_at.as_deref());
-        let new_status = health::transition(
-            bm.health,
-            result.method,
-            result.hash_matches,
-            days_since,
-            config.health.stale_days(),
-        );
-        let previous_status = bm.health;
-
-        // Auto-archive check
-        let final_status = if args.auto_archive
-            && new_status == BookmarkHealth::Stale
-            && bm
-                .stale_since
-                .as_deref()
-                .is_some_and(|s| health::should_auto_archive(s, args.archive_after))
-        {
-            BookmarkHealth::Archived
-        } else {
-            new_status
-        };
-
-        let breadcrumbs_json = if result.breadcrumbs.is_empty() {
-            None
-        } else {
-            serde_json::to_string(&result.breadcrumbs).ok()
-        };
-
-        // Track affected collections for health recompute
-        if let Ok(ids) = db.list_collection_ids_for_bookmark(&bm.id) {
-            for id in ids {
-                affected_collections.insert(id);
-            }
-        }
-
-        // Track the resolution ID that was created (if any)
-        let resolution_id = if !args.validate_only {
-            let res = Resolution {
-                id: uuid::Uuid::new_v4().to_string(),
-                bookmark_id: bm.id.clone(),
-                resolved_at: now_iso(),
-                health: final_status,
-                commit_hash: git_context::detect_context(&std::env::current_dir()?)
-                    .and_then(|ctx| ctx.head_commit),
-                method: result.method,
-                match_count: Some(1),
-                file_path: Some(result.file_path.clone()),
-                byte_range: Some(format!("{}-{}", result.byte_range.0, result.byte_range.1)),
-                line_range: Some(format!("{}-{}", result.start_line + 1, result.end_line + 1)),
-                content_hash: Some(result.content_hash.clone()),
-                headline: None,
-                snapshot: Some(result.matched_text.clone()),
-                breadcrumbs: breadcrumbs_json,
-            };
-            let res_id = res.id.clone();
-            if db.insert_resolution_if_changed(&res, config.storage.max_resolutions())? {
-                // New resolution recorded, update the bookmark's current pointer
-                db.update_bookmark_resolution_id(&bm.id, &res_id)?;
-                Some(res_id)
-            } else {
-                // Existing resolution updated, current_resolution_id remains correct
-                bm.current_resolution_id.clone()
-            }
-        } else {
-            None
-        };
+        // Use the heal module to resolve and update
+        let heal_result = heal::heal_bookmark(&db, bm, &config, &heal_options).await?;
 
         // Build the new location (null if failed)
-        let new_location = if result.method != ResolutionMethod::Failed {
-            Some(ByteLocation { start_byte: result.byte_range.0, end_byte: result.byte_range.1 })
+        let new_location = if heal_result.resolution_method != ResolutionMethod::Failed {
+            // Re-resolve to get byte range (TODO: include in heal result)
+            if let Ok(Some(res)) = db.get_resolution(&bm.id) {
+                res.byte_range.as_ref().and_then(|s| ByteLocation::from_str(s))
+            } else {
+                None
+            }
         } else {
             None
         };
@@ -175,27 +113,17 @@ pub async fn handle_heal(cli: &Cli, mode: &OutputMode, args: &HealArgs) -> Resul
 
         updates.push(HealUpdate {
             bookmark_id: bm.id.clone(),
-            resolution_id,
+            resolution_id: heal_result.resolution_id,
             name,
             file_path: bm.file_path.clone(),
-            previous_health: previous_status.to_string(),
-            new_health: final_status.to_string(),
-            previous_health_alias: previous_status.to_string(),
-            new_health_alias: final_status.to_string(),
-            resolution_method: result.method.to_string(),
+            previous_health: heal_result.previous_health.to_string(),
+            new_health: heal_result.new_health.to_string(),
+            previous_health_alias: heal_result.previous_health.to_string(),
+            new_health_alias: heal_result.new_health.to_string(),
+            resolution_method: heal_result.resolution_method.to_string(),
             previous_location,
             new_location,
         });
-    }
-
-    // Recompute health for all affected collections
-    for collection_id in affected_collections {
-        if let Err(e) = db.recompute_collection_health(&collection_id) {
-            eprintln!(
-                "codemark: warning: failed to recompute health for collection {}: {}",
-                collection_id, e
-            );
-        }
     }
 
     let total_processed = updates.len();
