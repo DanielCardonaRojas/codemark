@@ -30,6 +30,8 @@ pub enum Event {
     SearchResults(Vec<Bookmark>),
     /// Search failed with an error message.
     SearchError(String),
+    /// Heal operation completed with a notification message.
+    HealComplete(String, bool), // (message, success)
 }
 
 impl Event {

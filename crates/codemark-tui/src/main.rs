@@ -276,6 +276,18 @@ async fn run_app() -> Result<()> {
                         }
                     }
                 }
+
+                // Handle heal notifications
+                if let Some(heal_notif) = layout.take_pending_notification() {
+                    notification = Some((
+                        heal_notif.message,
+                        if heal_notif.success {
+                            NotificationType::Info
+                        } else {
+                            NotificationType::Error
+                        },
+                    ));
+                }
             }
         } else {
             // Event channel closed, quit the app
