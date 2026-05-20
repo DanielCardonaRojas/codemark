@@ -37,7 +37,7 @@ pub mod ui;
 
 // Re-export commonly used types
 pub use app::{App, AppBuilder};
-pub use browser::{BrowserLayout, FocusArea, SearchBar, Tab, TabSelection};
+pub use browser::{BrowserLayout, FocusArea, HealNotification, SearchBar, Tab, TabSelection};
 pub use component::{
     Component, HealthStatus, Label, Panel, PanelItem, SizeConstraints, Spacer, SyncDirection,
 };

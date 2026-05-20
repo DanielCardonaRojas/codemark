@@ -35,6 +35,24 @@ pub struct ExternalCommand {
     pub should_wait: bool,
 }
 
+/// Result of a heal operation that can be displayed as a notification.
+#[derive(Debug, Clone)]
+pub struct HealNotification {
+    /// Message to display
+    pub message: String,
+    /// Whether the operation was successful
+    pub success: bool,
+}
+
+/// Target for healing operation.
+#[derive(Debug, Clone)]
+enum HealTarget {
+    /// Heal a single bookmark by ID
+    Bookmark(String),
+    /// Heal all bookmarks in a collection by ID
+    Collection(String),
+}
+
 /// The main browser layout.
 ///
 /// Splits the screen vertically with a left sidebar (40%) and right main area (60%).
@@ -54,6 +72,8 @@ pub struct BrowserLayout {
     previous_focus: Option<FocusArea>,
     /// Pending external command to be executed
     pending_command: Option<ExternalCommand>,
+    /// Pending heal notification to be displayed
+    pending_notification: Option<HealNotification>,
     /// Event handler for sending custom events
     event_handler: crate::event::EventHandler,
 }
@@ -137,6 +157,10 @@ struct RightPane {
     last_area: std::cell::Cell<Rect>,
     /// Details height configuration
     info_config: SectionConfig,
+    /// Active tour name (if a tour is loaded)
+    active_tour_name: Option<String>,
+    /// Active bookmark ID (if a single bookmark is loaded)
+    active_bookmark_id: Option<String>,
 }
 
 /// Focus areas within the right pane.
@@ -247,6 +271,7 @@ impl BrowserLayout {
             db,
             registry,
             pending_command: None,
+            pending_notification: None,
             event_handler,
         };
         layout.update_focus_state();
@@ -272,6 +297,11 @@ impl BrowserLayout {
     /// Take the pending external command, if any.
     pub fn take_pending_command(&mut self) -> Option<ExternalCommand> {
         self.pending_command.take()
+    }
+
+    /// Take the pending heal notification, if any.
+    pub fn take_pending_notification(&mut self) -> Option<HealNotification> {
+        self.pending_notification.take()
     }
 
     /// Execute a search based on the current search bar query and mode.
@@ -359,6 +389,74 @@ impl BrowserLayout {
         Ok(())
     }
 
+    /// Start healing the currently selected bookmark(s) based on focus.
+    ///
+    /// This spawns an async background task to perform the heal operation.
+    /// When complete, a HealComplete event will be sent with the result.
+    pub fn start_heal_selection(&mut self) {
+        let db_path = self.db.path().to_path_buf();
+        let event_handler = self.event_handler.clone();
+
+        // Determine the heal target based on current focus
+        let target = match self.focus {
+            FocusArea::Panel3 => {
+                if let Some(panel) = self.left_pane.panel3.active_panel() {
+                    match tabs::Panel3Tab::from_index(self.left_pane.panel3.tabs.selected_index()) {
+                        Some(tabs::Panel3Tab::Bookmarks) => {
+                            // Heal selected bookmark
+                            panel
+                                .selected()
+                                .and_then(|s| s.user_data.clone())
+                                .map(HealTarget::Bookmark)
+                        }
+                        Some(tabs::Panel3Tab::Collections) | Some(tabs::Panel3Tab::Tours) => {
+                            // Heal all bookmarks in collection/tour
+                            panel.selected().and_then(|s| {
+                                if let Some(id) = &s.user_data {
+                                    Some(HealTarget::Collection(id.clone()))
+                                } else {
+                                    // Fallback to name lookup if user_data is missing
+                                    let name = s.text().to_string();
+                                    self.db
+                                        .get_collection_by_name(&name)
+                                        .ok()
+                                        .flatten()
+                                        .map(|c| HealTarget::Collection(c.id))
+                                }
+                            })
+                        }
+                        None => None,
+                    }
+                } else {
+                    None
+                }
+            }
+            FocusArea::Main => {
+                // Heal the currently displayed bookmark in preview
+                self.right_pane
+                    .steps_data
+                    .get(self.right_pane.pager_current)
+                    .map(|step| HealTarget::Bookmark(step.bookmark.id.clone()))
+            }
+            _ => None,
+        };
+
+        let Some(target) = target else {
+            // No valid target - show error
+            let _ = event_handler
+                .send(Event::HealComplete("Nothing selected to heal".to_string(), false));
+            return;
+        };
+
+        // Spawn a background task to perform the heal.
+        // Note: We use spawn_blocking because Database is not Send/Sync (rusqlite limitation).
+        // This runs the blocking database operations on a dedicated thread pool.
+        tokio::task::spawn_blocking(move || {
+            let handle = tokio::runtime::Handle::current();
+            handle.block_on(perform_heal(db_path, target, event_handler))
+        });
+    }
+
     /// Refresh all panels from the current active database.
     pub fn refresh_all_panels(&mut self) {
         // 1. Update Panel 1 Repos (in-place to preserve selection)
@@ -383,16 +481,27 @@ impl BrowserLayout {
         }
 
         // 4. Update Step previews (Right Pane)
-        if let Ok(collections) = self.db.list_collections() {
+        let current_step = self.right_pane.pager_current;
+        if let Some(tour_name) = self.right_pane.active_tour_name.clone() {
+            self.right_pane.load_tour(&self.db, &tour_name);
+            // Restore step if possible
+            if current_step < self.right_pane.pager_total {
+                self.right_pane.pager_current = current_step;
+                self.right_pane.update_preview();
+            }
+        } else if let Some(bm_id) = self.right_pane.active_bookmark_id.clone() {
+            self.right_pane.load_bookmark(&self.db, &bm_id);
+        } else if let Ok(collections) = self.db.list_collections() {
+            // Default to first tour only if nothing was active
             if let Some((first_tour, _)) = collections.first() {
                 let name = first_tour.name.clone();
                 self.right_pane.load_tour(&self.db, &name);
-            } else {
-                // Clear steps if no tours found
-                self.right_pane.steps_data.clear();
-                self.right_pane.pager_total = 0;
-                self.right_pane.pager_current = 0;
             }
+        } else {
+            // Clear steps if nothing found
+            self.right_pane.steps_data.clear();
+            self.right_pane.pager_total = 0;
+            self.right_pane.pager_current = 0;
         }
     }
 
@@ -451,15 +560,18 @@ impl BrowserLayout {
                         bindings.push(("Enter", "Open tour"));
                         bindings.push(("p", "Pull tour"));
                         bindings.push(("P", "Push tour"));
+                        bindings.push(("H", "Heal all"));
                     }
                     Some(Panel3Tab::Collections) => {
                         bindings.push(("Enter", "Open collection"));
                         bindings.push(("d", "Delete collection"));
+                        bindings.push(("H", "Heal all"));
                     }
                     Some(Panel3Tab::Bookmarks) => {
                         bindings.push(("Enter", "Preview bookmark"));
                         bindings.push(("o", "Open in editor"));
                         bindings.push(("d", "Delete bookmark"));
+                        bindings.push(("H", "Heal"));
                     }
                     None => {}
                 }
@@ -469,6 +581,7 @@ impl BrowserLayout {
                 bindings.push(("o", "Open in editor"));
                 bindings.push(("←/h", "Previous step"));
                 bindings.push(("→/l", "Next step"));
+                bindings.push(("H", "Heal"));
                 bindings.push(("↑", "Focus steps"));
                 bindings.push(("↓", "Focus details"));
             }
@@ -508,15 +621,18 @@ impl BrowserLayout {
                     Some(Panel3Tab::Tours) => {
                         bindings.insert(0, KeyBinding::new("p", "Pull"));
                         bindings.insert(1, KeyBinding::new("P", "Push"));
+                        bindings.insert(2, KeyBinding::new("H", "Heal all"));
                     }
                     Some(Panel3Tab::Collections) => {
                         bindings.insert(0, KeyBinding::new("Enter", "Open"));
                         bindings.insert(1, KeyBinding::new("d", "Delete"));
+                        bindings.insert(2, KeyBinding::new("H", "Heal all"));
                     }
                     Some(Panel3Tab::Bookmarks) => {
                         bindings.insert(0, KeyBinding::new("o", "Open"));
                         bindings.insert(1, KeyBinding::new("Enter", "Preview"));
                         bindings.insert(2, KeyBinding::new("d", "Delete"));
+                        bindings.insert(3, KeyBinding::new("H", "Heal"));
                     }
                     None => {}
                 }
@@ -524,7 +640,8 @@ impl BrowserLayout {
             FocusArea::Main => {
                 bindings.insert(0, KeyBinding::new("Enter", "Select Step"));
                 bindings.insert(1, KeyBinding::new("o", "Open File"));
-                bindings.insert(2, KeyBinding::new("Esc", "Back to Tours"));
+                bindings.insert(2, KeyBinding::new("H", "Heal"));
+                bindings.insert(3, KeyBinding::new("Esc", "Back to Tours"));
             }
             FocusArea::Filter => {}
         }
@@ -1039,6 +1156,14 @@ impl BrowserLayout {
                 self.left_pane.search.set_error(msg.clone());
                 return true;
             }
+            Event::HealComplete(msg, success) => {
+                // Store the heal result as a notification
+                self.pending_notification =
+                    Some(HealNotification { message: msg.clone(), success: *success });
+                // Refresh panels to show updated health status
+                self.refresh_all_panels();
+                return true;
+            }
             _ => {}
         }
 
@@ -1313,6 +1438,14 @@ impl BrowserLayout {
                         _ => {}
                     }
                 }
+                // Heal keybinding - only available in Bookmarks, Collections, or Preview
+                ratatui::crossterm::event::KeyCode::Char('H')
+                    if self.should_handle_keybindings()
+                        && (self.focus == FocusArea::Panel3 || self.focus == FocusArea::Main) =>
+                {
+                    self.start_heal_selection();
+                    return true;
+                }
                 _ => {}
             }
         }
@@ -1444,6 +1577,8 @@ impl RightPane {
             pager_current: 0,
             last_area: std::cell::Cell::new(Rect::default()),
             info_config: SectionConfig::new(4, 10),
+            active_tour_name: None,
+            active_bookmark_id: None,
         };
 
         // Try to load the first tour automatically
@@ -1535,15 +1670,40 @@ impl RightPane {
                 }];
                 self.pager_total = 1;
                 self.pager_current = 0;
+                self.active_bookmark_id = Some(bookmark_id.to_string());
+                self.active_tour_name = None;
                 self.update_preview();
             }
+        } else {
+            // Bookmark not found - clear stale preview state
+            self.clear_preview_state();
         }
+    }
+
+    /// Clear the preview state (used when a bookmark cannot be loaded).
+    fn clear_preview_state(&mut self) {
+        self.steps_data.clear();
+        self.pager_total = 0;
+        self.pager_current = 0;
+        self.active_bookmark_id = None;
+        self.active_tour_name = None;
+        self.update_preview();
     }
 
     /// Load a tour and its steps from the database.
     pub fn load_tour(&mut self, db: &Database, tour_name: &str) {
-        if let Ok(Some(collection)) = db.get_collection_by_name(tour_name)
-            && let Ok(bookmarks) = db.list_bookmarks_in_collection(&collection.id)
+        let Some(collection) = db.get_collection_by_name(tour_name).ok().flatten() else {
+            // Collection not found - clear stale preview state
+            self.clear_preview_state();
+            return;
+        };
+
+        let Ok(bookmarks) = db.list_bookmarks_in_collection(&collection.id) else {
+            // Failed to load bookmarks - clear stale preview state
+            self.clear_preview_state();
+            return;
+        };
+
         {
             let mut new_steps = Vec::new();
             for bm in bookmarks {
@@ -1593,13 +1753,12 @@ impl RightPane {
                 self.steps_data = new_steps;
                 self.pager_total = self.steps_data.len();
                 self.pager_current = 0;
+                self.active_tour_name = Some(tour_name.to_string());
+                self.active_bookmark_id = None;
                 self.update_preview();
             } else {
                 // Clear the right-pane state when no steps are available
-                self.steps_data.clear();
-                self.pager_total = 0;
-                self.pager_current = 0;
-                self.details = DetailsPanel::new();
+                self.clear_preview_state();
             }
         }
     }
@@ -1830,6 +1989,15 @@ impl TabbedPanel {
         None
     }
 
+    /// Get the currently active panel (immutable).
+    pub fn active_panel(&self) -> Option<&Panel> {
+        let active_index = self.tabs.selected_index();
+        match self.panels.get(active_index) {
+            Some(TabContent::List(p)) => Some(p),
+            _ => None,
+        }
+    }
+
     /// Get the currently active panel for modification.
     pub fn active_panel_mut(&mut self) -> Option<&mut Panel> {
         let active_index = self.tabs.selected_index();
@@ -1934,7 +2102,8 @@ impl TabbedPanel {
                     .secondary_text(c.created_branch.unwrap_or_else(|| "main".to_string()))
                     .metadata(format!("{count} steps"))
                     .health(health)
-                    .published(is_published);
+                    .published(is_published)
+                    .user_data(c.id);
 
                 collections_items.push(item.clone());
                 if is_published {
@@ -2335,4 +2504,81 @@ impl Component for BrowserLayout {
     fn size_constraints(&self) -> crate::component::SizeConstraints {
         crate::component::SizeConstraints::min(40, 20)
     }
+}
+
+/// Perform heal operation in a background task.
+async fn perform_heal(
+    db_path: std::path::PathBuf,
+    target: HealTarget,
+    event_handler: crate::event::EventHandler,
+) -> anyhow::Result<()> {
+    use codemark_core::config::Config;
+    use codemark_core::engine::heal;
+    use codemark_core::storage::db::Database;
+
+    let db = Database::open(&db_path)?;
+    let Some(codemark_dir) = db_path.parent() else {
+        let _ = event_handler
+            .send(Event::HealComplete("Failed to determine codemark directory".to_string(), false));
+        return Ok(());
+    };
+
+    let config = Config::load_layered(codemark_dir);
+    let heal_options = heal::HealOptions {
+        force: false,
+        auto_archive: false,
+        archive_after: config.health.auto_archive_days(),
+        validate_only: false,
+    };
+
+    match target {
+        HealTarget::Bookmark(bookmark_id) => {
+            let bm_result = db.get_bookmark(&bookmark_id);
+            if let Ok(Some(bm)) = bm_result {
+                match heal::heal_bookmark(&db, &bm, &config, &heal_options).await {
+                    Ok(result) => {
+                        let status = match result.new_health {
+                            codemark_core::engine::bookmark::BookmarkHealth::Active => "Active",
+                            codemark_core::engine::bookmark::BookmarkHealth::Drifted => "Drifted",
+                            codemark_core::engine::bookmark::BookmarkHealth::Stale => "Stale",
+                            codemark_core::engine::bookmark::BookmarkHealth::Archived => "Archived",
+                        };
+                        let _ = event_handler.send(Event::HealComplete(
+                            if result.previous_health != result.new_health {
+                                format!("Healed: {} → {}", result.previous_health, status)
+                            } else {
+                                format!("Already {}", status)
+                            },
+                            true,
+                        ));
+                    }
+                    Err(_) => {
+                        let _ = event_handler
+                            .send(Event::HealComplete("Heal failed".to_string(), false));
+                    }
+                }
+            } else {
+                let _ = event_handler
+                    .send(Event::HealComplete("Bookmark not found".to_string(), false));
+            }
+        }
+        HealTarget::Collection(collection_id) => {
+            match heal::heal_collection(&db, &collection_id, &config, &heal_options).await {
+                Ok(result) => {
+                    let msg = if result.skipped > 0 {
+                        format!("Healed {}, skipped {}", result.healed, result.skipped)
+                    } else {
+                        format!("Healed {}", result.healed)
+                    };
+                    let _ = event_handler.send(Event::HealComplete(msg, result.failed == 0));
+                }
+                Err(_) => {
+                    let _ =
+                        event_handler.send(Event::HealComplete("Heal failed".to_string(), false));
+                }
+            }
+        }
+    }
+
+    Ok(())
 }
