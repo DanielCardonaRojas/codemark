@@ -6,9 +6,14 @@
 mod data;
 mod search;
 mod tabs;
+mod types;
 
 pub use search::{SearchBar, SearchMode};
 pub use tabs::{Panel2Tab, Panel3Tab, Tab, TabSelection};
+pub use types::{
+    ExternalCommand, FocusArea, HealNotification, HealTarget, SectionConfig, StepData, TabContent,
+    escape_markdown,
+};
 
 use crate::component::{CodePreview, Component, HealthStatus, MarkdownPanel, Panel, PanelItem};
 use crate::event::Event;
@@ -25,34 +30,6 @@ use ratatui::{
     widgets::{Paragraph, Widget, Wrap},
 };
 
-/// An external command to be executed by the TUI host.
-#[derive(Debug, Clone)]
-pub struct ExternalCommand {
-    /// The program to execute
-    pub program: String,
-    /// Arguments for the program
-    pub args: Vec<String>,
-    /// Whether the TUI should wait for this command to complete (terminal editors)
-    pub should_wait: bool,
-}
-
-/// Result of a heal operation that can be displayed as a notification.
-#[derive(Debug, Clone)]
-pub struct HealNotification {
-    /// Message to display
-    pub message: String,
-    /// Whether the operation was successful
-    pub success: bool,
-}
-
-/// Target for healing operation.
-#[derive(Debug, Clone)]
-enum HealTarget {
-    /// Heal a single bookmark by ID
-    Bookmark(String),
-    /// Heal all bookmarks in a collection by ID
-    Collection(String),
-}
 
 /// The main browser layout.
 ///
@@ -79,36 +56,7 @@ pub struct BrowserLayout {
     event_handler: crate::event::EventHandler,
 }
 
-/// Areas that can be focused in the browser.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum FocusArea {
-    /// Search bar is focused
-    Search,
-    /// Tabbed panel 1 (Repos/Accounts) is focused
-    Panel1,
-    /// Tabbed panel 2 (Tags/Branches) is focused
-    Panel2,
-    /// Tabbed panel 3 (Tours/Collections/Bookmarks) is focused
-    Panel3,
-    /// Right main panel is focused
-    Main,
-    /// Bottom filter bar is focused
-    Filter,
-}
 
-/// Configuration for a sidebar section's height.
-struct SectionConfig {
-    /// Minimum height when unfocused
-    min: u16,
-    /// Maximum height when focused
-    max: u16,
-}
-
-impl SectionConfig {
-    fn new(min: u16, max: u16) -> Self {
-        Self { min, max }
-    }
-}
 
 /// Left sidebar containing search and three tabbed panels.
 struct LeftPane {
@@ -125,20 +73,6 @@ struct LeftPane {
     panel2_config: SectionConfig,
 }
 
-// @lat: [[tui-line-range-selection#StepData struct]]
-/// Data for a single step in a tour.
-struct StepData {
-    /// Path to the file for this step
-    file_path: String,
-    /// Line number to jump to (0-indexed)
-    line_number: usize,
-    /// Optional end line number for range highlighting (0-indexed, inclusive)
-    line_end: Option<usize>,
-    /// Real bookmark data
-    bookmark: Bookmark,
-    /// Resolution data if available
-    resolution: Option<Resolution>,
-}
 
 /// Right pane containing Steps and Details sections.
 struct RightPane {
@@ -191,49 +125,6 @@ struct DetailsPanel {
     last_area: std::cell::Cell<Rect>,
 }
 
-/// Content for a tabbed panel.
-enum TabContent {
-    /// A list of items
-    List(Panel),
-    /// A code preview
-    Preview(CodePreview),
-    /// A markdown panel
-    Markdown(MarkdownPanel),
-}
-
-impl TabContent {
-    fn render(&self, area: Rect, buf: &mut Buffer) {
-        match self {
-            TabContent::List(p) => p.render(area, buf),
-            TabContent::Preview(p) => p.render(area, buf),
-            TabContent::Markdown(p) => p.render(area, buf),
-        }
-    }
-
-    fn handle_event(&mut self, event: &Event) -> bool {
-        match self {
-            TabContent::List(p) => p.handle_event(event),
-            TabContent::Preview(p) => p.handle_event(event),
-            TabContent::Markdown(p) => p.handle_event(event),
-        }
-    }
-
-    fn set_focus(&mut self, focused: bool) {
-        match self {
-            TabContent::List(p) => p.set_focus(focused),
-            TabContent::Preview(p) => p.set_focus(focused),
-            TabContent::Markdown(p) => p.set_focus(focused),
-        }
-    }
-
-    /// Check for selection changes (for live preview).
-    fn take_selection_change(&mut self) -> Option<String> {
-        match self {
-            TabContent::List(p) => p.take_selection_change(),
-            _ => None,
-        }
-    }
-}
 
 /// A tabbed panel component with multiple content panels.
 struct TabbedPanel {
@@ -249,14 +140,6 @@ struct TabbedPanel {
     pending_selection_change: std::cell::Cell<Option<String>>,
 }
 
-/// Escape special markdown characters.
-fn escape_markdown(text: &str) -> String {
-    text.replace('_', "\\_")
-        .replace('*', "\\*")
-        .replace('[', "\\[")
-        .replace(']', "\\]")
-        .replace('#', "\\#")
-}
 
 impl BrowserLayout {
     /// Create a new browser layout.
