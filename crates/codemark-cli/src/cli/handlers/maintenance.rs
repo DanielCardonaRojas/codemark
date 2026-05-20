@@ -93,10 +93,7 @@ pub async fn handle_heal(cli: &Cli, mode: &OutputMode, args: &HealArgs) -> Resul
             // In validate-only mode, use the location from the heal result directly.
             // Otherwise, read from the database (where it was just written).
             if args.validate_only {
-                heal_result
-                    .byte_range
-                    .as_ref()
-                    .and_then(|s| ByteLocation::from_str(s))
+                heal_result.byte_range.as_ref().and_then(|s| ByteLocation::from_str(s))
             } else if let Ok(Some(res)) = db.get_resolution(&bm.id) {
                 res.byte_range.as_ref().and_then(|s| ByteLocation::from_str(s))
             } else {
