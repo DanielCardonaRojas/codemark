@@ -18,6 +18,13 @@
 ---
 {{/if}}
 
+{{#if tags}}
+## Tags
+{{#each tags}}
+- `{{escape_markdown this}}`
+{{/each}}
+{{/if}}
+
 ## Metadata
 | Property | Value |
 |----------|-------|
@@ -45,13 +52,6 @@
 ```scheme
 {{query}}
 ```
-
-{{#if tags}}
-## Tags
-{{#each tags}}
-- `{{escape_markdown this}}`
-{{/each}}
-{{/if}}
 
 {{#if resolutions}}
 ## Resolution History
