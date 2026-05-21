@@ -390,20 +390,17 @@ impl RightPane {
         // Handle navigation within right pane if not handled by components
         if let Event::Key(key) = event {
             match key.code {
+                // Left/right navigation works for both Steps and Details focus
                 ratatui::crossterm::event::KeyCode::Left
-                | ratatui::crossterm::event::KeyCode::Char('h')
-                    if self.focused == RightPaneFocus::Steps
-                        || self.focused == RightPaneFocus::Details =>
-                {
-                    self.pager_current = self.pager_current.saturating_sub(1);
-                    self.update_preview();
+                | ratatui::crossterm::event::KeyCode::Char('h') => {
+                    if self.pager_current > 0 {
+                        self.pager_current = self.pager_current.saturating_sub(1);
+                        self.update_preview();
+                    }
                     return true;
                 }
                 ratatui::crossterm::event::KeyCode::Right
-                | ratatui::crossterm::event::KeyCode::Char('l')
-                    if self.focused == RightPaneFocus::Steps
-                        || self.focused == RightPaneFocus::Details =>
-                {
+                | ratatui::crossterm::event::KeyCode::Char('l') => {
                     if self.pager_current + 1 < self.pager_total {
                         self.pager_current += 1;
                         self.update_preview();
