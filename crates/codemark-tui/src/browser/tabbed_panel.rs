@@ -335,6 +335,17 @@ impl TabbedPanel {
         let inner = block.inner(area);
         block.render(area, buf);
 
+        // Extend the top border line after the ╭ character
+        let border_extension = 2; // Number of characters to extend
+        for i in 1..=border_extension {
+            let x = area.left() + i as u16;
+            let y = area.top();
+            if x < area.width && let Some(cell) = buf.cell_mut((x, y)) {
+                cell.set_char('─');
+                cell.set_style(border_style);
+            }
+        }
+
         // Render active panel content (full inner area, no separate tab row)
         let active_index = self.tabs.selected_index();
         if let Some(panel) = self.panels.get(active_index) {

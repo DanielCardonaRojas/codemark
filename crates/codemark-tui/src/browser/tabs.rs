@@ -213,7 +213,8 @@ impl TabSelection {
 
     /// Render tabs as a Title for use with Block borders (inline with border).
     pub fn render_as_titles(&self, _focused: bool) -> Line<'_> {
-        let mut spans = Vec::new();
+        let border_extension = 2;
+        let mut spans = vec![Span::raw(" ".repeat(border_extension))]; // Offset for border extension
 
         for (i, tab) in self.tabs.iter().enumerate() {
             let selected = i == self.selected;
