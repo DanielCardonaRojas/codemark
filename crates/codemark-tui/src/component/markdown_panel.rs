@@ -7,7 +7,7 @@ use ratatui::{
     layout::{Position, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span, Text},
-    widgets::{Paragraph, Widget},
+    widgets::{Paragraph, Widget, Wrap},
 };
 
 /// A component that renders simple markdown-style text.
@@ -174,7 +174,9 @@ impl Component for MarkdownPanel {
     fn render(&self, area: Rect, buf: &mut Buffer) {
         self.last_area.set(area);
         let text = self.parse_to_text();
-        let paragraph = Paragraph::new(text).scroll((self.scroll_offset, 0));
+        let paragraph = Paragraph::new(text)
+            .wrap(Wrap { trim: false })
+            .scroll((self.scroll_offset, 0));
 
         paragraph.render(area, buf);
     }
