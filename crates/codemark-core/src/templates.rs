@@ -295,13 +295,27 @@ pub fn templates_dir() -> Option<PathBuf> {
     global_config_dir().map(|d| d.join("templates"))
 }
 
+/// Template names
+pub const SHOW_TEMPLATE: &str = "codemark_show.md";
+pub const DETAILS_TEMPLATE: &str = "details_panel.md";
+
 /// Get the default markdown template for the `show` command.
-///
-/// This template is bundled into the binary at compile time from `templates/codemark_show.md`.
-/// Users can override it by placing a custom template at:
-/// `~/.config/codemark/templates/codemark_show.md`
 pub fn default_show_template() -> &'static str {
     include_str!("../../../templates/codemark_show.md")
+}
+
+/// Get the default markdown template for the details panel.
+pub fn default_details_template() -> &'static str {
+    include_str!("../../../templates/details_panel.md")
+}
+
+/// Get the default content for a given template name.
+pub fn default_template_content(name: &str) -> Option<&'static str> {
+    match name {
+        SHOW_TEMPLATE => Some(default_show_template()),
+        DETAILS_TEMPLATE => Some(default_details_template()),
+        _ => None,
+    }
 }
 
 /// Create a Handlebars instance with all helpers registered.
@@ -318,8 +332,8 @@ pub fn create_handlebars_engine() -> Handlebars<'static> {
     handlebars
 }
 
-/// Ensure the default template file exists in the user's data directory.
-/// Creates the template file if it doesn't already exist.
+/// Ensure default template files exist in the user's data directory.
+/// Creates the template files if they don't already exist.
 pub fn ensure_default_template_exists() {
     let templates_dir = match templates_dir() {
         Some(dir) => dir,
@@ -332,44 +346,59 @@ pub fn ensure_default_template_exists() {
         return;
     }
 
-    let template_path = templates_dir.join("codemark_show.md");
-
-    // Only write if file doesn't exist (don't overwrite user customizations)
-    if !template_path.exists()
-        && let Err(e) = std::fs::write(&template_path, default_show_template())
-    {
-        eprintln!(
-            "Warning: Failed to write default template to {}: {}",
-            template_path.display(),
-            e
-        );
+    for name in [SHOW_TEMPLATE, DETAILS_TEMPLATE] {
+        let template_path = templates_dir.join(name);
+        if !template_path.exists() {
+            if let Some(content) = default_template_content(name) {
+                if let Err(e) = std::fs::write(&template_path, content) {
+                    eprintln!(
+                        "Warning: Failed to write default template to {}: {}",
+                        template_path.display(),
+                        e
+                    );
+                }
+            }
+        }
     }
 }
 
 /// Load a template, falling back to the default if not found.
-pub fn load_show_template() -> String {
-    let templates_dir = match templates_dir() {
-        Some(dir) => dir,
-        None => return default_show_template().to_string(),
-    };
+pub fn load_template(name: &str) -> String {
+    let templates_dir = templates_dir();
+    let template_path = templates_dir.map(|d| d.join(name));
 
-    let template_path = templates_dir.join("codemark_show.md");
-
-    match std::fs::read_to_string(&template_path) {
-        Ok(content) => content,
-        Err(_) => default_show_template().to_string(),
+    if let Some(path) = template_path
+        && let Ok(content) = std::fs::read_to_string(path)
+    {
+        return content;
     }
+
+    default_template_content(name).unwrap_or("").to_string()
 }
 
-/// Render a bookmark with its resolutions using the show template.
-pub fn render_show_template(
+/// Load the show template (backward compatibility).
+pub fn load_show_template() -> String {
+    load_template(SHOW_TEMPLATE)
+}
+
+/// Render a bookmark with its resolutions using a specific template.
+pub fn render_template(
+    template_name: &str,
     bm: &Bookmark,
     resolutions: &[Resolution],
 ) -> Result<String, handlebars::RenderError> {
     let handlebars = create_handlebars_engine();
-    let template = load_show_template();
+    let template = load_template(template_name);
     let context = BookmarkTemplateContext::from_bookmark(bm, resolutions);
     handlebars.render_template(&template, &context)
+}
+
+/// Render a bookmark with its resolutions using the show template (backward compatibility).
+pub fn render_show_template(
+    bm: &Bookmark,
+    resolutions: &[Resolution],
+) -> Result<String, handlebars::RenderError> {
+    render_template(SHOW_TEMPLATE, bm, resolutions)
 }
 
 #[cfg(test)]

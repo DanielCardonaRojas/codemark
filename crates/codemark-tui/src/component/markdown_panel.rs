@@ -57,19 +57,14 @@ impl MarkdownPanel {
                 )]));
             } else if let Some(stripped) = line.strip_prefix("> ") {
                 // Blockquote
-                lines.push(Line::from(vec![
-                    Span::styled("┃ ", Style::default().fg(Color::DarkGray)),
-                    Span::styled(
-                        stripped,
-                        Style::default().fg(Color::Gray).add_modifier(Modifier::ITALIC),
-                    ),
-                ]));
+                let mut spans = vec![Span::styled("┃ ", Style::default().fg(Color::DarkGray))];
+                spans.extend(self.parse_inline(stripped, Style::default().fg(Color::Gray).add_modifier(Modifier::ITALIC)));
+                lines.push(Line::from(spans));
             } else if let Some(stripped) = line.strip_prefix("- ") {
                 // List item
-                lines.push(Line::from(vec![
-                    Span::styled("• ", Style::default().fg(Color::Green)),
-                    Span::raw(stripped),
-                ]));
+                let mut spans = vec![Span::styled("• ", Style::default().fg(Color::Green))];
+                spans.extend(self.parse_inline(stripped, Style::default()));
+                lines.push(Line::from(spans));
             } else if line.starts_with('|') {
                 // Table line (simple parsing)
                 if line.contains("---") {
@@ -89,17 +84,89 @@ impl MarkdownPanel {
                         ));
                     } else {
                         // Value
-                        spans.push(Span::raw(text));
+                        spans.extend(self.parse_inline(text, Style::default()));
+                        if i < parts.len() - 1 {
+                            spans.push(Span::raw(" "));
+                        }
                     }
                 }
                 lines.push(Line::from(spans));
             } else {
                 // Normal text
-                lines.push(Line::from(line));
+                lines.push(Line::from(self.parse_inline(line, Style::default())));
             }
         }
 
         Text::from(lines)
+    }
+
+    /// Parse inline formatting like `code` and **bold**.
+    fn parse_inline(&self, text: &str, base_style: Style) -> Vec<Span<'static>> {
+        let mut spans = Vec::new();
+        let mut current = text;
+
+        while !current.is_empty() {
+            // Find next occurrence of ` or **
+            let next_code = current.find('`');
+            let next_bold = current.find("**");
+
+            match (next_code, next_bold) {
+                (Some(i), Some(j)) if i < j => {
+                    // Handle code first
+                    if i > 0 {
+                        spans.push(Span::styled(current[..i].to_string(), base_style));
+                    }
+                    current = &current[i + 1..];
+                    if let Some(end) = current.find('`') {
+                        spans.push(Span::styled(
+                            current[..end].to_string(),
+                            base_style.fg(Color::Yellow),
+                        ));
+                        current = &current[end + 1..];
+                    } else {
+                        spans.push(Span::styled("`".to_string(), base_style));
+                    }
+                }
+                (_, Some(j)) => {
+                    // Handle bold
+                    if j > 0 {
+                        spans.push(Span::styled(current[..j].to_string(), base_style));
+                    }
+                    current = &current[j + 2..];
+                    if let Some(end) = current.find("**") {
+                        spans.push(Span::styled(
+                            current[..end].to_string(),
+                            base_style.add_modifier(Modifier::BOLD),
+                        ));
+                        current = &current[end + 2..];
+                    } else {
+                        spans.push(Span::styled("**".to_string(), base_style));
+                    }
+                }
+                (Some(i), _) => {
+                    // Handle code
+                    if i > 0 {
+                        spans.push(Span::styled(current[..i].to_string(), base_style));
+                    }
+                    current = &current[i + 1..];
+                    if let Some(end) = current.find('`') {
+                        spans.push(Span::styled(
+                            current[..end].to_string(),
+                            base_style.fg(Color::Yellow),
+                        ));
+                        current = &current[end + 1..];
+                    } else {
+                        spans.push(Span::styled("`".to_string(), base_style));
+                    }
+                }
+                (None, None) => {
+                    spans.push(Span::styled(current.to_string(), base_style));
+                    break;
+                }
+            }
+        }
+
+        spans
     }
 }
 
