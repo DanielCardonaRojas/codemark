@@ -392,7 +392,8 @@ impl RightPane {
             match key.code {
                 ratatui::crossterm::event::KeyCode::Left
                 | ratatui::crossterm::event::KeyCode::Char('h')
-                    if self.focused == RightPaneFocus::Steps =>
+                    if self.focused == RightPaneFocus::Steps
+                        || self.focused == RightPaneFocus::Details =>
                 {
                     self.pager_current = self.pager_current.saturating_sub(1);
                     self.update_preview();
@@ -400,7 +401,8 @@ impl RightPane {
                 }
                 ratatui::crossterm::event::KeyCode::Right
                 | ratatui::crossterm::event::KeyCode::Char('l')
-                    if self.focused == RightPaneFocus::Steps =>
+                    if self.focused == RightPaneFocus::Steps
+                        || self.focused == RightPaneFocus::Details =>
                 {
                     if self.pager_current + 1 < self.pager_total {
                         self.pager_current += 1;
