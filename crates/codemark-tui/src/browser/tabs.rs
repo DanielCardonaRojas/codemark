@@ -8,6 +8,10 @@ use ratatui::{
     widgets::{Widget, Wrap},
 };
 
+/// Number of characters to extend the top border line for tab titles.
+/// This must be kept in sync with the rendering in `TabbedPanel`.
+pub const BORDER_EXTENSION: u16 = 2;
+
 /// Panel 3 tabs (Bookmarks/Collections/Tours).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Panel3Tab {
@@ -88,30 +92,17 @@ impl Panel2Tab {
 pub struct Tab {
     /// The tab label
     label: String,
-    /// Optional badge text (e.g., item count)
-    badge_text: Option<String>,
 }
 
 impl Tab {
     /// Create a new tab.
     pub fn new(label: impl Into<String>) -> Self {
-        Self { label: label.into(), badge_text: None }
-    }
-
-    /// Set a badge for this tab.
-    pub fn badge(mut self, badge: impl Into<String>) -> Self {
-        self.badge_text = Some(badge.into());
-        self
+        Self { label: label.into() }
     }
 
     /// Get the tab label.
     pub fn label(&self) -> &str {
         &self.label
-    }
-
-    /// Get the badge text.
-    pub fn badge_text(&self) -> Option<&str> {
-        self.badge_text.as_deref()
     }
 
     /// Render this tab as a Line.
@@ -213,8 +204,7 @@ impl TabSelection {
 
     /// Render tabs as a Title for use with Block borders (inline with border).
     pub fn render_as_titles(&self, _focused: bool) -> Line<'_> {
-        let border_extension = 2;
-        let mut spans = vec![Span::raw(" ".repeat(border_extension))]; // Offset for border extension
+        let mut spans = vec![Span::raw(" ".repeat(BORDER_EXTENSION as usize))]; // Offset for border extension
 
         for (i, tab) in self.tabs.iter().enumerate() {
             let selected = i == self.selected;

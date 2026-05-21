@@ -58,6 +58,8 @@ pub struct BrowserLayout {
     pending_notification: Option<HealNotification>,
     /// Event handler for sending custom events
     event_handler: crate::event::EventHandler,
+    /// Clipboard context for copy operations (kept alive for X11 selection ownership)
+    clipboard: Option<copypasta::ClipboardContext>,
 }
 
 impl BrowserLayout {
@@ -76,6 +78,7 @@ impl BrowserLayout {
             pending_command: None,
             pending_notification: None,
             event_handler,
+            clipboard: None,
         };
         layout.update_focus_state();
         layout
@@ -790,13 +793,24 @@ impl BrowserLayout {
     }
 
     /// Copy text to the system clipboard.
-    fn copy_to_clipboard(text: &str) -> Result<(), String> {
-        use copypasta::{ClipboardContext, ClipboardProvider};
+    /// Keeps the clipboard context alive for the lifetime of the BrowserLayout
+    /// to maintain X11 selection ownership.
+    fn copy_to_clipboard(&mut self, text: &str) -> Result<(), String> {
+        use copypasta::ClipboardProvider;
 
-        let mut ctx: ClipboardContext =
-            ClipboardContext::new().map_err(|e| format!("Failed to access clipboard: {}", e))?;
-        ctx.set_contents(text.to_owned())
-            .map_err(|e| format!("Failed to set clipboard contents: {}", e))?;
+        // Create clipboard context lazily and keep it alive
+        if self.clipboard.is_none() {
+            use copypasta::ClipboardContext;
+            self.clipboard = Some(
+                ClipboardContext::new()
+                    .map_err(|e| format!("Failed to access clipboard: {}", e))?,
+            );
+        }
+
+        if let Some(ref mut ctx) = self.clipboard {
+            ctx.set_contents(text.to_owned())
+                .map_err(|e| format!("Failed to set clipboard contents: {}", e))?;
+        }
         Ok(())
     }
 
@@ -1108,14 +1122,30 @@ impl BrowserLayout {
                                 && let Some(selected) = panel.selected()
                                 && let Some(id) = selected.user_data.clone()
                             {
-                                if let Err(e) = Self::copy_to_clipboard(&id) {
-                                    eprintln!("Failed to copy to clipboard: {}", e);
+                                match self.copy_to_clipboard(&id) {
+                                    Ok(()) => {
+                                        self.pending_notification = Some(HealNotification {
+                                            message: format!("Copied ID: {}", id),
+                                            success: true,
+                                        });
+                                    }
+                                    Err(e) => {
+                                        self.pending_notification = Some(HealNotification {
+                                            message: format!("Failed to copy: {}", e),
+                                            success: false,
+                                        });
+                                    }
                                 }
-                                return true;
+                            } else {
+                                self.pending_notification = Some(HealNotification {
+                                    message: "No item selected".to_string(),
+                                    success: false,
+                                });
                             }
                         }
                         _ => {}
                     }
+                    return true;
                 }
                 // Delete collection or bookmark based on active tab
                 ratatui::crossterm::event::KeyCode::Char('d')

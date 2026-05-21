@@ -1,4 +1,4 @@
-use crate::browser::{Panel3Tab, Tab, TabContent, TabSelection};
+use crate::browser::{tabs::BORDER_EXTENSION, Panel3Tab, Tab, TabContent, TabSelection};
 use crate::component::{CodePreview, HealthStatus, MarkdownPanel, Panel, PanelItem};
 use crate::event::Event;
 use codemark_core::engine::bookmark::{BookmarkFilter, BookmarkHealth};
@@ -336,11 +336,10 @@ impl TabbedPanel {
         block.render(area, buf);
 
         // Extend the top border line after the ╭ character
-        let border_extension = 2; // Number of characters to extend
-        for i in 1..=border_extension {
+        for i in 1..=BORDER_EXTENSION {
             let x = area.left() + i as u16;
             let y = area.top();
-            if x < area.width && let Some(cell) = buf.cell_mut((x, y)) {
+            if x < area.right() && let Some(cell) = buf.cell_mut((x, y)) {
                 cell.set_char('─');
                 cell.set_style(border_style);
             }
