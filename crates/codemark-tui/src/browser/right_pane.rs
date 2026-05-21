@@ -1,14 +1,14 @@
-use crate::browser::{SectionConfig, StepData, TabbedPanel, escape_markdown};
-use crate::component::Component;
+use crate::browser::{SectionConfig, StepData, TabbedPanel};
+use crate::component::{Component, MarkdownPanel};
 use crate::event::Event;
 use codemark_core::engine::bookmark::{Bookmark, Resolution};
 use codemark_core::storage::db::Database;
+use codemark_core::templates::{self, load_template};
 use ratatui::{
     buffer::Buffer,
-    layout::{Alignment, Constraint, Direction, Layout, Rect},
+    layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Style, Stylize},
-    text::{Line, Span},
-    widgets::{Paragraph, Widget, Wrap},
+    widgets::{Block, BorderType, Widget},
 };
 
 /// Focus areas within the right pane.
@@ -21,8 +21,8 @@ pub enum RightPaneFocus {
 pub struct RightPane {
     /// Steps tabbed panel (Steps/Info)
     pub steps: TabbedPanel,
-    /// Details panel showing bookmark metadata
-    pub details: DetailsPanel,
+    /// Details panel showing bookmark metadata (now template-driven)
+    pub details: MarkdownPanel,
     /// Data for each step in the current tour
     pub steps_data: Vec<StepData>,
     /// Currently focused section
@@ -39,33 +39,21 @@ pub struct RightPane {
     pub active_tour_name: Option<String>,
     /// Active bookmark ID (if a single bookmark is loaded)
     pub active_bookmark_id: Option<String>,
-}
-
-pub struct DetailsPanel {
-    /// Bookmark ID (short)
-    pub id: String,
-    /// Author
-    pub author: String,
-    /// Health status
-    pub health: String,
-    /// Commit hash
-    pub commit: String,
-    /// Creation date
-    pub created_at: String,
-    /// Tags associated with this bookmark
-    pub tags: Vec<String>,
-    /// Whether the panel is focused
-    pub focused: bool,
-    /// Last rendered area
-    pub last_area: std::cell::Cell<Rect>,
+    /// Cached show template content to avoid repeated disk reads
+    cached_show_template: String,
+    /// Cached details template content to avoid repeated disk reads
+    cached_details_template: String,
 }
 
 impl RightPane {
     /// Create a new right pane.
     pub fn new(db: &Database) -> Self {
+        let cached_show_template = load_template(templates::SHOW_TEMPLATE);
+        let cached_details_template = load_template(templates::DETAILS_TEMPLATE);
+
         let mut pane = Self {
             steps: TabbedPanel::new_steps_info(db),
-            details: DetailsPanel::new(),
+            details: MarkdownPanel::new(),
             steps_data: Vec::new(),
             focused: RightPaneFocus::Steps,
             pager_total: 0,
@@ -74,6 +62,8 @@ impl RightPane {
             info_config: SectionConfig::new(7, 13),
             active_tour_name: None,
             active_bookmark_id: None,
+            cached_show_template,
+            cached_details_template,
         };
 
         // Try to load the first tour automatically
@@ -105,8 +95,11 @@ impl RightPane {
             }
 
             // Update Info tab with markdown
-            let markdown =
-                self.generate_bookmark_markdown(&step.bookmark, step.resolution.as_ref());
+            let markdown = self.generate_markdown(
+                &step.bookmark,
+                step.resolution.as_ref(),
+                templates::SHOW_TEMPLATE,
+            );
             if let Some(md_panel) = self.steps.get_markdown_mut() {
                 md_panel.set_markdown(markdown);
             }
@@ -118,7 +111,12 @@ impl RightPane {
             }
 
             // Update Details panel
-            self.details.set_bookmark(&step.bookmark, step.resolution.as_ref());
+            let details_markdown = self.generate_markdown(
+                &step.bookmark,
+                step.resolution.as_ref(),
+                templates::DETAILS_TEMPLATE,
+            );
+            self.details.set_markdown(details_markdown);
         }
     }
 
@@ -258,52 +256,46 @@ impl RightPane {
         }
     }
 
-    /// Generate markdown for a bookmark.
-    pub fn generate_bookmark_markdown(&self, bm: &Bookmark, res: Option<&Resolution>) -> String {
-        let mut md = String::new();
-        md.push_str(&format!("# Bookmark: {}\n\n", &bm.id[..8.min(bm.id.len())]));
+    /// Generate markdown for a bookmark using a specific template.
+    pub fn generate_markdown(
+        &self,
+        bm: &Bookmark,
+        res: Option<&Resolution>,
+        template: &str,
+    ) -> String {
+        // Use the shared template from codemark_core with cached template content
+        let resolutions = if let Some(r) = res { vec![r.clone()] } else { vec![] };
 
-        md.push_str("## Metadata\n\n");
-        md.push_str("| Property | Value |\n");
-        md.push_str("|----------|-------|\n");
-        md.push_str(&format!("| **File** | {} |\n", escape_markdown(&bm.file_path)));
-        md.push_str(&format!("| **Language** | {} |\n", bm.language));
-        md.push_str(&format!("| **Health** | {} |\n", bm.health));
-        md.push_str(&format!("| **Created** | {} |\n", bm.created_at));
-
-        if let Some(ref author) = bm.created_by {
-            md.push_str(&format!("| **Author** | {} |\n", escape_markdown(author)));
-        }
-
-        if let Some(res) = res {
-            if let Some(ref commit) = res.commit_hash {
-                md.push_str(&format!("| **Commit** | `{}` |\n", &commit[..8.min(commit.len())]));
+        // Select the appropriate cached template to avoid repeated disk reads
+        let template_content = match template {
+            templates::SHOW_TEMPLATE => &self.cached_show_template,
+            templates::DETAILS_TEMPLATE => &self.cached_details_template,
+            _ => {
+                // Fallback for unknown templates (shouldn't happen in normal use)
+                return format!(
+                    "# Bookmark: {}\n\nError: Unknown template {}",
+                    &bm.id[..8.min(bm.id.len())],
+                    template
+                );
             }
-            if let Some(ref lr) = res.line_range {
-                md.push_str(&format!("| **Lines** | {} |\n", lr));
-            }
-        }
+        };
 
-        md.push('\n');
+        // Create context and render using the cached template content
+        let context = templates::BookmarkTemplateContext::from_bookmark(bm, &resolutions);
+        let handlebars = templates::create_handlebars_engine();
 
-        if !bm.tags.is_empty() {
-            md.push_str("## Tags\n\n");
-            for tag in &bm.tags {
-                md.push_str(&format!("- #{} \n", tag));
-            }
-            md.push('\n');
-        }
-
-        if !bm.annotations.is_empty() {
-            md.push_str("## Notes\n\n");
-            for ann in &bm.annotations {
-                if let Some(ref notes) = ann.notes {
-                    md.push_str(&format!("> {}\n\n", notes));
-                }
+        match handlebars.render_template(template_content, &context) {
+            Ok(rendered) => rendered,
+            Err(e) => {
+                // Fallback to simple format if template fails
+                format!(
+                    "# Bookmark: {}\n\nError rendering template {}: {}",
+                    &bm.id[..8.min(bm.id.len())],
+                    template,
+                    e
+                )
             }
         }
-
-        md
     }
 
     /// Render the right pane.
@@ -337,8 +329,22 @@ impl RightPane {
             pager.render(chunks[1], buf);
         }
 
-        // Render details
-        self.details.render(chunks[2], buf);
+        // Render details with border
+        let border_style = if self.focused == RightPaneFocus::Details {
+            Style::default().fg(Color::Green)
+        } else {
+            Style::default().fg(Color::DarkGray)
+        };
+
+        let block = Block::bordered()
+            .border_type(BorderType::Rounded)
+            .title("Details")
+            .title_style(Style::default().bold())
+            .border_style(border_style);
+
+        let inner = block.inner(chunks[2]);
+        block.render(chunks[2], buf);
+        self.details.render(inner, buf);
     }
 
     /// Handle an event.
@@ -360,7 +366,7 @@ impl RightPane {
             {
                 self.focus_steps();
             } else {
-                let info_area = self.details.last_area();
+                let info_area = self.details_area();
                 if col >= info_area.x
                     && col < info_area.x + info_area.width
                     && row >= info_area.y
@@ -374,7 +380,7 @@ impl RightPane {
         // Forward to focused component first
         let handled = match self.focused {
             RightPaneFocus::Steps => self.steps.handle_event(event),
-            RightPaneFocus::Details => false, // Details doesn't handle events
+            RightPaneFocus::Details => self.details.handle_event(event),
         };
 
         if handled {
@@ -455,120 +461,20 @@ impl RightPane {
             RightPaneFocus::Details => self.focus_steps(),
         }
     }
-}
 
-impl DetailsPanel {
-    /// Create a new details panel.
-    pub fn new() -> Self {
-        Self {
-            id: String::new(),
-            author: String::new(),
-            health: String::new(),
-            commit: String::new(),
-            created_at: String::new(),
-            tags: Vec::new(),
-            focused: false,
-            last_area: std::cell::Cell::new(Rect::default()),
-        }
-    }
-
-    /// Set bookmark data.
-    pub fn set_bookmark(&mut self, bm: &Bookmark, res: Option<&Resolution>) {
-        self.id = bm.id[..8.min(bm.id.len())].to_string();
-        self.author = bm.created_by.clone().unwrap_or_else(|| "Unknown".to_string());
-        self.health = bm.health.to_string();
-        self.created_at = bm.created_at.to_string();
-        self.tags = bm.tags.iter().map(|t| format!("#{}", t)).collect();
-        self.commit = res
-            .and_then(|r| r.commit_hash.as_ref())
-            .map(|c| c[..8.min(c.len())].to_string())
-            .unwrap_or_else(|| "N/A".to_string());
-    }
-    /// Get the last rendered area.
-    pub fn last_area(&self) -> Rect {
-        self.last_area.get()
-    }
-
-    /// Render the details panel.
-    pub fn render(&self, area: Rect, buf: &mut Buffer) {
-        self.last_area.set(area);
-        // Render border
-        let border_style = if self.focused {
-            Style::default().fg(Color::Green)
+    fn details_area(&self) -> Rect {
+        let area = self.last_area.get();
+        let info_height = if self.focused == RightPaneFocus::Details {
+            self.info_config.max
         } else {
-            Style::default().fg(Color::DarkGray)
+            self.info_config.min
         };
 
-        let block = ratatui::widgets::Block::bordered()
-            .border_type(ratatui::widgets::BorderType::Rounded)
-            .title("Details")
-            .title_style(Style::default().bold())
-            .border_style(border_style);
-
-        let inner = block.inner(area);
-        block.render(area, buf);
-
-        if self.id.is_empty() {
-            return;
+        Rect {
+            x: area.x,
+            y: area.y + area.height.saturating_sub(info_height),
+            width: area.width,
+            height: info_height,
         }
-
-        // Build info content
-        let mut info_lines = vec![
-            Line::from(vec![
-                Span::styled("ID:      ", Style::default().fg(Color::DarkGray)),
-                Span::styled(&self.id, Style::default().fg(Color::Yellow)),
-            ]),
-            Line::from(vec![
-                Span::styled("Author:  ", Style::default().fg(Color::DarkGray)),
-                Span::styled(&self.author, Style::default().fg(Color::Cyan)),
-            ]),
-            Line::from(vec![
-                Span::styled("Health:  ", Style::default().fg(Color::DarkGray)),
-                Span::styled(
-                    &self.health,
-                    Style::default().fg(match self.health.as_str() {
-                        "Active" | "Healthy" => Color::Green,
-                        "Error" | "Stale" => Color::Red,
-                        _ => Color::Yellow,
-                    }),
-                ),
-            ]),
-            Line::from(vec![
-                Span::styled("Commit:  ", Style::default().fg(Color::DarkGray)),
-                Span::styled(&self.commit, Style::default().fg(Color::Magenta)),
-            ]),
-            Line::from(vec![
-                Span::styled("Created: ", Style::default().fg(Color::DarkGray)),
-                Span::styled(&self.created_at, Style::default().fg(Color::Gray)),
-            ]),
-        ];
-
-        // Add tags line
-        if !self.tags.is_empty() {
-            let mut tag_spans = vec![Span::styled("Tags: ", Style::default().fg(Color::DarkGray))];
-            for (i, tag) in self.tags.iter().enumerate() {
-                if i > 0 {
-                    tag_spans.push(Span::raw(" "));
-                }
-                let color = match i % 4 {
-                    0 => Color::Cyan,
-                    1 => Color::Magenta,
-                    2 => Color::Yellow,
-                    _ => Color::Green,
-                };
-                tag_spans.push(Span::styled(tag, Style::default().fg(color)));
-            }
-            info_lines.push(Line::from(tag_spans));
-        }
-
-        let paragraph =
-            Paragraph::new(info_lines).wrap(Wrap { trim: false }).alignment(Alignment::Left);
-
-        paragraph.render(inner, buf);
-    }
-
-    /// Set focus state.
-    pub fn set_focus(&mut self, focused: bool) {
-        self.focused = focused;
     }
 }

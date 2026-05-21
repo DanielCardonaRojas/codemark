@@ -8,4 +8,5 @@ pub mod git;
 pub mod parser;
 pub mod query;
 pub mod storage;
+pub mod templates;
 pub mod vfs;

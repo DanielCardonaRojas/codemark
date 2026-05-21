@@ -1,21 +1,28 @@
 # Bookmark: {{short_id}}
+{{#if tags}}
+## Tags
+
+{{#each tags}} #{{this}} {{/each}}
+{{/if}}
 
 {{#if annotations}}
 ## Notes
+
 {{#each annotations}}
 {{#if notes}}
 {{escape_markdown notes}}
-{{/if}}
 
+*— {{added_by}}{{#if source}} ({{source}}){{/if}}, {{format_date added_at "%Y-%m-%d %H:%M:%S"}}*
+
+{{/if}}
 {{#if context}}
-```{{language}}
+**Context**
 {{escape_markdown context}}
-```
-{{/if}}
-*— {{added_by}}{{#if source}} ({{source}}){{/if}}, {{added_at}}*
 
+*— {{added_by}}{{#if source}} ({{source}}){{/if}}, {{format_date added_at "%Y-%m-%d %H:%M:%S"}}*
+
+{{/if}}
 {{/each}}
----
 {{/if}}
 
 ## Metadata
@@ -24,40 +31,35 @@
 | **File** | {{file_path}} |
 | **Language** | {{language}} |
 | **Status** | {{status}} |
-| **Created** | {{created_at}} |
-{{#if breadcrumbs}}
-| **Breadcrumbs** | {{#each breadcrumbs}}`{{line}}`:{{escape_markdown text}}{{#unless @last}} › {{/unless}}{{/each}} |
-{{/if}}
+| **Created** | {{format_date created_at "%Y-%m-%d %H:%M:%S"}} |
 {{#if created_by}}| **Author** | {{escape_markdown created_by}} |{{/if}}
-{{#if last_resolved_at}}| **Last Resolved** | {{last_resolved_at}} |{{/if}}
+{{#if last_resolved_at}}| **Last Resolved** | {{format_date last_resolved_at "%Y-%m-%d %H:%M:%S"}} |{{/if}}
 {{#if resolution_method}}| **Resolution Method** | {{resolution_method}} |{{/if}}
-{{#if commit_hash}}| **Commit** | `{{short_commit}}` |{{/if}}
+{{#if commit_hash}}| **Commit** | {{short_commit}} |{{/if}}
 {{#if stale_since}}| **Stale Since** | {{stale_since}} |{{/if}}
 
-{{#if snapshot}}
-## Snapshot
-````{{language}}
-{{{snapshot}}}
-````
-{{/if}}
-
-## Tree-sitter Query
-```scheme
-{{query}}
-```
-
-{{#if tags}}
-## Tags
-{{#each tags}}
-- `{{escape_markdown this}}`
-{{/each}}
-{{/if}}
 
 {{#if resolutions}}
 ## Resolution History
-| Time | Method | File | Lines | Matches | Commit |
-|------|--------|------|-------|---------|--------|
+
 {{#each resolutions}}
-| {{resolved_at}} | {{method}} | {{file_path}} | {{line_range}} | {{match_count}} | {{#if commit_hash}}`{{short_commit}}`{{else}}-{{/if}} |
+Date: {{format_date resolved_at "%Y-%m-%d %H:%M:%S"}}
+Method: {{method}}
+Range: {{line_range}}
+Commit: {{#if commit_hash}}{{short_commit}}{{else}}-{{/if}}
 {{/each}}
 {{/if}}
+
+{{#if snapshot}}
+## Snapshot
+
+```
+{{escape_markdown snapshot}}
+```
+{{/if}}
+
+## Tree-sitter Query
+
+```scm
+{{escape_markdown query}}
+```
