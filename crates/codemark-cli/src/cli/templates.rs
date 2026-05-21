@@ -20,7 +20,8 @@
 
 // Re-export all template rendering functionality from codemark_core
 pub use codemark_core::templates::{
-    create_handlebars_engine, ensure_default_template_exists, load_show_template, load_template,
-    render_show_template, render_template, AnnotationTemplateContext, BookmarkTemplateContext,
-    ResolutionTemplateContext, DETAILS_TEMPLATE, SHOW_TEMPLATE,
+    AnnotationTemplateContext, BookmarkTemplateContext, DETAILS_TEMPLATE,
+    ResolutionTemplateContext, SHOW_TEMPLATE, create_handlebars_engine,
+    ensure_default_template_exists, load_show_template, load_template, render_show_template,
+    render_template,
 };

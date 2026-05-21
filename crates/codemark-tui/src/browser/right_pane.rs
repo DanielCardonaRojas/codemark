@@ -95,8 +95,11 @@ impl RightPane {
             }
 
             // Update Info tab with markdown
-            let markdown =
-                self.generate_markdown(&step.bookmark, step.resolution.as_ref(), templates::SHOW_TEMPLATE);
+            let markdown = self.generate_markdown(
+                &step.bookmark,
+                step.resolution.as_ref(),
+                templates::SHOW_TEMPLATE,
+            );
             if let Some(md_panel) = self.steps.get_markdown_mut() {
                 md_panel.set_markdown(markdown);
             }
@@ -108,8 +111,11 @@ impl RightPane {
             }
 
             // Update Details panel
-            let details_markdown =
-                self.generate_markdown(&step.bookmark, step.resolution.as_ref(), templates::DETAILS_TEMPLATE);
+            let details_markdown = self.generate_markdown(
+                &step.bookmark,
+                step.resolution.as_ref(),
+                templates::DETAILS_TEMPLATE,
+            );
             self.details.set_markdown(details_markdown);
         }
     }
@@ -251,13 +257,14 @@ impl RightPane {
     }
 
     /// Generate markdown for a bookmark using a specific template.
-    pub fn generate_markdown(&self, bm: &Bookmark, res: Option<&Resolution>, template: &str) -> String {
+    pub fn generate_markdown(
+        &self,
+        bm: &Bookmark,
+        res: Option<&Resolution>,
+        template: &str,
+    ) -> String {
         // Use the shared template from codemark_core with cached template content
-        let resolutions = if let Some(r) = res {
-            vec![r.clone()]
-        } else {
-            vec![]
-        };
+        let resolutions = if let Some(r) = res { vec![r.clone()] } else { vec![] };
 
         // Select the appropriate cached template to avoid repeated disk reads
         let template_content = match template {
@@ -269,7 +276,7 @@ impl RightPane {
                     "# Bookmark: {}\n\nError: Unknown template {}",
                     &bm.id[..8.min(bm.id.len())],
                     template
-                )
+                );
             }
         };
 

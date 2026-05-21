@@ -58,7 +58,10 @@ impl MarkdownPanel {
             } else if let Some(stripped) = line.strip_prefix("> ") {
                 // Blockquote
                 let mut spans = vec![Span::styled("┃ ", Style::default().fg(Color::DarkGray))];
-                spans.extend(self.parse_inline(stripped, Style::default().fg(Color::Gray).add_modifier(Modifier::ITALIC)));
+                spans.extend(self.parse_inline(
+                    stripped,
+                    Style::default().fg(Color::Gray).add_modifier(Modifier::ITALIC),
+                ));
                 lines.push(Line::from(spans));
             } else if let Some(stripped) = line.strip_prefix("- ") {
                 // List item
@@ -174,9 +177,8 @@ impl Component for MarkdownPanel {
     fn render(&self, area: Rect, buf: &mut Buffer) {
         self.last_area.set(area);
         let text = self.parse_to_text();
-        let paragraph = Paragraph::new(text)
-            .wrap(Wrap { trim: false })
-            .scroll((self.scroll_offset, 0));
+        let paragraph =
+            Paragraph::new(text).wrap(Wrap { trim: false }).scroll((self.scroll_offset, 0));
 
         paragraph.render(area, buf);
     }

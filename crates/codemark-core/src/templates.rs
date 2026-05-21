@@ -301,15 +301,11 @@ impl HelperDef for FormatDateHelper {
         _rc: &mut RenderContext<'reg, 'rc>,
         out: &mut dyn Output,
     ) -> HelperResult {
-        let date_str = h
-            .param(0)
-            .and_then(|p| p.value().as_str())
-            .ok_or_else(|| RenderErrorReason::Other("format_date helper requires a date string parameter".into()))?;
+        let date_str = h.param(0).and_then(|p| p.value().as_str()).ok_or_else(|| {
+            RenderErrorReason::Other("format_date helper requires a date string parameter".into())
+        })?;
 
-        let format_str = h
-            .param(1)
-            .and_then(|p| p.value().as_str())
-            .unwrap_or("%Y-%m-%d %H:%M:%S");
+        let format_str = h.param(1).and_then(|p| p.value().as_str()).unwrap_or("%Y-%m-%d %H:%M:%S");
 
         // Try to parse the date string (expecting RFC3339 or similar)
         let formatted = if let Ok(dt) = DateTime::parse_from_rfc3339(date_str) {
@@ -389,16 +385,15 @@ pub fn ensure_default_template_exists() {
 
     for name in [SHOW_TEMPLATE, DETAILS_TEMPLATE] {
         let template_path = templates_dir.join(name);
-        if !template_path.exists() {
-            if let Some(content) = default_template_content(name) {
-                if let Err(e) = std::fs::write(&template_path, content) {
-                    eprintln!(
-                        "Warning: Failed to write default template to {}: {}",
-                        template_path.display(),
-                        e
-                    );
-                }
-            }
+        if !template_path.exists()
+            && let Some(content) = default_template_content(name)
+            && let Err(e) = std::fs::write(&template_path, content)
+        {
+            eprintln!(
+                "Warning: Failed to write default template to {}: {}",
+                template_path.display(),
+                e
+            );
         }
     }
 }
