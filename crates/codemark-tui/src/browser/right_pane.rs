@@ -71,7 +71,7 @@ impl RightPane {
             pager_total: 0,
             pager_current: 0,
             last_area: std::cell::Cell::new(Rect::default()),
-            info_config: SectionConfig::new(4, 10),
+            info_config: SectionConfig::new(7, 13),
             active_tour_name: None,
             active_bookmark_id: None,
         };
