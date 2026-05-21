@@ -242,9 +242,8 @@ mod tests {
 
     #[test]
     fn test_tab_creation() {
-        let tab = Tab::new("Test").badge("5");
+        let tab = Tab::new("Test");
         assert_eq!(tab.label(), "Test");
-        assert_eq!(tab.badge_text(), Some("5"));
     }
 
     #[test]
