@@ -19,9 +19,9 @@
 | **File** | {{file_path}} |
 | **Language** | {{language}} |
 | **Status** | {{status}} |
-| **Created** | {{created_at}} |
+| **Created** | {{format_date created_at "%Y-%m-%d %H:%M:%S"}} |
 {{#if created_by}}| **Author** | {{escape_markdown created_by}} |{{/if}}
-{{#if last_resolved_at}}| **Last Resolved** | {{last_resolved_at}} |{{/if}}
+{{#if last_resolved_at}}| **Last Resolved** | {{format_date last_resolved_at "%Y-%m-%d %H:%M:%S"}} |{{/if}}
 {{#if resolution_method}}| **Resolution Method** | {{resolution_method}} |{{/if}}
 {{#if commit_hash}}| **Commit** | {{short_commit}} |{{/if}}
 {{#if stale_since}}| **Stale Since** | {{stale_since}} |{{/if}}
@@ -31,7 +31,7 @@
 ## Resolution History
 
 {{#each resolutions}}
-Date: {{resolved_at}}
+Date: {{format_date resolved_at "%Y-%m-%d %H:%M:%S"}}
 Method: {{method}}
 Range: {{line_range}}
 Commit: {{#if commit_hash}}{{short_commit}}{{else}}-{{/if}}

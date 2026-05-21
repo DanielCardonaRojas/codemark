@@ -6,6 +6,7 @@
 
 use std::path::PathBuf;
 
+use chrono::DateTime;
 use handlebars::{Handlebars, HelperDef, HelperResult, Output, RenderContext, RenderErrorReason};
 use serde::Serialize;
 
@@ -286,6 +287,45 @@ impl HelperDef for TruncateHelper {
     }
 }
 
+/// Helper function for Handlebars to format a date string.
+/// Usage: {{format_date date_string "%Y-%m-%d %H:%M:%S"}}
+#[derive(Clone)]
+struct FormatDateHelper;
+
+impl HelperDef for FormatDateHelper {
+    fn call<'reg: 'rc, 'rc>(
+        &self,
+        h: &handlebars::Helper<'rc>,
+        _r: &'reg Handlebars<'reg>,
+        _ctx: &'rc handlebars::Context,
+        _rc: &mut RenderContext<'reg, 'rc>,
+        out: &mut dyn Output,
+    ) -> HelperResult {
+        let date_str = h
+            .param(0)
+            .and_then(|p| p.value().as_str())
+            .ok_or_else(|| RenderErrorReason::Other("format_date helper requires a date string parameter".into()))?;
+
+        let format_str = h
+            .param(1)
+            .and_then(|p| p.value().as_str())
+            .unwrap_or("%Y-%m-%d %H:%M:%S");
+
+        // Try to parse the date string (expecting RFC3339 or similar)
+        let formatted = if let Ok(dt) = DateTime::parse_from_rfc3339(date_str) {
+            dt.format(format_str).to_string()
+        } else if let Ok(dt) = DateTime::parse_from_str(date_str, "%Y-%m-%d %H:%M:%S") {
+            dt.format(format_str).to_string()
+        } else {
+            // Fallback to original string if parsing fails
+            date_str.to_string()
+        };
+
+        out.write(&formatted)?;
+        Ok(())
+    }
+}
+
 /// Get the templates directory.
 ///
 /// Located alongside `config.toml` under the global config directory
@@ -328,6 +368,7 @@ pub fn create_handlebars_engine() -> Handlebars<'static> {
     // Register custom helpers
     handlebars.register_helper("escape_markdown", Box::new(EscapeMarkdownHelper));
     handlebars.register_helper("truncate", Box::new(TruncateHelper));
+    handlebars.register_helper("format_date", Box::new(FormatDateHelper));
 
     handlebars
 }
