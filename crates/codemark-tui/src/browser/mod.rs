@@ -789,6 +789,17 @@ impl BrowserLayout {
         }
     }
 
+    /// Copy text to the system clipboard.
+    fn copy_to_clipboard(text: &str) -> Result<(), String> {
+        use copypasta::{ClipboardContext, ClipboardProvider};
+
+        let mut ctx: ClipboardContext =
+            ClipboardContext::new().map_err(|e| format!("Failed to access clipboard: {}", e))?;
+        ctx.set_contents(text.to_owned())
+            .map_err(|e| format!("Failed to set clipboard contents: {}", e))?;
+        Ok(())
+    }
+
     /// Render the browser layout.
     pub fn render(&self, area: Rect, buf: &mut Buffer) {
         // Split vertically: 40% left, 60% right
@@ -1078,10 +1089,33 @@ impl BrowserLayout {
                     return true;
                 }
                 ratatui::crossterm::event::KeyCode::Char('o')
-                    if self.should_handle_keybindings() && self.focus != FocusArea::Search =>
+                    if self.should_handle_keybindings()
+                        && self.focus != FocusArea::Search
+                        && !key.modifiers.contains(ratatui::crossterm::event::KeyModifiers::CONTROL) =>
                 {
                     self.open_in_editor();
                     return true;
+                }
+                // Copy ID keybinding (Ctrl+O) - only available in Bookmarks or Collections tabs
+                ratatui::crossterm::event::KeyCode::Char('o')
+                    if self.should_handle_keybindings()
+                        && self.focus == FocusArea::Panel3
+                        && key.modifiers.contains(ratatui::crossterm::event::KeyModifiers::CONTROL) =>
+                {
+                    match Panel3Tab::from_index(self.left_pane.panel3.tabs.selected_index()) {
+                        Some(Panel3Tab::Bookmarks) | Some(Panel3Tab::Collections) => {
+                            if let Some(panel) = self.left_pane.panel3.active_panel_mut()
+                                && let Some(selected) = panel.selected()
+                                && let Some(id) = selected.user_data.clone()
+                            {
+                                if let Err(e) = Self::copy_to_clipboard(&id) {
+                                    eprintln!("Failed to copy to clipboard: {}", e);
+                                }
+                                return true;
+                            }
+                        }
+                        _ => {}
+                    }
                 }
                 // Delete collection or bookmark based on active tab
                 ratatui::crossterm::event::KeyCode::Char('d')
