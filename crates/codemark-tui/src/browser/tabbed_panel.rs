@@ -1,4 +1,4 @@
-use crate::browser::{tabs::BORDER_EXTENSION, Panel3Tab, Tab, TabContent, TabSelection};
+use crate::browser::{Panel3Tab, Tab, TabContent, TabSelection, tabs::BORDER_EXTENSION};
 use crate::component::{CodePreview, HealthStatus, MarkdownPanel, Panel, PanelItem};
 use crate::event::Event;
 use codemark_core::engine::bookmark::{BookmarkFilter, BookmarkHealth};
@@ -217,10 +217,7 @@ impl TabbedPanel {
             ])
             .bordered(false);
 
-        let tabs = TabSelection::new(vec![
-            Tab::new("Repos"),
-            Tab::new("Accounts"),
-        ]);
+        let tabs = TabSelection::new(vec![Tab::new("Repos"), Tab::new("Accounts")]);
 
         Self {
             tabs,
@@ -238,10 +235,7 @@ impl TabbedPanel {
         let branches_panel =
             Panel::new("").bordered(false).multi_select(true).items(branches_items);
 
-        let tabs = TabSelection::new(vec![
-            Tab::new("Tags"),
-            Tab::new("Branches"),
-        ]);
+        let tabs = TabSelection::new(vec![Tab::new("Tags"), Tab::new("Branches")]);
 
         Self {
             tabs,
@@ -337,9 +331,11 @@ impl TabbedPanel {
 
         // Extend the top border line after the ╭ character
         for i in 1..=BORDER_EXTENSION {
-            let x = area.left() + i as u16;
+            let x = area.left() + i;
             let y = area.top();
-            if x < area.right() && let Some(cell) = buf.cell_mut((x, y)) {
+            if x < area.right()
+                && let Some(cell) = buf.cell_mut((x, y))
+            {
                 cell.set_char('─');
                 cell.set_style(border_style);
             }

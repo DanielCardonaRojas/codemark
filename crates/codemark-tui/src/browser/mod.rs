@@ -1105,7 +1105,9 @@ impl BrowserLayout {
                 ratatui::crossterm::event::KeyCode::Char('o')
                     if self.should_handle_keybindings()
                         && self.focus != FocusArea::Search
-                        && !key.modifiers.contains(ratatui::crossterm::event::KeyModifiers::CONTROL) =>
+                        && !key
+                            .modifiers
+                            .contains(ratatui::crossterm::event::KeyModifiers::CONTROL) =>
                 {
                     self.open_in_editor();
                     return true;
@@ -1114,7 +1116,9 @@ impl BrowserLayout {
                 ratatui::crossterm::event::KeyCode::Char('o')
                     if self.should_handle_keybindings()
                         && self.focus == FocusArea::Panel3
-                        && key.modifiers.contains(ratatui::crossterm::event::KeyModifiers::CONTROL) =>
+                        && key
+                            .modifiers
+                            .contains(ratatui::crossterm::event::KeyModifiers::CONTROL) =>
                 {
                     match Panel3Tab::from_index(self.left_pane.panel3.tabs.selected_index()) {
                         Some(Panel3Tab::Bookmarks) | Some(Panel3Tab::Collections) => {
