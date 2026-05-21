@@ -41,6 +41,7 @@ sqlite-vec = "0.1.9"
 zerocopy = "0.8"
 directories = "5"
 shellexpand = "3"
+handlebars = "6"
 
 [dev-dependencies]
 tempfile = { workspace = true }

@@ -1,8 +1,9 @@
-use crate::browser::{SectionConfig, StepData, TabbedPanel, escape_markdown};
+use crate::browser::{SectionConfig, StepData, TabbedPanel};
 use crate::component::Component;
 use crate::event::Event;
 use codemark_core::engine::bookmark::{Bookmark, Resolution};
 use codemark_core::storage::db::Database;
+use codemark_core::templates;
 use ratatui::{
     buffer::Buffer,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
@@ -260,50 +261,24 @@ impl RightPane {
 
     /// Generate markdown for a bookmark.
     pub fn generate_bookmark_markdown(&self, bm: &Bookmark, res: Option<&Resolution>) -> String {
-        let mut md = String::new();
-        md.push_str(&format!("# Bookmark: {}\n\n", &bm.id[..8.min(bm.id.len())]));
+        // Use the shared template from codemark_core
+        let resolutions = if let Some(r) = res {
+            vec![r.clone()]
+        } else {
+            vec![]
+        };
 
-        md.push_str("## Metadata\n\n");
-        md.push_str("| Property | Value |\n");
-        md.push_str("|----------|-------|\n");
-        md.push_str(&format!("| **File** | {} |\n", escape_markdown(&bm.file_path)));
-        md.push_str(&format!("| **Language** | {} |\n", bm.language));
-        md.push_str(&format!("| **Health** | {} |\n", bm.health));
-        md.push_str(&format!("| **Created** | {} |\n", bm.created_at));
-
-        if let Some(ref author) = bm.created_by {
-            md.push_str(&format!("| **Author** | {} |\n", escape_markdown(author)));
-        }
-
-        if let Some(res) = res {
-            if let Some(ref commit) = res.commit_hash {
-                md.push_str(&format!("| **Commit** | `{}` |\n", &commit[..8.min(commit.len())]));
-            }
-            if let Some(ref lr) = res.line_range {
-                md.push_str(&format!("| **Lines** | {} |\n", lr));
+        match templates::render_show_template(bm, &resolutions) {
+            Ok(rendered) => rendered,
+            Err(e) => {
+                // Fallback to simple format if template fails
+                format!(
+                    "# Bookmark: {}\n\nError rendering template: {}",
+                    &bm.id[..8.min(bm.id.len())],
+                    e
+                )
             }
         }
-
-        md.push('\n');
-
-        if !bm.tags.is_empty() {
-            md.push_str("## Tags\n\n");
-            for tag in &bm.tags {
-                md.push_str(&format!("- #{} \n", tag));
-            }
-            md.push('\n');
-        }
-
-        if !bm.annotations.is_empty() {
-            md.push_str("## Notes\n\n");
-            for ann in &bm.annotations {
-                if let Some(ref notes) = ann.notes {
-                    md.push_str(&format!("> {}\n\n", notes));
-                }
-            }
-        }
-
-        md
     }
 
     /// Render the right pane.

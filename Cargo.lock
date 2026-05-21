@@ -547,6 +547,7 @@ dependencies = [
  "chrono",
  "directories",
  "git2",
+ "handlebars",
  "hf-hub",
  "insta",
  "regex",
