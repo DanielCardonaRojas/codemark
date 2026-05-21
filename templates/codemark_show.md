@@ -6,9 +6,21 @@
 {{/if}}
 
 {{#if annotations}}
+## Notes
+
 {{#each annotations}}
+{{#if notes}}
+{{escape_markdown notes}}
+
+*— {{added_by}}{{#if source}} ({{source}}){{/if}}, {{format_date added_at "%Y-%m-%d %H:%M:%S"}}*
+
+{{/if}}
 {{#if context}}
+**Context**
 {{escape_markdown context}}
+
+*— {{added_by}}{{#if source}} ({{source}}){{/if}}, {{format_date added_at "%Y-%m-%d %H:%M:%S"}}*
+
 {{/if}}
 {{/each}}
 {{/if}}
@@ -37,3 +49,17 @@ Range: {{line_range}}
 Commit: {{#if commit_hash}}{{short_commit}}{{else}}-{{/if}}
 {{/each}}
 {{/if}}
+
+{{#if snapshot}}
+## Snapshot
+
+```
+{{escape_markdown snapshot}}
+```
+{{/if}}
+
+## Tree-sitter Query
+
+```scm
+{{escape_markdown query}}
+```
