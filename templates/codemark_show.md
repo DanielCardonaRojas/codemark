@@ -1,27 +1,15 @@
 # Bookmark: {{short_id}}
-
-{{#if annotations}}
-## Notes
-{{#each annotations}}
-{{#if notes}}
-{{escape_markdown notes}}
-{{/if}}
-
-{{#if context}}
-```{{language}}
-{{escape_markdown context}}
-```
-{{/if}}
-*— {{added_by}}{{#if source}} ({{source}}){{/if}}, {{added_at}}*
-
-{{/each}}
----
-{{/if}}
-
 {{#if tags}}
 ## Tags
-{{#each tags}}
-- `{{escape_markdown this}}`
+
+{{#each tags}} #{{this}} {{/each}}
+{{/if}}
+
+{{#if annotations}}
+{{#each annotations}}
+{{#if context}}
+{{escape_markdown context}}
+{{/if}}
 {{/each}}
 {{/if}}
 
@@ -32,32 +20,20 @@
 | **Language** | {{language}} |
 | **Status** | {{status}} |
 | **Created** | {{created_at}} |
-{{#if breadcrumbs}}
-| **Breadcrumbs** | {{#each breadcrumbs}}`{{line}}`:{{escape_markdown text}}{{#unless @last}} › {{/unless}}{{/each}} |
-{{/if}}
 {{#if created_by}}| **Author** | {{escape_markdown created_by}} |{{/if}}
 {{#if last_resolved_at}}| **Last Resolved** | {{last_resolved_at}} |{{/if}}
 {{#if resolution_method}}| **Resolution Method** | {{resolution_method}} |{{/if}}
-{{#if commit_hash}}| **Commit** | `{{short_commit}}` |{{/if}}
+{{#if commit_hash}}| **Commit** | {{short_commit}} |{{/if}}
 {{#if stale_since}}| **Stale Since** | {{stale_since}} |{{/if}}
 
-{{#if snapshot}}
-## Snapshot
-````{{language}}
-{{{snapshot}}}
-````
-{{/if}}
-
-## Tree-sitter Query
-```scheme
-{{query}}
-```
 
 {{#if resolutions}}
 ## Resolution History
-| Time | Method | File | Lines | Matches | Commit |
-|------|--------|------|-------|---------|--------|
+
 {{#each resolutions}}
-| {{resolved_at}} | {{method}} | {{file_path}} | {{line_range}} | {{match_count}} | {{#if commit_hash}}`{{short_commit}}`{{else}}-{{/if}} |
+Date: {{resolved_at}}
+Method: {{method}}
+Range: {{line_range}}
+Commit: {{#if commit_hash}}{{short_commit}}{{else}}-{{/if}}
 {{/each}}
 {{/if}}
