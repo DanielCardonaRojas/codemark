@@ -217,10 +217,9 @@ impl TabbedPanel {
             ])
             .bordered(false);
 
-        let repos_count = repos_panel.len().to_string();
         let tabs = TabSelection::new(vec![
-            Tab::new("Repos").badge(repos_count),
-            Tab::new("Accounts").badge("3"),
+            Tab::new("Repos"),
+            Tab::new("Accounts"),
         ]);
 
         Self {
@@ -240,8 +239,8 @@ impl TabbedPanel {
             Panel::new("").bordered(false).multi_select(true).items(branches_items);
 
         let tabs = TabSelection::new(vec![
-            Tab::new("Tags").badge(tags_panel.len().to_string()),
-            Tab::new("Branches").badge(branches_panel.len().to_string()),
+            Tab::new("Tags"),
+            Tab::new("Branches"),
         ]);
 
         Self {
@@ -261,9 +260,9 @@ impl TabbedPanel {
         let bookmarks_panel = Panel::new("").bordered(false).items(bookmarks_items);
 
         let tabs = TabSelection::new(vec![
-            Tab::new("Bookmarks").badge(bookmarks_panel.len().to_string()),
-            Tab::new("Collections").badge(collections_panel.len().to_string()),
-            Tab::new("Tours").badge(tours_panel.len().to_string()),
+            Tab::new("Bookmarks"),
+            Tab::new("Collections"),
+            Tab::new("Tours"),
         ]);
 
         Self {

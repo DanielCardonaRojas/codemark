@@ -114,27 +114,19 @@ impl Tab {
         self.badge_text.as_deref()
     }
 
-    /// Render this tab as a Line with its index number.
-    fn render(&self, index: usize, selected: bool, focused: bool) -> Line<'_> {
-        let base_style = if selected && focused {
-            Style::default().fg(Color::Black).bg(Color::Green)
-        } else if selected {
-            Style::default().fg(Color::Green).bg(Color::DarkGray)
+    /// Render this tab as a Line.
+    fn render(&self, selected: bool, _focused: bool) -> Line<'_> {
+        let base_style = if selected {
+            Style::default().fg(Color::Green).add_modifier(ratatui::style::Modifier::BOLD)
         } else {
             Style::default().fg(Color::DarkGray)
         };
 
-        let mut spans = vec![
+        let spans = vec![
             Span::styled(" ", base_style),
-            Span::styled(format!("{}:", index + 1), base_style),
-            Span::styled(&self.label, base_style.add_modifier(ratatui::style::Modifier::BOLD)),
+            Span::styled(&self.label, base_style),
+            Span::styled(" ", base_style),
         ];
-
-        if let Some(badge) = &self.badge_text {
-            spans.push(Span::styled(format!(" ({badge})"), base_style));
-        }
-
-        spans.push(Span::styled(" ", base_style));
 
         Line::from(spans)
     }
@@ -200,7 +192,7 @@ impl TabSelection {
 
         for (i, tab) in self.tabs.iter().enumerate() {
             let selected = i == self.selected;
-            lines.push(tab.render(i, selected, self.focused));
+            lines.push(tab.render(selected, self.focused));
         }
 
         // Join tabs with spacing
@@ -220,15 +212,13 @@ impl TabSelection {
     }
 
     /// Render tabs as a Title for use with Block borders (inline with border).
-    pub fn render_as_titles(&self, focused: bool) -> Line<'_> {
+    pub fn render_as_titles(&self, _focused: bool) -> Line<'_> {
         let mut spans = Vec::new();
 
         for (i, tab) in self.tabs.iter().enumerate() {
             let selected = i == self.selected;
-            let style = if selected && focused {
-                Style::default().fg(Color::Black).bg(Color::Green)
-            } else if selected {
-                Style::default().fg(Color::Green)
+            let style = if selected {
+                Style::default().fg(Color::Green).add_modifier(ratatui::style::Modifier::BOLD)
             } else {
                 Style::default().fg(Color::DarkGray)
             };
@@ -236,15 +226,7 @@ impl TabSelection {
             if i > 0 {
                 spans.push(Span::styled(" ", Style::default()));
             }
-            spans.push(Span::styled(format!("{}:", i + 1), style));
-            spans.push(Span::styled(
-                tab.label(),
-                style.add_modifier(ratatui::style::Modifier::BOLD),
-            ));
-
-            if let Some(badge) = tab.badge_text() {
-                spans.push(Span::styled(format!(" ({badge})"), style));
-            }
+            spans.push(Span::styled(tab.label(), style));
             spans.push(Span::styled(" ", style));
         }
 
