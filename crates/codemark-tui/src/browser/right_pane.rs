@@ -3,7 +3,7 @@ use crate::component::{Component, MarkdownPanel};
 use crate::event::Event;
 use codemark_core::engine::bookmark::{Bookmark, Resolution};
 use codemark_core::storage::db::Database;
-use codemark_core::templates;
+use codemark_core::templates::{self, load_template};
 use ratatui::{
     buffer::Buffer,
     layout::{Constraint, Direction, Layout, Rect},
@@ -39,11 +39,18 @@ pub struct RightPane {
     pub active_tour_name: Option<String>,
     /// Active bookmark ID (if a single bookmark is loaded)
     pub active_bookmark_id: Option<String>,
+    /// Cached show template content to avoid repeated disk reads
+    cached_show_template: String,
+    /// Cached details template content to avoid repeated disk reads
+    cached_details_template: String,
 }
 
 impl RightPane {
     /// Create a new right pane.
     pub fn new(db: &Database) -> Self {
+        let cached_show_template = load_template(templates::SHOW_TEMPLATE);
+        let cached_details_template = load_template(templates::DETAILS_TEMPLATE);
+
         let mut pane = Self {
             steps: TabbedPanel::new_steps_info(db),
             details: MarkdownPanel::new(),
@@ -55,6 +62,8 @@ impl RightPane {
             info_config: SectionConfig::new(7, 13),
             active_tour_name: None,
             active_bookmark_id: None,
+            cached_show_template,
+            cached_details_template,
         };
 
         // Try to load the first tour automatically
@@ -243,14 +252,32 @@ impl RightPane {
 
     /// Generate markdown for a bookmark using a specific template.
     pub fn generate_markdown(&self, bm: &Bookmark, res: Option<&Resolution>, template: &str) -> String {
-        // Use the shared template from codemark_core
+        // Use the shared template from codemark_core with cached template content
         let resolutions = if let Some(r) = res {
             vec![r.clone()]
         } else {
             vec![]
         };
 
-        match templates::render_template(template, bm, &resolutions) {
+        // Select the appropriate cached template to avoid repeated disk reads
+        let template_content = match template {
+            templates::SHOW_TEMPLATE => &self.cached_show_template,
+            templates::DETAILS_TEMPLATE => &self.cached_details_template,
+            _ => {
+                // Fallback for unknown templates (shouldn't happen in normal use)
+                return format!(
+                    "# Bookmark: {}\n\nError: Unknown template {}",
+                    &bm.id[..8.min(bm.id.len())],
+                    template
+                )
+            }
+        };
+
+        // Create context and render using the cached template content
+        let context = templates::BookmarkTemplateContext::from_bookmark(bm, &resolutions);
+        let handlebars = templates::create_handlebars_engine();
+
+        match handlebars.render_template(template_content, &context) {
             Ok(rendered) => rendered,
             Err(e) => {
                 // Fallback to simple format if template fails

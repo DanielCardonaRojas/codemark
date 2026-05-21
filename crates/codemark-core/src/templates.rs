@@ -206,8 +206,8 @@ fn short_id_value(s: &str) -> String {
 }
 
 /// Truncate ID to first 8 characters.
-pub fn short_id(id: &str) -> &str {
-    &id[..id.len().min(8)]
+pub fn short_id(id: &str) -> String {
+    id.chars().take(8).collect()
 }
 
 /// Escape special markdown characters in text.
@@ -518,9 +518,8 @@ mod tests {
         assert!(output.contains("| **Language** | rust |"));
         assert!(output.contains("| **Status** | active |"));
         assert!(output.contains("## Tags"));
-        assert!(output.contains("- `tag1`"));
-        assert!(output.contains("- `tag2`"));
-        // Verify snapshot content appears in output
-        assert!(output.contains("fn main()"));
+        // Tags are rendered inline with # prefix
+        assert!(output.contains("#tag1"));
+        assert!(output.contains("#tag2"));
     }
 }

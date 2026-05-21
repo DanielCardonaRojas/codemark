@@ -11,15 +11,16 @@
 //! - `AnnotationTemplateContext` - Template context for annotations
 //! - `ResolutionTemplateContext` - Template context for resolutions
 //! - `render_show_template()` - Render a bookmark with its resolutions
+//! - `render_template()` - Render a bookmark using a specific template
 //! - `load_show_template()` - Load the show template from disk or default
-//! - `default_show_template()` - Get the default bundled template
+//! - `load_template()` - Load a specific template from disk or default
 //! - `ensure_default_template_exists()` - Ensure default template is on disk
-//! - `create_handlebars_engine()` - Create a configured Handlebars instance
-//! - `templates_dir()` - Get the templates directory path
+//! - `SHOW_TEMPLATE` - Constant name for the show template
+//! - `DETAILS_TEMPLATE` - Constant name for the details panel template
 
 // Re-export all template rendering functionality from codemark_core
 pub use codemark_core::templates::{
-    ensure_default_template_exists, load_show_template, load_template, render_show_template,
-    render_template, AnnotationTemplateContext, BookmarkTemplateContext,
+    create_handlebars_engine, ensure_default_template_exists, load_show_template, load_template,
+    render_show_template, render_template, AnnotationTemplateContext, BookmarkTemplateContext,
     ResolutionTemplateContext, DETAILS_TEMPLATE, SHOW_TEMPLATE,
 };
