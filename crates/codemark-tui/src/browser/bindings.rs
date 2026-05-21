@@ -45,12 +45,14 @@ impl BrowserLayout {
                         bindings.push(("Enter", "Open collection"));
                         bindings.push(("d", "Delete collection"));
                         bindings.push(("H", "Heal all"));
+                        bindings.push(("Ctrl+O", "Copy ID"));
                     }
                     Some(Panel3Tab::Bookmarks) => {
                         bindings.push(("Enter", "Preview bookmark"));
                         bindings.push(("o", "Open in editor"));
                         bindings.push(("d", "Delete bookmark"));
                         bindings.push(("H", "Heal"));
+                        bindings.push(("Ctrl+O", "Copy ID"));
                     }
                     None => {}
                 }
@@ -106,12 +108,14 @@ impl BrowserLayout {
                         bindings.insert(0, KeyBinding::new("Enter", "Open"));
                         bindings.insert(1, KeyBinding::new("d", "Delete"));
                         bindings.insert(2, KeyBinding::new("H", "Heal all"));
+                        bindings.insert(3, KeyBinding::new("Ctrl+O", "Copy ID"));
                     }
                     Some(Panel3Tab::Bookmarks) => {
                         bindings.insert(0, KeyBinding::new("o", "Open"));
                         bindings.insert(1, KeyBinding::new("Enter", "Preview"));
                         bindings.insert(2, KeyBinding::new("d", "Delete"));
                         bindings.insert(3, KeyBinding::new("H", "Heal"));
+                        bindings.insert(4, KeyBinding::new("Ctrl+O", "Copy ID"));
                     }
                     None => {}
                 }

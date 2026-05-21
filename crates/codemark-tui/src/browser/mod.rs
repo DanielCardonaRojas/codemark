@@ -58,6 +58,8 @@ pub struct BrowserLayout {
     pending_notification: Option<HealNotification>,
     /// Event handler for sending custom events
     event_handler: crate::event::EventHandler,
+    /// Clipboard context for copy operations (kept alive for X11 selection ownership)
+    clipboard: Option<copypasta::ClipboardContext>,
 }
 
 impl BrowserLayout {
@@ -76,6 +78,7 @@ impl BrowserLayout {
             pending_command: None,
             pending_notification: None,
             event_handler,
+            clipboard: None,
         };
         layout.update_focus_state();
         layout
@@ -789,6 +792,28 @@ impl BrowserLayout {
         }
     }
 
+    /// Copy text to the system clipboard.
+    /// Keeps the clipboard context alive for the lifetime of the BrowserLayout
+    /// to maintain X11 selection ownership.
+    fn copy_to_clipboard(&mut self, text: &str) -> Result<(), String> {
+        use copypasta::ClipboardProvider;
+
+        // Create clipboard context lazily and keep it alive
+        if self.clipboard.is_none() {
+            use copypasta::ClipboardContext;
+            self.clipboard = Some(
+                ClipboardContext::new()
+                    .map_err(|e| format!("Failed to access clipboard: {}", e))?,
+            );
+        }
+
+        if let Some(ref mut ctx) = self.clipboard {
+            ctx.set_contents(text.to_owned())
+                .map_err(|e| format!("Failed to set clipboard contents: {}", e))?;
+        }
+        Ok(())
+    }
+
     /// Render the browser layout.
     pub fn render(&self, area: Rect, buf: &mut Buffer) {
         // Split vertically: 40% left, 60% right
@@ -1078,9 +1103,52 @@ impl BrowserLayout {
                     return true;
                 }
                 ratatui::crossterm::event::KeyCode::Char('o')
-                    if self.should_handle_keybindings() && self.focus != FocusArea::Search =>
+                    if self.should_handle_keybindings()
+                        && self.focus != FocusArea::Search
+                        && !key
+                            .modifiers
+                            .contains(ratatui::crossterm::event::KeyModifiers::CONTROL) =>
                 {
                     self.open_in_editor();
+                    return true;
+                }
+                // Copy ID keybinding (Ctrl+O) - only available in Bookmarks or Collections tabs
+                ratatui::crossterm::event::KeyCode::Char('o')
+                    if self.should_handle_keybindings()
+                        && self.focus == FocusArea::Panel3
+                        && key
+                            .modifiers
+                            .contains(ratatui::crossterm::event::KeyModifiers::CONTROL) =>
+                {
+                    match Panel3Tab::from_index(self.left_pane.panel3.tabs.selected_index()) {
+                        Some(Panel3Tab::Bookmarks) | Some(Panel3Tab::Collections) => {
+                            if let Some(panel) = self.left_pane.panel3.active_panel_mut()
+                                && let Some(selected) = panel.selected()
+                                && let Some(id) = selected.user_data.clone()
+                            {
+                                match self.copy_to_clipboard(&id) {
+                                    Ok(()) => {
+                                        self.pending_notification = Some(HealNotification {
+                                            message: format!("Copied ID: {}", id),
+                                            success: true,
+                                        });
+                                    }
+                                    Err(e) => {
+                                        self.pending_notification = Some(HealNotification {
+                                            message: format!("Failed to copy: {}", e),
+                                            success: false,
+                                        });
+                                    }
+                                }
+                            } else {
+                                self.pending_notification = Some(HealNotification {
+                                    message: "No item selected".to_string(),
+                                    success: false,
+                                });
+                            }
+                        }
+                        _ => {}
+                    }
                     return true;
                 }
                 // Delete collection or bookmark based on active tab

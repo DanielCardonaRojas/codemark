@@ -1,4 +1,4 @@
-use crate::browser::{Panel3Tab, Tab, TabContent, TabSelection};
+use crate::browser::{Panel3Tab, Tab, TabContent, TabSelection, tabs::BORDER_EXTENSION};
 use crate::component::{CodePreview, HealthStatus, MarkdownPanel, Panel, PanelItem};
 use crate::event::Event;
 use codemark_core::engine::bookmark::{BookmarkFilter, BookmarkHealth};
@@ -217,11 +217,7 @@ impl TabbedPanel {
             ])
             .bordered(false);
 
-        let repos_count = repos_panel.len().to_string();
-        let tabs = TabSelection::new(vec![
-            Tab::new("Repos").badge(repos_count),
-            Tab::new("Accounts").badge("3"),
-        ]);
+        let tabs = TabSelection::new(vec![Tab::new("Repos"), Tab::new("Accounts")]);
 
         Self {
             tabs,
@@ -239,10 +235,7 @@ impl TabbedPanel {
         let branches_panel =
             Panel::new("").bordered(false).multi_select(true).items(branches_items);
 
-        let tabs = TabSelection::new(vec![
-            Tab::new("Tags").badge(tags_panel.len().to_string()),
-            Tab::new("Branches").badge(branches_panel.len().to_string()),
-        ]);
+        let tabs = TabSelection::new(vec![Tab::new("Tags"), Tab::new("Branches")]);
 
         Self {
             tabs,
@@ -261,9 +254,9 @@ impl TabbedPanel {
         let bookmarks_panel = Panel::new("").bordered(false).items(bookmarks_items);
 
         let tabs = TabSelection::new(vec![
-            Tab::new("Bookmarks").badge(bookmarks_panel.len().to_string()),
-            Tab::new("Collections").badge(collections_panel.len().to_string()),
-            Tab::new("Tours").badge(tours_panel.len().to_string()),
+            Tab::new("Bookmarks"),
+            Tab::new("Collections"),
+            Tab::new("Tours"),
         ]);
 
         Self {
@@ -335,6 +328,18 @@ impl TabbedPanel {
 
         let inner = block.inner(area);
         block.render(area, buf);
+
+        // Extend the top border line after the ╭ character
+        for i in 1..=BORDER_EXTENSION {
+            let x = area.left() + i;
+            let y = area.top();
+            if x < area.right()
+                && let Some(cell) = buf.cell_mut((x, y))
+            {
+                cell.set_char('─');
+                cell.set_style(border_style);
+            }
+        }
 
         // Render active panel content (full inner area, no separate tab row)
         let active_index = self.tabs.selected_index();

@@ -8,6 +8,10 @@ use ratatui::{
     widgets::{Widget, Wrap},
 };
 
+/// Number of characters to extend the top border line for tab titles.
+/// This must be kept in sync with the rendering in `TabbedPanel`.
+pub const BORDER_EXTENSION: u16 = 2;
+
 /// Panel 3 tabs (Bookmarks/Collections/Tours).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Panel3Tab {
@@ -88,20 +92,12 @@ impl Panel2Tab {
 pub struct Tab {
     /// The tab label
     label: String,
-    /// Optional badge text (e.g., item count)
-    badge_text: Option<String>,
 }
 
 impl Tab {
     /// Create a new tab.
     pub fn new(label: impl Into<String>) -> Self {
-        Self { label: label.into(), badge_text: None }
-    }
-
-    /// Set a badge for this tab.
-    pub fn badge(mut self, badge: impl Into<String>) -> Self {
-        self.badge_text = Some(badge.into());
-        self
+        Self { label: label.into() }
     }
 
     /// Get the tab label.
@@ -109,32 +105,19 @@ impl Tab {
         &self.label
     }
 
-    /// Get the badge text.
-    pub fn badge_text(&self) -> Option<&str> {
-        self.badge_text.as_deref()
-    }
-
-    /// Render this tab as a Line with its index number.
-    fn render(&self, index: usize, selected: bool, focused: bool) -> Line<'_> {
-        let base_style = if selected && focused {
-            Style::default().fg(Color::Black).bg(Color::Green)
-        } else if selected {
-            Style::default().fg(Color::Green).bg(Color::DarkGray)
+    /// Render this tab as a Line.
+    fn render(&self, selected: bool, _focused: bool) -> Line<'_> {
+        let base_style = if selected {
+            Style::default().fg(Color::Green).add_modifier(ratatui::style::Modifier::BOLD)
         } else {
             Style::default().fg(Color::DarkGray)
         };
 
-        let mut spans = vec![
+        let spans = vec![
             Span::styled(" ", base_style),
-            Span::styled(format!("{}:", index + 1), base_style),
-            Span::styled(&self.label, base_style.add_modifier(ratatui::style::Modifier::BOLD)),
+            Span::styled(&self.label, base_style),
+            Span::styled(" ", base_style),
         ];
-
-        if let Some(badge) = &self.badge_text {
-            spans.push(Span::styled(format!(" ({badge})"), base_style));
-        }
-
-        spans.push(Span::styled(" ", base_style));
 
         Line::from(spans)
     }
@@ -200,7 +183,7 @@ impl TabSelection {
 
         for (i, tab) in self.tabs.iter().enumerate() {
             let selected = i == self.selected;
-            lines.push(tab.render(i, selected, self.focused));
+            lines.push(tab.render(selected, self.focused));
         }
 
         // Join tabs with spacing
@@ -220,15 +203,13 @@ impl TabSelection {
     }
 
     /// Render tabs as a Title for use with Block borders (inline with border).
-    pub fn render_as_titles(&self, focused: bool) -> Line<'_> {
-        let mut spans = Vec::new();
+    pub fn render_as_titles(&self, _focused: bool) -> Line<'_> {
+        let mut spans = vec![Span::raw(" ".repeat(BORDER_EXTENSION as usize))]; // Offset for border extension
 
         for (i, tab) in self.tabs.iter().enumerate() {
             let selected = i == self.selected;
-            let style = if selected && focused {
-                Style::default().fg(Color::Black).bg(Color::Green)
-            } else if selected {
-                Style::default().fg(Color::Green)
+            let style = if selected {
+                Style::default().fg(Color::Green).add_modifier(ratatui::style::Modifier::BOLD)
             } else {
                 Style::default().fg(Color::DarkGray)
             };
@@ -236,15 +217,7 @@ impl TabSelection {
             if i > 0 {
                 spans.push(Span::styled(" ", Style::default()));
             }
-            spans.push(Span::styled(format!("{}:", i + 1), style));
-            spans.push(Span::styled(
-                tab.label(),
-                style.add_modifier(ratatui::style::Modifier::BOLD),
-            ));
-
-            if let Some(badge) = tab.badge_text() {
-                spans.push(Span::styled(format!(" ({badge})"), style));
-            }
+            spans.push(Span::styled(tab.label(), style));
             spans.push(Span::styled(" ", style));
         }
 
@@ -269,9 +242,8 @@ mod tests {
 
     #[test]
     fn test_tab_creation() {
-        let tab = Tab::new("Test").badge("5");
+        let tab = Tab::new("Test");
         assert_eq!(tab.label(), "Test");
-        assert_eq!(tab.badge_text(), Some("5"));
     }
 
     #[test]
