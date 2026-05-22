@@ -8,6 +8,7 @@ use crate::engine::resolution;
 use crate::error::Result;
 use crate::git::context as git_context;
 use crate::parser::languages::{Language, ParseCache};
+use crate::query::summarizer;
 use crate::storage::db::Database;
 use chrono::Utc;
 use std::collections::HashMap;
@@ -22,6 +23,29 @@ pub struct SnapshotPayload {
     pub comments: Vec<BookmarkComment>,
     pub collection_tags: Vec<CollectionTag>,
     pub collection_links: Vec<CollectionLink>,
+}
+
+/// Truncate a headline to a reasonable length for display.
+///
+/// This function limits headlines to 100 characters and adds an ellipsis
+/// if truncation occurs. It also trims whitespace and newlines.
+fn truncate_headline(text: &str) -> String {
+    const MAX_LENGTH: usize = 100;
+
+    // Trim whitespace and replace newlines with spaces
+    let cleaned = text
+        .lines()
+        .map(|line| line.trim())
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ");
+
+    if cleaned.len() <= MAX_LENGTH {
+        cleaned
+    } else {
+        // Truncate and add ellipsis
+        format!("{}...", &cleaned[..MAX_LENGTH.saturating_sub(3)].trim())
+    }
 }
 
 /// Build a fresh snapshot of a collection by resolving all its bookmarks.
@@ -81,6 +105,13 @@ pub async fn build_snapshot(
 
         // Build the resolution record
         let res_id = uuid::Uuid::new_v4().to_string();
+
+        // Generate headline: try summarizer first, then annotation notes, then matched text
+        let headline = summarizer::summarize_query(&bm.query)
+            .and_then(|s| s.format())
+            .or_else(|| bm.annotations.iter().find_map(|a| a.notes.clone()))
+            .or_else(|| Some(truncate_headline(&result.matched_text)));
+
         let resolution = Resolution {
             id: res_id,
             bookmark_id: bm.id.clone(),
@@ -93,11 +124,7 @@ pub async fn build_snapshot(
             byte_range: Some(format!("{}-{}", result.byte_range.0, result.byte_range.1)),
             line_range: Some(format!("{}-{}", result.start_line + 1, result.end_line + 1)),
             content_hash: Some(result.content_hash.clone()),
-            headline: bm
-                .annotations
-                .iter()
-                .find_map(|a| a.notes.clone())
-                .or(Some(result.matched_text.clone())),
+            headline,
             snapshot: Some(preview),
             breadcrumbs: breadcrumbs_json,
         };
