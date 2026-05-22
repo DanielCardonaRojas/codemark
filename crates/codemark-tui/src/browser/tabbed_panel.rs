@@ -41,14 +41,17 @@ fn shorten_path(path: &str, max_width: usize) -> String {
     let components: Vec<&str> = path.split('/').collect();
     let mut result = String::new();
     let mut total_len = 0;
+    let prefix_overhead = 3; // "../" prefix that will be added if we truncate
 
     // Start from the last component and work backwards
     for (_i, component) in components.iter().enumerate().rev() {
         let component_len = component.len();
         let separator_len = if result.is_empty() { 0 } else { 1 }; // '/' separator
 
-        // Check if adding this component would exceed the limit
-        if total_len + component_len + separator_len > max_width {
+        // Check if adding this component would exceed the limit, accounting for the "../" prefix
+        // that will be added if we stop after this component
+        let budget = if result.is_empty() { max_width } else { max_width - prefix_overhead };
+        if total_len + component_len + separator_len > budget {
             // Stop here and add "../" prefix if we have any components
             if !result.is_empty() {
                 result = format!("../{}", result);
