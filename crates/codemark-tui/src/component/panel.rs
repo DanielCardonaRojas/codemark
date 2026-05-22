@@ -232,8 +232,10 @@ impl PanelItem {
 
         // Add icon if present
         if let Some(icon) = &self.icon {
-            spans.push(Span::styled(icon, Style::default().fg(Color::Cyan)));
-            spans.push(Span::raw(" "));
+            if !icon.is_empty() {
+                spans.push(Span::styled(icon, Style::default().fg(Color::Cyan)));
+                spans.push(Span::raw(" "));
+            }
         }
 
         // Add primary text
