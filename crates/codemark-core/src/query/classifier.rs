@@ -73,7 +73,7 @@ pub fn classify_node_type(node_type: &str) -> Option<&'static str> {
 pub fn get_node_icon(label: &str) -> &'static str {
     match label {
         "function" | "method" | "constructor" => "", // nf-cod-symbol_method
-        "class" | "struct" | "impl" => "",          // nf-cod-symbol_class
+        "class" | "struct" | "impl" => "",           // nf-cod-symbol_class
         "interface" | "protocol" | "trait" => "",    // nf-cod-symbol_interface
         "enum" => "",                                // nf-cod-symbol_enum
         "module" | "namespace" => "",                // nf-cod-symbol_module
