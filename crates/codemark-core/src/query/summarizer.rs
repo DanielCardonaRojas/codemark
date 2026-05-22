@@ -118,10 +118,10 @@ pub fn summarize_query(
 
 /// Recursively find all capture names inside a node.
 fn get_capture_names(node: Node, source: &str, names: &mut Vec<String>) {
-    if node.kind() == "capture" {
-        if let Ok(name) = node.utf8_text(source.as_bytes()) {
-            names.push(name.to_string());
-        }
+    if node.kind() == "capture"
+        && let Ok(name) = node.utf8_text(source.as_bytes())
+    {
+        names.push(name.to_string());
     }
     for i in 0..node.child_count() {
         get_capture_names(node.child(i).unwrap(), source, names);
@@ -155,10 +155,10 @@ fn find_target_node_type(capture_node: Node, source: &str) -> Result<String, Sum
     // In tree-sitter-tsquery, @target is a child of a named_node
     let mut current = capture_node;
     while let Some(parent) = current.parent() {
-        if parent.kind() == "named_node" {
-            if let Some(name_node) = parent.child_by_field_name("name") {
-                return Ok(name_node.utf8_text(source.as_bytes()).unwrap_or("").to_string());
-            }
+        if parent.kind() == "named_node"
+            && let Some(name_node) = parent.child_by_field_name("name")
+        {
+            return Ok(name_node.utf8_text(source.as_bytes()).unwrap_or("").to_string());
         }
         current = parent;
     }
@@ -202,16 +202,19 @@ fn find_identifier_in_predicates(
                             }
                         }
                         if pred_string.is_none() {
-                            pred_string = child.utf8_text(source.as_bytes()).ok().map(|s| s.trim_matches('"'));
+                            pred_string = child
+                                .utf8_text(source.as_bytes())
+                                .ok()
+                                .map(|s| s.trim_matches('"'));
                         }
                     }
                 }
 
-                if let (Some(cap), Some(val)) = (pred_capture, pred_string) {
-                    if target_captures.contains(&cap.to_string()) {
-                        *identifier = Some(val.to_string());
-                        return;
-                    }
+                if let (Some(cap), Some(val)) = (pred_capture, pred_string)
+                    && target_captures.contains(&cap.to_string())
+                {
+                    *identifier = Some(val.to_string());
+                    return;
                 }
             }
         }
