@@ -81,6 +81,7 @@ pub async fn build_snapshot(
 
         // Build the resolution record
         let res_id = uuid::Uuid::new_v4().to_string();
+
         let resolution = Resolution {
             id: res_id,
             bookmark_id: bm.id.clone(),
