@@ -73,17 +73,17 @@ pub fn classify_node_type(node_type: &str) -> Option<&'static str> {
 pub fn get_node_icon(label: &str) -> &'static str {
     match label {
         "function" | "method" | "constructor" => "", // nf-cod-symbol_method
-        "class" | "struct" => "",                      // nf-cod-symbol_class
-        "interface" | "protocol" | "trait" => "",     // nf-cod-symbol_interface
-        "enum" => "",                                 // nf-cod-symbol_enum
+        "class" | "struct" => "",                    // nf-cod-symbol_class
+        "interface" | "protocol" | "trait" => "",    // nf-cod-symbol_interface
+        "enum" => "",                                // nf-cod-symbol_enum
         "module" | "namespace" => "",                // nf-cod-symbol_module
         "variable" | "property" | "constant" => "",  // nf-cod-symbol_variable
-        "type" => "",                                 // nf-cod-symbol_parameter
-        "macro" => "",                                // nf-cod-symbol_constant
-        "if statement" | "match" => "",               // nf-cod-split_horizontal
-        "for loop" | "while loop" => "",              // nf-cod-sync
-        "call" => "",                                 // nf-cod-symbol_event
-        _ => "",                                      // nf-cod-file
+        "type" => "",                                // nf-cod-symbol_parameter
+        "macro" => "",                               // nf-cod-symbol_constant
+        "if statement" | "match" => "",              // nf-cod-split_horizontal
+        "for loop" | "while loop" => "",             // nf-cod-sync
+        "call" => "",                                // nf-cod-symbol_event
+        _ => "",                                     // nf-cod-file
     }
 }
 
