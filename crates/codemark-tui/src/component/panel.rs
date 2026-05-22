@@ -99,6 +99,8 @@ pub struct PanelItem {
     secondary_text: Option<String>,
     /// Optional metadata associated with this item
     metadata: Option<String>,
+    /// Optional icon (NERD font symbol)
+    icon: Option<String>,
     /// Health status indicator
     health: Option<HealthStatus>,
     /// Primary text color
@@ -133,6 +135,7 @@ impl PanelItem {
             text: text.into(),
             secondary_text: None,
             metadata: None,
+            icon: None,
             health: Some(HealthStatus::Unknown),
             text_color: None,
             checkmark: false,
@@ -141,6 +144,12 @@ impl PanelItem {
             published: false,
             user_data: None,
         }
+    }
+
+    /// Set the icon.
+    pub fn icon(mut self, icon: impl Into<String>) -> Self {
+        self.icon = Some(icon.into());
+        self
     }
 
     /// Set hidden user data.
@@ -218,6 +227,14 @@ impl PanelItem {
         // Add health status indicator if present
         if let Some(health) = self.health {
             spans.push(Span::styled(health.symbol(), Style::default().fg(health.color())));
+            spans.push(Span::raw(" "));
+        }
+
+        // Add icon if present
+        if let Some(icon) = &self.icon
+            && !icon.is_empty()
+        {
+            spans.push(Span::styled(icon, Style::default().fg(Color::Cyan)));
             spans.push(Span::raw(" "));
         }
 
