@@ -2,6 +2,8 @@ use crate::browser::{Panel3Tab, Tab, TabContent, TabSelection, tabs::BORDER_EXTE
 use crate::component::{CodePreview, HealthStatus, MarkdownPanel, Panel, PanelItem};
 use crate::event::Event;
 use codemark_core::engine::bookmark::{BookmarkFilter, BookmarkHealth};
+use codemark_core::parser::languages::Language;
+use codemark_core::query::summarizer;
 use codemark_core::storage::db::Database;
 use ratatui::{
     buffer::Buffer,
@@ -190,8 +192,17 @@ impl TabbedPanel {
                         })
                         .unwrap_or(HealthStatus::Unknown);
 
+                    // Try to get a summary from the query for better display
+                    let summary = bm
+                        .language
+                        .parse::<Language>()
+                        .ok()
+                        .and_then(|_lang| summarizer::summarize_query(&bm.query))
+                        .and_then(|s| s.format())
+                        .unwrap_or_else(|| bm.query.clone());
+
                     PanelItem::new(bm.file_path)
-                        .secondary_text(format!("L{}", bm.query))
+                        .secondary_text(summary)
                         .metadata(bm.created_by.unwrap_or_default())
                         .health(health)
                         .user_data(bm.id)
