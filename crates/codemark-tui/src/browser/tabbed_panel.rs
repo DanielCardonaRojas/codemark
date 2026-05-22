@@ -255,19 +255,29 @@ impl TabbedPanel {
 
                     let summary = summary_info
                         .as_ref()
-                        .and_then(|s| s.format())
-                        .unwrap_or_else(|| bm.query.clone());
+                        .and_then(|s| s.identifier.clone())
+                        .unwrap_or_else(|| {
+                            if summary_info.is_some() {
+                                String::new()
+                            } else {
+                                bm.query.clone()
+                            }
+                        });
 
                     let icon = summary_info
                         .as_ref()
                         .map(|s| get_node_icon(&s.label))
-                        .unwrap_or("󰈙");
+                        .unwrap_or("");
 
                     // Shrink the file path to prioritize last path components
                     let short_path = shorten_path(&bm.file_path, 25);
 
-                    // Format: short_file_path query_summary
-                    let display_text = format!("{} {}", short_path, summary);
+                    // Format: short_file_path identifier (or query if summarization failed)
+                    let display_text = if summary.is_empty() {
+                        short_path
+                    } else {
+                        format!("{} {}", short_path, summary)
+                    };
 
                     PanelItem::new(display_text)
                         .metadata(bm.created_by.unwrap_or_default())
