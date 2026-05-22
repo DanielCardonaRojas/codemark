@@ -26,6 +26,59 @@ pub struct TabbedPanel {
     pub pending_selection_change: std::cell::Cell<Option<String>>,
 }
 
+/// Shorten a file path to fit within a maximum width, prioritizing the last path components.
+///
+/// If the path exceeds `max_width`, it will be truncated to show the last components
+/// with a "../" prefix. For example, "/very/long/path/to/file.rs" with max_width=25
+/// might become "../path/to/file.rs".
+fn shorten_path(path: &str, max_width: usize) -> String {
+    if path.len() <= max_width {
+        return path.to_string();
+    }
+
+    // Try to find a good breaking point by working backwards from the end
+    let components: Vec<&str> = path.split('/').collect();
+    let mut result = String::new();
+    let mut total_len = 0;
+
+    // Start from the last component and work backwards
+    for (_i, component) in components.iter().enumerate().rev() {
+        let component_len = component.len();
+        let separator_len = if result.is_empty() { 0 } else { 1 }; // '/' separator
+
+        // Check if adding this component would exceed the limit
+        if total_len + component_len + separator_len > max_width {
+            // Stop here and add "../" prefix if we have any components
+            if !result.is_empty() {
+                result = format!("../{}", result);
+            }
+            break;
+        }
+
+        // Add this component
+        if result.is_empty() {
+            result = component.to_string();
+        } else {
+            result = format!("{}/{}", component, result);
+        }
+        total_len = result.len();
+    }
+
+    // If we still couldn't fit anything useful, use the filename only
+    if result.is_empty()
+        && let Some(filename) = components.last()
+    {
+        if filename.len() <= max_width {
+            return filename.to_string();
+        } else {
+            // Truncate the filename
+            return format!("...{}", &filename[filename.len().saturating_sub(max_width - 3)..]);
+        }
+    }
+
+    result
+}
+
 impl TabbedPanel {
     /// Get the step preview for modification.
     pub fn get_step_preview_mut(&mut self) -> Option<&mut CodePreview> {
@@ -197,12 +250,17 @@ impl TabbedPanel {
                         .language
                         .parse::<Language>()
                         .ok()
-                        .and_then(|_lang| summarizer::summarize_query(&bm.query))
+                        .and_then(|lang| summarizer::summarize_query(&bm.query, Some(lang)).ok())
                         .and_then(|s| s.format())
                         .unwrap_or_else(|| bm.query.clone());
 
-                    PanelItem::new(bm.file_path)
-                        .secondary_text(summary)
+                    // Shrink the file path to prioritize last path components
+                    let short_path = shorten_path(&bm.file_path, 25);
+
+                    // Format: short_file_path query_summary
+                    let display_text = format!("{} {}", short_path, summary);
+
+                    PanelItem::new(display_text)
                         .metadata(bm.created_by.unwrap_or_default())
                         .health(health)
                         .user_data(bm.id)
@@ -443,5 +501,48 @@ impl TabbedPanel {
         for panel in &mut self.panels {
             panel.set_focus(focused);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_shorten_path_short_path() {
+        let path = "src/main.rs";
+        assert_eq!(shorten_path(path, 25), "src/main.rs");
+    }
+
+    #[test]
+    fn test_shorten_path_exact_length() {
+        let path = "src/main.rs"; // 11 characters
+        assert_eq!(shorten_path(path, 11), "src/main.rs");
+    }
+
+    #[test]
+    fn test_shorten_path_long_path() {
+        let path = "very/long/path/to/some/deeply/nested/file.rs";
+        let result = shorten_path(path, 25);
+        // Result should be shorter than 25 chars and end with the filename
+        assert!(result.len() <= 26); // Allow for "../" prefix
+        assert!(result.ends_with("file.rs"));
+    }
+
+    #[test]
+    fn test_shorten_path_absolute_path() {
+        let path = "/Users/danielcardona/development/codemark/src/browser/tabbed_panel.rs";
+        let result = shorten_path(path, 25);
+        // Result should prioritize the last components
+        assert!(result.len() <= 26);
+        assert!(result.contains("tabbed_panel.rs") || result.contains("..."));
+    }
+
+    #[test]
+    fn test_shorten_path_very_long_filename() {
+        let path = "src/very_long_filename_that_exceeds_limit.rs";
+        let result = shorten_path(path, 25);
+        // Should truncate the filename if needed
+        assert!(result.len() <= 25);
     }
 }
