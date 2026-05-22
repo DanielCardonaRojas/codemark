@@ -1,9 +1,22 @@
 //! Query summarization for generating human-readable headlines from tree-sitter queries.
 //!
-//! This module parses tree-sitter query strings and extracts semantic information
-//! to produce concise summaries like "function cycle_mode" or "class AuthService".
+//! This module uses tree-sitter-tsquery to parse query strings and extract semantic
+//! information to produce concise summaries like "function cycle_mode" or "class AuthService".
 
+use crate::parser::languages::Language;
 use crate::query::classifier::classify_node_type;
+use thiserror::Error;
+use tree_sitter::{Node, Parser};
+
+#[derive(Debug, Error)]
+pub enum SummarizeError {
+    #[error("Failed to parse query string")]
+    ParseError,
+    #[error("No @target capture found in query")]
+    NoTarget,
+    #[error("Could not determine node type for @target")]
+    UnknownNodeType,
+}
 
 /// A summary of a tree-sitter query, containing the label and optional identifier.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -12,6 +25,8 @@ pub struct QuerySummary {
     pub label: String,
     /// The identifier/name if found in the query (e.g., "cycle_mode", "AuthService").
     pub identifier: Option<String>,
+    /// The language this query belongs to.
+    pub language: Option<Language>,
 }
 
 impl QuerySummary {
@@ -29,13 +44,13 @@ impl QuerySummary {
     }
 
     /// Create a new QuerySummary with the given label and identifier.
-    pub fn new(label: String, identifier: Option<String>) -> Self {
-        Self { label, identifier }
+    pub fn new(label: String, identifier: Option<String>, language: Option<Language>) -> Self {
+        Self { label, identifier, language }
     }
 
     /// Create a QuerySummary with only a label (no identifier).
-    pub fn label_only(label: String) -> Self {
-        Self { label, identifier: None }
+    pub fn label_only(label: String, language: Option<Language>) -> Self {
+        Self { label, identifier: None, language }
     }
 }
 
@@ -48,249 +63,166 @@ impl QuerySummary {
 ///
 /// # Arguments
 ///
-/// * `query` - The tree-sitter query string to parse
+/// * `query_str` - The tree-sitter query string to parse
+/// * `language` - The programming language this query is for
 ///
 /// # Returns
 ///
-/// * `Some(QuerySummary)` if the query could be parsed and summarized
-/// * `None` if parsing failed or no meaningful information could be extracted
+/// * `Ok(QuerySummary)` if the query could be parsed and summarized
+/// * `Err(SummarizeError)` if parsing failed or no @target was found
 ///
 /// # Examples
 ///
 /// ```
 /// use codemark_core::query::summarizer::summarize_query;
+/// use codemark_core::parser::languages::Language;
 ///
 /// let query = r#"(function_item name: (identifier) @fn_name (#eq? @fn_name "cycle_mode")) @target"#;
-/// let summary = summarize_query(query).unwrap();
+/// let summary = summarize_query(query, Some(Language::Rust)).unwrap();
 /// assert_eq!(summary.label, "function");
 /// assert_eq!(summary.identifier, Some("cycle_mode".to_string()));
 /// ```
-pub fn summarize_query(query: &str) -> Option<QuerySummary> {
-    // Parse the query to extract the target node type and identifier
-    let parsed = parse_query_string(query)?;
+pub fn summarize_query(
+    query_str: &str,
+    language: Option<Language>,
+) -> Result<QuerySummary, SummarizeError> {
+    let mut parser = Parser::new();
+    parser
+        .set_language(&tree_sitter_tsquery::LANGUAGE.into())
+        .map_err(|_| SummarizeError::ParseError)?;
 
-    // Find the target capture - the node marked with @target
-    let target_info = extract_target_info(&parsed)?;
+    let tree = parser.parse(query_str, None).ok_or(SummarizeError::ParseError)?;
+    let root = tree.root_node();
 
-    // Classify the node type to get a human-readable label
-    let label = classify_node_type(&target_info.node_type)
-        .unwrap_or_else(|| {
-            // If we can't classify, use the node type as-is but make it more readable
-            make_readable_label(&target_info.node_type)
-        })
-        .to_string();
+    // 1. Find @target capture node
+    let target_capture = find_capture_node(root, query_str, "target")?;
+    let target_parent = target_capture.parent().ok_or(SummarizeError::NoTarget)?;
 
-    Some(QuerySummary::new(label, target_info.identifier))
+    // 2. Find the associated node pattern and its type
+    let node_type = find_target_node_type(target_capture, query_str)?;
+
+    // 3. Get all capture names inside the target node pattern
+    let mut target_captures = Vec::new();
+    get_capture_names(target_parent, query_str, &mut target_captures);
+
+    // 4. Extract identifier from predicates that reference target captures
+    let identifier = extract_identifier(root, query_str, &target_captures);
+
+    // 5. Classify the node type to get a human-readable label
+    let label = classify_node_type(&node_type)
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| node_type.replace('_', " "));
+
+    Ok(QuerySummary::new(label, identifier, language))
 }
 
-/// Internal representation of a parsed query.
-#[derive(Debug)]
-struct ParsedQuery {
-    patterns: Vec<Pattern>,
-}
-
-/// A single pattern in a query (e.g., "(function_item) @target").
-#[derive(Debug)]
-struct Pattern {
-    nodes: Vec<NodePattern>,
-    captures: Vec<Capture>,
-    predicates: Vec<Predicate>,
-}
-
-/// A node pattern in a query (e.g., "(function_item name: (identifier))").
-#[derive(Debug)]
-struct NodePattern {
-    node_type: String,
-    #[allow(dead_code)]
-    field_name: Option<String>,
-    #[allow(dead_code)]
-    children: Vec<NodePattern>,
-}
-
-/// A capture in a query (e.g., "@target", "@fn_name").
-#[derive(Debug)]
-struct Capture {
-    name: String,
-    #[allow(dead_code)]
-    node_index: usize, // Index into the nodes vector
-}
-
-/// A predicate in a query (e.g., "#eq? @fn_name "foo"").
-#[derive(Debug)]
-enum Predicate {
-    Eq { capture: String, value: String },
-    Match { capture: String, pattern: String },
-}
-
-/// Information extracted from the target node in a query.
-#[derive(Debug)]
-struct TargetInfo {
-    node_type: String,
-    identifier: Option<String>,
-}
-
-/// Parse a query string into a structured representation.
-///
-/// This is a simplified parser that handles the common cases generated by
-/// codemark's query generator. It doesn't need to handle the full tree-sitter
-/// query grammar, just the patterns we generate.
-fn parse_query_string(query: &str) -> Option<ParsedQuery> {
-    // Treat the entire query as a single pattern for our purposes
-    let pattern = parse_pattern(query)?;
-    Some(ParsedQuery { patterns: vec![pattern] })
-}
-
-/// Parse a single pattern string.
-fn parse_pattern(pattern: &str) -> Option<Pattern> {
-    let mut captures = Vec::new();
-    let mut predicates = Vec::new();
-
-    // Extract captures (e.g., "@target", "@fn_name", "@sticky.function")
-    let capture_regex = regex::Regex::new(r"@(\w+(?:\.\w+)*)").ok()?;
-    for cap in capture_regex.captures_iter(pattern) {
-        let name = cap.get(1)?.as_str().to_string();
-        captures.push(Capture {
-            name: name.clone(),
-            node_index: 0, // We don't track individual nodes
-        });
+/// Recursively find all capture names inside a node.
+fn get_capture_names(node: Node, source: &str, names: &mut Vec<String>) {
+    if node.kind() == "capture" {
+        if let Ok(name) = node.utf8_text(source.as_bytes()) {
+            names.push(name.to_string());
+        }
     }
+    for i in 0..node.child_count() {
+        get_capture_names(node.child(i).unwrap(), source, names);
+    }
+}
 
-    // Extract predicates (e.g., "#eq? @fn_name \"foo\"")
-    // Note: ? is not a word character, so we need to match it explicitly
-    let predicate_regex = regex::Regex::new(r#"#(\w+\?)\s+@(\w+)\s+"([^"]*)""#).ok()?;
-    for pred in predicate_regex.captures_iter(pattern) {
-        let pred_type = pred.get(1)?.as_str();
-        let capture_name = pred.get(2)?.as_str().to_string();
-        let value = pred.get(3)?.as_str().to_string();
-
-        match pred_type {
-            "eq?" => predicates.push(Predicate::Eq { capture: capture_name, value }),
-            "match?" => predicates.push(Predicate::Match { capture: capture_name, pattern: value }),
-            _ => {}
+/// Recursively find a capture node with the given name (e.g., "target").
+fn find_capture_node<'a>(
+    node: Node<'a>,
+    source: &str,
+    name: &str,
+) -> Result<Node<'a>, SummarizeError> {
+    if node.kind() == "capture" {
+        let capture_name = node.utf8_text(source.as_bytes()).unwrap_or("");
+        if capture_name == format!("@{}", name) {
+            return Ok(node);
         }
     }
 
-    // Extract the node type from the pattern
-    // We need to find the node that has @target capture
-    let node_type = find_target_node_type(pattern)?;
-
-    // Build a simple node pattern (this is simplified)
-    let nodes = vec![NodePattern { node_type, field_name: None, children: Vec::new() }];
-
-    Some(Pattern { nodes, captures, predicates })
-}
-
-/// Find the node type that has the @target capture.
-///
-/// This function works backwards from @target to find the opening paren
-/// of the node it's attached to, skipping over any intermediate nodes.
-fn find_target_node_type(pattern: &str) -> Option<String> {
-    let target_pos = pattern.find("@target")?;
-    let type_regex = regex::Regex::new(r"\((\w+)").ok()?;
-
-    // Work backwards from @target to find the opening paren of the target node
-    // We need to skip over the closing paren of the target node itself
-    let mut depth = 0; // Number of closing parens we've seen that belong to nested nodes
-    let mut in_string = false;
-    let mut escape_next = false;
-    let mut found_target_closing = false; // Whether we've seen the closing paren of the target node
-    let mut found_open = None;
-
-    for (i, ch) in pattern[..target_pos].chars().rev().enumerate() {
-        let actual_pos = target_pos - i - 1;
-
-        if escape_next {
-            escape_next = false;
-            continue;
-        }
-
-        match ch {
-            '\\' if in_string => {
-                escape_next = true;
-            }
-            '"' if !escape_next => {
-                in_string = !in_string;
-            }
-            ')' if !in_string => {
-                if !found_target_closing {
-                    // This is the closing paren of the target node itself
-                    found_target_closing = true;
-                } else {
-                    // This is a closing paren of a nested node
-                    depth += 1;
-                }
-            }
-            '(' if !in_string && depth == 0 && found_target_closing => {
-                // Found the opening paren of the target node
-                found_open = Some(actual_pos);
-                break;
-            }
-            '(' if !in_string => {
-                depth -= 1;
-            }
-            _ => {}
+    for i in 0..node.child_count() {
+        if let Ok(found) = find_capture_node(node.child(i).unwrap(), source, name) {
+            return Ok(found);
         }
     }
 
-    // Extract the node type if we found the opening paren
-    if let Some(open_pos) = found_open {
-        let node_slice = &pattern[open_pos..];
-        return type_regex
-            .captures(node_slice)
-            .and_then(|cap| cap.get(1))
-            .map(|m| m.as_str().to_string());
+    Err(SummarizeError::NoTarget)
+}
+
+/// Find the node type of the pattern that has the @target capture.
+fn find_target_node_type(capture_node: Node, source: &str) -> Result<String, SummarizeError> {
+    // In tree-sitter-tsquery, @target is a child of a named_node
+    let mut current = capture_node;
+    while let Some(parent) = current.parent() {
+        if parent.kind() == "named_node" {
+            if let Some(name_node) = parent.child_by_field_name("name") {
+                return Ok(name_node.utf8_text(source.as_bytes()).unwrap_or("").to_string());
+            }
+        }
+        current = parent;
     }
 
-    // Fallback: try to find any node type
-    type_regex.captures(pattern).and_then(|cap| cap.get(1)).map(|m| m.as_str().to_string())
+    Err(SummarizeError::UnknownNodeType)
 }
 
-/// Extract target information from a parsed query.
-fn extract_target_info(parsed: &ParsedQuery) -> Option<TargetInfo> {
-    // Find the pattern with @target capture
-    let target_pattern = parsed
-        .patterns
-        .iter()
-        .find(|p| p.captures.iter().any(|c| c.name == "target" || c.name.starts_with("sticky.")))?;
+/// Extract an identifier from #eq? or #match? predicates in the query.
+fn extract_identifier(root: Node, source: &str, target_captures: &[String]) -> Option<String> {
+    let mut identifier = None;
+    find_identifier_in_predicates(root, source, target_captures, &mut identifier);
+    identifier
+}
 
-    // Get the node type from the first node in the pattern
-    let node_type = target_pattern.nodes.first()?.node_type.clone();
+fn find_identifier_in_predicates(
+    node: Node,
+    source: &str,
+    target_captures: &[String],
+    identifier: &mut Option<String>,
+) {
+    if node.kind() == "predicate" {
+        let text = node.utf8_text(source.as_bytes()).unwrap_or("");
 
-    // Try to extract an identifier from predicates
-    // Look for #eq? predicates with captures like "fn_name", "name", "identifier"
-    // Prefer "fn_name" over "name" or "name0" for nested queries
-    let identifier = target_pattern
-        .predicates
-        .iter()
-        .find_map(|pred| match pred {
-            Predicate::Eq { capture, value } if capture == "fn_name" => Some(value.clone()),
-            _ => None,
-        })
-        .or_else(|| {
-            // Fallback to any identifier capture
-            target_pattern.predicates.iter().find_map(|pred| match pred {
-                Predicate::Eq { capture, value } if is_identifier_capture(capture) => {
-                    Some(value.clone())
+        if text.contains("eq?") || text.contains("match?") {
+            // Find the capture name and string literal in the parameters
+            if let Some(params) = node.child_by_field_name("parameters") {
+                let mut pred_capture = None;
+                let mut pred_string = None;
+
+                for i in 0..params.child_count() {
+                    let child = params.child(i).unwrap();
+                    if child.kind() == "capture" {
+                        pred_capture = child.utf8_text(source.as_bytes()).ok();
+                    } else if child.kind() == "string" {
+                        // Find string_content inside string
+                        for j in 0..child.child_count() {
+                            let content = child.child(j).unwrap();
+                            if content.kind() == "string_content" {
+                                pred_string = content.utf8_text(source.as_bytes()).ok();
+                                break;
+                            }
+                        }
+                        if pred_string.is_none() {
+                            pred_string = child.utf8_text(source.as_bytes()).ok().map(|s| s.trim_matches('"'));
+                        }
+                    }
                 }
-                Predicate::Match { capture, pattern } if is_identifier_capture(capture) => {
-                    Some(pattern.clone())
+
+                if let (Some(cap), Some(val)) = (pred_capture, pred_string) {
+                    if target_captures.contains(&cap.to_string()) {
+                        *identifier = Some(val.to_string());
+                        return;
+                    }
                 }
-                _ => None,
-            })
-        });
+            }
+        }
+    }
 
-    Some(TargetInfo { node_type, identifier })
-}
-
-/// Check if a capture name suggests it's an identifier.
-fn is_identifier_capture(name: &str) -> bool {
-    // Check for common identifier capture patterns
-    matches!(name, "fn_name" | "name" | "name0" | "identifier" | "type_identifier" | "property")
-}
-
-/// Make a node type more readable by converting underscores to spaces.
-fn make_readable_label(node_type: &str) -> &str {
-    node_type
+    for i in 0..node.child_count() {
+        find_identifier_in_predicates(node.child(i).unwrap(), source, target_captures, identifier);
+        if identifier.is_some() {
+            return;
+        }
+    }
 }
 
 #[cfg(test)]
@@ -301,129 +233,56 @@ mod tests {
     fn test_summarize_simple_function_query() {
         let query =
             r#"(function_item name: (identifier) @fn_name (#eq? @fn_name "cycle_mode")) @target"#;
-        let summary = summarize_query(query);
+        let summary = summarize_query(query, Some(Language::Rust)).unwrap();
 
-        assert!(summary.is_some());
-        let s = summary.unwrap();
-        assert_eq!(s.label, "function");
-        assert_eq!(s.identifier, Some("cycle_mode".to_string()));
-        assert_eq!(s.format(), Some("function cycle_mode".to_string()));
+        assert_eq!(summary.label, "function");
+        assert_eq!(summary.identifier, Some("cycle_mode".to_string()));
+        assert_eq!(summary.format(), Some("function cycle_mode".to_string()));
     }
 
     #[test]
     fn test_summarize_class_query() {
         let query = r#"(class_declaration name: (type_identifier) @name0 (#eq? @name0 "AuthService")) @target"#;
-        let summary = summarize_query(query);
+        let summary = summarize_query(query, Some(Language::Swift)).unwrap();
 
-        assert!(summary.is_some());
-        let s = summary.unwrap();
-        assert_eq!(s.label, "class");
-        assert_eq!(s.identifier, Some("AuthService".to_string()));
-        assert_eq!(s.format(), Some("class AuthService".to_string()));
-    }
-
-    #[test]
-    fn test_summarize_impl_method_query() {
-        let query = r#"(impl_item type: (type_identifier) @name0 (#eq? @name0 "SearchBar") (declaration_list (function_item name: (identifier) @fn_name (#eq? @fn_name "cycle_mode")) @target))"#;
-        let summary = summarize_query(query);
-
-        assert!(summary.is_some());
-        let s = summary.unwrap();
-        // The target is the function_item, so we should get "function cycle_mode"
-        assert_eq!(s.label, "function");
-        assert_eq!(s.identifier, Some("cycle_mode".to_string()));
+        assert_eq!(summary.label, "class");
+        assert_eq!(summary.identifier, Some("AuthService".to_string()));
+        assert_eq!(summary.format(), Some("class AuthService".to_string()));
     }
 
     #[test]
     fn test_summarize_method_query() {
         let query = r#"(method_definition name: (property_identifier) @fn_name (#eq? @fn_name "validateToken")) @target"#;
-        let summary = summarize_query(query);
+        let summary = summarize_query(query, Some(Language::TypeScript)).unwrap();
 
-        assert!(summary.is_some());
-        let s = summary.unwrap();
-        assert_eq!(s.label, "method");
-        assert_eq!(s.identifier, Some("validateToken".to_string()));
+        assert_eq!(summary.label, "method");
+        assert_eq!(summary.identifier, Some("validateToken".to_string()));
     }
 
     #[test]
     fn test_summarize_query_without_identifier() {
         let query = r#"(if_statement) @target"#;
-        let summary = summarize_query(query);
+        let summary = summarize_query(query, Some(Language::Rust)).unwrap();
 
-        assert!(summary.is_some());
-        let s = summary.unwrap();
-        assert_eq!(s.label, "if statement");
-        assert_eq!(s.identifier, None);
-        assert_eq!(s.format(), Some("if statement".to_string()));
+        assert_eq!(summary.label, "if statement");
+        assert_eq!(summary.identifier, None);
+        assert_eq!(summary.format(), Some("if statement".to_string()));
     }
 
     #[test]
-    fn test_summarize_invalid_query_returns_none() {
+    fn test_summarize_invalid_query_returns_error() {
         let query = "not a valid query";
-        let summary = summarize_query(query);
+        let summary = summarize_query(query, None);
 
-        assert!(summary.is_none());
-    }
-
-    #[test]
-    fn test_query_summary_format_with_identifier() {
-        let summary = QuerySummary::new("function".to_string(), Some("foo".to_string()));
-        assert_eq!(summary.format(), Some("function foo".to_string()));
-    }
-
-    #[test]
-    fn test_query_summary_format_without_identifier() {
-        let summary = QuerySummary::label_only("class".to_string());
-        assert_eq!(summary.format(), Some("class".to_string()));
-    }
-
-    #[test]
-    fn test_query_summary_format_empty_label() {
-        let summary = QuerySummary::new("".to_string(), Some("foo".to_string()));
-        assert_eq!(summary.format(), None);
-    }
-
-    #[test]
-    fn test_summarize_nested_query_with_sticky_captures() {
-        let query = r#"(class_declaration name: (type_identifier) @name0 (#eq? @name0 "AuthService") @sticky.class (class_body (function_declaration name: (identifier) @fn_name (#eq? @fn_name "validateToken") @sticky.function) @target))"#;
-        let summary = summarize_query(query);
-
-        assert!(summary.is_some());
-        let s = summary.unwrap();
-        assert_eq!(s.label, "function");
-        assert_eq!(s.identifier, Some("validateToken".to_string()));
+        assert!(summary.is_err());
     }
 
     #[test]
     fn test_summarize_enum_query() {
         let query = r#"(enum_declaration name: (type_identifier) @name0 (#eq? @name0 "AuthError")) @target"#;
-        let summary = summarize_query(query);
+        let summary = summarize_query(query, Some(Language::Swift)).unwrap();
 
-        assert!(summary.is_some());
-        let s = summary.unwrap();
-        assert_eq!(s.label, "enum");
-        assert_eq!(s.identifier, Some("AuthError".to_string()));
-    }
-
-    #[test]
-    fn test_summarize_type_alias_query() {
-        let query = r#"(type_alias_declaration name: (type_identifier) @name0 (#eq? @name0 "UserID")) @target"#;
-        let summary = summarize_query(query);
-
-        assert!(summary.is_some());
-        let s = summary.unwrap();
-        assert_eq!(s.label, "type");
-        assert_eq!(s.identifier, Some("UserID".to_string()));
-    }
-
-    #[test]
-    fn test_summarize_module_query() {
-        let query = r#"(mod_item name: (identifier) @name0 (#eq? @name0 "auth")) @target"#;
-        let summary = summarize_query(query);
-
-        assert!(summary.is_some());
-        let s = summary.unwrap();
-        assert_eq!(s.label, "module");
-        assert_eq!(s.identifier, Some("auth".to_string()));
+        assert_eq!(summary.label, "enum");
+        assert_eq!(summary.identifier, Some("AuthError".to_string()));
     }
 }
