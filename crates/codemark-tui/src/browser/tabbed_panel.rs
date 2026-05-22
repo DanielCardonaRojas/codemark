@@ -3,6 +3,7 @@ use crate::component::{CodePreview, HealthStatus, MarkdownPanel, Panel, PanelIte
 use crate::event::Event;
 use codemark_core::engine::bookmark::{BookmarkFilter, BookmarkHealth};
 use codemark_core::parser::languages::Language;
+use codemark_core::query::classifier::get_node_icon;
 use codemark_core::query::summarizer;
 use codemark_core::storage::db::Database;
 use ratatui::{
@@ -246,13 +247,21 @@ impl TabbedPanel {
                         .unwrap_or(HealthStatus::Unknown);
 
                     // Try to get a summary from the query for better display
-                    let summary = bm
+                    let summary_info = bm
                         .language
                         .parse::<Language>()
                         .ok()
-                        .and_then(|lang| summarizer::summarize_query(&bm.query, Some(lang)).ok())
+                        .and_then(|lang| summarizer::summarize_query(&bm.query, Some(lang)).ok());
+
+                    let summary = summary_info
+                        .as_ref()
                         .and_then(|s| s.format())
                         .unwrap_or_else(|| bm.query.clone());
+
+                    let icon = summary_info
+                        .as_ref()
+                        .map(|s| get_node_icon(&s.label))
+                        .unwrap_or("󰈙");
 
                     // Shrink the file path to prioritize last path components
                     let short_path = shorten_path(&bm.file_path, 25);
@@ -263,6 +272,7 @@ impl TabbedPanel {
                     PanelItem::new(display_text)
                         .metadata(bm.created_by.unwrap_or_default())
                         .health(health)
+                        .icon(icon)
                         .user_data(bm.id)
                 })
                 .collect(),

@@ -55,8 +55,8 @@ pub fn classify_node_type(node_type: &str) -> Option<&'static str> {
 
         // Statements that might be targeted
         "if_statement" | "if_expression" => Some("if statement"),
-        "for_statement" => Some("for loop"),
-        "while_statement" => Some("while loop"),
+        "for_statement" | "for" | "for_expression" => Some("for loop"),
+        "while_statement" | "while" | "while_expression" => Some("while loop"),
         "match_statement" | "match_expression" | "switch_statement" => Some("match"),
         "return_statement" => Some("return"),
         "assignment_expression" | "assignment_statement" => Some("assignment"),
@@ -66,6 +66,24 @@ pub fn classify_node_type(node_type: &str) -> Option<&'static str> {
         "binary_expression" => Some("expression"),
 
         _ => None,
+    }
+}
+
+/// Returns a NERD font icon for a given node label.
+pub fn get_node_icon(label: &str) -> &'static str {
+    match label {
+        "function" | "method" | "constructor" => "", // nf-cod-symbol_method
+        "class" | "struct" => "",                      // nf-cod-symbol_class
+        "interface" | "protocol" | "trait" => "",     // nf-cod-symbol_interface
+        "enum" => "",                                 // nf-cod-symbol_enum
+        "module" | "namespace" => "",                // nf-cod-symbol_module
+        "variable" | "property" | "constant" => "",  // nf-cod-symbol_variable
+        "type" => "",                                 // nf-cod-symbol_parameter
+        "macro" => "",                                // nf-cod-symbol_constant
+        "if statement" | "match" => "",               // nf-cod-split_horizontal
+        "for loop" | "while loop" => "",              // nf-cod-sync
+        "call" => "",                                 // nf-cod-symbol_event
+        _ => "",                                      // nf-cod-file
     }
 }
 
