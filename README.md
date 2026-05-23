@@ -4,7 +4,6 @@
 [![CI](https://github.com/DanielCardonaRojas/codemark/actions/workflows/test.yml/badge.svg)](https://github.com/DanielCardonaRojas/codemark/actions/workflows/test.yml)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.75+-orange.svg)](https://www.rust-lang.org)
-[![television](https://img.shields.io/badge/television-ready-brightgreen)](https://alexpasmantier.github.io/television/)
 [![agent-ready](https://img.shields.io/badge/agent-ready-blueviolet)](#claude-code)
 
 **Codemark** is a structural bookmarking system for code. Unlike fragile `file:line` references that break when you insert a single newline, Codemark uses **[tree-sitter](https://tree-sitter.github.io/tree-sitter/)** to capture the semantic structure of your code.
@@ -18,35 +17,33 @@ Bookmarks **self-heal** across renames, refactors, and formatting changes, makin
 Standard bookmarks are "dumb"—they point to a coordinate. When the code moves, the coordinate points to the wrong thing. Codemark is "smart"—it knows what you bookmarked (e.g., "the `validateToken` function in `auth.rs`").
 
 - **Self-Healing Resolution**: Tiered matching (Exact → Relaxed → Hash Fallback) ensures your bookmarks stay alive even if the code drifts.
+- **Native TUI Dashboard**: A powerful, keyboard-centric command center for managing your code knowledge.
 - **Agent Ready**: Designed for AI coding agents (like Claude Code) to maintain context across sessions.
-- **TUI & CLI Native**: Works beautifully with `fzf`, `television`, `bat`, and `Neovim`.
 - **Semantic Search**: Find bookmarks by meaning using local vector embeddings (no API key required).
 
 ---
 
-## 📊 Rich Metadata
+## 🖥️ Native Dashboard (TUI)
 
-Codemark doesn't just store a pointer; it stores a comprehensive snapshot of the code's context:
-- **AST Structure**: The exact Tree-Sitter query used to locate the node.
-- **Git Context**: Commit hashes for both creation and every successful resolution.
-- **Content Hashes**: Resilient SHA-256 hashes of normalized code content.
-- **Append-only Annotations**: Multiple notes and context entries from different users or agents.
-- **Resolution History**: A full audit log of how and where the bookmark has moved over time.
+Codemark features a built-in, keyboard-driven dashboard inspired by `lazygit`. It's the primary interface for managing structural bookmarks and tours.
+
+![Screenshot](./codemark_tui_screenshot.png)
+[Query Preview](./codemark_tui_query_screenshot.png) |
+[Collections](./codemark_tui_collections_screenshot.png)
 
 ---
 
 ## 🛠️ Features
 
 - 🧠 **Smart Resolution**: Bookmarks survive renames and structural changes.
+- 🖥️ **Interactive Dashboard**: Lazygit-style TUI for efficient, keyboard-first interaction.
 - 📑 **Rich Metadata**: Captures AST structure, git context, content hashes, and append-only notes/tags.
 - 🔍 **Semantic Search**: Find code by intent (e.g., *"where is authentication handled?"*).
 - 🗃️ **Collections**: Group bookmarks into logical sets for specific tasks.
 - 📦 **Git Integrated**: Track bookmarks across commits and branches.
 - 🧩 **First-class Integrations**:
-    - **Television**: Interactive TUI for browsing and fuzzy-finding.
     - **Neovim**: Gut signs, visual selection bookmarking, and Telescope support.
     - **Claude Code**: Specialized plugin for AI-driven bookmarking.
-- 🚀 **Quick Open**: Jump directly to bookmarked code in your favorite editor.
 
 ---
 
@@ -72,13 +69,13 @@ cargo install codemark
 ### 1. Create a bookmark
 Bookmark a function by line number. Codemark automatically identifies the AST node.
 ```bash
-codemark add --file src/auth.rs --range 42 --tag auth --note "JWT entry point"
+codemark add src/auth.rs:42 --tag auth --note "JWT entry point"
 ```
 
-### 2. Find it later
-Even if you've added lines or moved the function, Codemark finds it:
+### 2. Launch the Dashboard
+The recommended way to browse and manage your bookmarks:
 ```bash
-codemark resolve a1b2
+codemark dashboard
 ```
 
 ### 3. Search by meaning
@@ -86,12 +83,6 @@ Reindex once to enable semantic search:
 ```bash
 codemark reindex
 codemark search --semantic "how are tokens validated?"
-```
-
-### 4. Interactive TUI
-The recommended way to browse is via **[television](https://alexpasmantier.github.io/television/)**:
-```bash
-tv codemark
 ```
 
 ---
