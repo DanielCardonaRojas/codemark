@@ -695,6 +695,24 @@ impl Component for Panel {
                         self.select_previous();
                         true
                     }
+                    ratatui::crossterm::event::KeyCode::Char('J') => {
+                        let mut state = self.list_state.borrow_mut();
+                        let area = self.last_area.get();
+                        let height =
+                            area.height.saturating_sub(if self.bordered { 2 } else { 0 }) as usize;
+                        if self.items.len() > height {
+                            let offset = state.offset();
+                            *state.offset_mut() =
+                                (offset + 5).min(self.items.len().saturating_sub(height));
+                        }
+                        true
+                    }
+                    ratatui::crossterm::event::KeyCode::Char('K') => {
+                        let mut state = self.list_state.borrow_mut();
+                        let offset = state.offset();
+                        *state.offset_mut() = offset.saturating_sub(5);
+                        true
+                    }
                     ratatui::crossterm::event::KeyCode::Char(' ') => {
                         self.activate_selected();
                         true
@@ -737,12 +755,29 @@ impl Component for Panel {
                         false
                     }
                     ratatui::crossterm::event::MouseEventKind::ScrollDown if is_hovered => {
-                        self.select_next();
-                        true
+                        let mut state = self.list_state.borrow_mut();
+                        let height =
+                            area.height.saturating_sub(if self.bordered { 2 } else { 0 }) as usize;
+                        if self.items.len() > height {
+                            let offset = state.offset();
+                            let new_offset =
+                                (offset + 1).min(self.items.len().saturating_sub(height));
+                            if new_offset != offset {
+                                *state.offset_mut() = new_offset;
+                                return true;
+                            }
+                        }
+                        false
                     }
                     ratatui::crossterm::event::MouseEventKind::ScrollUp if is_hovered => {
-                        self.select_previous();
-                        true
+                        let mut state = self.list_state.borrow_mut();
+                        let offset = state.offset();
+                        let new_offset = offset.saturating_sub(1);
+                        if new_offset != offset {
+                            *state.offset_mut() = new_offset;
+                            return true;
+                        }
+                        false
                     }
                     _ => false,
                 }

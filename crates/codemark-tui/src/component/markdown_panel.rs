@@ -171,6 +171,11 @@ impl MarkdownPanel {
 
         spans
     }
+
+    /// Get the estimated line count of the parsed content (without wrapping).
+    fn line_count(&self) -> usize {
+        self.parse_to_text().lines.len()
+    }
 }
 
 impl Component for MarkdownPanel {
@@ -192,21 +197,41 @@ impl Component for MarkdownPanel {
                 match key.code {
                     ratatui::crossterm::event::KeyCode::Down
                     | ratatui::crossterm::event::KeyCode::Char('j') => {
-                        self.scroll_offset = self.scroll_offset.saturating_add(1);
-                        true
+                        let height = self.last_area.get().height as usize;
+                        let line_count = self.line_count();
+                        if line_count > height {
+                            let old_offset = self.scroll_offset;
+                            self.scroll_offset = self
+                                .scroll_offset
+                                .saturating_add(1)
+                                .min((line_count - height) as u16);
+                            return old_offset != self.scroll_offset;
+                        }
+                        false
                     }
                     ratatui::crossterm::event::KeyCode::Up
                     | ratatui::crossterm::event::KeyCode::Char('k') => {
+                        let old_offset = self.scroll_offset;
                         self.scroll_offset = self.scroll_offset.saturating_sub(1);
-                        true
+                        old_offset != self.scroll_offset
                     }
                     ratatui::crossterm::event::KeyCode::Char('J') => {
-                        self.scroll_offset = self.scroll_offset.saturating_add(5);
-                        true
+                        let height = self.last_area.get().height as usize;
+                        let line_count = self.line_count();
+                        if line_count > height {
+                            let old_offset = self.scroll_offset;
+                            self.scroll_offset = self
+                                .scroll_offset
+                                .saturating_add(5)
+                                .min((line_count - height) as u16);
+                            return old_offset != self.scroll_offset;
+                        }
+                        false
                     }
                     ratatui::crossterm::event::KeyCode::Char('K') => {
+                        let old_offset = self.scroll_offset;
                         self.scroll_offset = self.scroll_offset.saturating_sub(5);
-                        true
+                        old_offset != self.scroll_offset
                     }
                     _ => false,
                 }
@@ -217,12 +242,22 @@ impl Component for MarkdownPanel {
 
                 match mouse.kind {
                     ratatui::crossterm::event::MouseEventKind::ScrollDown if is_hovered => {
-                        self.scroll_offset = self.scroll_offset.saturating_add(1);
-                        true
+                        let height = area.height as usize;
+                        let line_count = self.line_count();
+                        if line_count > height {
+                            let old_offset = self.scroll_offset;
+                            self.scroll_offset = self
+                                .scroll_offset
+                                .saturating_add(1)
+                                .min((line_count - height) as u16);
+                            return old_offset != self.scroll_offset;
+                        }
+                        false
                     }
                     ratatui::crossterm::event::MouseEventKind::ScrollUp if is_hovered => {
+                        let old_offset = self.scroll_offset;
                         self.scroll_offset = self.scroll_offset.saturating_sub(1);
-                        true
+                        old_offset != self.scroll_offset
                     }
                     _ => false,
                 }
