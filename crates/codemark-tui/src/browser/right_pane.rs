@@ -377,10 +377,19 @@ impl RightPane {
             }
         }
 
-        // Forward to focused component first
-        let handled = match self.focused {
-            RightPaneFocus::Steps => self.steps.handle_event(event),
-            RightPaneFocus::Details => self.details.handle_event(event),
+        // Forward to components
+        let handled = match event {
+            Event::Mouse(_) => {
+                // For mouse events, check both to allow scrolling any hovered pane
+                self.steps.handle_event(event) || self.details.handle_event(event)
+            }
+            _ => {
+                // For keyboard events, follow focus
+                match self.focused {
+                    RightPaneFocus::Steps => self.steps.handle_event(event),
+                    RightPaneFocus::Details => self.details.handle_event(event),
+                }
+            }
         };
 
         if handled {

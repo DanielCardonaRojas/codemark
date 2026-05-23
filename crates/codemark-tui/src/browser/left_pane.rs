@@ -70,9 +70,20 @@ impl LeftPane {
 
     /// Handle an event.
     pub fn handle_event(&mut self, event: &Event) -> bool {
-        self.search.handle_event(event)
-            || self.panel1.handle_event(event)
-            || self.panel2.handle_event(event)
-            || self.panel3.handle_event(event)
+        if matches!(event, Event::Mouse(_)) {
+            // For mouse events, check ALL panels to allow scrolling any hovered pane.
+            // Use bitwise OR to avoid short-circuiting.
+            let h1 = self.search.handle_event(event);
+            let h2 = self.panel1.handle_event(event);
+            let h3 = self.panel2.handle_event(event);
+            let h4 = self.panel3.handle_event(event);
+            h1 || h2 || h3 || h4
+        } else {
+            // Keyboard events can short-circuit for efficiency.
+            self.search.handle_event(event)
+                || self.panel1.handle_event(event)
+                || self.panel2.handle_event(event)
+                || self.panel3.handle_event(event)
+        }
     }
 }
