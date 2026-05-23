@@ -745,16 +745,24 @@ impl Component for Panel {
                             area.height.saturating_sub(if self.bordered { 2 } else { 0 }) as usize;
                         if self.items.len() > height {
                             let offset = state.offset();
-                            *state.offset_mut() =
+                            let new_offset =
                                 (offset + 5).min(self.items.len().saturating_sub(height));
+                            if new_offset != offset {
+                                *state.offset_mut() = new_offset;
+                                return true;
+                            }
                         }
-                        true
+                        false
                     }
                     ratatui::crossterm::event::KeyCode::Char('K') => {
                         let mut state = self.list_state.borrow_mut();
                         let offset = state.offset();
-                        *state.offset_mut() = offset.saturating_sub(5);
-                        true
+                        let new_offset = offset.saturating_sub(5);
+                        if new_offset != offset {
+                            *state.offset_mut() = new_offset;
+                            return true;
+                        }
+                        false
                     }
                     ratatui::crossterm::event::KeyCode::Char(' ') => {
                         self.activate_selected();

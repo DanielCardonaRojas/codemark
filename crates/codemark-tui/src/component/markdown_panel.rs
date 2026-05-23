@@ -21,6 +21,10 @@ pub struct MarkdownPanel {
     focused: bool,
     /// Last rendered area
     last_area: std::cell::Cell<Rect>,
+    /// Cached parsed text to avoid re-parsing on every frame
+    cached_text: std::cell::RefCell<Text<'static>>,
+    /// Cached content hash to detect when content changes
+    cached_content_hash: std::cell::Cell<u64>,
 }
 
 impl MarkdownPanel {
@@ -33,17 +37,19 @@ impl MarkdownPanel {
     pub fn set_markdown(&mut self, content: impl Into<String>) {
         self.content = content.into();
         self.scroll_offset = 0;
+        // Invalidate cache by setting hash to 0
+        self.cached_content_hash.set(0);
     }
 
     /// Convert the simple markdown string into Ratatui Text.
-    fn parse_to_text(&self) -> Text<'_> {
+    fn parse_to_text(&self) -> Text<'static> {
         let mut lines = Vec::new();
 
         for line in self.content.lines() {
             if let Some(stripped) = line.strip_prefix("# ") {
                 // H1
                 lines.push(Line::from(vec![Span::styled(
-                    stripped,
+                    stripped.to_string(),
                     Style::default()
                         .fg(Color::Yellow)
                         .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
@@ -52,7 +58,7 @@ impl MarkdownPanel {
             } else if let Some(stripped) = line.strip_prefix("## ") {
                 // H2
                 lines.push(Line::from(vec![Span::styled(
-                    stripped,
+                    stripped.to_string(),
                     Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
                 )]));
             } else if let Some(stripped) = line.strip_prefix("> ") {
@@ -101,6 +107,34 @@ impl MarkdownPanel {
         }
 
         Text::from(lines)
+    }
+
+    /// Refresh the cached text if content has changed.
+    fn refresh_cache(&self) {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+
+        // Calculate hash of current content
+        let mut hasher = DefaultHasher::new();
+        self.content.hash(&mut hasher);
+        let current_hash = hasher.finish();
+
+        // If content changed, re-parse and cache
+        if self.cached_content_hash.get() != current_hash {
+            let text = self.parse_to_text();
+            *self.cached_text.borrow_mut() = text;
+            self.cached_content_hash.set(current_hash);
+        }
+    }
+
+    /// Get the estimated line count with a multiplier for wrapping.
+    /// Since we can't predict exact wrapped line count without width,
+    /// use a 3x multiplier to account for potential wrapping.
+    fn line_count(&self) -> usize {
+        self.refresh_cache();
+        // Use a multiplier to account for line wrapping
+        // A single long line can wrap into multiple rendered rows
+        self.cached_text.borrow().lines.len() * 3
     }
 
     /// Parse inline formatting like `code` and **bold**.
@@ -171,19 +205,15 @@ impl MarkdownPanel {
 
         spans
     }
-
-    /// Get the estimated line count of the parsed content (without wrapping).
-    fn line_count(&self) -> usize {
-        self.parse_to_text().lines.len()
-    }
 }
 
 impl Component for MarkdownPanel {
     fn render(&self, area: Rect, buf: &mut Buffer) {
         self.last_area.set(area);
-        let text = self.parse_to_text();
+        self.refresh_cache();
+        let cached = self.cached_text.borrow().clone();
         let paragraph =
-            Paragraph::new(text).wrap(Wrap { trim: false }).scroll((self.scroll_offset, 0));
+            Paragraph::new(cached).wrap(Wrap { trim: false }).scroll((self.scroll_offset, 0));
 
         paragraph.render(area, buf);
     }
