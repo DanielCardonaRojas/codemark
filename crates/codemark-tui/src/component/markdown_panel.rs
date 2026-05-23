@@ -127,14 +127,18 @@ impl MarkdownPanel {
         }
     }
 
-    /// Get the estimated line count with a multiplier for wrapping.
-    /// Since we can't predict exact wrapped line count without width,
-    /// use a 3x multiplier to account for potential wrapping.
+    /// Get the rendered line count, accounting for line wrapping.
+    /// Uses the known viewport width to compute per-line wrap counts.
     fn line_count(&self) -> usize {
         self.refresh_cache();
-        // Use a multiplier to account for line wrapping
-        // A single long line can wrap into multiple rendered rows
-        self.cached_text.borrow().lines.len() * 3
+        let width = self.last_area.get().width as usize;
+        if width == 0 {
+            return self.cached_text.borrow().lines.len();
+        }
+        self.cached_text.borrow().lines.iter().map(|l| {
+            let char_count: usize = l.spans.iter().map(|s| s.content.chars().count()).sum();
+            if char_count == 0 { 1 } else { char_count.div_ceil(width) }
+        }).sum()
     }
 
     /// Parse inline formatting like `code` and **bold**.
