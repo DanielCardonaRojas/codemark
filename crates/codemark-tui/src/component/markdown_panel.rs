@@ -135,10 +135,15 @@ impl MarkdownPanel {
         if width == 0 {
             return self.cached_text.borrow().lines.len();
         }
-        self.cached_text.borrow().lines.iter().map(|l| {
-            let char_count: usize = l.spans.iter().map(|s| s.content.chars().count()).sum();
-            if char_count == 0 { 1 } else { char_count.div_ceil(width) }
-        }).sum()
+        self.cached_text
+            .borrow()
+            .lines
+            .iter()
+            .map(|l| {
+                let char_count: usize = l.spans.iter().map(|s| s.content.chars().count()).sum();
+                if char_count == 0 { 1 } else { char_count.div_ceil(width) }
+            })
+            .sum()
     }
 
     /// Parse inline formatting like `code` and **bold**.
@@ -272,7 +277,8 @@ impl Component for MarkdownPanel {
             }
             Event::Mouse(mouse) => {
                 let area = self.last_area.get();
-                let is_hovered = area.contains(ratatui::layout::Position::from((mouse.column, mouse.row)));
+                let is_hovered =
+                    area.contains(ratatui::layout::Position::from((mouse.column, mouse.row)));
 
                 match mouse.kind {
                     ratatui::crossterm::event::MouseEventKind::ScrollDown if is_hovered => {

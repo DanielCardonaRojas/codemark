@@ -1199,7 +1199,7 @@ impl BrowserLayout {
         match event {
             Event::Mouse(_) => {
                 let old_tab = self.left_pane.panel3.tabs.selected_index();
-                
+
                 // Always delegate mouse events to both panes to allow hovering/scrolling
                 // regardless of focus.
                 let left_handled = self.left_pane.handle_event(event);
@@ -1213,10 +1213,10 @@ impl BrowserLayout {
 
                 // Check for bookmark selection changes for live preview after mouse events
                 // Only if focus is actually on Panel3
-                if self.focus == FocusArea::Panel3 {
-                    if let Some(id) = self.left_pane.panel3.take_selection_change() {
-                        self.right_pane.load_bookmark(&self.db, &id);
-                    }
+                if self.focus == FocusArea::Panel3
+                    && let Some(id) = self.left_pane.panel3.take_selection_change()
+                {
+                    self.right_pane.load_bookmark(&self.db, &id);
                 }
                 handled
             }

@@ -449,10 +449,10 @@ impl Panel {
         if height == 0 {
             return;
         }
-        
+
         let mut state = self.list_state.borrow_mut();
         let offset = state.offset();
-        
+
         if idx >= offset + height {
             *state.offset_mut() = idx.saturating_sub(height) + 1;
         } else if idx < offset {
@@ -502,7 +502,8 @@ impl Panel {
         }
         let prev = {
             let state = self.list_state.borrow();
-            state.selected()
+            state
+                .selected()
                 .map_or(self.items.len() - 1, |i| if i == 0 { self.items.len() - 1 } else { i - 1 })
         };
         let old_index = self.list_state.borrow().selected();
@@ -773,7 +774,8 @@ impl Component for Panel {
             }
             Event::Mouse(mouse) => {
                 let area = self.last_area.get();
-                let is_hovered = area.contains(ratatui::layout::Position::from((mouse.column, mouse.row)));
+                let is_hovered =
+                    area.contains(ratatui::layout::Position::from((mouse.column, mouse.row)));
 
                 match mouse.kind {
                     ratatui::crossterm::event::MouseEventKind::Down(button) => {
@@ -786,8 +788,10 @@ impl Component for Panel {
                             let inner =
                                 if self.bordered { area.inner(Margin::new(1, 1)) } else { area };
 
-                            if inner.contains(ratatui::layout::Position::from((mouse.column, mouse.row)))
-                            {
+                            if inner.contains(ratatui::layout::Position::from((
+                                mouse.column,
+                                mouse.row,
+                            ))) {
                                 let relative_row = mouse.row.saturating_sub(inner.y) as usize;
                                 let item_idx = relative_row + self.list_state.borrow().offset();
                                 if item_idx < self.items.len() {
