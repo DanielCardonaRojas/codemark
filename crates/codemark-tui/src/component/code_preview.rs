@@ -328,10 +328,7 @@ impl Component for CodePreview {
             }
             Event::Mouse(mouse) => {
                 let area = self.last_area.get();
-                let is_hovered = mouse.column >= area.x
-                    && mouse.column < area.x + area.width
-                    && mouse.row >= area.y
-                    && mouse.row < area.y + area.height;
+                let is_hovered = area.contains(ratatui::layout::Position::from((mouse.column, mouse.row)));
 
                 match mouse.kind {
                     ratatui::crossterm::event::MouseEventKind::ScrollDown if is_hovered => {

@@ -352,12 +352,15 @@ impl Panel {
 
     /// Set the filter query and apply it.
     pub fn set_filter(&mut self, query: &str) {
-        self.filter_query = query.to_string();
-        self.apply_filter();
+        if self.filter_query != query {
+            self.filter_query = query.to_string();
+            self.apply_filter();
+        }
     }
 
     /// Apply the current filter to all_items.
     fn apply_filter(&mut self) {
+        let old_items_len = self.items.len();
         if self.filter_query.is_empty() {
             self.items = self.all_items.clone();
         } else {
@@ -380,10 +383,13 @@ impl Panel {
             state.select(Some(0));
         }
 
-        // Reset scroll offset on filter change by creating a new state but preserving selection
-        let selected = state.selected();
-        *state = ListState::default();
-        state.select(selected);
+        // Only reset scroll offset if the number of items changed,
+        // which usually means the filter results are different.
+        if self.items.len() != old_items_len {
+            let selected = state.selected();
+            *state = ListState::default();
+            state.select(selected);
+        }
     }
 
     /// Set whether the panel has a border.
@@ -436,10 +442,29 @@ impl Panel {
         self.list_state.borrow().selected()
     }
 
+    /// Scroll to ensure the given index is visible.
+    fn scroll_to_view(&self, idx: usize) {
+        let area = self.last_area.get();
+        let height = area.height.saturating_sub(if self.bordered { 2 } else { 0 }) as usize;
+        if height == 0 {
+            return;
+        }
+        
+        let mut state = self.list_state.borrow_mut();
+        let offset = state.offset();
+        
+        if idx >= offset + height {
+            *state.offset_mut() = idx.saturating_sub(height) + 1;
+        } else if idx < offset {
+            *state.offset_mut() = idx;
+        }
+    }
+
     /// Set the selected item by index.
     pub fn set_selected(&mut self, idx: usize) {
         if idx < self.items.len() {
             self.list_state.borrow_mut().select(Some(idx));
+            self.scroll_to_view(idx);
         }
     }
 
@@ -459,10 +484,13 @@ impl Panel {
         if self.items.is_empty() {
             return false;
         }
-        let mut state = self.list_state.borrow_mut();
-        let next = state.selected().map_or(0, |i| i.saturating_add(1) % self.items.len());
-        let old_index = state.selected();
-        state.select(Some(next));
+        let next = {
+            let state = self.list_state.borrow();
+            state.selected().map_or(0, |i| i.saturating_add(1) % self.items.len())
+        };
+        let old_index = self.list_state.borrow().selected();
+        self.list_state.borrow_mut().select(Some(next));
+        self.scroll_to_view(next);
         old_index != Some(next)
     }
 
@@ -472,12 +500,14 @@ impl Panel {
         if self.items.is_empty() {
             return false;
         }
-        let mut state = self.list_state.borrow_mut();
-        let prev = state
-            .selected()
-            .map_or(self.items.len() - 1, |i| if i == 0 { self.items.len() - 1 } else { i - 1 });
-        let old_index = state.selected();
-        state.select(Some(prev));
+        let prev = {
+            let state = self.list_state.borrow();
+            state.selected()
+                .map_or(self.items.len() - 1, |i| if i == 0 { self.items.len() - 1 } else { i - 1 })
+        };
+        let old_index = self.list_state.borrow().selected();
+        self.list_state.borrow_mut().select(Some(prev));
+        self.scroll_to_view(prev);
         old_index != Some(prev)
     }
 
@@ -609,15 +639,28 @@ impl Component for Panel {
             })
             .border_style(if self.focused { self.focus_style } else { self.normal_style });
 
-        // Render the list using StatefulWidget for native scrolling
+        // Render the list using StatefulWidget for native scrolling.
+        // We temporarily hide the selection from ListState during render so that
+        // the List widget doesn't force the selected item into view, which
+        // would block our manual scroll offset. We already manually highlighted
+        // the selected item in list_items above.
         let list = List::new(list_items);
 
         let mut state = self.list_state.borrow_mut();
+        let actual_selection = state.selected();
+        let actual_offset = state.offset();
+        state.select(None);
+        *state.offset_mut() = actual_offset; // Restore offset after select(None) clears it
+
         if self.bordered {
             StatefulWidget::render(list.block(block), area, buf, &mut *state);
         } else {
             StatefulWidget::render(list, area, buf, &mut *state);
         };
+
+        // Restore the selection and offset
+        state.select(actual_selection);
+        *state.offset_mut() = actual_offset;
 
         // Render scrollbar if needed
         if self.show_scrollbar && !self.items.is_empty() && self.items.len() > height {
@@ -722,10 +765,7 @@ impl Component for Panel {
             }
             Event::Mouse(mouse) => {
                 let area = self.last_area.get();
-                let is_hovered = mouse.column >= area.x
-                    && mouse.column < area.x + area.width
-                    && mouse.row >= area.y
-                    && mouse.row < area.y + area.height;
+                let is_hovered = area.contains(ratatui::layout::Position::from((mouse.column, mouse.row)));
 
                 match mouse.kind {
                     ratatui::crossterm::event::MouseEventKind::Down(button) => {
@@ -738,10 +778,7 @@ impl Component for Panel {
                             let inner =
                                 if self.bordered { area.inner(Margin::new(1, 1)) } else { area };
 
-                            if mouse.column >= inner.x
-                                && mouse.column < inner.x + inner.width
-                                && mouse.row >= inner.y
-                                && mouse.row < inner.y + inner.height
+                            if inner.contains(ratatui::layout::Position::from((mouse.column, mouse.row)))
                             {
                                 let relative_row = mouse.row.saturating_sub(inner.y) as usize;
                                 let item_idx = relative_row + self.list_state.borrow().offset();
