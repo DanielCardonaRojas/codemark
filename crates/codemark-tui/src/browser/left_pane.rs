@@ -30,8 +30,8 @@ impl LeftPane {
             panel1: TabbedPanel::new_repos_accounts(db, registry),
             panel2: TabbedPanel::new_tags_branches(db, Panel3Tab::Bookmarks),
             panel3: TabbedPanel::new_tours_collections_bookmarks(db),
-            panel1_config: SectionConfig::new(4, 6),
-            panel2_config: SectionConfig::new(4, 8),
+            panel1_config: SectionConfig::new(7, 9),
+            panel2_config: SectionConfig::new(7, 9),
         }
     }
 
