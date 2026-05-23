@@ -190,6 +190,11 @@ impl CodePreview {
         }
     }
 
+    /// Get the line count of the code.
+    fn line_count(&self) -> usize {
+        self.cached_lines.borrow().len()
+    }
+
     /// Get the last rendered area.
     pub fn last_area(&self) -> Rect {
         self.last_area.get()
@@ -273,7 +278,7 @@ impl Component for CodePreview {
                 match key.code {
                     ratatui::crossterm::event::KeyCode::Down
                     | ratatui::crossterm::event::KeyCode::Char('j') => {
-                        let line_count = self.code.lines().count();
+                        let line_count = self.line_count();
                         if line_count > 0 {
                             let next =
                                 self.selected_line.map_or(0, |i| (i + 1).min(line_count - 1));
@@ -301,39 +306,49 @@ impl Component for CodePreview {
                         true
                     }
                     ratatui::crossterm::event::KeyCode::Char('J') => {
-                        let line_count = self.code.lines().count();
-                        self.scroll_offset = self
-                            .scroll_offset
-                            .saturating_add(5)
-                            .min(line_count.saturating_sub(1) as u16);
-                        true
+                        let height = self.last_area.get().height as usize;
+                        let line_count = self.line_count();
+                        if line_count > height {
+                            let old_offset = self.scroll_offset;
+                            self.scroll_offset = self
+                                .scroll_offset
+                                .saturating_add(5)
+                                .min((line_count - height) as u16);
+                            return old_offset != self.scroll_offset;
+                        }
+                        false
                     }
                     ratatui::crossterm::event::KeyCode::Char('K') => {
+                        let old_offset = self.scroll_offset;
                         self.scroll_offset = self.scroll_offset.saturating_sub(5);
-                        true
+                        old_offset != self.scroll_offset
                     }
                     _ => false,
                 }
             }
             Event::Mouse(mouse) => {
                 let area = self.last_area.get();
-                let is_hovered = mouse.column >= area.x
-                    && mouse.column < area.x + area.width
-                    && mouse.row >= area.y
-                    && mouse.row < area.y + area.height;
+                let is_hovered =
+                    area.contains(ratatui::layout::Position::from((mouse.column, mouse.row)));
 
                 match mouse.kind {
                     ratatui::crossterm::event::MouseEventKind::ScrollDown if is_hovered => {
-                        let line_count = self.code.lines().count();
-                        self.scroll_offset = self
-                            .scroll_offset
-                            .saturating_add(1)
-                            .min(line_count.saturating_sub(1) as u16);
-                        true
+                        let height = area.height as usize;
+                        let line_count = self.line_count();
+                        if line_count > height {
+                            let old_offset = self.scroll_offset;
+                            self.scroll_offset = self
+                                .scroll_offset
+                                .saturating_add(1)
+                                .min((line_count - height) as u16);
+                            return old_offset != self.scroll_offset;
+                        }
+                        false
                     }
                     ratatui::crossterm::event::MouseEventKind::ScrollUp if is_hovered => {
+                        let old_offset = self.scroll_offset;
                         self.scroll_offset = self.scroll_offset.saturating_sub(1);
-                        true
+                        old_offset != self.scroll_offset
                     }
                     _ => false,
                 }
