@@ -902,21 +902,26 @@ impl BrowserLayout {
                             .map(|res| match res.health {
                                 BookmarkHealth::Active => HealthStatus::Healthy,
                                 BookmarkHealth::Drifted => HealthStatus::Warning,
-                                BookmarkHealth::Stale | BookmarkHealth::Archived => HealthStatus::Error,
+                                BookmarkHealth::Stale | BookmarkHealth::Archived => {
+                                    HealthStatus::Error
+                                }
                             })
                             .unwrap_or(HealthStatus::Unknown);
 
                         // Try to get a summary from the query for better display
-                        let summary_info =
-                            bm.language.parse::<Language>().ok().and_then(|lang| {
-                                summarizer::summarize_query(&bm.query, Some(lang)).ok()
-                            });
+                        let summary_info = bm.language.parse::<Language>().ok().and_then(|lang| {
+                            summarizer::summarize_query(&bm.query, Some(lang)).ok()
+                        });
 
                         let summary = summary_info
                             .as_ref()
                             .and_then(|s| s.identifier.clone())
                             .unwrap_or_else(|| {
-                                if summary_info.is_some() { String::new() } else { bm.query.clone() }
+                                if summary_info.is_some() {
+                                    String::new()
+                                } else {
+                                    bm.query.clone()
+                                }
                             });
 
                         let icon =
