@@ -51,7 +51,6 @@ fn shorten_path(path: &str, max_width: usize) -> String {
     // Try to find a good breaking point by working backwards from the end
     let components: Vec<&str> = path.split('/').collect();
     let mut result = String::new();
-    let mut total_len = 0;
     let prefix_overhead = 3; // "../" prefix that will be added if we truncate
 
     // Start from the last component and work backwards
@@ -59,10 +58,10 @@ fn shorten_path(path: &str, max_width: usize) -> String {
         let component_len = component.len();
         let separator_len = if result.is_empty() { 0 } else { 1 }; // '/' separator
 
-        // Check if adding this component would exceed the limit, accounting for the "../" prefix
-        // that will be added if we stop after this component
-        let budget = if result.is_empty() { max_width } else { max_width - prefix_overhead };
-        if total_len + component_len + separator_len > budget {
+        // Use max_width - prefix_overhead unconditionally to avoid edge cases
+        // where we build a string that then exceeds max_width after prepending "../"
+        let budget = max_width.saturating_sub(prefix_overhead);
+        if result.len() + component_len + separator_len > budget {
             // Stop here and add "../" prefix if we have any components
             if !result.is_empty() {
                 result = format!("../{}", result);
@@ -76,13 +75,16 @@ fn shorten_path(path: &str, max_width: usize) -> String {
         } else {
             result = format!("{}/{}", component, result);
         }
-        total_len = result.len();
     }
 
     // Fallback: if we couldn't build anything meaningful, just truncate with ellipsis
+    // Use char_indices() for UTF-8 safety
     if result.is_empty() || result.len() > max_width {
         if path.len() > max_width {
-            format!("...{}", &path[path.len().saturating_sub(max_width - 3)..])
+            let take = max_width.saturating_sub(3);
+            let start =
+                path.char_indices().rev().nth(take.saturating_sub(1)).map(|(i, _)| i).unwrap_or(0);
+            format!("...{}", &path[start..])
         } else {
             path.to_string()
         }
@@ -915,14 +917,8 @@ impl BrowserLayout {
 
                         let summary = summary_info
                             .as_ref()
-                            .and_then(|s| s.identifier.clone())
-                            .unwrap_or_else(|| {
-                                if summary_info.is_some() {
-                                    String::new()
-                                } else {
-                                    bm.query.clone()
-                                }
-                            });
+                            .and_then(|s| s.format())
+                            .unwrap_or_else(|| bm.query.clone());
 
                         let icon =
                             summary_info.as_ref().map(|s| get_node_icon(&s.label)).unwrap_or("");
@@ -930,7 +926,7 @@ impl BrowserLayout {
                         // Shrink the file path to prioritize last path components
                         let short_path = shorten_path(&bm.file_path, 25);
 
-                        // Format: short_file_path identifier (or query if summarization failed)
+                        // Format: short_file_path summary (or query if summarization failed)
                         let display_text = if summary.is_empty() {
                             short_path
                         } else {
