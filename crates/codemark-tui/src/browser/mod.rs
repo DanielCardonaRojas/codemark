@@ -18,8 +18,8 @@ pub use search::{SearchBar, SearchMode};
 pub use tabbed_panel::TabbedPanel;
 pub use tabs::{Panel2Tab, Panel3Tab, Tab, TabSelection};
 pub use types::{
-    ExternalCommand, FocusArea, HealNotification, HealTarget, SectionConfig, StepData, TabContent,
-    escape_markdown,
+    escape_markdown, ExternalCommand, FocusArea, HealNotification, HealTarget, LeftPaneSize,
+    SectionConfig, StepData, TabContent,
 };
 
 use crate::component::{Component, HealthStatus, PanelItem};
@@ -118,6 +118,8 @@ pub struct BrowserLayout {
     event_handler: crate::event::EventHandler,
     /// Clipboard context for copy operations (kept alive for X11 selection ownership)
     clipboard: Option<copypasta::ClipboardContext>,
+    /// Current size mode for the left pane
+    left_pane_size: LeftPaneSize,
 }
 
 impl BrowserLayout {
@@ -137,6 +139,7 @@ impl BrowserLayout {
             pending_notification: None,
             event_handler,
             clipboard: None,
+            left_pane_size: LeftPaneSize::Regular,
         };
         layout.update_focus_state();
         layout
@@ -828,6 +831,10 @@ impl BrowserLayout {
             return;
         }
 
+        // Sync focused area and resize mode to left pane
+        self.left_pane.set_focused_area(self.focus);
+        self.left_pane.set_resize_mode(self.left_pane_size);
+
         // Set focus on current area
         match self.focus {
             FocusArea::Search => {
@@ -874,17 +881,27 @@ impl BrowserLayout {
 
     /// Render the browser layout.
     pub fn render(&self, area: Rect, buf: &mut Buffer) {
-        // Split vertically: 40% left, 60% right
+        // Split vertically based on left_pane_size
+        let left_percent = self.left_pane_size.left_width_percent();
+        let constraints = if let Some(right_percent) = self.left_pane_size.right_width_percent() {
+            vec![Constraint::Percentage(left_percent), Constraint::Percentage(right_percent)]
+        } else {
+            // Right pane is hidden, left pane takes full width
+            vec![Constraint::Percentage(100)]
+        };
+
         let chunks = Layout::default()
             .direction(Direction::Horizontal)
-            .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
+            .constraints(constraints)
             .split(area);
 
         // Render left pane
         self.left_pane.render(chunks[0], buf);
 
-        // Render right pane
-        self.right_pane.render(chunks[1], buf);
+        // Render right pane only if visible
+        if chunks.len() > 1 {
+            self.right_pane.render(chunks[1], buf);
+        }
     }
 
     /// Handle an event.
@@ -1286,6 +1303,26 @@ impl BrowserLayout {
                         && (self.focus == FocusArea::Panel3 || self.focus == FocusArea::Main) =>
                 {
                     self.start_heal_selection();
+                    return true;
+                }
+                // Increase left pane size with + (only for resizable panels)
+                ratatui::crossterm::event::KeyCode::Char('+')
+                    | ratatui::crossterm::event::KeyCode::Char('=')
+                    if self.should_handle_keybindings() && self.focus.is_resizable() =>
+                {
+                    self.left_pane_size = self.left_pane_size.increase();
+                    self.left_pane.set_resize_mode(self.left_pane_size);
+                    self.left_pane.set_focused_area(self.focus);
+                    return true;
+                }
+                // Decrease left pane size with _ (only for resizable panels)
+                ratatui::crossterm::event::KeyCode::Char('_')
+                | ratatui::crossterm::event::KeyCode::Char('-')
+                    if self.should_handle_keybindings() && self.focus.is_resizable() =>
+                {
+                    self.left_pane_size = self.left_pane_size.decrease();
+                    self.left_pane.set_resize_mode(self.left_pane_size);
+                    self.left_pane.set_focused_area(self.focus);
                     return true;
                 }
                 _ => {}

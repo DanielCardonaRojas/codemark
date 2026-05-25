@@ -1,4 +1,4 @@
-use crate::browser::{Panel3Tab, SearchBar, SectionConfig, TabbedPanel};
+use crate::browser::{FocusArea, LeftPaneSize, Panel3Tab, SearchBar, SectionConfig, TabbedPanel};
 use crate::component::Component;
 use crate::event::Event;
 use codemark_core::storage::db::Database;
@@ -20,6 +20,10 @@ pub struct LeftPane {
     /// Section height configurations
     pub panel1_config: SectionConfig,
     pub panel2_config: SectionConfig,
+    /// Current resize mode for the left pane
+    resize_mode: LeftPaneSize,
+    /// Currently focused area within the left pane
+    focused_area: FocusArea,
 }
 
 impl LeftPane {
@@ -32,11 +36,75 @@ impl LeftPane {
             panel3: TabbedPanel::new_tours_collections_bookmarks(db),
             panel1_config: SectionConfig::new(7, 9),
             panel2_config: SectionConfig::new(7, 9),
+            resize_mode: LeftPaneSize::Regular,
+            focused_area: FocusArea::Panel3,
         }
+    }
+
+    /// Set the resize mode for the left pane.
+    pub fn set_resize_mode(&mut self, mode: LeftPaneSize) {
+        self.resize_mode = mode;
+    }
+
+    /// Get the current resize mode.
+    pub fn resize_mode(&self) -> LeftPaneSize {
+        self.resize_mode
+    }
+
+    /// Set the focused area.
+    pub fn set_focused_area(&mut self, focus: FocusArea) {
+        self.focused_area = focus;
     }
 
     /// Render the left pane.
     pub fn render(&self, area: Rect, buf: &mut Buffer) {
+        // In Half or Full mode, only render the focused panel and search bar
+        // The focused panel takes all available height
+        match self.resize_mode {
+            LeftPaneSize::Half | LeftPaneSize::Full => {
+                match self.focused_area {
+                    FocusArea::Panel1 => {
+                        // Render search and panel1 only
+                        let chunks = Layout::default()
+                            .direction(Direction::Vertical)
+                            .constraints([Constraint::Length(3), Constraint::Min(0)])
+                            .split(area);
+                        self.search.render(chunks[0], buf);
+                        self.panel1.render(chunks[1], buf);
+                    }
+                    FocusArea::Panel2 => {
+                        // Render search and panel2 only
+                        let chunks = Layout::default()
+                            .direction(Direction::Vertical)
+                            .constraints([Constraint::Length(3), Constraint::Min(0)])
+                            .split(area);
+                        self.search.render(chunks[0], buf);
+                        self.panel2.render(chunks[1], buf);
+                    }
+                    FocusArea::Panel3 => {
+                        // Render search and panel3 only
+                        let chunks = Layout::default()
+                            .direction(Direction::Vertical)
+                            .constraints([Constraint::Length(3), Constraint::Min(0)])
+                            .split(area);
+                        self.search.render(chunks[0], buf);
+                        self.panel3.render(chunks[1], buf);
+                    }
+                    _ => {
+                        // Fallback: render everything normally
+                        self.render_all(area, buf);
+                    }
+                }
+            }
+            LeftPaneSize::Regular => {
+                // Render all panels normally
+                self.render_all(area, buf);
+            }
+        }
+    }
+
+    /// Render all panels in the left pane (regular mode).
+    fn render_all(&self, area: Rect, buf: &mut Buffer) {
         // Calculate heights based on focus
         let p1_height =
             if self.panel1.focused { self.panel1_config.max } else { self.panel1_config.min };
