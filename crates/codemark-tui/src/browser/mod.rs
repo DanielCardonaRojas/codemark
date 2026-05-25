@@ -18,8 +18,8 @@ pub use search::{SearchBar, SearchMode};
 pub use tabbed_panel::TabbedPanel;
 pub use tabs::{Panel2Tab, Panel3Tab, Tab, TabSelection};
 pub use types::{
-    escape_markdown, ExternalCommand, FocusArea, HealNotification, HealTarget, LeftPaneSize,
-    SectionConfig, StepData, TabContent,
+    ExternalCommand, FocusArea, HealNotification, HealTarget, LeftPaneSize, SectionConfig,
+    StepData, TabContent, escape_markdown,
 };
 
 use crate::component::{Component, HealthStatus, PanelItem};
@@ -890,10 +890,8 @@ impl BrowserLayout {
             vec![Constraint::Percentage(100)]
         };
 
-        let chunks = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints(constraints)
-            .split(area);
+        let chunks =
+            Layout::default().direction(Direction::Horizontal).constraints(constraints).split(area);
 
         // Render left pane
         self.left_pane.render(chunks[0], buf);
@@ -1307,7 +1305,7 @@ impl BrowserLayout {
                 }
                 // Increase left pane size with + (only for resizable panels)
                 ratatui::crossterm::event::KeyCode::Char('+')
-                    | ratatui::crossterm::event::KeyCode::Char('=')
+                | ratatui::crossterm::event::KeyCode::Char('=')
                     if self.should_handle_keybindings() && self.focus.is_resizable() =>
                 {
                     self.left_pane_size = self.left_pane_size.increase();

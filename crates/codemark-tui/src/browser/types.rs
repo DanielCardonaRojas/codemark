@@ -103,7 +103,7 @@ impl LeftPaneSize {
         match self {
             Self::Regular => Some(60),
             Self::Half => Some(50), // Right pane at 50% in half mode
-            Self::Full => None, // Right pane is hidden in full mode
+            Self::Full => None,     // Right pane is hidden in full mode
         }
     }
 
