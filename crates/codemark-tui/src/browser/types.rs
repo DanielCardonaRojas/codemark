@@ -64,7 +64,7 @@ pub enum LeftPaneSize {
     /// Regular size (40% width)
     #[default]
     Regular,
-    /// Half width (50%), full height (right pane hidden)
+    /// Half width (50%), only focused left panel shown (right pane still visible at 50%)
     Half,
     /// Full window width (100%)
     Full,
@@ -83,7 +83,7 @@ impl LeftPaneSize {
     /// Cycle to the next smaller size.
     pub fn decrease(self) -> Self {
         match self {
-            Self::Regular => Self::Full, // Cycle to full
+            Self::Regular => Self::Half, // Wrap to middle size
             Self::Half => Self::Regular,
             Self::Full => Self::Half,
         }
@@ -106,11 +106,6 @@ impl LeftPaneSize {
             Self::Full => None,     // Right pane is hidden in full mode
         }
     }
-
-    /// Check if the right pane should be hidden.
-    pub fn hide_right_pane(self) -> bool {
-        matches!(self, Self::Full)
-    }
 }
 
 #[cfg(test)]
@@ -126,7 +121,7 @@ mod tests {
 
     #[test]
     fn test_left_pane_size_decrease() {
-        assert_eq!(LeftPaneSize::Regular.decrease(), LeftPaneSize::Full);
+        assert_eq!(LeftPaneSize::Regular.decrease(), LeftPaneSize::Half);
         assert_eq!(LeftPaneSize::Half.decrease(), LeftPaneSize::Regular);
         assert_eq!(LeftPaneSize::Full.decrease(), LeftPaneSize::Half);
     }

@@ -22,8 +22,8 @@ pub struct LeftPane {
     pub panel2_config: SectionConfig,
     /// Current resize mode for the left pane
     resize_mode: LeftPaneSize,
-    /// Currently focused area within the left pane
-    focused_area: FocusArea,
+    /// The last resizable panel that was focused (for rendering in Half/Full mode)
+    last_resizable_focus: FocusArea,
 }
 
 impl LeftPane {
@@ -37,7 +37,7 @@ impl LeftPane {
             panel1_config: SectionConfig::new(7, 9),
             panel2_config: SectionConfig::new(7, 9),
             resize_mode: LeftPaneSize::Regular,
-            focused_area: FocusArea::Panel3,
+            last_resizable_focus: FocusArea::Panel3,
         }
     }
 
@@ -53,7 +53,10 @@ impl LeftPane {
 
     /// Set the focused area.
     pub fn set_focused_area(&mut self, focus: FocusArea) {
-        self.focused_area = focus;
+        // Only update the last resizable focus if this is a resizable panel
+        if focus.is_resizable() {
+            self.last_resizable_focus = focus;
+        }
     }
 
     /// Render the left pane.
@@ -62,7 +65,7 @@ impl LeftPane {
         // The focused panel takes all available height
         match self.resize_mode {
             LeftPaneSize::Half | LeftPaneSize::Full => {
-                match self.focused_area {
+                match self.last_resizable_focus {
                     FocusArea::Panel1 => {
                         // Render search and panel1 only
                         let chunks = Layout::default()

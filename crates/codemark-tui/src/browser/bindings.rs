@@ -111,14 +111,14 @@ impl BrowserLayout {
                         bindings.insert(0, KeyBinding::new("p", "Pull"));
                         bindings.insert(1, KeyBinding::new("P", "Push"));
                         bindings.insert(2, KeyBinding::new("H", "Heal all"));
-                        bindings.push(KeyBinding::new("+/-", "Resize"));
+                        bindings.insert(3, KeyBinding::new("+/-", "Resize"));
                     }
                     Some(Panel3Tab::Collections) => {
                         bindings.insert(0, KeyBinding::new("Enter", "Open"));
                         bindings.insert(1, KeyBinding::new("d", "Delete"));
                         bindings.insert(2, KeyBinding::new("H", "Heal all"));
                         bindings.insert(3, KeyBinding::new("Ctrl+O", "Copy ID"));
-                        bindings.push(KeyBinding::new("+/-", "Resize"));
+                        bindings.insert(4, KeyBinding::new("+/-", "Resize"));
                     }
                     Some(Panel3Tab::Bookmarks) => {
                         bindings.insert(0, KeyBinding::new("o", "Open"));
@@ -126,10 +126,10 @@ impl BrowserLayout {
                         bindings.insert(2, KeyBinding::new("d", "Delete"));
                         bindings.insert(3, KeyBinding::new("H", "Heal"));
                         bindings.insert(4, KeyBinding::new("Ctrl+O", "Copy ID"));
-                        bindings.push(KeyBinding::new("+/-", "Resize"));
+                        bindings.insert(5, KeyBinding::new("+/-", "Resize"));
                     }
                     None => {
-                        bindings.push(KeyBinding::new("+/-", "Resize"));
+                        bindings.insert(0, KeyBinding::new("+/-", "Resize"));
                     }
                 }
             }
