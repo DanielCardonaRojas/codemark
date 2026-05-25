@@ -50,6 +50,104 @@ pub enum FocusArea {
     Filter,
 }
 
+impl FocusArea {
+    /// Check if this focus area can be resized with +/- keys.
+    /// Only left side panels (excluding search bar) support resizing.
+    pub fn is_resizable(self) -> bool {
+        matches!(self, FocusArea::Panel1 | FocusArea::Panel2 | FocusArea::Panel3)
+    }
+}
+
+/// Size mode for the left pane, similar to lazy git's panel sizing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum LeftPaneSize {
+    /// Regular size (40% width)
+    #[default]
+    Regular,
+    /// Half width (50%), only focused left panel shown (right pane still visible at 50%)
+    Half,
+    /// Full window width (100%)
+    Full,
+}
+
+impl LeftPaneSize {
+    /// Cycle to the next larger size.
+    pub fn increase(self) -> Self {
+        match self {
+            Self::Regular => Self::Half,
+            Self::Half => Self::Full,
+            Self::Full => Self::Regular, // Cycle back to regular
+        }
+    }
+
+    /// Cycle to the next smaller size.
+    pub fn decrease(self) -> Self {
+        match self {
+            Self::Regular => Self::Half, // Wrap to middle size
+            Self::Half => Self::Regular,
+            Self::Full => Self::Half,
+        }
+    }
+
+    /// Get the width percentage for the left pane.
+    pub fn left_width_percent(self) -> u16 {
+        match self {
+            Self::Regular => 40,
+            Self::Half => 50,
+            Self::Full => 100,
+        }
+    }
+
+    /// Get the width percentage for the right pane.
+    pub fn right_width_percent(self) -> Option<u16> {
+        match self {
+            Self::Regular => Some(60),
+            Self::Half => Some(50), // Right pane at 50% in half mode
+            Self::Full => None,     // Right pane is hidden in full mode
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_left_pane_size_increase() {
+        assert_eq!(LeftPaneSize::Regular.increase(), LeftPaneSize::Half);
+        assert_eq!(LeftPaneSize::Half.increase(), LeftPaneSize::Full);
+        assert_eq!(LeftPaneSize::Full.increase(), LeftPaneSize::Regular);
+    }
+
+    #[test]
+    fn test_left_pane_size_decrease() {
+        assert_eq!(LeftPaneSize::Regular.decrease(), LeftPaneSize::Half);
+        assert_eq!(LeftPaneSize::Half.decrease(), LeftPaneSize::Regular);
+        assert_eq!(LeftPaneSize::Full.decrease(), LeftPaneSize::Half);
+    }
+
+    #[test]
+    fn test_left_pane_size_widths() {
+        assert_eq!(LeftPaneSize::Regular.left_width_percent(), 40);
+        assert_eq!(LeftPaneSize::Half.left_width_percent(), 50);
+        assert_eq!(LeftPaneSize::Full.left_width_percent(), 100);
+
+        assert_eq!(LeftPaneSize::Regular.right_width_percent(), Some(60));
+        assert_eq!(LeftPaneSize::Half.right_width_percent(), Some(50));
+        assert_eq!(LeftPaneSize::Full.right_width_percent(), None);
+    }
+
+    #[test]
+    fn test_focus_area_is_resizable() {
+        assert!(!FocusArea::Search.is_resizable());
+        assert!(FocusArea::Panel1.is_resizable());
+        assert!(FocusArea::Panel2.is_resizable());
+        assert!(FocusArea::Panel3.is_resizable());
+        assert!(!FocusArea::Main.is_resizable());
+        assert!(!FocusArea::Filter.is_resizable());
+    }
+}
+
 /// Configuration for a sidebar section's height.
 #[derive(Debug, Clone, Copy)]
 pub struct SectionConfig {

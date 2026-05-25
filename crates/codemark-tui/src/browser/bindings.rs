@@ -28,12 +28,18 @@ impl BrowserLayout {
             }
             FocusArea::Panel1 => {
                 bindings.push(("Enter", "Select repo"));
+                bindings.push(("+", "Increase pane"));
+                bindings.push(("_", "Decrease pane"));
             }
             FocusArea::Panel2 => {
                 bindings.push(("Enter", "Toggle filter"));
                 bindings.push(("Space", "Toggle filter"));
+                bindings.push(("+", "Increase pane"));
+                bindings.push(("_", "Decrease pane"));
             }
             FocusArea::Panel3 => {
+                bindings.push(("+", "Increase pane"));
+                bindings.push(("_", "Decrease pane"));
                 match Panel3Tab::from_index(self.left_pane.panel3.tabs.selected_index()) {
                     Some(Panel3Tab::Tours) => {
                         bindings.push(("Enter", "Open tour"));
@@ -91,10 +97,12 @@ impl BrowserLayout {
             FocusArea::Panel1 => {
                 // Repos / Accounts
                 bindings.insert(0, KeyBinding::new("Enter", "Select"));
+                bindings.insert(1, KeyBinding::new("+/-", "Resize"));
             }
             FocusArea::Panel2 => {
                 // Tags / Branches
                 bindings.insert(0, KeyBinding::new("Enter", "Filter"));
+                bindings.insert(1, KeyBinding::new("+/-", "Resize"));
             }
             FocusArea::Panel3 => {
                 // Tours / Collections / Bookmarks
@@ -103,12 +111,14 @@ impl BrowserLayout {
                         bindings.insert(0, KeyBinding::new("p", "Pull"));
                         bindings.insert(1, KeyBinding::new("P", "Push"));
                         bindings.insert(2, KeyBinding::new("H", "Heal all"));
+                        bindings.insert(3, KeyBinding::new("+/-", "Resize"));
                     }
                     Some(Panel3Tab::Collections) => {
                         bindings.insert(0, KeyBinding::new("Enter", "Open"));
                         bindings.insert(1, KeyBinding::new("d", "Delete"));
                         bindings.insert(2, KeyBinding::new("H", "Heal all"));
                         bindings.insert(3, KeyBinding::new("Ctrl+O", "Copy ID"));
+                        bindings.insert(4, KeyBinding::new("+/-", "Resize"));
                     }
                     Some(Panel3Tab::Bookmarks) => {
                         bindings.insert(0, KeyBinding::new("o", "Open"));
@@ -116,8 +126,11 @@ impl BrowserLayout {
                         bindings.insert(2, KeyBinding::new("d", "Delete"));
                         bindings.insert(3, KeyBinding::new("H", "Heal"));
                         bindings.insert(4, KeyBinding::new("Ctrl+O", "Copy ID"));
+                        bindings.insert(5, KeyBinding::new("+/-", "Resize"));
                     }
-                    None => {}
+                    None => {
+                        bindings.insert(0, KeyBinding::new("+/-", "Resize"));
+                    }
                 }
             }
             FocusArea::Main => {
