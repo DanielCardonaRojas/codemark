@@ -360,17 +360,13 @@ impl TabbedPanel {
     /// Create steps/info/query tabs for right pane.
     pub fn new_steps_info(_db: &Database) -> Self {
         use crate::component::CodePreview;
-        let fixture_path = "tests/fixtures/rust/api_client.rs";
-        let code = std::fs::read_to_string(fixture_path).unwrap_or_else(|_| {
-            "Error: Could not load fixture tests/fixtures/rust/api_client.rs".to_string()
-        });
 
-        let mut preview = CodePreview::new(code, "rs");
-        preview.jump_to_line(49); // Jump to line 50 (0-indexed)
+        // Start with empty previews - content will be loaded when a bookmark is selected
+        let preview = CodePreview::new("", "rs");
 
         let info = MarkdownPanel::new();
 
-        let query_preview = CodePreview::new("(node) @cap", "scm");
+        let query_preview = CodePreview::new("", "scm");
 
         let tabs = TabSelection::new(vec![Tab::new("Steps"), Tab::new("Info"), Tab::new("Query")]);
 
