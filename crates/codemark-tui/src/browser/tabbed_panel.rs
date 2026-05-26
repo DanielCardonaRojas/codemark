@@ -463,10 +463,10 @@ impl TabbedPanel {
     /// Handle an event.
     /// Returns true if event was handled.
     pub fn handle_event(&mut self, event: &Event) -> bool {
-        // Check for tab switching with [ and ]
+        // Check for tab switching with [ and ] or mouse click
         let mut tab_changed = false;
-        if let Event::Key(key) = event {
-            match key.code {
+        match event {
+            Event::Key(key) => match key.code {
                 ratatui::crossterm::event::KeyCode::Char(']') => {
                     self.tabs.next();
                     tab_changed = true;
@@ -476,7 +476,29 @@ impl TabbedPanel {
                     tab_changed = true;
                 }
                 _ => {}
+            },
+            Event::Mouse(mouse) => {
+                use ratatui::crossterm::event::MouseButton;
+                if matches!(
+                    mouse.kind,
+                    ratatui::crossterm::event::MouseEventKind::Down(MouseButton::Left)
+                ) {
+                    let area = self.last_area.get();
+                    // Check if click is on the top border (where tabs are)
+                    // mouse.row is y (vertical), mouse.column is x (horizontal)
+                    if mouse.row == area.top()
+                        && mouse.column >= area.left()
+                        && mouse.column < area.right()
+                    {
+                        // Calculate x position relative to the panel's left edge
+                        let relative_x = mouse.column - area.left();
+                        if self.tabs.handle_click(relative_x, mouse.row) {
+                            tab_changed = true;
+                        }
+                    }
+                }
             }
+            _ => {}
         }
 
         // Forward to active panel
