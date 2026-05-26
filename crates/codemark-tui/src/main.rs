@@ -170,12 +170,36 @@ async fn run_app() -> Result<()> {
                                         show_help = !show_help;
                                         handled = true;
                                     }
+                                    event::KeyCode::Char('/') => {
+                                        // Set the filter target based on current focus before entering filter mode
+                                        let filter_target = match layout.focus() {
+                                            codemark_tui::browser::FocusArea::Panel1 => "panel1",
+                                            codemark_tui::browser::FocusArea::Panel2 => "panel2",
+                                            codemark_tui::browser::FocusArea::Panel3 => "panel3",
+                                            codemark_tui::browser::FocusArea::Main => "main",
+                                            codemark_tui::browser::FocusArea::Search => "panel1", // Search filters Panel1
+                                            codemark_tui::browser::FocusArea::Filter => "panel3",
+                                        };
+                                        state.set_string("filter_target", filter_target);
+                                    }
                                     event::KeyCode::Esc => {
                                         if show_help {
                                             show_help = false;
                                             handled = true;
                                         } else if notification.is_some() {
                                             notification = None;
+                                            handled = true;
+                                        } else {
+                                            // Clear the filter for the currently focused panel
+                                            let filter_key = match layout.focus() {
+                                                codemark_tui::browser::FocusArea::Panel1 => "active_filter_panel1",
+                                                codemark_tui::browser::FocusArea::Panel2 => "active_filter_panel2",
+                                                codemark_tui::browser::FocusArea::Panel3 => "active_filter_panel3",
+                                                codemark_tui::browser::FocusArea::Main => "active_filter_main",
+                                                codemark_tui::browser::FocusArea::Search => "active_filter_panel1",
+                                                codemark_tui::browser::FocusArea::Filter => "active_filter_panel3",
+                                            };
+                                            state.set_string(filter_key, "");
                                             handled = true;
                                         }
                                     }
@@ -226,8 +250,16 @@ async fn run_app() -> Result<()> {
                     }
                 }
 
-                // Update filter based on active_filter (live updated on each keystroke)
-                let query = state.get_string("active_filter").unwrap_or("");
+                // Update filter based on the focused panel's active_filter (live updated on each keystroke)
+                // Map focus area to the filter key
+                let filter_key = match layout.focus() {
+                    codemark_tui::browser::FocusArea::Panel1 => "active_filter_panel1",
+                    codemark_tui::browser::FocusArea::Panel2 => "active_filter_panel2",
+                    codemark_tui::browser::FocusArea::Panel3 => "active_filter_panel3",
+                    codemark_tui::browser::FocusArea::Main => "active_filter_main",
+                    _ => "active_filter_panel3", // Default to Panel3 for Search/Filter
+                };
+                let query = state.get_string(filter_key).unwrap_or("");
                 layout.apply_filter(query);
 
                 // Handle external commands (e.g. Open in Editor)
