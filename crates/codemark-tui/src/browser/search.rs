@@ -169,7 +169,7 @@ impl SearchBar {
         // 3. Draw cursor if focused
         if self.focused {
             // Calculate visible character count before cursor
-            let cursor_char_pos = self.query.chars().count();
+            let cursor_char_pos = self.cursor;
             let query_char_count = self.query.chars().count();
             let visible_start = query_char_count.saturating_sub(available_width);
             let visible_cursor_pos = cursor_char_pos.saturating_sub(visible_start);
