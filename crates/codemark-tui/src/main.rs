@@ -212,6 +212,8 @@ async fn run_app() -> Result<()> {
                                                 }
                                             };
                                             state.set_string(filter_key, "");
+                                            // Also clear the displayed filter_buffer for UI
+                                            state.set_string("filter_buffer", "");
                                             handled = true;
                                         }
                                     }
@@ -263,15 +265,23 @@ async fn run_app() -> Result<()> {
                 }
 
                 // Update filter based on the focused panel's active_filter (live updated on each keystroke)
-                // Map focus area to the filter key
-                let filter_key = match layout.focus() {
-                    codemark_tui::browser::FocusArea::Panel1 => "active_filter_panel1",
-                    codemark_tui::browser::FocusArea::Panel2 => "active_filter_panel2",
-                    codemark_tui::browser::FocusArea::Panel3 => "active_filter_panel3",
-                    codemark_tui::browser::FocusArea::Main => "active_filter_main",
-                    _ => "active_filter_panel3", // Default to Panel3 for Search/Filter
+                // When in Search mode, use the filter_target to determine which panel's filter to apply.
+                // Otherwise, use the current layout focus.
+                let filter_key = if state.mode() == AppMode::Search {
+                    // In Search mode, use the filter_target set when entering filter mode
+                    let target = state.get_string("filter_target").unwrap_or("panel3");
+                    format!("active_filter_{}", target)
+                } else {
+                    // In Normal mode, use the current layout focus
+                    match layout.focus() {
+                        codemark_tui::browser::FocusArea::Panel1 => "active_filter_panel1".to_string(),
+                        codemark_tui::browser::FocusArea::Panel2 => "active_filter_panel2".to_string(),
+                        codemark_tui::browser::FocusArea::Panel3 => "active_filter_panel3".to_string(),
+                        codemark_tui::browser::FocusArea::Main => "active_filter_main".to_string(),
+                        _ => "active_filter_panel3".to_string(),
+                    }
                 };
-                let query = state.get_string(filter_key).unwrap_or("");
+                let query = state.get_string(&filter_key).unwrap_or("");
                 layout.apply_filter(query);
 
                 // Handle external commands (e.g. Open in Editor)
