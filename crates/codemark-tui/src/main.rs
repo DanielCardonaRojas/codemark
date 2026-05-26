@@ -191,6 +191,7 @@ async fn run_app() -> Result<()> {
                                             handled = true;
                                         } else {
                                             // Clear the filter for the currently focused panel
+                                            // Don't set handled=true so the layout can still process Esc for navigation
                                             let filter_key = match layout.focus() {
                                                 codemark_tui::browser::FocusArea::Panel1 => {
                                                     "active_filter_panel1"
@@ -214,7 +215,6 @@ async fn run_app() -> Result<()> {
                                             state.set_string(filter_key, "");
                                             // Also clear the displayed filter_buffer for UI
                                             state.set_string("filter_buffer", "");
-                                            handled = true;
                                         }
                                     }
                                     _ => {}
