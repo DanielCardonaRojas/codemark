@@ -593,8 +593,10 @@ impl BrowserLayout {
                 Some(FocusArea::Panel2) => FocusArea::Panel2,
                 Some(FocusArea::Panel3) => FocusArea::Panel3,
                 Some(FocusArea::Main) => FocusArea::Main,
-                // Normalize Search and Filter to Panel3 (same as exit_filter_mode)
-                Some(FocusArea::Search) | Some(FocusArea::Filter) | None => FocusArea::Panel3,
+                // Search focus filters Panel1 (consistent with main.rs filter_target logic)
+                Some(FocusArea::Search) => FocusArea::Panel1,
+                // Filter focus with no previous focus defaults to Panel3
+                Some(FocusArea::Filter) | None => FocusArea::Panel3,
             }
         } else {
             self.focus
@@ -760,10 +762,12 @@ impl BrowserLayout {
     pub fn exit_filter_mode(&mut self) {
         let prev = self.previous_focus.take();
         match prev {
-            Some(FocusArea::Search) | Some(FocusArea::Filter) | None => {
+            Some(FocusArea::Filter) | None => {
+                // Filter focus with no previous focus defaults to Panel3
                 self.focus = FocusArea::Panel3;
             }
             Some(f) => {
+                // Restore the previous focus (including Search, which is a valid focus area)
                 self.focus = f;
             }
         }
