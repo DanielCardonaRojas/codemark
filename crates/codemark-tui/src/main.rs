@@ -274,9 +274,15 @@ async fn run_app() -> Result<()> {
                 } else {
                     // In Normal mode, use the current layout focus
                     match layout.focus() {
-                        codemark_tui::browser::FocusArea::Panel1 => "active_filter_panel1".to_string(),
-                        codemark_tui::browser::FocusArea::Panel2 => "active_filter_panel2".to_string(),
-                        codemark_tui::browser::FocusArea::Panel3 => "active_filter_panel3".to_string(),
+                        codemark_tui::browser::FocusArea::Panel1 => {
+                            "active_filter_panel1".to_string()
+                        }
+                        codemark_tui::browser::FocusArea::Panel2 => {
+                            "active_filter_panel2".to_string()
+                        }
+                        codemark_tui::browser::FocusArea::Panel3 => {
+                            "active_filter_panel3".to_string()
+                        }
                         codemark_tui::browser::FocusArea::Main => "active_filter_main".to_string(),
                         _ => "active_filter_panel3".to_string(),
                     }

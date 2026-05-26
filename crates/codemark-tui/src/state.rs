@@ -303,7 +303,8 @@ impl AppState {
                         if key.code == ratatui::crossterm::event::KeyCode::Esc {
                             if self.mode == AppMode::Search {
                                 // Clear the per-panel filter buffer when escaping
-                                let target = self.get_string("filter_target").unwrap_or("").to_string();
+                                let target =
+                                    self.get_string("filter_target").unwrap_or("").to_string();
                                 if !target.is_empty() {
                                     self.set_string(format!("filter_buffer_{}", target), "");
                                     self.set_string(format!("active_filter_{}", target), "");
