@@ -713,9 +713,49 @@ impl BrowserLayout {
                     branch_match && tag_match
                 })
                 .map(|bm| {
-                    PanelItem::new(bm.file_path)
-                        .secondary_text(format!("L{}", bm.query))
+                    // Get the best resolution for preview to determine health status
+                    let health = self
+                        .db
+                        .get_preview_resolution(&bm.id)
+                        .ok()
+                        .flatten()
+                        .map(|res| match res.health {
+                            BookmarkHealth::Active => HealthStatus::Healthy,
+                            BookmarkHealth::Drifted => HealthStatus::Warning,
+                            BookmarkHealth::Stale | BookmarkHealth::Archived => HealthStatus::Error,
+                        })
+                        .unwrap_or(HealthStatus::Unknown);
+
+                    // Try to get a summary from the query for better display
+                    let summary_info =
+                        bm.language.parse::<Language>().ok().and_then(|lang| {
+                            summarizer::summarize_query(&bm.query, Some(lang)).ok()
+                        });
+
+                    let summary = summary_info
+                        .as_ref()
+                        .and_then(|s| s.identifier.clone())
+                        .unwrap_or_else(|| {
+                            if summary_info.is_some() { String::new() } else { bm.query.clone() }
+                        });
+
+                    let icon =
+                        summary_info.as_ref().map(|s| get_node_icon(&s.label)).unwrap_or("");
+
+                    // Shrink the file path to prioritize last path components
+                    let short_path = shorten_path(&bm.file_path, 25);
+
+                    // Format: short_file_path identifier (or query if summarization failed)
+                    let display_text = if summary.is_empty() {
+                        short_path
+                    } else {
+                        format!("{} {}", short_path, summary)
+                    };
+
+                    PanelItem::new(display_text)
                         .metadata(bm.created_by.unwrap_or_default())
+                        .health(health)
+                        .icon(icon)
                         .user_data(bm.id)
                 })
                 .collect();
