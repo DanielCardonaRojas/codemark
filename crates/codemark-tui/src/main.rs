@@ -284,7 +284,12 @@ async fn run_app() -> Result<()> {
                             "active_filter_panel3".to_string()
                         }
                         codemark_tui::browser::FocusArea::Main => "active_filter_main".to_string(),
-                        _ => "active_filter_panel3".to_string(),
+                        codemark_tui::browser::FocusArea::Search => {
+                            "active_filter_panel1".to_string()
+                        }
+                        codemark_tui::browser::FocusArea::Filter => {
+                            "active_filter_panel3".to_string()
+                        }
                     }
                 };
                 let query = state.get_string(&filter_key).unwrap_or("");
