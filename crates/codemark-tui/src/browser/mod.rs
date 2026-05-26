@@ -15,7 +15,7 @@ mod types;
 pub use left_pane::LeftPane;
 pub use right_pane::{RightPane, RightPaneFocus};
 pub use search::{SearchBar, SearchMode};
-pub use tabbed_panel::TabbedPanel;
+pub use tabbed_panel::{TabbedPanel, bookmark_to_panel_item};
 pub use tabs::{Panel2Tab, Panel3Tab, Tab, TabSelection};
 pub use types::{
     ExternalCommand, FocusArea, HealNotification, HealTarget, LeftPaneSize, SectionConfig,
@@ -705,19 +705,14 @@ impl BrowserLayout {
         // 2. Update Bookmarks (Panel 3, tab 0)
         if let Ok(bookmarks) = self.db.list_bookmarks(&BookmarkFilter::default()) {
             let filtered_items: Vec<PanelItem> = bookmarks
-                .into_iter()
+                .iter()
                 .filter(|bm| {
                     let branch_match = active_branches.is_empty(); // Bookmarks don't have direct branch column in this version
                     let tag_match =
                         active_tags.is_empty() || bm.tags.iter().any(|t| active_tags.contains(t));
                     branch_match && tag_match
                 })
-                .map(|bm| {
-                    PanelItem::new(bm.file_path)
-                        .secondary_text(format!("L{}", bm.query))
-                        .metadata(bm.created_by.unwrap_or_default())
-                        .user_data(bm.id)
-                })
+                .map(|bm| bookmark_to_panel_item(bm, &self.db, false))
                 .collect();
 
             if let Some(TabContent::List(p)) = self.left_pane.panel3.panels.get_mut(0) {
