@@ -170,6 +170,18 @@ async fn run_app() -> Result<()> {
                                         show_help = !show_help;
                                         handled = true;
                                     }
+                                    event::KeyCode::Char('/') => {
+                                        // Set the filter target based on current focus before entering filter mode
+                                        let filter_target = match layout.focus() {
+                                            codemark_tui::browser::FocusArea::Panel1 => "panel1",
+                                            codemark_tui::browser::FocusArea::Panel2 => "panel2",
+                                            codemark_tui::browser::FocusArea::Panel3 => "panel3",
+                                            codemark_tui::browser::FocusArea::Main => "main",
+                                            codemark_tui::browser::FocusArea::Search => "panel1", // Search filters Panel1
+                                            codemark_tui::browser::FocusArea::Filter => "panel3",
+                                        };
+                                        state.set_string("filter_target", filter_target);
+                                    }
                                     event::KeyCode::Esc => {
                                         if show_help {
                                             show_help = false;
@@ -178,6 +190,8 @@ async fn run_app() -> Result<()> {
                                             notification = None;
                                             handled = true;
                                         }
+                                        // Don't handle Esc for filter clearing - let the layout handle navigation
+                                        // Filters are only cleared when exiting Search mode (handled in state.rs)
                                     }
                                     _ => {}
                                 }
@@ -226,8 +240,35 @@ async fn run_app() -> Result<()> {
                     }
                 }
 
-                // Update filter based on active_filter (live updated on each keystroke)
-                let query = state.get_string("active_filter").unwrap_or("");
+                // Update filter based on the focused panel's active_filter (live updated on each keystroke)
+                // When in Search mode, use the filter_target to determine which panel's filter to apply.
+                // Otherwise, use the current layout focus.
+                let filter_key = if state.mode() == AppMode::Search {
+                    // In Search mode, use the filter_target set when entering filter mode
+                    let target = state.get_string("filter_target").unwrap_or("panel3");
+                    format!("active_filter_{}", target)
+                } else {
+                    // In Normal mode, use the current layout focus
+                    match layout.focus() {
+                        codemark_tui::browser::FocusArea::Panel1 => {
+                            "active_filter_panel1".to_string()
+                        }
+                        codemark_tui::browser::FocusArea::Panel2 => {
+                            "active_filter_panel2".to_string()
+                        }
+                        codemark_tui::browser::FocusArea::Panel3 => {
+                            "active_filter_panel3".to_string()
+                        }
+                        codemark_tui::browser::FocusArea::Main => "active_filter_main".to_string(),
+                        codemark_tui::browser::FocusArea::Search => {
+                            "active_filter_panel1".to_string()
+                        }
+                        codemark_tui::browser::FocusArea::Filter => {
+                            "active_filter_panel3".to_string()
+                        }
+                    }
+                };
+                let query = state.get_string(&filter_key).unwrap_or("");
                 layout.apply_filter(query);
 
                 // Handle external commands (e.g. Open in Editor)
