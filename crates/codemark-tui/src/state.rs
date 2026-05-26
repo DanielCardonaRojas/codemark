@@ -275,10 +275,17 @@ impl AppState {
                                     self.set_string("filter_target", "panel3");
                                 }
                                 // Initialize the filter buffer for the target panel from its active filter
-                                let target = self.get_string("filter_target").unwrap_or("panel3").to_string();
+                                let target = self
+                                    .get_string("filter_target")
+                                    .unwrap_or("panel3")
+                                    .to_string();
                                 let active_filter_key = format!("active_filter_{}", target);
-                                let existing_filter = self.get_string(&active_filter_key).unwrap_or("").to_string();
-                                self.set_string(format!("filter_buffer_{}", target), existing_filter.clone());
+                                let existing_filter =
+                                    self.get_string(&active_filter_key).unwrap_or("").to_string();
+                                self.set_string(
+                                    format!("filter_buffer_{}", target),
+                                    existing_filter.clone(),
+                                );
                                 // Also set a global filter_buffer for UI display purposes
                                 self.set_string("filter_buffer", existing_filter);
                                 true
@@ -316,11 +323,15 @@ impl AppState {
                         } else if let ratatui::crossterm::event::KeyCode::Char(c) = key.code {
                             if self.mode == AppMode::Search {
                                 // Get the target panel's filter buffer
-                                let target = self.get_string("filter_target").unwrap_or("panel3").to_string();
+                                let target = self
+                                    .get_string("filter_target")
+                                    .unwrap_or("panel3")
+                                    .to_string();
                                 let buffer_key = format!("filter_buffer_{}", target);
                                 let active_key = format!("active_filter_{}", target);
 
-                                let mut query = self.get_string(&buffer_key).unwrap_or("").to_string();
+                                let mut query =
+                                    self.get_string(&buffer_key).unwrap_or("").to_string();
                                 query.push(c);
                                 self.set_string(&buffer_key, query.clone());
                                 // Update both per-panel active_filter and global filter_buffer for UI
@@ -333,11 +344,15 @@ impl AppState {
                         } else if key.code == ratatui::crossterm::event::KeyCode::Backspace {
                             if self.mode == AppMode::Search {
                                 // Get the target panel's filter buffer
-                                let target = self.get_string("filter_target").unwrap_or("panel3").to_string();
+                                let target = self
+                                    .get_string("filter_target")
+                                    .unwrap_or("panel3")
+                                    .to_string();
                                 let buffer_key = format!("filter_buffer_{}", target);
                                 let active_key = format!("active_filter_{}", target);
 
-                                let mut query = self.get_string(&buffer_key).unwrap_or("").to_string();
+                                let mut query =
+                                    self.get_string(&buffer_key).unwrap_or("").to_string();
                                 query.pop();
                                 self.set_string(&buffer_key, query.clone());
                                 // Update both per-panel active_filter and global filter_buffer for UI
