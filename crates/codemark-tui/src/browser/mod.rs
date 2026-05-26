@@ -15,7 +15,7 @@ mod types;
 pub use left_pane::LeftPane;
 pub use right_pane::{RightPane, RightPaneFocus};
 pub use search::{SearchBar, SearchMode};
-pub use tabbed_panel::TabbedPanel;
+pub use tabbed_panel::{TabbedPanel, bookmark_to_panel_item};
 pub use tabs::{Panel2Tab, Panel3Tab, Tab, TabSelection};
 pub use types::{
     ExternalCommand, FocusArea, HealNotification, HealTarget, LeftPaneSize, SectionConfig,
@@ -705,59 +705,14 @@ impl BrowserLayout {
         // 2. Update Bookmarks (Panel 3, tab 0)
         if let Ok(bookmarks) = self.db.list_bookmarks(&BookmarkFilter::default()) {
             let filtered_items: Vec<PanelItem> = bookmarks
-                .into_iter()
+                .iter()
                 .filter(|bm| {
                     let branch_match = active_branches.is_empty(); // Bookmarks don't have direct branch column in this version
                     let tag_match =
                         active_tags.is_empty() || bm.tags.iter().any(|t| active_tags.contains(t));
                     branch_match && tag_match
                 })
-                .map(|bm| {
-                    // Get the best resolution for preview to determine health status
-                    let health = self
-                        .db
-                        .get_preview_resolution(&bm.id)
-                        .ok()
-                        .flatten()
-                        .map(|res| match res.health {
-                            BookmarkHealth::Active => HealthStatus::Healthy,
-                            BookmarkHealth::Drifted => HealthStatus::Warning,
-                            BookmarkHealth::Stale | BookmarkHealth::Archived => HealthStatus::Error,
-                        })
-                        .unwrap_or(HealthStatus::Unknown);
-
-                    // Try to get a summary from the query for better display
-                    let summary_info =
-                        bm.language.parse::<Language>().ok().and_then(|lang| {
-                            summarizer::summarize_query(&bm.query, Some(lang)).ok()
-                        });
-
-                    let summary = summary_info
-                        .as_ref()
-                        .and_then(|s| s.identifier.clone())
-                        .unwrap_or_else(|| {
-                            if summary_info.is_some() { String::new() } else { bm.query.clone() }
-                        });
-
-                    let icon =
-                        summary_info.as_ref().map(|s| get_node_icon(&s.label)).unwrap_or("");
-
-                    // Shrink the file path to prioritize last path components
-                    let short_path = shorten_path(&bm.file_path, 25);
-
-                    // Format: short_file_path identifier (or query if summarization failed)
-                    let display_text = if summary.is_empty() {
-                        short_path
-                    } else {
-                        format!("{} {}", short_path, summary)
-                    };
-
-                    PanelItem::new(display_text)
-                        .metadata(bm.created_by.unwrap_or_default())
-                        .health(health)
-                        .icon(icon)
-                        .user_data(bm.id)
-                })
+                .map(|bm| bookmark_to_panel_item(bm, &self.db, false))
                 .collect();
 
             if let Some(TabContent::List(p)) = self.left_pane.panel3.panels.get_mut(0) {

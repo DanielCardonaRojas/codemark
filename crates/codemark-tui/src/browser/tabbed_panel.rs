@@ -1,7 +1,7 @@
 use crate::browser::{Panel3Tab, Tab, TabContent, TabSelection, tabs::BORDER_EXTENSION};
 use crate::component::{CodePreview, HealthStatus, MarkdownPanel, Panel, PanelItem};
 use crate::event::Event;
-use codemark_core::engine::bookmark::{BookmarkFilter, BookmarkHealth};
+use codemark_core::engine::bookmark::{Bookmark, BookmarkFilter, BookmarkHealth};
 use codemark_core::parser::languages::Language;
 use codemark_core::query::classifier::get_node_icon;
 use codemark_core::query::summarizer;
@@ -81,6 +81,67 @@ fn shorten_path(path: &str, max_width: usize) -> String {
     }
 
     result
+}
+
+/// Convert a bookmark to a PanelItem with consistent formatting.
+///
+/// This function encapsulates the common logic for displaying bookmarks
+/// in the TUI, ensuring consistent formatting across all contexts.
+///
+/// # Arguments
+/// * `bookmark` - The bookmark to convert
+/// * `db` - Database reference for fetching health status
+/// * `use_full_summary` - If true, use the full summary format (label + identifier).
+///   If false, use only the identifier for more compact display.
+///
+/// # Returns
+/// A PanelItem with formatted display text, health status, icon, and metadata
+pub fn bookmark_to_panel_item(
+    bookmark: &Bookmark,
+    db: &Database,
+    use_full_summary: bool,
+) -> PanelItem {
+    // Get the best resolution for preview to determine health status
+    let health = db
+        .get_preview_resolution(&bookmark.id)
+        .ok()
+        .flatten()
+        .map(|res| match res.health {
+            BookmarkHealth::Active => HealthStatus::Healthy,
+            BookmarkHealth::Drifted => HealthStatus::Warning,
+            BookmarkHealth::Stale | BookmarkHealth::Archived => HealthStatus::Error,
+        })
+        .unwrap_or(HealthStatus::Unknown);
+
+    // Try to get a summary from the query for better display
+    let summary_info = bookmark
+        .language
+        .parse::<Language>()
+        .ok()
+        .and_then(|lang| summarizer::summarize_query(&bookmark.query, Some(lang)).ok());
+
+    let summary = if use_full_summary {
+        summary_info.as_ref().and_then(|s| s.format()).unwrap_or_else(|| bookmark.query.clone())
+    } else {
+        summary_info.as_ref().and_then(|s| s.identifier.clone()).unwrap_or_else(|| {
+            if summary_info.is_some() { String::new() } else { bookmark.query.clone() }
+        })
+    };
+
+    let icon = summary_info.as_ref().map(|s| get_node_icon(&s.label)).unwrap_or("");
+
+    // Shrink the file path to prioritize last path components
+    let short_path = shorten_path(&bookmark.file_path, 25);
+
+    // Format: short_file_path summary (or query if summarization failed)
+    let display_text =
+        if summary.is_empty() { short_path } else { format!("{} {}", short_path, summary) };
+
+    PanelItem::new(display_text)
+        .metadata(bookmark.created_by.clone().unwrap_or_default())
+        .health(health)
+        .icon(icon)
+        .user_data(bookmark.id.clone())
 }
 
 impl TabbedPanel {
@@ -234,54 +295,9 @@ impl TabbedPanel {
         }
 
         let bookmarks = match db.list_bookmarks(&BookmarkFilter::default()) {
-            Ok(bookmarks) => bookmarks
-                .into_iter()
-                .map(|bm| {
-                    // Get the best resolution for preview to determine health status
-                    let health = db
-                        .get_preview_resolution(&bm.id)
-                        .ok()
-                        .flatten()
-                        .map(|res| match res.health {
-                            BookmarkHealth::Active => HealthStatus::Healthy,
-                            BookmarkHealth::Drifted => HealthStatus::Warning,
-                            BookmarkHealth::Stale | BookmarkHealth::Archived => HealthStatus::Error,
-                        })
-                        .unwrap_or(HealthStatus::Unknown);
-
-                    // Try to get a summary from the query for better display
-                    let summary_info =
-                        bm.language.parse::<Language>().ok().and_then(|lang| {
-                            summarizer::summarize_query(&bm.query, Some(lang)).ok()
-                        });
-
-                    let summary = summary_info
-                        .as_ref()
-                        .and_then(|s| s.identifier.clone())
-                        .unwrap_or_else(|| {
-                            if summary_info.is_some() { String::new() } else { bm.query.clone() }
-                        });
-
-                    let icon =
-                        summary_info.as_ref().map(|s| get_node_icon(&s.label)).unwrap_or("");
-
-                    // Shrink the file path to prioritize last path components
-                    let short_path = shorten_path(&bm.file_path, 25);
-
-                    // Format: short_file_path identifier (or query if summarization failed)
-                    let display_text = if summary.is_empty() {
-                        short_path
-                    } else {
-                        format!("{} {}", short_path, summary)
-                    };
-
-                    PanelItem::new(display_text)
-                        .metadata(bm.created_by.unwrap_or_default())
-                        .health(health)
-                        .icon(icon)
-                        .user_data(bm.id)
-                })
-                .collect(),
+            Ok(bookmarks) => {
+                bookmarks.iter().map(|bm| bookmark_to_panel_item(bm, db, false)).collect()
+            }
             Err(_) => Vec::new(),
         };
 
