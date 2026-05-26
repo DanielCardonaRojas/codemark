@@ -7,7 +7,7 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Widget, Wrap},
 };
-use std::rc::Rc;
+use unicode_width::UnicodeWidthStr;
 
 /// Number of characters to extend the top border line for tab titles.
 /// This must be kept in sync with the rendering in `TabbedPanel`.
@@ -134,7 +134,7 @@ pub struct TabSelection {
     /// Whether the tabs are focused
     focused: bool,
     /// Last rendered tab positions: (x_start, x_end) for each tab
-    last_tab_positions: Rc<std::cell::RefCell<Vec<(u16, u16)>>>,
+    last_tab_positions: std::cell::RefCell<Vec<(u16, u16)>>,
 }
 
 impl TabSelection {
@@ -144,7 +144,7 @@ impl TabSelection {
             tabs,
             selected: 0,
             focused: false,
-            last_tab_positions: Rc::new(std::cell::RefCell::new(Vec::new())),
+            last_tab_positions: std::cell::RefCell::new(Vec::new()),
         }
     }
 
@@ -231,7 +231,7 @@ impl TabSelection {
 
             let x_start = current_x;
             spans.push(Span::styled(tab.label(), style));
-            current_x += tab.label().len() as u16;
+            current_x += tab.label().width() as u16;
             spans.push(Span::styled(" ", style));
             current_x += 1;
 
