@@ -556,7 +556,7 @@ mod tests {
             "fn main() {\n    println!(\"Hello\");\n}"
         );
 
-        let result = render_show_template(&bm, &resolutions);
+        let result = render_show_template(&bm, &resolutions, Path::new("."), None);
         assert!(result.is_ok(), "Template rendering failed: {:?}", result.err());
         let output = result.unwrap();
         assert!(output.contains("# Bookmark: abcdef12"));
