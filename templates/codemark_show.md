@@ -45,7 +45,8 @@
 ## Resolution History
 
 {{#each resolutions}}
-{{#if is_current}}**[CURRENT]** {{/if}}**Date:** {{format_date resolved_at "%Y-%m-%d %H:%M:%S"}}
+{{#if is_current}}**[CURRENT]** {{/if}}**ID:** {{id}}
+**Date:** {{format_date resolved_at "%Y-%m-%d %H:%M:%S"}}
 **Status:** {{status}}
 {{#if ui_status}}**UI Status:** {{ui_status}}{{/if}}
 **Method:** {{method}}
