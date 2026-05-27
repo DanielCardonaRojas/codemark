@@ -97,15 +97,8 @@ impl HealthStatus {
 
     /// Get the symbol for this health status.
     fn symbol(&self) -> &'static str {
-        match self {
-            HealthStatus::Healthy => "🟢",
-            HealthStatus::UnanchoredHealthy | HealthStatus::Drifted => "🟡",
-            HealthStatus::UnanchoredDrifting => "🟠",
-            HealthStatus::Broken | HealthStatus::BrokenUnanchored => "🔴",
-            HealthStatus::Verified | HealthStatus::Outdated => "⚪",
-            HealthStatus::Future => "🔵",
-            _ => "●",
-        }
+        // Use a plain dot — color is applied via `self.color()`
+        "●"
     }
 }
 
