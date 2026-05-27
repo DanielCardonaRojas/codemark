@@ -47,6 +47,8 @@ pub struct RightPane {
     cached_show_template: String,
     /// Cached details template content to avoid repeated disk reads
     cached_details_template: String,
+    /// Flag set when step navigation changes and the caller must call update_preview
+    pub needs_preview_update: bool,
 }
 
 impl RightPane {
@@ -66,6 +68,7 @@ impl RightPane {
             info_config: SectionConfig::new(7, 13),
             active_tour_name: None,
             active_bookmark_id: None,
+            needs_preview_update: false,
             cached_show_template,
             cached_details_template,
         };
@@ -428,6 +431,7 @@ impl RightPane {
                 | ratatui::crossterm::event::KeyCode::Char('h') => {
                     if self.pager_current > 0 {
                         self.pager_current = self.pager_current.saturating_sub(1);
+                        self.needs_preview_update = true;
                     }
                     return true;
                 }
@@ -435,6 +439,7 @@ impl RightPane {
                 | ratatui::crossterm::event::KeyCode::Char('l') => {
                     if self.pager_current + 1 < self.pager_total {
                         self.pager_current += 1;
+                        self.needs_preview_update = true;
                     }
                     return true;
                 }

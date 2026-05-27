@@ -1446,6 +1446,10 @@ impl BrowserLayout {
                 // regardless of focus.
                 let left_handled = self.left_pane.handle_event(event);
                 let right_handled = self.right_pane.handle_event(event);
+                if self.right_pane.needs_preview_update {
+                    self.right_pane.needs_preview_update = false;
+                    self.right_pane.update_preview(&self.db);
+                }
                 let handled = left_handled || right_handled;
 
                 // Refresh tags if Panel 3 tab changed via mouse
@@ -1482,7 +1486,14 @@ impl BrowserLayout {
                         }
                         handled
                     }
-                    FocusArea::Main => self.right_pane.handle_event(event),
+                    FocusArea::Main => {
+                        let handled = self.right_pane.handle_event(event);
+                        if self.right_pane.needs_preview_update {
+                            self.right_pane.needs_preview_update = false;
+                            self.right_pane.update_preview(&self.db);
+                        }
+                        handled
+                    }
                     FocusArea::Filter => false,
                 };
 
