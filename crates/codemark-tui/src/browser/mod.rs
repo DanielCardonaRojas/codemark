@@ -18,8 +18,8 @@ pub use search::{SearchBar, SearchMode};
 pub use tabbed_panel::{TabbedPanel, bookmark_to_panel_item};
 pub use tabs::{Panel2Tab, Panel3Tab, Tab, TabSelection};
 pub use types::{
-    ExternalCommand, FocusArea, HealNotification, HealTarget, LeftPaneSize, SectionConfig,
-    StepData, TabContent, escape_markdown,
+    ExternalCommand, FocusArea, HealNotification, HealTarget, LeftPaneSize, RightPaneSize,
+    SectionConfig, StepData, TabContent, escape_markdown,
 };
 
 use crate::component::{Component, HealthStatus, PanelItem};
@@ -120,6 +120,8 @@ pub struct BrowserLayout {
     clipboard: Option<copypasta::ClipboardContext>,
     /// Current size mode for the left pane
     left_pane_size: LeftPaneSize,
+    /// Current size mode for the right pane (preview)
+    right_pane_size: RightPaneSize,
 }
 
 impl BrowserLayout {
@@ -128,10 +130,23 @@ impl BrowserLayout {
         use codemark_core::storage::registry;
         let registry = registry::open_registry().expect("Failed to open global registry");
 
+        // Determine initial focus: if there are no bookmarks in the current database,
+        // focus the repos pane (Panel1) so the user can select a repository.
+        // Otherwise, focus the bookmarks pane (Panel3).
+        let initial_focus = if db
+            .list_bookmarks(&codemark_core::engine::bookmark::BookmarkFilter::default())
+            .map(|b| !b.is_empty())
+            .unwrap_or(false)
+        {
+            FocusArea::Panel3
+        } else {
+            FocusArea::Panel1
+        };
+
         let mut layout = Self {
             left_pane: LeftPane::new(&db, &registry),
             right_pane: RightPane::new(&db),
-            focus: FocusArea::Panel3,
+            focus: initial_focus,
             previous_focus: None,
             db,
             registry,
@@ -140,6 +155,7 @@ impl BrowserLayout {
             event_handler,
             clipboard: None,
             left_pane_size: LeftPaneSize::Regular,
+            right_pane_size: RightPaneSize::Regular,
         };
         layout.update_focus_state();
         layout
@@ -877,27 +893,58 @@ impl BrowserLayout {
         }
         Ok(())
     }
+}
 
+/// Render mode for the browser layout.
+enum RenderMode {
+    /// Both left and right panes are visible
+    Both,
+    /// Only left pane is visible
+    LeftOnly,
+    /// Only right pane is visible (fullscreen)
+    RightOnly,
+}
+
+impl BrowserLayout {
     /// Render the browser layout.
     pub fn render(&self, area: Rect, buf: &mut Buffer) {
-        // Split vertically based on left_pane_size
-        let left_percent = self.left_pane_size.left_width_percent();
-        let constraints = if let Some(right_percent) = self.left_pane_size.right_width_percent() {
-            vec![Constraint::Percentage(left_percent), Constraint::Percentage(right_percent)]
+        let (left_constraints, render_mode) = if self.right_pane_size.is_fullscreen() {
+            // Right pane takes full width
+            (vec![Constraint::Percentage(100)], RenderMode::RightOnly)
         } else {
-            // Right pane is hidden, left pane takes full width
-            vec![Constraint::Percentage(100)]
+            // Use left pane size to determine layout
+            let left_percent = self.left_pane_size.left_width_percent();
+            if let Some(right_percent) = self.left_pane_size.right_width_percent() {
+                // Both panes visible
+                (
+                    vec![
+                        Constraint::Percentage(left_percent),
+                        Constraint::Percentage(right_percent),
+                    ],
+                    RenderMode::Both,
+                )
+            } else {
+                // Only left pane visible (right hidden)
+                (vec![Constraint::Percentage(100)], RenderMode::LeftOnly)
+            }
         };
 
-        let chunks =
-            Layout::default().direction(Direction::Horizontal).constraints(constraints).split(area);
+        let chunks = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints(left_constraints)
+            .split(area);
 
-        // Render left pane
-        self.left_pane.render(chunks[0], buf);
-
-        // Render right pane only if visible
-        if chunks.len() > 1 {
-            self.right_pane.render(chunks[1], buf);
+        match render_mode {
+            RenderMode::Both => {
+                self.left_pane.render(chunks[0], buf);
+                self.right_pane.render(chunks[1], buf, false);
+            }
+            RenderMode::LeftOnly => {
+                self.left_pane.render(chunks[0], buf);
+            }
+            RenderMode::RightOnly => {
+                self.right_pane.render(chunks[0], buf, true);
+            }
         }
     }
 
@@ -1051,7 +1098,10 @@ impl BrowserLayout {
                     {
                         let root = root.clone();
                         panel.activate_selected();
-                        let _ = self.switch_database(&root);
+                        // Only shift focus to bookmarks if database switch succeeds
+                        if self.switch_database(&root).is_ok() {
+                            self.set_focus(FocusArea::Panel3);
+                        }
                         return true;
                     }
                     if self.focus == FocusArea::Panel2
@@ -1302,24 +1352,40 @@ impl BrowserLayout {
                     self.start_heal_selection();
                     return true;
                 }
-                // Increase left pane size with + (only for resizable panels)
+                // Increase pane size with + (only for resizable panels)
                 ratatui::crossterm::event::KeyCode::Char('+')
                 | ratatui::crossterm::event::KeyCode::Char('=')
                     if self.should_handle_keybindings() && self.focus.is_resizable() =>
                 {
-                    self.left_pane_size = self.left_pane_size.increase();
-                    self.left_pane.set_resize_mode(self.left_pane_size);
-                    self.left_pane.set_focused_area(self.focus);
+                    if self.focus == FocusArea::Main {
+                        let next = self.right_pane_size.toggle();
+                        self.right_pane_size = next;
+                        if next.is_fullscreen() {
+                            self.right_pane.focus_steps();
+                        }
+                    } else {
+                        self.left_pane_size = self.left_pane_size.increase();
+                        self.left_pane.set_resize_mode(self.left_pane_size);
+                        self.left_pane.set_focused_area(self.focus);
+                    }
                     return true;
                 }
-                // Decrease left pane size with _ (only for resizable panels)
+                // Decrease pane size with _ (only for resizable panels)
                 ratatui::crossterm::event::KeyCode::Char('_')
                 | ratatui::crossterm::event::KeyCode::Char('-')
                     if self.should_handle_keybindings() && self.focus.is_resizable() =>
                 {
-                    self.left_pane_size = self.left_pane_size.decrease();
-                    self.left_pane.set_resize_mode(self.left_pane_size);
-                    self.left_pane.set_focused_area(self.focus);
+                    if self.focus == FocusArea::Main {
+                        let next = self.right_pane_size.toggle();
+                        self.right_pane_size = next;
+                        if next.is_fullscreen() {
+                            self.right_pane.focus_steps();
+                        }
+                    } else {
+                        self.left_pane_size = self.left_pane_size.decrease();
+                        self.left_pane.set_resize_mode(self.left_pane_size);
+                        self.left_pane.set_focused_area(self.focus);
+                    }
                     return true;
                 }
                 _ => {}
