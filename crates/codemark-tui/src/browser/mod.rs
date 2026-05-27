@@ -128,10 +128,23 @@ impl BrowserLayout {
         use codemark_core::storage::registry;
         let registry = registry::open_registry().expect("Failed to open global registry");
 
+        // Determine initial focus: if there are no bookmarks in the current database,
+        // focus the repos pane (Panel1) so the user can select a repository.
+        // Otherwise, focus the bookmarks pane (Panel3).
+        let initial_focus = if db
+            .list_bookmarks(&codemark_core::engine::bookmark::BookmarkFilter::default())
+            .map(|b| !b.is_empty())
+            .unwrap_or(false)
+        {
+            FocusArea::Panel3
+        } else {
+            FocusArea::Panel1
+        };
+
         let mut layout = Self {
             left_pane: LeftPane::new(&db, &registry),
             right_pane: RightPane::new(&db),
-            focus: FocusArea::Panel3,
+            focus: initial_focus,
             previous_focus: None,
             db,
             registry,
