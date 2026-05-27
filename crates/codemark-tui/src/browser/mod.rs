@@ -1094,6 +1094,7 @@ impl BrowserLayout {
                         let root = root.clone();
                         panel.activate_selected();
                         let _ = self.switch_database(&root);
+                        self.set_focus(FocusArea::Panel3);
                         return true;
                     }
                     if self.focus == FocusArea::Panel2
