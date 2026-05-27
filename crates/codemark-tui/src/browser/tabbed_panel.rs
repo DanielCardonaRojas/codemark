@@ -288,7 +288,7 @@ impl TabbedPanel {
         let branches = match db.list_all_branches() {
             Ok(branches) if !branches.is_empty() => branches
                 .into_iter()
-                .map(|branch| PanelItem::new(branch).health(HealthStatus::Branch))
+                .map(|branch| PanelItem::new(branch).no_health().icon(""))
                 .collect(),
             Ok(_) => vec![PanelItem::new("No branches found").no_health().color(Color::DarkGray)],
             Err(e) => vec![PanelItem::new(format!("Error: {e}")).no_health().color(Color::Red)],
