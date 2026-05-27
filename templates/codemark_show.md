@@ -34,6 +34,7 @@
 {{#if ui_status}}| **UI Status** | {{ui_status}} |{{/if}}
 | **Created** | {{format_date created_at "%Y-%m-%d %H:%M:%S"}} |
 {{#if created_by}}| **Author** | {{escape_markdown created_by}} |{{/if}}
+{{#if current_resolution_id}}| **Current Resolution** | {{current_resolution_id}} |{{/if}}
 {{#if last_resolved_at}}| **Last Resolved** | {{format_date last_resolved_at "%Y-%m-%d %H:%M:%S"}} |{{/if}}
 {{#if resolution_method}}| **Resolution Method** | {{resolution_method}} |{{/if}}
 {{#if commit_hash}}| **Commit** | {{short_commit}} |{{/if}}
@@ -44,7 +45,7 @@
 ## Resolution History
 
 {{#each resolutions}}
-**Date:** {{format_date resolved_at "%Y-%m-%d %H:%M:%S"}}
+{{#if is_current}}**[CURRENT]** {{/if}}**Date:** {{format_date resolved_at "%Y-%m-%d %H:%M:%S"}}
 **Status:** {{status}}
 {{#if ui_status}}**UI Status:** {{ui_status}}{{/if}}
 **Method:** {{method}}

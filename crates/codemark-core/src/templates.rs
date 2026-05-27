@@ -53,6 +53,8 @@ pub struct BookmarkTemplateContext {
     /// When it became stale (optional)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stale_since: Option<String>,
+    /// Current resolution ID (optional)
+    pub current_resolution_id: Option<String>,
     /// Code snapshot from the latest resolution (optional)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub snapshot: Option<String>,
@@ -91,12 +93,16 @@ pub struct AnnotationTemplateContext {
 /// Template context for a resolution.
 #[derive(Debug, Serialize)]
 pub struct ResolutionTemplateContext {
+    /// Resolution ID
+    pub id: String,
     /// When resolution occurred
     pub resolved_at: String,
     /// Resolution method
     pub method: String,
     /// Health status
     pub status: String,
+    /// Whether this is the current resolution
+    pub is_current: bool,
     /// Resolved file path (optional)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub file_path: Option<String>,
@@ -168,6 +174,7 @@ impl BookmarkTemplateContext {
             last_resolved_at: bm.last_resolved_at.clone(),
             resolution_method: bm.resolution_method.map(|m| m.to_string()),
             stale_since: bm.stale_since.clone(),
+            current_resolution_id: bm.current_resolution_id.clone(),
             snapshot: latest_snapshot,
             breadcrumbs,
             tags: bm.tags.clone(),
@@ -206,13 +213,15 @@ impl AnnotationTemplateContext {
 
 impl ResolutionTemplateContext {
     /// Create a template context from a resolution.
-    fn from_resolution(r: &Resolution) -> Self {
+    fn from_resolution(r: &Resolution, current_resolution_id: Option<&str>) -> Self {
         let short_commit = r.commit_hash.as_ref().map(|c| short_id_value(c));
 
         ResolutionTemplateContext {
+            id: r.id.clone(),
             resolved_at: r.resolved_at.clone(),
             method: r.method.to_string(),
             status: r.health.to_string(),
+            is_current: current_resolution_id == Some(r.id.as_str()),
             file_path: r.file_path.clone(),
             line_range: r.line_range.clone(),
             line_range_colon: r.line_range.as_ref().map(|l| l.replace('-', ":")),
@@ -232,7 +241,7 @@ impl ResolutionTemplateContext {
         repo_path: &std::path::Path,
         current_head: Option<&str>,
     ) -> Self {
-        let mut ctx = Self::from_resolution(r);
+        let mut ctx = Self::from_resolution(r, bm.current_resolution_id.as_deref());
         if let Ok(status) =
             crate::engine::projection::project_resolution_status(r, bm, current_head, repo_path)
         {

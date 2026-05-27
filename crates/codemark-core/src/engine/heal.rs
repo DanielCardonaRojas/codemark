@@ -178,8 +178,19 @@ pub async fn heal_bookmark(
             db.update_bookmark_resolution_id(&bookmark.id, &resolution_id)?;
             Some(resolution_id)
         } else {
-            // Existing resolution updated, current_resolution_id remains correct
-            bookmark.current_resolution_id.clone()
+            // Existing resolution was updated - we still need to update the bookmark's pointer
+            // to ensure it points to the latest resolution (in case the duplicate was an older one)
+            match db.list_resolutions(&bookmark.id, 1) {
+                Ok(latest_res) => {
+                    if let Some(latest) = latest_res.first() {
+                        db.update_bookmark_resolution_id(&bookmark.id, &latest.id)?;
+                        Some(latest.id.clone())
+                    } else {
+                        bookmark.current_resolution_id.clone()
+                    }
+                }
+                Err(_) => bookmark.current_resolution_id.clone(),
+            }
         }
     };
 
