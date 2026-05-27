@@ -1358,7 +1358,11 @@ impl BrowserLayout {
                     if self.should_handle_keybindings() && self.focus.is_resizable() =>
                 {
                     if self.focus == FocusArea::Main {
-                        self.right_pane_size = self.right_pane_size.toggle();
+                        let next = self.right_pane_size.toggle();
+                        self.right_pane_size = next;
+                        if next.is_fullscreen() {
+                            self.right_pane.focus_steps();
+                        }
                     } else {
                         self.left_pane_size = self.left_pane_size.increase();
                         self.left_pane.set_resize_mode(self.left_pane_size);
@@ -1372,7 +1376,11 @@ impl BrowserLayout {
                     if self.should_handle_keybindings() && self.focus.is_resizable() =>
                 {
                     if self.focus == FocusArea::Main {
-                        self.right_pane_size = self.right_pane_size.toggle();
+                        let next = self.right_pane_size.toggle();
+                        self.right_pane_size = next;
+                        if next.is_fullscreen() {
+                            self.right_pane.focus_steps();
+                        }
                     } else {
                         self.left_pane_size = self.left_pane_size.decrease();
                         self.left_pane.set_resize_mode(self.left_pane_size);

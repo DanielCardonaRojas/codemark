@@ -71,6 +71,7 @@ impl BrowserLayout {
                 bindings.push(("H", "Heal"));
                 bindings.push(("↑", "Focus steps"));
                 bindings.push(("↓", "Focus details"));
+                bindings.push(("+/-", "Toggle fullscreen"));
             }
             FocusArea::Filter => {}
         }
@@ -134,10 +135,11 @@ impl BrowserLayout {
                 }
             }
             FocusArea::Main => {
-                bindings.insert(0, KeyBinding::new("Enter", "Select Step"));
-                bindings.insert(1, KeyBinding::new("o", "Open File"));
-                bindings.insert(2, KeyBinding::new("H", "Heal"));
-                bindings.insert(3, KeyBinding::new("Esc", "Back to Tours"));
+                bindings.insert(0, KeyBinding::new("+/-", "Toggle fullscreen"));
+                bindings.insert(1, KeyBinding::new("Enter", "Select Step"));
+                bindings.insert(2, KeyBinding::new("o", "Open File"));
+                bindings.insert(3, KeyBinding::new("H", "Heal"));
+                bindings.insert(4, KeyBinding::new("Esc", "Back to Tours"));
             }
             FocusArea::Filter => {}
         }
