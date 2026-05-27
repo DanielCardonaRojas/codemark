@@ -125,22 +125,22 @@ pub fn bookmark_to_panel_item(
                     },
                     Err(_) => match resolution.health {
                         BookmarkHealth::Active => HealthStatus::Healthy,
-                        BookmarkHealth::Drifted => HealthStatus::Warning,
-                        BookmarkHealth::Stale | BookmarkHealth::Archived => HealthStatus::Error,
+                        BookmarkHealth::Drifted => HealthStatus::Drifted,
+                        BookmarkHealth::Stale | BookmarkHealth::Archived => HealthStatus::Broken,
                     },
                 }
             }
             _ => match bookmark.health {
                 BookmarkHealth::Active => HealthStatus::Healthy,
-                BookmarkHealth::Drifted => HealthStatus::Warning,
-                BookmarkHealth::Stale | BookmarkHealth::Archived => HealthStatus::Error,
+                BookmarkHealth::Drifted => HealthStatus::Drifted,
+                BookmarkHealth::Stale | BookmarkHealth::Archived => HealthStatus::Broken,
             },
         }
     } else {
         match bookmark.health {
             BookmarkHealth::Active => HealthStatus::Healthy,
-            BookmarkHealth::Drifted => HealthStatus::Warning,
-            BookmarkHealth::Stale | BookmarkHealth::Archived => HealthStatus::Error,
+            BookmarkHealth::Drifted => HealthStatus::Drifted,
+            BookmarkHealth::Stale | BookmarkHealth::Archived => HealthStatus::Broken,
         }
     };
 
@@ -310,10 +310,10 @@ impl TabbedPanel {
                             HealthStatus::Healthy
                         }
                         codemark_core::engine::bookmark::CollectionHealth::Drifted => {
-                            HealthStatus::Warning
+                            HealthStatus::Drifted
                         }
                         codemark_core::engine::bookmark::CollectionHealth::Stale => {
-                            HealthStatus::Error
+                            HealthStatus::Broken
                         }
                     },
                     None => HealthStatus::Unknown,

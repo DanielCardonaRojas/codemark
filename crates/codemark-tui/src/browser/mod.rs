@@ -688,10 +688,16 @@ impl BrowserLayout {
 
                 if branch_match && tag_match {
                     let health = match c.health {
-                        Some(h) => match h.to_string().as_str() {
-                            "Healthy" => HealthStatus::Healthy,
-                            "Error" => HealthStatus::Error,
-                            _ => HealthStatus::Warning,
+                        Some(h) => match h {
+                            codemark_core::engine::bookmark::CollectionHealth::Active => {
+                                HealthStatus::Healthy
+                            }
+                            codemark_core::engine::bookmark::CollectionHealth::Drifted => {
+                                HealthStatus::Drifted
+                            }
+                            codemark_core::engine::bookmark::CollectionHealth::Stale => {
+                                HealthStatus::Broken
+                            }
                         },
                         None => HealthStatus::Unknown,
                     };
@@ -964,9 +970,9 @@ impl BrowserLayout {
                             .flatten()
                             .map(|res| match res.health {
                                 BookmarkHealth::Active => HealthStatus::Healthy,
-                                BookmarkHealth::Drifted => HealthStatus::Warning,
+                                BookmarkHealth::Drifted => HealthStatus::Drifted,
                                 BookmarkHealth::Stale | BookmarkHealth::Archived => {
-                                    HealthStatus::Error
+                                    HealthStatus::Broken
                                 }
                             })
                             .unwrap_or(HealthStatus::Unknown);

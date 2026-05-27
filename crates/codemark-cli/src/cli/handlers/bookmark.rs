@@ -184,7 +184,15 @@ pub async fn handle_add(cli: &Cli, mode: &OutputMode, args: &AddArgsOriginal) ->
         let breadcrumbs_json =
             if breadcrumbs.is_empty() { None } else { serde_json::to_string(&breadcrumbs).ok() };
 
-        let initial_res = Resolution { is_anchored: true,
+        let repo_root = if let Some(ref ctx) = git_context::detect_context(&cwd) {
+            ctx.repo_root.clone()
+        } else {
+            cwd.clone()
+        };
+        let is_anchored = git_context::is_file_clean(&repo_root, &rel_path).unwrap_or(true);
+
+        let initial_res = Resolution {
+            is_anchored,
             id: uuid::Uuid::new_v4().to_string(),
             bookmark_id: actual_bookmark_id.clone(),
             resolved_at: now_iso(),
@@ -410,7 +418,15 @@ pub async fn handle_add_from_snippet(
         let breadcrumbs_json =
             if breadcrumbs.is_empty() { None } else { serde_json::to_string(&breadcrumbs).ok() };
 
-        let initial_res = Resolution { is_anchored: true,
+        let repo_root = if let Some(ref ctx) = git_context::detect_context(&cwd) {
+            ctx.repo_root.clone()
+        } else {
+            cwd.clone()
+        };
+        let is_anchored = git_context::is_file_clean(&repo_root, &rel_path).unwrap_or(true);
+
+        let initial_res = Resolution {
+            is_anchored,
             id: uuid::Uuid::new_v4().to_string(),
             bookmark_id: actual_bookmark_id.clone(),
             resolved_at: now_iso(),
@@ -636,7 +652,15 @@ pub async fn handle_add_from_query(
         let breadcrumbs_json =
             if breadcrumbs.is_empty() { None } else { serde_json::to_string(&breadcrumbs).ok() };
 
-        let initial_res = Resolution { is_anchored: true,
+        let repo_root = if let Some(ref ctx) = git_context::detect_context(&cwd) {
+            ctx.repo_root.clone()
+        } else {
+            cwd.clone()
+        };
+        let is_anchored = git_context::is_file_clean(&repo_root, &rel_path).unwrap_or(true);
+
+        let initial_res = Resolution {
+            is_anchored,
             id: uuid::Uuid::new_v4().to_string(),
             bookmark_id: actual_bookmark_id.clone(),
             resolved_at: now_iso(),
@@ -795,14 +819,22 @@ pub async fn handle_resolve(cli: &Cli, mode: &OutputMode, args: &ResolveArgs) ->
             serde_json::to_string(&result.breadcrumbs).ok()
         };
 
+        let cwd = std::env::current_dir()?;
+        let repo_root = if let Some(ref ctx) = git_context::detect_context(&cwd) {
+            ctx.repo_root.clone()
+        } else {
+            cwd.clone()
+        };
+        let is_anchored = git_context::is_file_clean(&repo_root, &result.file_path).unwrap_or(true);
+
         // Record resolution
-        let res = Resolution { is_anchored: true,
+        let res = Resolution {
+            is_anchored,
             id: uuid::Uuid::new_v4().to_string(),
             bookmark_id: bm.id.clone(),
             resolved_at: now_iso(),
             health: final_status,
-            commit_hash: git_context::detect_context(&std::env::current_dir()?)
-                .and_then(|ctx| ctx.head_commit),
+            commit_hash: git_context::detect_context(&cwd).and_then(|ctx| ctx.head_commit),
             method: result.method,
             match_count: Some(1),
             file_path: Some(result.file_path.clone()),
@@ -850,7 +882,11 @@ pub async fn handle_show(cli: &Cli, mode: &OutputMode, args: &ShowArgs) -> Resul
     let resolutions = db.list_resolutions(&bm.id, 5)?;
 
     // Project UI status for the bookmark
-    let bm = codemark_core::engine::projection::project_ui_status_for_bookmark(bm, &db, None)?;
+    let bm = codemark_core::engine::projection::project_ui_status_for_bookmark(
+        bm,
+        &db,
+        args.current_head.as_deref(),
+    )?;
 
     match mode {
         OutputMode::Json => {

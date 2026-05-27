@@ -369,6 +369,10 @@ pub struct ShowArgs {
     /// Hide code preview (show metadata only) — not yet implemented
     #[arg(long, hide = true)]
     pub no_preview: bool,
+
+    /// Override detected HEAD commit for UI status projection (useful for testing and remote viewing)
+    #[arg(long)]
+    pub current_head: Option<String>,
 }
 
 #[derive(Debug, clap::Args)]

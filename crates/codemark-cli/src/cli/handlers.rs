@@ -259,8 +259,12 @@ pub async fn handle_show_v2(cli: &Cli, mode: &OutputMode, args: &ShowArgs) -> Re
 
     // For backward compatibility, use the original show behavior (metadata + resolutions)
     // The --no-preview flag is for future use when we implement the merged show+preview
-    let show_args =
-        crate::cli::ShowArgs { id: args.id.clone(), location: false, no_preview: false };
+    let show_args = crate::cli::ShowArgs {
+        id: args.id.clone(),
+        location: false,
+        no_preview: false,
+        current_head: args.current_head.clone(),
+    };
     bookmark::handle_show(cli, mode, &show_args).await
 }
 
@@ -1071,6 +1075,11 @@ pub async fn resolve_batch(
     let provider = codemark_core::vfs::LocalFileProvider;
     let mut affected_collections: HashSet<String> = std::collections::HashSet::new();
 
+    let cwd = std::env::current_dir()?;
+    let ctx = git_context::detect_context(&cwd);
+    let repo_root = ctx.as_ref().map(|c| c.repo_root.clone()).unwrap_or_else(|| cwd.clone());
+    let head_commit = ctx.and_then(|c| c.head_commit);
+
     for bm in bookmarks {
         let Ok(lang) = bm.language.parse::<Language>() else {
             continue;
@@ -1117,14 +1126,16 @@ pub async fn resolve_batch(
             serde_json::to_string(&result.breadcrumbs).ok()
         };
 
+        let is_anchored = git_context::is_file_clean(&repo_root, &result.file_path).unwrap_or(true);
+
         // Record resolution history (deduped)
-        let res = Resolution { is_anchored: true,
+        let res = Resolution {
+            is_anchored,
             id: uuid::Uuid::new_v4().to_string(),
             bookmark_id: bm.id.clone(),
             resolved_at: now_iso(),
             health: new_status,
-            commit_hash: git_context::detect_context(&std::env::current_dir()?)
-                .and_then(|ctx| ctx.head_commit),
+            commit_hash: head_commit.clone(),
             method: result.method,
             match_count: Some(1),
             file_path: Some(result.file_path.clone()),

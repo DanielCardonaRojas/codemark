@@ -43,6 +43,21 @@ pub fn is_clean(repo_path: &Path) -> Result<bool> {
     Ok(output.stdout.is_empty())
 }
 
+/// Check if a specific file in the repository at `repo_path` is clean.
+pub fn is_file_clean(repo_path: &Path, file_path: &str) -> Result<bool> {
+    let output = std::process::Command::new("git")
+        .args(["status", "--porcelain", file_path])
+        .current_dir(repo_path)
+        .output()
+        .map_err(|e| Error::Git(format!("failed to run git status: {e}")))?;
+
+    if !output.status.success() {
+        return Err(Error::Git("git status failed".into()));
+    }
+
+    Ok(output.stdout.is_empty())
+}
+
 /// Detect git repo root and HEAD commit. Returns None if not in a git repo.
 ///
 /// Uses `git rev-parse --git-common-dir` to find the repo root, which correctly

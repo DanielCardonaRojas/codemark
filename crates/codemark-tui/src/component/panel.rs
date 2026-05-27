@@ -75,6 +75,8 @@ pub enum HealthStatus {
     Outdated,
     /// 🔵 Future
     Future,
+    ///  Branch indicator
+    Branch,
     /// Unknown/Gray - gray
     Unknown,
 }
@@ -92,6 +94,7 @@ impl HealthStatus {
                 Color::DarkGray
             }
             HealthStatus::Future => Color::Blue,
+            HealthStatus::Branch => Color::Cyan,
         }
     }
 
@@ -104,6 +107,7 @@ impl HealthStatus {
             HealthStatus::Broken | HealthStatus::BrokenUnanchored => "🔴",
             HealthStatus::Verified | HealthStatus::Outdated => "⚪",
             HealthStatus::Future => "🔵",
+            HealthStatus::Branch => "",
             _ => "●",
         }
     }

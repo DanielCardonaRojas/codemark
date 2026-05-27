@@ -79,26 +79,30 @@ pub fn project_resolution_status(
 
     // Project to UI status
     match (is_current, is_anchored, is_descendant, is_ancestor, resolution.health) {
-        // Current, Active
-        (true, true, false, _, BookmarkHealth::Active) => Ok(UIStatus::Healthy),
+        // Current, Active (must be at HEAD or ancestor)
+        (true, true, false, true, BookmarkHealth::Active) => Ok(UIStatus::Healthy),
         (true, false, false, _, BookmarkHealth::Active) => Ok(UIStatus::UnanchoredHealthy),
-        
-        // Current, Drifted
-        (true, true, false, _, BookmarkHealth::Drifted) => Ok(UIStatus::Drifted),
-        (true, false, false, _, BookmarkHealth::Drifted) => Ok(UIStatus::UnanchoredDrifting),
-        
-        // Current, Stale/Broken
-        (true, true, false, _, BookmarkHealth::Stale | BookmarkHealth::Archived) => Ok(UIStatus::Broken),
-        (true, false, false, _, BookmarkHealth::Stale | BookmarkHealth::Archived) => Ok(UIStatus::BrokenUnanchored),
 
-        // Past
+        // Current, Drifted (must be at HEAD or ancestor)
+        (true, true, false, true, BookmarkHealth::Drifted) => Ok(UIStatus::Drifted),
+        (true, false, false, _, BookmarkHealth::Drifted) => Ok(UIStatus::UnanchoredDrifting),
+
+        // Current, Stale/Broken
+        (true, true, false, true, BookmarkHealth::Stale | BookmarkHealth::Archived) => {
+            Ok(UIStatus::Broken)
+        }
+        (true, false, false, _, BookmarkHealth::Stale | BookmarkHealth::Archived) => {
+            Ok(UIStatus::BrokenUnanchored)
+        }
+
+        // Past (not current, but in history)
         (false, _, false, true, BookmarkHealth::Active) => Ok(UIStatus::Verified),
         (false, _, false, true, BookmarkHealth::Drifted) => Ok(UIStatus::Outdated),
 
-        // Future
+        // Future (commit is ahead of HEAD)
         (_, _, true, _, _) => Ok(UIStatus::Future),
-        
-        // Historical (Unrelated branch or unknown ancestry)
+
+        // Historical (Unrelated branch or unknown ancestry) - default to Verified/Outdated for non-current
         (false, _, false, false, BookmarkHealth::Active) => Ok(UIStatus::Verified),
         (false, _, false, false, BookmarkHealth::Drifted) => Ok(UIStatus::Outdated),
 
