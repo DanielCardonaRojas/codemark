@@ -917,7 +917,10 @@ impl BrowserLayout {
             if let Some(right_percent) = self.left_pane_size.right_width_percent() {
                 // Both panes visible
                 (
-                    vec![Constraint::Percentage(left_percent), Constraint::Percentage(right_percent)],
+                    vec![
+                        Constraint::Percentage(left_percent),
+                        Constraint::Percentage(right_percent),
+                    ],
                     RenderMode::Both,
                 )
             } else {
@@ -926,8 +929,10 @@ impl BrowserLayout {
             }
         };
 
-        let chunks =
-            Layout::default().direction(Direction::Horizontal).constraints(left_constraints).split(area);
+        let chunks = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints(left_constraints)
+            .split(area);
 
         match render_mode {
             RenderMode::Both => {

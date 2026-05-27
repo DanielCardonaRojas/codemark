@@ -54,10 +54,7 @@ impl FocusArea {
     /// Check if this focus area can be resized with +/- keys.
     /// Left side panels and the main preview pane support resizing.
     pub fn is_resizable(self) -> bool {
-        matches!(
-            self,
-            FocusArea::Panel1 | FocusArea::Panel2 | FocusArea::Panel3 | FocusArea::Main
-        )
+        matches!(self, FocusArea::Panel1 | FocusArea::Panel2 | FocusArea::Panel3 | FocusArea::Main)
     }
 }
 
