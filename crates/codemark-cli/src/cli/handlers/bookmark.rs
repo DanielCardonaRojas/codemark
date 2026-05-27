@@ -849,6 +849,9 @@ pub async fn handle_show(cli: &Cli, mode: &OutputMode, args: &ShowArgs) -> Resul
     let (bm, db) = find_bookmark_across(&dbs, &args.id)?;
     let resolutions = db.list_resolutions(&bm.id, 5)?;
 
+    // Project UI status for the bookmark
+    let bm = codemark_core::engine::projection::project_ui_status_for_bookmark(bm, &db, None)?;
+
     match mode {
         OutputMode::Json => {
             write_json_success(&serde_json::json!({
@@ -864,6 +867,9 @@ pub async fn handle_show(cli: &Cli, mode: &OutputMode, args: &ShowArgs) -> Resul
             println!("File:        {}", bm.file_path);
             println!("Language:    {}", bm.language);
             println!("Health:      {}", bm.health);
+            if let Some(ref ui_status) = bm.ui_status {
+                println!("UI Status:   {}", ui_status);
+            }
             if !bm.tags.is_empty() {
                 println!("Tags:        {}", bm.tags.join(", "));
             }

@@ -993,31 +993,9 @@ fn project_ui_status_for_bookmarks(
     bookmarks: Vec<Bookmark>,
     current_head: Option<&str>,
 ) -> Result<Vec<Bookmark>> {
-    let repo_path = db.path();
-
     let mut result = Vec::with_capacity(bookmarks.len());
-    for mut bm in bookmarks {
-        // Get the current resolution for this bookmark
-        let ui_status = if let Some(ref resolution_id) = bm.current_resolution_id {
-            match db.get_resolution(resolution_id) {
-                Ok(Some(resolution)) => {
-                    match projection::project_resolution_status(
-                        &resolution,
-                        &bm,
-                        current_head,
-                        repo_path,
-                    ) {
-                        Ok(status) => Some(status.to_string()),
-                        Err(_) => None,
-                    }
-                }
-                _ => None,
-            }
-        } else {
-            None
-        };
-
-        bm.ui_status = ui_status;
+    for bm in bookmarks {
+        let bm = projection::project_ui_status_for_bookmark(bm, db, current_head)?;
         result.push(bm);
     }
     Ok(result)

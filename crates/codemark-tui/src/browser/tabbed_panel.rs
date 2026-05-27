@@ -2,6 +2,7 @@ use crate::browser::{Panel3Tab, Tab, TabContent, TabSelection, tabs::BORDER_EXTE
 use crate::component::{CodePreview, HealthStatus, MarkdownPanel, Panel, PanelItem};
 use crate::event::Event;
 use codemark_core::engine::bookmark::{Bookmark, BookmarkFilter, BookmarkHealth};
+use codemark_core::engine::projection;
 use codemark_core::parser::languages::Language;
 use codemark_core::query::classifier::get_node_icon;
 use codemark_core::query::summarizer;
@@ -101,17 +102,44 @@ pub fn bookmark_to_panel_item(
     db: &Database,
     use_full_summary: bool,
 ) -> PanelItem {
-    // Get the best resolution for preview to determine health status
-    let health = db
-        .get_preview_resolution(&bookmark.id)
-        .ok()
-        .flatten()
-        .map(|res| match res.health {
+    // Get the current resolution for projection
+    let health = if let Some(ref resolution_id) = bookmark.current_resolution_id {
+        match db.get_resolution(resolution_id) {
+            Ok(Some(resolution)) => {
+                match projection::project_resolution_status(
+                    &resolution,
+                    bookmark,
+                    None, // Use detected HEAD
+                    db.path(),
+                ) {
+                    Ok(ui_status) => match ui_status {
+                        codemark_core::engine::bookmark::UIStatus::Healthy => HealthStatus::Healthy,
+                        codemark_core::engine::bookmark::UIStatus::Drifted => HealthStatus::Warning,
+                        codemark_core::engine::bookmark::UIStatus::Broken => HealthStatus::Error,
+                        codemark_core::engine::bookmark::UIStatus::Verified => HealthStatus::Unknown,
+                        codemark_core::engine::bookmark::UIStatus::Outdated => HealthStatus::Unknown,
+                        codemark_core::engine::bookmark::UIStatus::Future => HealthStatus::Future,
+                    },
+                    Err(_) => match resolution.health {
+                        BookmarkHealth::Active => HealthStatus::Healthy,
+                        BookmarkHealth::Drifted => HealthStatus::Warning,
+                        BookmarkHealth::Stale | BookmarkHealth::Archived => HealthStatus::Error,
+                    },
+                }
+            }
+            _ => match bookmark.health {
+                BookmarkHealth::Active => HealthStatus::Healthy,
+                BookmarkHealth::Drifted => HealthStatus::Warning,
+                BookmarkHealth::Stale | BookmarkHealth::Archived => HealthStatus::Error,
+            },
+        }
+    } else {
+        match bookmark.health {
             BookmarkHealth::Active => HealthStatus::Healthy,
             BookmarkHealth::Drifted => HealthStatus::Warning,
             BookmarkHealth::Stale | BookmarkHealth::Archived => HealthStatus::Error,
-        })
-        .unwrap_or(HealthStatus::Unknown);
+        }
+    };
 
     // Try to get a summary from the query for better display
     let summary_info = bookmark

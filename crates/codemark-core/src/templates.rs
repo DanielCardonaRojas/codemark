@@ -28,6 +28,9 @@ pub struct BookmarkTemplateContext {
     pub language: String,
     /// Status as string
     pub status: String,
+    /// UI status as string (projected based on current HEAD)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ui_status: Option<String>,
     /// Tree-sitter query
     pub query: String,
     /// Creation timestamp
@@ -146,6 +149,7 @@ impl BookmarkTemplateContext {
             file_name,
             language: bm.language.clone(),
             status: bm.health.to_string(),
+            ui_status: bm.ui_status.clone(),
             query: bm.query.clone(),
             created_at: bm.created_at.clone(),
             created_by: bm.created_by.clone(),

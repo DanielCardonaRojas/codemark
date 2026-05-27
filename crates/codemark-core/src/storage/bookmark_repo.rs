@@ -154,6 +154,7 @@ impl Database {
             Some(row) => {
                 let mut bm = row?;
                 self.load_bookmark_metadata(&mut bm)?;
+                self.compute_ui_status(&mut bm)?;
                 Ok(Some(bm))
             }
             None => Ok(None),
@@ -178,6 +179,7 @@ impl Database {
         // Load metadata for each result
         for bm in &mut results {
             self.load_bookmark_metadata(bm)?;
+            self.compute_ui_status(bm)?;
         }
 
         match results.len() {
@@ -297,6 +299,7 @@ impl Database {
         // Load metadata for all bookmarks
         for bm in &mut results {
             self.load_bookmark_metadata(bm)?;
+            self.compute_ui_status(bm)?;
         }
 
         Ok(results)
@@ -487,6 +490,7 @@ impl Database {
         // Load metadata for all bookmarks
         for bm in &mut results {
             self.load_bookmark_metadata(bm)?;
+            self.compute_ui_status(bm)?;
         }
 
         Ok(results)
@@ -541,6 +545,35 @@ impl Database {
         // Load comments
         bm.comments = self.list_comments_for_bookmark(&bm.id)?;
 
+        Ok(())
+    }
+
+    /// Compute the UI status for a bookmark based on its current resolution and git context.
+    fn compute_ui_status(&self, bm: &mut Bookmark) -> Result<()> {
+        use crate::engine::projection;
+
+        let repo_path = self.path();
+        let ui_status = if let Some(ref resolution_id) = bm.current_resolution_id {
+            match self.get_resolution(resolution_id) {
+                Ok(Some(resolution)) => {
+                    match projection::project_resolution_status(
+                        &resolution,
+                        bm,
+                        None, // Use detected HEAD
+                        repo_path,
+                    ) {
+                        Ok(status) => Some(status.to_string()),
+                        Err(_) => Some(bm.health.to_string()),
+                    }
+                }
+                Ok(None) => Some(bm.health.to_string()),
+                Err(_) => Some(bm.health.to_string()),
+            }
+        } else {
+            Some(bm.health.to_string())
+        };
+
+        bm.ui_status = ui_status;
         Ok(())
     }
 

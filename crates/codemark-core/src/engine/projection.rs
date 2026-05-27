@@ -8,6 +8,7 @@
 
 use crate::engine::bookmark::{Bookmark, BookmarkHealth, Resolution, UIStatus};
 use crate::error::Result;
+use crate::storage::db::Database;
 use std::path::Path;
 
 /// Project a resolution to a UI status based on current HEAD context.
@@ -79,6 +80,64 @@ pub fn project_resolution_status(
         (_, _, true, _) => Ok(UIStatus::Future),
         _ => Ok(UIStatus::Broken),
     }
+}
+
+/// Project UI status for a single bookmark.
+///
+/// This function:
+/// 1. Fetches the current resolution (if available)
+/// 2. Projects the UI status based on current HEAD
+/// 3. Adds the `ui_status` field to the bookmark
+///
+/// # Arguments
+///
+/// * `bookmark` - The bookmark to project
+/// * `db` - Database reference for fetching resolutions
+/// * `current_head` - Optional override for HEAD commit (for time-travel queries)
+///
+/// # Returns
+///
+/// The bookmark with `ui_status` populated.
+pub fn project_ui_status_for_bookmark(
+    mut bookmark: Bookmark,
+    db: &Database,
+    current_head: Option<&str>,
+) -> Result<Bookmark> {
+    let repo_path = db.path();
+
+    // Get the current resolution for this bookmark
+    let ui_status = if let Some(ref resolution_id) = bookmark.current_resolution_id {
+        match db.get_resolution(resolution_id) {
+            Ok(Some(resolution)) => {
+                match project_resolution_status(
+                    &resolution,
+                    &bookmark,
+                    current_head,
+                    repo_path,
+                ) {
+                    Ok(status) => Some(status.to_string()),
+                    Err(e) => {
+                        eprintln!("Warning: Failed to project UI status for bookmark {}: {:?}", bookmark.id, e);
+                        None
+                    }
+                }
+            }
+            Ok(None) => {
+                // Resolution ID exists but resolution not found - use raw health
+                Some(bookmark.health.to_string())
+            }
+            Err(e) => {
+                eprintln!("Warning: Failed to fetch resolution {} for bookmark {}: {:?}", resolution_id, bookmark.id, e);
+                Some(bookmark.health.to_string())
+            }
+        }
+    } else {
+        // No current resolution - use raw health
+        Some(bookmark.health.to_string())
+    };
+
+    bookmark.ui_status = ui_status;
+    Ok(bookmark)
 }
 
 #[cfg(test)]
@@ -302,5 +361,56 @@ mod tests {
 
         let result = project_resolution_status(&resolution, &bookmark, Some(&commit_b), &_tmp).unwrap();
         assert_eq!(result, UIStatus::Healthy);
+    }
+
+    #[test]
+    fn test_project_ui_status_for_bookmark_with_no_resolution() {
+        use crate::storage::db::Database;
+        use std::fs;
+        use uuid::Uuid;
+
+        let tmp = std::env::temp_dir().join(format!("codemark_test_ui_status_{}", Uuid::new_v4()));
+        fs::create_dir_all(&tmp).unwrap();
+
+        let db = Database::open_in_memory().unwrap();
+        let repo = git2::Repository::init(&tmp).unwrap();
+        let sig = git2::Signature::now("Test User", "test@example.com").unwrap();
+
+        // Create initial commit
+        let file_path = tmp.join("test.txt");
+        fs::write(&file_path, "initial").unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(Path::new("test.txt")).unwrap();
+        let tree_id = index.write_tree().unwrap();
+        let tree = repo.find_tree(tree_id).unwrap();
+        let commit_oid = repo.commit(Some("HEAD"), &sig, &sig, "A", &tree, &[]).unwrap();
+        let _commit = commit_oid.to_string();
+
+        // Create a bookmark with no current resolution
+        let bookmark = Bookmark {
+            id: Uuid::new_v4().to_string(),
+            query: "(function_declaration) @target".to_string(),
+            language: "rust".to_string(),
+            file_path: "test.txt".to_string(),
+            content_hash: None,
+            commit_hash: None,
+            health: BookmarkHealth::Active,
+            resolution_method: None,
+            last_resolved_at: None,
+            stale_since: None,
+            created_at: "2024-01-01T00:00:00Z".to_string(),
+            created_by: None,
+            current_resolution_id: None,
+            repo_id: None,
+            ui_status: None,
+            tags: vec![],
+            annotations: vec![],
+            comments: vec![],
+        };
+
+        let result = project_ui_status_for_bookmark(bookmark, &db, None).unwrap();
+        assert_eq!(result.ui_status, Some("active".to_string()));
+
+        let _ = fs::remove_dir_all(&tmp);
     }
 }
