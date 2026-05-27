@@ -26,7 +26,7 @@ use crate::component::{Component, HealthStatus, PanelItem};
 use crate::event::Event;
 use codemark_core::config::Config;
 use codemark_core::embeddings::config::EmbeddingModel;
-use codemark_core::engine::bookmark::{Bookmark, BookmarkFilter, BookmarkHealth};
+use codemark_core::engine::bookmark::{Bookmark, BookmarkFilter};
 use codemark_core::parser::languages::Language;
 use codemark_core::query::classifier::get_node_icon;
 use codemark_core::query::summarizer;
@@ -370,7 +370,7 @@ impl BrowserLayout {
             // Restore step if possible
             if current_step < self.right_pane.pager_total {
                 self.right_pane.pager_current = current_step;
-                self.right_pane.update_preview();
+                self.right_pane.update_preview(&self.db);
             }
         } else if let Some(bm_id) = self.right_pane.active_bookmark_id.clone() {
             self.right_pane.load_bookmark(&self.db, &bm_id);
@@ -962,20 +962,26 @@ impl BrowserLayout {
                 let items: Vec<PanelItem> = bookmarks
                     .iter()
                     .map(|bm| {
-                        // Get the best resolution for preview to determine health status
-                        let health = self
-                            .db
-                            .get_preview_resolution(&bm.id)
-                            .ok()
-                            .flatten()
-                            .map(|res| match res.health {
-                                BookmarkHealth::Active => HealthStatus::Healthy,
-                                BookmarkHealth::Drifted => HealthStatus::Drifted,
-                                BookmarkHealth::Stale | BookmarkHealth::Archived => {
-                                    HealthStatus::Broken
-                                }
-                            })
-                            .unwrap_or(HealthStatus::Unknown);
+                        // Project UI status for the bookmark
+                        let bm = codemark_core::engine::projection::project_ui_status_for_bookmark(
+                            bm.clone(),
+                            &self.db,
+                            None,
+                        )
+                        .unwrap_or(bm.clone());
+
+                        let health = match bm.ui_status.as_deref() {
+                            Some("healthy") => HealthStatus::Healthy,
+                            Some("unanchored_healthy") => HealthStatus::UnanchoredHealthy,
+                            Some("drifted") => HealthStatus::Drifted,
+                            Some("unanchored_drifting") => HealthStatus::UnanchoredDrifting,
+                            Some("broken") => HealthStatus::Broken,
+                            Some("broken_unanchored") => HealthStatus::BrokenUnanchored,
+                            Some("verified") => HealthStatus::Verified,
+                            Some("outdated") => HealthStatus::Outdated,
+                            Some("future") => HealthStatus::Future,
+                            _ => HealthStatus::Unknown,
+                        };
 
                         // Try to get a summary from the query for better display
                         let summary_info = bm.language.parse::<Language>().ok().and_then(|lang| {

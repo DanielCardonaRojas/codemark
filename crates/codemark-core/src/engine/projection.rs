@@ -102,9 +102,9 @@ pub fn project_resolution_status(
         // Future (commit is ahead of HEAD)
         (_, _, true, _, _) => Ok(UIStatus::Future),
 
-        // Historical (Unrelated branch or unknown ancestry) - default to Verified/Outdated for non-current
-        (false, _, false, false, BookmarkHealth::Active) => Ok(UIStatus::Verified),
-        (false, _, false, false, BookmarkHealth::Drifted) => Ok(UIStatus::Outdated),
+        // Historical / Unrelated (Default to dim status if not anchored at HEAD/Ancestor)
+        (_, _, false, false, BookmarkHealth::Active) => Ok(UIStatus::Verified),
+        (_, _, false, false, BookmarkHealth::Drifted) => Ok(UIStatus::Outdated),
 
         _ => Ok(UIStatus::Broken),
     }
@@ -131,7 +131,8 @@ pub fn project_ui_status_for_bookmark(
     db: &Database,
     current_head: Option<&str>,
 ) -> Result<Bookmark> {
-    let repo_path = db.path();
+    let db_path = db.path();
+    let repo_path = db_path.parent().unwrap_or(db_path);
 
     // Get the current resolution for this bookmark
     let ui_status = if let Some(ref resolution_id) = bookmark.current_resolution_id {

@@ -127,7 +127,12 @@ pub struct ResolutionTemplateContext {
 
 impl BookmarkTemplateContext {
     /// Create a template context from a bookmark and its resolutions.
-    pub fn from_bookmark(bm: &Bookmark, resolutions: &[Resolution]) -> Self {
+    pub fn from_bookmark(
+        bm: &Bookmark,
+        resolutions: &[Resolution],
+        repo_path: &std::path::Path,
+        current_head: Option<&str>,
+    ) -> Self {
         let short_id = short_id(&bm.id).to_string();
         let file_name = bm
             .file_path
@@ -173,7 +178,14 @@ impl BookmarkTemplateContext {
                 .collect(),
             resolutions: resolutions
                 .iter()
-                .map(ResolutionTemplateContext::from_resolution)
+                .map(|r| {
+                    ResolutionTemplateContext::from_resolution_projected(
+                        r,
+                        bm,
+                        repo_path,
+                        current_head,
+                    )
+                })
                 .collect(),
         }
     }
@@ -211,6 +223,22 @@ impl ResolutionTemplateContext {
             ui_status: None, // Will be computed or passed if needed
             is_anchored: r.is_anchored,
         }
+    }
+
+    /// Create a template context from a resolution with projected UI status.
+    pub fn from_resolution_projected(
+        r: &Resolution,
+        bm: &Bookmark,
+        repo_path: &std::path::Path,
+        current_head: Option<&str>,
+    ) -> Self {
+        let mut ctx = Self::from_resolution(r);
+        if let Ok(status) =
+            crate::engine::projection::project_resolution_status(r, bm, current_head, repo_path)
+        {
+            ctx.ui_status = Some(status.to_string());
+        }
+        ctx
     }
 }
 
@@ -436,10 +464,12 @@ pub fn render_template(
     template_name: &str,
     bm: &Bookmark,
     resolutions: &[Resolution],
+    repo_path: &std::path::Path,
+    current_head: Option<&str>,
 ) -> Result<String, handlebars::RenderError> {
     let handlebars = create_handlebars_engine();
     let template = load_template(template_name);
-    let context = BookmarkTemplateContext::from_bookmark(bm, resolutions);
+    let context = BookmarkTemplateContext::from_bookmark(bm, resolutions, repo_path, current_head);
     handlebars.render_template(&template, &context)
 }
 
@@ -447,8 +477,10 @@ pub fn render_template(
 pub fn render_show_template(
     bm: &Bookmark,
     resolutions: &[Resolution],
+    repo_path: &std::path::Path,
+    current_head: Option<&str>,
 ) -> Result<String, handlebars::RenderError> {
-    render_template(SHOW_TEMPLATE, bm, resolutions)
+    render_template(SHOW_TEMPLATE, bm, resolutions, repo_path, current_head)
 }
 
 #[cfg(test)]

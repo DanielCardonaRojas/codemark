@@ -896,7 +896,8 @@ pub async fn handle_show(cli: &Cli, mode: &OutputMode, args: &ShowArgs) -> Resul
             }))?;
         }
         OutputMode::Markdown => {
-            write_bookmark_markdown(&bm, &resolutions)?;
+            let repo_path = db.path().parent().unwrap_or_else(|| db.path());
+            write_bookmark_markdown(&bm, &resolutions, repo_path)?;
         }
         _ => {
             println!("ID:          {}", bm.id);

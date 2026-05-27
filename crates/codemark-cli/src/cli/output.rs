@@ -557,9 +557,13 @@ pub fn write_success(mode: &OutputMode, message: &str) -> io::Result<()> {
 // --- Markdown output for show command ---
 
 /// Write a bookmark with its resolutions in markdown format.
-pub fn write_bookmark_markdown(bm: &Bookmark, resolutions: &[Resolution]) -> io::Result<()> {
+pub fn write_bookmark_markdown(
+    bm: &Bookmark,
+    resolutions: &[Resolution],
+    repo_path: &std::path::Path,
+) -> io::Result<()> {
     // Use Handlebars template for rendering
-    match crate::cli::templates::render_show_template(bm, resolutions) {
+    match crate::cli::templates::render_show_template(bm, resolutions, repo_path, None) {
         Ok(rendered) => {
             print!("{rendered}");
             Ok(())
