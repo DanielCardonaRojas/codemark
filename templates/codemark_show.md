@@ -46,7 +46,9 @@
 {{#each resolutions}}
 **Date:** {{format_date resolved_at "%Y-%m-%d %H:%M:%S"}}
 **Status:** {{status}}
+{{#if ui_status}}**UI Status:** {{ui_status}}{{/if}}
 **Method:** {{method}}
+**Anchored:** {{#if is_anchored}}Yes{{else}}No{{/if}}
 {{#if file_path}}**File:** {{file_path}}{{/if}}
 {{#if line_range}}**Range:** {{line_range}}{{/if}}
 {{#if match_count}}**Matches:** {{match_count}}{{/if}}
