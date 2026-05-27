@@ -75,10 +75,16 @@ impl FromStr for CollectionHealth {
 pub enum UIStatus {
     /// Is Current + active - Perfect match at current HEAD
     Healthy,
+    /// Is Current + active + !Anchored
+    UnanchoredHealthy,
     /// Is Current + drifted - Found at HEAD but code changed
     Drifted,
+    /// Is Current + drifted + !Anchored
+    UnanchoredDrifting,
     /// Is Current + stale - Not found at current HEAD
     Broken,
+    /// Is Current + stale + !Anchored
+    BrokenUnanchored,
     /// Past + active - Was perfect match in previous commit
     Verified,
     /// Past + drifted - Was partial match in previous commit
@@ -91,8 +97,11 @@ impl fmt::Display for UIStatus {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             UIStatus::Healthy => write!(f, "healthy"),
+            UIStatus::UnanchoredHealthy => write!(f, "unanchored_healthy"),
             UIStatus::Drifted => write!(f, "drifted"),
+            UIStatus::UnanchoredDrifting => write!(f, "unanchored_drifting"),
             UIStatus::Broken => write!(f, "broken"),
+            UIStatus::BrokenUnanchored => write!(f, "broken_unanchored"),
             UIStatus::Verified => write!(f, "verified"),
             UIStatus::Outdated => write!(f, "outdated"),
             UIStatus::Future => write!(f, "future"),
@@ -308,6 +317,7 @@ pub struct Resolution {
     pub headline: Option<String>,
     pub snapshot: Option<String>,
     pub breadcrumbs: Option<String>,
+    pub is_anchored: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

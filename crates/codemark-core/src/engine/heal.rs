@@ -153,6 +153,7 @@ pub async fn heal_bookmark(
             git_context::detect_context(&std::env::current_dir()?).and_then(|ctx| ctx.head_commit);
 
         // Create and insert resolution
+        let is_anchored = git_context::is_clean(&std::env::current_dir()?).unwrap_or(true);
         let resolution = Resolution {
             id: uuid::Uuid::new_v4().to_string(),
             bookmark_id: bookmark.id.clone(),
@@ -168,6 +169,7 @@ pub async fn heal_bookmark(
             headline: None,
             snapshot: Some(result.matched_text.clone()),
             breadcrumbs: breadcrumbs_json,
+            is_anchored,
         };
 
         let resolution_id = resolution.id.clone();

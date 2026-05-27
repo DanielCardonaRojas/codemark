@@ -28,6 +28,21 @@ pub struct GitRepoMetadata {
     pub repo_root: PathBuf,
 }
 
+/// Check if the repository at `repo_path` is clean (no uncommitted changes).
+pub fn is_clean(repo_path: &Path) -> Result<bool> {
+    let output = std::process::Command::new("git")
+        .args(["status", "--porcelain"])
+        .current_dir(repo_path)
+        .output()
+        .map_err(|e| Error::Git(format!("failed to run git status: {e}")))?;
+
+    if !output.status.success() {
+        return Err(Error::Git("git status failed".into()));
+    }
+
+    Ok(output.stdout.is_empty())
+}
+
 /// Detect git repo root and HEAD commit. Returns None if not in a git repo.
 ///
 /// Uses `git rev-parse --git-common-dir` to find the repo root, which correctly

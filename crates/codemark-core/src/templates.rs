@@ -118,6 +118,11 @@ pub struct ResolutionTemplateContext {
     /// Code snapshot at this resolution (optional)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub snapshot: Option<String>,
+    /// UI status computed for this resolution (optional)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ui_status: Option<String>,
+    /// Whether this resolution is anchored
+    pub is_anchored: bool,
 }
 
 impl BookmarkTemplateContext {
@@ -203,6 +208,8 @@ impl ResolutionTemplateContext {
             commit_hash: r.commit_hash.clone(),
             short_commit,
             snapshot: r.snapshot.clone(),
+            ui_status: None, // Will be computed or passed if needed
+            is_anchored: r.is_anchored,
         }
     }
 }
@@ -447,7 +454,9 @@ pub fn render_show_template(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engine::bookmark::{BookmarkHealth, ResolutionMethod};
+    use crate::engine::bookmark::{Bookmark, BookmarkHealth, Resolution, ResolutionMethod};
+    use crate::git::context as git_context;
+    use std::path::Path;
 
     #[test]
     fn test_escape_markdown() {
@@ -489,6 +498,7 @@ mod tests {
             comments: vec![],
         };
 
+        let is_anchored = git_context::is_clean(Path::new(".")).unwrap_or(true);
         let resolutions = vec![Resolution {
             id: "res1".to_string(),
             bookmark_id: bm.id.clone(),
@@ -504,6 +514,7 @@ mod tests {
             headline: None,
             snapshot: Some("fn main() {\n    println!(\"Hello\");\n}".to_string()),
             breadcrumbs: None,
+            is_anchored,
         }];
 
         // Verify snapshot is present in resolution

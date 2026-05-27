@@ -114,10 +114,13 @@ pub fn bookmark_to_panel_item(
                 ) {
                     Ok(ui_status) => match ui_status {
                         codemark_core::engine::bookmark::UIStatus::Healthy => HealthStatus::Healthy,
-                        codemark_core::engine::bookmark::UIStatus::Drifted => HealthStatus::Warning,
-                        codemark_core::engine::bookmark::UIStatus::Broken => HealthStatus::Error,
-                        codemark_core::engine::bookmark::UIStatus::Verified => HealthStatus::Unknown,
-                        codemark_core::engine::bookmark::UIStatus::Outdated => HealthStatus::Unknown,
+                        codemark_core::engine::bookmark::UIStatus::UnanchoredHealthy => HealthStatus::UnanchoredHealthy,
+                        codemark_core::engine::bookmark::UIStatus::Drifted => HealthStatus::Drifted,
+                        codemark_core::engine::bookmark::UIStatus::UnanchoredDrifting => HealthStatus::UnanchoredDrifting,
+                        codemark_core::engine::bookmark::UIStatus::Broken => HealthStatus::Broken,
+                        codemark_core::engine::bookmark::UIStatus::BrokenUnanchored => HealthStatus::BrokenUnanchored,
+                        codemark_core::engine::bookmark::UIStatus::Verified => HealthStatus::Verified,
+                        codemark_core::engine::bookmark::UIStatus::Outdated => HealthStatus::Outdated,
                         codemark_core::engine::bookmark::UIStatus::Future => HealthStatus::Future,
                     },
                     Err(_) => match resolution.health {

@@ -57,11 +57,18 @@ pub fn project_resolution_status(
 
     let resolution_commit = match &resolution.commit_hash {
         Some(c) => c.clone(),
-        None => return Ok(UIStatus::Broken),
+        None => {
+            if resolution.is_anchored {
+                return Ok(UIStatus::Broken);
+            } else {
+                effective_head.clone()
+            }
+        }
     };
 
     // Check if resolution is current
     let is_current = bookmark.current_resolution_id.as_ref() == Some(&resolution.id);
+    let is_anchored = resolution.is_anchored;
 
     // Check commit ancestry
     let is_at_head = resolution_commit == effective_head;
@@ -71,13 +78,30 @@ pub fn project_resolution_status(
         && git_context::is_ancestor(repo_path, &effective_head, &resolution_commit).unwrap_or(false);
 
     // Project to UI status
-    match (is_current, is_ancestor, is_descendant, resolution.health) {
-        (true, true, false, BookmarkHealth::Active) => Ok(UIStatus::Healthy),
-        (true, true, false, BookmarkHealth::Drifted) => Ok(UIStatus::Drifted),
-        (true, true, false, BookmarkHealth::Stale | BookmarkHealth::Archived) => Ok(UIStatus::Broken),
-        (false, true, false, BookmarkHealth::Active) => Ok(UIStatus::Verified),
-        (false, true, false, BookmarkHealth::Drifted) => Ok(UIStatus::Outdated),
-        (_, _, true, _) => Ok(UIStatus::Future),
+    match (is_current, is_anchored, is_descendant, is_ancestor, resolution.health) {
+        // Current, Active
+        (true, true, false, _, BookmarkHealth::Active) => Ok(UIStatus::Healthy),
+        (true, false, false, _, BookmarkHealth::Active) => Ok(UIStatus::UnanchoredHealthy),
+        
+        // Current, Drifted
+        (true, true, false, _, BookmarkHealth::Drifted) => Ok(UIStatus::Drifted),
+        (true, false, false, _, BookmarkHealth::Drifted) => Ok(UIStatus::UnanchoredDrifting),
+        
+        // Current, Stale/Broken
+        (true, true, false, _, BookmarkHealth::Stale | BookmarkHealth::Archived) => Ok(UIStatus::Broken),
+        (true, false, false, _, BookmarkHealth::Stale | BookmarkHealth::Archived) => Ok(UIStatus::BrokenUnanchored),
+
+        // Past
+        (false, _, false, true, BookmarkHealth::Active) => Ok(UIStatus::Verified),
+        (false, _, false, true, BookmarkHealth::Drifted) => Ok(UIStatus::Outdated),
+
+        // Future
+        (_, _, true, _, _) => Ok(UIStatus::Future),
+        
+        // Historical (Unrelated branch or unknown ancestry)
+        (false, _, false, false, BookmarkHealth::Active) => Ok(UIStatus::Verified),
+        (false, _, false, false, BookmarkHealth::Drifted) => Ok(UIStatus::Outdated),
+
         _ => Ok(UIStatus::Broken),
     }
 }
@@ -197,7 +221,7 @@ mod tests {
             bookmark_id: Uuid::new_v4().to_string(),
             resolved_at: "2024-01-01T00:00:00Z".to_string(),
             health,
-            commit_hash,
+            commit_hash: commit_hash.clone(),
             method: ResolutionMethod::Exact,
             match_count: Some(1),
             file_path: Some("test.txt".to_string()),
@@ -207,6 +231,7 @@ mod tests {
             headline: None,
             snapshot: None,
             breadcrumbs: None,
+            is_anchored: commit_hash.is_some(),
         };
 
         let bookmark = Bookmark {
@@ -234,13 +259,37 @@ mod tests {
     }
 
     #[test]
-    fn test_current_active_at_head_returns_healthy() {
+    fn test_current_active_unanchored_returns_unanchored_healthy() {
         let (_tmp, _commit_a, commit_b) = create_test_repo().unwrap();
 
-        let (resolution, bookmark) = create_test_resolution(Some(commit_b.clone()), BookmarkHealth::Active, true);
+        let (mut resolution, bookmark) = create_test_resolution(None, BookmarkHealth::Active, true);
+        resolution.is_anchored = false;
+        eprintln!("DEBUG test: is_anchored set to: {}", resolution.is_anchored);
 
         let result = project_resolution_status(&resolution, &bookmark, Some(&commit_b), &_tmp).unwrap();
-        assert_eq!(result, UIStatus::Healthy);
+        assert_eq!(result, UIStatus::UnanchoredHealthy);
+    }
+
+    #[test]
+    fn test_current_drifted_unanchored_returns_unanchored_drifting() {
+        let (_tmp, _commit_a, commit_b) = create_test_repo().unwrap();
+
+        let (mut resolution, bookmark) = create_test_resolution(None, BookmarkHealth::Drifted, true);
+        resolution.is_anchored = false;
+
+        let result = project_resolution_status(&resolution, &bookmark, Some(&commit_b), &_tmp).unwrap();
+        assert_eq!(result, UIStatus::UnanchoredDrifting);
+    }
+
+    #[test]
+    fn test_current_stale_unanchored_returns_broken_unanchored() {
+        let (_tmp, _commit_a, commit_b) = create_test_repo().unwrap();
+
+        let (mut resolution, bookmark) = create_test_resolution(None, BookmarkHealth::Stale, true);
+        resolution.is_anchored = false;
+
+        let result = project_resolution_status(&resolution, &bookmark, Some(&commit_b), &_tmp).unwrap();
+        assert_eq!(result, UIStatus::BrokenUnanchored);
     }
 
     #[test]
@@ -301,7 +350,8 @@ mod tests {
     fn test_no_resolution_commit_returns_broken() {
         let (_tmp, _commit_a, commit_b) = create_test_repo().unwrap();
 
-        let (resolution, bookmark) = create_test_resolution(None, BookmarkHealth::Active, true);
+        let (mut resolution, bookmark) = create_test_resolution(None, BookmarkHealth::Active, true);
+        resolution.is_anchored = true; // Anchored, but no commit hash -> Broken
 
         let result = project_resolution_status(&resolution, &bookmark, Some(&commit_b), &_tmp).unwrap();
         assert_eq!(result, UIStatus::Broken);

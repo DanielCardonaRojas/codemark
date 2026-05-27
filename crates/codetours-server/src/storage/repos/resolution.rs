@@ -67,7 +67,7 @@ fn row_to_resolution(row: &rusqlite::Row) -> rusqlite::Result<Resolution> {
         rusqlite::Error::FromSqlConversionFailure(13, rusqlite::types::Type::Text, Box::new(e))
     })?;
 
-    Ok(Resolution {
+    Ok(Resolution { is_anchored: true,
         id: row.get(0)?,
         bookmark_id: row.get(1)?,
         resolved_at: row.get(2)?,

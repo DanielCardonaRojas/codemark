@@ -1118,7 +1118,7 @@ pub async fn resolve_batch(
         };
 
         // Record resolution history (deduped)
-        let res = Resolution {
+        let res = Resolution { is_anchored: true,
             id: uuid::Uuid::new_v4().to_string(),
             bookmark_id: bm.id.clone(),
             resolved_at: now_iso(),

@@ -184,7 +184,7 @@ pub async fn handle_add(cli: &Cli, mode: &OutputMode, args: &AddArgsOriginal) ->
         let breadcrumbs_json =
             if breadcrumbs.is_empty() { None } else { serde_json::to_string(&breadcrumbs).ok() };
 
-        let initial_res = Resolution {
+        let initial_res = Resolution { is_anchored: true,
             id: uuid::Uuid::new_v4().to_string(),
             bookmark_id: actual_bookmark_id.clone(),
             resolved_at: now_iso(),
@@ -410,7 +410,7 @@ pub async fn handle_add_from_snippet(
         let breadcrumbs_json =
             if breadcrumbs.is_empty() { None } else { serde_json::to_string(&breadcrumbs).ok() };
 
-        let initial_res = Resolution {
+        let initial_res = Resolution { is_anchored: true,
             id: uuid::Uuid::new_v4().to_string(),
             bookmark_id: actual_bookmark_id.clone(),
             resolved_at: now_iso(),
@@ -636,7 +636,7 @@ pub async fn handle_add_from_query(
         let breadcrumbs_json =
             if breadcrumbs.is_empty() { None } else { serde_json::to_string(&breadcrumbs).ok() };
 
-        let initial_res = Resolution {
+        let initial_res = Resolution { is_anchored: true,
             id: uuid::Uuid::new_v4().to_string(),
             bookmark_id: actual_bookmark_id.clone(),
             resolved_at: now_iso(),
@@ -796,7 +796,7 @@ pub async fn handle_resolve(cli: &Cli, mode: &OutputMode, args: &ResolveArgs) ->
         };
 
         // Record resolution
-        let res = Resolution {
+        let res = Resolution { is_anchored: true,
             id: uuid::Uuid::new_v4().to_string(),
             bookmark_id: bm.id.clone(),
             resolved_at: now_iso(),

@@ -54,21 +54,29 @@ pub struct Panel {
     last_selected_index: Cell<Option<usize>>,
 }
 
-/// Health status indicator for an item.
+/// Health status indicator for an item based on the projected UI status.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HealthStatus {
-    /// Healthy - green
+    /// 🟢 Healthy
     Healthy,
-    /// Warning - yellow
-    Warning,
-    /// Error/Unhealthy - red
-    Error,
+    /// 🟡 Unanchored (Healthy)
+    UnanchoredHealthy,
+    /// 🟡 Drifted
+    Drifted,
+    /// 🟠 Unanchored (Drifting)
+    UnanchoredDrifting,
+    /// 🔴 Broken
+    Broken,
+    /// 🔴 Broken (Unanchored)
+    BrokenUnanchored,
+    /// ⚪ Verified (Historical)
+    Verified,
+    /// ⚪ Outdated (Historical)
+    Outdated,
+    /// 🔵 Future
+    Future,
     /// Unknown/Gray - gray
     Unknown,
-    /// Branch icon
-    Branch,
-    /// Future - blue (resolution from ahead of HEAD)
-    Future,
 }
 
 impl HealthStatus {
@@ -76,10 +84,13 @@ impl HealthStatus {
     fn color(&self) -> Color {
         match self {
             HealthStatus::Healthy => Color::Green,
-            HealthStatus::Warning => Color::Yellow,
-            HealthStatus::Error => Color::Red,
-            HealthStatus::Unknown => Color::DarkGray,
-            HealthStatus::Branch => Color::Yellow,
+            HealthStatus::UnanchoredHealthy => Color::Yellow,
+            HealthStatus::Drifted => Color::Yellow,
+            HealthStatus::UnanchoredDrifting => Color::Rgb(255, 165, 0), // Orange
+            HealthStatus::Broken | HealthStatus::BrokenUnanchored => Color::Red,
+            HealthStatus::Verified | HealthStatus::Outdated | HealthStatus::Unknown => {
+                Color::DarkGray
+            }
             HealthStatus::Future => Color::Blue,
         }
     }
@@ -87,8 +98,12 @@ impl HealthStatus {
     /// Get the symbol for this health status.
     fn symbol(&self) -> &'static str {
         match self {
-            HealthStatus::Branch => "",
-            HealthStatus::Future => "◉",
+            HealthStatus::Healthy => "🟢",
+            HealthStatus::UnanchoredHealthy | HealthStatus::Drifted => "🟡",
+            HealthStatus::UnanchoredDrifting => "🟠",
+            HealthStatus::Broken | HealthStatus::BrokenUnanchored => "🔴",
+            HealthStatus::Verified | HealthStatus::Outdated => "⚪",
+            HealthStatus::Future => "🔵",
             _ => "●",
         }
     }
