@@ -479,6 +479,7 @@ mod tests {
             created_by: Some("user".to_string()),
             current_resolution_id: None,
             repo_id: None,
+            ui_status: None,
             tags: vec!["tag1".to_string(), "tag2".to_string()],
             annotations: vec![],
             comments: vec![],

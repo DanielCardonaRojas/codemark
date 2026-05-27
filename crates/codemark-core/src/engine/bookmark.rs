@@ -72,6 +72,36 @@ impl FromStr for CollectionHealth {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
+pub enum UIStatus {
+    /// Is Current + active - Perfect match at current HEAD
+    Healthy,
+    /// Is Current + drifted - Found at HEAD but code changed
+    Drifted,
+    /// Is Current + stale - Not found at current HEAD
+    Broken,
+    /// Past + active - Was perfect match in previous commit
+    Verified,
+    /// Past + drifted - Was partial match in previous commit
+    Outdated,
+    /// Future + Any - Recorded at commit ahead of current HEAD
+    Future,
+}
+
+impl fmt::Display for UIStatus {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            UIStatus::Healthy => write!(f, "healthy"),
+            UIStatus::Drifted => write!(f, "drifted"),
+            UIStatus::Broken => write!(f, "broken"),
+            UIStatus::Verified => write!(f, "verified"),
+            UIStatus::Outdated => write!(f, "outdated"),
+            UIStatus::Future => write!(f, "future"),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum CollectionLinkKind {
     Pr,
     Issue,
@@ -250,6 +280,9 @@ pub struct Bookmark {
     pub created_by: Option<String>,
     pub current_resolution_id: Option<String>,
     pub repo_id: Option<String>,
+    // Computed UI status (not stored in database)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ui_status: Option<String>,
     // Aggregated from related tables
     #[serde(default)]
     pub tags: Vec<String>,
@@ -384,6 +417,7 @@ mod tests {
             created_by: None,
             current_resolution_id: None,
             repo_id: None,
+            ui_status: None,
             tags: vec!["auth".into()],
             annotations: vec![],
             comments: vec![],

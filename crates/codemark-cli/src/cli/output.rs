@@ -80,6 +80,7 @@ pub struct LineFormatContext<'a> {
     pub offset: usize,
     pub health: &'a str,
     pub status: &'a str,
+    pub ui_status: &'a str,
     pub tags: &'a str,
     pub note: &'a str,
     pub context: &'a str,
@@ -101,6 +102,7 @@ pub fn format_line(template: &str, ctx: &LineFormatContext) -> String {
         .replace("{OFFSET}", &ctx.offset.to_string())
         .replace("{HEALTH}", ctx.health)
         .replace("{STATUS}", ctx.status)
+        .replace("{UI_STATUS}", ctx.ui_status)
         .replace("{TAGS}", ctx.tags)
         .replace("{NOTE}", ctx.note)
         .replace("{CONTEXT}", ctx.context)
@@ -114,6 +116,7 @@ pub fn format_line(template: &str, ctx: &LineFormatContext) -> String {
         .replace("{offset}", &ctx.offset.to_string())
         .replace("{health}", ctx.health)
         .replace("{status}", ctx.status)
+        .replace("{ui_status}", ctx.ui_status)
         .replace("{tags}", ctx.tags)
         .replace("{note}", ctx.note)
         .replace("{context}", ctx.context)
@@ -362,6 +365,7 @@ where
         let line =
             if let Some(ref fn_line) = get_line_fn { fn_line(short).unwrap_or(0) } else { 0 };
         let health = bm.health.to_string();
+        let ui_status = bm.ui_status.as_deref().unwrap_or(&health);
 
         let ctx = LineFormatContext {
             id: short,
@@ -371,6 +375,7 @@ where
             offset: line,
             health: health.as_str(),
             status: health.as_str(),
+            ui_status,
             tags: &tags,
             note,
             context,
@@ -413,6 +418,7 @@ where
         let line =
             if let Some(ref fn_line) = get_line_fn { fn_line(short).unwrap_or(0) } else { 0 };
         let health = bm.health.to_string();
+        let ui_status = bm.ui_status.as_deref().unwrap_or(&health);
 
         let ctx = LineFormatContext {
             id: short,
@@ -422,6 +428,7 @@ where
             offset: line,
             health: health.as_str(),
             status: health.as_str(),
+            ui_status,
             tags: &tags,
             note,
             context,

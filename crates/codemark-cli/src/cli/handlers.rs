@@ -17,7 +17,7 @@ use codemark_core::embeddings::config::EmbeddingModel;
 use codemark_core::engine::bookmark::{
     Bookmark, BookmarkFilter, BookmarkHealth, Collection, Resolution, ResolutionMethod, Visibility,
 };
-use codemark_core::engine::{health, resolution};
+use codemark_core::engine::{health, projection, resolution};
 use codemark_core::error::{Error, Result};
 use codemark_core::git::context as git_context;
 use codemark_core::git::remote;
@@ -980,6 +980,49 @@ pub fn parse_duration_days(duration: &str) -> Result<i64> {
     Err(Error::Input("duration must end with d, w, or m (e.g., 30d, 2w, 6m)".into()))
 }
 
+/// Project UI status for bookmarks by fetching their current resolutions.
+///
+/// For each bookmark, this function:
+/// 1. Fetches the current resolution (if available)
+/// 2. Projects the UI status based on current HEAD
+/// 3. Adds the `ui_status` field to the bookmark
+///
+/// Returns a new vector of bookmarks with `ui_status` populated.
+fn project_ui_status_for_bookmarks(
+    db: &Database,
+    bookmarks: Vec<Bookmark>,
+    current_head: Option<&str>,
+) -> Result<Vec<Bookmark>> {
+    let repo_path = db.path();
+
+    let mut result = Vec::with_capacity(bookmarks.len());
+    for mut bm in bookmarks {
+        // Get the current resolution for this bookmark
+        let ui_status = if let Some(ref resolution_id) = bm.current_resolution_id {
+            match db.get_resolution(resolution_id) {
+                Ok(Some(resolution)) => {
+                    match projection::project_resolution_status(
+                        &resolution,
+                        &bm,
+                        current_head,
+                        repo_path,
+                    ) {
+                        Ok(status) => Some(status.to_string()),
+                        Err(_) => None,
+                    }
+                }
+                _ => None,
+            }
+        } else {
+            None
+        };
+
+        bm.ui_status = ui_status;
+        result.push(bm);
+    }
+    Ok(result)
+}
+
 /// Add a bookmark to a collection, auto-creating the collection if it doesn't exist.
 /// Returns the collection name if the bookmark was added, None otherwise.
 pub fn add_bookmark_to_collection(
@@ -1324,6 +1367,13 @@ pub async fn handle_list(cli: &Cli, mode: &OutputMode, args: &ListArgs) -> Resul
         let bookmarks = dbs[0].1.list_bookmarks(&filter)?;
         let db = &dbs[0].1;
 
+        // Project UI status for all bookmarks
+        let bookmarks = project_ui_status_for_bookmarks(
+            db,
+            bookmarks,
+            args.current_head.as_deref(),
+        )?;
+
         if needs_line {
             // Capture both full IDs and file paths
             let bookmark_data: std::collections::HashMap<String, (String, String)> = bookmarks
@@ -1356,6 +1406,12 @@ pub async fn handle_list(cli: &Cli, mode: &OutputMode, args: &ListArgs) -> Resul
         for (label, db) in &dbs {
             db_map.insert(label.clone(), db);
             let bookmarks = db.list_bookmarks(&filter)?;
+            // Project UI status for bookmarks from this DB
+            let bookmarks = project_ui_status_for_bookmarks(
+                db,
+                bookmarks,
+                args.current_head.as_deref(),
+            )?;
             for bm in bookmarks {
                 all.push((label.clone(), bm));
             }

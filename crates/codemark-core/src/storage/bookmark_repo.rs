@@ -583,6 +583,7 @@ fn row_to_bookmark_base(row: &rusqlite::Row) -> rusqlite::Result<Bookmark> {
         created_by: row.get(11)?,
         current_resolution_id: row.get(12)?,
         repo_id: row.get(13)?,
+        ui_status: None,         // Computed, not stored
         tags: Vec::new(),        // Loaded separately
         annotations: Vec::new(), // Loaded separately
         comments: Vec::new(),    // Loaded separately
@@ -629,6 +630,7 @@ mod tests {
             created_by: None,
             current_resolution_id: None,
             repo_id: None,
+            ui_status: None,
             tags: Vec::new(),
             annotations: Vec::new(),
             comments: vec![],
@@ -983,6 +985,7 @@ mod tests {
             created_by: None,
             current_resolution_id: None,
             repo_id: None,
+            ui_status: None,
             tags: vec![],
             annotations: vec![],
             comments: vec![],
@@ -1063,6 +1066,7 @@ mod tests {
             created_by: None,
             current_resolution_id: None,
             repo_id: None,
+            ui_status: None,
             tags: vec![],
             annotations: vec![],
             comments: vec![],

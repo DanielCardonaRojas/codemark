@@ -106,6 +106,7 @@ pub async fn handle_add(cli: &Cli, mode: &OutputMode, args: &AddArgsOriginal) ->
         created_by: Some(args.created_by.clone()),
         current_resolution_id: None,
         repo_id,
+        ui_status: None,
         tags: Vec::new(),
 
         annotations: vec![],
@@ -332,6 +333,7 @@ pub async fn handle_add_from_snippet(
         created_by: Some(args.created_by.clone()),
         current_resolution_id: None,
         repo_id,
+        ui_status: None,
         tags: Vec::new(),
 
         annotations: vec![],
@@ -558,6 +560,7 @@ pub async fn handle_add_from_query(
         created_by: Some(args.created_by.clone()),
         current_resolution_id: None,
         repo_id,
+        ui_status: None,
         tags: Vec::new(),
 
         annotations: vec![],

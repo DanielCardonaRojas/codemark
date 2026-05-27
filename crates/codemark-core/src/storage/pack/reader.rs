@@ -164,6 +164,7 @@ fn row_to_bookmark(row: &rusqlite::Row) -> rusqlite::Result<Bookmark> {
         created_by: row.get(11)?,
         current_resolution_id: row.get(12)?,
         repo_id: row.get(13)?,
+        ui_status: None,     // Computed, not stored
         tags: vec![],
         annotations: vec![],
         comments: vec![],
