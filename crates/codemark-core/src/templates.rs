@@ -92,6 +92,8 @@ pub struct ResolutionTemplateContext {
     pub resolved_at: String,
     /// Resolution method
     pub method: String,
+    /// Health status
+    pub status: String,
     /// Resolved file path (optional)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub file_path: Option<String>,
@@ -189,6 +191,7 @@ impl ResolutionTemplateContext {
         ResolutionTemplateContext {
             resolved_at: r.resolved_at.clone(),
             method: r.method.to_string(),
+            status: r.health.to_string(),
             file_path: r.file_path.clone(),
             line_range: r.line_range.clone(),
             line_range_colon: r.line_range.as_ref().map(|l| l.replace('-', ":")),
@@ -516,5 +519,7 @@ mod tests {
         // Tags are rendered inline with # prefix
         assert!(output.contains("#tag1"));
         assert!(output.contains("#tag2"));
+        // Resolution status should be present
+        assert!(output.contains("active"));
     }
 }

@@ -43,10 +43,14 @@
 ## Resolution History
 
 {{#each resolutions}}
-Date: {{format_date resolved_at "%Y-%m-%d %H:%M:%S"}}
-Method: {{method}}
-Range: {{line_range}}
-Commit: {{#if commit_hash}}{{short_commit}}{{else}}-{{/if}}
+**Date:** {{format_date resolved_at "%Y-%m-%d %H:%M:%S"}}
+**Status:** {{status}}
+**Method:** {{method}}
+{{#if file_path}}**File:** {{file_path}}{{/if}}
+{{#if line_range}}**Range:** {{line_range}}{{/if}}
+{{#if match_count}}**Matches:** {{match_count}}{{/if}}
+{{#if commit_hash}}**Commit:** {{short_commit}}{{/if}}
+
 {{/each}}
 {{/if}}
 

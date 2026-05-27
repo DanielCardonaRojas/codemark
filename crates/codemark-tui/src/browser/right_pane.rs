@@ -101,7 +101,7 @@ impl RightPane {
             // Update Info tab with markdown
             let markdown = self.generate_markdown(
                 &step.bookmark,
-                step.resolution.as_ref(),
+                &step.resolutions,
                 templates::SHOW_TEMPLATE,
             );
             if let Some(md_panel) = self.steps.get_markdown_mut() {
@@ -117,7 +117,7 @@ impl RightPane {
             // Update Details panel
             let details_markdown = self.generate_markdown(
                 &step.bookmark,
-                step.resolution.as_ref(),
+                &step.resolutions,
                 templates::DETAILS_TEMPLATE,
             );
             self.details.set_markdown(details_markdown);
@@ -134,6 +134,9 @@ impl RightPane {
 
             // Get the best resolution for preview (from nearest ancestor commit)
             let resolution = db.get_preview_resolution(&bm.id).ok().flatten();
+
+            // Get all resolutions for showing full history
+            let resolutions = db.list_resolutions(&bm.id, 100).unwrap_or_default();
 
             // Extract line_range and file_path from the resolution
             if let Some(ref res) = resolution {
@@ -164,6 +167,7 @@ impl RightPane {
                     line_end,
                     bookmark: bm,
                     resolution,
+                    resolutions,
                 }];
                 self.pager_total = 1;
                 self.pager_current = 0;
@@ -211,6 +215,9 @@ impl RightPane {
                 // Get the best resolution for preview (from nearest ancestor commit)
                 let resolution = db.get_preview_resolution(&bm.id).ok().flatten();
 
+                // Get all resolutions for showing full history
+                let resolutions = db.list_resolutions(&bm.id, 100).unwrap_or_default();
+
                 // Extract line_range and file_path from the resolution
                 if let Some(ref res) = resolution {
                     if let Some(fp) = res.file_path.as_ref() {
@@ -242,6 +249,7 @@ impl RightPane {
                         line_end,
                         bookmark: bm,
                         resolution,
+                        resolutions,
                     });
                 }
             }
@@ -264,12 +272,9 @@ impl RightPane {
     pub fn generate_markdown(
         &self,
         bm: &Bookmark,
-        res: Option<&Resolution>,
+        resolutions: &[Resolution],
         template: &str,
     ) -> String {
-        // Use the shared template from codemark_core with cached template content
-        let resolutions = if let Some(r) = res { vec![r.clone()] } else { vec![] };
-
         // Select the appropriate cached template to avoid repeated disk reads
         let template_content = match template {
             templates::SHOW_TEMPLATE => &self.cached_show_template,
@@ -285,7 +290,7 @@ impl RightPane {
         };
 
         // Create context and render using the cached template content
-        let context = templates::BookmarkTemplateContext::from_bookmark(bm, &resolutions);
+        let context = templates::BookmarkTemplateContext::from_bookmark(bm, resolutions);
         let handlebars = templates::create_handlebars_engine();
 
         match handlebars.render_template(template_content, &context) {
