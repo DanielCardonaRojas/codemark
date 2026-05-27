@@ -52,9 +52,12 @@ pub enum FocusArea {
 
 impl FocusArea {
     /// Check if this focus area can be resized with +/- keys.
-    /// Only left side panels (excluding search bar) support resizing.
+    /// Left side panels and the main preview pane support resizing.
     pub fn is_resizable(self) -> bool {
-        matches!(self, FocusArea::Panel1 | FocusArea::Panel2 | FocusArea::Panel3)
+        matches!(
+            self,
+            FocusArea::Panel1 | FocusArea::Panel2 | FocusArea::Panel3 | FocusArea::Main
+        )
     }
 }
 
@@ -108,6 +111,32 @@ impl LeftPaneSize {
     }
 }
 
+/// Size mode for the right pane (preview), allowing expansion to full screen.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum RightPaneSize {
+    /// Regular size (shares space with left pane based on left_pane_size)
+    #[default]
+    Regular,
+    /// Full window width (100%) - left pane hidden
+    Full,
+}
+
+impl RightPaneSize {
+    /// Toggle between regular and full size.
+    pub fn toggle(self) -> Self {
+        match self {
+            Self::Regular => Self::Full,
+            Self::Full => Self::Regular,
+        }
+    }
+
+    /// Check if the right pane should override the default layout.
+    /// When true, the right pane takes full width regardless of left pane size.
+    pub fn is_fullscreen(self) -> bool {
+        matches!(self, Self::Full)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -143,8 +172,20 @@ mod tests {
         assert!(FocusArea::Panel1.is_resizable());
         assert!(FocusArea::Panel2.is_resizable());
         assert!(FocusArea::Panel3.is_resizable());
-        assert!(!FocusArea::Main.is_resizable());
+        assert!(FocusArea::Main.is_resizable());
         assert!(!FocusArea::Filter.is_resizable());
+    }
+
+    #[test]
+    fn test_right_pane_size_toggle() {
+        assert_eq!(RightPaneSize::Regular.toggle(), RightPaneSize::Full);
+        assert_eq!(RightPaneSize::Full.toggle(), RightPaneSize::Regular);
+    }
+
+    #[test]
+    fn test_right_pane_size_is_fullscreen() {
+        assert!(!RightPaneSize::Regular.is_fullscreen());
+        assert!(RightPaneSize::Full.is_fullscreen());
     }
 }
 

@@ -299,8 +299,19 @@ impl RightPane {
     }
 
     /// Render the right pane.
-    pub fn render(&self, area: Rect, buf: &mut Buffer) {
+    ///
+    /// # Arguments
+    /// * `area` - The area to render in
+    /// * `buf` - The buffer to render to
+    /// * `fullscreen` - If true, hide the details pane and use full area for steps
+    pub fn render(&self, area: Rect, buf: &mut Buffer, fullscreen: bool) {
         self.last_area.set(area);
+
+        if fullscreen {
+            // In fullscreen mode, use the entire area for the steps panel
+            self.steps.render(area, buf);
+            return;
+        }
 
         let info_height = if self.focused == RightPaneFocus::Details {
             self.info_config.max
