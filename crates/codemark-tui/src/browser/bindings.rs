@@ -72,6 +72,7 @@ impl BrowserLayout {
                 bindings.push(("↑", "Focus steps"));
                 bindings.push(("↓", "Focus details"));
                 bindings.push(("+/-", "Toggle fullscreen"));
+                bindings.push(("Ctrl+O", "Copy markdown"));
             }
             FocusArea::Filter => {}
         }
@@ -139,7 +140,8 @@ impl BrowserLayout {
                 bindings.insert(1, KeyBinding::new("Enter", "Select Step"));
                 bindings.insert(2, KeyBinding::new("o", "Open File"));
                 bindings.insert(3, KeyBinding::new("H", "Heal"));
-                bindings.insert(4, KeyBinding::new("Esc", "Back to Tours"));
+                bindings.insert(4, KeyBinding::new("Ctrl+O", "Copy markdown"));
+                bindings.insert(5, KeyBinding::new("Esc", "Back to Tours"));
             }
             FocusArea::Filter => {}
         }

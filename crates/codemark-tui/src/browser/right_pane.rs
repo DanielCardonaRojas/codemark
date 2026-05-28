@@ -496,4 +496,14 @@ impl RightPane {
             height: info_height,
         }
     }
+
+    /// Get the markdown content from the currently focused markdown panel.
+    /// Returns the content from the Details panel when focused on Details,
+    /// or from the Info tab's markdown panel when focused on Steps.
+    pub fn active_markdown_content(&self) -> Option<&str> {
+        match self.focused {
+            RightPaneFocus::Details => Some(self.details.markdown()),
+            RightPaneFocus::Steps => self.steps.get_markdown().map(|m| m.markdown()),
+        }
+    }
 }
