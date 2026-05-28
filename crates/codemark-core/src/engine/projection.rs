@@ -139,25 +139,34 @@ pub fn project_resolution_status(
 
     // Project to UI status
     match (is_current, ancestry, is_anchored, resolution.health) {
-        // --- Current Pointer ---
-        
-        // At HEAD or Ancestor (Historical but still valid pointer)
-        (true, Ancestry::AtHead | Ancestry::Ancestor, true, BookmarkHealth::Active) => Ok(UIStatus::Healthy),
-        (true, Ancestry::AtHead | Ancestry::Ancestor, false, BookmarkHealth::Active) => Ok(UIStatus::UnanchoredHealthy),
-        
-        (true, Ancestry::AtHead | Ancestry::Ancestor, true, BookmarkHealth::Drifted) => Ok(UIStatus::Drifted),
-        (true, Ancestry::AtHead | Ancestry::Ancestor, false, BookmarkHealth::Drifted) => Ok(UIStatus::UnanchoredDrifting),
-        
-        // Stale is always broken
+        // --- Current Pointer at HEAD (100% confidence) ---
+
+        (true, Ancestry::AtHead, true, BookmarkHealth::Active) => Ok(UIStatus::Healthy),
+        (true, Ancestry::AtHead, false, BookmarkHealth::Active) => Ok(UIStatus::UnanchoredHealthy),
+
+        (true, Ancestry::AtHead, true, BookmarkHealth::Drifted) => Ok(UIStatus::Drifted),
+        (true, Ancestry::AtHead, false, BookmarkHealth::Drifted) => Ok(UIStatus::UnanchoredDrifting),
+
+        // --- Current Pointer at Ancestor (was correct, HEAD has moved on) ---
+
+        (true, Ancestry::Ancestor, true, BookmarkHealth::Active) => Ok(UIStatus::Verified),
+        (true, Ancestry::Ancestor, false, BookmarkHealth::Active) => Ok(UIStatus::UnanchoredHealthy),
+
+        (true, Ancestry::Ancestor, true, BookmarkHealth::Drifted) => Ok(UIStatus::Outdated),
+        (true, Ancestry::Ancestor, false, BookmarkHealth::Drifted) => Ok(UIStatus::UnanchoredDrifting),
+
+        // --- Stale / Archived are always broken ---
+
         (true, _, true, BookmarkHealth::Stale | BookmarkHealth::Archived) => Ok(UIStatus::Broken),
         (true, _, false, BookmarkHealth::Stale | BookmarkHealth::Archived) => Ok(UIStatus::BrokenUnanchored),
 
-        // Unrelated but Current Pointer (Likely from another branch)
+        // --- Current Pointer but Unrelated (likely from another branch) ---
+
         (true, Ancestry::Unrelated, _, BookmarkHealth::Active) => Ok(UIStatus::Verified),
         (true, Ancestry::Unrelated, _, BookmarkHealth::Drifted) => Ok(UIStatus::Outdated),
 
         // --- Non-Current (Historical) ---
-        
+
         (false, Ancestry::AtHead | Ancestry::Ancestor, _, BookmarkHealth::Active) => Ok(UIStatus::Verified),
         (false, Ancestry::AtHead | Ancestry::Ancestor, _, BookmarkHealth::Drifted) => Ok(UIStatus::Outdated),
 
@@ -339,13 +348,14 @@ mod tests {
     }
 
     #[test]
-    fn test_ancestor_returns_healthy() {
+    fn test_ancestor_returns_verified() {
         let repo = create_test_repo();
         let (resolution, bookmark) = create_test_resolution(Some(repo.commit_a), BookmarkHealth::Active, true);
-        
+
+        // Ancestor means HEAD has moved on — was correct at that commit but no guarantee now
         let result = project_resolution_status(&resolution, &bookmark, Some(&repo.commit_b), &repo.path).unwrap();
-        assert_eq!(result, UIStatus::Healthy);
-        
+        assert_eq!(result, UIStatus::Verified);
+
         fs::remove_dir_all(&repo.path).unwrap();
     }
 
