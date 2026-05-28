@@ -994,9 +994,10 @@ fn compute_ui_statuses(
     bookmarks: &[Bookmark],
     current_head: Option<&str>,
 ) -> HashMap<String, String> {
+    let db_dir = db.path().parent().unwrap_or_else(|| db.path());
     let head = current_head
         .map(|h| h.to_string())
-        .or_else(|| git_context::detect_context(db.path()).and_then(|ctx| ctx.head_commit));
+        .or_else(|| git_context::detect_context(db_dir).and_then(|ctx| ctx.head_commit));
     bookmarks
         .iter()
         .filter_map(|bm| {

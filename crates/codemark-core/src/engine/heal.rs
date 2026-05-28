@@ -155,7 +155,7 @@ pub async fn heal_bookmark(
         let repo_root = git_ctx.map(|ctx| ctx.repo_root).unwrap_or_else(|| repo_base.to_path_buf());
 
         // Create and insert resolution — default to dirty on git errors (fail-closed)
-        let is_dirty = !git_context::is_file_clean(&repo_root, &result.file_path).unwrap_or(true);
+        let is_dirty = !git_context::is_file_clean(&repo_root, &result.file_path).unwrap_or(false);
         let resolution = Resolution {
             id: uuid::Uuid::new_v4().to_string(),
             bookmark_id: bookmark.id.clone(),

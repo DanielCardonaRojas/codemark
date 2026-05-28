@@ -50,7 +50,7 @@ impl Database {
                         1,
                         bookmark.file_path,
                         bookmark.content_hash,
-                        true, // Initial resolution is anchored if it was created
+                        false, // Initial resolution is anchored (is_dirty = false means clean/committed)
                     ],
                 )?;
 

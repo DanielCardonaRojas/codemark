@@ -188,7 +188,7 @@ pub async fn handle_add(cli: &Cli, mode: &OutputMode, args: &AddArgsOriginal) ->
         } else {
             cwd.clone()
         };
-        let is_dirty = !git_context::is_file_clean(&repo_root, &rel_path).unwrap_or(true);
+        let is_dirty = !git_context::is_file_clean(&repo_root, &rel_path).unwrap_or(false);
 
         let initial_res = Resolution {
             is_dirty,
@@ -421,7 +421,7 @@ pub async fn handle_add_from_snippet(
         } else {
             cwd.clone()
         };
-        let is_dirty = !git_context::is_file_clean(&repo_root, &rel_path).unwrap_or(true);
+        let is_dirty = !git_context::is_file_clean(&repo_root, &rel_path).unwrap_or(false);
 
         let initial_res = Resolution {
             is_dirty,
@@ -654,7 +654,7 @@ pub async fn handle_add_from_query(
         } else {
             cwd.clone()
         };
-        let is_dirty = !git_context::is_file_clean(&repo_root, &rel_path).unwrap_or(true);
+        let is_dirty = !git_context::is_file_clean(&repo_root, &rel_path).unwrap_or(false);
 
         let initial_res = Resolution {
             is_dirty,
