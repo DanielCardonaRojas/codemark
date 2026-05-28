@@ -148,12 +148,16 @@ pub async fn heal_bookmark(
         // Skip database writes when validating
         None
     } else {
-        // Get current commit hash
-        let commit_hash =
-            git_context::detect_context(&std::env::current_dir()?).and_then(|ctx| ctx.head_commit);
+        // Get current commit hash from the DB's repo context (not CWD)
+        let repo_base = db.path().parent().unwrap_or_else(|| db.path());
+        let git_ctx = git_context::detect_context(repo_base);
+        let commit_hash = git_ctx.as_ref().and_then(|ctx| ctx.head_commit.clone());
+        let repo_root = git_ctx
+            .map(|ctx| ctx.repo_root)
+            .unwrap_or_else(|| repo_base.to_path_buf());
 
-        // Create and insert resolution
-        let is_anchored = git_context::is_file_clean(&std::env::current_dir()?, &result.file_path).unwrap_or(true);
+        // Create and insert resolution — default to unanchored on git errors (fail-closed)
+        let is_anchored = git_context::is_file_clean(&repo_root, &result.file_path).unwrap_or(false);
         let resolution = Resolution {
             id: uuid::Uuid::new_v4().to_string(),
             bookmark_id: bookmark.id.clone(),

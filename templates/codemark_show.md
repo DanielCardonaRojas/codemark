@@ -31,14 +31,28 @@
 | **File** | {{file_path}} |
 | **Language** | {{language}} |
 | **Status** | {{status}} |
-{{#if ui_status}}| **UI Status** | {{ui_status}} |{{/if}}
+{{#if ui_status}}
+| **UI Status** | {{ui_status}} |
+{{/if}}
 | **Created** | {{format_date created_at "%Y-%m-%d %H:%M:%S"}} |
-{{#if created_by}}| **Author** | {{escape_markdown created_by}} |{{/if}}
-{{#if current_resolution_id}}| **Current Resolution** | {{current_resolution_id}} |{{/if}}
-{{#if last_resolved_at}}| **Last Resolved** | {{format_date last_resolved_at "%Y-%m-%d %H:%M:%S"}} |{{/if}}
-{{#if resolution_method}}| **Resolution Method** | {{resolution_method}} |{{/if}}
-{{#if commit_hash}}| **Commit** | {{short_commit}} |{{/if}}
-{{#if stale_since}}| **Stale Since** | {{stale_since}} |{{/if}}
+{{#if created_by}}
+| **Author** | {{escape_markdown created_by}} |
+{{/if}}
+{{#if current_resolution_id}}
+| **Current Resolution** | {{current_resolution_id}} |
+{{/if}}
+{{#if last_resolved_at}}
+| **Last Resolved** | {{format_date last_resolved_at "%Y-%m-%d %H:%M:%S"}} |
+{{/if}}
+{{#if resolution_method}}
+| **Resolution Method** | {{resolution_method}} |
+{{/if}}
+{{#if commit_hash}}
+| **Commit** | {{short_commit}} |
+{{/if}}
+{{#if stale_since}}
+| **Stale Since** | {{stale_since}} |
+{{/if}}
 
 
 {{#if resolutions}}

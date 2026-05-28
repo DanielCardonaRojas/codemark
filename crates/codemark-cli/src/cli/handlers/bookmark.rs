@@ -819,13 +819,13 @@ pub async fn handle_resolve(cli: &Cli, mode: &OutputMode, args: &ResolveArgs) ->
             serde_json::to_string(&result.breadcrumbs).ok()
         };
 
-        let cwd = std::env::current_dir()?;
-        let repo_root = if let Some(ref ctx) = git_context::detect_context(&cwd) {
-            ctx.repo_root.clone()
-        } else {
-            cwd.clone()
-        };
-        let is_anchored = git_context::is_file_clean(&repo_root, &result.file_path).unwrap_or(true);
+        let repo_base = db.path().parent().unwrap_or_else(|| db.path());
+        let git_ctx = git_context::detect_context(repo_base);
+        let repo_root = git_ctx
+            .as_ref()
+            .map(|ctx| ctx.repo_root.clone())
+            .unwrap_or_else(|| repo_base.to_path_buf());
+        let is_anchored = git_context::is_file_clean(&repo_root, &result.file_path).unwrap_or(false);
 
         // Record resolution
         let res = Resolution {
@@ -834,7 +834,7 @@ pub async fn handle_resolve(cli: &Cli, mode: &OutputMode, args: &ResolveArgs) ->
             bookmark_id: bm.id.clone(),
             resolved_at: now_iso(),
             health: final_status,
-            commit_hash: git_context::detect_context(&cwd).and_then(|ctx| ctx.head_commit),
+            commit_hash: git_ctx.and_then(|ctx| ctx.head_commit),
             method: result.method,
             match_count: Some(1),
             file_path: Some(result.file_path.clone()),
@@ -881,12 +881,17 @@ pub async fn handle_show(cli: &Cli, mode: &OutputMode, args: &ShowArgs) -> Resul
     let (bm, db) = find_bookmark_across(&dbs, &args.id)?;
     let resolutions = db.list_resolutions(&bm.id, 5)?;
 
-    // Project UI status for the bookmark
-    let bm = codemark_core::engine::projection::project_ui_status_for_bookmark(
-        bm,
-        &db,
-        args.current_head.as_deref(),
-    )?;
+    // Re-project UI status only when the user overrides HEAD.
+    // The repo layer already projected with a cached HEAD.
+    let bm = if args.current_head.is_some() {
+        codemark_core::engine::projection::project_ui_status_for_bookmark(
+            bm,
+            &db,
+            args.current_head.as_deref(),
+        )?
+    } else {
+        bm
+    };
 
     match mode {
         OutputMode::Json => {
@@ -897,7 +902,7 @@ pub async fn handle_show(cli: &Cli, mode: &OutputMode, args: &ShowArgs) -> Resul
         }
         OutputMode::Markdown => {
             let repo_path = db.path().parent().unwrap_or_else(|| db.path());
-            write_bookmark_markdown(&bm, &resolutions, repo_path)?;
+            write_bookmark_markdown(&bm, &resolutions, repo_path, args.current_head.as_deref())?;
         }
         _ => {
             println!("ID:          {}", bm.id);

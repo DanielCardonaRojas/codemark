@@ -984,19 +984,24 @@ pub fn parse_duration_days(duration: &str) -> Result<i64> {
     Err(Error::Input("duration must end with d, w, or m (e.g., 30d, 2w, 6m)".into()))
 }
 
-/// Project UI status for bookmarks by fetching their current resolutions.
+/// Re-project UI status for bookmarks when the caller supplies a `--current-head` override.
 ///
-/// For each bookmark, this function:
-/// 1. Fetches the current resolution (if available)
-/// 2. Projects the UI status based on current HEAD
-/// 3. Adds the `ui_status` field to the bookmark
+/// When `current_head` is `None`, bookmarks already have `ui_status` populated by the
+/// database layer (`compute_ui_status`), so this function is a no-op to avoid redundant
+/// git subprocess spawns and DB queries.
 ///
-/// Returns a new vector of bookmarks with `ui_status` populated.
+/// When `current_head` is `Some(...)`, the user wants to project against a different HEAD,
+/// so we re-project every bookmark.
 fn project_ui_status_for_bookmarks(
     db: &Database,
     bookmarks: Vec<Bookmark>,
     current_head: Option<&str>,
 ) -> Result<Vec<Bookmark>> {
+    // The repo layer already projects ui_status using a cached HEAD.
+    // Only re-project when the user explicitly overrides HEAD.
+    if current_head.is_none() {
+        return Ok(bookmarks);
+    }
     let mut result = Vec::with_capacity(bookmarks.len());
     for bm in bookmarks {
         let bm = projection::project_ui_status_for_bookmark(bm, db, current_head)?;
@@ -1126,7 +1131,7 @@ pub async fn resolve_batch(
             serde_json::to_string(&result.breadcrumbs).ok()
         };
 
-        let is_anchored = git_context::is_file_clean(&repo_root, &result.file_path).unwrap_or(true);
+        let is_anchored = git_context::is_file_clean(&repo_root, &result.file_path).unwrap_or(false);
 
         // Record resolution history (deduped)
         let res = Resolution {

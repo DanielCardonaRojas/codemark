@@ -561,9 +561,10 @@ pub fn write_bookmark_markdown(
     bm: &Bookmark,
     resolutions: &[Resolution],
     repo_path: &std::path::Path,
+    current_head: Option<&str>,
 ) -> io::Result<()> {
     // Use Handlebars template for rendering
-    match crate::cli::templates::render_show_template(bm, resolutions, repo_path, None) {
+    match crate::cli::templates::render_show_template(bm, resolutions, repo_path, current_head) {
         Ok(rendered) => {
             print!("{rendered}");
             Ok(())

@@ -46,7 +46,7 @@ pub fn is_clean(repo_path: &Path) -> Result<bool> {
 /// Check if a specific file in the repository at `repo_path` is clean.
 pub fn is_file_clean(repo_path: &Path, file_path: &str) -> Result<bool> {
     let output = std::process::Command::new("git")
-        .args(["status", "--porcelain", file_path])
+        .args(["status", "--porcelain", "--", file_path])
         .current_dir(repo_path)
         .output()
         .map_err(|e| Error::Git(format!("failed to run git status: {e}")))?;

@@ -81,7 +81,7 @@ pub async fn build_snapshot(
 
         // Build the resolution record
         let res_id = uuid::Uuid::new_v4().to_string();
-        let is_anchored = git_context::is_file_clean(&std::env::current_dir()?, &bm.file_path).unwrap_or(true);
+        let is_anchored = git_context::is_file_clean(project_root, &bm.file_path).unwrap_or(false);
 
         let resolution = Resolution {
             id: res_id,
