@@ -1127,8 +1127,7 @@ pub async fn resolve_batch(
             serde_json::to_string(&result.breadcrumbs).ok()
         };
 
-        let is_dirty =
-            !git_context::is_file_clean(&repo_root, &result.file_path).unwrap_or(false);
+        let is_dirty = !git_context::is_file_clean(&repo_root, &result.file_path).unwrap_or(false);
 
         // Record resolution history (deduped)
         let res = Resolution {

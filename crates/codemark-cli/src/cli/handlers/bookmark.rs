@@ -822,8 +822,7 @@ pub async fn handle_resolve(cli: &Cli, mode: &OutputMode, args: &ResolveArgs) ->
             .as_ref()
             .map(|ctx| ctx.repo_root.clone())
             .unwrap_or_else(|| repo_base.to_path_buf());
-        let is_dirty =
-            !git_context::is_file_clean(&repo_root, &result.file_path).unwrap_or(false);
+        let is_dirty = !git_context::is_file_clean(&repo_root, &result.file_path).unwrap_or(false);
 
         // Record resolution
         let res = Resolution {
