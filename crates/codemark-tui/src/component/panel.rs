@@ -106,7 +106,8 @@ impl HealthStatus {
             HealthStatus::UnanchoredDrifting => Color::Rgb(255, 165, 0), // Orange
             HealthStatus::Broken | HealthStatus::BrokenUnanchored => Color::Red,
             HealthStatus::Verified => Color::Green,
-            HealthStatus::Outdated | HealthStatus::Unknown => Color::DarkGray,
+            HealthStatus::Outdated => Color::Yellow,
+            HealthStatus::Unknown => Color::DarkGray,
             HealthStatus::Future => Color::Blue,
         }
     }
@@ -114,8 +115,10 @@ impl HealthStatus {
     /// Get the symbol for this health status.
     fn symbol(&self) -> &'static str {
         match self {
-            HealthStatus::Verified => "○", // Unfilled circle for verified/historical
-            _ => "●",                      // Filled dot for all other statuses
+            HealthStatus::Verified | HealthStatus::Outdated => {
+                "○"
+            } // Unfilled circle for historical statuses
+            _ => "●", // Filled dot for all other statuses
         }
     }
 }
@@ -968,15 +971,16 @@ mod tests {
         assert_eq!(HealthStatus::Broken.color(), Color::Red);
         assert_eq!(HealthStatus::BrokenUnanchored.color(), Color::Red);
         assert_eq!(HealthStatus::Verified.color(), Color::Green);
-        assert_eq!(HealthStatus::Outdated.color(), Color::DarkGray);
+        assert_eq!(HealthStatus::Outdated.color(), Color::Yellow);
         assert_eq!(HealthStatus::Unknown.color(), Color::DarkGray);
         assert_eq!(HealthStatus::Future.color(), Color::Blue);
     }
 
     #[test]
     fn test_health_status_symbols() {
-        // Verified status uses an unfilled circle
+        // Verified and Outdated statuses use an unfilled circle (historical)
         assert_eq!(HealthStatus::Verified.symbol(), "○");
+        assert_eq!(HealthStatus::Outdated.symbol(), "○");
         // All other statuses use a filled dot
         assert_eq!(HealthStatus::Healthy.symbol(), "●");
         assert_eq!(HealthStatus::UnanchoredHealthy.symbol(), "●");
