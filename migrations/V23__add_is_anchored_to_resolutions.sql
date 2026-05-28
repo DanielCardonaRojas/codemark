@@ -1,1 +1,0 @@
-ALTER TABLE resolutions ADD COLUMN is_anchored BOOLEAN NOT NULL DEFAULT 1;

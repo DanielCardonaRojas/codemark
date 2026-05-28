@@ -154,9 +154,9 @@ pub async fn heal_bookmark(
         let commit_hash = git_ctx.as_ref().and_then(|ctx| ctx.head_commit.clone());
         let repo_root = git_ctx.map(|ctx| ctx.repo_root).unwrap_or_else(|| repo_base.to_path_buf());
 
-        // Create and insert resolution — default to unanchored on git errors (fail-closed)
-        let is_anchored =
-            git_context::is_file_clean(&repo_root, &result.file_path).unwrap_or(false);
+        // Create and insert resolution — default to dirty on git errors (fail-closed)
+        let is_dirty =
+            !git_context::is_file_clean(&repo_root, &result.file_path).unwrap_or(true);
         let resolution = Resolution {
             id: uuid::Uuid::new_v4().to_string(),
             bookmark_id: bookmark.id.clone(),
@@ -172,7 +172,7 @@ pub async fn heal_bookmark(
             headline: None,
             snapshot: Some(result.matched_text.clone()),
             breadcrumbs: breadcrumbs_json,
-            is_anchored,
+            is_dirty,
         };
 
         let resolution_id = resolution.id.clone();

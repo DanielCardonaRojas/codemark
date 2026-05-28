@@ -1127,12 +1127,12 @@ pub async fn resolve_batch(
             serde_json::to_string(&result.breadcrumbs).ok()
         };
 
-        let is_anchored =
-            git_context::is_file_clean(&repo_root, &result.file_path).unwrap_or(false);
+        let is_dirty =
+            !git_context::is_file_clean(&repo_root, &result.file_path).unwrap_or(false);
 
         // Record resolution history (deduped)
         let res = Resolution {
-            is_anchored,
+            is_dirty,
             id: uuid::Uuid::new_v4().to_string(),
             bookmark_id: bm.id.clone(),
             resolved_at: now_iso(),
@@ -1906,7 +1906,7 @@ mod tests {
             headline: None,
             snapshot: None,
             breadcrumbs: None,
-            is_anchored: true,
+            is_dirty: false,
         };
         db.insert_resolution_if_changed(&res, 10).unwrap();
         db.update_bookmark_resolution_id(&bm_id, &res_id).unwrap();

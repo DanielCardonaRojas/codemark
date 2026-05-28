@@ -188,10 +188,10 @@ pub async fn handle_add(cli: &Cli, mode: &OutputMode, args: &AddArgsOriginal) ->
         } else {
             cwd.clone()
         };
-        let is_anchored = git_context::is_file_clean(&repo_root, &rel_path).unwrap_or(true);
+        let is_dirty = !git_context::is_file_clean(&repo_root, &rel_path).unwrap_or(true);
 
         let initial_res = Resolution {
-            is_anchored,
+            is_dirty,
             id: uuid::Uuid::new_v4().to_string(),
             bookmark_id: actual_bookmark_id.clone(),
             resolved_at: now_iso(),
@@ -421,10 +421,10 @@ pub async fn handle_add_from_snippet(
         } else {
             cwd.clone()
         };
-        let is_anchored = git_context::is_file_clean(&repo_root, &rel_path).unwrap_or(true);
+        let is_dirty = !git_context::is_file_clean(&repo_root, &rel_path).unwrap_or(true);
 
         let initial_res = Resolution {
-            is_anchored,
+            is_dirty,
             id: uuid::Uuid::new_v4().to_string(),
             bookmark_id: actual_bookmark_id.clone(),
             resolved_at: now_iso(),
@@ -654,10 +654,10 @@ pub async fn handle_add_from_query(
         } else {
             cwd.clone()
         };
-        let is_anchored = git_context::is_file_clean(&repo_root, &rel_path).unwrap_or(true);
+        let is_dirty = !git_context::is_file_clean(&repo_root, &rel_path).unwrap_or(true);
 
         let initial_res = Resolution {
-            is_anchored,
+            is_dirty,
             id: uuid::Uuid::new_v4().to_string(),
             bookmark_id: actual_bookmark_id.clone(),
             resolved_at: now_iso(),
@@ -822,12 +822,12 @@ pub async fn handle_resolve(cli: &Cli, mode: &OutputMode, args: &ResolveArgs) ->
             .as_ref()
             .map(|ctx| ctx.repo_root.clone())
             .unwrap_or_else(|| repo_base.to_path_buf());
-        let is_anchored =
-            git_context::is_file_clean(&repo_root, &result.file_path).unwrap_or(false);
+        let is_dirty =
+            !git_context::is_file_clean(&repo_root, &result.file_path).unwrap_or(false);
 
         // Record resolution
         let res = Resolution {
-            is_anchored,
+            is_dirty,
             id: uuid::Uuid::new_v4().to_string(),
             bookmark_id: bm.id.clone(),
             resolved_at: now_iso(),

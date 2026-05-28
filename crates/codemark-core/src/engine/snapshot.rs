@@ -81,7 +81,7 @@ pub async fn build_snapshot(
 
         // Build the resolution record
         let res_id = uuid::Uuid::new_v4().to_string();
-        let is_anchored = git_context::is_file_clean(project_root, &bm.file_path).unwrap_or(false);
+        let is_dirty = !git_context::is_file_clean(project_root, &bm.file_path).unwrap_or(true);
 
         let resolution = Resolution {
             id: res_id,
@@ -102,7 +102,7 @@ pub async fn build_snapshot(
                 .or(Some(result.matched_text.clone())),
             snapshot: Some(preview),
             breadcrumbs: breadcrumbs_json,
-            is_anchored,
+            is_dirty,
         };
 
         // Fetch tags for this bookmark

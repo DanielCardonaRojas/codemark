@@ -3,7 +3,7 @@
 //! This module provides logic to project a resolution's stored health state
 //! to a user-facing UI status based on:
 //! 1. Whether the resolution is the current one (matches the bookmark's current pointer).
-//! 2. Whether the resolution was created with uncommitted changes (is_anchored).
+//! 2. Whether the resolution was created with uncommitted changes (is_dirty).
 //! 3. The ancestry relationship between the resolution's commit and the current HEAD.
 
 use std::fmt;
@@ -111,7 +111,7 @@ pub fn project_resolution_status(
     let resolution_commit = match &resolution.commit_hash {
         Some(c) => c.clone(),
         None => {
-            if resolution.is_anchored {
+            if !resolution.is_dirty {
                 return Ok(UIStatus::Broken);
             } else {
                 head.clone()
@@ -121,7 +121,7 @@ pub fn project_resolution_status(
 
     // Check if resolution is current
     let is_current = bookmark.current_resolution_id.as_ref() == Some(&resolution.id);
-    let is_anchored = resolution.is_anchored;
+    let is_anchored = !resolution.is_dirty;
 
     // Determine ancestry relation
     let ancestry = if head == resolution_commit {
@@ -311,7 +311,7 @@ mod tests {
             headline: None,
             snapshot: None,
             breadcrumbs: None,
-            is_anchored: anchored,
+            is_dirty: !anchored,
         };
 
         (resolution, bookmark)

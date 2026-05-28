@@ -244,7 +244,7 @@ impl ResolutionTemplateContext {
             short_commit,
             snapshot: r.snapshot.clone(),
             ui_status: None, // Will be computed or passed if needed
-            is_anchored: r.is_anchored,
+            is_anchored: !r.is_dirty,
         }
     }
 
@@ -552,7 +552,7 @@ mod tests {
             comments: vec![],
         };
 
-        let is_anchored = git_context::is_clean(Path::new(".")).unwrap_or(true);
+        let is_dirty = !git_context::is_clean(Path::new(".")).unwrap_or(true);
         let resolutions = vec![Resolution {
             id: "res1".to_string(),
             bookmark_id: bm.id.clone(),
@@ -568,7 +568,7 @@ mod tests {
             headline: None,
             snapshot: Some("fn main() {\n    println!(\"Hello\");\n}".to_string()),
             breadcrumbs: None,
-            is_anchored,
+            is_dirty,
         }];
 
         // Verify snapshot is present in resolution
@@ -595,7 +595,7 @@ mod tests {
 
     #[test]
     fn test_template_ui_status_healthy_at_head() {
-        // When a bookmark has a current resolution at HEAD with is_anchored=true
+        // When a bookmark has a current resolution at HEAD with is_dirty=false
         // and health=Active, the projected ui_status should be "healthy".
         let tmp = std::env::temp_dir()
             .join(format!("codemark_test_tpl_healthy_{}", uuid::Uuid::new_v4()));
@@ -660,7 +660,7 @@ mod tests {
             headline: None,
             snapshot: None,
             breadcrumbs: None,
-            is_anchored: true,
+            is_dirty: false,
         };
 
         let ctx = BookmarkTemplateContext::from_bookmark(&bm, &[resolution], &tmp, Some(&head));
@@ -788,7 +788,7 @@ mod tests {
             headline: None,
             snapshot: None,
             breadcrumbs: None,
-            is_anchored: true,
+            is_dirty: false,
         };
 
         let ctx = BookmarkTemplateContext::from_bookmark(&bm, &[resolution], &tmp, Some(&head));

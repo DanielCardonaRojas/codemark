@@ -38,7 +38,7 @@ impl Database {
                 // Create initial resolution
                 let res_id = uuid::Uuid::new_v4().to_string();
                 tx.execute(
-                    "INSERT INTO resolutions (id, bookmark_id, resolved_at, health, commit_hash, method, match_count, file_path, content_hash, is_anchored)
+                    "INSERT INTO resolutions (id, bookmark_id, resolved_at, health, commit_hash, method, match_count, file_path, content_hash, is_dirty)
                      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
                     rusqlite::params![
                         res_id,
@@ -865,7 +865,7 @@ mod tests {
         // In new model, we'd normally create a resolution.
         // For the test, we'll manually insert one and link it.
         let res = crate::engine::bookmark::Resolution {
-            is_anchored: true,
+            is_dirty: false,
             id: "res-new".to_string(),
             bookmark_id: "aaaa-0000-0000-0001".to_string(),
             resolved_at: "2026-04-01T01:00:00Z".to_string(),
@@ -999,7 +999,7 @@ mod tests {
 
         // 1. Create a new resolution (simulating a heal operation)
         let res1 = crate::engine::bookmark::Resolution {
-            is_anchored: true,
+            is_dirty: false,
             id: "res-1".to_string(),
             bookmark_id: bm_id.to_string(),
             resolved_at: "2024-01-02T00:00:00Z".to_string(),
@@ -1071,7 +1071,7 @@ mod tests {
 
         // Test 1: Resolution with same timestamp as creation should be allowed
         let res_same_time = crate::engine::bookmark::Resolution {
-            is_anchored: true,
+            is_dirty: false,
             id: "res-same-time".to_string(),
             bookmark_id: bm_id.to_string(),
             resolved_at: bookmark_created_at.to_string(), // Same as created_at
@@ -1096,7 +1096,7 @@ mod tests {
 
         // Test 2: Resolution AFTER creation should be allowed
         let res_future = crate::engine::bookmark::Resolution {
-            is_anchored: true,
+            is_dirty: false,
             id: "res-future".to_string(),
             bookmark_id: bm_id.to_string(),
             resolved_at: "2024-06-15T11:00:00Z".to_string(), // 30 minutes after
@@ -1122,7 +1122,7 @@ mod tests {
         // Currently, the database doesn't enforce this constraint.
         // This test documents the expected behavior.
         let res_past = crate::engine::bookmark::Resolution {
-            is_anchored: true,
+            is_dirty: false,
             id: "res-past".to_string(),
             bookmark_id: bm_id.to_string(),
             resolved_at: "2024-06-15T09:00:00Z".to_string(), // 1.5 hours BEFORE created_at
