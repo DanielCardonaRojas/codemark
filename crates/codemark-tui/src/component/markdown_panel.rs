@@ -41,6 +41,11 @@ impl MarkdownPanel {
         self.cached_content_hash.set(0);
     }
 
+    /// Get the current markdown content.
+    pub fn markdown(&self) -> &str {
+        &self.content
+    }
+
     /// Convert the simple markdown string into Ratatui Text.
     fn parse_to_text(&self) -> Text<'static> {
         let mut lines = Vec::new();

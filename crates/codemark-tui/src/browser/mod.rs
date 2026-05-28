@@ -1312,6 +1312,39 @@ impl BrowserLayout {
                     }
                     return true;
                 }
+                // Copy markdown keybinding (Ctrl+O) - available when focus is on Main area
+                ratatui::crossterm::event::KeyCode::Char('o')
+                    if self.should_handle_keybindings()
+                        && self.focus == FocusArea::Main
+                        && key
+                            .modifiers
+                            .contains(ratatui::crossterm::event::KeyModifiers::CONTROL) =>
+                {
+                    if let Some(markdown) =
+                        self.right_pane.active_markdown_content().map(|m| m.to_owned())
+                    {
+                        match self.copy_to_clipboard(&markdown) {
+                            Ok(()) => {
+                                self.pending_notification = Some(HealNotification {
+                                    message: "Copied markdown content".to_string(),
+                                    success: true,
+                                });
+                            }
+                            Err(e) => {
+                                self.pending_notification = Some(HealNotification {
+                                    message: format!("Failed to copy: {}", e),
+                                    success: false,
+                                });
+                            }
+                        }
+                    } else {
+                        self.pending_notification = Some(HealNotification {
+                            message: "No markdown content to copy".to_string(),
+                            success: false,
+                        });
+                    }
+                    return true;
+                }
                 // Delete collection or bookmark based on active tab
                 ratatui::crossterm::event::KeyCode::Char('d')
                     if self.should_handle_keybindings() && self.focus == FocusArea::Panel3 =>

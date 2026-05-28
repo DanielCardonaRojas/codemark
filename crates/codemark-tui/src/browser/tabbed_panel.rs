@@ -171,6 +171,15 @@ impl TabbedPanel {
         None
     }
 
+    /// Get the currently active markdown panel (immutable).
+    /// Returns the markdown panel only if the active tab contains markdown content.
+    pub fn get_markdown(&self) -> Option<&MarkdownPanel> {
+        match self.panels.get(self.tabs.selected_index()) {
+            Some(TabContent::Markdown(p)) => Some(p),
+            _ => None,
+        }
+    }
+
     /// Get the currently active panel (immutable).
     pub fn active_panel(&self) -> Option<&Panel> {
         let active_index = self.tabs.selected_index();

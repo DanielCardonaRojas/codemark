@@ -11,6 +11,10 @@ use ratatui::{
     widgets::{Block, BorderType, Widget},
 };
 
+/// Tab index for the Info tab in the steps panel.
+/// The steps panel has tabs in order: Steps (0), Info (1), Query (2).
+pub const INFO_TAB_INDEX: usize = 1;
+
 /// Focus areas within the right pane.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RightPaneFocus {
@@ -495,5 +499,31 @@ impl RightPane {
             width: area.width,
             height: info_height,
         }
+    }
+
+    /// Get the markdown content from the currently focused markdown panel.
+    /// Returns the content from the Details panel when focused on Details,
+    /// or from the Info tab's markdown panel when the Info tab is selected.
+    /// Returns None if there's no content or the preview state is cleared.
+    pub fn active_markdown_content(&self) -> Option<&str> {
+        // Return None if there are no steps loaded (preview state is cleared)
+        if self.steps_data.is_empty() {
+            return None;
+        }
+
+        let content = match self.focused {
+            RightPaneFocus::Details => Some(self.details.markdown()),
+            RightPaneFocus::Steps => {
+                // Only return markdown if the Info tab is selected
+                if self.steps.tabs.selected_index() == INFO_TAB_INDEX {
+                    self.steps.get_markdown().map(|m| m.markdown())
+                } else {
+                    None
+                }
+            }
+        };
+
+        // Filter out empty or whitespace-only content
+        content.filter(|m| !m.trim().is_empty())
     }
 }
