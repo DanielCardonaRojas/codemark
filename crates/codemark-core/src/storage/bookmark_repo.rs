@@ -143,6 +143,8 @@ impl Database {
     }
 
     pub fn get_bookmark(&self, id: &str) -> Result<Option<Bookmark>> {
+        let head = crate::git::context::detect_context(self.path())
+            .and_then(|ctx| ctx.head_commit);
         let mut stmt = self.conn().prepare(
             "SELECT b.id, b.query, b.language, b.file_path, b.content_hash, b.commit_hash,
              r.health, r.method, r.resolved_at, NULL as stale_since, b.created_at, b.created_by, b.current_resolution_id, b.repo_id
@@ -155,7 +157,7 @@ impl Database {
             Some(row) => {
                 let mut bm = row?;
                 self.load_bookmark_metadata(&mut bm)?;
-                self.compute_ui_status(&mut bm)?;
+                self.compute_ui_status(&mut bm, head.as_deref())?;
                 Ok(Some(bm))
             }
             None => Ok(None),
@@ -177,10 +179,14 @@ impl Database {
         let mut results: Vec<Bookmark> =
             stmt.query_map([&pattern], row_to_bookmark_base)?.filter_map(|r| r.ok()).collect();
 
+        // Detect HEAD once for all results
+        let head = crate::git::context::detect_context(self.path())
+            .and_then(|ctx| ctx.head_commit);
+
         // Load metadata for each result
         for bm in &mut results {
             self.load_bookmark_metadata(bm)?;
-            self.compute_ui_status(bm)?;
+            self.compute_ui_status(bm, head.as_deref())?;
         }
 
         match results.len() {
@@ -297,10 +303,14 @@ impl Database {
             .filter_map(|r| r.ok())
             .collect();
 
+        // Detect HEAD once for all bookmarks
+        let head = crate::git::context::detect_context(self.path())
+            .and_then(|ctx| ctx.head_commit);
+
         // Load metadata for all bookmarks
         for bm in &mut results {
             self.load_bookmark_metadata(bm)?;
-            self.compute_ui_status(bm)?;
+            self.compute_ui_status(bm, head.as_deref())?;
         }
 
         Ok(results)
@@ -488,10 +498,14 @@ impl Database {
             .filter_map(|r| r.ok())
             .collect();
 
+        // Detect HEAD once for all bookmarks
+        let head = crate::git::context::detect_context(self.path())
+            .and_then(|ctx| ctx.head_commit);
+
         // Load metadata for all bookmarks
         for bm in &mut results {
             self.load_bookmark_metadata(bm)?;
-            self.compute_ui_status(bm)?;
+            self.compute_ui_status(bm, head.as_deref())?;
         }
 
         Ok(results)
@@ -550,7 +564,7 @@ impl Database {
     }
 
     /// Compute the UI status for a bookmark based on its current resolution and git context.
-    fn compute_ui_status(&self, bm: &mut Bookmark) -> Result<()> {
+    fn compute_ui_status(&self, bm: &mut Bookmark, current_head: Option<&str>) -> Result<()> {
         use crate::engine::projection;
 
         let repo_path = self.path();
@@ -560,7 +574,7 @@ impl Database {
                     match projection::project_resolution_status(
                         &resolution,
                         bm,
-                        None, // Use detected HEAD
+                        current_head,
                         repo_path,
                     ) {
                         Ok(status) => Some(status.to_string()),

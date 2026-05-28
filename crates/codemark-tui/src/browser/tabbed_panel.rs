@@ -3,6 +3,7 @@ use crate::component::{CodePreview, HealthStatus, MarkdownPanel, Panel, PanelIte
 use crate::event::Event;
 use codemark_core::engine::bookmark::{Bookmark, BookmarkFilter, BookmarkHealth};
 use codemark_core::engine::projection;
+use codemark_core::git::context as git_context;
 use codemark_core::parser::languages::Language;
 use codemark_core::query::classifier::get_node_icon;
 use codemark_core::query::summarizer;
@@ -101,6 +102,7 @@ pub fn bookmark_to_panel_item(
     bookmark: &Bookmark,
     db: &Database,
     use_full_summary: bool,
+    current_head: Option<&str>,
 ) -> PanelItem {
     // Get the current resolution for projection
     let health = if let Some(ref resolution_id) = bookmark.current_resolution_id {
@@ -109,7 +111,7 @@ pub fn bookmark_to_panel_item(
                 match projection::project_resolution_status(
                     &resolution,
                     bookmark,
-                    None, // Use detected HEAD
+                    current_head,
                     db.path(),
                 ) {
                     Ok(ui_status) => match ui_status {
@@ -334,9 +336,13 @@ impl TabbedPanel {
             }
         }
 
+        let head = git_context::detect_context(db.path())
+            .and_then(|ctx| ctx.head_commit);
+        let head_ref = head.as_deref();
+
         let bookmarks = match db.list_bookmarks(&BookmarkFilter::default()) {
             Ok(bookmarks) => {
-                bookmarks.iter().map(|bm| bookmark_to_panel_item(bm, db, false)).collect()
+                bookmarks.iter().map(|bm| bookmark_to_panel_item(bm, db, false, head_ref)).collect()
             }
             Err(_) => Vec::new(),
         };

@@ -726,6 +726,10 @@ impl BrowserLayout {
 
         // 2. Update Bookmarks (Panel 3, tab 0)
         if let Ok(bookmarks) = self.db.list_bookmarks(&BookmarkFilter::default()) {
+            let head = codemark_core::git::context::detect_context(self.db.path())
+                .and_then(|ctx| ctx.head_commit);
+            let head_ref = head.as_deref();
+
             let filtered_items: Vec<PanelItem> = bookmarks
                 .iter()
                 .filter(|bm| {
@@ -734,7 +738,7 @@ impl BrowserLayout {
                         active_tags.is_empty() || bm.tags.iter().any(|t| active_tags.contains(t));
                     branch_match && tag_match
                 })
-                .map(|bm| bookmark_to_panel_item(bm, &self.db, false))
+                .map(|bm| bookmark_to_panel_item(bm, &self.db, false, head_ref))
                 .collect();
 
             if let Some(TabContent::List(p)) = self.left_pane.panel3.panels.get_mut(0) {
@@ -959,6 +963,10 @@ impl BrowserLayout {
         // Handle search results and errors
         match event {
             Event::SearchResults(bookmarks) => {
+                let head = codemark_core::git::context::detect_context(self.db.path())
+                    .and_then(|ctx| ctx.head_commit);
+                let head_ref = head.as_deref();
+
                 let items: Vec<PanelItem> = bookmarks
                     .iter()
                     .map(|bm| {
@@ -966,7 +974,7 @@ impl BrowserLayout {
                         let bm = codemark_core::engine::projection::project_ui_status_for_bookmark(
                             bm.clone(),
                             &self.db,
-                            None,
+                            head_ref,
                         )
                         .unwrap_or(bm.clone());
 
