@@ -500,8 +500,14 @@ impl RightPane {
     /// Get the markdown content from the currently focused markdown panel.
     /// Returns the content from the Details panel when focused on Details,
     /// or from the Info tab's markdown panel when the Info tab is selected.
+    /// Returns None if there's no content or the preview state is cleared.
     pub fn active_markdown_content(&self) -> Option<&str> {
-        match self.focused {
+        // Return None if there are no steps loaded (preview state is cleared)
+        if self.steps_data.is_empty() {
+            return None;
+        }
+
+        let content = match self.focused {
             RightPaneFocus::Details => Some(self.details.markdown()),
             RightPaneFocus::Steps => {
                 // Only return markdown if the Info tab (index 1) is selected
@@ -511,6 +517,9 @@ impl RightPane {
                     None
                 }
             }
-        }
+        };
+
+        // Filter out empty or whitespace-only content
+        content.filter(|m| !m.trim().is_empty())
     }
 }
