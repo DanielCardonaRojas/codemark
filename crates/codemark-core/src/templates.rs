@@ -166,12 +166,17 @@ impl BookmarkTemplateContext {
             language: bm.language.clone(),
             status: bm.health.to_string(),
             ui_status: bm.current_resolution_id.as_ref().and_then(|rid| {
-                resolutions.iter()
+                resolutions
+                    .iter()
                     .find(|r| r.id == *rid)
                     .and_then(|resolution| {
                         crate::engine::projection::project_resolution_status(
-                            resolution, bm, current_head, repo_path,
-                        ).ok()
+                            resolution,
+                            bm,
+                            current_head,
+                            repo_path,
+                        )
+                        .ok()
                     })
                     .map(|s| s.to_string())
             }),

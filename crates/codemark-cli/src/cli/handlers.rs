@@ -994,9 +994,9 @@ fn compute_ui_statuses(
     bookmarks: &[Bookmark],
     current_head: Option<&str>,
 ) -> HashMap<String, String> {
-    let head = current_head.map(|h| h.to_string()).or_else(|| {
-        git_context::detect_context(db.path()).and_then(|ctx| ctx.head_commit)
-    });
+    let head = current_head
+        .map(|h| h.to_string())
+        .or_else(|| git_context::detect_context(db.path()).and_then(|ctx| ctx.head_commit));
     bookmarks
         .iter()
         .filter_map(|bm| {
@@ -1127,7 +1127,8 @@ pub async fn resolve_batch(
             serde_json::to_string(&result.breadcrumbs).ok()
         };
 
-        let is_anchored = git_context::is_file_clean(&repo_root, &result.file_path).unwrap_or(false);
+        let is_anchored =
+            git_context::is_file_clean(&repo_root, &result.file_path).unwrap_or(false);
 
         // Record resolution history (deduped)
         let res = Resolution {
@@ -1382,7 +1383,12 @@ pub async fn handle_list(cli: &Cli, mode: &OutputMode, args: &ListArgs) -> Resul
                 Some(&ui_statuses),
             )?;
         } else {
-            crate::cli::output::write_bookmarks(mode, &bookmarks, args.line_format.as_deref(), Some(&ui_statuses))?;
+            crate::cli::output::write_bookmarks(
+                mode,
+                &bookmarks,
+                args.line_format.as_deref(),
+                Some(&ui_statuses),
+            )?;
         }
     } else {
         // Multi-database case with line number support

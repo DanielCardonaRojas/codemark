@@ -115,14 +115,28 @@ pub fn bookmark_to_panel_item(
                     db.path(),
                 ) {
                     Ok(ui_status) => match ui_status {
-                        codemark_core::engine::projection::UIStatus::Healthy => HealthStatus::Healthy,
-                        codemark_core::engine::projection::UIStatus::UnanchoredHealthy => HealthStatus::UnanchoredHealthy,
-                        codemark_core::engine::projection::UIStatus::Drifted => HealthStatus::Drifted,
-                        codemark_core::engine::projection::UIStatus::UnanchoredDrifting => HealthStatus::UnanchoredDrifting,
+                        codemark_core::engine::projection::UIStatus::Healthy => {
+                            HealthStatus::Healthy
+                        }
+                        codemark_core::engine::projection::UIStatus::UnanchoredHealthy => {
+                            HealthStatus::UnanchoredHealthy
+                        }
+                        codemark_core::engine::projection::UIStatus::Drifted => {
+                            HealthStatus::Drifted
+                        }
+                        codemark_core::engine::projection::UIStatus::UnanchoredDrifting => {
+                            HealthStatus::UnanchoredDrifting
+                        }
                         codemark_core::engine::projection::UIStatus::Broken => HealthStatus::Broken,
-                        codemark_core::engine::projection::UIStatus::BrokenUnanchored => HealthStatus::BrokenUnanchored,
-                        codemark_core::engine::projection::UIStatus::Verified => HealthStatus::Verified,
-                        codemark_core::engine::projection::UIStatus::Outdated => HealthStatus::Outdated,
+                        codemark_core::engine::projection::UIStatus::BrokenUnanchored => {
+                            HealthStatus::BrokenUnanchored
+                        }
+                        codemark_core::engine::projection::UIStatus::Verified => {
+                            HealthStatus::Verified
+                        }
+                        codemark_core::engine::projection::UIStatus::Outdated => {
+                            HealthStatus::Outdated
+                        }
                         codemark_core::engine::projection::UIStatus::Future => HealthStatus::Future,
                     },
                     Err(_) => match resolution.health {
@@ -336,8 +350,7 @@ impl TabbedPanel {
             }
         }
 
-        let head = git_context::detect_context(db.path())
-            .and_then(|ctx| ctx.head_commit);
+        let head = git_context::detect_context(db.path()).and_then(|ctx| ctx.head_commit);
         let head_ref = head.as_deref();
 
         let bookmarks = match db.list_bookmarks(&BookmarkFilter::default()) {

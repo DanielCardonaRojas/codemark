@@ -290,10 +290,10 @@ where
                     .iter()
                     .map(|bm| {
                         let mut val = serde_json::to_value(bm).unwrap_or_default();
-                        if let Some(obj) = val.as_object_mut() {
-                            if let Some(status) = statuses.get(&bm.id) {
-                                obj.insert("ui_status".to_string(), serde_json::json!(status));
-                            }
+                        if let Some(obj) = val.as_object_mut()
+                            && let Some(status) = statuses.get(&bm.id)
+                        {
+                            obj.insert("ui_status".to_string(), serde_json::json!(status));
                         }
                         val
                     })
@@ -389,10 +389,8 @@ where
         let line =
             if let Some(ref fn_line) = get_line_fn { fn_line(short).unwrap_or(0) } else { 0 };
         let health = bm.health.to_string();
-        let ui_status = ui_statuses
-            .and_then(|m| m.get(&bm.id))
-            .map(|s| s.as_str())
-            .unwrap_or(&health);
+        let ui_status =
+            ui_statuses.and_then(|m| m.get(&bm.id)).map(|s| s.as_str()).unwrap_or(&health);
 
         let ctx = LineFormatContext {
             id: short,
@@ -446,10 +444,8 @@ where
         let line =
             if let Some(ref fn_line) = get_line_fn { fn_line(short).unwrap_or(0) } else { 0 };
         let health = bm.health.to_string();
-        let ui_status = ui_statuses
-            .and_then(|m| m.get(&bm.id))
-            .map(|s| s.as_str())
-            .unwrap_or(&health);
+        let ui_status =
+            ui_statuses.and_then(|m| m.get(&bm.id)).map(|s| s.as_str()).unwrap_or(&health);
 
         let ctx = LineFormatContext {
             id: short,
@@ -492,10 +488,10 @@ where
                     let mut val = serde_json::to_value(ab.bookmark).unwrap_or_default();
                     if let Some(obj) = val.as_object_mut() {
                         obj.insert("source".to_string(), serde_json::json!(ab.source));
-                        if let Some(statuses) = ui_statuses {
-                            if let Some(status) = statuses.get(&ab.bookmark.id) {
-                                obj.insert("ui_status".to_string(), serde_json::json!(status));
-                            }
+                        if let Some(statuses) = ui_statuses
+                            && let Some(status) = statuses.get(&ab.bookmark.id)
+                        {
+                            obj.insert("ui_status".to_string(), serde_json::json!(status));
                         }
                     }
                     val

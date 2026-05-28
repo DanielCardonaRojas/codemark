@@ -969,7 +969,9 @@ impl BrowserLayout {
                     .iter()
                     .map(|bm| {
                         let health = codemark_core::engine::projection::compute_bookmark_ui_status(
-                            bm, &self.db, current_head.as_deref(),
+                            bm,
+                            &self.db,
+                            current_head.as_deref(),
                         )
                         .map(HealthStatus::from)
                         .unwrap_or(HealthStatus::Unknown);

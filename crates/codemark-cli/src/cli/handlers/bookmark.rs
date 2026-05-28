@@ -822,7 +822,8 @@ pub async fn handle_resolve(cli: &Cli, mode: &OutputMode, args: &ResolveArgs) ->
             .as_ref()
             .map(|ctx| ctx.repo_root.clone())
             .unwrap_or_else(|| repo_base.to_path_buf());
-        let is_anchored = git_context::is_file_clean(&repo_root, &result.file_path).unwrap_or(false);
+        let is_anchored =
+            git_context::is_file_clean(&repo_root, &result.file_path).unwrap_or(false);
 
         // Record resolution
         let res = Resolution {
@@ -880,16 +881,19 @@ pub async fn handle_show(cli: &Cli, mode: &OutputMode, args: &ShowArgs) -> Resul
 
     // Compute UI status at the presentation boundary
     let ui_status = codemark_core::engine::projection::compute_bookmark_ui_status(
-        &bm, &db, args.current_head.as_deref(),
-    ).ok();
+        &bm,
+        db,
+        args.current_head.as_deref(),
+    )
+    .ok();
 
     match mode {
         OutputMode::Json => {
             let mut json = serde_json::to_value(&bm).unwrap_or_default();
-            if let Some(obj) = json.as_object_mut() {
-                if let Some(ref status) = ui_status {
-                    obj.insert("ui_status".to_string(), serde_json::json!(status.to_string()));
-                }
+            if let Some(obj) = json.as_object_mut()
+                && let Some(ref status) = ui_status
+            {
+                obj.insert("ui_status".to_string(), serde_json::json!(status.to_string()));
             }
             write_json_success(&serde_json::json!({
                 "bookmark": json,

@@ -68,7 +68,13 @@ pub async fn handle_search(cli: &Cli, mode: &OutputMode, args: &SearchArgs) -> R
                 None
             };
 
-            write_bookmarks_with_line(mode, &bookmarks, args.line_format.as_deref(), get_line_fn, None)?;
+            write_bookmarks_with_line(
+                mode,
+                &bookmarks,
+                args.line_format.as_deref(),
+                get_line_fn,
+                None,
+            )?;
         } else {
             output::write_bookmarks(mode, &bookmarks, args.line_format.as_deref(), None)?;
         }

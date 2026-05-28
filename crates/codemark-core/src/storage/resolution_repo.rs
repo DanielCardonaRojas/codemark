@@ -285,7 +285,8 @@ mod tests {
         let db = Database::open_in_memory().unwrap();
         db.insert_bookmark(&test_bookmark("bm-0001")).unwrap();
 
-        let res = Resolution { is_anchored: true,
+        let res = Resolution {
+            is_anchored: true,
             id: "res-0001".to_string(),
             bookmark_id: "bm-0001".to_string(),
             resolved_at: "2026-04-01T01:00:00Z".to_string(),
@@ -316,7 +317,8 @@ mod tests {
         let db = Database::open_in_memory().unwrap();
         db.insert_bookmark(&test_bookmark("bm-0001")).unwrap();
 
-        let res = Resolution { is_anchored: true,
+        let res = Resolution {
+            is_anchored: true,
             id: "res-0001".to_string(),
             bookmark_id: "bm-0001".to_string(),
             resolved_at: "2026-04-01T01:00:00Z".to_string(),
@@ -340,7 +342,8 @@ mod tests {
         assert_eq!(results[0].snapshot.as_deref(), Some("line 1\nline 2"));
 
         // Test update in insert_resolution_if_changed
-        let res_update = Resolution { is_anchored: true,
+        let res_update = Resolution {
+            is_anchored: true,
             id: "res-0002".to_string(),
             bookmark_id: "bm-0001".to_string(),
             resolved_at: "2026-04-01T02:00:00Z".to_string(),
@@ -371,7 +374,8 @@ mod tests {
         let db = Database::open_in_memory().unwrap();
         db.insert_bookmark(&test_bookmark("bm-0001")).unwrap();
 
-        let res = Resolution { is_anchored: true,
+        let res = Resolution {
+            is_anchored: true,
             id: "res-0001".to_string(),
             bookmark_id: "bm-0001".to_string(),
             resolved_at: "2026-04-01T01:00:00Z".to_string(),
@@ -391,7 +395,8 @@ mod tests {
         assert!(inserted);
 
         // Same byte_range, line_range, method but different commit — should UPDATE existing
-        let res2 = Resolution { is_anchored: true,
+        let res2 = Resolution {
+            is_anchored: true,
             id: "res-0002".to_string(),
             bookmark_id: "bm-0001".to_string(),
             resolved_at: "2026-04-01T02:00:00Z".to_string(),
@@ -418,7 +423,8 @@ mod tests {
         assert_eq!(all[0].resolved_at, "2026-04-01T02:00:00Z"); // Updated timestamp
 
         // Different byte_range — should be recorded
-        let res3 = Resolution { is_anchored: true,
+        let res3 = Resolution {
+            is_anchored: true,
             id: "res-0003".to_string(),
             bookmark_id: "bm-0001".to_string(),
             resolved_at: "2026-04-01T03:00:00Z".to_string(),
@@ -438,7 +444,8 @@ mod tests {
         assert!(inserted);
 
         // Different method — should be recorded
-        let res4 = Resolution { is_anchored: true,
+        let res4 = Resolution {
+            is_anchored: true,
             id: "res-0004".to_string(),
             bookmark_id: "bm-0001".to_string(),
             resolved_at: "2026-04-01T04:00:00Z".to_string(),
@@ -474,7 +481,8 @@ mod tests {
             let byte_end = 200 + (i * 10);
             let line_start = 10 + i;
             let line_end = 20 + i;
-            let res = Resolution { is_anchored: true,
+            let res = Resolution {
+                is_anchored: true,
                 id: format!("res-{i:04}"),
                 bookmark_id: "bm-0001".to_string(),
                 resolved_at: format!("2026-04-01T{i:02}:00:00Z"),
@@ -510,7 +518,8 @@ mod tests {
         let db = Database::open_in_memory().unwrap();
         db.insert_bookmark(&test_bookmark("bm-0001")).unwrap();
 
-        let res = Resolution { is_anchored: true,
+        let res = Resolution {
+            is_anchored: true,
             id: "res-0001".to_string(),
             bookmark_id: "bm-0001".to_string(),
             resolved_at: "2026-04-01T01:00:00Z".to_string(),
@@ -580,7 +589,8 @@ mod tests {
         assert_eq!(initial_resolutions[0].id, initial_res_id);
 
         // Simulate a "heal" operation - create a new resolution
-        let heal_resolution = Resolution { is_anchored: true,
+        let heal_resolution = Resolution {
+            is_anchored: true,
             id: "res-heal-1".to_string(),
             bookmark_id: bm_id.to_string(),
             resolved_at: "2024-01-02T00:00:00Z".to_string(),

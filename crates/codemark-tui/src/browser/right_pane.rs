@@ -297,7 +297,8 @@ impl RightPane {
 
         // Create context and render using the cached template content
         let repo_path = db.path().parent().unwrap_or_else(|| db.path());
-        let context = templates::BookmarkTemplateContext::from_bookmark(bm, resolutions, repo_path, None);
+        let context =
+            templates::BookmarkTemplateContext::from_bookmark(bm, resolutions, repo_path, None);
         let handlebars = templates::create_handlebars_engine();
 
         match handlebars.render_template(template_content, &context) {

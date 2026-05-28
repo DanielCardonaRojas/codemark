@@ -36,7 +36,8 @@ const MIGRATION_020: &str =
     include_str!("../../../../migrations/V20__rename_preview_lines_to_snapshot.sql");
 const MIGRATION_021: &str = include_str!("../../../../migrations/V21__add_repo_id.sql");
 const MIGRATION_022: &str = include_str!("../../../../migrations/V22__add_unique_constraint.sql");
-const MIGRATION_023: &str = include_str!("../../../../migrations/V23__add_is_anchored_to_resolutions.sql");
+const MIGRATION_023: &str =
+    include_str!("../../../../migrations/V23__add_is_anchored_to_resolutions.sql");
 
 /// SQLite database wrapper with automatic migrations.
 pub struct Database {

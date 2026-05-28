@@ -527,7 +527,8 @@ mod tests {
         assert_eq!(health, Some(CollectionHealth::Stale));
 
         // Archive the stale one, health should return to drifted
-        let archive_res = crate::engine::bookmark::Resolution { is_anchored: true,
+        let archive_res = crate::engine::bookmark::Resolution {
+            is_anchored: true,
             id: "archive-res".to_string(),
             bookmark_id: "bm3".to_string(),
             resolved_at: chrono::Utc::now().to_rfc3339(),

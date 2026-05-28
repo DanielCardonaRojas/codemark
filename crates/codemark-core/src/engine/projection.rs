@@ -93,11 +93,8 @@ pub fn project_resolution_status(
     repo_path: &Path,
 ) -> Result<UIStatus> {
     // Ensure we have a directory path for git operations
-    let repo_path = if repo_path.is_file() {
-        repo_path.parent().unwrap_or(repo_path)
-    } else {
-        repo_path
-    };
+    let repo_path =
+        if repo_path.is_file() { repo_path.parent().unwrap_or(repo_path) } else { repo_path };
 
     // Determine the effective HEAD
     let head = if let Some(head) = current_head {
@@ -140,35 +137,38 @@ pub fn project_resolution_status(
     // Project to UI status
     match (is_current, ancestry, is_anchored, resolution.health) {
         // --- Current Pointer at HEAD (100% confidence) ---
-
         (true, Ancestry::AtHead, true, BookmarkHealth::Active) => Ok(UIStatus::Healthy),
         (true, Ancestry::AtHead, false, BookmarkHealth::Active) => Ok(UIStatus::UnanchoredHealthy),
 
         (true, Ancestry::AtHead, true, BookmarkHealth::Drifted) => Ok(UIStatus::Drifted),
-        (true, Ancestry::AtHead, false, BookmarkHealth::Drifted) => Ok(UIStatus::UnanchoredDrifting),
+        (true, Ancestry::AtHead, false, BookmarkHealth::Drifted) => {
+            Ok(UIStatus::UnanchoredDrifting)
+        }
 
         // --- Current Pointer at Ancestor (was correct, HEAD has moved on) ---
         // The anchored/unanchored distinction is irrelevant here: the resolution is
         // at a past commit, so what matters is that HEAD has moved on. Both anchored
         // and unanchored resolutions at an ancestor are historical facts.
-
         (true, Ancestry::Ancestor, _, BookmarkHealth::Active) => Ok(UIStatus::Verified),
         (true, Ancestry::Ancestor, _, BookmarkHealth::Drifted) => Ok(UIStatus::Outdated),
 
         // --- Stale / Archived are always broken ---
-
         (true, _, true, BookmarkHealth::Stale | BookmarkHealth::Archived) => Ok(UIStatus::Broken),
-        (true, _, false, BookmarkHealth::Stale | BookmarkHealth::Archived) => Ok(UIStatus::BrokenUnanchored),
+        (true, _, false, BookmarkHealth::Stale | BookmarkHealth::Archived) => {
+            Ok(UIStatus::BrokenUnanchored)
+        }
 
         // --- Current Pointer but Unrelated (likely from another branch) ---
-
         (true, Ancestry::Unrelated, _, BookmarkHealth::Active) => Ok(UIStatus::Verified),
         (true, Ancestry::Unrelated, _, BookmarkHealth::Drifted) => Ok(UIStatus::Outdated),
 
         // --- Non-Current (Historical) ---
-
-        (false, Ancestry::AtHead | Ancestry::Ancestor, _, BookmarkHealth::Active) => Ok(UIStatus::Verified),
-        (false, Ancestry::AtHead | Ancestry::Ancestor, _, BookmarkHealth::Drifted) => Ok(UIStatus::Outdated),
+        (false, Ancestry::AtHead | Ancestry::Ancestor, _, BookmarkHealth::Active) => {
+            Ok(UIStatus::Verified)
+        }
+        (false, Ancestry::AtHead | Ancestry::Ancestor, _, BookmarkHealth::Drifted) => {
+            Ok(UIStatus::Outdated)
+        }
 
         // --- Descendant (The future) ---
         (_, Ancestry::Descendant, _, _) => Ok(UIStatus::Future),
@@ -216,13 +216,12 @@ impl From<BookmarkHealth> for UIStatus {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::engine::bookmark::{BookmarkHealth, ResolutionMethod};
     use std::fs;
     use std::path::PathBuf;
-    use crate::engine::bookmark::{BookmarkHealth, ResolutionMethod};
 
     struct TestRepo {
         path: PathBuf,
@@ -235,18 +234,15 @@ mod tests {
         fs::create_dir_all(&tmp).unwrap();
 
         let run = |args: &[&str]| {
-            let status = std::process::Command::new("git")
-                .args(args)
-                .current_dir(&tmp)
-                .status()
-                .unwrap();
+            let status =
+                std::process::Command::new("git").args(args).current_dir(&tmp).status().unwrap();
             assert!(status.success());
         };
 
         run(&["init"]);
         run(&["config", "user.email", "test@example.com"]);
         run(&["config", "user.name", "test"]);
-        
+
         fs::write(tmp.join("file.rs"), "fn main() {}").unwrap();
         run(&["add", "file.rs"]);
         run(&["commit", "-m", "initial"]);
@@ -272,10 +268,14 @@ mod tests {
         TestRepo { path: tmp, commit_a, commit_b }
     }
 
-    fn create_test_resolution(commit: Option<String>, health: BookmarkHealth, anchored: bool) -> (Resolution, Bookmark) {
+    fn create_test_resolution(
+        commit: Option<String>,
+        health: BookmarkHealth,
+        anchored: bool,
+    ) -> (Resolution, Bookmark) {
         let bookmark_id = uuid::Uuid::new_v4().to_string();
         let resolution_id = uuid::Uuid::new_v4().to_string();
-        
+
         let bookmark = Bookmark {
             id: bookmark_id.clone(),
             query: "test".to_string(),
@@ -320,21 +320,27 @@ mod tests {
     #[test]
     fn test_at_head_returns_healthy() {
         let repo = create_test_repo();
-        let (resolution, bookmark) = create_test_resolution(Some(repo.commit_a.clone()), BookmarkHealth::Active, true);
-        
-        let result = project_resolution_status(&resolution, &bookmark, Some(&repo.commit_a), &repo.path).unwrap();
+        let (resolution, bookmark) =
+            create_test_resolution(Some(repo.commit_a.clone()), BookmarkHealth::Active, true);
+
+        let result =
+            project_resolution_status(&resolution, &bookmark, Some(&repo.commit_a), &repo.path)
+                .unwrap();
         assert_eq!(result, UIStatus::Healthy);
-        
+
         fs::remove_dir_all(&repo.path).unwrap();
     }
 
     #[test]
     fn test_ancestor_returns_verified() {
         let repo = create_test_repo();
-        let (resolution, bookmark) = create_test_resolution(Some(repo.commit_a), BookmarkHealth::Active, true);
+        let (resolution, bookmark) =
+            create_test_resolution(Some(repo.commit_a), BookmarkHealth::Active, true);
 
         // Ancestor means HEAD has moved on — was correct at that commit but no guarantee now
-        let result = project_resolution_status(&resolution, &bookmark, Some(&repo.commit_b), &repo.path).unwrap();
+        let result =
+            project_resolution_status(&resolution, &bookmark, Some(&repo.commit_b), &repo.path)
+                .unwrap();
         assert_eq!(result, UIStatus::Verified);
 
         fs::remove_dir_all(&repo.path).unwrap();
@@ -343,55 +349,73 @@ mod tests {
     #[test]
     fn test_unrelated_commit_returns_verified() {
         let repo = create_test_repo();
-        let (resolution, bookmark) = create_test_resolution(Some("0123456789abcdef0123456789abcdef01234567".to_string()), BookmarkHealth::Active, true);
-        
-        let result = project_resolution_status(&resolution, &bookmark, Some(&repo.commit_b), &repo.path).unwrap();
+        let (resolution, bookmark) = create_test_resolution(
+            Some("0123456789abcdef0123456789abcdef01234567".to_string()),
+            BookmarkHealth::Active,
+            true,
+        );
+
+        let result =
+            project_resolution_status(&resolution, &bookmark, Some(&repo.commit_b), &repo.path)
+                .unwrap();
         assert_eq!(result, UIStatus::Verified);
-        
+
         fs::remove_dir_all(&repo.path).unwrap();
     }
 
     #[test]
     fn test_current_drifted_at_head_returns_drifted() {
         let repo = create_test_repo();
-        let (resolution, bookmark) = create_test_resolution(Some(repo.commit_a.clone()), BookmarkHealth::Drifted, true);
-        
-        let result = project_resolution_status(&resolution, &bookmark, Some(&repo.commit_a), &repo.path).unwrap();
+        let (resolution, bookmark) =
+            create_test_resolution(Some(repo.commit_a.clone()), BookmarkHealth::Drifted, true);
+
+        let result =
+            project_resolution_status(&resolution, &bookmark, Some(&repo.commit_a), &repo.path)
+                .unwrap();
         assert_eq!(result, UIStatus::Drifted);
-        
+
         fs::remove_dir_all(&repo.path).unwrap();
     }
 
     #[test]
     fn test_current_stale_at_head_returns_broken() {
         let repo = create_test_repo();
-        let (resolution, bookmark) = create_test_resolution(Some(repo.commit_a.clone()), BookmarkHealth::Stale, true);
-        
-        let result = project_resolution_status(&resolution, &bookmark, Some(&repo.commit_a), &repo.path).unwrap();
+        let (resolution, bookmark) =
+            create_test_resolution(Some(repo.commit_a.clone()), BookmarkHealth::Stale, true);
+
+        let result =
+            project_resolution_status(&resolution, &bookmark, Some(&repo.commit_a), &repo.path)
+                .unwrap();
         assert_eq!(result, UIStatus::Broken);
-        
+
         fs::remove_dir_all(&repo.path).unwrap();
     }
 
     #[test]
     fn test_future_commit_returns_future() {
         let repo = create_test_repo();
-        let (resolution, bookmark) = create_test_resolution(Some(repo.commit_b), BookmarkHealth::Active, true);
-        
-        let result = project_resolution_status(&resolution, &bookmark, Some(&repo.commit_a), &repo.path).unwrap();
+        let (resolution, bookmark) =
+            create_test_resolution(Some(repo.commit_b), BookmarkHealth::Active, true);
+
+        let result =
+            project_resolution_status(&resolution, &bookmark, Some(&repo.commit_a), &repo.path)
+                .unwrap();
         assert_eq!(result, UIStatus::Future);
-        
+
         fs::remove_dir_all(&repo.path).unwrap();
     }
 
     #[test]
     fn test_unanchored_returns_unanchored() {
         let repo = create_test_repo();
-        let (resolution, bookmark) = create_test_resolution(Some(repo.commit_a.clone()), BookmarkHealth::Active, false);
-        
-        let result = project_resolution_status(&resolution, &bookmark, Some(&repo.commit_a), &repo.path).unwrap();
+        let (resolution, bookmark) =
+            create_test_resolution(Some(repo.commit_a.clone()), BookmarkHealth::Active, false);
+
+        let result =
+            project_resolution_status(&resolution, &bookmark, Some(&repo.commit_a), &repo.path)
+                .unwrap();
         assert_eq!(result, UIStatus::UnanchoredHealthy);
-        
+
         fs::remove_dir_all(&repo.path).unwrap();
     }
 
@@ -400,9 +424,12 @@ mod tests {
         let repo = create_test_repo();
         // Unanchored resolution at an ancestor commit — the anchoring distinction
         // is irrelevant since HEAD has moved on; should be treated as historical.
-        let (resolution, bookmark) = create_test_resolution(Some(repo.commit_a.clone()), BookmarkHealth::Active, false);
+        let (resolution, bookmark) =
+            create_test_resolution(Some(repo.commit_a.clone()), BookmarkHealth::Active, false);
 
-        let result = project_resolution_status(&resolution, &bookmark, Some(&repo.commit_b), &repo.path).unwrap();
+        let result =
+            project_resolution_status(&resolution, &bookmark, Some(&repo.commit_b), &repo.path)
+                .unwrap();
         assert_eq!(result, UIStatus::Verified);
 
         fs::remove_dir_all(&repo.path).unwrap();
@@ -411,9 +438,12 @@ mod tests {
     #[test]
     fn test_unanchored_ancestor_drifted_returns_outdated() {
         let repo = create_test_repo();
-        let (resolution, bookmark) = create_test_resolution(Some(repo.commit_a.clone()), BookmarkHealth::Drifted, false);
+        let (resolution, bookmark) =
+            create_test_resolution(Some(repo.commit_a.clone()), BookmarkHealth::Drifted, false);
 
-        let result = project_resolution_status(&resolution, &bookmark, Some(&repo.commit_b), &repo.path).unwrap();
+        let result =
+            project_resolution_status(&resolution, &bookmark, Some(&repo.commit_b), &repo.path)
+                .unwrap();
         assert_eq!(result, UIStatus::Outdated);
 
         fs::remove_dir_all(&repo.path).unwrap();
@@ -422,11 +452,14 @@ mod tests {
     #[test]
     fn test_non_current_active_returns_verified() {
         let repo = create_test_repo();
-        let (resolution, mut bookmark) = create_test_resolution(Some(repo.commit_a.clone()), BookmarkHealth::Active, true);
+        let (resolution, mut bookmark) =
+            create_test_resolution(Some(repo.commit_a.clone()), BookmarkHealth::Active, true);
         // Make this resolution non-current by pointing to a different ID
         bookmark.current_resolution_id = Some("other-resolution-id".to_string());
 
-        let result = project_resolution_status(&resolution, &bookmark, Some(&repo.commit_a), &repo.path).unwrap();
+        let result =
+            project_resolution_status(&resolution, &bookmark, Some(&repo.commit_a), &repo.path)
+                .unwrap();
         assert_eq!(result, UIStatus::Verified);
 
         fs::remove_dir_all(&repo.path).unwrap();
@@ -435,10 +468,13 @@ mod tests {
     #[test]
     fn test_non_current_drifted_returns_outdated() {
         let repo = create_test_repo();
-        let (resolution, mut bookmark) = create_test_resolution(Some(repo.commit_a.clone()), BookmarkHealth::Drifted, true);
+        let (resolution, mut bookmark) =
+            create_test_resolution(Some(repo.commit_a.clone()), BookmarkHealth::Drifted, true);
         bookmark.current_resolution_id = Some("other-resolution-id".to_string());
 
-        let result = project_resolution_status(&resolution, &bookmark, Some(&repo.commit_a), &repo.path).unwrap();
+        let result =
+            project_resolution_status(&resolution, &bookmark, Some(&repo.commit_a), &repo.path)
+                .unwrap();
         assert_eq!(result, UIStatus::Outdated);
 
         fs::remove_dir_all(&repo.path).unwrap();
@@ -449,7 +485,8 @@ mod tests {
         let tmp = std::env::temp_dir().join(format!("not-a-git-repo-{}", uuid::Uuid::new_v4()));
         fs::create_dir_all(&tmp).unwrap();
 
-        let (resolution, bookmark) = create_test_resolution(Some("abc".to_string()), BookmarkHealth::Active, true);
+        let (resolution, bookmark) =
+            create_test_resolution(Some("abc".to_string()), BookmarkHealth::Active, true);
         let result = project_resolution_status(&resolution, &bookmark, None, &tmp).unwrap();
         assert_eq!(result, UIStatus::Broken);
 
