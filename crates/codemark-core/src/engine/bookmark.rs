@@ -275,6 +275,7 @@ pub struct Resolution {
     pub headline: Option<String>,
     pub snapshot: Option<String>,
     pub breadcrumbs: Option<String>,
+    #[serde(default)]
     pub is_dirty: bool,
 }
 
