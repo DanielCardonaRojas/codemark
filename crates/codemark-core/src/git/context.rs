@@ -345,6 +345,22 @@ pub fn is_ancestor(
         .map_err(|e| Error::Git(format!("graph check failed: {e}")))
 }
 
+/// Check if a commit exists in the repository.
+///
+/// Returns Ok(true) if the commit exists and is accessible.
+/// Returns Ok(false) if the commit does not exist.
+/// Returns Err if the repo cannot be accessed.
+pub fn commit_exists(repo_path: &Path, commit_hash: &str) -> Result<bool> {
+    let repo = Repository::discover(repo_path)
+        .map_err(|e| Error::Git(format!("cannot open repo: {e}")))?;
+
+    match repo.revparse_single(commit_hash) {
+        Ok(_) => Ok(true),
+        // All revparse errors (except repo-level errors above) indicate the commit doesn't exist
+        Err(_) => Ok(false),
+    }
+}
+
 /// Find the nearest ancestor commit from a list of candidate commit hashes.
 ///
 /// Given the current HEAD and a list of candidate commits, returns the commit hash
@@ -1135,5 +1151,45 @@ mod tests {
         // repo_root should be set
         assert!(metadata.repo_root.exists());
         // origin_url might or might not be set depending on git config
+    }
+
+    #[test]
+    fn test_commit_exists_with_valid_commit() {
+        let repo_path = create_git_repo();
+
+        // Get the HEAD commit
+        let repo = Repository::open(&repo_path).unwrap();
+        let head = repo.head().unwrap().peel_to_commit().unwrap();
+        let commit_hash = head.id().to_string();
+
+        // Should exist
+        let result = commit_exists(&repo_path, &commit_hash);
+        assert!(result.is_ok());
+        assert!(result.unwrap(), "valid commit should exist");
+
+        let _ = fs::remove_dir_all(&repo_path);
+    }
+
+    #[test]
+    fn test_commit_exists_with_invalid_commit() {
+        let repo_path = create_git_repo();
+
+        // Should not exist
+        let result = commit_exists(&repo_path, "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef");
+        assert!(result.is_ok());
+        assert!(!result.unwrap(), "invalid commit should not exist");
+
+        let _ = fs::remove_dir_all(&repo_path);
+    }
+
+    #[test]
+    fn test_commit_exists_non_git_dir() {
+        let tmp = std::env::temp_dir().join(format!("codemark_test_no_git_{}", Uuid::new_v4()));
+        fs::create_dir_all(&tmp).unwrap();
+
+        let result = commit_exists(&tmp, "anyhash");
+        assert!(result.is_err(), "non-git directory should return Err");
+
+        let _ = fs::remove_dir_all(&tmp);
     }
 }
