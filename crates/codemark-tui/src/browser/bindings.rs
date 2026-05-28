@@ -1,3 +1,4 @@
+use crate::browser::right_pane::INFO_TAB_INDEX;
 use crate::browser::{BrowserLayout, FocusArea, Panel3Tab};
 use crate::ui::KeyBinding;
 
@@ -72,7 +73,10 @@ impl BrowserLayout {
                 bindings.push(("↑", "Focus steps"));
                 bindings.push(("↓", "Focus details"));
                 bindings.push(("+/-", "Toggle fullscreen"));
-                bindings.push(("Ctrl+O", "Copy markdown"));
+                // Only show Ctrl+O binding when Info tab is selected
+                if self.right_pane.steps.tabs.selected_index() == INFO_TAB_INDEX {
+                    bindings.push(("Ctrl+O", "Copy markdown"));
+                }
             }
             FocusArea::Filter => {}
         }
@@ -140,8 +144,13 @@ impl BrowserLayout {
                 bindings.insert(1, KeyBinding::new("Enter", "Select Step"));
                 bindings.insert(2, KeyBinding::new("o", "Open File"));
                 bindings.insert(3, KeyBinding::new("H", "Heal"));
-                bindings.insert(4, KeyBinding::new("Ctrl+O", "Copy markdown"));
-                bindings.insert(5, KeyBinding::new("Esc", "Back to Tours"));
+                let insert_pos = if self.right_pane.steps.tabs.selected_index() == INFO_TAB_INDEX {
+                    bindings.insert(4, KeyBinding::new("Ctrl+O", "Copy markdown"));
+                    5
+                } else {
+                    4
+                };
+                bindings.insert(insert_pos, KeyBinding::new("Esc", "Back to Tours"));
             }
             FocusArea::Filter => {}
         }

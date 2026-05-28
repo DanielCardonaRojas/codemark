@@ -13,7 +13,7 @@ use ratatui::{
 
 /// Tab index for the Info tab in the steps panel.
 /// The steps panel has tabs in order: Steps (0), Info (1), Query (2).
-const INFO_TAB_INDEX: usize = 1;
+pub const INFO_TAB_INDEX: usize = 1;
 
 /// Focus areas within the right pane.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
