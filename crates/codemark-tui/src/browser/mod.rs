@@ -1320,7 +1320,9 @@ impl BrowserLayout {
                             .modifiers
                             .contains(ratatui::crossterm::event::KeyModifiers::CONTROL) =>
                 {
-                    if let Some(markdown) = self.right_pane.active_markdown_content().map(|m| m.to_owned()) {
+                    if let Some(markdown) =
+                        self.right_pane.active_markdown_content().map(|m| m.to_owned())
+                    {
                         match self.copy_to_clipboard(&markdown) {
                             Ok(()) => {
                                 self.pending_notification = Some(HealNotification {

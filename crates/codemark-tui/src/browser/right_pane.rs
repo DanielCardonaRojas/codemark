@@ -11,6 +11,10 @@ use ratatui::{
     widgets::{Block, BorderType, Widget},
 };
 
+/// Tab index for the Info tab in the steps panel.
+/// The steps panel has tabs in order: Steps (0), Info (1), Query (2).
+const INFO_TAB_INDEX: usize = 1;
+
 /// Focus areas within the right pane.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RightPaneFocus {
@@ -510,8 +514,8 @@ impl RightPane {
         let content = match self.focused {
             RightPaneFocus::Details => Some(self.details.markdown()),
             RightPaneFocus::Steps => {
-                // Only return markdown if the Info tab (index 1) is selected
-                if self.steps.tabs.selected_index() == 1 {
+                // Only return markdown if the Info tab is selected
+                if self.steps.tabs.selected_index() == INFO_TAB_INDEX {
                     self.steps.get_markdown().map(|m| m.markdown())
                 } else {
                     None
