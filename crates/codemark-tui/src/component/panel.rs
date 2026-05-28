@@ -105,17 +105,18 @@ impl HealthStatus {
             HealthStatus::Drifted => Color::Yellow,
             HealthStatus::UnanchoredDrifting => Color::Rgb(255, 165, 0), // Orange
             HealthStatus::Broken | HealthStatus::BrokenUnanchored => Color::Red,
-            HealthStatus::Verified | HealthStatus::Outdated | HealthStatus::Unknown => {
-                Color::DarkGray
-            }
+            HealthStatus::Verified => Color::Green,
+            HealthStatus::Outdated | HealthStatus::Unknown => Color::DarkGray,
             HealthStatus::Future => Color::Blue,
         }
     }
 
     /// Get the symbol for this health status.
     fn symbol(&self) -> &'static str {
-        // Use a plain dot — color is applied via `self.color()`
-        "●"
+        match self {
+            HealthStatus::Verified => "○", // Unfilled circle for verified/historical
+            _ => "●", // Filled dot for all other statuses
+        }
     }
 }
 
@@ -966,10 +967,21 @@ mod tests {
         assert_eq!(HealthStatus::UnanchoredDrifting.color(), Color::Rgb(255, 165, 0));
         assert_eq!(HealthStatus::Broken.color(), Color::Red);
         assert_eq!(HealthStatus::BrokenUnanchored.color(), Color::Red);
-        assert_eq!(HealthStatus::Verified.color(), Color::DarkGray);
+        assert_eq!(HealthStatus::Verified.color(), Color::Green);
         assert_eq!(HealthStatus::Outdated.color(), Color::DarkGray);
         assert_eq!(HealthStatus::Unknown.color(), Color::DarkGray);
         assert_eq!(HealthStatus::Future.color(), Color::Blue);
+    }
+
+    #[test]
+    fn test_health_status_symbols() {
+        // Verified status uses an unfilled circle
+        assert_eq!(HealthStatus::Verified.symbol(), "○");
+        // All other statuses use a filled dot
+        assert_eq!(HealthStatus::Healthy.symbol(), "●");
+        assert_eq!(HealthStatus::UnanchoredHealthy.symbol(), "●");
+        assert_eq!(HealthStatus::Drifted.symbol(), "●");
+        assert_eq!(HealthStatus::Broken.symbol(), "●");
     }
 
     #[test]
