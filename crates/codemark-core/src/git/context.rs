@@ -81,14 +81,14 @@ pub fn detect_context(from_path: &Path) -> Option<GitContext> {
         return None;
     }
 
-    // Resolve the git common dir relative to the working directory
-    // --git-common-dir may return a relative path like ".git" or an absolute path
+    // Resolve the git common dir relative to the working directory.
+    // --git-common-dir may return a relative path like ".git" or an absolute path.
+    // For relative paths, resolve from the provided from_path (not CWD) to ensure
+    // correctness regardless of where the process is running.
     let git_path = if PathBuf::from(git_common_dir).is_absolute() {
         PathBuf::from(git_common_dir)
     } else {
-        // Resolve relative path from the current directory
-        let cwd = std::env::current_dir().ok()?;
-        cwd.join(git_common_dir)
+        from_path.join(git_common_dir)
     };
 
     // The parent of the git common dir is the repo root
