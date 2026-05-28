@@ -88,7 +88,6 @@ async fn test_cli_publish_pull_roundtrip() {
         repo_id: None,
         tags: vec![],
         annotations: vec![],
-        ui_status: None,
         comments: vec![],
     };
     db.insert_bookmark(&bookmark).unwrap();

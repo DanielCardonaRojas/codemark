@@ -7,7 +7,7 @@
 //! - [`maintenance`]: heal, status, diff, gc, export, import
 //! - [`repo`]: repository registry management
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::io::Write;
 
 use crate::cli::output::{OutputMode, write_json_success, write_success};
@@ -984,30 +984,26 @@ pub fn parse_duration_days(duration: &str) -> Result<i64> {
     Err(Error::Input("duration must end with d, w, or m (e.g., 30d, 2w, 6m)".into()))
 }
 
-/// Re-project UI status for bookmarks when the caller supplies a `--current-head` override.
+/// Compute projected UI statuses for a list of bookmarks at the presentation boundary.
 ///
-/// When `current_head` is `None`, bookmarks already have `ui_status` populated by the
-/// database layer (`compute_ui_status`), so this function is a no-op to avoid redundant
-/// git subprocess spawns and DB queries.
-///
-/// When `current_head` is `Some(...)`, the user wants to project against a different HEAD,
-/// so we re-project every bookmark.
-fn project_ui_status_for_bookmarks(
+/// Detects HEAD once and projects each bookmark's status. When `current_head` is provided,
+/// uses that as the HEAD override (for time-travel queries). Returns a map of
+/// bookmark ID → ui_status string.
+fn compute_ui_statuses(
     db: &Database,
-    bookmarks: Vec<Bookmark>,
+    bookmarks: &[Bookmark],
     current_head: Option<&str>,
-) -> Result<Vec<Bookmark>> {
-    // The repo layer already projects ui_status using a cached HEAD.
-    // Only re-project when the user explicitly overrides HEAD.
-    if current_head.is_none() {
-        return Ok(bookmarks);
-    }
-    let mut result = Vec::with_capacity(bookmarks.len());
-    for bm in bookmarks {
-        let bm = projection::project_ui_status_for_bookmark(bm, db, current_head)?;
-        result.push(bm);
-    }
-    Ok(result)
+) -> HashMap<String, String> {
+    let head = current_head.map(|h| h.to_string()).or_else(|| {
+        git_context::detect_context(db.path()).and_then(|ctx| ctx.head_commit)
+    });
+    bookmarks
+        .iter()
+        .filter_map(|bm| {
+            let status = projection::compute_bookmark_ui_status(bm, db, head.as_deref()).ok()?;
+            Some((bm.id.clone(), status.to_string()))
+        })
+        .collect()
 }
 
 /// Add a bookmark to a collection, auto-creating the collection if it doesn't exist.
@@ -1361,16 +1357,12 @@ pub async fn handle_list(cli: &Cli, mode: &OutputMode, args: &ListArgs) -> Resul
         let bookmarks = dbs[0].1.list_bookmarks(&filter)?;
         let db = &dbs[0].1;
 
-        // Project UI status for all bookmarks
-        let bookmarks = project_ui_status_for_bookmarks(
-            db,
-            bookmarks,
-            args.current_head.as_deref(),
-        )?;
+        // Compute UI statuses at the presentation boundary
+        let ui_statuses = compute_ui_statuses(db, &bookmarks, args.current_head.as_deref());
 
         if needs_line {
             // Capture both full IDs and file paths
-            let bookmark_data: std::collections::HashMap<String, (String, String)> = bookmarks
+            let bookmark_data: HashMap<String, (String, String)> = bookmarks
                 .iter()
                 .map(|bm| {
                     (
@@ -1387,25 +1379,23 @@ pub async fn handle_list(cli: &Cli, mode: &OutputMode, args: &ListArgs) -> Resul
                     let (full_id, file_path) = bookmark_data.get(short_id)?;
                     get_bookmark_line(db, full_id, file_path)
                 },
+                Some(&ui_statuses),
             )?;
         } else {
-            crate::cli::output::write_bookmarks(mode, &bookmarks, args.line_format.as_deref())?;
+            crate::cli::output::write_bookmarks(mode, &bookmarks, args.line_format.as_deref(), Some(&ui_statuses))?;
         }
     } else {
         // Multi-database case with line number support
         let mut all = Vec::new();
         // Keep track of which database each bookmark belongs to
-        let mut db_map: std::collections::HashMap<String, &Database> =
-            std::collections::HashMap::new();
+        let mut db_map: HashMap<String, &Database> = HashMap::new();
+        let mut all_ui_statuses: HashMap<String, String> = HashMap::new();
         for (label, db) in &dbs {
             db_map.insert(label.clone(), db);
             let bookmarks = db.list_bookmarks(&filter)?;
-            // Project UI status for bookmarks from this DB
-            let bookmarks = project_ui_status_for_bookmarks(
-                db,
-                bookmarks,
-                args.current_head.as_deref(),
-            )?;
+            // Compute UI statuses at the presentation boundary
+            let statuses = compute_ui_statuses(db, &bookmarks, args.current_head.as_deref());
+            all_ui_statuses.extend(statuses);
             for bm in bookmarks {
                 all.push((label.clone(), bm));
             }
@@ -1419,7 +1409,7 @@ pub async fn handle_list(cli: &Cli, mode: &OutputMode, args: &ListArgs) -> Resul
             .collect();
 
         if needs_line {
-            let bookmark_data: std::collections::HashMap<String, (String, String, String)> = all
+            let bookmark_data: HashMap<String, (String, String, String)> = all
                 .iter()
                 .map(|(label, bm)| {
                     (
@@ -1440,6 +1430,7 @@ pub async fn handle_list(cli: &Cli, mode: &OutputMode, args: &ListArgs) -> Resul
                 &annotated,
                 args.line_format.as_deref(),
                 Some(&get_line_fn),
+                Some(&all_ui_statuses),
             )?;
         } else {
             crate::cli::output::write_annotated_bookmarks(
@@ -1447,6 +1438,7 @@ pub async fn handle_list(cli: &Cli, mode: &OutputMode, args: &ListArgs) -> Resul
                 &annotated,
                 args.line_format.as_deref(),
                 None as Option<&fn(&str) -> Option<usize>>,
+                Some(&all_ui_statuses),
             )?;
         }
     }

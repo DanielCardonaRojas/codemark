@@ -79,6 +79,23 @@ pub enum HealthStatus {
     Unknown,
 }
 
+impl From<codemark_core::engine::projection::UIStatus> for HealthStatus {
+    fn from(status: codemark_core::engine::projection::UIStatus) -> Self {
+        use codemark_core::engine::projection::UIStatus;
+        match status {
+            UIStatus::Healthy => HealthStatus::Healthy,
+            UIStatus::UnanchoredHealthy => HealthStatus::UnanchoredHealthy,
+            UIStatus::Drifted => HealthStatus::Drifted,
+            UIStatus::UnanchoredDrifting => HealthStatus::UnanchoredDrifting,
+            UIStatus::Broken => HealthStatus::Broken,
+            UIStatus::BrokenUnanchored => HealthStatus::BrokenUnanchored,
+            UIStatus::Verified => HealthStatus::Verified,
+            UIStatus::Outdated => HealthStatus::Outdated,
+            UIStatus::Future => HealthStatus::Future,
+        }
+    }
+}
+
 impl HealthStatus {
     /// Get the color for this health status.
     fn color(&self) -> Color {

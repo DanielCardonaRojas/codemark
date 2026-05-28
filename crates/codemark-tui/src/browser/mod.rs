@@ -963,22 +963,16 @@ impl BrowserLayout {
         // Handle search results and errors
         match event {
             Event::SearchResults(bookmarks) => {
-                // Search results already have ui_status populated by the repo layer.
+                let current_head = codemark_core::git::context::detect_context(self.db.path())
+                    .and_then(|ctx| ctx.head_commit);
                 let items: Vec<PanelItem> = bookmarks
                     .iter()
                     .map(|bm| {
-                        let health = match bm.ui_status.as_deref() {
-                            Some("healthy") => HealthStatus::Healthy,
-                            Some("unanchored_healthy") => HealthStatus::UnanchoredHealthy,
-                            Some("drifted") => HealthStatus::Drifted,
-                            Some("unanchored_drifting") => HealthStatus::UnanchoredDrifting,
-                            Some("broken") => HealthStatus::Broken,
-                            Some("broken_unanchored") => HealthStatus::BrokenUnanchored,
-                            Some("verified") => HealthStatus::Verified,
-                            Some("outdated") => HealthStatus::Outdated,
-                            Some("future") => HealthStatus::Future,
-                            _ => HealthStatus::Unknown,
-                        };
+                        let health = codemark_core::engine::projection::compute_bookmark_ui_status(
+                            bm, &self.db, current_head.as_deref(),
+                        )
+                        .map(HealthStatus::from)
+                        .unwrap_or(HealthStatus::Unknown);
 
                         // Try to get a summary from the query for better display
                         let summary_info = bm.language.parse::<Language>().ok().and_then(|lang| {

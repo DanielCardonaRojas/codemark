@@ -385,7 +385,6 @@ mod tests {
             created_by: None,
             current_resolution_id: None,
             repo_id: None,
-            ui_status: None,
             tags: Vec::new(),
             annotations: Vec::new(),
             comments: vec![],

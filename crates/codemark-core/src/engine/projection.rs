@@ -177,63 +177,45 @@ pub fn project_resolution_status(
     }
 }
 
-/// Project UI status for a single bookmark.
+/// Compute the projected UI status for a bookmark.
 ///
-/// This function:
-/// 1. Fetches the current resolution (if available)
-/// 2. Projects the UI status based on current HEAD
-/// 3. Adds the `ui_status` field to the bookmark
+/// Pure computation that fetches the current resolution from the database
+/// and projects the status. Returns a typed `UIStatus` without mutating the bookmark.
 ///
 /// # Arguments
 ///
 /// * `bookmark` - The bookmark to project
-/// * `db` - Database reference for fetching resolutions
+/// * `db` - Database reference for fetching the current resolution
 /// * `current_head` - Optional override for HEAD commit (for time-travel queries)
-///
-/// # Returns
-///
-/// The bookmark with `ui_status` populated.
-pub fn project_ui_status_for_bookmark(
-    mut bookmark: Bookmark,
+pub fn compute_bookmark_ui_status(
+    bookmark: &Bookmark,
     db: &Database,
     current_head: Option<&str>,
-) -> Result<Bookmark> {
+) -> Result<UIStatus> {
     let repo_path = db.path();
-
-    // Get the current resolution for this bookmark
-    let ui_status = if let Some(ref resolution_id) = bookmark.current_resolution_id {
+    if let Some(ref resolution_id) = bookmark.current_resolution_id {
         match db.get_resolution(resolution_id) {
             Ok(Some(resolution)) => {
-                match project_resolution_status(
-                    &resolution,
-                    &bookmark,
-                    current_head,
-                    repo_path,
-                ) {
-                    Ok(status) => Some(status.to_string()),
-                    Err(e) => {
-                        eprintln!("Warning: Failed to project UI status for bookmark {}: {:?}", bookmark.id, e);
-                        None
-                    }
-                }
+                project_resolution_status(&resolution, bookmark, current_head, repo_path)
             }
-            Ok(None) => {
-                // Resolution ID exists but resolution not found - use raw health
-                Some(bookmark.health.to_string())
-            }
-            Err(e) => {
-                eprintln!("Warning: Failed to fetch resolution {} for bookmark {}: {:?}", resolution_id, bookmark.id, e);
-                Some(bookmark.health.to_string())
-            }
+            Ok(None) => Ok(UIStatus::from(bookmark.health)),
+            Err(_) => Ok(UIStatus::from(bookmark.health)),
         }
     } else {
-        // No current resolution - use raw health
-        Some(bookmark.health.to_string())
-    };
-
-    bookmark.ui_status = ui_status;
-    Ok(bookmark)
+        Ok(UIStatus::from(bookmark.health))
+    }
 }
+
+impl From<BookmarkHealth> for UIStatus {
+    fn from(health: BookmarkHealth) -> Self {
+        match health {
+            BookmarkHealth::Active => UIStatus::Healthy,
+            BookmarkHealth::Drifted => UIStatus::Drifted,
+            BookmarkHealth::Stale | BookmarkHealth::Archived => UIStatus::Broken,
+        }
+    }
+}
+
 
 #[cfg(test)]
 mod tests {
@@ -309,7 +291,6 @@ mod tests {
             created_by: None,
             current_resolution_id: Some(resolution_id.clone()),
             repo_id: None,
-            ui_status: None,
             tags: vec![],
             annotations: vec![],
             comments: vec![],

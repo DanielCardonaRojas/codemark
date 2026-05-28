@@ -250,9 +250,6 @@ pub struct Bookmark {
     pub created_by: Option<String>,
     pub current_resolution_id: Option<String>,
     pub repo_id: Option<String>,
-    // Computed UI status (not stored in database)
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub ui_status: Option<String>,
     // Aggregated from related tables
     #[serde(default)]
     pub tags: Vec<String>,
@@ -388,7 +385,6 @@ mod tests {
             created_by: None,
             current_resolution_id: None,
             repo_id: None,
-            ui_status: None,
             tags: vec!["auth".into()],
             annotations: vec![],
             comments: vec![],

@@ -2,6 +2,7 @@
 
 #![allow(dead_code)]
 
+use std::collections::HashMap;
 use std::io::{self, Write};
 
 use comfy_table::{Cell, Table};
@@ -251,8 +252,9 @@ pub fn write_bookmarks(
     mode: &OutputMode,
     bookmarks: &[Bookmark],
     line_format: Option<&str>,
+    ui_statuses: Option<&HashMap<String, String>>,
 ) -> io::Result<()> {
-    write_bookmarks_impl(mode, bookmarks, line_format, &|_| None)
+    write_bookmarks_impl(mode, bookmarks, line_format, &|_| None, ui_statuses)
 }
 
 /// Write a list of bookmarks with line number support.
@@ -261,11 +263,12 @@ pub fn write_bookmarks_with_line<F>(
     bookmarks: &[Bookmark],
     line_format: Option<&str>,
     get_line_fn: F,
+    ui_statuses: Option<&HashMap<String, String>>,
 ) -> io::Result<()>
 where
     F: Fn(&str) -> Option<usize>,
 {
-    write_bookmarks_impl(mode, bookmarks, line_format, &get_line_fn)
+    write_bookmarks_impl(mode, bookmarks, line_format, &get_line_fn, ui_statuses)
 }
 
 /// Internal implementation of write_bookmarks that takes a line number fetcher.
@@ -274,23 +277,43 @@ fn write_bookmarks_impl<F>(
     bookmarks: &[Bookmark],
     line_format: Option<&str>,
     get_line_fn: &F,
+    ui_statuses: Option<&HashMap<String, String>>,
 ) -> io::Result<()>
 where
     F: Fn(&str) -> Option<usize>,
 {
     match mode {
-        OutputMode::Json => write_json_success(&bookmarks),
+        OutputMode::Json => {
+            // Inject ui_status into each bookmark's JSON representation
+            if let Some(statuses) = ui_statuses {
+                let items: Vec<serde_json::Value> = bookmarks
+                    .iter()
+                    .map(|bm| {
+                        let mut val = serde_json::to_value(bm).unwrap_or_default();
+                        if let Some(obj) = val.as_object_mut() {
+                            if let Some(status) = statuses.get(&bm.id) {
+                                obj.insert("ui_status".to_string(), serde_json::json!(status));
+                            }
+                        }
+                        val
+                    })
+                    .collect();
+                write_json_success(&items)
+            } else {
+                write_json_success(&bookmarks)
+            }
+        }
         OutputMode::Table => write_bookmarks_table(bookmarks),
         OutputMode::Line => {
             if let Some(fmt) = line_format {
-                write_bookmarks_line_format(bookmarks, fmt, Some(get_line_fn))
+                write_bookmarks_line_format(bookmarks, fmt, Some(get_line_fn), ui_statuses)
             } else {
                 write_bookmarks_line(bookmarks)
             }
         }
         OutputMode::Markdown => write_bookmarks_table(bookmarks),
         OutputMode::Custom(template) => {
-            write_bookmarks_line_format(bookmarks, template, Some(get_line_fn))
+            write_bookmarks_line_format(bookmarks, template, Some(get_line_fn), ui_statuses)
         }
     }
 }
@@ -350,6 +373,7 @@ pub fn write_bookmarks_line_format<F>(
     bookmarks: &[Bookmark],
     template: &str,
     get_line_fn: Option<&F>,
+    ui_statuses: Option<&HashMap<String, String>>,
 ) -> io::Result<()>
 where
     F: Fn(&str) -> Option<usize>,
@@ -365,7 +389,10 @@ where
         let line =
             if let Some(ref fn_line) = get_line_fn { fn_line(short).unwrap_or(0) } else { 0 };
         let health = bm.health.to_string();
-        let ui_status = bm.ui_status.as_deref().unwrap_or(&health);
+        let ui_status = ui_statuses
+            .and_then(|m| m.get(&bm.id))
+            .map(|s| s.as_str())
+            .unwrap_or(&health);
 
         let ctx = LineFormatContext {
             id: short,
@@ -403,6 +430,7 @@ fn write_annotated_line_format<F>(
     bookmarks: &[AnnotatedBookmark],
     template: &str,
     get_line_fn: Option<&F>,
+    ui_statuses: Option<&HashMap<String, String>>,
 ) -> io::Result<()>
 where
     F: Fn(&str) -> Option<usize>,
@@ -418,7 +446,10 @@ where
         let line =
             if let Some(ref fn_line) = get_line_fn { fn_line(short).unwrap_or(0) } else { 0 };
         let health = bm.health.to_string();
-        let ui_status = bm.ui_status.as_deref().unwrap_or(&health);
+        let ui_status = ui_statuses
+            .and_then(|m| m.get(&bm.id))
+            .map(|s| s.as_str())
+            .unwrap_or(&health);
 
         let ctx = LineFormatContext {
             id: short,
@@ -448,6 +479,7 @@ pub fn write_annotated_bookmarks<F>(
     bookmarks: &[AnnotatedBookmark],
     line_format: Option<&str>,
     get_line_fn: Option<&F>,
+    ui_statuses: Option<&HashMap<String, String>>,
 ) -> io::Result<()>
 where
     F: Fn(&str) -> Option<usize>,
@@ -460,6 +492,11 @@ where
                     let mut val = serde_json::to_value(ab.bookmark).unwrap_or_default();
                     if let Some(obj) = val.as_object_mut() {
                         obj.insert("source".to_string(), serde_json::json!(ab.source));
+                        if let Some(statuses) = ui_statuses {
+                            if let Some(status) = statuses.get(&ab.bookmark.id) {
+                                obj.insert("ui_status".to_string(), serde_json::json!(status));
+                            }
+                        }
                     }
                     val
                 })
@@ -491,7 +528,7 @@ where
         }
         OutputMode::Line => {
             if let Some(fmt) = line_format {
-                write_annotated_line_format(bookmarks, fmt, get_line_fn)
+                write_annotated_line_format(bookmarks, fmt, get_line_fn, ui_statuses)
             } else {
                 let mut stdout = io::stdout().lock();
                 for ab in bookmarks {
@@ -514,7 +551,7 @@ where
             }
         }
         OutputMode::Custom(template) => {
-            write_annotated_line_format(bookmarks, template, get_line_fn)
+            write_annotated_line_format(bookmarks, template, get_line_fn, ui_statuses)
         }
         OutputMode::Markdown => {
             // For multi-db markdown output, fall back to table format

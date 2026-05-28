@@ -106,7 +106,6 @@ pub async fn handle_add(cli: &Cli, mode: &OutputMode, args: &AddArgsOriginal) ->
         created_by: Some(args.created_by.clone()),
         current_resolution_id: None,
         repo_id,
-        ui_status: None,
         tags: Vec::new(),
 
         annotations: vec![],
@@ -341,7 +340,6 @@ pub async fn handle_add_from_snippet(
         created_by: Some(args.created_by.clone()),
         current_resolution_id: None,
         repo_id,
-        ui_status: None,
         tags: Vec::new(),
 
         annotations: vec![],
@@ -576,7 +574,6 @@ pub async fn handle_add_from_query(
         created_by: Some(args.created_by.clone()),
         current_resolution_id: None,
         repo_id,
-        ui_status: None,
         tags: Vec::new(),
 
         annotations: vec![],
@@ -881,22 +878,21 @@ pub async fn handle_show(cli: &Cli, mode: &OutputMode, args: &ShowArgs) -> Resul
     let (bm, db) = find_bookmark_across(&dbs, &args.id)?;
     let resolutions = db.list_resolutions(&bm.id, 5)?;
 
-    // Re-project UI status only when the user overrides HEAD.
-    // The repo layer already projected with a cached HEAD.
-    let bm = if args.current_head.is_some() {
-        codemark_core::engine::projection::project_ui_status_for_bookmark(
-            bm,
-            &db,
-            args.current_head.as_deref(),
-        )?
-    } else {
-        bm
-    };
+    // Compute UI status at the presentation boundary
+    let ui_status = codemark_core::engine::projection::compute_bookmark_ui_status(
+        &bm, &db, args.current_head.as_deref(),
+    ).ok();
 
     match mode {
         OutputMode::Json => {
+            let mut json = serde_json::to_value(&bm).unwrap_or_default();
+            if let Some(obj) = json.as_object_mut() {
+                if let Some(ref status) = ui_status {
+                    obj.insert("ui_status".to_string(), serde_json::json!(status.to_string()));
+                }
+            }
             write_json_success(&serde_json::json!({
-                "bookmark": bm,
+                "bookmark": json,
                 "resolutions": resolutions,
             }))?;
         }
@@ -909,8 +905,8 @@ pub async fn handle_show(cli: &Cli, mode: &OutputMode, args: &ShowArgs) -> Resul
             println!("File:        {}", bm.file_path);
             println!("Language:    {}", bm.language);
             println!("Health:      {}", bm.health);
-            if let Some(ref ui_status) = bm.ui_status {
-                println!("UI Status:   {}", ui_status);
+            if let Some(ref status) = ui_status {
+                println!("UI Status:   {}", status);
             }
             if !bm.tags.is_empty() {
                 println!("Tags:        {}", bm.tags.join(", "));

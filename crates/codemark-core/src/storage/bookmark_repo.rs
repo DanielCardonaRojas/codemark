@@ -143,8 +143,6 @@ impl Database {
     }
 
     pub fn get_bookmark(&self, id: &str) -> Result<Option<Bookmark>> {
-        let head = crate::git::context::detect_context(self.path())
-            .and_then(|ctx| ctx.head_commit);
         let mut stmt = self.conn().prepare(
             "SELECT b.id, b.query, b.language, b.file_path, b.content_hash, b.commit_hash,
              r.health, r.method, r.resolved_at, NULL as stale_since, b.created_at, b.created_by, b.current_resolution_id, b.repo_id
@@ -157,7 +155,6 @@ impl Database {
             Some(row) => {
                 let mut bm = row?;
                 self.load_bookmark_metadata(&mut bm)?;
-                self.compute_ui_status(&mut bm, head.as_deref())?;
                 Ok(Some(bm))
             }
             None => Ok(None),
@@ -179,14 +176,8 @@ impl Database {
         let mut results: Vec<Bookmark> =
             stmt.query_map([&pattern], row_to_bookmark_base)?.filter_map(|r| r.ok()).collect();
 
-        // Detect HEAD once for all results
-        let head = crate::git::context::detect_context(self.path())
-            .and_then(|ctx| ctx.head_commit);
-
-        // Load metadata for each result
         for bm in &mut results {
             self.load_bookmark_metadata(bm)?;
-            self.compute_ui_status(bm, head.as_deref())?;
         }
 
         match results.len() {
@@ -303,14 +294,8 @@ impl Database {
             .filter_map(|r| r.ok())
             .collect();
 
-        // Detect HEAD once for all bookmarks
-        let head = crate::git::context::detect_context(self.path())
-            .and_then(|ctx| ctx.head_commit);
-
-        // Load metadata for all bookmarks
         for bm in &mut results {
             self.load_bookmark_metadata(bm)?;
-            self.compute_ui_status(bm, head.as_deref())?;
         }
 
         Ok(results)
@@ -498,14 +483,8 @@ impl Database {
             .filter_map(|r| r.ok())
             .collect();
 
-        // Detect HEAD once for all bookmarks
-        let head = crate::git::context::detect_context(self.path())
-            .and_then(|ctx| ctx.head_commit);
-
-        // Load metadata for all bookmarks
         for bm in &mut results {
             self.load_bookmark_metadata(bm)?;
-            self.compute_ui_status(bm, head.as_deref())?;
         }
 
         Ok(results)
@@ -563,35 +542,6 @@ impl Database {
         Ok(())
     }
 
-    /// Compute the UI status for a bookmark based on its current resolution and git context.
-    fn compute_ui_status(&self, bm: &mut Bookmark, current_head: Option<&str>) -> Result<()> {
-        use crate::engine::projection;
-
-        let repo_path = self.path();
-        let ui_status = if let Some(ref resolution_id) = bm.current_resolution_id {
-            match self.get_resolution(resolution_id) {
-                Ok(Some(resolution)) => {
-                    match projection::project_resolution_status(
-                        &resolution,
-                        bm,
-                        current_head,
-                        repo_path,
-                    ) {
-                        Ok(status) => Some(status.to_string()),
-                        Err(_) => Some(bm.health.to_string()),
-                    }
-                }
-                Ok(None) => Some(bm.health.to_string()),
-                Err(_) => Some(bm.health.to_string()),
-            }
-        } else {
-            Some(bm.health.to_string())
-        };
-
-        bm.ui_status = ui_status;
-        Ok(())
-    }
-
     /// List all bookmarks in a specific collection.
     pub fn list_bookmarks_in_collection(&self, collection_id: &str) -> Result<Vec<Bookmark>> {
         let filter =
@@ -631,7 +581,6 @@ fn row_to_bookmark_base(row: &rusqlite::Row) -> rusqlite::Result<Bookmark> {
         created_by: row.get(11)?,
         current_resolution_id: row.get(12)?,
         repo_id: row.get(13)?,
-        ui_status: None,         // Computed, not stored
         tags: Vec::new(),        // Loaded separately
         annotations: Vec::new(), // Loaded separately
         comments: Vec::new(),    // Loaded separately
@@ -678,7 +627,6 @@ mod tests {
             created_by: None,
             current_resolution_id: None,
             repo_id: None,
-            ui_status: None,
             tags: Vec::new(),
             annotations: Vec::new(),
             comments: vec![],
@@ -1033,7 +981,6 @@ mod tests {
             created_by: None,
             current_resolution_id: None,
             repo_id: None,
-            ui_status: None,
             tags: vec![],
             annotations: vec![],
             comments: vec![],
@@ -1114,7 +1061,6 @@ mod tests {
             created_by: None,
             current_resolution_id: None,
             repo_id: None,
-            ui_status: None,
             tags: vec![],
             annotations: vec![],
             comments: vec![],

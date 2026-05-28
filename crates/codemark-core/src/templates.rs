@@ -165,7 +165,16 @@ impl BookmarkTemplateContext {
             file_name,
             language: bm.language.clone(),
             status: bm.health.to_string(),
-            ui_status: bm.ui_status.clone(),
+            ui_status: bm.current_resolution_id.as_ref().and_then(|rid| {
+                resolutions.iter()
+                    .find(|r| r.id == *rid)
+                    .and_then(|resolution| {
+                        crate::engine::projection::project_resolution_status(
+                            resolution, bm, current_head, repo_path,
+                        ).ok()
+                    })
+                    .map(|s| s.to_string())
+            }),
             query: bm.query.clone(),
             created_at: bm.created_at.clone(),
             created_by: bm.created_by.clone(),
@@ -533,7 +542,6 @@ mod tests {
             created_by: Some("user".to_string()),
             current_resolution_id: None,
             repo_id: None,
-            ui_status: None,
             tags: vec!["tag1".to_string(), "tag2".to_string()],
             annotations: vec![],
             comments: vec![],
