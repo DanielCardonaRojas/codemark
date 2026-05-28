@@ -115,7 +115,7 @@ impl HealthStatus {
     fn symbol(&self) -> &'static str {
         match self {
             HealthStatus::Verified => "○", // Unfilled circle for verified/historical
-            _ => "●", // Filled dot for all other statuses
+            _ => "●",                      // Filled dot for all other statuses
         }
     }
 }

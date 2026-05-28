@@ -145,7 +145,9 @@ pub fn project_resolution_status(
     match (is_current, ancestry, is_anchored, resolution.health, commit_exists) {
         // --- Current Pointer at HEAD (100% confidence) ---
         (true, Ancestry::AtHead, true, BookmarkHealth::Active, true) => Ok(UIStatus::Healthy),
-        (true, Ancestry::AtHead, false, BookmarkHealth::Active, true) => Ok(UIStatus::UnanchoredHealthy),
+        (true, Ancestry::AtHead, false, BookmarkHealth::Active, true) => {
+            Ok(UIStatus::UnanchoredHealthy)
+        }
 
         (true, Ancestry::AtHead, true, BookmarkHealth::Drifted, true) => Ok(UIStatus::Drifted),
         (true, Ancestry::AtHead, false, BookmarkHealth::Drifted, true) => {
@@ -160,7 +162,9 @@ pub fn project_resolution_status(
         (true, Ancestry::Ancestor, _, BookmarkHealth::Drifted, true) => Ok(UIStatus::Outdated),
 
         // --- Stale / Archived are always broken ---
-        (true, _, true, BookmarkHealth::Stale | BookmarkHealth::Archived, _) => Ok(UIStatus::Broken),
+        (true, _, true, BookmarkHealth::Stale | BookmarkHealth::Archived, _) => {
+            Ok(UIStatus::Broken)
+        }
         (true, _, false, BookmarkHealth::Stale | BookmarkHealth::Archived, _) => {
             Ok(UIStatus::BrokenUnanchored)
         }
