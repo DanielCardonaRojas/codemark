@@ -123,9 +123,16 @@ pub fn project_resolution_status(
     let is_current = bookmark.current_resolution_id.as_ref() == Some(&resolution.id);
     let is_anchored = !resolution.is_dirty;
 
-    // Determine ancestry relation
+    // Check if the resolution commit exists in the repository.
+    // If the commit was deleted (e.g., via rebase/history rewrite), treat as broken.
+    let commit_exists = git_context::commit_exists(repo_path, &resolution_commit).unwrap_or(false);
+
+    // Determine ancestry relation (only if commit exists)
     let ancestry = if head == resolution_commit {
         Ancestry::AtHead
+    } else if !commit_exists {
+        // Commit doesn't exist — mark as unrelated to fall through to broken
+        Ancestry::Unrelated
     } else if git_context::is_ancestor(repo_path, &resolution_commit, &head).unwrap_or(false) {
         Ancestry::Ancestor
     } else if git_context::is_ancestor(repo_path, &head, &resolution_commit).unwrap_or(false) {
@@ -135,13 +142,13 @@ pub fn project_resolution_status(
     };
 
     // Project to UI status
-    match (is_current, ancestry, is_anchored, resolution.health) {
+    match (is_current, ancestry, is_anchored, resolution.health, commit_exists) {
         // --- Current Pointer at HEAD (100% confidence) ---
-        (true, Ancestry::AtHead, true, BookmarkHealth::Active) => Ok(UIStatus::Healthy),
-        (true, Ancestry::AtHead, false, BookmarkHealth::Active) => Ok(UIStatus::UnanchoredHealthy),
+        (true, Ancestry::AtHead, true, BookmarkHealth::Active, true) => Ok(UIStatus::Healthy),
+        (true, Ancestry::AtHead, false, BookmarkHealth::Active, true) => Ok(UIStatus::UnanchoredHealthy),
 
-        (true, Ancestry::AtHead, true, BookmarkHealth::Drifted) => Ok(UIStatus::Drifted),
-        (true, Ancestry::AtHead, false, BookmarkHealth::Drifted) => {
+        (true, Ancestry::AtHead, true, BookmarkHealth::Drifted, true) => Ok(UIStatus::Drifted),
+        (true, Ancestry::AtHead, false, BookmarkHealth::Drifted, true) => {
             Ok(UIStatus::UnanchoredDrifting)
         }
 
@@ -149,29 +156,37 @@ pub fn project_resolution_status(
         // The anchored/unanchored distinction is irrelevant here: the resolution is
         // at a past commit, so what matters is that HEAD has moved on. Both anchored
         // and unanchored resolutions at an ancestor are historical facts.
-        (true, Ancestry::Ancestor, _, BookmarkHealth::Active) => Ok(UIStatus::Verified),
-        (true, Ancestry::Ancestor, _, BookmarkHealth::Drifted) => Ok(UIStatus::Outdated),
+        (true, Ancestry::Ancestor, _, BookmarkHealth::Active, true) => Ok(UIStatus::Verified),
+        (true, Ancestry::Ancestor, _, BookmarkHealth::Drifted, true) => Ok(UIStatus::Outdated),
 
         // --- Stale / Archived are always broken ---
-        (true, _, true, BookmarkHealth::Stale | BookmarkHealth::Archived) => Ok(UIStatus::Broken),
-        (true, _, false, BookmarkHealth::Stale | BookmarkHealth::Archived) => {
+        (true, _, true, BookmarkHealth::Stale | BookmarkHealth::Archived, _) => Ok(UIStatus::Broken),
+        (true, _, false, BookmarkHealth::Stale | BookmarkHealth::Archived, _) => {
             Ok(UIStatus::BrokenUnanchored)
         }
 
         // --- Current Pointer but Unrelated (likely from another branch) ---
-        (true, Ancestry::Unrelated, _, BookmarkHealth::Active) => Ok(UIStatus::Verified),
-        (true, Ancestry::Unrelated, _, BookmarkHealth::Drifted) => Ok(UIStatus::Outdated),
+        // If commit doesn't exist, treat as broken
+        (true, Ancestry::Unrelated, _, BookmarkHealth::Active, true) => Ok(UIStatus::Verified),
+        (true, Ancestry::Unrelated, _, BookmarkHealth::Active, false) => Ok(UIStatus::Broken),
+        (true, Ancestry::Unrelated, _, BookmarkHealth::Drifted, true) => Ok(UIStatus::Outdated),
+        (true, Ancestry::Unrelated, _, BookmarkHealth::Drifted, false) => Ok(UIStatus::Broken),
 
         // --- Non-Current (Historical) ---
-        (false, Ancestry::AtHead | Ancestry::Ancestor, _, BookmarkHealth::Active) => {
+        (false, Ancestry::AtHead | Ancestry::Ancestor, _, BookmarkHealth::Active, true) => {
             Ok(UIStatus::Verified)
         }
-        (false, Ancestry::AtHead | Ancestry::Ancestor, _, BookmarkHealth::Drifted) => {
+        (false, Ancestry::AtHead | Ancestry::Ancestor, _, BookmarkHealth::Drifted, true) => {
             Ok(UIStatus::Outdated)
         }
 
         // --- Descendant (The future) ---
-        (_, Ancestry::Descendant, _, _) => Ok(UIStatus::Future),
+        // Only mark as Future if commit exists; otherwise broken
+        (_, Ancestry::Descendant, _, _, true) => Ok(UIStatus::Future),
+        (_, Ancestry::Descendant, _, _, false) => Ok(UIStatus::Broken),
+
+        // --- Fallback for missing commit ---
+        (_, _, _, _, false) => Ok(UIStatus::Broken),
 
         _ => Ok(UIStatus::Broken),
     }
@@ -347,7 +362,7 @@ mod tests {
     }
 
     #[test]
-    fn test_unrelated_commit_returns_verified() {
+    fn test_missing_commit_returns_broken() {
         let repo = create_test_repo();
         let (resolution, bookmark) = create_test_resolution(
             Some("0123456789abcdef0123456789abcdef01234567".to_string()),
@@ -358,7 +373,7 @@ mod tests {
         let result =
             project_resolution_status(&resolution, &bookmark, Some(&repo.commit_b), &repo.path)
                 .unwrap();
-        assert_eq!(result, UIStatus::Verified);
+        assert_eq!(result, UIStatus::Broken);
 
         fs::remove_dir_all(&repo.path).unwrap();
     }
@@ -491,5 +506,24 @@ mod tests {
         assert_eq!(result, UIStatus::Broken);
 
         fs::remove_dir_all(&tmp).unwrap();
+    }
+
+    #[test]
+    fn test_future_commit_with_missing_commit_returns_broken() {
+        let repo = create_test_repo();
+        // Resolution with a commit that would be "future" (ahead of HEAD) but doesn't exist
+        let (resolution, bookmark) = create_test_resolution(
+            Some("deadbeefdeadbeefdeadbeefdeadbeefdeadbeef".to_string()),
+            BookmarkHealth::Active,
+            true,
+        );
+
+        // Even though this looks like it would be "future", the commit doesn't exist
+        let result =
+            project_resolution_status(&resolution, &bookmark, Some(&repo.commit_a), &repo.path)
+                .unwrap();
+        assert_eq!(result, UIStatus::Broken);
+
+        fs::remove_dir_all(&repo.path).unwrap();
     }
 }
