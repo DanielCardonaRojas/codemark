@@ -805,6 +805,80 @@ fn write_heal_line(output: &HealOutput) -> io::Result<()> {
     Ok(())
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_format_line_with_ui_status() {
+        let ctx = LineFormatContext {
+            id: "abcd1234",
+            file: "src/main.rs",
+            filename: "main.rs",
+            line: 42,
+            offset: 42,
+            health: "active",
+            status: "active",
+            ui_status: "healthy",
+            tags: "#api",
+            note: "entry point",
+            context: "",
+            query: "(function_item) @target",
+            source: None,
+        };
+        let result = format_line("{id}\t{ui_status}", &ctx);
+        assert_eq!(result, "abcd1234\thealthy");
+    }
+
+    #[test]
+    fn test_format_line_uppercase_ui_status() {
+        let ctx = LineFormatContext {
+            id: "abcd1234",
+            file: "src/main.rs",
+            filename: "main.rs",
+            line: 42,
+            offset: 42,
+            health: "active",
+            status: "active",
+            ui_status: "healthy",
+            tags: "#api",
+            note: "entry point",
+            context: "",
+            query: "(function_item) @target",
+            source: None,
+        };
+        let result = format_line("{ID}\t{UI_STATUS}", &ctx);
+        assert_eq!(result, "abcd1234\thealthy");
+    }
+
+    #[test]
+    fn test_format_line_all_placeholders() {
+        let ctx = LineFormatContext {
+            id: "abcd1234",
+            file: "src/main.rs",
+            filename: "main.rs",
+            line: 42,
+            offset: 42,
+            health: "active",
+            status: "active",
+            ui_status: "drifted",
+            tags: "#api #core",
+            note: "entry point",
+            context: "fn main",
+            query: "(function_item) @target",
+            source: Some("my-repo"),
+        };
+        let result = format_line(
+            "{source}|{id}|{file}|{filename}|{line}|{offset}|{health}|{status}|{ui_status}|{tags}|{note}|{context}|{query}",
+            &ctx,
+        );
+        assert_eq!(
+            result,
+            "my-repo|abcd1234|src/main.rs|main.rs|42|42|active|active|drifted|#api #core|entry point|fn main|(function_item) @target"
+        );
+    }
+}
+
 /// Escape special markdown characters in text.
 fn escape_markdown(text: &str) -> String {
     // Escape characters that have special meaning in markdown:

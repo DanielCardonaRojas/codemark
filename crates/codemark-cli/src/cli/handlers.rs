@@ -1820,4 +1820,159 @@ mod tests {
             }
         }
     }
+
+    /// Helper: create a temp git repo with a known HEAD, return (path, head_commit).
+    fn create_handler_test_repo() -> (std::path::PathBuf, String) {
+        let tmp =
+            std::env::temp_dir().join(format!("codemark_handler_test_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&tmp).unwrap();
+
+        let run = |args: &[&str]| {
+            let status =
+                std::process::Command::new("git").args(args).current_dir(&tmp).status().unwrap();
+            assert!(status.success());
+        };
+
+        run(&["init"]);
+        run(&["config", "user.email", "test@example.com"]);
+        run(&["config", "user.name", "test"]);
+        std::fs::write(tmp.join("file.rs"), "fn main() {}").unwrap();
+        run(&["add", "file.rs"]);
+        run(&["commit", "-m", "initial"]);
+
+        let head = String::from_utf8(
+            std::process::Command::new("git")
+                .args(["rev-parse", "HEAD"])
+                .current_dir(&tmp)
+                .output()
+                .unwrap()
+                .stdout,
+        )
+        .unwrap()
+        .trim()
+        .to_string();
+
+        (tmp, head)
+    }
+
+    #[test]
+    fn test_compute_ui_statuses_with_resolution() {
+        let (repo_path, head) = create_handler_test_repo();
+
+        // Create DB inside the repo
+        let codemark_dir = repo_path.join(".codemark");
+        std::fs::create_dir_all(&codemark_dir).unwrap();
+        let db_path = codemark_dir.join("codemark.db");
+        let db = Database::open(&db_path).unwrap();
+
+        let bm_id = uuid::Uuid::new_v4().to_string();
+        let res_id = uuid::Uuid::new_v4().to_string();
+
+        // Insert bookmark with resolution at HEAD
+        let bm = Bookmark {
+            id: bm_id.clone(),
+            query: "(function_item) @target".to_string(),
+            language: "rust".to_string(),
+            file_path: "file.rs".to_string(),
+            content_hash: None,
+            commit_hash: Some(head.clone()),
+            health: BookmarkHealth::Active,
+            resolution_method: Some(ResolutionMethod::Exact),
+            last_resolved_at: Some("2024-01-01T00:00:00Z".to_string()),
+            stale_since: None,
+            created_at: "2024-01-01T00:00:00Z".to_string(),
+            created_by: None,
+            current_resolution_id: Some(res_id.clone()),
+            repo_id: None,
+            tags: vec![],
+            annotations: vec![],
+            comments: vec![],
+        };
+        db.insert_bookmark(&bm).unwrap();
+
+        // Insert the resolution
+        let res = Resolution {
+            id: res_id.clone(),
+            bookmark_id: bm_id.clone(),
+            resolved_at: "2024-01-01T00:00:00Z".to_string(),
+            health: BookmarkHealth::Active,
+            commit_hash: Some(head.clone()),
+            method: ResolutionMethod::Exact,
+            match_count: Some(1),
+            file_path: Some("file.rs".to_string()),
+            byte_range: Some("0-12".to_string()),
+            line_range: Some("1-1".to_string()),
+            content_hash: None,
+            headline: None,
+            snapshot: None,
+            breadcrumbs: None,
+            is_anchored: true,
+        };
+        db.insert_resolution_if_changed(&res, 10).unwrap();
+        db.update_bookmark_resolution_id(&bm_id, &res_id).unwrap();
+
+        // Reload the bookmark to get the updated current_resolution_id
+        let bm = db.get_bookmark(&bm_id).unwrap().unwrap();
+
+        let statuses = compute_ui_statuses(&db, &[bm], Some(&head));
+        assert!(statuses.contains_key(&bm_id));
+        assert_eq!(statuses[&bm_id], "healthy");
+
+        let _ = std::fs::remove_dir_all(&repo_path);
+    }
+
+    #[test]
+    fn test_compute_ui_statuses_no_resolution() {
+        let (repo_path, head) = create_handler_test_repo();
+
+        let codemark_dir = repo_path.join(".codemark");
+        std::fs::create_dir_all(&codemark_dir).unwrap();
+        let db_path = codemark_dir.join("codemark.db");
+        let db = Database::open(&db_path).unwrap();
+
+        let bm_id = uuid::Uuid::new_v4().to_string();
+
+        // Insert bookmark without a current resolution
+        let bm = Bookmark {
+            id: bm_id.clone(),
+            query: "(function_item) @target".to_string(),
+            language: "rust".to_string(),
+            file_path: "file.rs".to_string(),
+            content_hash: None,
+            commit_hash: Some(head.clone()),
+            health: BookmarkHealth::Active,
+            resolution_method: None,
+            last_resolved_at: None,
+            stale_since: None,
+            created_at: "2024-01-01T00:00:00Z".to_string(),
+            created_by: None,
+            current_resolution_id: None,
+            repo_id: None,
+            tags: vec![],
+            annotations: vec![],
+            comments: vec![],
+        };
+
+        // Falls back via From<BookmarkHealth> → Active → "healthy"
+        let statuses = compute_ui_statuses(&db, &[bm], Some(&head));
+        assert!(statuses.contains_key(&bm_id));
+        assert_eq!(statuses[&bm_id], "healthy");
+
+        let _ = std::fs::remove_dir_all(&repo_path);
+    }
+
+    #[test]
+    fn test_compute_ui_statuses_empty_bookmarks() {
+        let (repo_path, head) = create_handler_test_repo();
+
+        let codemark_dir = repo_path.join(".codemark");
+        std::fs::create_dir_all(&codemark_dir).unwrap();
+        let db_path = codemark_dir.join("codemark.db");
+        let db = Database::open(&db_path).unwrap();
+
+        let statuses = compute_ui_statuses(&db, &[], Some(&head));
+        assert!(statuses.is_empty());
+
+        let _ = std::fs::remove_dir_all(&repo_path);
+    }
 }

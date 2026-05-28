@@ -336,4 +336,216 @@ mod tests {
         assert!(!options.validate_only);
         assert_eq!(options.archive_after, 0);
     }
+
+    /// Helper: create a temp git repo with `file.rs` containing `fn main() {}`,
+    /// a `.codemark/` directory with a DB, and return (repo_path, db, head_commit).
+    fn create_heal_test_env() -> (std::path::PathBuf, Database, String) {
+        let tmp = std::env::temp_dir().join(format!("codemark_heal_test_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&tmp).unwrap();
+
+        let run = |args: &[&str]| {
+            let status =
+                std::process::Command::new("git").args(args).current_dir(&tmp).status().unwrap();
+            assert!(status.success(), "git {:?} failed", args);
+        };
+
+        run(&["init"]);
+        run(&["config", "user.email", "test@example.com"]);
+        run(&["config", "user.name", "test"]);
+        std::fs::write(tmp.join("file.rs"), "fn main() {}").unwrap();
+        run(&["add", "file.rs"]);
+        run(&["commit", "-m", "initial"]);
+
+        let head = String::from_utf8(
+            std::process::Command::new("git")
+                .args(["rev-parse", "HEAD"])
+                .current_dir(&tmp)
+                .output()
+                .unwrap()
+                .stdout,
+        )
+        .unwrap()
+        .trim()
+        .to_string();
+
+        let codemark_dir = tmp.join(".codemark");
+        std::fs::create_dir_all(&codemark_dir).unwrap();
+        let db_path = codemark_dir.join("codemark.db");
+        let db = Database::open(&db_path).unwrap();
+
+        (tmp, db, head)
+    }
+
+    /// Helper: create a minimal bookmark suitable for heal tests.
+    /// Sets the content_hash to match what tree-sitter resolves for `fn main() {}`.
+    fn make_test_bookmark(id: &str) -> Bookmark {
+        use crate::engine::hash;
+        Bookmark {
+            id: id.to_string(),
+            query: "(function_item) @target".to_string(),
+            language: "rust".to_string(),
+            file_path: "file.rs".to_string(),
+            content_hash: Some(hash::content_hash("fn main() {}")),
+            commit_hash: None,
+            health: BookmarkHealth::Active,
+            resolution_method: None,
+            last_resolved_at: None,
+            stale_since: None,
+            created_at: chrono::Utc::now().to_rfc3339(),
+            created_by: None,
+            current_resolution_id: None,
+            repo_id: None,
+            tags: vec![],
+            annotations: vec![],
+            comments: vec![],
+        }
+    }
+
+    #[tokio::test]
+    async fn test_heal_creates_resolution() {
+        let (repo_path, db, _head) = create_heal_test_env();
+        let config = Config::default();
+        let bm = make_test_bookmark("heal-test-1");
+        db.insert_bookmark(&bm).unwrap();
+
+        let options = HealOptions { force: true, ..Default::default() };
+        let result = heal_bookmark(&db, &bm, &config, &options).await.unwrap();
+
+        assert!(!result.was_skipped);
+        assert!(result.resolution_id.is_some());
+        assert_eq!(result.new_health, BookmarkHealth::Active);
+        assert_eq!(result.resolution_method, ResolutionMethod::Exact);
+
+        let _ = std::fs::remove_dir_all(&repo_path);
+    }
+
+    #[tokio::test]
+    async fn test_heal_stores_resolution_in_db() {
+        let (repo_path, db, _head) = create_heal_test_env();
+        let config = Config::default();
+        let bm = make_test_bookmark("heal-test-2");
+        db.insert_bookmark(&bm).unwrap();
+
+        let options = HealOptions { force: true, ..Default::default() };
+        let result = heal_bookmark(&db, &bm, &config, &options).await.unwrap();
+
+        // Verify the resolution was stored and retrievable
+        let res_id = result.resolution_id.unwrap();
+        let resolution = db.get_resolution(&res_id).unwrap().unwrap();
+        assert_eq!(resolution.bookmark_id, bm.id);
+        assert_eq!(resolution.method, ResolutionMethod::Exact);
+        assert!(resolution.file_path.is_some());
+        assert!(resolution.content_hash.is_some());
+
+        let _ = std::fs::remove_dir_all(&repo_path);
+    }
+
+    #[tokio::test]
+    async fn test_heal_updates_bookmark_health_in_db() {
+        let (repo_path, db, _head) = create_heal_test_env();
+        let config = Config::default();
+        let bm = make_test_bookmark("heal-test-3");
+        db.insert_bookmark(&bm).unwrap();
+
+        let options = HealOptions { force: true, ..Default::default() };
+        let result = heal_bookmark(&db, &bm, &config, &options).await.unwrap();
+
+        // Verify the bookmark's health was updated in the DB
+        let updated = db.get_bookmark(&bm.id).unwrap().unwrap();
+        assert_eq!(updated.health, result.new_health);
+        assert_eq!(updated.current_resolution_id, result.resolution_id);
+        assert!(updated.last_resolved_at.is_some());
+
+        let _ = std::fs::remove_dir_all(&repo_path);
+    }
+
+    #[tokio::test]
+    async fn test_heal_validate_only_no_db_writes() {
+        let (repo_path, db, _head) = create_heal_test_env();
+        let config = Config::default();
+        let bm = make_test_bookmark("heal-test-4");
+        db.insert_bookmark(&bm).unwrap();
+
+        let options = HealOptions { validate_only: true, force: true, ..Default::default() };
+        let result = heal_bookmark(&db, &bm, &config, &options).await.unwrap();
+
+        assert!(result.resolution_id.is_none(), "validate_only should not create a resolution");
+        // Check that no resolutions exist for this bookmark
+        let resolutions = db.list_resolutions(&bm.id, 100).unwrap();
+        // The initial bookmark insertion creates one resolution, but no new ones from heal
+        let initial_count = resolutions.len();
+        assert!(initial_count <= 1, "only the initial resolution (if any) should exist");
+
+        let _ = std::fs::remove_dir_all(&repo_path);
+    }
+
+    #[tokio::test]
+    async fn test_heal_invalid_language_returns_failed() {
+        let (repo_path, db, _head) = create_heal_test_env();
+        let config = Config::default();
+        let mut bm = make_test_bookmark("heal-test-5");
+        bm.language = "nonexistent".to_string();
+        db.insert_bookmark(&bm).unwrap();
+
+        let options = HealOptions { force: true, ..Default::default() };
+        let result = heal_bookmark(&db, &bm, &config, &options).await.unwrap();
+
+        assert_eq!(result.resolution_method, ResolutionMethod::Failed);
+        assert_eq!(result.new_health, bm.health);
+        assert!(!result.was_skipped);
+
+        let _ = std::fs::remove_dir_all(&repo_path);
+    }
+
+    #[tokio::test]
+    async fn test_heal_auto_archive_stale() {
+        let (repo_path, db, _head) = create_heal_test_env();
+        let config = Config::default();
+
+        // Overwrite file.rs so (function_item) query no longer matches → Failed → Stale
+        std::fs::write(repo_path.join("file.rs"), "// no functions here\n").unwrap();
+
+        let mut bm = make_test_bookmark("heal-test-6");
+        bm.health = BookmarkHealth::Stale;
+        // Set stale_since to 60 days ago
+        let sixty_days_ago = chrono::Utc::now() - chrono::Duration::days(60);
+        bm.stale_since = Some(sixty_days_ago.to_rfc3339());
+        db.insert_bookmark(&bm).unwrap();
+
+        let options = HealOptions {
+            force: true,
+            auto_archive: true,
+            archive_after: 30,
+            ..Default::default()
+        };
+        let result = heal_bookmark(&db, &bm, &config, &options).await.unwrap();
+
+        assert_eq!(result.new_health, BookmarkHealth::Archived);
+
+        let _ = std::fs::remove_dir_all(&repo_path);
+    }
+
+    #[tokio::test]
+    async fn test_heal_auto_archive_not_triggered_when_active() {
+        let (repo_path, db, _head) = create_heal_test_env();
+        let config = Config::default();
+        let bm = make_test_bookmark("heal-test-7");
+        db.insert_bookmark(&bm).unwrap();
+
+        let options = HealOptions {
+            force: true,
+            auto_archive: true,
+            archive_after: 30,
+            ..Default::default()
+        };
+        let result = heal_bookmark(&db, &bm, &config, &options).await.unwrap();
+
+        assert_eq!(
+            result.new_health,
+            BookmarkHealth::Active,
+            "active bookmarks should not be archived"
+        );
+
+        let _ = std::fs::remove_dir_all(&repo_path);
+    }
 }

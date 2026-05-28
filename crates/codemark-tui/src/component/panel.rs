@@ -936,6 +936,43 @@ mod tests {
     }
 
     #[test]
+    fn test_ui_status_to_health_status_exhaustive() {
+        use codemark_core::engine::projection::UIStatus;
+
+        assert_eq!(HealthStatus::from(UIStatus::Healthy), HealthStatus::Healthy);
+        assert_eq!(
+            HealthStatus::from(UIStatus::UnanchoredHealthy),
+            HealthStatus::UnanchoredHealthy
+        );
+        assert_eq!(HealthStatus::from(UIStatus::Drifted), HealthStatus::Drifted);
+        assert_eq!(
+            HealthStatus::from(UIStatus::UnanchoredDrifting),
+            HealthStatus::UnanchoredDrifting
+        );
+        assert_eq!(HealthStatus::from(UIStatus::Broken), HealthStatus::Broken);
+        assert_eq!(HealthStatus::from(UIStatus::BrokenUnanchored), HealthStatus::BrokenUnanchored);
+        assert_eq!(HealthStatus::from(UIStatus::Verified), HealthStatus::Verified);
+        assert_eq!(HealthStatus::from(UIStatus::Outdated), HealthStatus::Outdated);
+        assert_eq!(HealthStatus::from(UIStatus::Future), HealthStatus::Future);
+    }
+
+    #[test]
+    fn test_health_status_colors() {
+        use ratatui::style::Color;
+
+        assert_eq!(HealthStatus::Healthy.color(), Color::Green);
+        assert_eq!(HealthStatus::UnanchoredHealthy.color(), Color::Yellow);
+        assert_eq!(HealthStatus::Drifted.color(), Color::Yellow);
+        assert_eq!(HealthStatus::UnanchoredDrifting.color(), Color::Rgb(255, 165, 0));
+        assert_eq!(HealthStatus::Broken.color(), Color::Red);
+        assert_eq!(HealthStatus::BrokenUnanchored.color(), Color::Red);
+        assert_eq!(HealthStatus::Verified.color(), Color::DarkGray);
+        assert_eq!(HealthStatus::Outdated.color(), Color::DarkGray);
+        assert_eq!(HealthStatus::Unknown.color(), Color::DarkGray);
+        assert_eq!(HealthStatus::Future.color(), Color::Blue);
+    }
+
+    #[test]
     fn test_panel_set_items() {
         let mut panel =
             Panel::new("Test").items(vec![PanelItem::new("item1"), PanelItem::new("item2")]);

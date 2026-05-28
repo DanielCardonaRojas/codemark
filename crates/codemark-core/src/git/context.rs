@@ -990,6 +990,142 @@ mod tests {
         assert!(identity.user_name.is_some());
     }
 
+    /// Helper: create a temp git repo with an initial commit.
+    fn create_git_repo() -> PathBuf {
+        let tmp = std::env::temp_dir().join(format!("codemark_test_file_clean_{}", Uuid::new_v4()));
+        fs::create_dir_all(&tmp).unwrap();
+
+        let repo = Repository::init(&tmp).unwrap();
+        let sig = Signature::now("Test User", "test@example.com").unwrap();
+
+        // Create initial commit so HEAD exists
+        let path = tmp.join("init.txt");
+        fs::write(&path, "init").unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(Path::new("init.txt")).unwrap();
+        let tree_id = index.write_tree().unwrap();
+        let tree = repo.find_tree(tree_id).unwrap();
+        repo.commit(Some("HEAD"), &sig, &sig, "initial commit", &tree, &[]).unwrap();
+
+        tmp
+    }
+
+    #[test]
+    fn test_is_file_clean_committed_file() {
+        let repo_path = create_git_repo();
+        let file = repo_path.join("test.txt");
+        fs::write(&file, "committed content").unwrap();
+
+        // Stage and commit
+        let repo = Repository::open(&repo_path).unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(Path::new("test.txt")).unwrap();
+        index.write().unwrap();
+        let tree_id = index.write_tree().unwrap();
+        let tree = repo.find_tree(tree_id).unwrap();
+        let sig = Signature::now("Test User", "test@example.com").unwrap();
+        let head = repo.head().unwrap().peel_to_commit().unwrap();
+        repo.commit(Some("HEAD"), &sig, &sig, "add test.txt", &tree, &[&head]).unwrap();
+
+        let result = is_file_clean(&repo_path, "test.txt");
+        assert!(result.is_ok());
+        assert!(result.unwrap(), "committed file should be clean");
+
+        let _ = fs::remove_dir_all(&repo_path);
+    }
+
+    #[test]
+    fn test_is_file_clean_modified_file() {
+        let repo_path = create_git_repo();
+        let file = repo_path.join("test.txt");
+        fs::write(&file, "original").unwrap();
+
+        let repo = Repository::open(&repo_path).unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(Path::new("test.txt")).unwrap();
+        index.write().unwrap();
+        let tree_id = index.write_tree().unwrap();
+        let tree = repo.find_tree(tree_id).unwrap();
+        let sig = Signature::now("Test User", "test@example.com").unwrap();
+        let head = repo.head().unwrap().peel_to_commit().unwrap();
+        repo.commit(Some("HEAD"), &sig, &sig, "add test.txt", &tree, &[&head]).unwrap();
+
+        // Modify without staging
+        fs::write(&file, "modified").unwrap();
+
+        let result = is_file_clean(&repo_path, "test.txt");
+        assert!(result.is_ok());
+        assert!(!result.unwrap(), "modified unstaged file should not be clean");
+
+        let _ = fs::remove_dir_all(&repo_path);
+    }
+
+    #[test]
+    fn test_is_file_clean_staged_file() {
+        let repo_path = create_git_repo();
+        let file = repo_path.join("test.txt");
+        fs::write(&file, "original").unwrap();
+
+        let repo = Repository::open(&repo_path).unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(Path::new("test.txt")).unwrap();
+        index.write().unwrap();
+        let tree_id = index.write_tree().unwrap();
+        let tree = repo.find_tree(tree_id).unwrap();
+        let sig = Signature::now("Test User", "test@example.com").unwrap();
+        let head = repo.head().unwrap().peel_to_commit().unwrap();
+        repo.commit(Some("HEAD"), &sig, &sig, "add test.txt", &tree, &[&head]).unwrap();
+
+        // Modify and stage (but don't commit)
+        fs::write(&file, "staged changes").unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(Path::new("test.txt")).unwrap();
+        index.write().unwrap();
+
+        let result = is_file_clean(&repo_path, "test.txt");
+        assert!(result.is_ok());
+        assert!(!result.unwrap(), "staged but uncommitted file should not be clean");
+
+        let _ = fs::remove_dir_all(&repo_path);
+    }
+
+    #[test]
+    fn test_is_file_clean_untracked_file() {
+        let repo_path = create_git_repo();
+        // Write a new file without adding or committing
+        let file = repo_path.join("new.txt");
+        fs::write(&file, "untracked").unwrap();
+
+        let result = is_file_clean(&repo_path, "new.txt");
+        assert!(result.is_ok());
+        assert!(!result.unwrap(), "untracked file should not be clean");
+
+        let _ = fs::remove_dir_all(&repo_path);
+    }
+
+    #[test]
+    fn test_is_file_clean_non_git_dir() {
+        let tmp = std::env::temp_dir().join(format!("codemark_test_no_git_{}", Uuid::new_v4()));
+        fs::create_dir_all(&tmp).unwrap();
+
+        let result = is_file_clean(&tmp, "anything.txt");
+        assert!(result.is_err(), "non-git directory should return Err");
+
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn test_is_file_clean_nonexistent_file() {
+        let repo_path = create_git_repo();
+
+        // Ask about a file that doesn't exist — porcelain output is empty
+        let result = is_file_clean(&repo_path, "missing.txt");
+        assert!(result.is_ok());
+        assert!(result.unwrap(), "nonexistent file should show as clean (empty porcelain)");
+
+        let _ = fs::remove_dir_all(&repo_path);
+    }
+
     #[test]
     fn detect_repo_metadata_from_current_repo() {
         // Test with the current codemark repo

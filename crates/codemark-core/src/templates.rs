@@ -592,4 +592,208 @@ mod tests {
         // Resolution status should be present
         assert!(output.contains("active"));
     }
+
+    #[test]
+    fn test_template_ui_status_healthy_at_head() {
+        // When a bookmark has a current resolution at HEAD with is_anchored=true
+        // and health=Active, the projected ui_status should be "healthy".
+        let tmp = std::env::temp_dir()
+            .join(format!("codemark_test_tpl_healthy_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&tmp).unwrap();
+
+        // Create a two-commit repo so we have a known HEAD
+        let run = |args: &[&str]| {
+            let status =
+                std::process::Command::new("git").args(args).current_dir(&tmp).status().unwrap();
+            assert!(status.success());
+        };
+        run(&["init"]);
+        run(&["config", "user.email", "test@example.com"]);
+        run(&["config", "user.name", "test"]);
+        std::fs::write(tmp.join("file.rs"), "fn main() {}").unwrap();
+        run(&["add", "file.rs"]);
+        run(&["commit", "-m", "initial"]);
+        let head = String::from_utf8(
+            std::process::Command::new("git")
+                .args(["rev-parse", "HEAD"])
+                .current_dir(&tmp)
+                .output()
+                .unwrap()
+                .stdout,
+        )
+        .unwrap()
+        .trim()
+        .to_string();
+
+        let bm = Bookmark {
+            id: "bm-1".to_string(),
+            query: "test".to_string(),
+            language: "rust".to_string(),
+            file_path: "file.rs".to_string(),
+            content_hash: None,
+            commit_hash: None,
+            health: BookmarkHealth::Active,
+            resolution_method: None,
+            last_resolved_at: None,
+            stale_since: None,
+            created_at: "2024-01-01T00:00:00Z".to_string(),
+            created_by: None,
+            current_resolution_id: Some("res-1".to_string()),
+            repo_id: None,
+            tags: vec![],
+            annotations: vec![],
+            comments: vec![],
+        };
+
+        let resolution = Resolution {
+            id: "res-1".to_string(),
+            bookmark_id: "bm-1".to_string(),
+            resolved_at: "2024-01-01T00:00:00Z".to_string(),
+            health: BookmarkHealth::Active,
+            commit_hash: Some(head.clone()),
+            method: ResolutionMethod::Exact,
+            match_count: Some(1),
+            file_path: Some("file.rs".to_string()),
+            byte_range: None,
+            line_range: None,
+            content_hash: None,
+            headline: None,
+            snapshot: None,
+            breadcrumbs: None,
+            is_anchored: true,
+        };
+
+        let ctx = BookmarkTemplateContext::from_bookmark(&bm, &[resolution], &tmp, Some(&head));
+        assert_eq!(ctx.ui_status, Some("healthy".to_string()));
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn test_template_ui_status_none_without_resolution_id() {
+        // When bookmark has no current_resolution_id, ui_status should be None
+        let bm = Bookmark {
+            id: "bm-2".to_string(),
+            query: "test".to_string(),
+            language: "rust".to_string(),
+            file_path: "file.rs".to_string(),
+            content_hash: None,
+            commit_hash: None,
+            health: BookmarkHealth::Active,
+            resolution_method: None,
+            last_resolved_at: None,
+            stale_since: None,
+            created_at: "2024-01-01T00:00:00Z".to_string(),
+            created_by: None,
+            current_resolution_id: None,
+            repo_id: None,
+            tags: vec![],
+            annotations: vec![],
+            comments: vec![],
+        };
+
+        let ctx = BookmarkTemplateContext::from_bookmark(&bm, &[], Path::new("."), None);
+        assert_eq!(ctx.ui_status, None);
+    }
+
+    #[test]
+    fn test_template_ui_status_none_when_resolution_missing() {
+        // When bookmark points to a resolution ID that doesn't exist in the list
+        let bm = Bookmark {
+            id: "bm-3".to_string(),
+            query: "test".to_string(),
+            language: "rust".to_string(),
+            file_path: "file.rs".to_string(),
+            content_hash: None,
+            commit_hash: None,
+            health: BookmarkHealth::Active,
+            resolution_method: None,
+            last_resolved_at: None,
+            stale_since: None,
+            created_at: "2024-01-01T00:00:00Z".to_string(),
+            created_by: None,
+            current_resolution_id: Some("nonexistent-res".to_string()),
+            repo_id: None,
+            tags: vec![],
+            annotations: vec![],
+            comments: vec![],
+        };
+
+        let ctx = BookmarkTemplateContext::from_bookmark(&bm, &[], Path::new("."), None);
+        assert_eq!(ctx.ui_status, None);
+    }
+
+    #[test]
+    fn test_template_ui_status_drifted() {
+        // When health=Drifted at HEAD, ui_status should be "drifted"
+        let tmp = std::env::temp_dir()
+            .join(format!("codemark_test_tpl_drifted_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&tmp).unwrap();
+
+        let run = |args: &[&str]| {
+            let status =
+                std::process::Command::new("git").args(args).current_dir(&tmp).status().unwrap();
+            assert!(status.success());
+        };
+        run(&["init"]);
+        run(&["config", "user.email", "test@example.com"]);
+        run(&["config", "user.name", "test"]);
+        std::fs::write(tmp.join("file.rs"), "fn main() {}").unwrap();
+        run(&["add", "file.rs"]);
+        run(&["commit", "-m", "initial"]);
+        let head = String::from_utf8(
+            std::process::Command::new("git")
+                .args(["rev-parse", "HEAD"])
+                .current_dir(&tmp)
+                .output()
+                .unwrap()
+                .stdout,
+        )
+        .unwrap()
+        .trim()
+        .to_string();
+
+        let bm = Bookmark {
+            id: "bm-4".to_string(),
+            query: "test".to_string(),
+            language: "rust".to_string(),
+            file_path: "file.rs".to_string(),
+            content_hash: None,
+            commit_hash: None,
+            health: BookmarkHealth::Drifted,
+            resolution_method: None,
+            last_resolved_at: None,
+            stale_since: None,
+            created_at: "2024-01-01T00:00:00Z".to_string(),
+            created_by: None,
+            current_resolution_id: Some("res-4".to_string()),
+            repo_id: None,
+            tags: vec![],
+            annotations: vec![],
+            comments: vec![],
+        };
+
+        let resolution = Resolution {
+            id: "res-4".to_string(),
+            bookmark_id: "bm-4".to_string(),
+            resolved_at: "2024-01-01T00:00:00Z".to_string(),
+            health: BookmarkHealth::Drifted,
+            commit_hash: Some(head.clone()),
+            method: ResolutionMethod::Relaxed,
+            match_count: Some(1),
+            file_path: Some("file.rs".to_string()),
+            byte_range: None,
+            line_range: None,
+            content_hash: None,
+            headline: None,
+            snapshot: None,
+            breadcrumbs: None,
+            is_anchored: true,
+        };
+
+        let ctx = BookmarkTemplateContext::from_bookmark(&bm, &[resolution], &tmp, Some(&head));
+        assert_eq!(ctx.ui_status, Some("drifted".to_string()));
+
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
 }
