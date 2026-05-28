@@ -499,11 +499,18 @@ impl RightPane {
 
     /// Get the markdown content from the currently focused markdown panel.
     /// Returns the content from the Details panel when focused on Details,
-    /// or from the Info tab's markdown panel when focused on Steps.
+    /// or from the Info tab's markdown panel when the Info tab is selected.
     pub fn active_markdown_content(&self) -> Option<&str> {
         match self.focused {
             RightPaneFocus::Details => Some(self.details.markdown()),
-            RightPaneFocus::Steps => self.steps.get_markdown().map(|m| m.markdown()),
+            RightPaneFocus::Steps => {
+                // Only return markdown if the Info tab (index 1) is selected
+                if self.steps.tabs.selected_index() == 1 {
+                    self.steps.get_markdown().map(|m| m.markdown())
+                } else {
+                    None
+                }
+            }
         }
     }
 }
