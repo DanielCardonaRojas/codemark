@@ -805,6 +805,38 @@ fn write_heal_line(output: &HealOutput) -> io::Result<()> {
     Ok(())
 }
 
+/// Escape special markdown characters in text.
+fn escape_markdown(text: &str) -> String {
+    // Escape characters that have special meaning in markdown:
+    // \ ` * _ { } [ ] ( ) # + - . ! | < >
+    // But be careful not to escape within code blocks
+    let mut result = String::with_capacity(text.len());
+    for c in text.chars() {
+        match c {
+            '\\' => result.push_str("\\\\"),
+            '`' => result.push_str("\\`"),
+            '*' => result.push_str("\\*"),
+            '_' => result.push_str("\\_"),
+            '{' => result.push_str("\\{"),
+            '}' => result.push_str("\\}"),
+            '[' => result.push_str("\\["),
+            ']' => result.push_str("\\]"),
+            '(' => result.push_str("\\("),
+            ')' => result.push_str("\\)"),
+            '#' => result.push_str("\\#"),
+            '+' => result.push_str("\\+"),
+            '-' => result.push_str("\\-"),
+            '.' => result.push_str("\\."),
+            '!' => result.push_str("\\!"),
+            '|' => result.push_str("\\|"),
+            '<' => result.push_str("\\<"),
+            '>' => result.push_str("\\>"),
+            _ => result.push(c),
+        }
+    }
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -877,36 +909,4 @@ mod tests {
             "my-repo|abcd1234|src/main.rs|main.rs|42|42|active|active|drifted|#api #core|entry point|fn main|(function_item) @target"
         );
     }
-}
-
-/// Escape special markdown characters in text.
-fn escape_markdown(text: &str) -> String {
-    // Escape characters that have special meaning in markdown:
-    // \ ` * _ { } [ ] ( ) # + - . ! | < >
-    // But be careful not to escape within code blocks
-    let mut result = String::with_capacity(text.len());
-    for c in text.chars() {
-        match c {
-            '\\' => result.push_str("\\\\"),
-            '`' => result.push_str("\\`"),
-            '*' => result.push_str("\\*"),
-            '_' => result.push_str("\\_"),
-            '{' => result.push_str("\\{"),
-            '}' => result.push_str("\\}"),
-            '[' => result.push_str("\\["),
-            ']' => result.push_str("\\]"),
-            '(' => result.push_str("\\("),
-            ')' => result.push_str("\\)"),
-            '#' => result.push_str("\\#"),
-            '+' => result.push_str("\\+"),
-            '-' => result.push_str("\\-"),
-            '.' => result.push_str("\\."),
-            '!' => result.push_str("\\!"),
-            '|' => result.push_str("\\|"),
-            '<' => result.push_str("\\<"),
-            '>' => result.push_str("\\>"),
-            _ => result.push(c),
-        }
-    }
-    result
 }

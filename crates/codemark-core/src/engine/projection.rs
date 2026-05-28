@@ -247,7 +247,7 @@ mod tests {
         run(&["add", "file.rs"]);
         run(&["commit", "-m", "initial"]);
         let commit_a = std::process::Command::new("git")
-            .args(&["rev-parse", "HEAD"])
+            .args(["rev-parse", "HEAD"])
             .current_dir(&tmp)
             .output()
             .unwrap()
@@ -258,7 +258,7 @@ mod tests {
         run(&["add", "file.rs"]);
         run(&["commit", "-m", "second"]);
         let commit_b = std::process::Command::new("git")
-            .args(&["rev-parse", "HEAD"])
+            .args(["rev-parse", "HEAD"])
             .current_dir(&tmp)
             .output()
             .unwrap()
