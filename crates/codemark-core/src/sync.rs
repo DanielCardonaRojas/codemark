@@ -5,12 +5,11 @@
 //! The server preserves the collection_id, so we use it as the unified
 //! identifier for both directions.
 
-use crate::cli::Cli;
-use crate::cli::output::OutputMode;
-use codemark_core::engine::snapshot::build_snapshot;
-use codemark_core::error::{Error, Result};
-use codemark_core::storage::db::Database;
-use codemark_core::storage::pack::{PackReader, Packer, inspect, pre_inspect};
+use crate::config::Config;
+use crate::engine::snapshot::build_snapshot;
+use crate::error::{Error, Result};
+use crate::storage::db::Database;
+use crate::storage::pack::{PackReader, Packer, inspect, pre_inspect};
 use reqwest::header::{ACCEPT, CONTENT_TYPE, HeaderMap, HeaderValue};
 use rusqlite::params;
 use serde_json::Value;
@@ -56,14 +55,14 @@ pub struct SyncOptions {
     /// Empty string means use original name, Some(name) means custom name
     pub save_name: Option<String>,
 
-    /// Database reference (required for push)
+    /// Database reference (required for push and pull)
     pub db: Option<Database>,
 
     /// Project root (required for push)
     pub project_root: Option<String>,
 
-    /// CLI reference (for loading config)
-    pub cli: *const Cli,
+    /// Config (required for push)
+    pub config: Option<Config>,
 }
 
 unsafe impl Send for SyncOptions {}
@@ -197,7 +196,7 @@ async fn import_pack(
         // Import annotations
         let mut ann_stmt = reader.conn().prepare("SELECT id, bookmark_id, added_at, added_by, notes, context, source FROM bookmark_annotations WHERE bookmark_id = ?1")?;
         let annotations = ann_stmt.query_map([&old_id], |row: &rusqlite::Row| {
-            Ok(codemark_core::engine::bookmark::Annotation {
+            Ok(crate::engine::bookmark::Annotation {
                 id: uuid::Uuid::new_v4().to_string(),
                 bookmark_id: bookmark_id.clone(),
                 added_at: row.get(2)?,
@@ -216,7 +215,7 @@ async fn import_pack(
             "SELECT bookmark_id, tag, added_at, added_by FROM bookmark_tags WHERE bookmark_id = ?1",
         )?;
         let tags = tag_stmt.query_map([&old_id], |row: &rusqlite::Row| {
-            Ok(codemark_core::engine::bookmark::Tag {
+            Ok(crate::engine::bookmark::Tag {
                 bookmark_id: bookmark_id.clone(),
                 tag: row.get(1)?,
                 added_at: row.get(2)?,
@@ -254,7 +253,7 @@ async fn import_pack(
 
         for (new_id, author, body, created_at, old_parent_id) in pending_comments {
             let new_parent_id = old_parent_id.and_then(|id| comment_id_map.get(&id).cloned());
-            db.insert_comment(&codemark_core::engine::bookmark::BookmarkComment {
+            db.insert_comment(&crate::engine::bookmark::BookmarkComment {
                 id: new_id,
                 bookmark_id: bookmark_id.clone(),
                 author,
@@ -331,15 +330,19 @@ async fn upload_pack(
 /// This is the main entry point for the unified sync interface.
 /// It handles both downloading collections from a server (Pull)
 /// and uploading collections to a server (Push).
-pub async fn sync(cli: &Cli, mode: &OutputMode, opts: SyncOptions) -> Result<()> {
+pub async fn sync(opts: SyncOptions) -> Result<()> {
     match opts.direction {
-        SyncDirection::Pull => sync_pull(cli, mode, opts).await,
-        SyncDirection::Push => sync_push(cli, mode, opts).await,
+        SyncDirection::Pull => sync_pull(opts).await,
+        SyncDirection::Push => sync_push(opts).await,
     }
 }
 
 /// Handle pulling a collection from the server.
-async fn sync_pull(cli: &Cli, mode: &OutputMode, opts: SyncOptions) -> Result<()> {
+async fn sync_pull(opts: SyncOptions) -> Result<()> {
+    let db = opts
+        .db
+        .ok_or_else(|| Error::Operation("database required for pull".to_string()))?;
+
     let temp_dir = std::env::temp_dir();
     let pack_path = temp_dir.join(format!("codemark-pull-{}.sqlite", uuid::Uuid::new_v4()));
 
@@ -356,19 +359,17 @@ async fn sync_pull(cli: &Cli, mode: &OutputMode, opts: SyncOptions) -> Result<()
         let user_version = pre_inspect(&pack_path)
             .map_err(|e| Error::Operation(format!("pre-inspection failed: {e}")))?;
 
-        if user_version < codemark_core::storage::db::Database::CURRENT_VERSION {
+        if user_version < Database::CURRENT_VERSION {
             let pack_path_clone = pack_path.clone();
             tokio::task::spawn_blocking(move || {
                 let mut conn = rusqlite::Connection::open(&pack_path_clone)
                     .map_err(|e| Error::Database(e.to_string()))?;
-                codemark_core::storage::db::Database::run_migrations_on(&mut conn)
+                Database::run_migrations_on(&mut conn)
                     .map_err(|e| Error::Database(e.to_string()))?;
                 Ok::<_, Error>(())
             })
             .await
-            .map_err(|_| {
-                Error::Operation("Blocking task panicked during migration".to_string())
-            })??;
+            .map_err(|_| Error::Operation("Blocking task panicked during migration".to_string()))??;
         }
 
         // Full inspection after potential migration
@@ -376,22 +377,16 @@ async fn sync_pull(cli: &Cli, mode: &OutputMode, opts: SyncOptions) -> Result<()
             .map_err(|e| Error::Operation(format!("pack inspection failed: {e}")))?;
 
         // Pull is now persistent by default - always save locally
-        let db = super::open_db_for_write(cli)?;
         let source_url = format!("{}/tours/{}", opts.server_url, opts.collection_id);
 
         match &opts.save_name {
             Some(name) if !name.is_empty() => {
                 // Save with custom name
                 import_pack(&db, &pack_path, Some(name), &source_url).await?;
-                crate::cli::output::write_success(
-                    mode,
-                    &format!("Saved as collection '{}'", name),
-                )?;
             }
             _ => {
                 // Save with original name
                 import_pack(&db, &pack_path, None, &source_url).await?;
-                crate::cli::output::write_success(mode, "Collection imported successfully")?;
             }
         }
 
@@ -405,13 +400,17 @@ async fn sync_pull(cli: &Cli, mode: &OutputMode, opts: SyncOptions) -> Result<()
 }
 
 /// Handle pushing a collection to the server.
-async fn sync_push(cli: &Cli, mode: &OutputMode, opts: SyncOptions) -> Result<()> {
-    let db = opts.db.ok_or_else(|| Error::Operation("database required for push".to_string()))?;
+async fn sync_push(opts: SyncOptions) -> Result<()> {
+    let db = opts
+        .db
+        .ok_or_else(|| Error::Operation("database required for push".to_string()))?;
     let project_root = opts
         .project_root
         .ok_or_else(|| Error::Operation("project_root required for push".to_string()))?;
+    let config = opts
+        .config
+        .ok_or_else(|| Error::Operation("config required for push".to_string()))?;
 
-    let config = super::load_config(cli);
     let project_root_path = Path::new(&project_root);
 
     // Build snapshot
@@ -437,12 +436,11 @@ async fn sync_push(cli: &Cli, mode: &OutputMode, opts: SyncOptions) -> Result<()
 
     let res = async {
         if opts.dry_run {
-            println!("Dry run: pack created at {}", result_path.display());
             return Ok(());
         }
 
         // Upload pack
-        let tour_id = upload_pack(
+        upload_pack(
             &result_path,
             &opts.server_url,
             opts.token.as_ref(),
@@ -451,11 +449,6 @@ async fn sync_push(cli: &Cli, mode: &OutputMode, opts: SyncOptions) -> Result<()
         )
         .await?;
 
-        crate::cli::output::write_success(
-            mode,
-            &format!("Published tour: {}/tours/{}", opts.server_url, tour_id),
-        )?;
-
         Ok(())
     }
     .await;
@@ -463,4 +456,36 @@ async fn sync_push(cli: &Cli, mode: &OutputMode, opts: SyncOptions) -> Result<()
     // Cleanup
     let _ = tokio::fs::remove_file(&result_path).await;
     res
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_build_auth_headers_jwt() {
+        let token = Some("eyJtest".to_string());
+        let headers = build_auth_headers(&token).unwrap();
+        assert_eq!(
+            headers.get("Authorization").unwrap().to_str().unwrap(),
+            "Bearer eyJtest"
+        );
+    }
+
+    #[test]
+    fn test_build_auth_headers_legacy() {
+        let token = Some("legacy_token".to_string());
+        let headers = build_auth_headers(&token).unwrap();
+        assert_eq!(
+            headers.get("X-Tour-Token").unwrap().to_str().unwrap(),
+            "legacy_token"
+        );
+    }
+
+    #[test]
+    fn test_build_auth_headers_none() {
+        let headers = build_auth_headers(&None).unwrap();
+        assert!(headers.get("Authorization").is_none());
+        assert!(headers.get("X-Tour-Token").is_none());
+    }
 }

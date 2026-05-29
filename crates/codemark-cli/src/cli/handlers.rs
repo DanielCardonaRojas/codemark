@@ -34,7 +34,6 @@ pub mod publish;
 pub mod pull;
 pub mod repo;
 pub mod search;
-pub mod sync;
 pub mod tour;
 
 /// Pre-flight detection for `tour list` command.
