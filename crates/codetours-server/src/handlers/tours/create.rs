@@ -494,6 +494,8 @@ pub async fn handler(
 
             if exists {
                 tx.execute("CREATE TEMP TABLE IF NOT EXISTS _republish_orphan_candidates AS SELECT bookmark_id FROM main.collection_bookmarks WHERE collection_id = ?1", [&collection_id])?;
+                tx.execute("DELETE FROM main.collection_tags WHERE collection_id = ?1", [&collection_id])?;
+                tx.execute("DELETE FROM main.collection_links WHERE collection_id = ?1", [&collection_id])?;
                 tx.execute("DELETE FROM main.collection_bookmarks WHERE collection_id = ?1", [&collection_id])?;
                 tx.execute("DELETE FROM main.collections WHERE id = ?1", [&collection_id])?;
                 tx.execute("DELETE FROM main.bookmarks WHERE id IN (SELECT bookmark_id FROM _republish_orphan_candidates) AND id NOT IN (SELECT bookmark_id FROM main.collection_bookmarks)", [])?;
