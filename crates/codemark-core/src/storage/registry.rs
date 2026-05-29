@@ -185,9 +185,8 @@ pub fn find_repo_by_root(conn: &Connection, root: &str) -> Result<Option<KnownRe
 
 /// List distinct repo owners from all known repositories.
 pub fn list_repo_owners(conn: &Connection) -> Result<Vec<String>> {
-    let mut stmt = conn.prepare(
-        "SELECT DISTINCT repo_owner FROM known_repos ORDER BY repo_owner"
-    )?;
+    let mut stmt =
+        conn.prepare("SELECT DISTINCT repo_owner FROM known_repos ORDER BY repo_owner")?;
     let rows = stmt.query_map([], |row| row.get(0))?;
     let mut owners = Vec::new();
     for owner in rows {
