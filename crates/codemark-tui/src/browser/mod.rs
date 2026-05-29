@@ -752,6 +752,42 @@ impl BrowserLayout {
         }
     }
 
+    /// Update the Repos panel (Panel 1, tab 0) based on active account (owner) filters.
+    ///
+    /// Follows the same pattern as `update_tours_collections()`:
+    /// reads active owners from the Accounts panel, re-queries repos from the registry,
+    /// and filters to only show repos matching the selected owners.
+    fn update_repos_by_owner(&mut self) {
+        let active_owners = self
+            .left_pane
+            .panel1
+            .panels
+            .get(1)
+            .and_then(|c| match c {
+                TabContent::List(p) => Some(p.active_items()),
+                _ => None,
+            })
+            .unwrap_or_default();
+
+        let repo_items = if active_owners.is_empty() {
+            // No filter — show all repos
+            TabbedPanel::build_repo_items(&self.db, &self.registry)
+        } else {
+            // Filter repos by selected owners
+            TabbedPanel::build_repo_items(&self.db, &self.registry)
+                .into_iter()
+                .filter(|item| {
+                    item.get_secondary_text()
+                        .is_some_and(|owner| active_owners.iter().any(|o| o == owner))
+                })
+                .collect()
+        };
+
+        if let Some(p) = self.left_pane.panel1.get_list_panel_mut(0) {
+            p.set_items(repo_items);
+        }
+    }
+
     /// Set the focus area.
     pub fn set_focus(&mut self, focus: FocusArea) {
         // If we're in filter mode, we don't allow changing focus visually
@@ -1102,18 +1138,27 @@ impl BrowserLayout {
                         self.execute_search();
                         return true;
                     }
-                    if self.focus == FocusArea::Panel1
-                        && let Some(panel) = self.left_pane.panel1.active_panel_mut()
-                        && let Some(selected) = panel.selected()
-                        && let Some(root) = selected.user_data.as_ref()
-                    {
-                        let root = root.clone();
-                        panel.activate_selected();
-                        // Only shift focus to bookmarks if database switch succeeds
-                        if self.switch_database(&root).is_ok() {
-                            self.set_focus(FocusArea::Panel3);
+                    if self.focus == FocusArea::Panel1 {
+                        let active_tab = self.left_pane.panel1.tabs.selected_index();
+                        if active_tab == 1 {
+                            // Accounts tab: toggle owner selection and filter repos
+                            if let Some(panel) = self.left_pane.panel1.active_panel_mut() {
+                                panel.activate_selected();
+                            }
+                            self.update_repos_by_owner();
+                            return true;
+                        } else if let Some(panel) = self.left_pane.panel1.active_panel_mut()
+                            && let Some(selected) = panel.selected()
+                            && let Some(root) = selected.user_data.as_ref()
+                        {
+                            // Repos tab: switch database
+                            let root = root.clone();
+                            panel.activate_selected();
+                            if self.switch_database(&root).is_ok() {
+                                self.set_focus(FocusArea::Panel3);
+                            }
+                            return true;
                         }
-                        return true;
                     }
                     if self.focus == FocusArea::Panel2
                         && let Some(panel) = self.left_pane.panel2.active_panel_mut()
@@ -1154,15 +1199,25 @@ impl BrowserLayout {
                     }
                 }
                 ratatui::crossterm::event::KeyCode::Char(' ') => {
-                    if self.focus == FocusArea::Panel1
-                        && let Some(panel) = self.left_pane.panel1.active_panel_mut()
-                        && let Some(selected) = panel.selected()
-                        && let Some(root) = selected.user_data.as_ref()
-                    {
-                        let root = root.clone();
-                        panel.activate_selected();
-                        let _ = self.switch_database(&root);
-                        return true;
+                    if self.focus == FocusArea::Panel1 {
+                        let active_tab = self.left_pane.panel1.tabs.selected_index();
+                        if active_tab == 1 {
+                            // Accounts tab: toggle owner selection and filter repos
+                            if let Some(panel) = self.left_pane.panel1.active_panel_mut() {
+                                panel.activate_selected();
+                            }
+                            self.update_repos_by_owner();
+                            return true;
+                        } else if let Some(panel) = self.left_pane.panel1.active_panel_mut()
+                            && let Some(selected) = panel.selected()
+                            && let Some(root) = selected.user_data.as_ref()
+                        {
+                            // Repos tab: switch database
+                            let root = root.clone();
+                            panel.activate_selected();
+                            let _ = self.switch_database(&root);
+                            return true;
+                        }
                     }
                     if self.focus == FocusArea::Panel2
                         && let Some(panel) = self.left_pane.panel2.active_panel_mut()

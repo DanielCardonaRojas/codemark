@@ -206,6 +206,11 @@ impl PanelItem {
         &self.text
     }
 
+    /// Get the secondary text value.
+    pub fn get_secondary_text(&self) -> Option<&str> {
+        self.secondary_text.as_deref()
+    }
+
     /// Set the secondary text.
     pub fn secondary_text(mut self, text: impl Into<String>) -> Self {
         self.secondary_text = Some(text.into());

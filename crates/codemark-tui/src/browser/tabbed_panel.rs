@@ -285,7 +285,10 @@ impl TabbedPanel {
         use codemark_core::storage::registry;
         if let Ok(owners) = registry::list_repo_owners(registry) {
             owners.into_iter()
-                .map(|owner| PanelItem::new(owner).no_health())
+                .map(|owner| {
+                    let name = owner.clone();
+                    PanelItem::new(owner).user_data(name).no_health()
+                })
                 .collect()
         } else {
             Vec::new()
@@ -383,7 +386,7 @@ impl TabbedPanel {
         repos_panel = repos_panel.items(repos_items);
 
         let account_items = TabbedPanel::build_account_items(registry);
-        let accounts = Panel::new("").items(account_items).bordered(false);
+        let accounts = Panel::new("").items(account_items).bordered(false).multi_select(true);
 
         let tabs = TabSelection::new(vec![Tab::new("Repos"), Tab::new("Accounts")]);
 
