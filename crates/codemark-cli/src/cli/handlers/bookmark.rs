@@ -207,7 +207,10 @@ pub async fn handle_add(cli: &Cli, mode: &OutputMode, args: &AddArgsOriginal) ->
             snapshot: Some(source[generated.byte_range.0..generated.byte_range.1].to_string()),
             breadcrumbs: breadcrumbs_json,
         };
-        db.insert_resolution_if_changed(&initial_res, config.storage.max_resolutions())?;
+        let res_id = initial_res.id.clone();
+        if db.insert_resolution_if_changed(&initial_res, config.storage.max_resolutions())? {
+            db.update_bookmark_resolution_id(&actual_bookmark_id, &res_id)?;
+        }
     }
 
     // Add to collection if specified
@@ -440,7 +443,10 @@ pub async fn handle_add_from_snippet(
             snapshot: Some(source[generated.byte_range.0..generated.byte_range.1].to_string()),
             breadcrumbs: breadcrumbs_json,
         };
-        db.insert_resolution_if_changed(&initial_res, config.storage.max_resolutions())?;
+        let res_id = initial_res.id.clone();
+        if db.insert_resolution_if_changed(&initial_res, config.storage.max_resolutions())? {
+            db.update_bookmark_resolution_id(&actual_bookmark_id, &res_id)?;
+        }
     }
 
     // Add to collection if specified
@@ -673,7 +679,10 @@ pub async fn handle_add_from_query(
             snapshot: Some(source[byte_range.0..byte_range.1].to_string()),
             breadcrumbs: breadcrumbs_json,
         };
-        db.insert_resolution_if_changed(&initial_res, config.storage.max_resolutions())?;
+        let res_id = initial_res.id.clone();
+        if db.insert_resolution_if_changed(&initial_res, config.storage.max_resolutions())? {
+            db.update_bookmark_resolution_id(&actual_bookmark_id, &res_id)?;
+        }
     }
 
     // Add to collection if specified
