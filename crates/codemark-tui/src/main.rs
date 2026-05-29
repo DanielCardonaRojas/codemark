@@ -10,7 +10,7 @@ use crossterm::{
 };
 use ratatui::{Terminal, backend::CrosstermBackend};
 use std::io;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use codemark_tui::{
     browser::BrowserLayout,
@@ -58,8 +58,9 @@ async fn run_app() -> Result<()> {
     // Create the browser layout
     let mut layout = BrowserLayout::new(db, event_handler);
 
-    // Notification state
-    let mut notification: Option<(String, NotificationType)> = None;
+    // Notification state (message, type, when it was shown)
+    let mut notification: Option<(String, NotificationType, Instant)> = None;
+    let notification_duration = Duration::from_secs(2);
 
     // Main loop
     let mut show_help = false;
@@ -130,7 +131,7 @@ async fn run_app() -> Result<()> {
             }
 
             // Draw notification if present
-            if let Some((msg, notification_type)) = &notification {
+            if let Some((msg, notification_type, _)) = &notification {
                 let notif_area = ratatui::layout::Rect {
                     x: 0,
                     y: size.height.saturating_sub(1),
@@ -202,6 +203,13 @@ async fn run_app() -> Result<()> {
                     }
                     Event::Resize(width, height) => {
                         state.set_size(*width, *height);
+                    }
+                    Event::Tick => {
+                        if let Some((_, _, shown_at)) = &notification {
+                            if shown_at.elapsed() >= notification_duration {
+                                notification = None;
+                            }
+                        }
                     }
                     _ => {}
                 }
@@ -313,6 +321,7 @@ async fn run_app() -> Result<()> {
                             notification = Some((
                                 format!("Failed to spawn editor: {}", e),
                                 NotificationType::Error,
+                                Instant::now(),
                             ));
                         }
                     }
@@ -327,6 +336,7 @@ async fn run_app() -> Result<()> {
                         } else {
                             NotificationType::Error
                         },
+                        Instant::now(),
                     ));
                 }
             }

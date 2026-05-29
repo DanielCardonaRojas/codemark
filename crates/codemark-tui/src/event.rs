@@ -254,6 +254,15 @@ async fn event_loop_with_sender(tick_rate: Duration, tx: mpsc::Sender<Event>) {
                     // Channel closed, exit the loop
                     return;
                 }
+                // Also send tick if the tick interval has elapsed, even when
+                // input events are arriving (e.g. mouse events from mouse capture
+                // can starve tick generation otherwise).
+                if last_tick.elapsed() >= tick_rate {
+                    if tx.send(Event::Tick).await.is_err() {
+                        return;
+                    }
+                    last_tick = std::time::Instant::now();
+                }
             }
             Ok(None) => {
                 // Timeout occurred, send tick event if needed
