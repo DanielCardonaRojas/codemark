@@ -602,6 +602,22 @@ impl Panel {
         }
     }
 
+    /// Activate an item by its `user_data` value without changing cursor selection.
+    ///
+    /// Used to restore active state after rebuilding items with `set_items`.
+    pub fn activate_by_user_data(&mut self, data: &str) {
+        for item in &mut self.all_items {
+            if item.user_data.as_deref() == Some(data) {
+                item.active = true;
+            }
+        }
+        for item in &mut self.items {
+            if item.user_data.as_deref() == Some(data) {
+                item.active = true;
+            }
+        }
+    }
+
     /// Clear all items from the panel.
     pub fn clear(&mut self) {
         self.items.clear();

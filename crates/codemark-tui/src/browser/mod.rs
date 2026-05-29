@@ -342,14 +342,34 @@ impl BrowserLayout {
 
     /// Refresh all panels from the current active database.
     pub fn refresh_all_panels(&mut self) {
-        // 1. Update Panel 1 Repos and Accounts (in-place to preserve selection)
+        // 1. Update Panel 1 Accounts (preserving active owner selections)
+        let active_owners: Vec<String> = self
+            .left_pane
+            .panel1
+            .panels
+            .get(1)
+            .and_then(|c| match c {
+                TabContent::List(p) => Some(p.active_items()),
+                _ => None,
+            })
+            .unwrap_or_default();
+
+        let account_items = TabbedPanel::build_account_items(&self.registry);
+        if let Some(p) = self.left_pane.panel1.get_list_panel_mut(1) {
+            p.set_items(account_items);
+            // Re-activate previously selected owners
+            for owner in &active_owners {
+                p.activate_by_user_data(owner);
+            }
+        }
+
+        // Update Panel 1 Repos (respecting active owner filter)
         let repo_items = TabbedPanel::build_repo_items(&self.db, &self.registry);
         if let Some(p) = self.left_pane.panel1.get_list_panel_mut(0) {
             p.set_items(repo_items);
         }
-        let account_items = TabbedPanel::build_account_items(&self.registry);
-        if let Some(p) = self.left_pane.panel1.get_list_panel_mut(1) {
-            p.set_items(account_items);
+        if !active_owners.is_empty() {
+            self.update_repos_by_owner();
         }
 
         // 2. Update Tags/Branches (in-place)
