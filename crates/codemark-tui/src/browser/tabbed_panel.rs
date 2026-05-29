@@ -284,10 +284,9 @@ impl TabbedPanel {
     pub fn build_account_items(registry: &rusqlite::Connection) -> Vec<PanelItem> {
         use codemark_core::storage::registry;
         if let Ok(owners) = registry::list_repo_owners(registry) {
-            owners.into_iter()
-                .map(|owner| {
-                    PanelItem::new(owner.clone()).user_data(owner).no_health()
-                })
+            owners
+                .into_iter()
+                .map(|owner| PanelItem::new(owner.clone()).user_data(owner).no_health())
                 .collect()
         } else {
             Vec::new()
