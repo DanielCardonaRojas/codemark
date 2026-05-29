@@ -101,6 +101,47 @@ pub fn build_auth_headers(token: Option<&String>) -> Result<HeaderMap> {
     Ok(headers)
 }
 
+/// Resolve server URL and token from config and registry.
+///
+/// This function handles the logic of resolving which server to use and
+/// obtaining the authentication token. It follows this priority order:
+///
+/// 1. If `default_server` is a direct URL (starts with http), use it
+/// 2. If `default_server` is a named server, look it up in config.servers
+/// 3. Get token from config (for named servers) or fallback to registry
+///
+/// Returns `(server_url, token)` tuple where token may be None if not found.
+pub fn resolve_server_and_token(config: &Config) -> Result<(String, Option<String>)> {
+    use crate::storage::registry;
+
+    let (server_url, mut token) = if let Some(ref server_name) = config.codetours.default_server {
+        if server_name.starts_with("http") {
+            // Direct URL in default_server
+            (server_name.clone(), None)
+        } else {
+            // Named server - look up in config
+            if let Some(s) = config.codetours.servers.iter().find(|s| s.name == server_name.as_str()) {
+                (s.url.clone(), s.token.clone())
+            } else {
+                return Err(Error::Input(format!("server '{}' not found in config", server_name)));
+            }
+        }
+    } else {
+        return Err(Error::Input("No default_server configured".to_string()));
+    };
+
+    // Try to get token from registry as fallback (if not in config)
+    if token.is_none() {
+        token = registry::open_registry()
+            .ok()
+            .and_then(|conn| registry::get_server(&conn, &server_url).ok())
+            .flatten()
+            .and_then(|s| s.token);
+    }
+
+    Ok((server_url, token))
+}
+
 /// Download a pack from the server and decompress it.
 async fn download_pack(
     server_url: &str,
