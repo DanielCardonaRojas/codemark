@@ -726,7 +726,8 @@ impl BrowserLayout {
 
         // 2. Update Bookmarks (Panel 3, tab 0)
         if let Ok(bookmarks) = self.db.list_bookmarks(&BookmarkFilter::default()) {
-            let head = codemark_core::git::context::detect_context(self.db.path())
+            let db_dir = self.db.path().parent().unwrap_or_else(|| self.db.path());
+            let head = codemark_core::git::context::detect_context(db_dir)
                 .and_then(|ctx| ctx.head_commit);
             let head_ref = head.as_deref();
 
@@ -963,7 +964,8 @@ impl BrowserLayout {
         // Handle search results and errors
         match event {
             Event::SearchResults(bookmarks) => {
-                let current_head = codemark_core::git::context::detect_context(self.db.path())
+                let db_dir = self.db.path().parent().unwrap_or_else(|| self.db.path());
+                let current_head = codemark_core::git::context::detect_context(db_dir)
                     .and_then(|ctx| ctx.head_commit);
                 let items: Vec<PanelItem> = bookmarks
                     .iter()

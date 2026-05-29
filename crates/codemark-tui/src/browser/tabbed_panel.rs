@@ -350,7 +350,8 @@ impl TabbedPanel {
             }
         }
 
-        let head = git_context::detect_context(db.path()).and_then(|ctx| ctx.head_commit);
+        let db_dir = db.path().parent().unwrap_or_else(|| db.path());
+        let head = git_context::detect_context(db_dir).and_then(|ctx| ctx.head_commit);
         let head_ref = head.as_deref();
 
         let bookmarks = match db.list_bookmarks(&BookmarkFilter::default()) {
