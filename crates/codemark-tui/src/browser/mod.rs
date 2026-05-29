@@ -26,7 +26,7 @@ use crate::component::{Component, HealthStatus, PanelItem};
 use crate::event::Event;
 use codemark_core::config::Config;
 use codemark_core::embeddings::config::EmbeddingModel;
-use codemark_core::engine::bookmark::{Bookmark, BookmarkFilter, BookmarkHealth};
+use codemark_core::engine::bookmark::{Bookmark, BookmarkFilter};
 use codemark_core::parser::languages::Language;
 use codemark_core::query::classifier::get_node_icon;
 use codemark_core::query::summarizer;
@@ -370,7 +370,7 @@ impl BrowserLayout {
             // Restore step if possible
             if current_step < self.right_pane.pager_total {
                 self.right_pane.pager_current = current_step;
-                self.right_pane.update_preview();
+                self.right_pane.update_preview(&self.db);
             }
         } else if let Some(bm_id) = self.right_pane.active_bookmark_id.clone() {
             self.right_pane.load_bookmark(&self.db, &bm_id);
@@ -688,10 +688,16 @@ impl BrowserLayout {
 
                 if branch_match && tag_match {
                     let health = match c.health {
-                        Some(h) => match h.to_string().as_str() {
-                            "Healthy" => HealthStatus::Healthy,
-                            "Error" => HealthStatus::Error,
-                            _ => HealthStatus::Warning,
+                        Some(h) => match h {
+                            codemark_core::engine::bookmark::CollectionHealth::Active => {
+                                HealthStatus::Healthy
+                            }
+                            codemark_core::engine::bookmark::CollectionHealth::Drifted => {
+                                HealthStatus::Drifted
+                            }
+                            codemark_core::engine::bookmark::CollectionHealth::Stale => {
+                                HealthStatus::Broken
+                            }
                         },
                         None => HealthStatus::Unknown,
                     };
@@ -720,6 +726,11 @@ impl BrowserLayout {
 
         // 2. Update Bookmarks (Panel 3, tab 0)
         if let Ok(bookmarks) = self.db.list_bookmarks(&BookmarkFilter::default()) {
+            let db_dir = self.db.path().parent().unwrap_or_else(|| self.db.path());
+            let head =
+                codemark_core::git::context::detect_context(db_dir).and_then(|ctx| ctx.head_commit);
+            let head_ref = head.as_deref();
+
             let filtered_items: Vec<PanelItem> = bookmarks
                 .iter()
                 .filter(|bm| {
@@ -728,7 +739,7 @@ impl BrowserLayout {
                         active_tags.is_empty() || bm.tags.iter().any(|t| active_tags.contains(t));
                     branch_match && tag_match
                 })
-                .map(|bm| bookmark_to_panel_item(bm, &self.db, false))
+                .map(|bm| bookmark_to_panel_item(bm, &self.db, false, head_ref))
                 .collect();
 
             if let Some(TabContent::List(p)) = self.left_pane.panel3.panels.get_mut(0) {
@@ -953,23 +964,19 @@ impl BrowserLayout {
         // Handle search results and errors
         match event {
             Event::SearchResults(bookmarks) => {
+                let db_dir = self.db.path().parent().unwrap_or_else(|| self.db.path());
+                let current_head = codemark_core::git::context::detect_context(db_dir)
+                    .and_then(|ctx| ctx.head_commit);
                 let items: Vec<PanelItem> = bookmarks
                     .iter()
                     .map(|bm| {
-                        // Get the best resolution for preview to determine health status
-                        let health = self
-                            .db
-                            .get_preview_resolution(&bm.id)
-                            .ok()
-                            .flatten()
-                            .map(|res| match res.health {
-                                BookmarkHealth::Active => HealthStatus::Healthy,
-                                BookmarkHealth::Drifted => HealthStatus::Warning,
-                                BookmarkHealth::Stale | BookmarkHealth::Archived => {
-                                    HealthStatus::Error
-                                }
-                            })
-                            .unwrap_or(HealthStatus::Unknown);
+                        let health = codemark_core::engine::projection::compute_bookmark_ui_status(
+                            bm,
+                            &self.db,
+                            current_head.as_deref(),
+                        )
+                        .map(HealthStatus::from)
+                        .unwrap_or(HealthStatus::Unknown);
 
                         // Try to get a summary from the query for better display
                         let summary_info = bm.language.parse::<Language>().ok().and_then(|lang| {
@@ -1434,6 +1441,10 @@ impl BrowserLayout {
                 // regardless of focus.
                 let left_handled = self.left_pane.handle_event(event);
                 let right_handled = self.right_pane.handle_event(event);
+                if self.right_pane.needs_preview_update {
+                    self.right_pane.needs_preview_update = false;
+                    self.right_pane.update_preview(&self.db);
+                }
                 let handled = left_handled || right_handled;
 
                 // Refresh tags if Panel 3 tab changed via mouse
@@ -1470,7 +1481,14 @@ impl BrowserLayout {
                         }
                         handled
                     }
-                    FocusArea::Main => self.right_pane.handle_event(event),
+                    FocusArea::Main => {
+                        let handled = self.right_pane.handle_event(event);
+                        if self.right_pane.needs_preview_update {
+                            self.right_pane.needs_preview_update = false;
+                            self.right_pane.update_preview(&self.db);
+                        }
+                        handled
+                    }
                     FocusArea::Filter => false,
                 };
 

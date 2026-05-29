@@ -54,19 +54,46 @@ pub struct Panel {
     last_selected_index: Cell<Option<usize>>,
 }
 
-/// Health status indicator for an item.
+/// Health status indicator for an item based on the projected UI status.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HealthStatus {
-    /// Healthy - green
+    /// 🟢 Healthy
     Healthy,
-    /// Warning - yellow
-    Warning,
-    /// Error/Unhealthy - red
-    Error,
+    /// 🟡 Unanchored (Healthy)
+    UnanchoredHealthy,
+    /// 🟡 Drifted
+    Drifted,
+    /// 🟠 Unanchored (Drifting)
+    UnanchoredDrifting,
+    /// 🔴 Broken
+    Broken,
+    /// 🔴 Broken (Unanchored)
+    BrokenUnanchored,
+    /// ⚪ Verified (Historical)
+    Verified,
+    /// ⚪ Outdated (Historical)
+    Outdated,
+    /// 🔵 Future
+    Future,
     /// Unknown/Gray - gray
     Unknown,
-    /// Branch icon
-    Branch,
+}
+
+impl From<codemark_core::engine::projection::UIStatus> for HealthStatus {
+    fn from(status: codemark_core::engine::projection::UIStatus) -> Self {
+        use codemark_core::engine::projection::UIStatus;
+        match status {
+            UIStatus::Healthy => HealthStatus::Healthy,
+            UIStatus::UnanchoredHealthy => HealthStatus::UnanchoredHealthy,
+            UIStatus::Drifted => HealthStatus::Drifted,
+            UIStatus::UnanchoredDrifting => HealthStatus::UnanchoredDrifting,
+            UIStatus::Broken => HealthStatus::Broken,
+            UIStatus::BrokenUnanchored => HealthStatus::BrokenUnanchored,
+            UIStatus::Verified => HealthStatus::Verified,
+            UIStatus::Outdated => HealthStatus::Outdated,
+            UIStatus::Future => HealthStatus::Future,
+        }
+    }
 }
 
 impl HealthStatus {
@@ -74,18 +101,22 @@ impl HealthStatus {
     fn color(&self) -> Color {
         match self {
             HealthStatus::Healthy => Color::Green,
-            HealthStatus::Warning => Color::Yellow,
-            HealthStatus::Error => Color::Red,
+            HealthStatus::UnanchoredHealthy => Color::Yellow,
+            HealthStatus::Drifted => Color::Yellow,
+            HealthStatus::UnanchoredDrifting => Color::Rgb(255, 165, 0), // Orange
+            HealthStatus::Broken | HealthStatus::BrokenUnanchored => Color::Red,
+            HealthStatus::Verified => Color::Green,
+            HealthStatus::Outdated => Color::Yellow,
             HealthStatus::Unknown => Color::DarkGray,
-            HealthStatus::Branch => Color::Yellow,
+            HealthStatus::Future => Color::Blue,
         }
     }
 
     /// Get the symbol for this health status.
     fn symbol(&self) -> &'static str {
         match self {
-            HealthStatus::Branch => "",
-            _ => "●",
+            HealthStatus::Verified | HealthStatus::Outdated => "○", // Unfilled circle for historical statuses
+            _ => "●", // Filled dot for all other statuses
         }
     }
 }
@@ -904,6 +935,55 @@ mod tests {
         let panel = Panel::new("Test");
         assert!(panel.is_empty());
         assert_eq!(panel.len(), 0);
+    }
+
+    #[test]
+    fn test_ui_status_to_health_status_exhaustive() {
+        use codemark_core::engine::projection::UIStatus;
+
+        assert_eq!(HealthStatus::from(UIStatus::Healthy), HealthStatus::Healthy);
+        assert_eq!(
+            HealthStatus::from(UIStatus::UnanchoredHealthy),
+            HealthStatus::UnanchoredHealthy
+        );
+        assert_eq!(HealthStatus::from(UIStatus::Drifted), HealthStatus::Drifted);
+        assert_eq!(
+            HealthStatus::from(UIStatus::UnanchoredDrifting),
+            HealthStatus::UnanchoredDrifting
+        );
+        assert_eq!(HealthStatus::from(UIStatus::Broken), HealthStatus::Broken);
+        assert_eq!(HealthStatus::from(UIStatus::BrokenUnanchored), HealthStatus::BrokenUnanchored);
+        assert_eq!(HealthStatus::from(UIStatus::Verified), HealthStatus::Verified);
+        assert_eq!(HealthStatus::from(UIStatus::Outdated), HealthStatus::Outdated);
+        assert_eq!(HealthStatus::from(UIStatus::Future), HealthStatus::Future);
+    }
+
+    #[test]
+    fn test_health_status_colors() {
+        use ratatui::style::Color;
+
+        assert_eq!(HealthStatus::Healthy.color(), Color::Green);
+        assert_eq!(HealthStatus::UnanchoredHealthy.color(), Color::Yellow);
+        assert_eq!(HealthStatus::Drifted.color(), Color::Yellow);
+        assert_eq!(HealthStatus::UnanchoredDrifting.color(), Color::Rgb(255, 165, 0));
+        assert_eq!(HealthStatus::Broken.color(), Color::Red);
+        assert_eq!(HealthStatus::BrokenUnanchored.color(), Color::Red);
+        assert_eq!(HealthStatus::Verified.color(), Color::Green);
+        assert_eq!(HealthStatus::Outdated.color(), Color::Yellow);
+        assert_eq!(HealthStatus::Unknown.color(), Color::DarkGray);
+        assert_eq!(HealthStatus::Future.color(), Color::Blue);
+    }
+
+    #[test]
+    fn test_health_status_symbols() {
+        // Verified and Outdated statuses use an unfilled circle (historical)
+        assert_eq!(HealthStatus::Verified.symbol(), "○");
+        assert_eq!(HealthStatus::Outdated.symbol(), "○");
+        // All other statuses use a filled dot
+        assert_eq!(HealthStatus::Healthy.symbol(), "●");
+        assert_eq!(HealthStatus::UnanchoredHealthy.symbol(), "●");
+        assert_eq!(HealthStatus::Drifted.symbol(), "●");
+        assert_eq!(HealthStatus::Broken.symbol(), "●");
     }
 
     #[test]

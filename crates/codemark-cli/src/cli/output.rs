@@ -2,6 +2,7 @@
 
 #![allow(dead_code)]
 
+use std::collections::HashMap;
 use std::io::{self, Write};
 
 use comfy_table::{Cell, Table};
@@ -80,6 +81,7 @@ pub struct LineFormatContext<'a> {
     pub offset: usize,
     pub health: &'a str,
     pub status: &'a str,
+    pub ui_status: &'a str,
     pub tags: &'a str,
     pub note: &'a str,
     pub context: &'a str,
@@ -101,6 +103,7 @@ pub fn format_line(template: &str, ctx: &LineFormatContext) -> String {
         .replace("{OFFSET}", &ctx.offset.to_string())
         .replace("{HEALTH}", ctx.health)
         .replace("{STATUS}", ctx.status)
+        .replace("{UI_STATUS}", ctx.ui_status)
         .replace("{TAGS}", ctx.tags)
         .replace("{NOTE}", ctx.note)
         .replace("{CONTEXT}", ctx.context)
@@ -114,6 +117,7 @@ pub fn format_line(template: &str, ctx: &LineFormatContext) -> String {
         .replace("{offset}", &ctx.offset.to_string())
         .replace("{health}", ctx.health)
         .replace("{status}", ctx.status)
+        .replace("{ui_status}", ctx.ui_status)
         .replace("{tags}", ctx.tags)
         .replace("{note}", ctx.note)
         .replace("{context}", ctx.context)
@@ -248,8 +252,9 @@ pub fn write_bookmarks(
     mode: &OutputMode,
     bookmarks: &[Bookmark],
     line_format: Option<&str>,
+    ui_statuses: Option<&HashMap<String, String>>,
 ) -> io::Result<()> {
-    write_bookmarks_impl(mode, bookmarks, line_format, &|_| None)
+    write_bookmarks_impl(mode, bookmarks, line_format, &|_| None, ui_statuses)
 }
 
 /// Write a list of bookmarks with line number support.
@@ -258,11 +263,12 @@ pub fn write_bookmarks_with_line<F>(
     bookmarks: &[Bookmark],
     line_format: Option<&str>,
     get_line_fn: F,
+    ui_statuses: Option<&HashMap<String, String>>,
 ) -> io::Result<()>
 where
     F: Fn(&str) -> Option<usize>,
 {
-    write_bookmarks_impl(mode, bookmarks, line_format, &get_line_fn)
+    write_bookmarks_impl(mode, bookmarks, line_format, &get_line_fn, ui_statuses)
 }
 
 /// Internal implementation of write_bookmarks that takes a line number fetcher.
@@ -271,23 +277,43 @@ fn write_bookmarks_impl<F>(
     bookmarks: &[Bookmark],
     line_format: Option<&str>,
     get_line_fn: &F,
+    ui_statuses: Option<&HashMap<String, String>>,
 ) -> io::Result<()>
 where
     F: Fn(&str) -> Option<usize>,
 {
     match mode {
-        OutputMode::Json => write_json_success(&bookmarks),
+        OutputMode::Json => {
+            // Inject ui_status into each bookmark's JSON representation
+            if let Some(statuses) = ui_statuses {
+                let items: Vec<serde_json::Value> = bookmarks
+                    .iter()
+                    .map(|bm| {
+                        let mut val = serde_json::to_value(bm).unwrap_or_default();
+                        if let Some(obj) = val.as_object_mut()
+                            && let Some(status) = statuses.get(&bm.id)
+                        {
+                            obj.insert("ui_status".to_string(), serde_json::json!(status));
+                        }
+                        val
+                    })
+                    .collect();
+                write_json_success(&items)
+            } else {
+                write_json_success(&bookmarks)
+            }
+        }
         OutputMode::Table => write_bookmarks_table(bookmarks),
         OutputMode::Line => {
             if let Some(fmt) = line_format {
-                write_bookmarks_line_format(bookmarks, fmt, Some(get_line_fn))
+                write_bookmarks_line_format(bookmarks, fmt, Some(get_line_fn), ui_statuses)
             } else {
                 write_bookmarks_line(bookmarks)
             }
         }
         OutputMode::Markdown => write_bookmarks_table(bookmarks),
         OutputMode::Custom(template) => {
-            write_bookmarks_line_format(bookmarks, template, Some(get_line_fn))
+            write_bookmarks_line_format(bookmarks, template, Some(get_line_fn), ui_statuses)
         }
     }
 }
@@ -347,6 +373,7 @@ pub fn write_bookmarks_line_format<F>(
     bookmarks: &[Bookmark],
     template: &str,
     get_line_fn: Option<&F>,
+    ui_statuses: Option<&HashMap<String, String>>,
 ) -> io::Result<()>
 where
     F: Fn(&str) -> Option<usize>,
@@ -362,6 +389,8 @@ where
         let line =
             if let Some(ref fn_line) = get_line_fn { fn_line(short).unwrap_or(0) } else { 0 };
         let health = bm.health.to_string();
+        let ui_status =
+            ui_statuses.and_then(|m| m.get(&bm.id)).map(|s| s.as_str()).unwrap_or(&health);
 
         let ctx = LineFormatContext {
             id: short,
@@ -371,6 +400,7 @@ where
             offset: line,
             health: health.as_str(),
             status: health.as_str(),
+            ui_status,
             tags: &tags,
             note,
             context,
@@ -398,6 +428,7 @@ fn write_annotated_line_format<F>(
     bookmarks: &[AnnotatedBookmark],
     template: &str,
     get_line_fn: Option<&F>,
+    ui_statuses: Option<&HashMap<String, String>>,
 ) -> io::Result<()>
 where
     F: Fn(&str) -> Option<usize>,
@@ -413,6 +444,8 @@ where
         let line =
             if let Some(ref fn_line) = get_line_fn { fn_line(short).unwrap_or(0) } else { 0 };
         let health = bm.health.to_string();
+        let ui_status =
+            ui_statuses.and_then(|m| m.get(&bm.id)).map(|s| s.as_str()).unwrap_or(&health);
 
         let ctx = LineFormatContext {
             id: short,
@@ -422,6 +455,7 @@ where
             offset: line,
             health: health.as_str(),
             status: health.as_str(),
+            ui_status,
             tags: &tags,
             note,
             context,
@@ -441,6 +475,7 @@ pub fn write_annotated_bookmarks<F>(
     bookmarks: &[AnnotatedBookmark],
     line_format: Option<&str>,
     get_line_fn: Option<&F>,
+    ui_statuses: Option<&HashMap<String, String>>,
 ) -> io::Result<()>
 where
     F: Fn(&str) -> Option<usize>,
@@ -453,6 +488,11 @@ where
                     let mut val = serde_json::to_value(ab.bookmark).unwrap_or_default();
                     if let Some(obj) = val.as_object_mut() {
                         obj.insert("source".to_string(), serde_json::json!(ab.source));
+                        if let Some(statuses) = ui_statuses
+                            && let Some(status) = statuses.get(&ab.bookmark.id)
+                        {
+                            obj.insert("ui_status".to_string(), serde_json::json!(status));
+                        }
                     }
                     val
                 })
@@ -484,7 +524,7 @@ where
         }
         OutputMode::Line => {
             if let Some(fmt) = line_format {
-                write_annotated_line_format(bookmarks, fmt, get_line_fn)
+                write_annotated_line_format(bookmarks, fmt, get_line_fn, ui_statuses)
             } else {
                 let mut stdout = io::stdout().lock();
                 for ab in bookmarks {
@@ -507,7 +547,7 @@ where
             }
         }
         OutputMode::Custom(template) => {
-            write_annotated_line_format(bookmarks, template, get_line_fn)
+            write_annotated_line_format(bookmarks, template, get_line_fn, ui_statuses)
         }
         OutputMode::Markdown => {
             // For multi-db markdown output, fall back to table format
@@ -550,9 +590,14 @@ pub fn write_success(mode: &OutputMode, message: &str) -> io::Result<()> {
 // --- Markdown output for show command ---
 
 /// Write a bookmark with its resolutions in markdown format.
-pub fn write_bookmark_markdown(bm: &Bookmark, resolutions: &[Resolution]) -> io::Result<()> {
+pub fn write_bookmark_markdown(
+    bm: &Bookmark,
+    resolutions: &[Resolution],
+    repo_path: &std::path::Path,
+    current_head: Option<&str>,
+) -> io::Result<()> {
     // Use Handlebars template for rendering
-    match crate::cli::templates::render_show_template(bm, resolutions) {
+    match crate::cli::templates::render_show_template(bm, resolutions, repo_path, current_head) {
         Ok(rendered) => {
             print!("{rendered}");
             Ok(())
@@ -790,4 +835,78 @@ fn escape_markdown(text: &str) -> String {
         }
     }
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_format_line_with_ui_status() {
+        let ctx = LineFormatContext {
+            id: "abcd1234",
+            file: "src/main.rs",
+            filename: "main.rs",
+            line: 42,
+            offset: 42,
+            health: "active",
+            status: "active",
+            ui_status: "healthy",
+            tags: "#api",
+            note: "entry point",
+            context: "",
+            query: "(function_item) @target",
+            source: None,
+        };
+        let result = format_line("{id}\t{ui_status}", &ctx);
+        assert_eq!(result, "abcd1234\thealthy");
+    }
+
+    #[test]
+    fn test_format_line_uppercase_ui_status() {
+        let ctx = LineFormatContext {
+            id: "abcd1234",
+            file: "src/main.rs",
+            filename: "main.rs",
+            line: 42,
+            offset: 42,
+            health: "active",
+            status: "active",
+            ui_status: "healthy",
+            tags: "#api",
+            note: "entry point",
+            context: "",
+            query: "(function_item) @target",
+            source: None,
+        };
+        let result = format_line("{ID}\t{UI_STATUS}", &ctx);
+        assert_eq!(result, "abcd1234\thealthy");
+    }
+
+    #[test]
+    fn test_format_line_all_placeholders() {
+        let ctx = LineFormatContext {
+            id: "abcd1234",
+            file: "src/main.rs",
+            filename: "main.rs",
+            line: 42,
+            offset: 42,
+            health: "active",
+            status: "active",
+            ui_status: "drifted",
+            tags: "#api #core",
+            note: "entry point",
+            context: "fn main",
+            query: "(function_item) @target",
+            source: Some("my-repo"),
+        };
+        let result = format_line(
+            "{source}|{id}|{file}|{filename}|{line}|{offset}|{health}|{status}|{ui_status}|{tags}|{note}|{context}|{query}",
+            &ctx,
+        );
+        assert_eq!(
+            result,
+            "my-repo|abcd1234|src/main.rs|main.rs|42|42|active|active|drifted|#api #core|entry point|fn main|(function_item) @target"
+        );
+    }
 }

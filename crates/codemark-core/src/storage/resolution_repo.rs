@@ -6,8 +6,8 @@ impl Database {
     pub fn insert_resolution(&self, resolution: &Resolution) -> Result<()> {
         self.conn().execute(
             "INSERT INTO resolutions (id, bookmark_id, resolved_at, health, commit_hash,
-             method, match_count, file_path, byte_range, line_range, content_hash, headline, snapshot, breadcrumbs)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
+             method, match_count, file_path, byte_range, line_range, content_hash, headline, snapshot, breadcrumbs, is_dirty)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
             rusqlite::params![
                 resolution.id,
                 resolution.bookmark_id,
@@ -23,6 +23,7 @@ impl Database {
                 resolution.headline,
                 resolution.snapshot,
                 resolution.breadcrumbs,
+                resolution.is_dirty,
             ],
         )?;
         Ok(())
@@ -79,13 +80,14 @@ impl Database {
                 |row| row.get(0),
             )?;
             self.conn().execute(
-                "UPDATE resolutions SET commit_hash = ?1, resolved_at = ?2, headline = ?3, snapshot = ?4, breadcrumbs = ?5 WHERE id = ?6",
+                "UPDATE resolutions SET commit_hash = ?1, resolved_at = ?2, headline = ?3, snapshot = ?4, breadcrumbs = ?5, is_dirty = ?6 WHERE id = ?7",
                 rusqlite::params![
                     resolution.commit_hash,
                     resolution.resolved_at,
                     resolution.headline,
                     resolution.snapshot,
                     resolution.breadcrumbs,
+                    resolution.is_dirty,
                     id,
                 ],
             )?;
@@ -114,7 +116,7 @@ impl Database {
     pub fn list_resolutions(&self, bookmark_id: &str, limit: usize) -> Result<Vec<Resolution>> {
         let mut stmt = self.conn().prepare(
             "SELECT id, bookmark_id, resolved_at, health, commit_hash, method,
-             match_count, file_path, byte_range, line_range, content_hash, headline, snapshot, breadcrumbs
+             match_count, file_path, byte_range, line_range, content_hash, headline, snapshot, breadcrumbs, is_dirty
              FROM resolutions WHERE bookmark_id = ?1
              ORDER BY resolved_at DESC, id DESC LIMIT ?2",
         )?;
@@ -144,6 +146,7 @@ impl Database {
                 headline: row.get(11)?,
                 snapshot: row.get(12)?,
                 breadcrumbs: row.get(13)?,
+                is_dirty: row.get(14)?,
             })
         })?;
 
@@ -155,7 +158,7 @@ impl Database {
     pub fn get_resolution(&self, id: &str) -> Result<Option<Resolution>> {
         let mut stmt = self.conn().prepare(
             "SELECT id, bookmark_id, resolved_at, health, commit_hash, method,
-             match_count, file_path, byte_range, line_range, content_hash, headline, snapshot, breadcrumbs
+             match_count, file_path, byte_range, line_range, content_hash, headline, snapshot, breadcrumbs, is_dirty
              FROM resolutions WHERE id LIKE ?1 LIMIT 2",
         )?;
         let pattern = format!("{id}%");
@@ -186,6 +189,7 @@ impl Database {
                     headline: row.get(11)?,
                     snapshot: row.get(12)?,
                     breadcrumbs: row.get(13)?,
+                    is_dirty: row.get(14)?,
                 })
             })?
             .collect::<rusqlite::Result<Vec<_>>>()?;
@@ -282,6 +286,7 @@ mod tests {
         db.insert_bookmark(&test_bookmark("bm-0001")).unwrap();
 
         let res = Resolution {
+            is_dirty: false,
             id: "res-0001".to_string(),
             bookmark_id: "bm-0001".to_string(),
             resolved_at: "2026-04-01T01:00:00Z".to_string(),
@@ -313,6 +318,7 @@ mod tests {
         db.insert_bookmark(&test_bookmark("bm-0001")).unwrap();
 
         let res = Resolution {
+            is_dirty: false,
             id: "res-0001".to_string(),
             bookmark_id: "bm-0001".to_string(),
             resolved_at: "2026-04-01T01:00:00Z".to_string(),
@@ -337,6 +343,7 @@ mod tests {
 
         // Test update in insert_resolution_if_changed
         let res_update = Resolution {
+            is_dirty: false,
             id: "res-0002".to_string(),
             bookmark_id: "bm-0001".to_string(),
             resolved_at: "2026-04-01T02:00:00Z".to_string(),
@@ -368,6 +375,7 @@ mod tests {
         db.insert_bookmark(&test_bookmark("bm-0001")).unwrap();
 
         let res = Resolution {
+            is_dirty: false,
             id: "res-0001".to_string(),
             bookmark_id: "bm-0001".to_string(),
             resolved_at: "2026-04-01T01:00:00Z".to_string(),
@@ -388,6 +396,7 @@ mod tests {
 
         // Same byte_range, line_range, method but different commit — should UPDATE existing
         let res2 = Resolution {
+            is_dirty: false,
             id: "res-0002".to_string(),
             bookmark_id: "bm-0001".to_string(),
             resolved_at: "2026-04-01T02:00:00Z".to_string(),
@@ -415,6 +424,7 @@ mod tests {
 
         // Different byte_range — should be recorded
         let res3 = Resolution {
+            is_dirty: false,
             id: "res-0003".to_string(),
             bookmark_id: "bm-0001".to_string(),
             resolved_at: "2026-04-01T03:00:00Z".to_string(),
@@ -435,6 +445,7 @@ mod tests {
 
         // Different method — should be recorded
         let res4 = Resolution {
+            is_dirty: false,
             id: "res-0004".to_string(),
             bookmark_id: "bm-0001".to_string(),
             resolved_at: "2026-04-01T04:00:00Z".to_string(),
@@ -471,6 +482,7 @@ mod tests {
             let line_start = 10 + i;
             let line_end = 20 + i;
             let res = Resolution {
+                is_dirty: false,
                 id: format!("res-{i:04}"),
                 bookmark_id: "bm-0001".to_string(),
                 resolved_at: format!("2026-04-01T{i:02}:00:00Z"),
@@ -507,6 +519,7 @@ mod tests {
         db.insert_bookmark(&test_bookmark("bm-0001")).unwrap();
 
         let res = Resolution {
+            is_dirty: false,
             id: "res-0001".to_string(),
             bookmark_id: "bm-0001".to_string(),
             resolved_at: "2026-04-01T01:00:00Z".to_string(),
@@ -577,6 +590,7 @@ mod tests {
 
         // Simulate a "heal" operation - create a new resolution
         let heal_resolution = Resolution {
+            is_dirty: false,
             id: "res-heal-1".to_string(),
             bookmark_id: bm_id.to_string(),
             resolved_at: "2024-01-02T00:00:00Z".to_string(),

@@ -68,9 +68,15 @@ pub async fn handle_search(cli: &Cli, mode: &OutputMode, args: &SearchArgs) -> R
                 None
             };
 
-            write_bookmarks_with_line(mode, &bookmarks, args.line_format.as_deref(), get_line_fn)?;
+            write_bookmarks_with_line(
+                mode,
+                &bookmarks,
+                args.line_format.as_deref(),
+                get_line_fn,
+                None,
+            )?;
         } else {
-            output::write_bookmarks(mode, &bookmarks, args.line_format.as_deref())?;
+            output::write_bookmarks(mode, &bookmarks, args.line_format.as_deref(), None)?;
         }
     } else {
         let mut all = Vec::new();
@@ -124,6 +130,7 @@ pub async fn handle_search(cli: &Cli, mode: &OutputMode, args: &SearchArgs) -> R
                 &annotated,
                 args.line_format.as_deref(),
                 Some(&get_line_fn),
+                None,
             )?;
         } else {
             output::write_annotated_bookmarks(
@@ -131,6 +138,7 @@ pub async fn handle_search(cli: &Cli, mode: &OutputMode, args: &SearchArgs) -> R
                 &annotated,
                 args.line_format.as_deref(),
                 None as Option<&fn(&str) -> Option<usize>>,
+                None,
             )?;
         }
     }
@@ -233,9 +241,10 @@ async fn handle_semantic_search(
                 &bookmarks_only,
                 args.line_format.as_deref(),
                 get_line_fn,
+                None,
             )?;
         } else {
-            output::write_bookmarks(mode, &bookmarks_only, args.line_format.as_deref())?;
+            output::write_bookmarks(mode, &bookmarks_only, args.line_format.as_deref(), None)?;
         }
     }
 

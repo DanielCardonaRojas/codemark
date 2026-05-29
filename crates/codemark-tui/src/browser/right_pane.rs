@@ -47,6 +47,8 @@ pub struct RightPane {
     cached_show_template: String,
     /// Cached details template content to avoid repeated disk reads
     cached_details_template: String,
+    /// Flag set when step navigation changes and the caller must call update_preview
+    pub needs_preview_update: bool,
 }
 
 impl RightPane {
@@ -66,6 +68,7 @@ impl RightPane {
             info_config: SectionConfig::new(7, 13),
             active_tour_name: None,
             active_bookmark_id: None,
+            needs_preview_update: false,
             cached_show_template,
             cached_details_template,
         };
@@ -82,7 +85,7 @@ impl RightPane {
     }
 
     /// Update the code preview based on current step.
-    pub fn update_preview(&mut self) {
+    pub fn update_preview(&mut self, db: &Database) {
         if let Some(step) = self.steps_data.get(self.pager_current) {
             let code = std::fs::read_to_string(&step.file_path)
                 .unwrap_or_else(|_| format!("Error: Could not load file {}", step.file_path));
@@ -98,14 +101,15 @@ impl RightPane {
                 preview.jump_to_range(step.line_number, step.line_end);
             }
 
-            // Update Info tab with markdown
-            let markdown = self.generate_markdown(
+            // Update Info tab with markdown (Full bookmark details)
+            let info_markdown = self.generate_markdown(
+                db,
                 &step.bookmark,
-                step.resolution.as_ref(),
+                &step.resolutions,
                 templates::SHOW_TEMPLATE,
             );
             if let Some(md_panel) = self.steps.get_markdown_mut() {
-                md_panel.set_markdown(markdown);
+                md_panel.set_markdown(info_markdown);
             }
 
             // Update Query tab
@@ -114,10 +118,11 @@ impl RightPane {
                 query_preview.set_extension("scm".to_string());
             }
 
-            // Update Details panel
+            // Update bottom Details pane with markdown (Annotations/Notes only)
             let details_markdown = self.generate_markdown(
+                db,
                 &step.bookmark,
-                step.resolution.as_ref(),
+                &step.resolutions,
                 templates::DETAILS_TEMPLATE,
             );
             self.details.set_markdown(details_markdown);
@@ -134,6 +139,9 @@ impl RightPane {
 
             // Get the best resolution for preview (from nearest ancestor commit)
             let resolution = db.get_preview_resolution(&bm.id).ok().flatten();
+
+            // Get all resolutions for showing full history
+            let resolutions = db.list_resolutions(&bm.id, 100).unwrap_or_default();
 
             // Extract line_range and file_path from the resolution
             if let Some(ref res) = resolution {
@@ -164,40 +172,41 @@ impl RightPane {
                     line_end,
                     bookmark: bm,
                     resolution,
+                    resolutions,
                 }];
                 self.pager_total = 1;
                 self.pager_current = 0;
                 self.active_bookmark_id = Some(bookmark_id.to_string());
                 self.active_tour_name = None;
-                self.update_preview();
+                self.update_preview(db);
             }
         } else {
             // Bookmark not found - clear stale preview state
-            self.clear_preview_state();
+            self.clear_preview_state(db);
         }
     }
 
     /// Clear the preview state (used when a bookmark cannot be loaded).
-    pub fn clear_preview_state(&mut self) {
+    pub fn clear_preview_state(&mut self, db: &Database) {
         self.steps_data.clear();
         self.pager_total = 0;
         self.pager_current = 0;
         self.active_bookmark_id = None;
         self.active_tour_name = None;
-        self.update_preview();
+        self.update_preview(db);
     }
 
     /// Load a tour and its steps from the database.
     pub fn load_tour(&mut self, db: &Database, tour_name: &str) {
         let Some(collection) = db.get_collection_by_name(tour_name).ok().flatten() else {
             // Collection not found - clear stale preview state
-            self.clear_preview_state();
+            self.clear_preview_state(db);
             return;
         };
 
         let Ok(bookmarks) = db.list_bookmarks_in_collection(&collection.id) else {
             // Failed to load bookmarks - clear stale preview state
-            self.clear_preview_state();
+            self.clear_preview_state(db);
             return;
         };
 
@@ -210,6 +219,9 @@ impl RightPane {
 
                 // Get the best resolution for preview (from nearest ancestor commit)
                 let resolution = db.get_preview_resolution(&bm.id).ok().flatten();
+
+                // Get all resolutions for showing full history
+                let resolutions = db.list_resolutions(&bm.id, 100).unwrap_or_default();
 
                 // Extract line_range and file_path from the resolution
                 if let Some(ref res) = resolution {
@@ -242,6 +254,7 @@ impl RightPane {
                         line_end,
                         bookmark: bm,
                         resolution,
+                        resolutions,
                     });
                 }
             }
@@ -252,10 +265,10 @@ impl RightPane {
                 self.pager_current = 0;
                 self.active_tour_name = Some(tour_name.to_string());
                 self.active_bookmark_id = None;
-                self.update_preview();
+                self.update_preview(db);
             } else {
                 // Clear the right-pane state when no steps are available
-                self.clear_preview_state();
+                self.clear_preview_state(db);
             }
         }
     }
@@ -263,13 +276,11 @@ impl RightPane {
     /// Generate markdown for a bookmark using a specific template.
     pub fn generate_markdown(
         &self,
+        db: &Database,
         bm: &Bookmark,
-        res: Option<&Resolution>,
+        resolutions: &[Resolution],
         template: &str,
     ) -> String {
-        // Use the shared template from codemark_core with cached template content
-        let resolutions = if let Some(r) = res { vec![r.clone()] } else { vec![] };
-
         // Select the appropriate cached template to avoid repeated disk reads
         let template_content = match template {
             templates::SHOW_TEMPLATE => &self.cached_show_template,
@@ -285,7 +296,9 @@ impl RightPane {
         };
 
         // Create context and render using the cached template content
-        let context = templates::BookmarkTemplateContext::from_bookmark(bm, &resolutions);
+        let repo_path = db.path().parent().unwrap_or_else(|| db.path());
+        let context =
+            templates::BookmarkTemplateContext::from_bookmark(bm, resolutions, repo_path, None);
         let handlebars = templates::create_handlebars_engine();
 
         match handlebars.render_template(template_content, &context) {
@@ -419,7 +432,7 @@ impl RightPane {
                 | ratatui::crossterm::event::KeyCode::Char('h') => {
                     if self.pager_current > 0 {
                         self.pager_current = self.pager_current.saturating_sub(1);
-                        self.update_preview();
+                        self.needs_preview_update = true;
                     }
                     return true;
                 }
@@ -427,7 +440,7 @@ impl RightPane {
                 | ratatui::crossterm::event::KeyCode::Char('l') => {
                     if self.pager_current + 1 < self.pager_total {
                         self.pager_current += 1;
-                        self.update_preview();
+                        self.needs_preview_update = true;
                     }
                     return true;
                 }

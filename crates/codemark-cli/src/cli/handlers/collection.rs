@@ -526,7 +526,7 @@ pub async fn handle_collection_show(
 
     let filter = BookmarkFilter { collection_id: Some(collection.id), ..Default::default() };
     let bookmarks = db.list_bookmarks(&filter)?;
-    output::write_bookmarks(mode, &bookmarks, None)?;
+    output::write_bookmarks(mode, &bookmarks, None, None)?;
     Ok(())
 }
 

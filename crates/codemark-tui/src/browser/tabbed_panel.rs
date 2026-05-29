@@ -2,6 +2,8 @@ use crate::browser::{Panel3Tab, Tab, TabContent, TabSelection, tabs::BORDER_EXTE
 use crate::component::{CodePreview, HealthStatus, MarkdownPanel, Panel, PanelItem};
 use crate::event::Event;
 use codemark_core::engine::bookmark::{Bookmark, BookmarkFilter, BookmarkHealth};
+use codemark_core::engine::projection;
+use codemark_core::git::context as git_context;
 use codemark_core::parser::languages::Language;
 use codemark_core::query::classifier::get_node_icon;
 use codemark_core::query::summarizer;
@@ -100,18 +102,63 @@ pub fn bookmark_to_panel_item(
     bookmark: &Bookmark,
     db: &Database,
     use_full_summary: bool,
+    current_head: Option<&str>,
 ) -> PanelItem {
-    // Get the best resolution for preview to determine health status
-    let health = db
-        .get_preview_resolution(&bookmark.id)
-        .ok()
-        .flatten()
-        .map(|res| match res.health {
+    // Get the current resolution for projection
+    let health = if let Some(ref resolution_id) = bookmark.current_resolution_id {
+        match db.get_resolution(resolution_id) {
+            Ok(Some(resolution)) => {
+                match projection::project_resolution_status(
+                    &resolution,
+                    bookmark,
+                    current_head,
+                    db.path(),
+                ) {
+                    Ok(ui_status) => match ui_status {
+                        codemark_core::engine::projection::UIStatus::Healthy => {
+                            HealthStatus::Healthy
+                        }
+                        codemark_core::engine::projection::UIStatus::UnanchoredHealthy => {
+                            HealthStatus::UnanchoredHealthy
+                        }
+                        codemark_core::engine::projection::UIStatus::Drifted => {
+                            HealthStatus::Drifted
+                        }
+                        codemark_core::engine::projection::UIStatus::UnanchoredDrifting => {
+                            HealthStatus::UnanchoredDrifting
+                        }
+                        codemark_core::engine::projection::UIStatus::Broken => HealthStatus::Broken,
+                        codemark_core::engine::projection::UIStatus::BrokenUnanchored => {
+                            HealthStatus::BrokenUnanchored
+                        }
+                        codemark_core::engine::projection::UIStatus::Verified => {
+                            HealthStatus::Verified
+                        }
+                        codemark_core::engine::projection::UIStatus::Outdated => {
+                            HealthStatus::Outdated
+                        }
+                        codemark_core::engine::projection::UIStatus::Future => HealthStatus::Future,
+                    },
+                    Err(_) => match resolution.health {
+                        BookmarkHealth::Active => HealthStatus::Healthy,
+                        BookmarkHealth::Drifted => HealthStatus::Drifted,
+                        BookmarkHealth::Stale | BookmarkHealth::Archived => HealthStatus::Broken,
+                    },
+                }
+            }
+            _ => match bookmark.health {
+                BookmarkHealth::Active => HealthStatus::Healthy,
+                BookmarkHealth::Drifted => HealthStatus::Drifted,
+                BookmarkHealth::Stale | BookmarkHealth::Archived => HealthStatus::Broken,
+            },
+        }
+    } else {
+        match bookmark.health {
             BookmarkHealth::Active => HealthStatus::Healthy,
-            BookmarkHealth::Drifted => HealthStatus::Warning,
-            BookmarkHealth::Stale | BookmarkHealth::Archived => HealthStatus::Error,
-        })
-        .unwrap_or(HealthStatus::Unknown);
+            BookmarkHealth::Drifted => HealthStatus::Drifted,
+            BookmarkHealth::Stale | BookmarkHealth::Archived => HealthStatus::Broken,
+        }
+    };
 
     // Try to get a summary from the query for better display
     let summary_info = bookmark
@@ -257,7 +304,7 @@ impl TabbedPanel {
         let branches = match db.list_all_branches() {
             Ok(branches) if !branches.is_empty() => branches
                 .into_iter()
-                .map(|branch| PanelItem::new(branch).health(HealthStatus::Branch))
+                .map(|branch| PanelItem::new(branch).no_health().icon(""))
                 .collect(),
             Ok(_) => vec![PanelItem::new("No branches found").no_health().color(Color::DarkGray)],
             Err(e) => vec![PanelItem::new(format!("Error: {e}")).no_health().color(Color::Red)],
@@ -279,10 +326,10 @@ impl TabbedPanel {
                             HealthStatus::Healthy
                         }
                         codemark_core::engine::bookmark::CollectionHealth::Drifted => {
-                            HealthStatus::Warning
+                            HealthStatus::Drifted
                         }
                         codemark_core::engine::bookmark::CollectionHealth::Stale => {
-                            HealthStatus::Error
+                            HealthStatus::Broken
                         }
                     },
                     None => HealthStatus::Unknown,
@@ -303,9 +350,13 @@ impl TabbedPanel {
             }
         }
 
+        let db_dir = db.path().parent().unwrap_or_else(|| db.path());
+        let head = git_context::detect_context(db_dir).and_then(|ctx| ctx.head_commit);
+        let head_ref = head.as_deref();
+
         let bookmarks = match db.list_bookmarks(&BookmarkFilter::default()) {
             Ok(bookmarks) => {
-                bookmarks.iter().map(|bm| bookmark_to_panel_item(bm, db, false)).collect()
+                bookmarks.iter().map(|bm| bookmark_to_panel_item(bm, db, false, head_ref)).collect()
             }
             Err(_) => Vec::new(),
         };

@@ -28,6 +28,36 @@ pub struct GitRepoMetadata {
     pub repo_root: PathBuf,
 }
 
+/// Check if the repository at `repo_path` is clean (no uncommitted changes).
+pub fn is_clean(repo_path: &Path) -> Result<bool> {
+    let output = std::process::Command::new("git")
+        .args(["status", "--porcelain"])
+        .current_dir(repo_path)
+        .output()
+        .map_err(|e| Error::Git(format!("failed to run git status: {e}")))?;
+
+    if !output.status.success() {
+        return Err(Error::Git("git status failed".into()));
+    }
+
+    Ok(output.stdout.is_empty())
+}
+
+/// Check if a specific file in the repository at `repo_path` is clean.
+pub fn is_file_clean(repo_path: &Path, file_path: &str) -> Result<bool> {
+    let output = std::process::Command::new("git")
+        .args(["status", "--porcelain", "--", file_path])
+        .current_dir(repo_path)
+        .output()
+        .map_err(|e| Error::Git(format!("failed to run git status: {e}")))?;
+
+    if !output.status.success() {
+        return Err(Error::Git("git status failed".into()));
+    }
+
+    Ok(output.stdout.is_empty())
+}
+
 /// Detect git repo root and HEAD commit. Returns None if not in a git repo.
 ///
 /// Uses `git rev-parse --git-common-dir` to find the repo root, which correctly
@@ -51,14 +81,14 @@ pub fn detect_context(from_path: &Path) -> Option<GitContext> {
         return None;
     }
 
-    // Resolve the git common dir relative to the working directory
-    // --git-common-dir may return a relative path like ".git" or an absolute path
+    // Resolve the git common dir relative to the working directory.
+    // --git-common-dir may return a relative path like ".git" or an absolute path.
+    // For relative paths, resolve from the provided from_path (not CWD) to ensure
+    // correctness regardless of where the process is running.
     let git_path = if PathBuf::from(git_common_dir).is_absolute() {
         PathBuf::from(git_common_dir)
     } else {
-        // Resolve relative path from the current directory
-        let cwd = std::env::current_dir().ok()?;
-        cwd.join(git_common_dir)
+        from_path.join(git_common_dir)
     };
 
     // The parent of the git common dir is the repo root
@@ -313,6 +343,22 @@ pub fn is_ancestor(
     // (i.e., if ancestor is an ancestor of descendant)
     repo.graph_descendant_of(descendant.id(), ancestor.id())
         .map_err(|e| Error::Git(format!("graph check failed: {e}")))
+}
+
+/// Check if a commit exists in the repository.
+///
+/// Returns Ok(true) if the commit exists and is accessible.
+/// Returns Ok(false) if the commit does not exist.
+/// Returns Err if the repo cannot be accessed.
+pub fn commit_exists(repo_path: &Path, commit_hash: &str) -> Result<bool> {
+    let repo = Repository::discover(repo_path)
+        .map_err(|e| Error::Git(format!("cannot open repo: {e}")))?;
+
+    match repo.revparse_single(commit_hash) {
+        Ok(_) => Ok(true),
+        // All revparse errors (except repo-level errors above) indicate the commit doesn't exist
+        Err(_) => Ok(false),
+    }
 }
 
 /// Find the nearest ancestor commit from a list of candidate commit hashes.
@@ -960,6 +1006,142 @@ mod tests {
         assert!(identity.user_name.is_some());
     }
 
+    /// Helper: create a temp git repo with an initial commit.
+    fn create_git_repo() -> PathBuf {
+        let tmp = std::env::temp_dir().join(format!("codemark_test_file_clean_{}", Uuid::new_v4()));
+        fs::create_dir_all(&tmp).unwrap();
+
+        let repo = Repository::init(&tmp).unwrap();
+        let sig = Signature::now("Test User", "test@example.com").unwrap();
+
+        // Create initial commit so HEAD exists
+        let path = tmp.join("init.txt");
+        fs::write(&path, "init").unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(Path::new("init.txt")).unwrap();
+        let tree_id = index.write_tree().unwrap();
+        let tree = repo.find_tree(tree_id).unwrap();
+        repo.commit(Some("HEAD"), &sig, &sig, "initial commit", &tree, &[]).unwrap();
+
+        tmp
+    }
+
+    #[test]
+    fn test_is_file_clean_committed_file() {
+        let repo_path = create_git_repo();
+        let file = repo_path.join("test.txt");
+        fs::write(&file, "committed content").unwrap();
+
+        // Stage and commit
+        let repo = Repository::open(&repo_path).unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(Path::new("test.txt")).unwrap();
+        index.write().unwrap();
+        let tree_id = index.write_tree().unwrap();
+        let tree = repo.find_tree(tree_id).unwrap();
+        let sig = Signature::now("Test User", "test@example.com").unwrap();
+        let head = repo.head().unwrap().peel_to_commit().unwrap();
+        repo.commit(Some("HEAD"), &sig, &sig, "add test.txt", &tree, &[&head]).unwrap();
+
+        let result = is_file_clean(&repo_path, "test.txt");
+        assert!(result.is_ok());
+        assert!(result.unwrap(), "committed file should be clean");
+
+        let _ = fs::remove_dir_all(&repo_path);
+    }
+
+    #[test]
+    fn test_is_file_clean_modified_file() {
+        let repo_path = create_git_repo();
+        let file = repo_path.join("test.txt");
+        fs::write(&file, "original").unwrap();
+
+        let repo = Repository::open(&repo_path).unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(Path::new("test.txt")).unwrap();
+        index.write().unwrap();
+        let tree_id = index.write_tree().unwrap();
+        let tree = repo.find_tree(tree_id).unwrap();
+        let sig = Signature::now("Test User", "test@example.com").unwrap();
+        let head = repo.head().unwrap().peel_to_commit().unwrap();
+        repo.commit(Some("HEAD"), &sig, &sig, "add test.txt", &tree, &[&head]).unwrap();
+
+        // Modify without staging
+        fs::write(&file, "modified").unwrap();
+
+        let result = is_file_clean(&repo_path, "test.txt");
+        assert!(result.is_ok());
+        assert!(!result.unwrap(), "modified unstaged file should not be clean");
+
+        let _ = fs::remove_dir_all(&repo_path);
+    }
+
+    #[test]
+    fn test_is_file_clean_staged_file() {
+        let repo_path = create_git_repo();
+        let file = repo_path.join("test.txt");
+        fs::write(&file, "original").unwrap();
+
+        let repo = Repository::open(&repo_path).unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(Path::new("test.txt")).unwrap();
+        index.write().unwrap();
+        let tree_id = index.write_tree().unwrap();
+        let tree = repo.find_tree(tree_id).unwrap();
+        let sig = Signature::now("Test User", "test@example.com").unwrap();
+        let head = repo.head().unwrap().peel_to_commit().unwrap();
+        repo.commit(Some("HEAD"), &sig, &sig, "add test.txt", &tree, &[&head]).unwrap();
+
+        // Modify and stage (but don't commit)
+        fs::write(&file, "staged changes").unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(Path::new("test.txt")).unwrap();
+        index.write().unwrap();
+
+        let result = is_file_clean(&repo_path, "test.txt");
+        assert!(result.is_ok());
+        assert!(!result.unwrap(), "staged but uncommitted file should not be clean");
+
+        let _ = fs::remove_dir_all(&repo_path);
+    }
+
+    #[test]
+    fn test_is_file_clean_untracked_file() {
+        let repo_path = create_git_repo();
+        // Write a new file without adding or committing
+        let file = repo_path.join("new.txt");
+        fs::write(&file, "untracked").unwrap();
+
+        let result = is_file_clean(&repo_path, "new.txt");
+        assert!(result.is_ok());
+        assert!(!result.unwrap(), "untracked file should not be clean");
+
+        let _ = fs::remove_dir_all(&repo_path);
+    }
+
+    #[test]
+    fn test_is_file_clean_non_git_dir() {
+        let tmp = std::env::temp_dir().join(format!("codemark_test_no_git_{}", Uuid::new_v4()));
+        fs::create_dir_all(&tmp).unwrap();
+
+        let result = is_file_clean(&tmp, "anything.txt");
+        assert!(result.is_err(), "non-git directory should return Err");
+
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn test_is_file_clean_nonexistent_file() {
+        let repo_path = create_git_repo();
+
+        // Ask about a file that doesn't exist — porcelain output is empty
+        let result = is_file_clean(&repo_path, "missing.txt");
+        assert!(result.is_ok());
+        assert!(result.unwrap(), "nonexistent file should show as clean (empty porcelain)");
+
+        let _ = fs::remove_dir_all(&repo_path);
+    }
+
     #[test]
     fn detect_repo_metadata_from_current_repo() {
         // Test with the current codemark repo
@@ -969,5 +1151,45 @@ mod tests {
         // repo_root should be set
         assert!(metadata.repo_root.exists());
         // origin_url might or might not be set depending on git config
+    }
+
+    #[test]
+    fn test_commit_exists_with_valid_commit() {
+        let repo_path = create_git_repo();
+
+        // Get the HEAD commit
+        let repo = Repository::open(&repo_path).unwrap();
+        let head = repo.head().unwrap().peel_to_commit().unwrap();
+        let commit_hash = head.id().to_string();
+
+        // Should exist
+        let result = commit_exists(&repo_path, &commit_hash);
+        assert!(result.is_ok());
+        assert!(result.unwrap(), "valid commit should exist");
+
+        let _ = fs::remove_dir_all(&repo_path);
+    }
+
+    #[test]
+    fn test_commit_exists_with_invalid_commit() {
+        let repo_path = create_git_repo();
+
+        // Should not exist
+        let result = commit_exists(&repo_path, "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef");
+        assert!(result.is_ok());
+        assert!(!result.unwrap(), "invalid commit should not exist");
+
+        let _ = fs::remove_dir_all(&repo_path);
+    }
+
+    #[test]
+    fn test_commit_exists_non_git_dir() {
+        let tmp = std::env::temp_dir().join(format!("codemark_test_no_git_{}", Uuid::new_v4()));
+        fs::create_dir_all(&tmp).unwrap();
+
+        let result = commit_exists(&tmp, "anyhash");
+        assert!(result.is_err(), "non-git directory should return Err");
+
+        let _ = fs::remove_dir_all(&tmp);
     }
 }

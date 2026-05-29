@@ -183,7 +183,15 @@ pub async fn handle_add(cli: &Cli, mode: &OutputMode, args: &AddArgsOriginal) ->
         let breadcrumbs_json =
             if breadcrumbs.is_empty() { None } else { serde_json::to_string(&breadcrumbs).ok() };
 
+        let repo_root = if let Some(ref ctx) = git_context::detect_context(&cwd) {
+            ctx.repo_root.clone()
+        } else {
+            cwd.clone()
+        };
+        let is_dirty = !git_context::is_file_clean(&repo_root, &rel_path).unwrap_or(false);
+
         let initial_res = Resolution {
+            is_dirty,
             id: uuid::Uuid::new_v4().to_string(),
             bookmark_id: actual_bookmark_id.clone(),
             resolved_at: now_iso(),
@@ -199,7 +207,10 @@ pub async fn handle_add(cli: &Cli, mode: &OutputMode, args: &AddArgsOriginal) ->
             snapshot: Some(source[generated.byte_range.0..generated.byte_range.1].to_string()),
             breadcrumbs: breadcrumbs_json,
         };
-        db.insert_resolution_if_changed(&initial_res, config.storage.max_resolutions())?;
+        let res_id = initial_res.id.clone();
+        if db.insert_resolution_if_changed(&initial_res, config.storage.max_resolutions())? {
+            db.update_bookmark_resolution_id(&actual_bookmark_id, &res_id)?;
+        }
     }
 
     // Add to collection if specified
@@ -408,7 +419,15 @@ pub async fn handle_add_from_snippet(
         let breadcrumbs_json =
             if breadcrumbs.is_empty() { None } else { serde_json::to_string(&breadcrumbs).ok() };
 
+        let repo_root = if let Some(ref ctx) = git_context::detect_context(&cwd) {
+            ctx.repo_root.clone()
+        } else {
+            cwd.clone()
+        };
+        let is_dirty = !git_context::is_file_clean(&repo_root, &rel_path).unwrap_or(false);
+
         let initial_res = Resolution {
+            is_dirty,
             id: uuid::Uuid::new_v4().to_string(),
             bookmark_id: actual_bookmark_id.clone(),
             resolved_at: now_iso(),
@@ -424,7 +443,10 @@ pub async fn handle_add_from_snippet(
             snapshot: Some(source[generated.byte_range.0..generated.byte_range.1].to_string()),
             breadcrumbs: breadcrumbs_json,
         };
-        db.insert_resolution_if_changed(&initial_res, config.storage.max_resolutions())?;
+        let res_id = initial_res.id.clone();
+        if db.insert_resolution_if_changed(&initial_res, config.storage.max_resolutions())? {
+            db.update_bookmark_resolution_id(&actual_bookmark_id, &res_id)?;
+        }
     }
 
     // Add to collection if specified
@@ -633,7 +655,15 @@ pub async fn handle_add_from_query(
         let breadcrumbs_json =
             if breadcrumbs.is_empty() { None } else { serde_json::to_string(&breadcrumbs).ok() };
 
+        let repo_root = if let Some(ref ctx) = git_context::detect_context(&cwd) {
+            ctx.repo_root.clone()
+        } else {
+            cwd.clone()
+        };
+        let is_dirty = !git_context::is_file_clean(&repo_root, &rel_path).unwrap_or(false);
+
         let initial_res = Resolution {
+            is_dirty,
             id: uuid::Uuid::new_v4().to_string(),
             bookmark_id: actual_bookmark_id.clone(),
             resolved_at: now_iso(),
@@ -649,7 +679,10 @@ pub async fn handle_add_from_query(
             snapshot: Some(source[byte_range.0..byte_range.1].to_string()),
             breadcrumbs: breadcrumbs_json,
         };
-        db.insert_resolution_if_changed(&initial_res, config.storage.max_resolutions())?;
+        let res_id = initial_res.id.clone();
+        if db.insert_resolution_if_changed(&initial_res, config.storage.max_resolutions())? {
+            db.update_bookmark_resolution_id(&actual_bookmark_id, &res_id)?;
+        }
     }
 
     // Add to collection if specified
@@ -792,14 +825,22 @@ pub async fn handle_resolve(cli: &Cli, mode: &OutputMode, args: &ResolveArgs) ->
             serde_json::to_string(&result.breadcrumbs).ok()
         };
 
+        let repo_base = db.path().parent().unwrap_or_else(|| db.path());
+        let git_ctx = git_context::detect_context(repo_base);
+        let repo_root = git_ctx
+            .as_ref()
+            .map(|ctx| ctx.repo_root.clone())
+            .unwrap_or_else(|| repo_base.to_path_buf());
+        let is_dirty = !git_context::is_file_clean(&repo_root, &result.file_path).unwrap_or(false);
+
         // Record resolution
         let res = Resolution {
+            is_dirty,
             id: uuid::Uuid::new_v4().to_string(),
             bookmark_id: bm.id.clone(),
             resolved_at: now_iso(),
             health: final_status,
-            commit_hash: git_context::detect_context(&std::env::current_dir()?)
-                .and_then(|ctx| ctx.head_commit),
+            commit_hash: git_ctx.and_then(|ctx| ctx.head_commit),
             method: result.method,
             match_count: Some(1),
             file_path: Some(result.file_path.clone()),
@@ -846,21 +887,39 @@ pub async fn handle_show(cli: &Cli, mode: &OutputMode, args: &ShowArgs) -> Resul
     let (bm, db) = find_bookmark_across(&dbs, &args.id)?;
     let resolutions = db.list_resolutions(&bm.id, 5)?;
 
+    // Compute UI status at the presentation boundary
+    let ui_status = codemark_core::engine::projection::compute_bookmark_ui_status(
+        &bm,
+        db,
+        args.current_head.as_deref(),
+    )
+    .ok();
+
     match mode {
         OutputMode::Json => {
+            let mut json = serde_json::to_value(&bm).unwrap_or_default();
+            if let Some(obj) = json.as_object_mut()
+                && let Some(ref status) = ui_status
+            {
+                obj.insert("ui_status".to_string(), serde_json::json!(status.to_string()));
+            }
             write_json_success(&serde_json::json!({
-                "bookmark": bm,
+                "bookmark": json,
                 "resolutions": resolutions,
             }))?;
         }
         OutputMode::Markdown => {
-            write_bookmark_markdown(&bm, &resolutions)?;
+            let repo_path = db.path().parent().unwrap_or_else(|| db.path());
+            write_bookmark_markdown(&bm, &resolutions, repo_path, args.current_head.as_deref())?;
         }
         _ => {
             println!("ID:          {}", bm.id);
             println!("File:        {}", bm.file_path);
             println!("Language:    {}", bm.language);
             println!("Health:      {}", bm.health);
+            if let Some(ref status) = ui_status {
+                println!("UI Status:   {}", status);
+            }
             if !bm.tags.is_empty() {
                 println!("Tags:        {}", bm.tags.join(", "));
             }

@@ -257,6 +257,8 @@ pub struct StepData {
     pub bookmark: Bookmark,
     /// Resolution data if available
     pub resolution: Option<Resolution>,
+    /// All resolutions for this bookmark (for showing full resolution history)
+    pub resolutions: Vec<Resolution>,
 }
 
 /// Escape special markdown characters.
