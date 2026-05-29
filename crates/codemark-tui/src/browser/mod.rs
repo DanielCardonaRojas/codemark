@@ -340,6 +340,117 @@ impl BrowserLayout {
         });
     }
 
+    /// Start pushing the currently selected collection to the server.
+    ///
+    /// This spawns an async background task to perform the push operation.
+    /// When complete, a SyncComplete event will be sent with the result.
+    pub fn start_push_collection(&mut self) {
+        let db_path = self.db.path().to_path_buf();
+        let event_handler = self.event_handler.clone();
+
+        // Get the selected collection
+        let target = if self.focus == FocusArea::Panel3 {
+            if let Some(panel) = self.left_pane.panel3.active_panel() {
+                if let Some(Panel3Tab::Collections) =
+                    Panel3Tab::from_index(self.left_pane.panel3.tabs.selected_index())
+                {
+                    panel.selected().and_then(|s| {
+                        if let Some(id) = &s.user_data {
+                            Some(id.clone())
+                        } else {
+                            // Fallback to name lookup if user_data is missing
+                            let name = s.text().to_string();
+                            self.db
+                                .get_collection_by_name(&name)
+                                .ok()
+                                .flatten()
+                                .map(|c| c.id)
+                        }
+                    })
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        let Some(collection_id) = target else {
+            let _ = event_handler.send(Event::SyncComplete("No collection selected".to_string(), false));
+            return;
+        };
+
+        // Get config for the push operation
+        let codemark_dir = match self.db.path().parent() {
+            Some(dir) => dir.to_path_buf(),
+            None => {
+                let _ = event_handler.send(Event::SyncComplete("Failed to get config directory".to_string(), false));
+                return;
+            }
+        };
+
+        let config = Config::load_layered(&codemark_dir);
+        let project_root = codemark_dir.parent().unwrap_or(&codemark_dir).to_path_buf();
+
+        // Resolve server URL and token using the helper from core crate
+        let (server_url, token) = match codemark_core::sync::resolve_server_and_token(&config) {
+            Ok(result) => result,
+            Err(e) => {
+                let _ = event_handler.send(Event::SyncComplete(format!("Failed to resolve server: {}", e), false));
+                return;
+            }
+        };
+
+        tokio::task::spawn_blocking(move || {
+            let handle = tokio::runtime::Handle::current();
+
+            let result = handle.block_on(async {
+                let db = Database::open(&db_path)?;
+                let collection = db.get_collection_by_id(&collection_id)?.ok_or_else(|| {
+                    codemark_core::error::Error::Input("Collection not found".to_string())
+                })?;
+
+                let sync_opts = codemark_core::sync::SyncOptions {
+                    collection_id: collection.id.clone(),
+                    server_url: server_url.clone(),
+                    direction: codemark_core::sync::SyncDirection::Push,
+                    token,
+                    visibility: Some("public".to_string()),
+                    title: None,
+                    description: None,
+                    dry_run: false,
+                    save_name: None,
+                    db: Some(db),
+                    project_root: Some(project_root.to_string_lossy().to_string()),
+                    config: Some(config),
+                };
+
+                codemark_core::sync::sync(sync_opts).await
+            });
+
+                match result {
+                    Ok(()) => {
+                        let _ = event_handler.send(Event::SyncComplete("Collection published successfully".to_string(), true));
+                        // Trigger a refresh
+                        std::thread::sleep(std::time::Duration::from_millis(100));
+                        let _ = event_handler.send(Event::Tick);
+                    }
+                    Err(e) => {
+                        let _ = event_handler.send(Event::SyncComplete(format!("Push failed: {}", e), false));
+                    }
+                }
+            });
+    }
+
+    /// Start pulling a collection from the server.
+    ///
+    /// For now, this is a placeholder as pull requires server-side tour ID.
+    pub fn start_pull_collection(&mut self) {
+        let _ = self.event_handler.send(Event::SyncComplete("Pull not yet implemented in TUI".to_string(), false));
+    }
+
     /// Refresh all panels from the current active database.
     pub fn refresh_all_panels(&mut self) {
         // 1. Update Panel 1 Accounts (preserving active owner selections)
@@ -1092,6 +1203,14 @@ impl BrowserLayout {
                 self.refresh_all_panels();
                 return true;
             }
+            Event::SyncComplete(msg, success) => {
+                // Store the sync result as a notification
+                self.pending_notification =
+                    Some(HealNotification { message: msg.clone(), success: *success });
+                // Refresh panels to show updated publish status
+                self.refresh_all_panels();
+                return true;
+            }
             _ => {}
         }
 
@@ -1462,6 +1581,28 @@ impl BrowserLayout {
                             }
                         }
                         _ => {}
+                    }
+                }
+                // Push collection (P) - publish collection to server
+                ratatui::crossterm::event::KeyCode::Char('P')
+                    if self.should_handle_keybindings() && self.focus == FocusArea::Panel3 =>
+                {
+                    if let Some(Panel3Tab::Collections) =
+                        Panel3Tab::from_index(self.left_pane.panel3.tabs.selected_index())
+                    {
+                        self.start_push_collection();
+                        return true;
+                    }
+                }
+                // Pull collection (p) - fetch collection from server
+                ratatui::crossterm::event::KeyCode::Char('p')
+                    if self.should_handle_keybindings() && self.focus == FocusArea::Panel3 =>
+                {
+                    if let Some(Panel3Tab::Collections) =
+                        Panel3Tab::from_index(self.left_pane.panel3.tabs.selected_index())
+                    {
+                        self.start_pull_collection();
+                        return true;
                     }
                 }
                 // Heal keybinding - only available in Bookmarks, Collections, or Preview

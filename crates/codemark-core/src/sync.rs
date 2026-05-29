@@ -363,6 +363,12 @@ async fn upload_pack(
         params![collection_id, server_url, tour_id],
     )?;
 
+    // Also update the collection's published_at field for UI display
+    db.conn().execute(
+        "UPDATE collections SET published_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?1",
+        params![collection_id],
+    )?;
+
     Ok(tour_id.to_string())
 }
 

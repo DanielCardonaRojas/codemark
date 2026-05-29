@@ -32,6 +32,8 @@ pub enum Event {
     SearchError(String),
     /// Heal operation completed with a notification message.
     HealComplete(String, bool), // (message, success)
+    /// Sync operation (push/pull) completed with a notification message.
+    SyncComplete(String, bool), // (message, success)
 }
 
 impl Event {

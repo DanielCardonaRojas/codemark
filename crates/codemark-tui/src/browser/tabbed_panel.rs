@@ -349,16 +349,28 @@ impl TabbedPanel {
                 };
 
                 let is_published = c.published_at.is_some();
-                let item = PanelItem::new(c.name)
-                    .secondary_text(c.created_branch.unwrap_or_else(|| "main".to_string()))
+                let branch = c.created_branch.clone().unwrap_or_else(|| "main".to_string());
+                let name = c.name.clone();
+
+                // Collections item - shows publish icon
+                let collection_item = PanelItem::new(&name)
+                    .secondary_text(&branch)
                     .metadata(format!("{count} steps"))
                     .health(health)
-                    .published(is_published)
-                    .user_data(c.id);
+                    .published(is_published)  // Only show icon on Collections tab
+                    .user_data(c.id.clone());
 
-                collections_items.push(item.clone());
+                collections_items.push(collection_item);
+
+                // Tours item - no publish icon (already in tours tab means published)
                 if is_published {
-                    tours_items.push(item);
+                    let tour_item = PanelItem::new(&name)
+                        .secondary_text(&branch)
+                        .metadata(format!("{count} steps"))
+                        .health(health)
+                        .published(false)  // Don't show icon on Tours tab
+                        .user_data(c.id);
+                    tours_items.push(tour_item);
                 }
             }
         }

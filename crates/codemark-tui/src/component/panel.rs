@@ -142,7 +142,7 @@ pub struct PanelItem {
     sync_direction: Option<SyncDirection>,
     /// Whether this item is currently active (e.g., active workspace)
     active: bool,
-    /// Whether the item is published to a server (shows cloud icon)
+    /// Whether the item is published to a server (shows cloud upload icon)
     published: bool,
     /// Optional hidden user data (e.g., database ID)
     pub user_data: Option<String>,
@@ -320,10 +320,10 @@ impl PanelItem {
             ));
         }
 
-        // Add cloud icon if published
+        // Add cloud upload icon if published to server (pushed)
         if self.published {
             spans.push(Span::raw(" "));
-            spans.push(Span::styled("\u{f0c2}", Style::default().fg(Color::Cyan)));
+            spans.push(Span::styled("☁", Style::default().fg(Color::Cyan)));
         }
 
         let mut line = Line::from(spans);
@@ -724,8 +724,12 @@ impl Component for Panel {
                 .thumb_symbol("┃")
                 .style(scrollbar_style);
 
-            let mut scrollbar_state =
-                ScrollbarState::new(self.items.len()).position(state.offset());
+            // Note: We don't set viewport_content_length because Ratatui's scrollbar has a bug
+            // where it calculates thumb size incorrectly. When viewport_content_length is 0,
+            // the scrollbar uses its track height, which happens to be correct for our use case
+            // since the list and scrollbar have the same height.
+            // See: https://github.com/ratatui/ratatui/issues/966
+            let mut scrollbar_state = ScrollbarState::new(self.items.len()).position(state.offset());
 
             let scrollbar_area = if self.bordered {
                 Rect {
