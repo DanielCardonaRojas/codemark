@@ -727,8 +727,8 @@ impl BrowserLayout {
         // 2. Update Bookmarks (Panel 3, tab 0)
         if let Ok(bookmarks) = self.db.list_bookmarks(&BookmarkFilter::default()) {
             let db_dir = self.db.path().parent().unwrap_or_else(|| self.db.path());
-            let head = codemark_core::git::context::detect_context(db_dir)
-                .and_then(|ctx| ctx.head_commit);
+            let head =
+                codemark_core::git::context::detect_context(db_dir).and_then(|ctx| ctx.head_commit);
             let head_ref = head.as_deref();
 
             let filtered_items: Vec<PanelItem> = bookmarks
