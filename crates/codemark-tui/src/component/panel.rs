@@ -206,6 +206,11 @@ impl PanelItem {
         &self.text
     }
 
+    /// Get the secondary text value.
+    pub fn get_secondary_text(&self) -> Option<&str> {
+        self.secondary_text.as_deref()
+    }
+
     /// Set the secondary text.
     pub fn secondary_text(mut self, text: impl Into<String>) -> Self {
         self.secondary_text = Some(text.into());
@@ -595,6 +600,20 @@ impl Panel {
                     .collect();
             }
         }
+    }
+
+    /// Activate an item by its `user_data` value without changing cursor selection.
+    ///
+    /// Used to restore active state after rebuilding items with `set_items`.
+    /// Follows the same pattern as `activate_selected`: modifies `all_items`
+    /// then re-derives `items` via `apply_filter`.
+    pub fn activate_by_user_data(&mut self, data: &str) {
+        for item in &mut self.all_items {
+            if item.user_data.as_deref() == Some(data) {
+                item.active = true;
+            }
+        }
+        self.apply_filter();
     }
 
     /// Clear all items from the panel.

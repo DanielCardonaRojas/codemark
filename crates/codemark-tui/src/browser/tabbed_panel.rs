@@ -280,6 +280,19 @@ impl TabbedPanel {
         }
     }
 
+    /// Build the list of account (repo owner) items from the global registry.
+    pub fn build_account_items(registry: &rusqlite::Connection) -> Vec<PanelItem> {
+        use codemark_core::storage::registry;
+        if let Ok(owners) = registry::list_repo_owners(registry) {
+            owners
+                .into_iter()
+                .map(|owner| PanelItem::new(owner.clone()).user_data(owner).no_health())
+                .collect()
+        } else {
+            Vec::new()
+        }
+    }
+
     /// Build tags and branches items.
     pub fn build_tags_branches_items(
         db: &Database,
@@ -370,13 +383,8 @@ impl TabbedPanel {
         let mut repos_panel = Panel::new("").bordered(false);
         repos_panel = repos_panel.items(repos_items);
 
-        let accounts = Panel::new("")
-            .items(vec![
-                PanelItem::new("GitHub").no_health(),
-                PanelItem::new("GitLab").no_health(),
-                PanelItem::new("Bitbucket").no_health(),
-            ])
-            .bordered(false);
+        let account_items = TabbedPanel::build_account_items(registry);
+        let accounts = Panel::new("").items(account_items).bordered(false).multi_select(true);
 
         let tabs = TabSelection::new(vec![Tab::new("Repos"), Tab::new("Accounts")]);
 
