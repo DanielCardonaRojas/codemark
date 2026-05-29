@@ -120,7 +120,7 @@ impl CodePreview {
             let mut spans = Vec::new();
 
             // Add sign column indicator (1 char) + line number (4 chars) + space (1 char) = 6 chars total gutter
-            // Sign column shows: '■' for single line, '├' for start, '│' for middle, '└' for end of range
+            // Sign column shows: '┃' for lines in the bookmark range
             let sign = " "; // Default: no mark
             spans.push(Span::styled(sign, Style::default().fg(Color::DarkGray)));
 
@@ -216,15 +216,15 @@ impl Component for CodePreview {
         for (i, line) in cached.iter().enumerate() {
             let in_range = selected_range.is_some_and(|(start, end)| i >= start && i <= end);
 
-            // Sign indicator: show │ for range lines (independent of current selection)
+            // Sign indicator: show ┃ for range lines (independent of current selection)
             let sign = if in_range {
-                "│" // Vertical bar for lines in the bookmark range
+                "┃" // Thick vertical bar for lines in the bookmark range
             } else {
                 " "
             };
 
-            // Sign color: cyan for range lines, regardless of current selection
-            let sign_color = if in_range { Color::Cyan } else { Color::DarkGray };
+            // Sign color: magenta for range lines, regardless of current selection
+            let sign_color = if in_range { Color::Magenta } else { Color::DarkGray };
 
             // Rebuild the line with the correct sign indicator
             // The cached line has: sign (1 char) + line number (4 chars) + content
