@@ -364,11 +364,12 @@ impl BrowserLayout {
         }
 
         // Update Panel 1 Repos (respecting active owner filter)
-        let repo_items = TabbedPanel::build_repo_items(&self.db, &self.registry);
-        if let Some(p) = self.left_pane.panel1.get_list_panel_mut(0) {
-            p.set_items(repo_items);
-        }
-        if !active_owners.is_empty() {
+        if active_owners.is_empty() {
+            let repo_items = TabbedPanel::build_repo_items(&self.db, &self.registry);
+            if let Some(p) = self.left_pane.panel1.get_list_panel_mut(0) {
+                p.set_items(repo_items);
+            }
+        } else {
             self.update_repos_by_owner();
         }
 

@@ -286,8 +286,7 @@ impl TabbedPanel {
         if let Ok(owners) = registry::list_repo_owners(registry) {
             owners.into_iter()
                 .map(|owner| {
-                    let name = owner.clone();
-                    PanelItem::new(owner).user_data(name).no_health()
+                    PanelItem::new(owner.clone()).user_data(owner).no_health()
                 })
                 .collect()
         } else {
