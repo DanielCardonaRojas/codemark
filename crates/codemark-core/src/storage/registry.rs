@@ -183,6 +183,19 @@ pub fn find_repo_by_root(conn: &Connection, root: &str) -> Result<Option<KnownRe
     }
 }
 
+/// List distinct repo owners from all known repositories.
+pub fn list_repo_owners(conn: &Connection) -> Result<Vec<String>> {
+    let mut stmt = conn.prepare(
+        "SELECT DISTINCT repo_owner FROM known_repos ORDER BY repo_owner"
+    )?;
+    let rows = stmt.query_map([], |row| row.get(0))?;
+    let mut owners = Vec::new();
+    for owner in rows {
+        owners.push(owner?);
+    }
+    Ok(owners)
+}
+
 /// List all known repositories.
 pub fn list_repos(conn: &Connection) -> Result<Vec<KnownRepo>> {
     let mut stmt = conn.prepare(

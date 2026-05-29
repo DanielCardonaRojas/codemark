@@ -342,10 +342,14 @@ impl BrowserLayout {
 
     /// Refresh all panels from the current active database.
     pub fn refresh_all_panels(&mut self) {
-        // 1. Update Panel 1 Repos (in-place to preserve selection)
+        // 1. Update Panel 1 Repos and Accounts (in-place to preserve selection)
         let repo_items = TabbedPanel::build_repo_items(&self.db, &self.registry);
         if let Some(p) = self.left_pane.panel1.get_list_panel_mut(0) {
             p.set_items(repo_items);
+        }
+        let account_items = TabbedPanel::build_account_items(&self.registry);
+        if let Some(p) = self.left_pane.panel1.get_list_panel_mut(1) {
+            p.set_items(account_items);
         }
 
         // 2. Update Tags/Branches (in-place)
