@@ -34,6 +34,10 @@ pub enum Event {
     HealComplete(String, bool), // (message, success)
     /// Sync operation (push/pull) completed with a notification message.
     SyncComplete(String, bool), // (message, success)
+    /// Remote tours listing completed.
+    RemoteToursLoaded(Vec<codemark_core::sync::RemoteTourSummary>),
+    /// Remote tours listing failed.
+    RemoteToursFetchError(String),
 }
 
 impl Event {

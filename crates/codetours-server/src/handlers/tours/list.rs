@@ -13,8 +13,12 @@ use serde::{Deserialize, Serialize};
 /// Request parameters for listing tours.
 #[derive(Debug, Deserialize)]
 pub struct ListToursParams {
-    /// Optional repository URL filter.
+    /// Optional repository URL filter (legacy, use repo_owner + repo instead).
     pub repo_url: Option<String>,
+    /// Repository owner (e.g. "DanielCardonaRojas"). Preferred over repo_url.
+    pub repo_owner: Option<String>,
+    /// Repository name (e.g. "codemark"). Used with repo_owner.
+    pub repo_name: Option<String>,
     /// Maximum number of tours to return (default 50, max 200).
     pub limit: Option<usize>,
     /// Number of tours to skip.
@@ -53,8 +57,12 @@ pub struct ListToursResponse {
 
 /// Handler for GET /tours. Lists public tours with filtering and pagination.
 ///
-/// When `repo_url` is provided, verifies the user has access to that repository
-/// via GitHub API before returning tours.
+/// Supports filtering by repository using either:
+/// - `repo_owner` + `repo_name` (preferred, format-agnostic)
+/// - `repo_url` (legacy, exact match)
+///
+/// When repository filtering is used, verifies the user has access to that
+/// repository via GitHub API before returning tours.
 pub async fn handler(
     State(state): State<AppState>,
     auth: AuthContext,
@@ -63,8 +71,20 @@ pub async fn handler(
     let limit = params.limit.unwrap_or(50).min(200);
     let offset = params.offset.unwrap_or(0);
 
-    // If repo_url is provided, verify GitHub access
-    if let Some(ref repo_url) = params.repo_url {
+    // Resolve repo filter: prefer repo_owner+repo_name, fall back to repo_url
+    let repo_filter: Option<(String, String)> =
+        if let (Some(owner), Some(name)) = (&params.repo_owner, &params.repo_name) {
+            Some((owner.clone(), name.clone()))
+        } else if let Some(ref repo_url) = params.repo_url {
+            GitHubVerifier::parse_repo_url(repo_url)
+        } else {
+            None
+        };
+
+    // If filtering by repo, verify GitHub access
+    if let Some((ref owner, ref repo)) = repo_filter {
+        let repo_url_for_access = format!("git@github.com:{}/{}.git", owner, repo);
+
         let user_id = match auth.user_id() {
             Some(id) => id,
             None => {
@@ -82,11 +102,12 @@ pub async fn handler(
 
         let verifier = GitHubVerifier::new();
 
-        match verifier.verify_access(&state, repo_url, user_id).await {
+        match verifier.verify_access(&state, &repo_url_for_access, user_id).await {
             Ok(has_access) => {
                 if !has_access {
                     tracing::warn!(
-                        repo_url = %repo_url,
+                        repo_owner = %owner,
+                        repo_name = %repo,
                         "Access denied: user does not have access to repository"
                     );
                     return (
@@ -99,11 +120,12 @@ pub async fn handler(
                     )
                         .into_response();
                 }
-                tracing::debug!(repo_url = %repo_url, "Access granted to repository");
+                tracing::debug!(repo_owner = %owner, repo_name = %repo, "Access granted to repository");
             }
             Err(crate::github::GitHubVerifyError::NoGitHubToken) => {
                 tracing::warn!(
-                    repo_url = %repo_url,
+                    repo_owner = %owner,
+                    repo_name = %repo,
                     "Access check failed: no GitHub token linked"
                 );
                 return (
@@ -120,12 +142,12 @@ pub async fn handler(
             }
             Err(e) => {
                 tracing::error!(
-                    repo_url = %repo_url,
+                    repo_owner = %owner,
+                    repo_name = %repo,
                     error = %e,
                     "Failed to verify GitHub access"
                 );
                 // For now, allow access if verification fails (graceful degradation)
-                // In production, you might want to fail closed
             }
         }
     }
@@ -142,26 +164,24 @@ pub async fn handler(
 
     let result = conn
         .interact(move |conn| {
-            let mut query = "SELECT id, name, repo_url, updated_at FROM collections
-                         WHERE visibility = 'public' AND status = 'ready'"
-                .to_string();
-
-            if params.repo_url.is_some() {
-                query.push_str(" AND repo_url = ?3");
-            }
-
+            // Always fetch all public/ready tours, then filter by parsed owner/repo in Rust.
+            // This avoids fragile exact-string matching on repo_url (SSH vs HTTPS vs .git suffix).
             let sort = match params.sort.as_deref() {
                 Some("updated_at_asc") => "updated_at ASC",
                 Some("title_asc") => "name ASC",
                 _ => "updated_at DESC",
             };
-            query.push_str(&format!(" ORDER BY {}", sort));
-            query.push_str(" LIMIT ?1 OFFSET ?2");
+
+            let query = format!(
+                "SELECT id, name, repo_url, updated_at FROM collections
+                 WHERE visibility = 'public' AND status = 'ready'
+                 ORDER BY {}",
+                sort
+            );
 
             let mut stmt = conn.prepare(&query)?;
-
-            let tours = if let Some(repo_url) = &params.repo_url {
-                stmt.query_map([limit.to_string(), offset.to_string(), repo_url.clone()], |row| {
+            let all_tours: Vec<TourSummary> = stmt
+                .query_map([], |row| {
                     let id: String = row.get(0)?;
                     Ok(TourSummary {
                         tour_id: id.clone(),
@@ -171,40 +191,42 @@ pub async fn handler(
                         url: format!("/tours/{}", id),
                     })
                 })?
-                .collect::<rusqlite::Result<Vec<_>>>()?
-            } else {
-                stmt.query_map([limit.to_string(), offset.to_string()], |row| {
-                    let id: String = row.get(0)?;
-                    Ok(TourSummary {
-                        tour_id: id.clone(),
-                        title: row.get(1)?,
-                        repo_url: row.get(2)?,
-                        updated_at: row.get(3)?,
-                        url: format!("/tours/{}", id),
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+
+            // Filter by owner/repo if provided
+            let filtered: Vec<TourSummary> = if let Some((ref owner, ref repo)) = repo_filter {
+                all_tours
+                    .into_iter()
+                    .filter(|t| {
+                        t.repo_url.as_deref().and_then(GitHubVerifier::parse_repo_url)
+                            == Some((owner.clone(), repo.clone()))
                     })
-                })?
-                .collect::<rusqlite::Result<Vec<_>>>()?
-            };
-
-            let mut count_query =
-                "SELECT COUNT(*) FROM collections WHERE visibility = 'public' AND status = 'ready'"
-                    .to_string();
-            if params.repo_url.is_some() {
-                count_query.push_str(" AND repo_url = ?1");
-            }
-
-            let total: usize = if let Some(repo_url) = &params.repo_url {
-                conn.query_row(&count_query, [repo_url], |row| row.get(0))?
+                    .collect()
             } else {
-                conn.query_row(&count_query, [], |row| row.get(0))?
+                all_tours
             };
 
-            Ok::<_, rusqlite::Error>(ListToursResponse { tours, total, limit, offset })
+            let total = filtered.len();
+            let paged: Vec<TourSummary> = filtered.into_iter().skip(offset).take(limit).collect();
+
+            Ok::<_, rusqlite::Error>(ListToursResponse {
+                tours: paged,
+                total,
+                limit,
+                offset,
+            })
         })
         .await;
 
     match result {
-        Ok(Ok(res)) => (StatusCode::OK, Json(res)).into_response(),
+        Ok(Ok(res)) => {
+            tracing::info!(
+                tours_count = res.tours.len(),
+                total = res.total,
+                "Returning tours list"
+            );
+            (StatusCode::OK, Json(res)).into_response()
+        }
         Ok(Err(e)) => (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(ErrorResponse {

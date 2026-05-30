@@ -458,6 +458,11 @@ impl Panel {
         self
     }
 
+    /// Get all items (unfiltered) in the panel.
+    pub fn all_items(&self) -> &[PanelItem] {
+        &self.all_items
+    }
+
     /// Get the number of items in the panel.
     pub fn len(&self) -> usize {
         self.items.len()

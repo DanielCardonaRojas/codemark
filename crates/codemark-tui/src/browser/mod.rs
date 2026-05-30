@@ -18,8 +18,8 @@ pub use search::{SearchBar, SearchMode};
 pub use tabbed_panel::{TabbedPanel, bookmark_to_panel_item};
 pub use tabs::{Panel2Tab, Panel3Tab, Tab, TabSelection};
 pub use types::{
-    ExternalCommand, FocusArea, HealNotification, HealTarget, LeftPaneSize, RightPaneSize,
-    SectionConfig, StepData, TabContent, escape_markdown,
+    ExternalCommand, FocusArea, HealNotification, HealTarget, LeftPaneSize,
+    RightPaneSize, SectionConfig, StepData, TabContent, escape_markdown,
 };
 
 use crate::component::{Component, HealthStatus, PanelItem};
@@ -444,11 +444,128 @@ impl BrowserLayout {
             });
     }
 
-    /// Start pulling a collection from the server.
+    /// Fetch remote tours from the server in the background.
     ///
-    /// For now, this is a placeholder as pull requires server-side tour ID.
-    pub fn start_pull_collection(&mut self) {
-        let _ = self.event_handler.send(Event::SyncComplete("Pull not yet implemented in TUI".to_string(), false));
+    /// On completion, merges results into the Tours tab panel.
+    pub fn fetch_remote_tours(&mut self) {
+        let event_handler = self.event_handler.clone();
+
+        // Resolve server URL and token
+        let codemark_dir = match self.db.path().parent() {
+            Some(dir) => dir.to_path_buf(),
+            None => {
+                let _ = event_handler.send(Event::RemoteToursFetchError(
+                    "Failed to get config directory".to_string(),
+                ));
+                return;
+            }
+        };
+
+        let config = Config::load_layered(&codemark_dir);
+        let project_root = codemark_dir.parent().unwrap_or(&codemark_dir).to_path_buf();
+
+        let (server_url, token) = match codemark_core::sync::resolve_server_and_token(&config) {
+            Ok(result) => result,
+            Err(e) => {
+                let _ = event_handler.send(Event::RemoteToursFetchError(
+                    format!("Failed to resolve server: {}", e),
+                ));
+                return;
+            }
+        };
+
+        // Get repo origin URL for filtering
+        let repo_url = codemark_core::git::remote::get_origin_url(&project_root).ok();
+
+        // Spawn background task to fetch tours
+        tokio::spawn(async move {
+            let opts = codemark_core::sync::ListRemoteToursOptions {
+                server_url,
+                token,
+                repo_url,
+            };
+
+            match codemark_core::sync::list_remote_tours(opts).await {
+                Ok(tours) => {
+                    let _ = event_handler.send(Event::RemoteToursLoaded(tours));
+                }
+                Err(e) => {
+                    let _ = event_handler.send(Event::RemoteToursFetchError(e.to_string()));
+                }
+            }
+        });
+    }
+
+    /// Start pulling a specific tour from the server by tour_id.
+    pub fn start_pull_tour(&mut self, tour_id: String) {
+        let db_path = self.db.path().to_path_buf();
+        let event_handler = self.event_handler.clone();
+
+        let codemark_dir = match self.db.path().parent() {
+            Some(dir) => dir.to_path_buf(),
+            None => {
+                let _ = event_handler.send(Event::SyncComplete(
+                    "Failed to get config directory".to_string(),
+                    false,
+                ));
+                return;
+            }
+        };
+
+        let config = Config::load_layered(&codemark_dir);
+
+        let (server_url, token) = match codemark_core::sync::resolve_server_and_token(&config) {
+            Ok(result) => result,
+            Err(e) => {
+                let _ = event_handler.send(Event::SyncComplete(
+                    format!("Failed to resolve server: {}", e),
+                    false,
+                ));
+                return;
+            }
+        };
+
+        tokio::task::spawn_blocking(move || {
+            let handle = tokio::runtime::Handle::current();
+
+            let result = handle.block_on(async {
+                let db = Database::open(&db_path)?;
+
+                let sync_opts = codemark_core::sync::SyncOptions {
+                    collection_id: tour_id,
+                    server_url,
+                    direction: codemark_core::sync::SyncDirection::Pull,
+                    token,
+                    visibility: None,
+                    title: None,
+                    description: None,
+                    dry_run: false,
+                    save_name: None,
+                    db: Some(db),
+                    project_root: None,
+                    config: None,
+                };
+
+                codemark_core::sync::sync(sync_opts).await
+            });
+
+            match result {
+                Ok(()) => {
+                    let _ = event_handler.send(Event::SyncComplete(
+                        "Tour pulled successfully".to_string(),
+                        true,
+                    ));
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                    let _ = event_handler.send(Event::Tick);
+                }
+                Err(e) => {
+                    let _ = event_handler.send(Event::SyncComplete(
+                        format!("Pull failed: {}", e),
+                        false,
+                    ));
+                }
+            }
+        });
     }
 
     /// Refresh all panels from the current active database.
@@ -1129,6 +1246,7 @@ impl BrowserLayout {
                 self.right_pane.render(chunks[0], buf, true);
             }
         }
+
     }
 
     /// Handle an event.
@@ -1209,6 +1327,70 @@ impl BrowserLayout {
                     Some(HealNotification { message: msg.clone(), success: *success });
                 // Refresh panels to show updated publish status
                 self.refresh_all_panels();
+                return true;
+            }
+            Event::RemoteToursLoaded(tours) => {
+                // Rebuild the Tours tab panel (index 2) with local + remote tours.
+                // Local tours keep their health dot; remote-only tours get a gray dot
+                // and a "remote:" prefix on user_data so Enter knows to pull them.
+
+                // First, rebuild local tours from DB (same as build_panel3_items)
+                let mut local_items = Vec::new();
+                let mut local_ids = std::collections::HashSet::new();
+                if let Ok(collections) = self.db.list_collections() {
+                    for (c, count) in collections {
+                        if c.published_at.is_some() {
+                            let health = match c.health {
+                                Some(h) => match h {
+                                    codemark_core::engine::bookmark::CollectionHealth::Active => {
+                                        HealthStatus::Healthy
+                                    }
+                                    codemark_core::engine::bookmark::CollectionHealth::Drifted => {
+                                        HealthStatus::Drifted
+                                    }
+                                    codemark_core::engine::bookmark::CollectionHealth::Stale => {
+                                        HealthStatus::Broken
+                                    }
+                                },
+                                None => HealthStatus::Unknown,
+                            };
+                            let branch = c.created_branch.clone().unwrap_or_else(|| "main".to_string());
+                            let item = PanelItem::new(&c.name)
+                                .secondary_text(&branch)
+                                .metadata(format!("{count} steps"))
+                                .health(health)
+                                .user_data(c.id.clone());
+                            local_ids.insert(c.id);
+                            local_items.push(item);
+                        }
+                    }
+                }
+
+                // Add remote-only tours (not already local)
+                let remote_items: Vec<PanelItem> = tours
+                    .iter()
+                    .filter(|t| !local_ids.contains(&t.tour_id))
+                    .map(|t| {
+                        PanelItem::new(&t.title)
+                            .secondary_text(
+                                t.updated_at.chars().take(10).collect::<String>(),
+                            )
+                            .health(HealthStatus::Unknown)
+                            .user_data(format!("remote:{}", t.tour_id))
+                    })
+                    .collect();
+
+                let mut all_items = local_items;
+                all_items.extend(remote_items);
+
+                if let Some(panel) = self.left_pane.panel3.get_list_panel_mut(2) {
+                    panel.set_items(all_items);
+                }
+                return true;
+            }
+            Event::RemoteToursFetchError(msg) => {
+                self.pending_notification =
+                    Some(HealNotification { message: format!("Failed to fetch tours: {}", msg), success: false });
                 return true;
             }
             _ => {}
@@ -1309,15 +1491,32 @@ impl BrowserLayout {
                     }
                     if self.focus == FocusArea::Panel3 {
                         match Panel3Tab::from_index(self.left_pane.panel3.tabs.selected_index()) {
-                            Some(Panel3Tab::Tours) | Some(Panel3Tab::Collections) => {
-                                // Tours or Collections
+                            Some(Panel3Tab::Tours) => {
+                                // Tours tab: check if remote tour (pull) or local tour (open)
+                                if let Some(panel) = self.left_pane.panel3.active_panel_mut()
+                                    && let Some(selected) = panel.selected()
+                                {
+                                    if let Some(ref ud) = selected.user_data
+                                        && let Some(remote_id) = ud.strip_prefix("remote:")
+                                    {
+                                        let remote_id = remote_id.to_string();
+                                        self.start_pull_tour(remote_id);
+                                        return true;
+                                    }
+                                    let tour_name = selected.text().to_string();
+                                    panel.activate_selected();
+                                    self.right_pane.load_tour(&self.db, &tour_name);
+                                    self.set_focus(FocusArea::Main);
+                                    return true;
+                                }
+                            }
+                            Some(Panel3Tab::Collections) => {
                                 if let Some(panel) = self.left_pane.panel3.active_panel_mut()
                                     && let Some(selected) = panel.selected()
                                 {
                                     let tour_name = selected.text().to_string();
-                                    panel.activate_selected(); // Mark as active in current panel
+                                    panel.activate_selected();
                                     self.right_pane.load_tour(&self.db, &tour_name);
-
                                     self.set_focus(FocusArea::Main);
                                     return true;
                                 }
@@ -1368,15 +1567,32 @@ impl BrowserLayout {
                     }
                     if self.focus == FocusArea::Panel3 {
                         match Panel3Tab::from_index(self.left_pane.panel3.tabs.selected_index()) {
-                            Some(Panel3Tab::Tours) | Some(Panel3Tab::Collections) => {
-                                // Tours or Collections
+                            Some(Panel3Tab::Tours) => {
+                                // Tours tab: check if remote tour (pull) or local tour (open)
+                                if let Some(panel) = self.left_pane.panel3.active_panel_mut()
+                                    && let Some(selected) = panel.selected()
+                                {
+                                    if let Some(ref ud) = selected.user_data
+                                        && let Some(remote_id) = ud.strip_prefix("remote:")
+                                    {
+                                        let remote_id = remote_id.to_string();
+                                        self.start_pull_tour(remote_id);
+                                        return true;
+                                    }
+                                    let tour_name = selected.text().to_string();
+                                    panel.activate_selected();
+                                    self.right_pane.load_tour(&self.db, &tour_name);
+                                    self.set_focus(FocusArea::Main);
+                                    return true;
+                                }
+                            }
+                            Some(Panel3Tab::Collections) => {
                                 if let Some(panel) = self.left_pane.panel3.active_panel_mut()
                                     && let Some(selected) = panel.selected()
                                 {
                                     let tour_name = selected.text().to_string();
-                                    panel.activate_selected(); // Mark as active in current panel
+                                    panel.activate_selected();
                                     self.right_pane.load_tour(&self.db, &tour_name);
-
                                     self.set_focus(FocusArea::Main);
                                     return true;
                                 }
@@ -1594,14 +1810,14 @@ impl BrowserLayout {
                         return true;
                     }
                 }
-                // Pull collection (p) - fetch collection from server
+                // Pull tour (p) - fetch remote tours from server into Tours tab
                 ratatui::crossterm::event::KeyCode::Char('p')
                     if self.should_handle_keybindings() && self.focus == FocusArea::Panel3 =>
                 {
-                    if let Some(Panel3Tab::Collections) =
+                    if let Some(Panel3Tab::Tours) =
                         Panel3Tab::from_index(self.left_pane.panel3.tabs.selected_index())
                     {
-                        self.start_pull_collection();
+                        self.fetch_remote_tours();
                         return true;
                     }
                 }
@@ -1669,8 +1885,13 @@ impl BrowserLayout {
                 let handled = left_handled || right_handled;
 
                 // Refresh tags if Panel 3 tab changed via mouse
-                if self.left_pane.panel3.tabs.selected_index() != old_tab {
+                let new_tab = self.left_pane.panel3.tabs.selected_index();
+                if new_tab != old_tab {
                     self.refresh_tags();
+                    // Auto-fetch remote tours when switching to Tours tab
+                    if Panel3Tab::from_index(new_tab) == Some(Panel3Tab::Tours) {
+                        self.fetch_remote_tours();
+                    }
                 }
 
                 // Check for bookmark selection changes for live preview after mouse events
@@ -1714,8 +1935,13 @@ impl BrowserLayout {
                 };
 
                 // Refresh tags if Panel 3 tab changed via keyboard (e.g., [ or ])
-                if self.left_pane.panel3.tabs.selected_index() != old_tab {
+                let new_tab = self.left_pane.panel3.tabs.selected_index();
+                if new_tab != old_tab {
                     self.refresh_tags();
+                    // Auto-fetch remote tours when switching to Tours tab
+                    if Panel3Tab::from_index(new_tab) == Some(Panel3Tab::Tours) {
+                        self.fetch_remote_tours();
+                    }
                 }
 
                 handled

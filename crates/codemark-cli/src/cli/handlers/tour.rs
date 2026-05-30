@@ -83,7 +83,13 @@ pub async fn handle_tour_list(
 
     let mut query = vec![("limit", args.limit.to_string()), ("offset", args.offset.to_string())];
     if let Some(ref repo) = repo_url {
-        query.push(("repo_url", repo.clone()));
+        // Parse into owner/repo to avoid URL format mismatch (SSH vs HTTPS)
+        if let Some((owner, name)) = codemark_core::git::remote::parse_remote_url(repo) {
+            query.push(("repo_owner", owner));
+            query.push(("repo_name", name));
+        } else {
+            query.push(("repo_url", repo.clone()));
+        }
     }
 
     let url = format!("{}/tours", server_url);

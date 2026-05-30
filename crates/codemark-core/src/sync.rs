@@ -142,6 +142,73 @@ pub fn resolve_server_and_token(config: &Config) -> Result<(String, Option<Strin
     Ok((server_url, token))
 }
 
+/// Summary of a remote tour available on the server.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RemoteTourSummary {
+    pub tour_id: String,
+    pub title: String,
+    pub repo_url: Option<String>,
+    pub updated_at: String,
+}
+
+/// Options for listing remote tours.
+pub struct ListRemoteToursOptions {
+    pub server_url: String,
+    pub token: Option<String>,
+    pub repo_url: Option<String>,
+}
+
+/// Fetch available tours from the server.
+pub async fn list_remote_tours(opts: ListRemoteToursOptions) -> Result<Vec<RemoteTourSummary>> {
+    let client = build_sync_http_client()?;
+    let headers = build_auth_headers(opts.token.as_ref())?;
+
+    let url = format!("{}/tours", opts.server_url);
+
+    let mut request = client.get(&url).headers(headers);
+    if let Some(ref repo_url) = opts.repo_url {
+        // Parse into owner/repo to avoid URL format mismatch (SSH vs HTTPS)
+        if let Some((owner, repo)) = crate::git::remote::parse_remote_url(repo_url) {
+            request = request.query(&[("repo_owner", owner), ("repo_name", repo)]);
+        } else {
+            // Fallback to raw repo_url if parsing fails
+            request = request.query(&[("repo_url", repo_url.to_string())]);
+        }
+    }
+
+    let response = request
+        .send()
+        .await
+        .map_err(|e| Error::Operation(format!("failed to list remote tours: {e}")))?;
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().await.unwrap_or_default();
+        return Err(Error::Operation(format!("server returned {status}: {body}")));
+    }
+
+    let body: Value = response
+        .json()
+        .await
+        .map_err(|e| Error::Operation(format!("failed to parse response: {e}")))?;
+
+    let tours = body["tours"]
+        .as_array()
+        .ok_or_else(|| Error::Operation("invalid response: missing tours array".to_string()))?;
+
+    let summaries = tours
+        .iter()
+        .map(|t| RemoteTourSummary {
+            tour_id: t["tour_id"].as_str().unwrap_or_default().to_string(),
+            title: t["title"].as_str().unwrap_or("Untitled").to_string(),
+            repo_url: t["repo_url"].as_str().map(|s| s.to_string()),
+            updated_at: t["updated_at"].as_str().unwrap_or_default().to_string(),
+        })
+        .collect();
+
+    Ok(summaries)
+}
+
 /// Download a pack from the server and decompress it.
 async fn download_pack(
     server_url: &str,
@@ -475,6 +542,13 @@ async fn sync_push(opts: SyncOptions) -> Result<()> {
             visibility.parse().map_err(|e| Error::Input(format!("invalid visibility: {e}")))?;
     }
 
+    // Set repo_url from git origin if not already set
+    if payload.collection.repo_url.is_none() {
+        if let Ok(origin_url) = crate::git::remote::get_origin_url(project_root_path) {
+            payload.collection.repo_url = Some(origin_url);
+        }
+    }
+
     // Create pack
     let temp_dir = std::env::temp_dir();
     let pack_path_dest = temp_dir.join(format!("codemark-publish-{}.sqlite", uuid::Uuid::new_v4()));
@@ -512,7 +586,7 @@ mod tests {
     #[test]
     fn test_build_auth_headers_jwt() {
         let token = Some("eyJtest".to_string());
-        let headers = build_auth_headers(&token).unwrap();
+        let headers = build_auth_headers(token.as_ref()).unwrap();
         assert_eq!(
             headers.get("Authorization").unwrap().to_str().unwrap(),
             "Bearer eyJtest"
@@ -522,7 +596,7 @@ mod tests {
     #[test]
     fn test_build_auth_headers_legacy() {
         let token = Some("legacy_token".to_string());
-        let headers = build_auth_headers(&token).unwrap();
+        let headers = build_auth_headers(token.as_ref()).unwrap();
         assert_eq!(
             headers.get("X-Tour-Token").unwrap().to_str().unwrap(),
             "legacy_token"
@@ -531,7 +605,7 @@ mod tests {
 
     #[test]
     fn test_build_auth_headers_none() {
-        let headers = build_auth_headers(&None).unwrap();
+        let headers = build_auth_headers(None).unwrap();
         assert!(headers.get("Authorization").is_none());
         assert!(headers.get("X-Tour-Token").is_none());
     }
