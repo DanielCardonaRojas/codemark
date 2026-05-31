@@ -217,6 +217,11 @@ impl PanelItem {
         self
     }
 
+    /// Update the secondary text in place.
+    pub fn set_secondary_text(&mut self, text: impl Into<String>) {
+        self.secondary_text = Some(text.into());
+    }
+
     /// Set the metadata.
     pub fn metadata(mut self, metadata: impl Into<String>) -> Self {
         self.metadata = Some(metadata.into());
@@ -627,6 +632,28 @@ impl Panel {
         self.all_items.clear();
         self.list_state.borrow_mut().select(None);
         self.filter_query.clear();
+    }
+
+    /// Update the secondary text of an item identified by its user_data value.
+    /// Re-applies the filter so the change is visible immediately.
+    pub fn update_item_secondary_text(&mut self, user_data: &str, text: &str) {
+        let mut changed = false;
+        for item in &mut self.all_items {
+            if item.user_data.as_deref() == Some(user_data) {
+                item.set_secondary_text(text);
+                changed = true;
+                break;
+            }
+        }
+        if changed {
+            // Also update the filtered items list directly to avoid resetting selection
+            for item in &mut self.items {
+                if item.user_data.as_deref() == Some(user_data) {
+                    item.set_secondary_text(text);
+                    break;
+                }
+            }
+        }
     }
 
     /// Update the items in the panel, preserving selection if possible.

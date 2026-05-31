@@ -122,6 +122,12 @@ pub struct BrowserLayout {
     left_pane_size: LeftPaneSize,
     /// Current size mode for the right pane (preview)
     right_pane_size: RightPaneSize,
+    /// Tour ID currently being pulled (for spinner and post-pull refresh)
+    pulling_tour_id: Option<String>,
+    /// Tick counter for spinner animation
+    tick_count: usize,
+    /// Last-fetched remote tours (cached to avoid re-fetching after pull)
+    cached_remote_tours: Vec<codemark_core::sync::RemoteTourSummary>,
 }
 
 impl BrowserLayout {
@@ -156,6 +162,9 @@ impl BrowserLayout {
             clipboard: None,
             left_pane_size: LeftPaneSize::Regular,
             right_pane_size: RightPaneSize::Regular,
+            pulling_tour_id: None,
+            tick_count: 0,
+            cached_remote_tours: Vec::new(),
         };
         layout.update_focus_state();
         layout
@@ -498,6 +507,13 @@ impl BrowserLayout {
 
     /// Start pulling a specific tour from the server by tour_id.
     pub fn start_pull_tour(&mut self, tour_id: String) {
+        // Mark the item as pulling (spinner will be shown on tick)
+        self.pulling_tour_id = Some(tour_id.clone());
+        let user_data_key = format!("remote:{}", tour_id);
+        if let Some(panel) = self.left_pane.panel3.get_list_panel_mut(2) {
+            panel.update_item_secondary_text(&user_data_key, "\u{28cb} Pulling");
+        }
+
         let db_path = self.db.path().to_path_buf();
         let event_handler = self.event_handler.clone();
 
@@ -566,6 +582,60 @@ impl BrowserLayout {
                 }
             }
         });
+    }
+
+    /// Rebuild the Tours panel (index 2) from local DB + cached remote tours.
+    fn rebuild_tours_panel(&mut self) {
+        let mut local_items = Vec::new();
+        let mut local_ids = std::collections::HashSet::new();
+        if let Ok(collections) = self.db.list_collections() {
+            for (c, count) in collections {
+                if c.published_at.is_some() {
+                    let health = match c.health {
+                        Some(h) => match h {
+                            codemark_core::engine::bookmark::CollectionHealth::Active => {
+                                HealthStatus::Healthy
+                            }
+                            codemark_core::engine::bookmark::CollectionHealth::Drifted => {
+                                HealthStatus::Drifted
+                            }
+                            codemark_core::engine::bookmark::CollectionHealth::Stale => {
+                                HealthStatus::Broken
+                            }
+                        },
+                        None => HealthStatus::Unknown,
+                    };
+                    let branch =
+                        c.created_branch.clone().unwrap_or_else(|| "main".to_string());
+                    let item = PanelItem::new(&c.name)
+                        .secondary_text(&branch)
+                        .metadata(format!("{count} steps"))
+                        .health(health)
+                        .user_data(c.id.clone());
+                    local_ids.insert(c.id);
+                    local_items.push(item);
+                }
+            }
+        }
+
+        let remote_items: Vec<PanelItem> = self
+            .cached_remote_tours
+            .iter()
+            .filter(|t| !local_ids.contains(&t.tour_id))
+            .map(|t| {
+                PanelItem::new(&t.title)
+                    .secondary_text(t.updated_at.chars().take(10).collect::<String>())
+                    .health(HealthStatus::Unknown)
+                    .user_data(format!("remote:{}", t.tour_id))
+            })
+            .collect();
+
+        let mut all_items = local_items;
+        all_items.extend(remote_items);
+
+        if let Some(panel) = self.left_pane.panel3.get_list_panel_mut(2) {
+            panel.set_items(all_items);
+        }
     }
 
     /// Refresh all panels from the current active database.
@@ -1251,6 +1321,22 @@ impl BrowserLayout {
 
     /// Handle an event.
     pub fn handle_event(&mut self, event: &Event) -> bool {
+        // Handle tick for spinner animation
+        if matches!(event, Event::Tick) {
+            self.tick_count = self.tick_count.wrapping_add(1);
+            if let Some(ref tour_id) = self.pulling_tour_id {
+                const SPINNER_FRAMES: &[&str] =
+                    &["\u{28cb}", "\u{2819}", "\u{2839}", "\u{2838}", "\u{283c}", "\u{2834}", "\u{2826}", "\u{2827}", "\u{2807}", "\u{280f}"];
+                let frame = SPINNER_FRAMES[self.tick_count % SPINNER_FRAMES.len()];
+                let user_data_key = format!("remote:{}", tour_id);
+                if let Some(panel) = self.left_pane.panel3.get_list_panel_mut(2) {
+                    panel.update_item_secondary_text(&user_data_key, &format!("{} Pulling", frame));
+                }
+                return true;
+            }
+            return false;
+        }
+
         // Handle search results and errors
         match event {
             Event::SearchResults(bookmarks) => {
@@ -1325,67 +1411,19 @@ impl BrowserLayout {
                 // Store the sync result as a notification
                 self.pending_notification =
                     Some(HealNotification { message: msg.clone(), success: *success });
-                // Refresh panels to show updated publish status
+                let was_pulling = self.pulling_tour_id.take().is_some();
+                // Refresh panels to show updated status
                 self.refresh_all_panels();
+                // If we were pulling a tour, rebuild the Tours panel from cached
+                // remote data (no network request needed)
+                if was_pulling {
+                    self.rebuild_tours_panel();
+                }
                 return true;
             }
             Event::RemoteToursLoaded(tours) => {
-                // Rebuild the Tours tab panel (index 2) with local + remote tours.
-                // Local tours keep their health dot; remote-only tours get a gray dot
-                // and a "remote:" prefix on user_data so Enter knows to pull them.
-
-                // First, rebuild local tours from DB (same as build_panel3_items)
-                let mut local_items = Vec::new();
-                let mut local_ids = std::collections::HashSet::new();
-                if let Ok(collections) = self.db.list_collections() {
-                    for (c, count) in collections {
-                        if c.published_at.is_some() {
-                            let health = match c.health {
-                                Some(h) => match h {
-                                    codemark_core::engine::bookmark::CollectionHealth::Active => {
-                                        HealthStatus::Healthy
-                                    }
-                                    codemark_core::engine::bookmark::CollectionHealth::Drifted => {
-                                        HealthStatus::Drifted
-                                    }
-                                    codemark_core::engine::bookmark::CollectionHealth::Stale => {
-                                        HealthStatus::Broken
-                                    }
-                                },
-                                None => HealthStatus::Unknown,
-                            };
-                            let branch = c.created_branch.clone().unwrap_or_else(|| "main".to_string());
-                            let item = PanelItem::new(&c.name)
-                                .secondary_text(&branch)
-                                .metadata(format!("{count} steps"))
-                                .health(health)
-                                .user_data(c.id.clone());
-                            local_ids.insert(c.id);
-                            local_items.push(item);
-                        }
-                    }
-                }
-
-                // Add remote-only tours (not already local)
-                let remote_items: Vec<PanelItem> = tours
-                    .iter()
-                    .filter(|t| !local_ids.contains(&t.tour_id))
-                    .map(|t| {
-                        PanelItem::new(&t.title)
-                            .secondary_text(
-                                t.updated_at.chars().take(10).collect::<String>(),
-                            )
-                            .health(HealthStatus::Unknown)
-                            .user_data(format!("remote:{}", t.tour_id))
-                    })
-                    .collect();
-
-                let mut all_items = local_items;
-                all_items.extend(remote_items);
-
-                if let Some(panel) = self.left_pane.panel3.get_list_panel_mut(2) {
-                    panel.set_items(all_items);
-                }
+                self.cached_remote_tours = tours.clone();
+                self.rebuild_tours_panel();
                 return true;
             }
             Event::RemoteToursFetchError(msg) => {
@@ -1810,14 +1848,31 @@ impl BrowserLayout {
                         return true;
                     }
                 }
-                // Pull tour (p) - fetch remote tours from server into Tours tab
+                // Pull tour (p) - pull selected remote tour, or refresh listing
                 ratatui::crossterm::event::KeyCode::Char('p')
                     if self.should_handle_keybindings() && self.focus == FocusArea::Panel3 =>
                 {
                     if let Some(Panel3Tab::Tours) =
                         Panel3Tab::from_index(self.left_pane.panel3.tabs.selected_index())
                     {
-                        self.fetch_remote_tours();
+                        // If a remote tour is selected, pull it
+                        let should_pull = self
+                            .left_pane
+                            .panel3
+                            .active_panel_mut()
+                            .and_then(|panel| panel.selected())
+                            .and_then(|selected| {
+                                selected
+                                    .user_data
+                                    .as_ref()
+                                    .and_then(|ud| ud.strip_prefix("remote:").map(|id| id.to_string()))
+                            });
+
+                        if let Some(remote_id) = should_pull {
+                            self.start_pull_tour(remote_id);
+                        } else {
+                            self.fetch_remote_tours();
+                        }
                         return true;
                     }
                 }
