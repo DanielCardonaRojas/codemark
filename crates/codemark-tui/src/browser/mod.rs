@@ -618,10 +618,10 @@ impl BrowserLayout {
                         .checkmark(true)
                         .user_data(c.id.clone());
                     // Track both the local ID and the original remote ID
-                    if let Some(ref url) = c.imported_from_url {
-                        if let Some(remote_id) = Self::extract_remote_tour_id(url) {
-                            matched_remote_ids.insert(remote_id.to_string());
-                        }
+                    if let Some(ref url) = c.imported_from_url
+                        && let Some(remote_id) = Self::extract_remote_tour_id(url)
+                    {
+                        matched_remote_ids.insert(remote_id.to_string());
                     }
                     matched_remote_ids.insert(c.id);
                     local_items.push(item);

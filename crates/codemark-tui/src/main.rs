@@ -205,10 +205,10 @@ async fn run_app() -> Result<()> {
                         state.set_size(*width, *height);
                     }
                     Event::Tick => {
-                        if let Some((_, _, shown_at)) = &notification {
-                            if shown_at.elapsed() >= notification_duration {
-                                notification = None;
-                            }
+                        if let Some((_, _, shown_at)) = &notification
+                            && shown_at.elapsed() >= notification_duration
+                        {
+                            notification = None;
                         }
                     }
                     _ => {}

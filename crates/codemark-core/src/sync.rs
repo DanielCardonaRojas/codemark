@@ -546,10 +546,10 @@ async fn sync_push(opts: SyncOptions) -> Result<()> {
     }
 
     // Set repo_url from git origin if not already set
-    if payload.collection.repo_url.is_none() {
-        if let Ok(origin_url) = crate::git::remote::get_origin_url(project_root_path) {
-            payload.collection.repo_url = Some(origin_url);
-        }
+    if payload.collection.repo_url.is_none()
+        && let Ok(origin_url) = crate::git::remote::get_origin_url(project_root_path)
+    {
+        payload.collection.repo_url = Some(origin_url);
     }
 
     // Create pack
