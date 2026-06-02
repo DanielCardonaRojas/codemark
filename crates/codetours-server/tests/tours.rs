@@ -252,6 +252,71 @@ async fn test_publish_too_large() {
     assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
 }
 
+/// Tests that republishing a tour with collection_tags does not fail with a UNIQUE constraint error.
+#[tokio::test]
+async fn test_republish_with_collection_tags() {
+    let (app, _tmp) = setup_app().await;
+    let collection_id = Uuid::new_v4().to_string();
+
+    let make_pack = |col_id: &str, bookmark_suffix: &str| {
+        let pack_path = _tmp.path().join(format!("republish_{}.pack.sqlite", bookmark_suffix));
+        let conn = rusqlite::Connection::open(&pack_path).unwrap();
+        let sql = format!(
+            "PRAGMA user_version = 20;
+             CREATE TABLE schema_meta (key TEXT PRIMARY KEY, value TEXT);
+             INSERT INTO schema_meta (key, value) VALUES ('schema_version', '20');
+             CREATE TABLE collections (id TEXT PRIMARY KEY, name TEXT, visibility TEXT, created_at TEXT, description TEXT, repo_url TEXT, created_branch TEXT, published_commit_sha TEXT, status TEXT, health TEXT, health_computed_at TEXT, published_at TEXT, updated_at TEXT, created_by TEXT);
+             CREATE TABLE bookmarks (id TEXT PRIMARY KEY, file_path TEXT, query TEXT, language TEXT, created_at TEXT, content_hash TEXT, commit_hash TEXT, created_by TEXT, current_resolution_id TEXT);
+             CREATE TABLE collection_bookmarks (collection_id TEXT, bookmark_id TEXT, position INTEGER, added_at TEXT);
+             CREATE TABLE collection_tags (collection_id TEXT, tag TEXT, added_at TEXT, added_by TEXT);
+             CREATE TABLE collection_links (id TEXT PRIMARY KEY, collection_id TEXT, kind TEXT, label TEXT, url TEXT, sort_order INTEGER, added_at TEXT, added_by TEXT);
+             CREATE TABLE resolutions (id TEXT PRIMARY KEY, bookmark_id TEXT, resolved_at TEXT, health TEXT, method TEXT, headline TEXT, snapshot TEXT, commit_hash TEXT, match_count INTEGER, file_path TEXT, byte_range TEXT, line_range TEXT, content_hash TEXT, breadcrumbs TEXT, snapshot_top_padding INTEGER, snapshot_bottom_padding INTEGER);
+             CREATE TABLE bookmark_annotations (id TEXT PRIMARY KEY, bookmark_id TEXT, added_at TEXT, added_by TEXT, notes TEXT, context TEXT, source TEXT);
+             CREATE TABLE bookmark_tags (bookmark_id TEXT, tag TEXT, added_at TEXT, added_by TEXT);
+             CREATE TABLE _pack_meta (pack_id TEXT PRIMARY KEY, protocol_version INTEGER, purpose TEXT, source_client TEXT, generated_at TEXT, notes TEXT);
+
+             INSERT INTO collections (id, name, visibility, created_at, status, health, published_at, updated_at) VALUES ('{col_id}', 'Tagged Tour', 'public', '2026-05-01T00:00:00Z', 'ready', 'active', '2026-05-01T00:00:00Z', '2026-05-01T00:00:00Z');
+             INSERT INTO bookmarks (id, file_path, query, language, created_at, current_resolution_id) VALUES ('BM_{bookmark_suffix}', 'src/main.rs', 'query', 'rust', '2026-05-01T00:00:00Z', 'RES_{bookmark_suffix}');
+             INSERT INTO collection_bookmarks (collection_id, bookmark_id, position, added_at) VALUES ('{col_id}', 'BM_{bookmark_suffix}', 0, '2026-05-01T00:00:00Z');
+             INSERT INTO collection_tags (collection_id, tag, added_at, added_by) VALUES ('{col_id}', 'rust', '2026-05-01T00:00:00Z', 'test');
+             INSERT INTO collection_tags (collection_id, tag, added_at, added_by) VALUES ('{col_id}', 'tutorial', '2026-05-01T00:00:00Z', 'test');
+             INSERT INTO resolutions (id, bookmark_id, resolved_at, health, method, headline, line_range, snapshot, breadcrumbs) VALUES ('RES_{bookmark_suffix}', 'BM_{bookmark_suffix}', '2026-05-01T00:00:00Z', 'active', 'exact', 'headline', '10', 'snapshot_content', '[]');
+             INSERT INTO _pack_meta (pack_id, protocol_version, purpose, source_client, generated_at) VALUES ('PACK_{bookmark_suffix}', 20, 'publish', 'test-client', '2026-05-01T00:00:00Z');",
+        );
+        conn.execute_batch(&sql).unwrap();
+        std::fs::read(&pack_path).unwrap()
+    };
+
+    // First publish
+    let pack_bytes = make_pack(&collection_id, "PUB1");
+    let req = Request::builder()
+        .method("POST")
+        .uri("/tours")
+        .header("X-Tour-Token", DEV_TOKEN)
+        .header(header::CONTENT_TYPE, "application/vnd.codetours.pack+sqlite")
+        .body(Body::from(pack_bytes))
+        .unwrap();
+
+    let response = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(response.status(), StatusCode::CREATED);
+
+    // Republish same collection (should succeed with 200, not 500)
+    let pack_bytes = make_pack(&collection_id, "PUB2");
+    let req = Request::builder()
+        .method("POST")
+        .uri("/tours")
+        .header("X-Tour-Token", DEV_TOKEN)
+        .header(header::CONTENT_TYPE, "application/vnd.codetours.pack+sqlite")
+        .body(Body::from(pack_bytes))
+        .unwrap();
+
+    let response = app.clone().oneshot(req).await.unwrap();
+    let status = response.status();
+    let body = ax_body_to_json(response).await;
+    assert_eq!(status, StatusCode::OK, "Republish failed: {:?}", body);
+    assert_eq!(body["tour_id"], collection_id);
+}
+
 async fn ax_body_to_json(response: axum::response::Response) -> Value {
     let body = axum::body::to_bytes(response.into_body(), usize::MAX).await.unwrap();
     serde_json::from_slice(&body).unwrap()

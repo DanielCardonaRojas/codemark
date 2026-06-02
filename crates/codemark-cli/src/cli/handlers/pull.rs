@@ -1,10 +1,10 @@
 use crate::cli::output::OutputMode;
 use crate::cli::*;
 use codemark_core::error::{Error, Result};
+use codemark_core::sync::{SyncDirection, SyncOptions, build_sync_http_client, sync};
 
 // Re-export auth resolution helpers
 use crate::cli::handlers::auth_resolve::get_token_for_server;
-use crate::cli::handlers::sync::{SyncDirection, SyncOptions, build_sync_http_client, sync};
 
 pub async fn handle_pull(cli: &Cli, mode: &OutputMode, args: &PullArgs) -> Result<()> {
     // 1. Resolve server and token
@@ -54,7 +54,10 @@ pub async fn handle_pull(cli: &Cli, mode: &OutputMode, args: &PullArgs) -> Resul
         }
     }
 
-    // 3. Use unified sync interface
+    // 3. Open database for pull
+    let db = super::open_db_for_write(cli)?;
+
+    // 4. Use unified sync interface from core crate
     // Pull is now persistent by default - save with original name or custom name
     let save_name = args.name.clone();
 
@@ -68,12 +71,17 @@ pub async fn handle_pull(cli: &Cli, mode: &OutputMode, args: &PullArgs) -> Resul
         description: None,
         dry_run: false,
         save_name: Some(save_name.unwrap_or_default()),
-        db: None,
+        db: Some(db),
         project_root: None,
-        cli: cli as *const Cli,
+        config: None,
     };
 
-    sync(cli, mode, sync_opts).await
+    sync(sync_opts).await?;
+
+    // Show success message
+    crate::cli::output::write_success(mode, "Collection imported successfully")?;
+
+    Ok(())
 }
 
 fn resolve_pull_params(cli: &Cli, args: &PullArgs) -> Result<(String, Option<String>, String)> {

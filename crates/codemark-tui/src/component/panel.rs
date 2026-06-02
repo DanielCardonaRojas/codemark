@@ -142,7 +142,7 @@ pub struct PanelItem {
     sync_direction: Option<SyncDirection>,
     /// Whether this item is currently active (e.g., active workspace)
     active: bool,
-    /// Whether the item is published to a server (shows cloud icon)
+    /// Whether the item is published to a server (shows cloud upload icon)
     published: bool,
     /// Optional hidden user data (e.g., database ID)
     pub user_data: Option<String>,
@@ -215,6 +215,11 @@ impl PanelItem {
     pub fn secondary_text(mut self, text: impl Into<String>) -> Self {
         self.secondary_text = Some(text.into());
         self
+    }
+
+    /// Update the secondary text in place.
+    pub fn set_secondary_text(&mut self, text: impl Into<String>) {
+        self.secondary_text = Some(text.into());
     }
 
     /// Set the metadata.
@@ -320,10 +325,10 @@ impl PanelItem {
             ));
         }
 
-        // Add cloud icon if published
+        // Add cloud upload icon if published to server (pushed)
         if self.published {
             spans.push(Span::raw(" "));
-            spans.push(Span::styled("\u{f0c2}", Style::default().fg(Color::Cyan)));
+            spans.push(Span::styled("☁", Style::default().fg(Color::Cyan)));
         }
 
         let mut line = Line::from(spans);
@@ -456,6 +461,11 @@ impl Panel {
     pub fn border_type(mut self, border_type: BorderType) -> Self {
         self.border_type = border_type;
         self
+    }
+
+    /// Get all items (unfiltered) in the panel.
+    pub fn all_items(&self) -> &[PanelItem] {
+        &self.all_items
     }
 
     /// Get the number of items in the panel.
@@ -624,6 +634,28 @@ impl Panel {
         self.filter_query.clear();
     }
 
+    /// Update the secondary text of an item identified by its user_data value.
+    /// Re-applies the filter so the change is visible immediately.
+    pub fn update_item_secondary_text(&mut self, user_data: &str, text: &str) {
+        let mut changed = false;
+        for item in &mut self.all_items {
+            if item.user_data.as_deref() == Some(user_data) {
+                item.set_secondary_text(text);
+                changed = true;
+                break;
+            }
+        }
+        if changed {
+            // Also update the filtered items list directly to avoid resetting selection
+            for item in &mut self.items {
+                if item.user_data.as_deref() == Some(user_data) {
+                    item.set_secondary_text(text);
+                    break;
+                }
+            }
+        }
+    }
+
     /// Update the items in the panel, preserving selection if possible.
     pub fn set_items(&mut self, items: Vec<PanelItem>) {
         let selected_text = self
@@ -724,6 +756,11 @@ impl Component for Panel {
                 .thumb_symbol("┃")
                 .style(scrollbar_style);
 
+            // Note: We don't set viewport_content_length because Ratatui's scrollbar has a bug
+            // where it calculates thumb size incorrectly. When viewport_content_length is 0,
+            // the scrollbar uses its track height, which happens to be correct for our use case
+            // since the list and scrollbar have the same height.
+            // See: https://github.com/ratatui/ratatui/issues/966
             let mut scrollbar_state =
                 ScrollbarState::new(self.items.len()).position(state.offset());
 

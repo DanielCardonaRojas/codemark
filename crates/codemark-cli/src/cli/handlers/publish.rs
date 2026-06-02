@@ -1,10 +1,10 @@
 use crate::cli::output::OutputMode;
 use crate::cli::*;
 use codemark_core::error::{Error, Result};
+use codemark_core::sync::{SyncDirection, SyncOptions, sync};
 
 // Re-export auth resolution helpers
 use crate::cli::handlers::auth_resolve::{detect_current_repo, resolve_server_and_token};
-use crate::cli::handlers::sync::{SyncDirection, SyncOptions, sync};
 
 pub async fn handle_publish(cli: &Cli, mode: &OutputMode, args: &PublishArgs) -> Result<()> {
     let db = super::open_db_for_write(cli)?;
@@ -31,7 +31,10 @@ pub async fn handle_publish(cli: &Cli, mode: &OutputMode, args: &PublishArgs) ->
     // 4. Get project root
     let project_root = super::get_project_root(&db);
 
-    // 5. Use unified sync interface
+    // 5. Load config
+    let config = super::load_config(cli);
+
+    // 6. Use unified sync interface from core crate
     let sync_opts = SyncOptions {
         collection_id: collection.id.clone(),
         server_url,
@@ -44,8 +47,13 @@ pub async fn handle_publish(cli: &Cli, mode: &OutputMode, args: &PublishArgs) ->
         save_name: None,
         db: Some(db),
         project_root: Some(project_root.to_string_lossy().to_string()),
-        cli: cli as *const Cli,
+        config: Some(config),
     };
 
-    sync(cli, mode, sync_opts).await
+    sync(sync_opts).await?;
+
+    // Show success message
+    crate::cli::output::write_success(mode, &format!("Published collection: {}", collection.name))?;
+
+    Ok(())
 }

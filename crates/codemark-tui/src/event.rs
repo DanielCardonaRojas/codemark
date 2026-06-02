@@ -32,6 +32,12 @@ pub enum Event {
     SearchError(String),
     /// Heal operation completed with a notification message.
     HealComplete(String, bool), // (message, success)
+    /// Sync operation (push/pull) completed with a notification message.
+    SyncComplete(String, bool), // (message, success)
+    /// Remote tours listing completed (tours, repo_url used for the request).
+    RemoteToursLoaded(Vec<codemark_core::sync::RemoteTourSummary>, Option<String>),
+    /// Remote tours listing failed.
+    RemoteToursFetchError(String),
 }
 
 impl Event {
@@ -251,6 +257,15 @@ async fn event_loop_with_sender(tick_rate: Duration, tx: mpsc::Sender<Event>) {
                 {
                     // Channel closed, exit the loop
                     return;
+                }
+                // Also send tick if the tick interval has elapsed, even when
+                // input events are arriving (e.g. mouse events from mouse capture
+                // can starve tick generation otherwise).
+                if last_tick.elapsed() >= tick_rate {
+                    if tx.send(Event::Tick).await.is_err() {
+                        return;
+                    }
+                    last_tick = std::time::Instant::now();
                 }
             }
             Ok(None) => {
