@@ -362,13 +362,14 @@ impl TabbedPanel {
 
                 collections_items.push(collection_item);
 
-                // Tours item - no publish icon (already in tours tab means published)
-                if is_published {
+                // Tours item - show if published or imported (pulled from remote)
+                let is_tour = is_published || c.imported_from_url.is_some();
+                if is_tour {
                     let tour_item = PanelItem::new(&name)
                         .secondary_text(&branch)
                         .metadata(format!("{count} steps"))
                         .health(health)
-                        .published(false)  // Don't show icon on Tours tab
+                        .checkmark(true)
                         .user_data(c.id);
                     tours_items.push(tour_item);
                 }

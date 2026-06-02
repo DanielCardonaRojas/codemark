@@ -585,12 +585,20 @@ impl BrowserLayout {
     }
 
     /// Rebuild the Tours panel (index 2) from local DB + cached remote tours.
+    /// Extract the original remote tour ID from an imported_from_url.
+    /// e.g. "http://127.0.0.1:8080/tours/5efea669-..." -> "5efea669-..."
+    fn extract_remote_tour_id(imported_url: &str) -> Option<&str> {
+        imported_url.rsplit('/').next()
+    }
+
     fn rebuild_tours_panel(&mut self) {
         let mut local_items = Vec::new();
-        let mut local_ids = std::collections::HashSet::new();
+        // Track which remote tour IDs have been pulled locally
+        let mut matched_remote_ids = std::collections::HashSet::new();
         if let Ok(collections) = self.db.list_collections() {
             for (c, count) in collections {
-                if c.published_at.is_some() {
+                let is_tour = c.published_at.is_some() || c.imported_from_url.is_some();
+                if is_tour {
                     let health = match c.health {
                         Some(h) => match h {
                             codemark_core::engine::bookmark::CollectionHealth::Active => {
@@ -611,8 +619,15 @@ impl BrowserLayout {
                         .secondary_text(&branch)
                         .metadata(format!("{count} steps"))
                         .health(health)
+                        .checkmark(true)
                         .user_data(c.id.clone());
-                    local_ids.insert(c.id);
+                    // Track both the local ID and the original remote ID
+                    if let Some(ref url) = c.imported_from_url {
+                        if let Some(remote_id) = Self::extract_remote_tour_id(url) {
+                            matched_remote_ids.insert(remote_id.to_string());
+                        }
+                    }
+                    matched_remote_ids.insert(c.id);
                     local_items.push(item);
                 }
             }
@@ -621,7 +636,7 @@ impl BrowserLayout {
         let remote_items: Vec<PanelItem> = self
             .cached_remote_tours
             .iter()
-            .filter(|t| !local_ids.contains(&t.tour_id))
+            .filter(|t| !matched_remote_ids.contains(&t.tour_id))
             .map(|t| {
                 PanelItem::new(&t.title)
                     .secondary_text(t.updated_at.chars().take(10).collect::<String>())
@@ -1026,15 +1041,22 @@ impl BrowserLayout {
                     };
 
                     let is_published = c.published_at.is_some();
-                    let item = PanelItem::new(c.name)
-                        .secondary_text(c.created_branch.unwrap_or_else(|| "main".to_string()))
+                    let is_tour = is_published || c.imported_from_url.is_some();
+                    let branch = c.created_branch.unwrap_or_else(|| "main".to_string());
+                    let item = PanelItem::new(&c.name)
+                        .secondary_text(&branch)
                         .metadata(format!("{count} steps"))
                         .health(health)
                         .published(is_published);
 
-                    collection_items.push(item.clone());
-                    if is_published {
-                        tour_items.push(item);
+                    collection_items.push(item);
+                    if is_tour {
+                        let tour_item = PanelItem::new(c.name)
+                            .secondary_text(branch)
+                            .metadata(format!("{count} steps"))
+                            .health(health)
+                            .checkmark(true);
+                        tour_items.push(tour_item);
                     }
                 }
             }
