@@ -65,6 +65,9 @@ pub struct SyncOptions {
     pub config: Option<Config>,
 }
 
+// SAFETY: Database wraps rusqlite::Connection which is !Send, but SyncOptions is only
+// transferred between threads before use — the Database is opened on the target thread
+// in sync_pull, and consumed (not shared) in sync_push.
 unsafe impl Send for SyncOptions {}
 
 /// Build a reqwest client with reasonable timeouts for sync operations.
@@ -556,7 +559,7 @@ async fn sync_push(opts: SyncOptions) -> Result<()> {
 
     let res = async {
         if opts.dry_run {
-            return Ok(());
+            return Err(Error::Operation("dry_run: pack created but not uploaded".to_string()));
         }
 
         // Upload pack

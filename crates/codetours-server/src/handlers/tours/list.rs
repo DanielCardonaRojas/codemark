@@ -76,7 +76,23 @@ pub async fn handler(
         if let (Some(owner), Some(name)) = (&params.repo_owner, &params.repo_name) {
             Some((owner.clone(), name.clone()))
         } else if let Some(ref repo_url) = params.repo_url {
-            GitHubVerifier::parse_repo_url(repo_url)
+            match GitHubVerifier::parse_repo_url(repo_url) {
+                Some(parsed) => Some(parsed),
+                None => {
+                    return (
+                        StatusCode::BAD_REQUEST,
+                        Json(ErrorResponse {
+                            error: "invalid_repo_url".to_string(),
+                            reason: Some(format!(
+                                "Could not parse repository URL: {}",
+                                repo_url
+                            )),
+                            request_id: None,
+                        }),
+                    )
+                        .into_response();
+                }
+            }
         } else {
             None
         };
@@ -164,52 +180,87 @@ pub async fn handler(
 
     let result = conn
         .interact(move |conn| {
-            // Always fetch all public/ready tours, then filter by parsed owner/repo in Rust.
-            // This avoids fragile exact-string matching on repo_url (SSH vs HTTPS vs .git suffix).
             let sort = match params.sort.as_deref() {
                 Some("updated_at_asc") => "updated_at ASC",
                 Some("title_asc") => "name ASC",
                 _ => "updated_at DESC",
             };
 
-            let query = format!(
-                "SELECT id, name, repo_url, updated_at FROM collections
-                 WHERE visibility = 'public' AND status = 'ready'
-                 ORDER BY {}",
-                sort
-            );
+            if let Some((ref owner, ref repo)) = repo_filter {
+                // Repo filter requires Rust-side filtering because repo_url formats vary
+                // (SSH vs HTTPS vs .git suffix). Fetch all matching tours, filter, then paginate.
+                let query = format!(
+                    "SELECT id, name, repo_url, updated_at FROM collections
+                     WHERE visibility = 'public' AND status = 'ready'
+                     ORDER BY {}",
+                    sort
+                );
 
-            let mut stmt = conn.prepare(&query)?;
-            let all_tours: Vec<TourSummary> = stmt
-                .query_map([], |row| {
-                    let id: String = row.get(0)?;
-                    Ok(TourSummary {
-                        tour_id: id.clone(),
-                        title: row.get(1)?,
-                        repo_url: row.get(2)?,
-                        updated_at: row.get(3)?,
-                        url: format!("/tours/{}", id),
-                    })
-                })?
-                .collect::<rusqlite::Result<Vec<_>>>()?;
+                let mut stmt = conn.prepare(&query)?;
+                let all_tours: Vec<TourSummary> = stmt
+                    .query_map([], |row| {
+                        let id: String = row.get(0)?;
+                        Ok(TourSummary {
+                            tour_id: id.clone(),
+                            title: row.get(1)?,
+                            repo_url: row.get(2)?,
+                            updated_at: row.get(3)?,
+                            url: format!("/tours/{}", id),
+                        })
+                    })?
+                    .collect::<rusqlite::Result<Vec<_>>>()?;
 
-            // Filter by owner/repo if provided
-            let filtered: Vec<TourSummary> = if let Some((ref owner, ref repo)) = repo_filter {
-                all_tours
+                let filtered: Vec<TourSummary> = all_tours
                     .into_iter()
                     .filter(|t| {
                         t.repo_url.as_deref().and_then(GitHubVerifier::parse_repo_url)
                             == Some((owner.clone(), repo.clone()))
                     })
-                    .collect()
+                    .collect();
+
+                let total = filtered.len();
+                let paged: Vec<TourSummary> =
+                    filtered.into_iter().skip(offset).take(limit).collect();
+
+                Ok::<_, rusqlite::Error>(ListToursResponse { tours: paged, total, limit, offset })
             } else {
-                all_tours
-            };
+                // No repo filter: push LIMIT/OFFSET to SQL for efficiency
+                let count: usize = conn.query_row(
+                    "SELECT COUNT(*) FROM collections
+                     WHERE visibility = 'public' AND status = 'ready'",
+                    [],
+                    |row| row.get(0),
+                )?;
 
-            let total = filtered.len();
-            let paged: Vec<TourSummary> = filtered.into_iter().skip(offset).take(limit).collect();
+                let query = format!(
+                    "SELECT id, name, repo_url, updated_at FROM collections
+                     WHERE visibility = 'public' AND status = 'ready'
+                     ORDER BY {}
+                     LIMIT ?1 OFFSET ?2",
+                    sort
+                );
 
-            Ok::<_, rusqlite::Error>(ListToursResponse { tours: paged, total, limit, offset })
+                let mut stmt = conn.prepare(&query)?;
+                let tours: Vec<TourSummary> = stmt
+                    .query_map(rusqlite::params![limit, offset], |row| {
+                        let id: String = row.get(0)?;
+                        Ok(TourSummary {
+                            tour_id: id.clone(),
+                            title: row.get(1)?,
+                            repo_url: row.get(2)?,
+                            updated_at: row.get(3)?,
+                            url: format!("/tours/{}", id),
+                        })
+                    })?
+                    .collect::<rusqlite::Result<Vec<_>>>()?;
+
+                Ok::<_, rusqlite::Error>(ListToursResponse {
+                    tours,
+                    total: count,
+                    limit,
+                    offset,
+                })
+            }
         })
         .await;
 
