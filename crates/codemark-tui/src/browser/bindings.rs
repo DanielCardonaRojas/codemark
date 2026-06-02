@@ -50,7 +50,6 @@ impl BrowserLayout {
                     }
                     Some(Panel3Tab::Collections) => {
                         bindings.push(("Enter", "Open collection"));
-                        bindings.push(("p", "Pull collection"));
                         bindings.push(("P", "Push collection"));
                         bindings.push(("d", "Delete collection"));
                         bindings.push(("H", "Heal all"));
@@ -122,13 +121,12 @@ impl BrowserLayout {
                         bindings.insert(3, KeyBinding::new("+/-", "Resize"));
                     }
                     Some(Panel3Tab::Collections) => {
-                        bindings.insert(0, KeyBinding::new("p", "Pull"));
-                        bindings.insert(1, KeyBinding::new("P", "Push"));
-                        bindings.insert(2, KeyBinding::new("Enter", "Open"));
-                        bindings.insert(3, KeyBinding::new("d", "Delete"));
-                        bindings.insert(4, KeyBinding::new("H", "Heal all"));
-                        bindings.insert(5, KeyBinding::new("Ctrl+O", "Copy ID"));
-                        bindings.insert(6, KeyBinding::new("+/-", "Resize"));
+                        bindings.insert(0, KeyBinding::new("P", "Push"));
+                        bindings.insert(1, KeyBinding::new("Enter", "Open"));
+                        bindings.insert(2, KeyBinding::new("d", "Delete"));
+                        bindings.insert(3, KeyBinding::new("H", "Heal all"));
+                        bindings.insert(4, KeyBinding::new("Ctrl+O", "Copy ID"));
+                        bindings.insert(5, KeyBinding::new("+/-", "Resize"));
                     }
                     Some(Panel3Tab::Bookmarks) => {
                         bindings.insert(0, KeyBinding::new("o", "Open"));

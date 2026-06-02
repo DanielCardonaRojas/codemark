@@ -203,6 +203,7 @@ pub async fn list_remote_tours(opts: ListRemoteToursOptions) -> Result<Vec<Remot
 
     let summaries = tours
         .iter()
+        .filter(|t| t["tour_id"].as_str().is_some_and(|id| !id.is_empty()))
         .map(|t| RemoteTourSummary {
             tour_id: t["tour_id"].as_str().unwrap_or_default().to_string(),
             title: t["title"].as_str().unwrap_or("Untitled").to_string(),

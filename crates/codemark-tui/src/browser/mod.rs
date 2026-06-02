@@ -128,6 +128,8 @@ pub struct BrowserLayout {
     tick_count: usize,
     /// Last-fetched remote tours (cached to avoid re-fetching after pull)
     cached_remote_tours: Vec<codemark_core::sync::RemoteTourSummary>,
+    /// Repo URL used for the in-flight remote tours fetch (guards against stale responses)
+    pending_remote_repo_url: Option<String>,
 }
 
 impl BrowserLayout {
@@ -165,6 +167,7 @@ impl BrowserLayout {
             pulling_tour_id: None,
             tick_count: 0,
             cached_remote_tours: Vec::new(),
+            pending_remote_repo_url: None,
         };
         layout.update_focus_state();
         layout
@@ -488,13 +491,17 @@ impl BrowserLayout {
         // Get repo origin URL for filtering
         let repo_url = codemark_core::git::remote::get_origin_url(&project_root).ok();
 
+        // Record the repo identity so we can discard stale responses if the user switches repos
+        self.pending_remote_repo_url = repo_url.clone();
+
         // Spawn background task to fetch tours
+        let request_repo_url = repo_url.clone();
         tokio::spawn(async move {
             let opts = codemark_core::sync::ListRemoteToursOptions { server_url, token, repo_url };
 
             match codemark_core::sync::list_remote_tours(opts).await {
                 Ok(tours) => {
-                    let _ = event_handler.send(Event::RemoteToursLoaded(tours));
+                    let _ = event_handler.send(Event::RemoteToursLoaded(tours, request_repo_url));
                 }
                 Err(e) => {
                     let _ = event_handler.send(Event::RemoteToursFetchError(e.to_string()));
@@ -1036,7 +1043,8 @@ impl BrowserLayout {
                         .secondary_text(&branch)
                         .metadata(format!("{count} steps"))
                         .health(health)
-                        .published(is_published);
+                        .published(is_published)
+                        .user_data(c.id.clone());
 
                     collection_items.push(item);
                     if is_tour {
@@ -1044,7 +1052,8 @@ impl BrowserLayout {
                             .secondary_text(branch)
                             .metadata(format!("{count} steps"))
                             .health(health)
-                            .checkmark(true);
+                            .checkmark(true)
+                            .user_data(c.id);
                         tour_items.push(tour_item);
                     }
                 }
@@ -1433,7 +1442,11 @@ impl BrowserLayout {
                 }
                 return true;
             }
-            Event::RemoteToursLoaded(tours) => {
+            Event::RemoteToursLoaded(tours, repo_url) => {
+                // Discard stale responses if the user switched repos since the request
+                if *repo_url != self.pending_remote_repo_url {
+                    return true;
+                }
                 self.cached_remote_tours = tours.clone();
                 self.rebuild_tours_panel();
                 return true;
