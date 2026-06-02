@@ -83,10 +83,7 @@ pub async fn handler(
                         StatusCode::BAD_REQUEST,
                         Json(ErrorResponse {
                             error: "invalid_repo_url".to_string(),
-                            reason: Some(format!(
-                                "Could not parse repository URL: {}",
-                                repo_url
-                            )),
+                            reason: Some(format!("Could not parse repository URL: {}", repo_url)),
                             request_id: None,
                         }),
                     )
@@ -254,12 +251,7 @@ pub async fn handler(
                     })?
                     .collect::<rusqlite::Result<Vec<_>>>()?;
 
-                Ok::<_, rusqlite::Error>(ListToursResponse {
-                    tours,
-                    total: count,
-                    limit,
-                    offset,
-                })
+                Ok::<_, rusqlite::Error>(ListToursResponse { tours, total: count, limit, offset })
             }
         })
         .await;
