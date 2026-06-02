@@ -209,12 +209,7 @@ pub async fn handler(
             let total = filtered.len();
             let paged: Vec<TourSummary> = filtered.into_iter().skip(offset).take(limit).collect();
 
-            Ok::<_, rusqlite::Error>(ListToursResponse {
-                tours: paged,
-                total,
-                limit,
-                offset,
-            })
+            Ok::<_, rusqlite::Error>(ListToursResponse { tours: paged, total, limit, offset })
         })
         .await;
 

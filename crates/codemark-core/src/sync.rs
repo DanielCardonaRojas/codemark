@@ -120,7 +120,9 @@ pub fn resolve_server_and_token(config: &Config) -> Result<(String, Option<Strin
             (server_name.clone(), None)
         } else {
             // Named server - look up in config
-            if let Some(s) = config.codetours.servers.iter().find(|s| s.name == server_name.as_str()) {
+            if let Some(s) =
+                config.codetours.servers.iter().find(|s| s.name == server_name.as_str())
+            {
                 (s.url.clone(), s.token.clone())
             } else {
                 return Err(Error::Input(format!("server '{}' not found in config", server_name)));
@@ -453,9 +455,7 @@ pub async fn sync(opts: SyncOptions) -> Result<()> {
 
 /// Handle pulling a collection from the server.
 async fn sync_pull(opts: SyncOptions) -> Result<()> {
-    let db = opts
-        .db
-        .ok_or_else(|| Error::Operation("database required for pull".to_string()))?;
+    let db = opts.db.ok_or_else(|| Error::Operation("database required for pull".to_string()))?;
 
     let temp_dir = std::env::temp_dir();
     let pack_path = temp_dir.join(format!("codemark-pull-{}.sqlite", uuid::Uuid::new_v4()));
@@ -483,7 +483,9 @@ async fn sync_pull(opts: SyncOptions) -> Result<()> {
                 Ok::<_, Error>(())
             })
             .await
-            .map_err(|_| Error::Operation("Blocking task panicked during migration".to_string()))??;
+            .map_err(|_| {
+                Error::Operation("Blocking task panicked during migration".to_string())
+            })??;
         }
 
         // Full inspection after potential migration
@@ -515,15 +517,12 @@ async fn sync_pull(opts: SyncOptions) -> Result<()> {
 
 /// Handle pushing a collection to the server.
 async fn sync_push(opts: SyncOptions) -> Result<()> {
-    let db = opts
-        .db
-        .ok_or_else(|| Error::Operation("database required for push".to_string()))?;
+    let db = opts.db.ok_or_else(|| Error::Operation("database required for push".to_string()))?;
     let project_root = opts
         .project_root
         .ok_or_else(|| Error::Operation("project_root required for push".to_string()))?;
-    let config = opts
-        .config
-        .ok_or_else(|| Error::Operation("config required for push".to_string()))?;
+    let config =
+        opts.config.ok_or_else(|| Error::Operation("config required for push".to_string()))?;
 
     let project_root_path = Path::new(&project_root);
 
@@ -561,14 +560,8 @@ async fn sync_push(opts: SyncOptions) -> Result<()> {
         }
 
         // Upload pack
-        upload_pack(
-            &result_path,
-            &opts.server_url,
-            opts.token.as_ref(),
-            &db,
-            &opts.collection_id,
-        )
-        .await?;
+        upload_pack(&result_path, &opts.server_url, opts.token.as_ref(), &db, &opts.collection_id)
+            .await?;
 
         Ok(())
     }
@@ -587,20 +580,14 @@ mod tests {
     fn test_build_auth_headers_jwt() {
         let token = Some("eyJtest".to_string());
         let headers = build_auth_headers(token.as_ref()).unwrap();
-        assert_eq!(
-            headers.get("Authorization").unwrap().to_str().unwrap(),
-            "Bearer eyJtest"
-        );
+        assert_eq!(headers.get("Authorization").unwrap().to_str().unwrap(), "Bearer eyJtest");
     }
 
     #[test]
     fn test_build_auth_headers_legacy() {
         let token = Some("legacy_token".to_string());
         let headers = build_auth_headers(token.as_ref()).unwrap();
-        assert_eq!(
-            headers.get("X-Tour-Token").unwrap().to_str().unwrap(),
-            "legacy_token"
-        );
+        assert_eq!(headers.get("X-Tour-Token").unwrap().to_str().unwrap(), "legacy_token");
     }
 
     #[test]

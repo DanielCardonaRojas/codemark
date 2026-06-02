@@ -18,8 +18,8 @@ pub use search::{SearchBar, SearchMode};
 pub use tabbed_panel::{TabbedPanel, bookmark_to_panel_item};
 pub use tabs::{Panel2Tab, Panel3Tab, Tab, TabSelection};
 pub use types::{
-    ExternalCommand, FocusArea, HealNotification, HealTarget, LeftPaneSize,
-    RightPaneSize, SectionConfig, StepData, TabContent, escape_markdown,
+    ExternalCommand, FocusArea, HealNotification, HealTarget, LeftPaneSize, RightPaneSize,
+    SectionConfig, StepData, TabContent, escape_markdown,
 };
 
 use crate::component::{Component, HealthStatus, PanelItem};
@@ -369,11 +369,7 @@ impl BrowserLayout {
                         } else {
                             // Fallback to name lookup if user_data is missing
                             let name = s.text().to_string();
-                            self.db
-                                .get_collection_by_name(&name)
-                                .ok()
-                                .flatten()
-                                .map(|c| c.id)
+                            self.db.get_collection_by_name(&name).ok().flatten().map(|c| c.id)
                         }
                     })
                 } else {
@@ -387,7 +383,8 @@ impl BrowserLayout {
         };
 
         let Some(collection_id) = target else {
-            let _ = event_handler.send(Event::SyncComplete("No collection selected".to_string(), false));
+            let _ = event_handler
+                .send(Event::SyncComplete("No collection selected".to_string(), false));
             return;
         };
 
@@ -395,7 +392,8 @@ impl BrowserLayout {
         let codemark_dir = match self.db.path().parent() {
             Some(dir) => dir.to_path_buf(),
             None => {
-                let _ = event_handler.send(Event::SyncComplete("Failed to get config directory".to_string(), false));
+                let _ = event_handler
+                    .send(Event::SyncComplete("Failed to get config directory".to_string(), false));
                 return;
             }
         };
@@ -407,7 +405,8 @@ impl BrowserLayout {
         let (server_url, token) = match codemark_core::sync::resolve_server_and_token(&config) {
             Ok(result) => result,
             Err(e) => {
-                let _ = event_handler.send(Event::SyncComplete(format!("Failed to resolve server: {}", e), false));
+                let _ = event_handler
+                    .send(Event::SyncComplete(format!("Failed to resolve server: {}", e), false));
                 return;
             }
         };
@@ -439,18 +438,22 @@ impl BrowserLayout {
                 codemark_core::sync::sync(sync_opts).await
             });
 
-                match result {
-                    Ok(()) => {
-                        let _ = event_handler.send(Event::SyncComplete("Collection published successfully".to_string(), true));
-                        // Trigger a refresh
-                        std::thread::sleep(std::time::Duration::from_millis(100));
-                        let _ = event_handler.send(Event::Tick);
-                    }
-                    Err(e) => {
-                        let _ = event_handler.send(Event::SyncComplete(format!("Push failed: {}", e), false));
-                    }
+            match result {
+                Ok(()) => {
+                    let _ = event_handler.send(Event::SyncComplete(
+                        "Collection published successfully".to_string(),
+                        true,
+                    ));
+                    // Trigger a refresh
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                    let _ = event_handler.send(Event::Tick);
                 }
-            });
+                Err(e) => {
+                    let _ = event_handler
+                        .send(Event::SyncComplete(format!("Push failed: {}", e), false));
+                }
+            }
+        });
     }
 
     /// Fetch remote tours from the server in the background.
@@ -476,9 +479,8 @@ impl BrowserLayout {
         let (server_url, token) = match codemark_core::sync::resolve_server_and_token(&config) {
             Ok(result) => result,
             Err(e) => {
-                let _ = event_handler.send(Event::RemoteToursFetchError(
-                    format!("Failed to resolve server: {}", e),
-                ));
+                let _ = event_handler
+                    .send(Event::RemoteToursFetchError(format!("Failed to resolve server: {}", e)));
                 return;
             }
         };
@@ -488,11 +490,7 @@ impl BrowserLayout {
 
         // Spawn background task to fetch tours
         tokio::spawn(async move {
-            let opts = codemark_core::sync::ListRemoteToursOptions {
-                server_url,
-                token,
-                repo_url,
-            };
+            let opts = codemark_core::sync::ListRemoteToursOptions { server_url, token, repo_url };
 
             match codemark_core::sync::list_remote_tours(opts).await {
                 Ok(tours) => {
@@ -520,10 +518,8 @@ impl BrowserLayout {
         let codemark_dir = match self.db.path().parent() {
             Some(dir) => dir.to_path_buf(),
             None => {
-                let _ = event_handler.send(Event::SyncComplete(
-                    "Failed to get config directory".to_string(),
-                    false,
-                ));
+                let _ = event_handler
+                    .send(Event::SyncComplete("Failed to get config directory".to_string(), false));
                 return;
             }
         };
@@ -533,10 +529,8 @@ impl BrowserLayout {
         let (server_url, token) = match codemark_core::sync::resolve_server_and_token(&config) {
             Ok(result) => result,
             Err(e) => {
-                let _ = event_handler.send(Event::SyncComplete(
-                    format!("Failed to resolve server: {}", e),
-                    false,
-                ));
+                let _ = event_handler
+                    .send(Event::SyncComplete(format!("Failed to resolve server: {}", e), false));
                 return;
             }
         };
@@ -567,18 +561,14 @@ impl BrowserLayout {
 
             match result {
                 Ok(()) => {
-                    let _ = event_handler.send(Event::SyncComplete(
-                        "Tour pulled successfully".to_string(),
-                        true,
-                    ));
+                    let _ = event_handler
+                        .send(Event::SyncComplete("Tour pulled successfully".to_string(), true));
                     std::thread::sleep(std::time::Duration::from_millis(100));
                     let _ = event_handler.send(Event::Tick);
                 }
                 Err(e) => {
-                    let _ = event_handler.send(Event::SyncComplete(
-                        format!("Pull failed: {}", e),
-                        false,
-                    ));
+                    let _ = event_handler
+                        .send(Event::SyncComplete(format!("Pull failed: {}", e), false));
                 }
             }
         });
@@ -613,8 +603,7 @@ impl BrowserLayout {
                         },
                         None => HealthStatus::Unknown,
                     };
-                    let branch =
-                        c.created_branch.clone().unwrap_or_else(|| "main".to_string());
+                    let branch = c.created_branch.clone().unwrap_or_else(|| "main".to_string());
                     let item = PanelItem::new(&c.name)
                         .secondary_text(&branch)
                         .metadata(format!("{count} steps"))
@@ -1338,7 +1327,6 @@ impl BrowserLayout {
                 self.right_pane.render(chunks[0], buf, true);
             }
         }
-
     }
 
     /// Handle an event.
@@ -1347,8 +1335,10 @@ impl BrowserLayout {
         if matches!(event, Event::Tick) {
             self.tick_count = self.tick_count.wrapping_add(1);
             if let Some(ref tour_id) = self.pulling_tour_id {
-                const SPINNER_FRAMES: &[&str] =
-                    &["\u{28cb}", "\u{2819}", "\u{2839}", "\u{2838}", "\u{283c}", "\u{2834}", "\u{2826}", "\u{2827}", "\u{2807}", "\u{280f}"];
+                const SPINNER_FRAMES: &[&str] = &[
+                    "\u{28cb}", "\u{2819}", "\u{2839}", "\u{2838}", "\u{283c}", "\u{2834}",
+                    "\u{2826}", "\u{2827}", "\u{2807}", "\u{280f}",
+                ];
                 let frame = SPINNER_FRAMES[self.tick_count % SPINNER_FRAMES.len()];
                 let user_data_key = format!("remote:{}", tour_id);
                 if let Some(panel) = self.left_pane.panel3.get_list_panel_mut(2) {
@@ -1449,8 +1439,10 @@ impl BrowserLayout {
                 return true;
             }
             Event::RemoteToursFetchError(msg) => {
-                self.pending_notification =
-                    Some(HealNotification { message: format!("Failed to fetch tours: {}", msg), success: false });
+                self.pending_notification = Some(HealNotification {
+                    message: format!("Failed to fetch tours: {}", msg),
+                    success: false,
+                });
                 return true;
             }
             _ => {}
@@ -1884,10 +1876,9 @@ impl BrowserLayout {
                             .active_panel_mut()
                             .and_then(|panel| panel.selected())
                             .and_then(|selected| {
-                                selected
-                                    .user_data
-                                    .as_ref()
-                                    .and_then(|ud| ud.strip_prefix("remote:").map(|id| id.to_string()))
+                                selected.user_data.as_ref().and_then(|ud| {
+                                    ud.strip_prefix("remote:").map(|id| id.to_string())
+                                })
                             });
 
                         if let Some(remote_id) = should_pull {

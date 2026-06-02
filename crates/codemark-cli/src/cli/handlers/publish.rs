@@ -53,10 +53,7 @@ pub async fn handle_publish(cli: &Cli, mode: &OutputMode, args: &PublishArgs) ->
     sync(sync_opts).await?;
 
     // Show success message
-    crate::cli::output::write_success(
-        mode,
-        &format!("Published collection: {}", collection.name),
-    )?;
+    crate::cli::output::write_success(mode, &format!("Published collection: {}", collection.name))?;
 
     Ok(())
 }

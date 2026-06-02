@@ -357,7 +357,7 @@ impl TabbedPanel {
                     .secondary_text(&branch)
                     .metadata(format!("{count} steps"))
                     .health(health)
-                    .published(is_published)  // Only show icon on Collections tab
+                    .published(is_published) // Only show icon on Collections tab
                     .user_data(c.id.clone());
 
                 collections_items.push(collection_item);

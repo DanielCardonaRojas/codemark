@@ -761,7 +761,8 @@ impl Component for Panel {
             // the scrollbar uses its track height, which happens to be correct for our use case
             // since the list and scrollbar have the same height.
             // See: https://github.com/ratatui/ratatui/issues/966
-            let mut scrollbar_state = ScrollbarState::new(self.items.len()).position(state.offset());
+            let mut scrollbar_state =
+                ScrollbarState::new(self.items.len()).position(state.offset());
 
             let scrollbar_area = if self.bordered {
                 Rect {
