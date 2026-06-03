@@ -72,6 +72,7 @@ unsafe impl Send for SyncOptions {}
 
 /// Build a reqwest client with reasonable timeouts for sync operations.
 pub fn build_sync_http_client() -> Result<reqwest::Client> {
+    tracing::debug!(target: "codemark::http", "building HTTP client");
     reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(10))
         .timeout(Duration::from_secs(30))
@@ -169,6 +170,7 @@ pub async fn list_remote_tours(opts: ListRemoteToursOptions) -> Result<Vec<Remot
     let headers = build_auth_headers(opts.token.as_ref())?;
 
     let url = format!("{}/tours", opts.server_url);
+    tracing::debug!(target: "codemark::http", url = %url, "GET /tours");
 
     let mut request = client.get(&url).headers(headers);
     if let Some(ref repo_url) = opts.repo_url {
@@ -185,6 +187,8 @@ pub async fn list_remote_tours(opts: ListRemoteToursOptions) -> Result<Vec<Remot
         .send()
         .await
         .map_err(|e| Error::Operation(format!("failed to list remote tours: {e}")))?;
+
+    tracing::debug!(target: "codemark::http", status = %response.status(), "response received");
 
     if !response.status().is_success() {
         let status = response.status();
@@ -221,6 +225,7 @@ async fn download_pack(
     collection_id: &str,
     token: Option<&String>,
 ) -> Result<Vec<u8>> {
+    tracing::debug!(target: "codemark::http", server = %server_url, collection_id = %collection_id, "downloading pack");
     let client = build_sync_http_client()?;
     let mut headers = build_auth_headers(token)?;
     headers.insert(ACCEPT, HeaderValue::from_static("application/vnd.codetours.pack+sqlite"));
@@ -397,6 +402,7 @@ async fn upload_pack(
     db: &Database,
     collection_id: &str,
 ) -> Result<String> {
+    tracing::debug!(target: "codemark::http", server = %server_url, collection_id = %collection_id, "uploading pack");
     let client = reqwest::Client::new();
     let mut headers = build_auth_headers(token)?;
     headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/vnd.codetours.pack+sqlite"));
@@ -459,6 +465,7 @@ pub async fn sync(opts: SyncOptions) -> Result<()> {
 
 /// Handle pulling a collection from the server.
 async fn sync_pull(opts: SyncOptions) -> Result<()> {
+    tracing::info!(target: "codemark::http", direction = "pull", collection_id = %opts.collection_id, server = %opts.server_url, "starting sync");
     let db = opts.db.ok_or_else(|| Error::Operation("database required for pull".to_string()))?;
 
     let temp_dir = std::env::temp_dir();
@@ -521,6 +528,7 @@ async fn sync_pull(opts: SyncOptions) -> Result<()> {
 
 /// Handle pushing a collection to the server.
 async fn sync_push(opts: SyncOptions) -> Result<()> {
+    tracing::info!(target: "codemark::http", direction = "push", collection_id = %opts.collection_id, server = %opts.server_url, "starting sync");
     let db = opts.db.ok_or_else(|| Error::Operation("database required for push".to_string()))?;
     let project_root = opts
         .project_root

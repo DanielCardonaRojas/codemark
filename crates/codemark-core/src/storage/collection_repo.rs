@@ -4,6 +4,7 @@ use crate::storage::db::Database;
 
 impl Database {
     pub fn insert_collection(&self, collection: &Collection) -> Result<()> {
+        tracing::debug!(target: "codemark::db", id = %collection.id, name = %collection.name, "inserting collection");
         self.conn().execute(
             "INSERT INTO collections (id, name, description, visibility, created_at, created_by, created_branch, published_at, published_commit_sha, repo_url, repo_id, status, health, health_computed_at, updated_at, imported_from_url)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
