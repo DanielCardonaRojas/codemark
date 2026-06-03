@@ -101,12 +101,19 @@ impl RightPane {
                 preview.jump_to_range(step.line_number, step.line_end);
             }
 
+            // Resolve HEAD once for all template rendering in this preview update
+            let db_dir = db.path().parent().unwrap_or_else(|| db.path());
+            let current_head =
+                codemark_core::git::context::detect_context(db_dir).and_then(|ctx| ctx.head_commit);
+            let head_ref = current_head.as_deref();
+
             // Update Info tab with markdown (Full bookmark details)
             let info_markdown = self.generate_markdown(
                 db,
                 &step.bookmark,
                 &step.resolutions,
                 templates::SHOW_TEMPLATE,
+                head_ref,
             );
             if let Some(md_panel) = self.steps.get_markdown_mut() {
                 md_panel.set_markdown(info_markdown);
@@ -124,6 +131,7 @@ impl RightPane {
                 &step.bookmark,
                 &step.resolutions,
                 templates::DETAILS_TEMPLATE,
+                head_ref,
             );
             self.details.set_markdown(details_markdown);
         }
@@ -280,6 +288,7 @@ impl RightPane {
         bm: &Bookmark,
         resolutions: &[Resolution],
         template: &str,
+        current_head: Option<&str>,
     ) -> String {
         // Select the appropriate cached template to avoid repeated disk reads
         let template_content = match template {
@@ -297,8 +306,12 @@ impl RightPane {
 
         // Create context and render using the cached template content
         let repo_path = db.path().parent().unwrap_or_else(|| db.path());
-        let context =
-            templates::BookmarkTemplateContext::from_bookmark(bm, resolutions, repo_path, None);
+        let context = templates::BookmarkTemplateContext::from_bookmark(
+            bm,
+            resolutions,
+            repo_path,
+            current_head,
+        );
         let handlebars = templates::create_handlebars_engine();
 
         match handlebars.render_template(template_content, &context) {
