@@ -17,4 +17,4 @@ Available subsystem targets:
 | `codemark::http` | HTTP client, remote tour listing, pack download/upload, sync |
 | `codemark::shell` | External editor spawning (program, args, errors) |
 
-When adding new functionality, instrument it with `tracing::debug!` (or `info!`/`warn!`/`error!` as appropriate) using the matching subsystem target. If adding a new subsystem, define a new `codemark::` target and document it in `lat.md/tui-logging.md`.
+When adding new functionality, instrument it with `tracing::debug!` (or `info!`/`warn!`/`error!` as appropriate) using the matching subsystem target. If adding a new subsystem, define a new `codemark::` target and add a row to the table above.
