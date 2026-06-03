@@ -124,6 +124,8 @@ pub struct BrowserLayout {
     right_pane_size: RightPaneSize,
     /// Tour ID currently being pulled (for spinner and post-pull refresh)
     pulling_tour_id: Option<String>,
+    /// Item currently being healed: (user_data key, panel tab index)
+    healing_item: Option<(String, usize)>,
     /// Tick counter for spinner animation
     tick_count: usize,
     /// Last-fetched remote tours (cached to avoid re-fetching after pull)
@@ -165,6 +167,7 @@ impl BrowserLayout {
             left_pane_size: LeftPaneSize::Regular,
             right_pane_size: RightPaneSize::Regular,
             pulling_tour_id: None,
+            healing_item: None,
             tick_count: 0,
             cached_remote_tours: Vec::new(),
             pending_remote_repo_url: None,
@@ -292,23 +295,28 @@ impl BrowserLayout {
         let db_path = self.db.path().to_path_buf();
         let event_handler = self.event_handler.clone();
 
-        // Determine the heal target based on current focus
-        let target = match self.focus {
+        // Determine the heal target and the item to show a spinner on.
+        // heal_item is (user_data_key, panel_tab_index) for spinner animation.
+        let (target, heal_item): (Option<HealTarget>, Option<(String, usize)>) = match self.focus {
             FocusArea::Panel3 => {
                 if let Some(panel) = self.left_pane.panel3.active_panel() {
-                    match tabs::Panel3Tab::from_index(self.left_pane.panel3.tabs.selected_index()) {
+                    let tab = tabs::Panel3Tab::from_index(self.left_pane.panel3.tabs.selected_index());
+                    match tab {
                         Some(tabs::Panel3Tab::Bookmarks) => {
                             // Heal selected bookmark
-                            panel
-                                .selected()
-                                .and_then(|s| s.user_data.clone())
-                                .map(HealTarget::Bookmark)
+                            let selected = panel.selected();
+                            let user_data = selected.and_then(|s| s.user_data.clone());
+                            (
+                                user_data.clone().map(HealTarget::Bookmark),
+                                user_data.map(|ud| (ud, tabs::Panel3Tab::Bookmarks.index())),
+                            )
                         }
-                        Some(tabs::Panel3Tab::Collections) | Some(tabs::Panel3Tab::Tours) => {
+                        Some(tab @ tabs::Panel3Tab::Collections) | Some(tab @ tabs::Panel3Tab::Tours) => {
                             // Heal all bookmarks in collection/tour
-                            panel.selected().and_then(|s| {
+                            let selected = panel.selected();
+                            let result = selected.and_then(|s| {
                                 if let Some(id) = &s.user_data {
-                                    Some(HealTarget::Collection(id.clone()))
+                                    Some((HealTarget::Collection(id.clone()), (id.clone(), tab.index())))
                                 } else {
                                     // Fallback to name lookup if user_data is missing
                                     let name = s.text().to_string();
@@ -316,24 +324,35 @@ impl BrowserLayout {
                                         .get_collection_by_name(&name)
                                         .ok()
                                         .flatten()
-                                        .map(|c| HealTarget::Collection(c.id))
+                                        .map(|c| (HealTarget::Collection(c.id.clone()), (c.id, tab.index())))
                                 }
-                            })
+                            });
+                            match result {
+                                Some((target, item)) => (Some(target), Some(item)),
+                                None => (None, None),
+                            }
                         }
-                        None => None,
+                        None => (None, None),
                     }
                 } else {
-                    None
+                    (None, None)
                 }
             }
             FocusArea::Main => {
                 // Heal the currently displayed bookmark in preview
-                self.right_pane
+                let result = self.right_pane
                     .steps_data
                     .get(self.right_pane.pager_current)
-                    .map(|step| HealTarget::Bookmark(step.bookmark.id.clone()))
+                    .map(|step| {
+                        let id = step.bookmark.id.clone();
+                        (HealTarget::Bookmark(id.clone()), (id, tabs::Panel3Tab::Bookmarks.index()))
+                    });
+                match result {
+                    Some((target, item)) => (Some(target), Some(item)),
+                    None => (None, None),
+                }
             }
-            _ => None,
+            _ => (None, None),
         };
 
         let Some(target) = target else {
@@ -342,6 +361,14 @@ impl BrowserLayout {
                 .send(Event::HealComplete("Nothing selected to heal".to_string(), false));
             return;
         };
+
+        // Show spinner on the healing item
+        if let Some((ref user_data_key, tab_index)) = heal_item {
+            if let Some(panel) = self.left_pane.panel3.get_list_panel_mut(tab_index) {
+                panel.update_item_spinner(user_data_key, Some("\u{28cb}"));
+            }
+            self.healing_item = heal_item;
+        }
 
         // Spawn a background task to perform the heal.
         // Note: We use spawn_blocking because Database is not Send/Sync (rusqlite limitation).
@@ -1343,19 +1370,26 @@ impl BrowserLayout {
         // Handle tick for spinner animation
         if matches!(event, Event::Tick) {
             self.tick_count = self.tick_count.wrapping_add(1);
+            const SPINNER_FRAMES: &[&str] = &[
+                "\u{28cb}", "\u{2819}", "\u{2839}", "\u{2838}", "\u{283c}", "\u{2834}",
+                "\u{2826}", "\u{2827}", "\u{2807}", "\u{280f}",
+            ];
+            let frame = SPINNER_FRAMES[self.tick_count % SPINNER_FRAMES.len()];
+            let mut needs_redraw = false;
             if let Some(ref tour_id) = self.pulling_tour_id {
-                const SPINNER_FRAMES: &[&str] = &[
-                    "\u{28cb}", "\u{2819}", "\u{2839}", "\u{2838}", "\u{283c}", "\u{2834}",
-                    "\u{2826}", "\u{2827}", "\u{2807}", "\u{280f}",
-                ];
-                let frame = SPINNER_FRAMES[self.tick_count % SPINNER_FRAMES.len()];
                 let user_data_key = format!("remote:{}", tour_id);
                 if let Some(panel) = self.left_pane.panel3.get_list_panel_mut(2) {
                     panel.update_item_secondary_text(&user_data_key, &format!("{} Pulling", frame));
                 }
-                return true;
+                needs_redraw = true;
             }
-            return false;
+            if let Some((ref user_data_key, tab_index)) = self.healing_item {
+                if let Some(panel) = self.left_pane.panel3.get_list_panel_mut(tab_index) {
+                    panel.update_item_spinner(user_data_key, Some(frame));
+                }
+                needs_redraw = true;
+            }
+            return needs_redraw;
         }
 
         // Handle search results and errors
@@ -1421,6 +1455,8 @@ impl BrowserLayout {
                 return true;
             }
             Event::HealComplete(msg, success) => {
+                // Clear the healing spinner
+                self.healing_item = None;
                 // Store the heal result as a notification
                 self.pending_notification =
                     Some(HealNotification { message: msg.clone(), success: *success });
