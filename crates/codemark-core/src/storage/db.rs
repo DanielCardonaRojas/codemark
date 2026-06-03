@@ -52,6 +52,7 @@ impl Database {
     /// Open the database at the given path, run migrations.
     /// Returns an error if the parent directory does not exist.
     pub fn open(path: &Path) -> Result<Self> {
+        tracing::info!(target: "codemark::db", path = %path.display(), "opening database");
         crate::embeddings::VecStore::load_extension()?;
         let conn = Connection::open(path)?;
         let mut db = Database { conn, path: path.to_path_buf() };
@@ -143,6 +144,7 @@ impl Database {
 
         for (version, sql) in migrations {
             if current_version < version {
+                tracing::debug!(target: "codemark::db", version, "running migration");
                 if version == 7 {
                     // Special case for migration 7 which has complex logic
                     Self::migrate_to_v7_on(conn)?;

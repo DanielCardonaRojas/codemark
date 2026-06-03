@@ -44,6 +44,7 @@ directories = "5"
 shellexpand = "3"
 handlebars = "6"
 reqwest = { version = "0.12", features = ["json", "stream"] }
+tracing = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

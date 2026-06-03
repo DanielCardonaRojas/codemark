@@ -22,6 +22,9 @@ use codemark_tui::{
 /// Main entry point for the TUI application.
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Initialize file-based logging before anything else
+    let _log_guard = codemark_tui::logging::init_logging();
+
     // Setup panic handler to restore terminal on panic
     setup_panic_handler();
 
@@ -281,6 +284,14 @@ async fn run_app() -> Result<()> {
 
                 // Handle external commands (e.g. Open in Editor)
                 if let Some(cmd) = layout.take_pending_command() {
+                    tracing::info!(
+                        target: "codemark::shell",
+                        program = %cmd.program,
+                        args = ?cmd.args,
+                        wait = cmd.should_wait,
+                        "spawning external command"
+                    );
+
                     if cmd.should_wait {
                         // Terminal editor: exit TUI and replace process
                         restore_terminal();
@@ -292,6 +303,7 @@ async fn run_app() -> Result<()> {
                                 std::process::Command::new(&cmd.program).args(&cmd.args).exec();
 
                             // If exec returns, it failed
+                            tracing::error!(target: "codemark::shell", error = %err, "failed to exec editor");
                             eprintln!("Failed to run editor: {}", err);
                             std::process::exit(1);
                         }
@@ -303,10 +315,12 @@ async fn run_app() -> Result<()> {
                                 Ok(status) if status.success() => std::process::exit(0),
                                 Ok(status) => {
                                     let code = status.code().unwrap_or(1);
+                                    tracing::error!(target: "codemark::shell", code, "editor exited with non-zero status");
                                     eprintln!("Editor exited with status {}", code);
                                     std::process::exit(code);
                                 }
                                 Err(e) => {
+                                    tracing::error!(target: "codemark::shell", error = %e, "failed to spawn editor");
                                     eprintln!("Failed to run editor: {}", e);
                                     std::process::exit(1);
                                 }
@@ -318,6 +332,7 @@ async fn run_app() -> Result<()> {
                             std::process::Command::new(&cmd.program).args(&cmd.args).spawn();
 
                         if let Err(e) = status {
+                            tracing::error!(target: "codemark::shell", error = %e, "failed to spawn editor");
                             notification = Some((
                                 format!("Failed to spawn editor: {}", e),
                                 NotificationType::Error,

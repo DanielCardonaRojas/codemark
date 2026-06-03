@@ -4,6 +4,7 @@ use crate::storage::db::Database;
 
 impl Database {
     pub fn insert_resolution(&self, resolution: &Resolution) -> Result<()> {
+        tracing::debug!(target: "codemark::db", id = %resolution.id, bookmark_id = %resolution.bookmark_id, "inserting resolution");
         self.conn().execute(
             "INSERT INTO resolutions (id, bookmark_id, resolved_at, health, commit_hash,
              method, match_count, file_path, byte_range, line_range, content_hash, headline, snapshot, breadcrumbs, is_dirty)

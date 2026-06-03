@@ -14,6 +14,7 @@ impl Database {
     /// Insert a bookmark, returning the bookmark ID.
     /// If a bookmark with the same file_path and query exists, returns its ID instead.
     pub fn insert_bookmark(&self, bookmark: &Bookmark) -> Result<String> {
+        tracing::debug!(target: "codemark::db", id = %bookmark.id, file = %bookmark.file_path, "inserting bookmark");
         let tx = self.conn().unchecked_transaction()?;
 
         // Try to insert with OR FAIL to check for uniqueness constraint
@@ -143,6 +144,7 @@ impl Database {
     }
 
     pub fn get_bookmark(&self, id: &str) -> Result<Option<Bookmark>> {
+        tracing::debug!(target: "codemark::db", id = %id, "getting bookmark");
         let mut stmt = self.conn().prepare(
             "SELECT b.id, b.query, b.language, b.file_path, b.content_hash, b.commit_hash,
              r.health, r.method, r.resolved_at, NULL as stale_since, b.created_at, b.created_by, b.current_resolution_id, b.repo_id
@@ -215,6 +217,7 @@ impl Database {
     }
 
     pub fn list_bookmarks(&self, filter: &BookmarkFilter) -> Result<Vec<Bookmark>> {
+        tracing::debug!(target: "codemark::db", "listing bookmarks");
         let mut sql = String::from(
             "SELECT DISTINCT b.id, b.query, b.language, b.file_path, b.content_hash, b.commit_hash,
              r.health, r.method, r.resolved_at, NULL as stale_since, b.created_at, b.created_by, b.current_resolution_id, b.repo_id
@@ -338,6 +341,7 @@ impl Database {
     }
 
     pub fn delete_bookmark(&self, id: &str) -> Result<bool> {
+        tracing::debug!(target: "codemark::db", id = %id, "deleting bookmark");
         let count = self.conn().execute("DELETE FROM bookmarks WHERE id = ?1", [id])?;
         Ok(count > 0)
     }

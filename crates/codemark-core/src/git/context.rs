@@ -30,6 +30,8 @@ pub struct GitRepoMetadata {
 
 /// Check if the repository at `repo_path` is clean (no uncommitted changes).
 pub fn is_clean(repo_path: &Path) -> Result<bool> {
+    tracing::debug!(target: "codemark::git", repo = %repo_path.display(), "checking repo cleanliness");
+
     let output = std::process::Command::new("git")
         .args(["status", "--porcelain"])
         .current_dir(repo_path)
@@ -40,11 +42,15 @@ pub fn is_clean(repo_path: &Path) -> Result<bool> {
         return Err(Error::Git("git status failed".into()));
     }
 
-    Ok(output.stdout.is_empty())
+    let clean = output.stdout.is_empty();
+    tracing::debug!(target: "codemark::git", clean, "repo cleanliness result");
+    Ok(clean)
 }
 
 /// Check if a specific file in the repository at `repo_path` is clean.
 pub fn is_file_clean(repo_path: &Path, file_path: &str) -> Result<bool> {
+    tracing::debug!(target: "codemark::git", repo = %repo_path.display(), file = %file_path, "checking file cleanliness");
+
     let output = std::process::Command::new("git")
         .args(["status", "--porcelain", "--", file_path])
         .current_dir(repo_path)
@@ -55,7 +61,9 @@ pub fn is_file_clean(repo_path: &Path, file_path: &str) -> Result<bool> {
         return Err(Error::Git("git status failed".into()));
     }
 
-    Ok(output.stdout.is_empty())
+    let clean = output.stdout.is_empty();
+    tracing::debug!(target: "codemark::git", file = %file_path, clean, "file cleanliness result");
+    Ok(clean)
 }
 
 /// Detect git repo root and HEAD commit. Returns None if not in a git repo.
@@ -63,6 +71,8 @@ pub fn is_file_clean(repo_path: &Path, file_path: &str) -> Result<bool> {
 /// Uses `git rev-parse --git-common-dir` to find the repo root, which correctly
 /// handles git worktrees (all worktrees share a common .git directory).
 pub fn detect_context(from_path: &Path) -> Option<GitContext> {
+    tracing::debug!(target: "codemark::git", path = %from_path.display(), "detecting git context");
+
     // Use git rev-parse to get the common git dir
     let output = std::process::Command::new("git")
         .arg("rev-parse")
@@ -103,6 +113,7 @@ pub fn detect_context(from_path: &Path) -> Option<GitContext> {
         head.as_ref().and_then(|r| r.peel_to_commit().ok()).map(|c| c.id().to_string());
     let branch_name = head.as_ref().and_then(|r| r.shorthand()).map(|s| s.to_string());
 
+    tracing::debug!(target: "codemark::git", root = %repo_root.display(), branch = ?branch_name, "detected git context");
     Some(GitContext { repo_root, head_commit, branch_name })
 }
 
@@ -126,6 +137,7 @@ pub fn detect_identity(from_path: &Path) -> Option<GitIdentity> {
 /// Detect repository metadata from git remote origin.
 /// Returns None if not in a git repo or no origin is configured.
 pub fn detect_repo_metadata(from_path: &Path) -> Option<GitRepoMetadata> {
+    tracing::debug!(target: "codemark::git", path = %from_path.display(), "detecting repo metadata");
     let git_ctx = detect_context(from_path)?;
 
     // Use git remote get-url to get the origin URL

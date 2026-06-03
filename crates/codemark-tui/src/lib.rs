@@ -32,6 +32,7 @@ pub mod browser;
 pub mod component;
 pub mod event;
 pub mod layout;
+pub mod logging;
 pub mod state;
 pub mod ui;
 

@@ -30,6 +30,9 @@ unicode-width = "0.2"
 futures = "0.3"
 copypasta = "0.10"
 reqwest = { version = "0.12", features = ["json", "stream"] }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+tracing-appender = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
