@@ -85,7 +85,8 @@ impl GitProvider for LocalGitProvider {
             )));
         }
 
-        let files: Vec<PathBuf> = String::from_utf8_lossy(&output.stdout).lines().map(PathBuf::from).collect();
+        let files: Vec<PathBuf> =
+            String::from_utf8_lossy(&output.stdout).lines().map(PathBuf::from).collect();
         tracing::debug!(target: "codemark::git", count = files.len(), "listed files");
         Ok(files)
     }
