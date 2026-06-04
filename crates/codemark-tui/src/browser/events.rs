@@ -689,7 +689,9 @@ impl BrowserLayout {
                         }
                         handled
                     }
-                    FocusArea::Filter => false,
+                    // Unreachable: should_handle_keybindings() returns false in
+                    // filter mode, so the early return on line 668 fires first.
+                    FocusArea::Filter => unreachable!(),
                 };
 
                 let new_tab = self.left_pane.panel3.tabs.selected_index();
