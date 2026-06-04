@@ -324,7 +324,7 @@ impl BrowserLayout {
             return Some(true);
         }
         if self.focus == FocusArea::Panel1 {
-            return Some(self.activate_panel1_selection());
+            return Some(self.activate_panel1_selection(true));
         }
         if self.focus == FocusArea::Panel2
             && let Some(panel) = self.left_pane.panel2.active_panel_mut()
@@ -339,10 +339,10 @@ impl BrowserLayout {
         None
     }
 
-    /// Handle Space key — same activation logic as Enter for panels.
+    /// Handle Space key — activate/toggle without moving focus away.
     fn handle_space_key(&mut self) -> Option<bool> {
         if self.focus == FocusArea::Panel1 {
-            return Some(self.activate_panel1_selection());
+            return Some(self.activate_panel1_selection(false));
         }
         if self.focus == FocusArea::Panel2
             && let Some(panel) = self.left_pane.panel2.active_panel_mut()
@@ -358,7 +358,10 @@ impl BrowserLayout {
     }
 
     /// Activate the currently selected item in Panel 1 (Repos or Accounts).
-    fn activate_panel1_selection(&mut self) -> bool {
+    ///
+    /// When `move_focus` is true (Enter), a successful repo switch moves focus to Panel 3.
+    /// When false (Space), focus stays on Panel 1.
+    fn activate_panel1_selection(&mut self, move_focus: bool) -> bool {
         let active_tab = self.left_pane.panel1.tabs.selected_index();
         if active_tab == 1 {
             // Accounts tab: toggle owner selection and filter repos
@@ -375,8 +378,12 @@ impl BrowserLayout {
             // Repos tab: switch database
             let root = root.clone();
             panel.activate_selected();
-            if self.switch_database(&root).is_ok() {
-                self.set_focus(FocusArea::Panel3);
+            if move_focus {
+                if self.switch_database(&root).is_ok() {
+                    self.set_focus(FocusArea::Panel3);
+                }
+            } else {
+                let _ = self.switch_database(&root);
             }
             return true;
         }
