@@ -359,7 +359,66 @@ impl EditorTypesConfig {
     }
 }
 
+/// A fully-resolved editor command ready to be spawned.
+#[derive(Debug, Clone)]
+pub struct EditorCommand {
+    pub program: String,
+    pub args: Vec<String>,
+    pub should_wait: bool,
+}
+
 impl OpenConfig {
+    /// Build a ready-to-spawn editor command from a bookmark's file info.
+    ///
+    /// Returns `None` if the command template fails to tokenize or produces empty tokens.
+    ///
+    /// # Arguments
+    /// - `file_path`: absolute path to the file
+    /// - `extension`: file extension (without dot) for command lookup
+    /// - `line_start`: 1-indexed start line
+    /// - `line_end`: 1-indexed end line
+    /// - `bookmark_id`: the bookmark ID (for `{ID}` substitution)
+    pub fn build_editor_command(
+        &self,
+        file_path: &str,
+        extension: &str,
+        line_start: usize,
+        line_end: usize,
+        bookmark_id: &str,
+    ) -> Option<EditorCommand> {
+        // Select command template: extension lookup → default → $EDITOR fallback
+        let command_template =
+            if let Some(cmd) = self.get_command_for_extension(extension).or(self.default.as_ref()) {
+                cmd.clone()
+            } else {
+                let editor = std::env::var("EDITOR").unwrap_or_else(|_| "vim".to_string());
+                format!("{} {{FILE}}", editor)
+            };
+
+        // Substitute placeholders
+        let substituted = command_template
+            .replace("{FILE}", file_path)
+            .replace("{LINE_START}", &line_start.to_string())
+            .replace("{LINE_END}", &line_end.to_string())
+            .replace("{ID}", bookmark_id);
+
+        // Tokenize the command safely
+        let tokens = shlex::split(&substituted)?;
+        if tokens.is_empty() {
+            return None;
+        }
+
+        let program = tokens[0].clone();
+        let args = tokens[1..].to_vec();
+
+        // Determine should_wait from program name
+        let program_name =
+            std::path::Path::new(&program).file_name().and_then(|n| n.to_str()).unwrap_or("");
+        let should_wait = self.should_wait_for_editor(program_name);
+
+        Some(EditorCommand { program, args, should_wait })
+    }
+
     /// Get the command for a specific file extension.
     /// Returns None if no extension-specific command is configured.
     pub fn get_command_for_extension(&self, extension: &str) -> Option<&String> {
