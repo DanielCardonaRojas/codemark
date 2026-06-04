@@ -285,6 +285,7 @@ impl BrowserLayout {
         let db_path = std::path::Path::new(repo_root).join(".codemark").join("codemark.db");
         if db_path.exists() {
             self.db = Database::open(&db_path)?;
+            self.right_pane.refresh_head_commit(&self.db);
             self.refresh_all_panels();
         }
         Ok(())
@@ -319,7 +320,7 @@ impl BrowserLayout {
             self.finish_clear_spinners();
         } else {
             // Defer until the cycle completes
-            self.spinner_clear_at = Some(earliest_start + Self::SPINNER_MIN_TICKS);
+            self.spinner_clear_at = Some(earliest_start.wrapping_add(Self::SPINNER_MIN_TICKS));
         }
     }
 
@@ -332,9 +333,6 @@ impl BrowserLayout {
             }
         }
         self.refresh_all_panels();
-        if std::mem::take(&mut self.is_pulling_tour) {
-            self.rebuild_tours_panel();
-        }
     }
 
     /// Start healing the currently selected bookmark(s) based on focus.
@@ -1515,6 +1513,10 @@ impl BrowserLayout {
                 // Store the sync result as a notification
                 self.pending_notification =
                     Some(HealNotification { message: msg.clone(), success: *success });
+                // If we were pulling a tour, rebuild the Tours panel immediately
+                if std::mem::take(&mut self.is_pulling_tour) {
+                    self.rebuild_tours_panel();
+                }
                 // Schedule spinners to clear after at least one full cycle
                 self.schedule_clear_spinners();
                 return true;

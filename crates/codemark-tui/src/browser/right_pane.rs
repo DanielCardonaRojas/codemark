@@ -49,6 +49,8 @@ pub struct RightPane {
     cached_details_template: String,
     /// Flag set when step navigation changes and the caller must call update_preview
     pub needs_preview_update: bool,
+    /// Cached HEAD commit hash to avoid re-running git I/O on every preview navigation
+    cached_head_commit: Option<String>,
 }
 
 impl RightPane {
@@ -71,6 +73,11 @@ impl RightPane {
             needs_preview_update: false,
             cached_show_template,
             cached_details_template,
+            cached_head_commit: {
+                let db_dir = db.path().parent().unwrap_or_else(|| db.path());
+                codemark_core::git::context::detect_context(db_dir)
+                    .and_then(|ctx| ctx.head_commit)
+            },
         };
 
         // Try to load the first tour automatically
@@ -82,6 +89,13 @@ impl RightPane {
         }
 
         pane
+    }
+
+    /// Refresh the cached HEAD commit (call after switching databases or repos).
+    pub fn refresh_head_commit(&mut self, db: &Database) {
+        let db_dir = db.path().parent().unwrap_or_else(|| db.path());
+        self.cached_head_commit =
+            codemark_core::git::context::detect_context(db_dir).and_then(|ctx| ctx.head_commit);
     }
 
     /// Update the code preview based on current step.
@@ -101,11 +115,7 @@ impl RightPane {
                 preview.jump_to_range(step.line_number, step.line_end);
             }
 
-            // Resolve HEAD once for all template rendering in this preview update
-            let db_dir = db.path().parent().unwrap_or_else(|| db.path());
-            let current_head =
-                codemark_core::git::context::detect_context(db_dir).and_then(|ctx| ctx.head_commit);
-            let head_ref = current_head.as_deref();
+            let head_ref = self.cached_head_commit.as_deref();
 
             // Update Info tab with markdown (Full bookmark details)
             let info_markdown = self.generate_markdown(
