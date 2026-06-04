@@ -33,6 +33,17 @@ pub enum HealTarget {
     Collection(String),
 }
 
+/// A panel item that is currently showing an animated spinner.
+#[derive(Debug, Clone)]
+pub struct SpinningItem {
+    /// The `user_data` value that identifies the item in its panel
+    pub user_data_key: String,
+    /// Index of the panel tab containing the item
+    pub tab_index: usize,
+    /// Tick count when this spinner was started (for minimum duration)
+    pub start_tick: usize,
+}
+
 /// Areas that can be focused in the browser.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FocusArea {

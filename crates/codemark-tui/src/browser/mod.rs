@@ -19,7 +19,7 @@ pub use tabbed_panel::{TabbedPanel, bookmark_to_panel_item};
 pub use tabs::{Panel2Tab, Panel3Tab, Tab, TabSelection};
 pub use types::{
     ExternalCommand, FocusArea, HealNotification, HealTarget, LeftPaneSize, RightPaneSize,
-    SectionConfig, StepData, TabContent, escape_markdown,
+    SectionConfig, SpinningItem, StepData, TabContent, escape_markdown,
 };
 
 use crate::component::{Component, HealthStatus, PanelItem};
@@ -122,8 +122,12 @@ pub struct BrowserLayout {
     left_pane_size: LeftPaneSize,
     /// Current size mode for the right pane (preview)
     right_pane_size: RightPaneSize,
-    /// Tour ID currently being pulled (for spinner and post-pull refresh)
-    pulling_tour_id: Option<String>,
+    /// Whether a tour pull is in progress (for post-pull panel rebuild)
+    is_pulling_tour: bool,
+    /// Panel items currently showing an animated spinner
+    spinning_items: Vec<SpinningItem>,
+    /// Tick at which spinners should be cleared (deferred to complete at least one full cycle)
+    spinner_clear_at: Option<usize>,
     /// Tick counter for spinner animation
     tick_count: usize,
     /// Last-fetched remote tours (cached to avoid re-fetching after pull)
@@ -164,7 +168,9 @@ impl BrowserLayout {
             clipboard: None,
             left_pane_size: LeftPaneSize::Regular,
             right_pane_size: RightPaneSize::Regular,
-            pulling_tour_id: None,
+            is_pulling_tour: false,
+            spinning_items: Vec::new(),
+            spinner_clear_at: None,
             tick_count: 0,
             cached_remote_tours: Vec::new(),
             pending_remote_repo_url: None,
@@ -279,9 +285,66 @@ impl BrowserLayout {
         let db_path = std::path::Path::new(repo_root).join(".codemark").join("codemark.db");
         if db_path.exists() {
             self.db = Database::open(&db_path)?;
+            self.right_pane.refresh_head_commit(&self.db);
             self.refresh_all_panels();
         }
         Ok(())
+    }
+
+    /// Minimum number of ticks a spinner must run before clearing (one visual cycle).
+    const SPINNER_MIN_TICKS: usize = 5;
+
+    /// Add a spinner to a panel item. The spinner animates on each tick.
+    fn add_spinner(&mut self, user_data_key: &str, tab_index: usize) {
+        if let Some(panel) = self.left_pane.panel3.get_list_panel_mut(tab_index) {
+            panel.update_item_spinner(user_data_key, Some("\u{28cb}"));
+        }
+        self.spinner_clear_at = None;
+        self.spinning_items.push(SpinningItem {
+            user_data_key: user_data_key.to_string(),
+            tab_index,
+            start_tick: self.tick_count,
+        });
+    }
+
+    /// Schedule spinners to be cleared after completing at least one full cycle.
+    /// If no spinners are active, refreshes panels immediately.
+    fn schedule_clear_spinners(&mut self) {
+        if self.spinning_items.is_empty() {
+            // No spinners to clear — still refresh panels for the completed operation
+            self.refresh_all_panels();
+            if std::mem::take(&mut self.is_pulling_tour) {
+                self.rebuild_tours_panel();
+            }
+            return;
+        }
+        // Find the earliest start tick among active spinners
+        let earliest_start = self.spinning_items.iter().map(|s| s.start_tick).min().unwrap();
+        let elapsed = self.tick_count.wrapping_sub(earliest_start);
+        if elapsed >= Self::SPINNER_MIN_TICKS {
+            // Already completed a full cycle — clear immediately
+            self.finish_clear_spinners();
+        } else {
+            // Defer until the cycle completes
+            self.spinner_clear_at = Some(earliest_start.wrapping_add(Self::SPINNER_MIN_TICKS));
+        }
+    }
+
+    /// Actually remove all spinners and refresh panels.
+    fn finish_clear_spinners(&mut self) {
+        self.spinner_clear_at = None;
+        for item in self.spinning_items.drain(..) {
+            if let Some(panel) = self.left_pane.panel3.get_list_panel_mut(item.tab_index) {
+                panel.update_item_spinner(&item.user_data_key, None);
+            }
+        }
+        self.refresh_all_panels();
+        // Rebuild the hybrid local+remote Tours view after refresh_all_panels
+        // (which only shows DB-local data). This must come second so the remote
+        // tours are overlaid on top of the fresh local list.
+        if std::mem::take(&mut self.is_pulling_tour) {
+            self.rebuild_tours_panel();
+        }
     }
 
     /// Start healing the currently selected bookmark(s) based on focus.
@@ -292,56 +355,81 @@ impl BrowserLayout {
         let db_path = self.db.path().to_path_buf();
         let event_handler = self.event_handler.clone();
 
-        // Determine the heal target based on current focus
-        let target = match self.focus {
+        // Determine the heal target and the item to show a spinner on.
+        // heal_item is (user_data_key, panel_tab_index) for spinner animation.
+        let (target, heal_item): (Option<HealTarget>, Option<(String, usize)>) = match self.focus {
             FocusArea::Panel3 => {
                 if let Some(panel) = self.left_pane.panel3.active_panel() {
-                    match tabs::Panel3Tab::from_index(self.left_pane.panel3.tabs.selected_index()) {
+                    let tab =
+                        tabs::Panel3Tab::from_index(self.left_pane.panel3.tabs.selected_index());
+                    match tab {
                         Some(tabs::Panel3Tab::Bookmarks) => {
                             // Heal selected bookmark
-                            panel
-                                .selected()
-                                .and_then(|s| s.user_data.clone())
-                                .map(HealTarget::Bookmark)
+                            let selected = panel.selected();
+                            let user_data = selected.and_then(|s| s.user_data.clone());
+                            (
+                                user_data.clone().map(HealTarget::Bookmark),
+                                user_data.map(|ud| (ud, tabs::Panel3Tab::Bookmarks.index())),
+                            )
                         }
-                        Some(tabs::Panel3Tab::Collections) | Some(tabs::Panel3Tab::Tours) => {
+                        Some(tab @ tabs::Panel3Tab::Collections)
+                        | Some(tab @ tabs::Panel3Tab::Tours) => {
                             // Heal all bookmarks in collection/tour
-                            panel.selected().and_then(|s| {
+                            let selected = panel.selected();
+                            let result = selected.and_then(|s| {
                                 if let Some(id) = &s.user_data {
-                                    Some(HealTarget::Collection(id.clone()))
+                                    Some((
+                                        HealTarget::Collection(id.clone()),
+                                        (id.clone(), tab.index()),
+                                    ))
                                 } else {
                                     // Fallback to name lookup if user_data is missing
                                     let name = s.text().to_string();
-                                    self.db
-                                        .get_collection_by_name(&name)
-                                        .ok()
-                                        .flatten()
-                                        .map(|c| HealTarget::Collection(c.id))
+                                    self.db.get_collection_by_name(&name).ok().flatten().map(|c| {
+                                        (HealTarget::Collection(c.id.clone()), (c.id, tab.index()))
+                                    })
                                 }
-                            })
+                            });
+                            match result {
+                                Some((target, item)) => (Some(target), Some(item)),
+                                None => (None, None),
+                            }
                         }
-                        None => None,
+                        None => (None, None),
                     }
                 } else {
-                    None
+                    (None, None)
                 }
             }
             FocusArea::Main => {
                 // Heal the currently displayed bookmark in preview
-                self.right_pane
-                    .steps_data
-                    .get(self.right_pane.pager_current)
-                    .map(|step| HealTarget::Bookmark(step.bookmark.id.clone()))
+                let result =
+                    self.right_pane.steps_data.get(self.right_pane.pager_current).map(|step| {
+                        let id = step.bookmark.id.clone();
+                        (HealTarget::Bookmark(id.clone()), (id, tabs::Panel3Tab::Bookmarks.index()))
+                    });
+                match result {
+                    Some((target, item)) => (Some(target), Some(item)),
+                    None => (None, None),
+                }
             }
-            _ => None,
+            _ => (None, None),
         };
 
         let Some(target) = target else {
-            // No valid target - show error
-            let _ = event_handler
-                .send(Event::HealComplete("Nothing selected to heal".to_string(), false));
+            // No valid target - show error directly (don't send an event that
+            // could interfere with an in-flight heal's spinner lifecycle)
+            self.pending_notification = Some(HealNotification {
+                message: "Nothing selected to heal".to_string(),
+                success: false,
+            });
             return;
         };
+
+        // Show spinner on the healing item
+        if let Some((ref user_data_key, tab_index)) = heal_item {
+            self.add_spinner(user_data_key, tab_index);
+        }
 
         // Spawn a background task to perform the heal.
         // Note: We use spawn_blocking because Database is not Send/Sync (rusqlite limitation).
@@ -513,11 +601,9 @@ impl BrowserLayout {
     /// Start pulling a specific tour from the server by tour_id.
     pub fn start_pull_tour(&mut self, tour_id: String) {
         // Mark the item as pulling (spinner will be shown on tick)
-        self.pulling_tour_id = Some(tour_id.clone());
+        self.is_pulling_tour = true;
         let user_data_key = format!("remote:{}", tour_id);
-        if let Some(panel) = self.left_pane.panel3.get_list_panel_mut(2) {
-            panel.update_item_secondary_text(&user_data_key, "\u{28cb} Pulling");
-        }
+        self.add_spinner(&user_data_key, tabs::Panel3Tab::Tours.index());
 
         let db_path = self.db.path().to_path_buf();
         let event_handler = self.event_handler.clone();
@@ -1342,20 +1428,30 @@ impl BrowserLayout {
     pub fn handle_event(&mut self, event: &Event) -> bool {
         // Handle tick for spinner animation
         if matches!(event, Event::Tick) {
+            if self.spinning_items.is_empty() {
+                return false;
+            }
             self.tick_count = self.tick_count.wrapping_add(1);
-            if let Some(ref tour_id) = self.pulling_tour_id {
-                const SPINNER_FRAMES: &[&str] = &[
-                    "\u{28cb}", "\u{2819}", "\u{2839}", "\u{2838}", "\u{283c}", "\u{2834}",
-                    "\u{2826}", "\u{2827}", "\u{2807}", "\u{280f}",
-                ];
-                let frame = SPINNER_FRAMES[self.tick_count % SPINNER_FRAMES.len()];
-                let user_data_key = format!("remote:{}", tour_id);
-                if let Some(panel) = self.left_pane.panel3.get_list_panel_mut(2) {
-                    panel.update_item_secondary_text(&user_data_key, &format!("{} Pulling", frame));
-                }
+
+            // Check if a deferred clear is due
+            if let Some(clear_at) = self.spinner_clear_at
+                && self.tick_count >= clear_at
+            {
+                self.finish_clear_spinners();
                 return true;
             }
-            return false;
+
+            const SPINNER_FRAMES: &[&str] = &[
+                "\u{28cb}", "\u{2819}", "\u{2839}", "\u{2838}", "\u{283c}", "\u{2834}", "\u{2826}",
+                "\u{2827}", "\u{2807}", "\u{280f}",
+            ];
+            let frame = SPINNER_FRAMES[self.tick_count % SPINNER_FRAMES.len()];
+            for item in &self.spinning_items {
+                if let Some(panel) = self.left_pane.panel3.get_list_panel_mut(item.tab_index) {
+                    panel.update_item_spinner(&item.user_data_key, Some(frame));
+                }
+            }
+            return true;
         }
 
         // Handle search results and errors
@@ -1424,22 +1520,17 @@ impl BrowserLayout {
                 // Store the heal result as a notification
                 self.pending_notification =
                     Some(HealNotification { message: msg.clone(), success: *success });
-                // Refresh panels to show updated health status
-                self.refresh_all_panels();
+                // Schedule spinners to clear after at least one full cycle
+                self.schedule_clear_spinners();
                 return true;
             }
             Event::SyncComplete(msg, success) => {
                 // Store the sync result as a notification
                 self.pending_notification =
                     Some(HealNotification { message: msg.clone(), success: *success });
-                let was_pulling = self.pulling_tour_id.take().is_some();
-                // Refresh panels to show updated status
-                self.refresh_all_panels();
-                // If we were pulling a tour, rebuild the Tours panel from cached
-                // remote data (no network request needed)
-                if was_pulling {
-                    self.rebuild_tours_panel();
-                }
+                // Schedule spinners to clear after at least one full cycle;
+                // finish_clear_spinners will call rebuild_tours_panel if needed
+                self.schedule_clear_spinners();
                 return true;
             }
             Event::RemoteToursLoaded(tours, repo_url) => {

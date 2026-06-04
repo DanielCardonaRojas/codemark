@@ -49,6 +49,8 @@ pub struct RightPane {
     cached_details_template: String,
     /// Flag set when step navigation changes and the caller must call update_preview
     pub needs_preview_update: bool,
+    /// Cached HEAD commit hash to avoid re-running git I/O on every preview navigation
+    cached_head_commit: Option<String>,
 }
 
 impl RightPane {
@@ -71,6 +73,10 @@ impl RightPane {
             needs_preview_update: false,
             cached_show_template,
             cached_details_template,
+            cached_head_commit: {
+                let db_dir = db.path().parent().unwrap_or_else(|| db.path());
+                codemark_core::git::context::detect_context(db_dir).and_then(|ctx| ctx.head_commit)
+            },
         };
 
         // Try to load the first tour automatically
@@ -82,6 +88,13 @@ impl RightPane {
         }
 
         pane
+    }
+
+    /// Refresh the cached HEAD commit (call after switching databases or repos).
+    pub fn refresh_head_commit(&mut self, db: &Database) {
+        let db_dir = db.path().parent().unwrap_or_else(|| db.path());
+        self.cached_head_commit =
+            codemark_core::git::context::detect_context(db_dir).and_then(|ctx| ctx.head_commit);
     }
 
     /// Update the code preview based on current step.
@@ -101,12 +114,15 @@ impl RightPane {
                 preview.jump_to_range(step.line_number, step.line_end);
             }
 
+            let head_ref = self.cached_head_commit.as_deref();
+
             // Update Info tab with markdown (Full bookmark details)
             let info_markdown = self.generate_markdown(
                 db,
                 &step.bookmark,
                 &step.resolutions,
                 templates::SHOW_TEMPLATE,
+                head_ref,
             );
             if let Some(md_panel) = self.steps.get_markdown_mut() {
                 md_panel.set_markdown(info_markdown);
@@ -124,6 +140,7 @@ impl RightPane {
                 &step.bookmark,
                 &step.resolutions,
                 templates::DETAILS_TEMPLATE,
+                head_ref,
             );
             self.details.set_markdown(details_markdown);
         }
@@ -280,6 +297,7 @@ impl RightPane {
         bm: &Bookmark,
         resolutions: &[Resolution],
         template: &str,
+        current_head: Option<&str>,
     ) -> String {
         // Select the appropriate cached template to avoid repeated disk reads
         let template_content = match template {
@@ -297,8 +315,12 @@ impl RightPane {
 
         // Create context and render using the cached template content
         let repo_path = db.path().parent().unwrap_or_else(|| db.path());
-        let context =
-            templates::BookmarkTemplateContext::from_bookmark(bm, resolutions, repo_path, None);
+        let context = templates::BookmarkTemplateContext::from_bookmark(
+            bm,
+            resolutions,
+            repo_path,
+            current_head,
+        );
         let handlebars = templates::create_handlebars_engine();
 
         match handlebars.render_template(template_content, &context) {

@@ -144,6 +144,8 @@ pub struct PanelItem {
     active: bool,
     /// Whether the item is published to a server (shows cloud upload icon)
     published: bool,
+    /// Optional spinner text shown at the very end of the item
+    spinner_text: Option<String>,
     /// Optional hidden user data (e.g., database ID)
     pub user_data: Option<String>,
 }
@@ -173,6 +175,7 @@ impl PanelItem {
             sync_direction: None,
             active: false,
             published: false,
+            spinner_text: None,
             user_data: None,
         }
     }
@@ -329,6 +332,12 @@ impl PanelItem {
         if self.published {
             spans.push(Span::raw(" "));
             spans.push(Span::styled("☁", Style::default().fg(Color::Cyan)));
+        }
+
+        // Add spinner at the very end
+        if let Some(spinner) = &self.spinner_text {
+            spans.push(Span::raw(" "));
+            spans.push(Span::styled(spinner, Style::default().fg(Color::Yellow)));
         }
 
         let mut line = Line::from(spans);
@@ -650,6 +659,27 @@ impl Panel {
             for item in &mut self.items {
                 if item.user_data.as_deref() == Some(user_data) {
                     item.set_secondary_text(text);
+                    break;
+                }
+            }
+        }
+    }
+
+    /// Update the spinner text of an item identified by its user_data value.
+    /// The spinner is rendered at the very end of the item line.
+    pub fn update_item_spinner(&mut self, user_data: &str, text: Option<&str>) {
+        let mut changed = false;
+        for item in &mut self.all_items {
+            if item.user_data.as_deref() == Some(user_data) {
+                item.spinner_text = text.map(|t| t.to_string());
+                changed = true;
+                break;
+            }
+        }
+        if changed {
+            for item in &mut self.items {
+                if item.user_data.as_deref() == Some(user_data) {
+                    item.spinner_text = text.map(|t| t.to_string());
                     break;
                 }
             }
