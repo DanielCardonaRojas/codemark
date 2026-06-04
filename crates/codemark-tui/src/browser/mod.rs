@@ -288,18 +288,13 @@ impl BrowserLayout {
     }
 
     /// Add a spinner to a panel item. The spinner animates on each tick.
-    fn add_spinner(&mut self, user_data_key: &str, tab_index: usize, label: Option<&str>) {
+    fn add_spinner(&mut self, user_data_key: &str, tab_index: usize) {
         if let Some(panel) = self.left_pane.panel3.get_list_panel_mut(tab_index) {
-            let initial = match label {
-                Some(l) => format!("\u{28cb} {l}"),
-                None => "\u{28cb}".to_string(),
-            };
-            panel.update_item_spinner(user_data_key, Some(&initial));
+            panel.update_item_spinner(user_data_key, Some("\u{28cb}"));
         }
         self.spinning_items.push(SpinningItem {
             user_data_key: user_data_key.to_string(),
             tab_index,
-            label: label.map(|s| s.to_string()),
         });
     }
 
@@ -389,7 +384,7 @@ impl BrowserLayout {
 
         // Show spinner on the healing item
         if let Some((ref user_data_key, tab_index)) = heal_item {
-            self.add_spinner(user_data_key, tab_index, None);
+            self.add_spinner(user_data_key, tab_index);
         }
 
         // Spawn a background task to perform the heal.
@@ -564,7 +559,7 @@ impl BrowserLayout {
         // Mark the item as pulling (spinner will be shown on tick)
         self.is_pulling_tour = true;
         let user_data_key = format!("remote:{}", tour_id);
-        self.add_spinner(&user_data_key, tabs::Panel3Tab::Tours.index(), Some("Pulling"));
+        self.add_spinner(&user_data_key, tabs::Panel3Tab::Tours.index());
 
         let db_path = self.db.path().to_path_buf();
         let event_handler = self.event_handler.clone();
@@ -1399,12 +1394,8 @@ impl BrowserLayout {
             ];
             let frame = SPINNER_FRAMES[self.tick_count % SPINNER_FRAMES.len()];
             for item in &self.spinning_items {
-                let text = match &item.label {
-                    Some(label) => format!("{frame} {label}"),
-                    None => frame.to_string(),
-                };
                 if let Some(panel) = self.left_pane.panel3.get_list_panel_mut(item.tab_index) {
-                    panel.update_item_spinner(&item.user_data_key, Some(&text));
+                    panel.update_item_spinner(&item.user_data_key, Some(frame));
                 }
             }
             return true;

@@ -40,8 +40,6 @@ pub struct SpinningItem {
     pub user_data_key: String,
     /// Index of the panel tab containing the item
     pub tab_index: usize,
-    /// Optional label shown after the spinner frame (e.g. "Pulling")
-    pub label: Option<String>,
 }
 
 /// Areas that can be focused in the browser.
