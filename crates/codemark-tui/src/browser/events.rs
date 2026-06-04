@@ -138,8 +138,7 @@ impl BrowserLayout {
                     .and_then(|s| s.format())
                     .unwrap_or_else(|| bm.query.clone());
 
-                let icon =
-                    summary_info.as_ref().map(|s| get_node_icon(&s.label)).unwrap_or("");
+                let icon = summary_info.as_ref().map(|s| get_node_icon(&s.label)).unwrap_or("");
 
                 let short_path = shorten_path(&bm.file_path, 25);
 
@@ -228,10 +227,7 @@ impl BrowserLayout {
     /// Handle keyboard events (focus cycling, shortcuts, actions).
     ///
     /// Returns `Some(true/false)` if handled, `None` to fall through to delegation.
-    fn handle_key_event(
-        &mut self,
-        key: &ratatui::crossterm::event::KeyEvent,
-    ) -> Option<bool> {
+    fn handle_key_event(&mut self, key: &ratatui::crossterm::event::KeyEvent) -> Option<bool> {
         match key.code {
             ratatui::crossterm::event::KeyCode::Enter => {
                 return self.handle_enter_key();
@@ -474,9 +470,7 @@ impl BrowserLayout {
 
     /// Handle 'o' key — open in editor (plain) or copy ID/markdown (Ctrl+O).
     fn handle_o_key(&mut self, key: &ratatui::crossterm::event::KeyEvent) -> Option<bool> {
-        let ctrl = key
-            .modifiers
-            .contains(ratatui::crossterm::event::KeyModifiers::CONTROL);
+        let ctrl = key.modifiers.contains(ratatui::crossterm::event::KeyModifiers::CONTROL);
 
         if !ctrl {
             if self.should_handle_keybindings() && self.focus != FocusArea::Search {
@@ -525,8 +519,7 @@ impl BrowserLayout {
         }
 
         if self.focus == FocusArea::Main {
-            if let Some(markdown) =
-                self.right_pane.active_markdown_content().map(|m| m.to_owned())
+            if let Some(markdown) = self.right_pane.active_markdown_content().map(|m| m.to_owned())
             {
                 match self.copy_to_clipboard(&markdown) {
                     Ok(()) => {
@@ -562,8 +555,7 @@ impl BrowserLayout {
                     && let Some(selected) = panel.selected()
                 {
                     let collection_name = selected.text().to_string();
-                    if let Ok(Some(_collection)) =
-                        self.db.get_collection_by_name(&collection_name)
+                    if let Ok(Some(_collection)) = self.db.get_collection_by_name(&collection_name)
                     {
                         let _ = self.db.delete_collection(&collection_name);
                         self.refresh_all_panels();

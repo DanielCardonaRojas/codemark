@@ -211,14 +211,29 @@ async fn run_app() -> Result<Option<i32>> {
                                         } else {
                                             // Clear the active filter for the focused panel
                                             let filter_key = match layout.focus() {
-                                                codemark_tui::browser::FocusArea::Panel1 => "active_filter_panel1",
-                                                codemark_tui::browser::FocusArea::Panel2 => "active_filter_panel2",
-                                                codemark_tui::browser::FocusArea::Panel3 => "active_filter_panel3",
-                                                codemark_tui::browser::FocusArea::Main => "active_filter_main",
-                                                codemark_tui::browser::FocusArea::Search => "active_filter_panel1",
-                                                codemark_tui::browser::FocusArea::Filter => "active_filter_panel3",
+                                                codemark_tui::browser::FocusArea::Panel1 => {
+                                                    "active_filter_panel1"
+                                                }
+                                                codemark_tui::browser::FocusArea::Panel2 => {
+                                                    "active_filter_panel2"
+                                                }
+                                                codemark_tui::browser::FocusArea::Panel3 => {
+                                                    "active_filter_panel3"
+                                                }
+                                                codemark_tui::browser::FocusArea::Main => {
+                                                    "active_filter_main"
+                                                }
+                                                codemark_tui::browser::FocusArea::Search => {
+                                                    "active_filter_panel1"
+                                                }
+                                                codemark_tui::browser::FocusArea::Filter => {
+                                                    "active_filter_panel3"
+                                                }
                                             };
-                                            if state.get_string(filter_key).is_some_and(|q| !q.is_empty()) {
+                                            if state
+                                                .get_string(filter_key)
+                                                .is_some_and(|q| !q.is_empty())
+                                            {
                                                 state.set_string(filter_key, "");
                                                 handled = true;
                                             }
