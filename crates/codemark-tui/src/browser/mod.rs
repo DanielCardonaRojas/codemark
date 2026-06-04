@@ -308,8 +308,14 @@ impl BrowserLayout {
     }
 
     /// Schedule spinners to be cleared after completing at least one full cycle.
+    /// If no spinners are active, refreshes panels immediately.
     fn schedule_clear_spinners(&mut self) {
         if self.spinning_items.is_empty() {
+            // No spinners to clear — still refresh panels for the completed operation
+            self.refresh_all_panels();
+            if std::mem::take(&mut self.is_pulling_tour) {
+                self.rebuild_tours_panel();
+            }
             return;
         }
         // Find the earliest start tick among active spinners
