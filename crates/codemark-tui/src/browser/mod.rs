@@ -126,6 +126,8 @@ pub struct BrowserLayout {
     is_pulling_tour: bool,
     /// Panel items currently showing an animated spinner
     spinning_items: Vec<SpinningItem>,
+    /// Tick at which spinners should be cleared (deferred to complete at least one full cycle)
+    spinner_clear_at: Option<usize>,
     /// Tick counter for spinner animation
     tick_count: usize,
     /// Last-fetched remote tours (cached to avoid re-fetching after pull)
@@ -168,6 +170,7 @@ impl BrowserLayout {
             right_pane_size: RightPaneSize::Regular,
             is_pulling_tour: false,
             spinning_items: Vec::new(),
+            spinner_clear_at: None,
             tick_count: 0,
             cached_remote_tours: Vec::new(),
             pending_remote_repo_url: None,
@@ -287,23 +290,50 @@ impl BrowserLayout {
         Ok(())
     }
 
+    /// Minimum number of ticks a spinner must run before clearing (one visual cycle).
+    const SPINNER_MIN_TICKS: usize = 5;
+
     /// Add a spinner to a panel item. The spinner animates on each tick.
     fn add_spinner(&mut self, user_data_key: &str, tab_index: usize) {
         if let Some(panel) = self.left_pane.panel3.get_list_panel_mut(tab_index) {
             panel.update_item_spinner(user_data_key, Some("\u{28cb}"));
         }
+        self.spinner_clear_at = None;
         self.spinning_items.push(SpinningItem {
             user_data_key: user_data_key.to_string(),
             tab_index,
+            start_tick: self.tick_count,
         });
     }
 
-    /// Remove all active spinners and clear their spinner text.
-    fn clear_spinners(&mut self) {
+    /// Schedule spinners to be cleared after completing at least one full cycle.
+    fn schedule_clear_spinners(&mut self) {
+        if self.spinning_items.is_empty() {
+            return;
+        }
+        // Find the earliest start tick among active spinners
+        let earliest_start = self.spinning_items.iter().map(|s| s.start_tick).min().unwrap();
+        let elapsed = self.tick_count.wrapping_sub(earliest_start);
+        if elapsed >= Self::SPINNER_MIN_TICKS {
+            // Already completed a full cycle — clear immediately
+            self.finish_clear_spinners();
+        } else {
+            // Defer until the cycle completes
+            self.spinner_clear_at = Some(earliest_start + Self::SPINNER_MIN_TICKS);
+        }
+    }
+
+    /// Actually remove all spinners and refresh panels.
+    fn finish_clear_spinners(&mut self) {
+        self.spinner_clear_at = None;
         for item in self.spinning_items.drain(..) {
             if let Some(panel) = self.left_pane.panel3.get_list_panel_mut(item.tab_index) {
                 panel.update_item_spinner(&item.user_data_key, None);
             }
+        }
+        self.refresh_all_panels();
+        if std::mem::take(&mut self.is_pulling_tour) {
+            self.rebuild_tours_panel();
         }
     }
 
@@ -1388,6 +1418,15 @@ impl BrowserLayout {
                 return false;
             }
             self.tick_count = self.tick_count.wrapping_add(1);
+
+            // Check if a deferred clear is due
+            if let Some(clear_at) = self.spinner_clear_at {
+                if self.tick_count >= clear_at {
+                    self.finish_clear_spinners();
+                    return true;
+                }
+            }
+
             const SPINNER_FRAMES: &[&str] = &[
                 "\u{28cb}", "\u{2819}", "\u{2839}", "\u{2838}", "\u{283c}", "\u{2834}",
                 "\u{2826}", "\u{2827}", "\u{2807}", "\u{280f}",
@@ -1464,29 +1503,19 @@ impl BrowserLayout {
                 return true;
             }
             Event::HealComplete(msg, success) => {
-                // Clear spinners
-                self.clear_spinners();
                 // Store the heal result as a notification
                 self.pending_notification =
                     Some(HealNotification { message: msg.clone(), success: *success });
-                // Refresh panels to show updated health status
-                self.refresh_all_panels();
+                // Schedule spinners to clear after at least one full cycle
+                self.schedule_clear_spinners();
                 return true;
             }
             Event::SyncComplete(msg, success) => {
-                // Clear spinners
-                self.clear_spinners();
                 // Store the sync result as a notification
                 self.pending_notification =
                     Some(HealNotification { message: msg.clone(), success: *success });
-                let was_pulling = std::mem::take(&mut self.is_pulling_tour);
-                // Refresh panels to show updated status
-                self.refresh_all_panels();
-                // If we were pulling a tour, rebuild the Tours panel from cached
-                // remote data (no network request needed)
-                if was_pulling {
-                    self.rebuild_tours_panel();
-                }
+                // Schedule spinners to clear after at least one full cycle
+                self.schedule_clear_spinners();
                 return true;
             }
             Event::RemoteToursLoaded(tours, repo_url) => {
