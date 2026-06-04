@@ -75,8 +75,7 @@ impl RightPane {
             cached_details_template,
             cached_head_commit: {
                 let db_dir = db.path().parent().unwrap_or_else(|| db.path());
-                codemark_core::git::context::detect_context(db_dir)
-                    .and_then(|ctx| ctx.head_commit)
+                codemark_core::git::context::detect_context(db_dir).and_then(|ctx| ctx.head_commit)
             },
         };
 

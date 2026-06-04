@@ -1434,11 +1434,11 @@ impl BrowserLayout {
             self.tick_count = self.tick_count.wrapping_add(1);
 
             // Check if a deferred clear is due
-            if let Some(clear_at) = self.spinner_clear_at {
-                if self.tick_count >= clear_at {
-                    self.finish_clear_spinners();
-                    return true;
-                }
+            if let Some(clear_at) = self.spinner_clear_at
+                && self.tick_count >= clear_at
+            {
+                self.finish_clear_spinners();
+                return true;
             }
 
             const SPINNER_FRAMES: &[&str] = &[
