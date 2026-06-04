@@ -350,7 +350,8 @@ impl BrowserLayout {
         let (target, heal_item): (Option<HealTarget>, Option<(String, usize)>) = match self.focus {
             FocusArea::Panel3 => {
                 if let Some(panel) = self.left_pane.panel3.active_panel() {
-                    let tab = tabs::Panel3Tab::from_index(self.left_pane.panel3.tabs.selected_index());
+                    let tab =
+                        tabs::Panel3Tab::from_index(self.left_pane.panel3.tabs.selected_index());
                     match tab {
                         Some(tabs::Panel3Tab::Bookmarks) => {
                             // Heal selected bookmark
@@ -361,20 +362,22 @@ impl BrowserLayout {
                                 user_data.map(|ud| (ud, tabs::Panel3Tab::Bookmarks.index())),
                             )
                         }
-                        Some(tab @ tabs::Panel3Tab::Collections) | Some(tab @ tabs::Panel3Tab::Tours) => {
+                        Some(tab @ tabs::Panel3Tab::Collections)
+                        | Some(tab @ tabs::Panel3Tab::Tours) => {
                             // Heal all bookmarks in collection/tour
                             let selected = panel.selected();
                             let result = selected.and_then(|s| {
                                 if let Some(id) = &s.user_data {
-                                    Some((HealTarget::Collection(id.clone()), (id.clone(), tab.index())))
+                                    Some((
+                                        HealTarget::Collection(id.clone()),
+                                        (id.clone(), tab.index()),
+                                    ))
                                 } else {
                                     // Fallback to name lookup if user_data is missing
                                     let name = s.text().to_string();
-                                    self.db
-                                        .get_collection_by_name(&name)
-                                        .ok()
-                                        .flatten()
-                                        .map(|c| (HealTarget::Collection(c.id.clone()), (c.id, tab.index())))
+                                    self.db.get_collection_by_name(&name).ok().flatten().map(|c| {
+                                        (HealTarget::Collection(c.id.clone()), (c.id, tab.index()))
+                                    })
                                 }
                             });
                             match result {
@@ -390,10 +393,8 @@ impl BrowserLayout {
             }
             FocusArea::Main => {
                 // Heal the currently displayed bookmark in preview
-                let result = self.right_pane
-                    .steps_data
-                    .get(self.right_pane.pager_current)
-                    .map(|step| {
+                let result =
+                    self.right_pane.steps_data.get(self.right_pane.pager_current).map(|step| {
                         let id = step.bookmark.id.clone();
                         (HealTarget::Bookmark(id.clone()), (id, tabs::Panel3Tab::Bookmarks.index()))
                     });
@@ -1428,8 +1429,8 @@ impl BrowserLayout {
             }
 
             const SPINNER_FRAMES: &[&str] = &[
-                "\u{28cb}", "\u{2819}", "\u{2839}", "\u{2838}", "\u{283c}", "\u{2834}",
-                "\u{2826}", "\u{2827}", "\u{2807}", "\u{280f}",
+                "\u{28cb}", "\u{2819}", "\u{2839}", "\u{2838}", "\u{283c}", "\u{2834}", "\u{2826}",
+                "\u{2827}", "\u{2807}", "\u{280f}",
             ];
             let frame = SPINNER_FRAMES[self.tick_count % SPINNER_FRAMES.len()];
             for item in &self.spinning_items {
