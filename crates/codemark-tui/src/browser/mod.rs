@@ -333,6 +333,12 @@ impl BrowserLayout {
             }
         }
         self.refresh_all_panels();
+        // Rebuild the hybrid local+remote Tours view after refresh_all_panels
+        // (which only shows DB-local data). This must come second so the remote
+        // tours are overlaid on top of the fresh local list.
+        if std::mem::take(&mut self.is_pulling_tour) {
+            self.rebuild_tours_panel();
+        }
     }
 
     /// Start healing the currently selected bookmark(s) based on focus.
@@ -1513,11 +1519,8 @@ impl BrowserLayout {
                 // Store the sync result as a notification
                 self.pending_notification =
                     Some(HealNotification { message: msg.clone(), success: *success });
-                // If we were pulling a tour, rebuild the Tours panel immediately
-                if std::mem::take(&mut self.is_pulling_tour) {
-                    self.rebuild_tours_panel();
-                }
-                // Schedule spinners to clear after at least one full cycle
+                // Schedule spinners to clear after at least one full cycle;
+                // finish_clear_spinners will call rebuild_tours_panel if needed
                 self.schedule_clear_spinners();
                 return true;
             }
