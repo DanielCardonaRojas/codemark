@@ -1678,7 +1678,18 @@ pub async fn handle_open(cli: &Cli, args: &OpenArgs) -> Result<()> {
             line_end,
             &bookmark.id,
         )
-        .ok_or_else(|| Error::Input("failed to build editor command from template".into()))?;
+        .ok_or_else(|| {
+            let template = config
+                .open
+                .get_command_for_extension(extension)
+                .or(config.open.default.as_ref())
+                .cloned()
+                .unwrap_or_else(|| {
+                    let editor = std::env::var("EDITOR").unwrap_or_else(|_| "vim".to_string());
+                    format!("{} {{FILE}}", editor)
+                });
+            Error::Input(format!("invalid command template: {}", template))
+        })?;
 
     if cmd.should_wait {
         // Wait for terminal editors to complete

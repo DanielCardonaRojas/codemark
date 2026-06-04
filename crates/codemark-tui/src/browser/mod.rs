@@ -993,8 +993,8 @@ impl BrowserLayout {
                 .unwrap_or((1, 1));
             (rel_path, start, end)
         } else {
-            // Fallback to bookmark file path
-            (bookmark.file_path.clone(), 0, 0)
+            // Fallback to bookmark file path (use 1-indexed line 1 as a safe default)
+            (bookmark.file_path.clone(), 1, 1)
         };
 
         // Resolve relative path to absolute path
