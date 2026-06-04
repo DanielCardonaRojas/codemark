@@ -26,10 +26,10 @@ impl BrowserLayout {
             self.handle_mouse_focus(event);
         }
 
-        if let Event::Key(key) = event {
-            if let Some(handled) = self.handle_key_event(key) {
-                return handled;
-            }
+        if let Event::Key(key) = event
+            && let Some(handled) = self.handle_key_event(key)
+        {
+            return handled;
         }
 
         self.handle_delegation(event)
