@@ -935,9 +935,13 @@ impl BrowserLayout {
             "open_in_editor: building editor command"
         );
 
-        if let Some(cmd) =
-            config.open.build_editor_command(&step.file_path, extension, line_start, line_end, &step.bookmark.id)
-        {
+        if let Some(cmd) = config.open.build_editor_command(
+            &step.file_path,
+            extension,
+            line_start,
+            line_end,
+            &step.bookmark.id,
+        ) {
             tracing::debug!(
                 target: "codemark::shell",
                 program = %cmd.program,
@@ -946,8 +950,11 @@ impl BrowserLayout {
                 "open_in_editor: pending command set"
             );
 
-            self.pending_command =
-                Some(ExternalCommand { program: cmd.program, args: cmd.args, should_wait: cmd.should_wait });
+            self.pending_command = Some(ExternalCommand {
+                program: cmd.program,
+                args: cmd.args,
+                should_wait: cmd.should_wait,
+            });
         }
     }
 
@@ -961,33 +968,34 @@ impl BrowserLayout {
         let config = Config::load_layered(codemark_dir);
 
         // Resolve the file path and line range from the bookmark's latest resolution
-        let (relative_path, line_start, line_end) =
-            if let Some(resolution) = self.db.list_resolutions(&bookmark.id, 1).ok().and_then(|mut v| v.pop()) {
-                tracing::debug!(
-                    target: "codemark::shell",
-                    bookmark_id = %bookmark.id,
-                    resolution_id = %resolution.id,
-                    line_range = ?resolution.line_range,
-                    file_path = ?resolution.file_path,
-                    "open_bookmark_in_editor: found resolution"
-                );
-                let rel_path =
-                    resolution.file_path.clone().unwrap_or_else(|| bookmark.file_path.clone());
-                // line_range is stored as "start-end" (1-indexed) by heal.rs
-                let (start, end) = resolution
-                    .line_range
-                    .and_then(|r| {
-                        let (s_str, e_str) = r.split_once('-')?;
-                        let s = s_str.trim().parse::<usize>().ok()?;
-                        let e = e_str.trim().parse::<usize>().ok()?;
-                        Some((s, e))
-                    })
-                    .unwrap_or((1, 1));
-                (rel_path, start, end)
-            } else {
-                // Fallback to bookmark file path
-                (bookmark.file_path.clone(), 0, 0)
-            };
+        let (relative_path, line_start, line_end) = if let Some(resolution) =
+            self.db.list_resolutions(&bookmark.id, 1).ok().and_then(|mut v| v.pop())
+        {
+            tracing::debug!(
+                target: "codemark::shell",
+                bookmark_id = %bookmark.id,
+                resolution_id = %resolution.id,
+                line_range = ?resolution.line_range,
+                file_path = ?resolution.file_path,
+                "open_bookmark_in_editor: found resolution"
+            );
+            let rel_path =
+                resolution.file_path.clone().unwrap_or_else(|| bookmark.file_path.clone());
+            // line_range is stored as "start-end" (1-indexed) by heal.rs
+            let (start, end) = resolution
+                .line_range
+                .and_then(|r| {
+                    let (s_str, e_str) = r.split_once('-')?;
+                    let s = s_str.trim().parse::<usize>().ok()?;
+                    let e = e_str.trim().parse::<usize>().ok()?;
+                    Some((s, e))
+                })
+                .unwrap_or((1, 1));
+            (rel_path, start, end)
+        } else {
+            // Fallback to bookmark file path
+            (bookmark.file_path.clone(), 0, 0)
+        };
 
         // Resolve relative path to absolute path
         let absolute_path = match resolve_bookmark_file_path(&relative_path, self.db.path()) {
@@ -1002,10 +1010,8 @@ impl BrowserLayout {
             }
         };
 
-        let extension = std::path::Path::new(&relative_path)
-            .extension()
-            .and_then(|e| e.to_str())
-            .unwrap_or("");
+        let extension =
+            std::path::Path::new(&relative_path).extension().and_then(|e| e.to_str()).unwrap_or("");
 
         // line_start/line_end are already 1-indexed from the stored resolution format
         tracing::debug!(
@@ -1031,8 +1037,11 @@ impl BrowserLayout {
                 "open_bookmark_in_editor: pending command set"
             );
 
-            self.pending_command =
-                Some(ExternalCommand { program: cmd.program, args: cmd.args, should_wait: cmd.should_wait });
+            self.pending_command = Some(ExternalCommand {
+                program: cmd.program,
+                args: cmd.args,
+                should_wait: cmd.should_wait,
+            });
         }
     }
 

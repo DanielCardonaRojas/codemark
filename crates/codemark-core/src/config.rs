@@ -387,13 +387,14 @@ impl OpenConfig {
         bookmark_id: &str,
     ) -> Option<EditorCommand> {
         // Select command template: extension lookup → default → $EDITOR fallback
-        let command_template =
-            if let Some(cmd) = self.get_command_for_extension(extension).or(self.default.as_ref()) {
-                cmd.clone()
-            } else {
-                let editor = std::env::var("EDITOR").unwrap_or_else(|_| "vim".to_string());
-                format!("{} {{FILE}}", editor)
-            };
+        let command_template = if let Some(cmd) =
+            self.get_command_for_extension(extension).or(self.default.as_ref())
+        {
+            cmd.clone()
+        } else {
+            let editor = std::env::var("EDITOR").unwrap_or_else(|_| "vim".to_string());
+            format!("{} {{FILE}}", editor)
+        };
 
         // Substitute placeholders
         let substituted = command_template
