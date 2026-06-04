@@ -411,9 +411,12 @@ impl BrowserLayout {
         };
 
         let Some(target) = target else {
-            // No valid target - show error
-            let _ = event_handler
-                .send(Event::HealComplete("Nothing selected to heal".to_string(), false));
+            // No valid target - show error directly (don't send an event that
+            // could interfere with an in-flight heal's spinner lifecycle)
+            self.pending_notification = Some(HealNotification {
+                message: "Nothing selected to heal".to_string(),
+                success: false,
+            });
             return;
         };
 
