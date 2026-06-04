@@ -890,8 +890,6 @@ impl BrowserLayout {
 
     /// Open the currently selected bookmark or tour step in the editor.
     pub fn open_in_editor(&mut self) {
-        use codemark_core::config::Config;
-
         // Special handling for Panel3 bookmarks: open directly without StepData
         if self.focus == FocusArea::Panel3
             && let Some(bookmark) = self
@@ -925,99 +923,125 @@ impl BrowserLayout {
             .and_then(|e| e.to_str())
             .unwrap_or("");
 
-        let command_template = if let Some(cmd) =
-            config.open.get_command_for_extension(extension).or(config.open.default.as_ref())
-        {
-            cmd.clone()
-        } else {
-            let editor = std::env::var("EDITOR").unwrap_or_else(|_| "vim".to_string());
-            format!("{} {{FILE}}", editor)
-        };
-
-        // Substitute placeholders
-        // Note: StepData already has resolved absolute path and line number
+        // StepData already has resolved absolute path and line numbers (0-indexed)
         let line_start = step.line_number + 1;
-        let substituted = command_template
-            .replace("{FILE}", &step.file_path)
-            .replace("{LINE_START}", &line_start.to_string())
-            .replace("{LINE_END}", &line_start.to_string())
-            .replace("{ID}", &step.bookmark.id);
+        let line_end = step.line_end.map(|e| e + 1).unwrap_or(line_start);
 
-        if let Some(tokens) = shlex::split(&substituted)
-            && !tokens.is_empty()
-        {
-            let program = tokens[0].clone();
-            let args = tokens[1..].to_vec();
-            let program_name =
-                std::path::Path::new(&program).file_name().and_then(|n| n.to_str()).unwrap_or("");
-            let should_wait = config.open.should_wait_for_editor(program_name);
+        tracing::debug!(
+            target: "codemark::shell",
+            file_path = %step.file_path,
+            line_start = line_start,
+            line_end = line_end,
+            "open_in_editor: building editor command"
+        );
 
-            self.pending_command = Some(ExternalCommand { program, args, should_wait });
+        if let Some(cmd) = config.open.build_editor_command(
+            &step.file_path,
+            extension,
+            line_start,
+            line_end,
+            &step.bookmark.id,
+        ) {
+            tracing::debug!(
+                target: "codemark::shell",
+                program = %cmd.program,
+                args = ?cmd.args,
+                should_wait = cmd.should_wait,
+                "open_in_editor: pending command set"
+            );
+
+            self.pending_command = Some(ExternalCommand {
+                program: cmd.program,
+                args: cmd.args,
+                should_wait: cmd.should_wait,
+            });
         }
     }
 
     /// Open a bookmark directly in the editor (used for Panel3 bookmarks).
     fn open_bookmark_in_editor(&mut self, bookmark: Bookmark) {
-        use codemark_core::config::Config;
+        use codemark_core::git::context::resolve_bookmark_file_path;
 
         let Some(codemark_dir) = self.db.path().parent() else {
             return;
         };
         let config = Config::load_layered(codemark_dir);
 
-        // Resolve the file path and line number from the bookmark
-        let (file_path, line_number) =
-            if let Ok(Some(resolution)) = self.db.get_resolution(&bookmark.id) {
-                (
-                    resolution.file_path.clone().unwrap_or_else(|| bookmark.file_path.clone()),
-                    resolution
-                        .line_range
-                        .and_then(|r| {
-                            // Parse "(start,end)" format
-                            let parts: Vec<&str> = r.split(',').collect();
-                            if parts.len() == 2 {
-                                parts[0].trim().trim_start_matches('(').parse::<usize>().ok()
-                            } else {
-                                None
-                            }
-                        })
-                        .unwrap_or(0),
-                )
-            } else {
-                // Fallback to bookmark file path
-                (bookmark.file_path.clone(), 0)
-            };
-
-        let extension =
-            std::path::Path::new(&file_path).extension().and_then(|e| e.to_str()).unwrap_or("");
-
-        let command_template = if let Some(cmd) =
-            config.open.get_command_for_extension(extension).or(config.open.default.as_ref())
+        // Resolve the file path and line range from the bookmark's latest resolution
+        let (relative_path, line_start, line_end) = if let Some(resolution) =
+            self.db.list_resolutions(&bookmark.id, 1).ok().and_then(|mut v| v.pop())
         {
-            cmd.clone()
+            tracing::debug!(
+                target: "codemark::shell",
+                bookmark_id = %bookmark.id,
+                resolution_id = %resolution.id,
+                line_range = ?resolution.line_range,
+                file_path = ?resolution.file_path,
+                "open_bookmark_in_editor: found resolution"
+            );
+            let rel_path =
+                resolution.file_path.clone().unwrap_or_else(|| bookmark.file_path.clone());
+            // line_range is stored as "start-end" (1-indexed) by heal.rs
+            let (start, end) = resolution
+                .line_range
+                .and_then(|r| {
+                    let (s_str, e_str) = r.split_once('-')?;
+                    let s = s_str.trim().parse::<usize>().ok()?;
+                    let e = e_str.trim().parse::<usize>().ok()?;
+                    Some((s, e))
+                })
+                .unwrap_or((1, 1));
+            (rel_path, start, end)
         } else {
-            let editor = std::env::var("EDITOR").unwrap_or_else(|_| "vim".to_string());
-            format!("{} {{FILE}}", editor)
+            // Fallback to bookmark file path (use 1-indexed line 1 as a safe default)
+            (bookmark.file_path.clone(), 1, 1)
         };
 
-        // Substitute placeholders
-        let line_start = line_number + 1;
-        let substituted = command_template
-            .replace("{FILE}", &file_path)
-            .replace("{LINE_START}", &line_start.to_string())
-            .replace("{LINE_END}", &line_start.to_string())
-            .replace("{ID}", &bookmark.id);
+        // Resolve relative path to absolute path
+        let absolute_path = match resolve_bookmark_file_path(&relative_path, self.db.path()) {
+            Ok(p) => p.to_string_lossy().to_string(),
+            Err(_) => {
+                tracing::warn!(
+                    target: "codemark::shell",
+                    relative_path = %relative_path,
+                    "open_bookmark_in_editor: failed to resolve absolute path"
+                );
+                return;
+            }
+        };
 
-        if let Some(tokens) = shlex::split(&substituted)
-            && !tokens.is_empty()
-        {
-            let program = tokens[0].clone();
-            let args = tokens[1..].to_vec();
-            let program_name =
-                std::path::Path::new(&program).file_name().and_then(|n| n.to_str()).unwrap_or("");
-            let should_wait = config.open.should_wait_for_editor(program_name);
+        let extension =
+            std::path::Path::new(&relative_path).extension().and_then(|e| e.to_str()).unwrap_or("");
 
-            self.pending_command = Some(ExternalCommand { program, args, should_wait });
+        // line_start/line_end are already 1-indexed from the stored resolution format
+        tracing::debug!(
+            target: "codemark::shell",
+            absolute_path = %absolute_path,
+            line_start = line_start,
+            line_end = line_end,
+            "open_bookmark_in_editor: building editor command"
+        );
+
+        if let Some(cmd) = config.open.build_editor_command(
+            &absolute_path,
+            extension,
+            line_start,
+            line_end,
+            &bookmark.id,
+        ) {
+            tracing::debug!(
+                target: "codemark::shell",
+                program = %cmd.program,
+                args = ?cmd.args,
+                should_wait = cmd.should_wait,
+                "open_bookmark_in_editor: pending command set"
+            );
+
+            self.pending_command = Some(ExternalCommand {
+                program: cmd.program,
+                args: cmd.args,
+                should_wait: cmd.should_wait,
+            });
         }
     }
 

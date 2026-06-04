@@ -45,6 +45,7 @@ shellexpand = "3"
 handlebars = "6"
 reqwest = { version = "0.12", features = ["json", "stream"] }
 tracing = { workspace = true }
+shlex = "1.3"
 
 [dev-dependencies]
 tempfile = { workspace = true }
