@@ -1166,11 +1166,11 @@ pub struct RepoShowArgs {
 
 #[derive(Debug, clap::Args)]
 pub struct RepoSetServerArgs {
-    /// Repository reference (owner/name) - defaults to current repo
-    pub repo: Option<String>,
-
     /// Server URL (e.g., https://codemark.example.com)
     pub server: String,
+
+    /// Repository reference (owner/name) - defaults to current repo
+    pub repo: Option<String>,
 }
 
 /// Arguments for the `codemark auth` subcommand.
