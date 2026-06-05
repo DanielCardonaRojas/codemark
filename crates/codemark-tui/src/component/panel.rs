@@ -433,7 +433,13 @@ impl Panel {
             self.items = self
                 .all_items
                 .iter()
-                .filter(|item| item.text.to_lowercase().contains(&query))
+                .filter(|item| {
+                    item.text.to_lowercase().contains(&query)
+                        || item
+                            .emphasis_text
+                            .as_ref()
+                            .is_some_and(|e| e.to_lowercase().contains(&query))
+                })
                 .cloned()
                 .collect();
         }
@@ -629,7 +635,13 @@ impl Panel {
                 self.items = self
                     .all_items
                     .iter()
-                    .filter(|item| item.text.to_lowercase().contains(&query))
+                    .filter(|item| {
+                        item.text.to_lowercase().contains(&query)
+                            || item
+                                .emphasis_text
+                                .as_ref()
+                                .is_some_and(|e| e.to_lowercase().contains(&query))
+                    })
                     .cloned()
                     .collect();
             }

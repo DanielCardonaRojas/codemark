@@ -344,4 +344,16 @@ mod tests {
         assert!(!tabs.handle_click(100, 0));
         assert_eq!(tabs.selected_index(), 2); // Should remain unchanged
     }
+
+    #[test]
+    fn test_set_tab_label() {
+        let mut tabs = TabSelection::new(vec![Tab::new("Initial"), Tab::new("Tab2")]);
+
+        tabs.set_tab_label(0, "Updated");
+        assert_eq!(tabs.tabs[0].label(), "Updated");
+        assert_eq!(tabs.tabs[1].label(), "Tab2");
+
+        // Out of bounds should be safe (no panic)
+        tabs.set_tab_label(10, "Invalid");
+    }
 }
