@@ -260,14 +260,11 @@ impl ResolutionTemplateContext {
         current_head: Option<&str>,
     ) -> Self {
         let mut ctx = Self::from_resolution(r, bm.current_resolution_id.as_deref());
-        if ctx.is_current {
-            if let Ok(status) =
-                crate::engine::projection::project_resolution_status(
-                    r, bm, current_head, repo_path,
-                )
-            {
-                ctx.ui_status = Some(status.to_string());
-            }
+        if ctx.is_current
+            && let Ok(status) =
+                crate::engine::projection::project_resolution_status(r, bm, current_head, repo_path)
+        {
+            ctx.ui_status = Some(status.to_string());
         }
         ctx
     }

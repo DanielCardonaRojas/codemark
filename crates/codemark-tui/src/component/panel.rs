@@ -302,10 +302,7 @@ impl PanelItem {
         // Add emphasized text if present (bold)
         if let Some(emphasis) = &self.emphasis_text {
             spans.push(Span::raw(" "));
-            spans.push(Span::styled(
-                emphasis,
-                Style::default().add_modifier(Modifier::BOLD),
-            ));
+            spans.push(Span::styled(emphasis, Style::default().add_modifier(Modifier::BOLD)));
         }
 
         // Add secondary text if present
