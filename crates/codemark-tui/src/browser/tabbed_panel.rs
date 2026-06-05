@@ -180,15 +180,17 @@ pub fn bookmark_to_panel_item(
     // Shrink the file path to prioritize last path components
     let short_path = shorten_path(&bookmark.file_path, 25);
 
-    // Format: short_file_path summary (or query if summarization failed)
-    let display_text =
-        if summary.is_empty() { short_path } else { format!("{} {}", short_path, summary) };
-
-    PanelItem::new(display_text)
+    let mut item = PanelItem::new(&short_path)
         .metadata(bookmark.created_by.clone().unwrap_or_default())
         .health(health)
         .icon(icon)
-        .user_data(bookmark.id.clone())
+        .user_data(bookmark.id.clone());
+
+    if !summary.is_empty() {
+        item = item.emphasis(summary);
+    }
+
+    item
 }
 
 impl TabbedPanel {

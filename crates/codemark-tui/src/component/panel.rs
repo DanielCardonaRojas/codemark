@@ -126,6 +126,8 @@ impl HealthStatus {
 pub struct PanelItem {
     /// The primary text to display
     text: String,
+    /// Optional emphasized text rendered bold (shown after primary text)
+    emphasis_text: Option<String>,
     /// Optional secondary text (shown in a different color)
     secondary_text: Option<String>,
     /// Optional metadata associated with this item
@@ -166,6 +168,7 @@ impl PanelItem {
     pub fn new(text: impl Into<String>) -> Self {
         Self {
             text: text.into(),
+            emphasis_text: None,
             secondary_text: None,
             metadata: None,
             icon: None,
@@ -183,6 +186,12 @@ impl PanelItem {
     /// Set the icon.
     pub fn icon(mut self, icon: impl Into<String>) -> Self {
         self.icon = Some(icon.into());
+        self
+    }
+
+    /// Set the emphasized text (rendered bold, after primary text).
+    pub fn emphasis(mut self, text: impl Into<String>) -> Self {
+        self.emphasis_text = Some(text.into());
         self
     }
 
@@ -289,6 +298,12 @@ impl PanelItem {
             Style::default()
         };
         spans.push(Span::styled(&self.text, primary_style));
+
+        // Add emphasized text if present (bold)
+        if let Some(emphasis) = &self.emphasis_text {
+            spans.push(Span::raw(" "));
+            spans.push(Span::styled(emphasis, Style::default().add_modifier(Modifier::BOLD)));
+        }
 
         // Add secondary text if present
         if let Some(secondary) = &self.secondary_text {
@@ -418,7 +433,13 @@ impl Panel {
             self.items = self
                 .all_items
                 .iter()
-                .filter(|item| item.text.to_lowercase().contains(&query))
+                .filter(|item| {
+                    item.text.to_lowercase().contains(&query)
+                        || item
+                            .emphasis_text
+                            .as_ref()
+                            .is_some_and(|e| e.to_lowercase().contains(&query))
+                })
                 .cloned()
                 .collect();
         }
@@ -614,7 +635,13 @@ impl Panel {
                 self.items = self
                     .all_items
                     .iter()
-                    .filter(|item| item.text.to_lowercase().contains(&query))
+                    .filter(|item| {
+                        item.text.to_lowercase().contains(&query)
+                            || item
+                                .emphasis_text
+                                .as_ref()
+                                .is_some_and(|e| e.to_lowercase().contains(&query))
+                    })
                     .cloned()
                     .collect();
             }

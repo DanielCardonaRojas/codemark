@@ -174,6 +174,7 @@ impl BrowserLayout {
             pending_remote_repo_url: None,
         };
         layout.update_focus_state();
+        layout.sync_steps_tab_label();
         layout
     }
 
@@ -191,6 +192,23 @@ impl BrowserLayout {
         {
             self.right_pane.load_bookmark(&self.db, id);
         }
+    }
+
+    /// Sync the right pane's first tab label based on the active Panel3 tab.
+    /// Shows "Content" when on Bookmarks (single items), "Steps" otherwise (collections/tours).
+    fn sync_steps_tab_label(&mut self) {
+        let panel3_tab = Panel3Tab::from_index(self.left_pane.panel3.tabs.selected_index());
+        let label = match panel3_tab {
+            Some(Panel3Tab::Bookmarks) => "Content",
+            _ => "Steps",
+        };
+        tracing::debug!(
+            target: "codemark::ui",
+            ?panel3_tab,
+            new_label = %label,
+            "syncing right pane tab label"
+        );
+        self.right_pane.steps.tabs.set_tab_label(0, label);
     }
 
     /// Take the pending external command, if any.

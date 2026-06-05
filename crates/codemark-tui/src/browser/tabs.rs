@@ -106,6 +106,11 @@ impl Tab {
         &self.label
     }
 
+    /// Set the tab label.
+    pub fn set_label(&mut self, label: impl Into<String>) {
+        self.label = label.into();
+    }
+
     /// Render this tab as a Line.
     fn render(&self, selected: bool, _focused: bool) -> Line<'_> {
         let base_style = if selected {
@@ -183,6 +188,13 @@ impl TabSelection {
     /// Check if there are no tabs.
     pub fn is_empty(&self) -> bool {
         self.tabs.is_empty()
+    }
+
+    /// Set the label of a tab by index.
+    pub fn set_tab_label(&mut self, index: usize, label: impl Into<String>) {
+        if let Some(tab) = self.tabs.get_mut(index) {
+            tab.set_label(label);
+        }
     }
 
     /// Render the tabs.
@@ -331,5 +343,17 @@ mod tests {
         // Click outside tabs
         assert!(!tabs.handle_click(100, 0));
         assert_eq!(tabs.selected_index(), 2); // Should remain unchanged
+    }
+
+    #[test]
+    fn test_set_tab_label() {
+        let mut tabs = TabSelection::new(vec![Tab::new("Initial"), Tab::new("Tab2")]);
+
+        tabs.set_tab_label(0, "Updated");
+        assert_eq!(tabs.tabs[0].label(), "Updated");
+        assert_eq!(tabs.tabs[1].label(), "Tab2");
+
+        // Out of bounds should be safe (no panic)
+        tabs.set_tab_label(10, "Invalid");
     }
 }

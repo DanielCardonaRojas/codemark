@@ -644,6 +644,7 @@ impl BrowserLayout {
                 let new_tab = self.left_pane.panel3.tabs.selected_index();
                 if new_tab != old_tab {
                     self.refresh_tags();
+                    self.sync_steps_tab_label();
                     if Panel3Tab::from_index(new_tab) == Some(Panel3Tab::Tours) {
                         self.fetch_remote_tours();
                     }
@@ -689,6 +690,7 @@ impl BrowserLayout {
                 let new_tab = self.left_pane.panel3.tabs.selected_index();
                 if new_tab != old_tab {
                     self.refresh_tags();
+                    self.sync_steps_tab_label();
                     if Panel3Tab::from_index(new_tab) == Some(Panel3Tab::Tours) {
                         self.fetch_remote_tours();
                     }
