@@ -32,7 +32,7 @@ use codemark_core::storage::{SemanticRepo, db::Database};
 use ratatui::{
     buffer::Buffer,
     layout::{Constraint, Direction, Layout, Rect},
-    style::{Color, Style},
+    style::{Color, Style, Stylize},
     text::{Line, Span},
 };
 
@@ -882,6 +882,12 @@ impl BrowserLayout {
                 Style::default().fg(Color::Magenta),
             ));
         }
+
+        spans.push(Span::styled(" | ", Style::default().fg(Color::Gray)));
+        spans.push(Span::styled(
+            format!("v{}", env!("CARGO_PKG_VERSION")),
+            Style::default().fg(Color::White).bold(),
+        ));
 
         Line::from(spans)
     }
