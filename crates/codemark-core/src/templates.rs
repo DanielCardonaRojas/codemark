@@ -249,6 +249,10 @@ impl ResolutionTemplateContext {
     }
 
     /// Create a template context from a resolution with projected UI status.
+    ///
+    /// Only the current resolution gets a projected `ui_status`; historical
+    /// resolutions are left with `ui_status: None` because the projection
+    /// algorithm is only meaningful relative to the bookmark's current pointer.
     pub fn from_resolution_projected(
         r: &Resolution,
         bm: &Bookmark,
@@ -256,10 +260,14 @@ impl ResolutionTemplateContext {
         current_head: Option<&str>,
     ) -> Self {
         let mut ctx = Self::from_resolution(r, bm.current_resolution_id.as_deref());
-        if let Ok(status) =
-            crate::engine::projection::project_resolution_status(r, bm, current_head, repo_path)
-        {
-            ctx.ui_status = Some(status.to_string());
+        if ctx.is_current {
+            if let Ok(status) =
+                crate::engine::projection::project_resolution_status(
+                    r, bm, current_head, repo_path,
+                )
+            {
+                ctx.ui_status = Some(status.to_string());
+            }
         }
         ctx
     }
