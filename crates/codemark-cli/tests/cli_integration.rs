@@ -281,6 +281,24 @@ fn add_and_resolve_round_trip() {
 }
 
 #[test]
+fn add_sets_repo_id_on_bookmark() {
+    let cm = Codemark::new();
+
+    let json =
+        cm.run_json(&["add", "--file", &cm.fixture("rust/auth_service.rs"), "--range", "108"]);
+    assert_eq!(json["success"], true);
+    let id = json["data"]["id"].as_str().unwrap().to_string();
+
+    // show returns the full bookmark with repo_id
+    let json = cm.run_json(&["show", &id[..8]]);
+    let repo_id = &json["data"]["bookmark"]["repo_id"];
+    assert!(
+        repo_id.is_string() && !repo_id.as_str().unwrap().is_empty(),
+        "expected non-null repo_id, got: {repo_id}"
+    );
+}
+
+#[test]
 fn add_dry_run_does_not_persist() {
     let cm = Codemark::new();
 

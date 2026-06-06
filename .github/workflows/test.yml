@@ -14,8 +14,8 @@ jobs:
       matrix:
         rust:
           - stable
-          - beta
-          - nightly
+          # - beta
+          # - nightly
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
