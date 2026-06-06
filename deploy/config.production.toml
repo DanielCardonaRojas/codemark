@@ -13,5 +13,5 @@ mode = "github"
 # Secrets are read from environment variables:
 #   GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET, JWT_SECRET
 #
-# Set callback_url to match your domain:
-# callback_url = "https://your-domain.com/auth/github/callback"
+# Must match your public HTTPS domain configured in Caddy/GitHub OAuth app
+callback_url = "https://your-domain.com/auth/github/callback"
