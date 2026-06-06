@@ -1,0 +1,17 @@
+host = "0.0.0.0"
+port = 8080
+data_dir = "/data"
+log_level = "info"
+
+[storage]
+pool_size = 8
+
+[auth]
+mode = "github"
+
+[auth.github]
+# Secrets are read from environment variables:
+#   GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET, JWT_SECRET
+#
+# Set callback_url to match your domain:
+# callback_url = "https://your-domain.com/auth/github/callback"
