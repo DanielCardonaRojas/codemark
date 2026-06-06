@@ -19,7 +19,7 @@ RUN mkdir -p crates/codemark-tui/src && echo "fn main() {}" > crates/codemark-tu
 COPY crates/codemark-tui/Cargo.toml crates/codemark-tui/Cargo.toml
 
 # Pre-build dependencies (this layer is cached as long as Cargo.toml/lock don't change)
-RUN cargo build --release -p codetours-server 2>/dev/null || true
+RUN cargo build --release -p codetours-server 2>&1 || true
 
 # Copy actual source code and files referenced by include_str! in codemark-core
 COPY config config
@@ -39,6 +39,7 @@ FROM debian:bookworm-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 RUN groupadd --system codetours && useradd --system --gid codetours codetours

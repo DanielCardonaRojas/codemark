@@ -2,7 +2,7 @@ services:
   server:
     build: .
     volumes:
-      - ./data:/data
+      - codetours_data:/data
       - ./deploy/config.production.toml:/etc/codetours/config.toml:ro
     environment:
       - GITHUB_CLIENT_ID
@@ -10,6 +10,12 @@ services:
       - JWT_SECRET
     env_file:
       - .env
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
     restart: unless-stopped
 
   caddy:
@@ -24,12 +30,12 @@ services:
       - caddy_config:/config
     environment:
       - DOMAIN
-    env_file:
-      - .env
     depends_on:
-      - server
+      server:
+        condition: service_healthy
     restart: unless-stopped
 
 volumes:
+  codetours_data:
   caddy_data:
   caddy_config:
