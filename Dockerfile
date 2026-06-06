@@ -40,6 +40,7 @@ FROM debian:bookworm-slim
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     curl \
+    libgit2-1.5 \
     && rm -rf /var/lib/apt/lists/*
 
 RUN groupadd --system codetours && useradd --system --gid codetours codetours
@@ -53,4 +54,4 @@ USER codetours
 EXPOSE 8080
 
 ENTRYPOINT ["codetours"]
-CMD ["--json-logs", "--config", "/etc/codetours/config.toml"]
+CMD ["--json-logs"]
