@@ -100,10 +100,13 @@ impl Packer {
 
         // 2. Insert bookmarks
         for bm in &payload.bookmarks {
+            tracing::debug!(target: "codemark::db", id = %bm.id, file = %bm.file_path, "exporting bookmark to pack");
+            // repo_id is intentionally omitted: packs don't include repos rows,
+            // so persisting it would create a dangling foreign key on import.
             conn.execute(
                 "INSERT INTO bookmarks (id, query, language, file_path, content_hash, commit_hash,
-                 created_at, created_by, current_resolution_id, repo_id)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                 created_at, created_by, current_resolution_id)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
                 params![
                     bm.id,
                     bm.query,
@@ -114,7 +117,6 @@ impl Packer {
                     bm.created_at,
                     bm.created_by,
                     bm.current_resolution_id,
-                    bm.repo_id,
                 ],
             )?;
 

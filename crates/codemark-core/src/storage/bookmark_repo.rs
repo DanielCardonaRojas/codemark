@@ -201,20 +201,32 @@ impl Database {
         }
     }
 
-    /// Find an existing bookmark by file_path and query.
+    /// Find an existing bookmark by repo_id, file_path, and query.
     pub fn find_bookmark_by_location(
         &self,
         file_path: &str,
         query: &str,
+        repo_id: Option<&str>,
     ) -> Result<Option<Bookmark>> {
-        let mut stmt = self.conn().prepare(
+        let sql = if repo_id.is_some() {
             "SELECT b.id, b.query, b.language, b.file_path, b.content_hash, b.commit_hash,
              r.health, r.method, r.resolved_at, NULL as stale_since, b.created_at, b.created_by, b.current_resolution_id, b.repo_id
              FROM bookmarks b
              LEFT JOIN resolutions r ON b.current_resolution_id = r.id
-             WHERE b.file_path = ?1 AND b.query = ?2",
-        )?;
-        let mut rows = stmt.query_map(rusqlite::params![file_path, query], row_to_bookmark_base)?;
+             WHERE b.repo_id = ?1 AND b.file_path = ?2 AND b.query = ?3"
+        } else {
+            "SELECT b.id, b.query, b.language, b.file_path, b.content_hash, b.commit_hash,
+             r.health, r.method, r.resolved_at, NULL as stale_since, b.created_at, b.created_by, b.current_resolution_id, b.repo_id
+             FROM bookmarks b
+             LEFT JOIN resolutions r ON b.current_resolution_id = r.id
+             WHERE b.repo_id IS NULL AND b.file_path = ?1 AND b.query = ?2"
+        };
+        let mut stmt = self.conn().prepare(sql)?;
+        let mut rows = if let Some(rid) = repo_id {
+            stmt.query_map(rusqlite::params![rid, file_path, query], row_to_bookmark_base)?
+        } else {
+            stmt.query_map(rusqlite::params![file_path, query], row_to_bookmark_base)?
+        };
         match rows.next() {
             Some(row) => {
                 let mut bm = row?;
@@ -678,6 +690,38 @@ mod tests {
     }
 
     #[test]
+    fn insert_duplicate_with_repo_id_returns_existing_id() {
+        init_test_env();
+        let db = Database::open_in_memory().unwrap();
+
+        // Create a repo for the FK constraint
+        let repo = crate::engine::bookmark::Repo {
+            id: "repo-1".to_string(),
+            repo_owner: "owner".to_string(),
+            repo_name: "repo".to_string(),
+            origin_url: Some("https://github.com/owner/repo".to_string()),
+            repo_root: "/tmp/repo".to_string(),
+            db_owner_email: "test@test.com".to_string(),
+            db_owner_name: Some("Test".to_string()),
+            detected_at: "2024-01-01T00:00:00Z".to_string(),
+        };
+        db.upsert_repo(&repo).unwrap();
+
+        let mut bm1 = test_bookmark("aaaa-1111-2222-3333");
+        bm1.repo_id = Some("repo-1".to_string());
+
+        let mut bm2 = test_bookmark("bbbb-4444-5555-6666");
+        bm2.query = bm1.query.clone();
+        bm2.file_path = bm1.file_path.clone();
+        bm2.repo_id = Some("repo-1".to_string());
+
+        db.insert_bookmark(&bm1).unwrap();
+        let existing_id = db.insert_bookmark(&bm2).unwrap();
+
+        assert_eq!(existing_id, bm1.id);
+    }
+
+    #[test]
     fn insert_and_load_annotations() {
         init_test_env();
         let db = Database::open_in_memory().unwrap();
@@ -957,12 +1001,13 @@ mod tests {
         let expected_query = bm.query.clone();
         db.insert_bookmark(&bm).unwrap();
 
-        let found = db.find_bookmark_by_location(&expected_path, &expected_query).unwrap();
+        let found = db.find_bookmark_by_location(&expected_path, &expected_query, None).unwrap();
         assert!(found.is_some());
         assert_eq!(found.unwrap().id, "test-id");
 
-        let not_found =
-            db.find_bookmark_by_location("other.swift", "(function_declaration) @target").unwrap();
+        let not_found = db
+            .find_bookmark_by_location("other.swift", "(function_declaration) @target", None)
+            .unwrap();
         assert!(not_found.is_none());
     }
 
