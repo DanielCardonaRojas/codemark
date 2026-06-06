@@ -20,8 +20,8 @@ impl Database {
         // Try to insert with OR FAIL to check for uniqueness constraint
         let result = tx.execute(
             "INSERT INTO bookmarks (id, query, language, file_path, content_hash, commit_hash,
-             created_at, created_by)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+             created_at, created_by, repo_id)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
             rusqlite::params![
                 bookmark.id,
                 bookmark.query,
@@ -31,6 +31,7 @@ impl Database {
                 bookmark.commit_hash,
                 bookmark.created_at,
                 bookmark.created_by,
+                bookmark.repo_id,
             ],
         );
 
@@ -67,12 +68,20 @@ impl Database {
             Err(rusqlite::Error::SqliteFailure(err, _))
                 if err.code == rusqlite::ErrorCode::ConstraintViolation =>
             {
-                // Bookmark with same file_path and query exists, fetch its ID
-                let existing_id: String = tx.query_row(
-                    "SELECT id FROM bookmarks WHERE file_path = ?1 AND query = ?2",
-                    rusqlite::params![bookmark.file_path, bookmark.query],
-                    |row| row.get(0),
-                )?;
+                // Bookmark with same (repo_id, file_path, query) exists, fetch its ID
+                let existing_id: String = if bookmark.repo_id.is_some() {
+                    tx.query_row(
+                        "SELECT id FROM bookmarks WHERE repo_id = ?1 AND file_path = ?2 AND query = ?3",
+                        rusqlite::params![bookmark.repo_id, bookmark.file_path, bookmark.query],
+                        |row| row.get(0),
+                    )?
+                } else {
+                    tx.query_row(
+                        "SELECT id FROM bookmarks WHERE repo_id IS NULL AND file_path = ?1 AND query = ?2",
+                        rusqlite::params![bookmark.file_path, bookmark.query],
+                        |row| row.get(0),
+                    )?
+                };
                 Ok(existing_id)
             }
             Err(e) => Err(Error::from(e)),

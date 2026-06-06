@@ -102,8 +102,8 @@ impl Packer {
         for bm in &payload.bookmarks {
             conn.execute(
                 "INSERT INTO bookmarks (id, query, language, file_path, content_hash, commit_hash,
-                 created_at, created_by, current_resolution_id)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                 created_at, created_by, current_resolution_id, repo_id)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
                 params![
                     bm.id,
                     bm.query,
@@ -114,6 +114,7 @@ impl Packer {
                     bm.created_at,
                     bm.created_by,
                     bm.current_resolution_id,
+                    bm.repo_id,
                 ],
             )?;
 
