@@ -367,8 +367,12 @@ pub async fn handle_import(cli: &Cli, mode: &OutputMode, args: &ImportArgs) -> R
         if db.get_bookmark(&bm.id)?.is_some() {
             skipped += 1;
         } else {
+            // Clear repo_id: the source repo may not exist in this database,
+            // and inserting a foreign repo_id would violate the FK constraint.
+            let mut bm = bm.clone();
+            bm.repo_id = None;
             // Insert the bookmark (without annotations/tags in the main table)
-            let bookmark_id = db.insert_bookmark(bm)?;
+            let bookmark_id = db.insert_bookmark(&bm)?;
 
             // Insert annotations if present
             for ann in &bm.annotations {
