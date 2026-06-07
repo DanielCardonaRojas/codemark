@@ -3,7 +3,7 @@
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
-    style::{Color, Style},
+    style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Scrollbar, ScrollbarOrientation, ScrollbarState, StatefulWidget, Widget},
 };
@@ -65,6 +65,8 @@ pub struct CodePreview {
     last_area: std::cell::Cell<Rect>,
     /// Cache for highlighted lines to avoid re-highlighting on every frame
     cached_lines: RefCell<Vec<Line<'static>>>,
+    /// Optional file name header displayed above the code
+    file_header: Option<String>,
 }
 
 impl CodePreview {
@@ -81,6 +83,7 @@ impl CodePreview {
             focused: false,
             last_area: std::cell::Cell::new(Rect::default()),
             cached_lines: RefCell::new(Vec::new()),
+            file_header: None,
         };
         preview.refresh_cache();
         preview
@@ -101,6 +104,11 @@ impl CodePreview {
             self.extension = extension;
             self.refresh_cache();
         }
+    }
+
+    /// Set the file header displayed above the code preview.
+    pub fn set_file_header(&mut self, header: Option<String>) {
+        self.file_header = header;
     }
 
     /// Refresh the syntax highlighting cache.
@@ -204,12 +212,38 @@ impl CodePreview {
 
 impl Component for CodePreview {
     fn render(&self, area: Rect, buf: &mut Buffer) {
-        self.last_area.set(area);
+        // Render file header if set, and offset code area accordingly
+        let code_area = if let Some(ref header) = self.file_header {
+            if area.height < 2 {
+                // Not enough room for header + code
+                area
+            } else {
+                let header_area = Rect { height: 1, ..area };
+                let code_area = Rect {
+                    y: area.y + 1,
+                    height: area.height.saturating_sub(1),
+                    ..area
+                };
+
+                let header_line = Line::from(Span::styled(
+                    format!(" {}", header),
+                    Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+                ));
+                ratatui::widgets::Paragraph::new(header_line).render(header_area, buf);
+
+                code_area
+            }
+        } else {
+            area
+        };
+
+        // Store the code area (not full area) so scroll calculations use the correct height
+        self.last_area.set(code_area);
 
         let cached = self.cached_lines.borrow();
         let selected_range = self.selected_range;
         let list_len = cached.len();
-        let height = area.height as usize;
+        let height = code_area.height as usize;
 
         // Build text lines with sign column indicators
         let mut text_lines = Vec::with_capacity(list_len);
@@ -246,7 +280,7 @@ impl Component for CodePreview {
         let paragraph =
             ratatui::widgets::Paragraph::new(text_lines).scroll((self.scroll_offset, 0));
 
-        paragraph.render(area, buf);
+        paragraph.render(code_area, buf);
 
         // Render scrollbar
         if !self.code.is_empty() && list_len > height {
@@ -260,10 +294,10 @@ impl Component for CodePreview {
                 ScrollbarState::new(list_len).position(self.scroll_offset as usize);
 
             let scrollbar_area = Rect {
-                x: area.right().saturating_sub(1),
-                y: area.top(),
+                x: code_area.right().saturating_sub(1),
+                y: code_area.top(),
                 width: 1,
-                height: area.height,
+                height: code_area.height,
             };
 
             scrollbar.render(scrollbar_area, buf, &mut scrollbar_state);

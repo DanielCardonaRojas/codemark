@@ -111,6 +111,15 @@ impl RightPane {
             if let Some(preview) = self.steps.get_step_preview_mut() {
                 preview.set_code(code);
                 preview.set_extension(ext.to_string());
+
+                // Use the bookmark's relative file path (or the resolution's override)
+                let relative_path = step
+                    .resolution
+                    .as_ref()
+                    .and_then(|r| r.file_path.clone())
+                    .unwrap_or_else(|| step.bookmark.file_path.clone());
+                preview.set_file_header(Some(relative_path));
+
                 preview.jump_to_range(step.line_number, step.line_end);
             }
 
