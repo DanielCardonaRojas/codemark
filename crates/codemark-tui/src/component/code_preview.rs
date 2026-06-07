@@ -219,11 +219,8 @@ impl Component for CodePreview {
                 area
             } else {
                 let header_area = Rect { height: 1, ..area };
-                let code_area = Rect {
-                    y: area.y + 1,
-                    height: area.height.saturating_sub(1),
-                    ..area
-                };
+                let code_area =
+                    Rect { y: area.y + 1, height: area.height.saturating_sub(1), ..area };
 
                 let header_line = Line::from(Span::styled(
                     format!(" {}", header),
