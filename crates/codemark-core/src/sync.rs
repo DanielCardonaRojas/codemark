@@ -140,9 +140,8 @@ pub fn resolve_server_and_token(config: &Config) -> Result<(String, Option<Strin
     if token.is_none() {
         token = registry::open_registry()
             .ok()
-            .and_then(|conn| registry::get_server(&conn, &server_url).ok())
-            .flatten()
-            .and_then(|s| s.token);
+            .and_then(|conn| registry::resolve_token(&conn, &server_url, None).ok())
+            .flatten();
     }
 
     Ok((server_url, token))

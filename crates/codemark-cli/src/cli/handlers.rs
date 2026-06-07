@@ -594,6 +594,7 @@ fn sync_to_global_registry(
             db_owner_email,
             db_owner_name,
             server_url: server_url.as_deref(),
+            default_username: None,
         },
     );
 }

@@ -65,14 +65,12 @@ pub fn resolve_server_and_token(
             }
         }
 
-        // 3. Check for a default server in registry
-        // Note: This uses servers.first() which is non-deterministic.
-        // TODO: Add is_default flag to registry or require explicit default
-        if let Ok(servers) = registry::list_servers(&conn)
-            && let Some(server) = servers.first()
+        // 3. Check for a default account in registry
+        if let Ok(accounts) = registry::list_accounts(&conn, None)
+            && let Some(account) = accounts.first()
         {
-            let token = server.token.clone();
-            return Ok((server.url.clone(), token));
+            let token = Some(account.token.clone());
+            return Ok((account.server_url.clone(), token));
         }
     }
 
@@ -124,8 +122,6 @@ pub fn build_auth_headers(token: Option<&String>) -> Result<HeaderMap> {
 /// Get auth token for a server from the registry.
 pub fn get_token_for_server(server_url: &str) -> Result<Option<String>> {
     let conn = registry::open_registry()?;
-    let server = registry::get_server(&conn, server_url)
-        .map_err(|e| Error::Database(format!("Failed to query server: {}", e)))?;
-
-    Ok(server.and_then(|s| s.token))
+    registry::resolve_token(&conn, server_url, None)
+        .map_err(|e| Error::Database(format!("Failed to query account: {}", e)))
 }
