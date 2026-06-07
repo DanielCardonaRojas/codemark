@@ -118,6 +118,7 @@ impl RightPane {
                     .as_ref()
                     .and_then(|r| r.file_path.clone())
                     .unwrap_or_else(|| step.bookmark.file_path.clone());
+                tracing::debug!(target: "codemark::ui", %relative_path, "Setting preview file header");
                 preview.set_file_header(Some(relative_path));
 
                 preview.jump_to_range(step.line_number, step.line_end);
