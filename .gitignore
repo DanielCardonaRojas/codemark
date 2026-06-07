@@ -22,3 +22,6 @@ codetours.toml
 .env
 .env.local
 .env.*.local
+
+# Local docker-compose overrides
+docker-compose.override.yml

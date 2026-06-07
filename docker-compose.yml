@@ -2,8 +2,8 @@ services:
   server:
     build: .
     command: ["--json-logs", "--config", "/etc/codetours/config.toml"]
-    ports:
-      - "8080:8080"
+    expose:
+      - "8080"
     volumes:
       - codetours_data:/data
       - ./deploy/config.production.toml:/etc/codetours/config.toml:ro
