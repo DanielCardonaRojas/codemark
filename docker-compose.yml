@@ -1,0 +1,44 @@
+services:
+  server:
+    build: .
+    command: ["--json-logs", "--config", "/etc/codetours/config.toml"]
+    expose:
+      - "8080"
+    volumes:
+      - codetours_data:/data
+      - ./deploy/config.production.toml:/etc/codetours/config.toml:ro
+    environment:
+      - GITHUB_CLIENT_ID
+      - GITHUB_CLIENT_SECRET
+      - JWT_SECRET
+    env_file:
+      - .env
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    environment:
+      - DOMAIN=${DOMAIN:?DOMAIN must be set to your public hostname}
+    depends_on:
+      server:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  codetours_data:
+  caddy_data:
+  caddy_config:

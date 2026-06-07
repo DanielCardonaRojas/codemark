@@ -1,0 +1,37 @@
+target/
+.git/
+.gitignore
+data/
+pack-cache/
+
+# Environment and secrets
+.env
+.env.*
+
+# IDE and OS
+.DS_Store
+.vscode/
+.idea/
+
+# Documentation and metadata
+*.md
+man/
+site/
+dev-docs/
+lat.md/
+graphify-out/
+
+# Node (if present)
+node_modules/
+
+# Claude / AI tooling
+.claude
+.mcp.json
+.gemini/
+
+# Local config
+codetours.toml
+.codemark/
+
+# Deploy artifacts (Caddyfile is mounted separately)
+deploy/
