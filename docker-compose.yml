@@ -2,6 +2,8 @@ services:
   server:
     build: .
     command: ["--json-logs", "--config", "/etc/codetours/config.toml"]
+    ports:
+      - "8080:8080"
     volumes:
       - codetours_data:/data
       - ./deploy/config.production.toml:/etc/codetours/config.toml:ro
@@ -30,7 +32,7 @@ services:
       - caddy_data:/data
       - caddy_config:/config
     environment:
-      - DOMAIN
+      - DOMAIN=${DOMAIN:?DOMAIN must be set to your public hostname}
     depends_on:
       server:
         condition: service_healthy
