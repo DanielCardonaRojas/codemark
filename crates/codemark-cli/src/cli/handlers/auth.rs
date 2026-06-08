@@ -37,6 +37,7 @@ pub async fn handle_login(_cli: &Cli, mode: &OutputMode, args: &AuthLoginArgs) -
             &conn,
             &registry::AccountUpsert {
                 server_url: &server_url,
+                forge_kind: &args.forge,
                 username,
                 email,
                 token,
@@ -54,6 +55,7 @@ pub async fn handle_login(_cli: &Cli, mode: &OutputMode, args: &AuthLoginArgs) -
                     "message": message,
                     "server": server_url,
                     "username": username,
+                    "forge_kind": args.forge,
                     "method": "token",
                 })
             );
@@ -162,6 +164,7 @@ async fn handle_device_login(
                 &conn,
                 &registry::AccountUpsert {
                     server_url,
+                    forge_kind: "github",
                     username: &username,
                     email,
                     token,
@@ -227,7 +230,7 @@ pub async fn handle_logout(_cli: &Cli, mode: &OutputMode, args: &AuthLogoutArgs)
         return Err(Error::Operation(format!("Not logged in to {} as {}", server_url, user)));
     }
 
-    registry::delete_account(&conn, &server_url, args.user.as_deref())?;
+    registry::delete_account(&conn, &server_url, args.user.as_deref(), None)?;
     drop(conn);
 
     let message = if let Some(ref user) = args.user {
@@ -278,6 +281,7 @@ pub async fn handle_list(_cli: &Cli, mode: &OutputMode) -> Result<()> {
         .map(|a| {
             serde_json::json!({
                 "server_url": a.server_url,
+                "forge_kind": a.forge_kind,
                 "username": a.username,
                 "email": a.email,
                 "is_default": a.is_default,
@@ -299,7 +303,10 @@ pub async fn handle_list(_cli: &Cli, mode: &OutputMode) -> Result<()> {
     } else {
         println!("{}", message);
         for account in &accounts {
-            println!("  - {} @ {}", account.username, account.server_url);
+            println!(
+                "  - {} @ {} ({})",
+                account.username, account.server_url, account.forge_kind
+            );
         }
     }
 

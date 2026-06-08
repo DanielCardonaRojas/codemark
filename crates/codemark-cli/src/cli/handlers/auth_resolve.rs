@@ -64,6 +64,7 @@ pub fn resolve_server_and_token(
                     &conn,
                     server_url,
                     known_repo.default_username.as_deref(),
+                    None,
                 )?;
                 return Ok((server_url.clone(), token));
             }
@@ -123,6 +124,6 @@ pub fn build_auth_headers(token: Option<&String>) -> Result<HeaderMap> {
 /// Get auth token for a server from the registry.
 pub fn get_token_for_server(server_url: &str) -> Result<Option<String>> {
     let conn = registry::open_registry()?;
-    registry::resolve_token(&conn, server_url, None)
+    registry::resolve_token(&conn, server_url, None, None)
         .map_err(|e| Error::Database(format!("Failed to query account: {}", e)))
 }

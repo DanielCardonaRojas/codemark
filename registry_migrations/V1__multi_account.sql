@@ -18,12 +18,13 @@ CREATE INDEX IF NOT EXISTS idx_known_repos_owner_name ON known_repos(repo_owner,
 
 CREATE TABLE IF NOT EXISTS accounts (
     server_url      TEXT NOT NULL,
+    forge_kind      TEXT NOT NULL DEFAULT 'github',
     username        TEXT NOT NULL,
     email           TEXT,
     token           TEXT NOT NULL,
     is_default      INTEGER NOT NULL DEFAULT 0,
     last_used       TEXT,
-    PRIMARY KEY (server_url, username)
+    PRIMARY KEY (server_url, forge_kind, username)
 );
 
 CREATE INDEX IF NOT EXISTS idx_accounts_server ON accounts(server_url);

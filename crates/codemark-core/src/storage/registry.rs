@@ -129,12 +129,13 @@ fn migrate_v0_to_v1(conn: &Connection) -> Result<()> {
         conn.execute_batch(
             "CREATE TABLE IF NOT EXISTS accounts (
                 server_url      TEXT NOT NULL,
+                forge_kind      TEXT NOT NULL DEFAULT 'github',
                 username        TEXT NOT NULL,
                 email           TEXT,
                 token           TEXT NOT NULL,
                 is_default      INTEGER NOT NULL DEFAULT 0,
                 last_used       TEXT,
-                PRIMARY KEY (server_url, username)
+                PRIMARY KEY (server_url, forge_kind, username)
             );
 
             CREATE INDEX IF NOT EXISTS idx_accounts_server ON accounts(server_url);
@@ -144,10 +145,12 @@ fn migrate_v0_to_v1(conn: &Connection) -> Result<()> {
 
         // 2. Migrate servers → accounts, using db_owner_email from known_repos as username when available.
         // Use a scalar subquery (not LEFT JOIN) to pick exactly one canonical identity per server,
-        // avoiding duplicate (server_url, username) PK rows when multiple repos reference the same server.
+        // avoiding duplicate (server_url, forge_kind, username) PK rows when multiple repos reference the same server.
+        // Hardcode forge_kind = 'github' since v0 only supported GitHub.
         conn.execute_batch(
-            "INSERT INTO accounts (server_url, username, email, token, is_default, last_used)
+            "INSERT INTO accounts (server_url, forge_kind, username, email, token, is_default, last_used)
              SELECT s.url,
+                    'github',
                     COALESCE(
                         (SELECT kr.db_owner_email FROM known_repos kr
                          WHERE kr.server_url = s.url ORDER BY kr.last_seen_at DESC LIMIT 1),
@@ -231,6 +234,7 @@ pub struct RepoUpsert<'a> {
 #[derive(Debug, Clone)]
 pub struct Account {
     pub server_url: String,
+    pub forge_kind: String,
     pub username: String,
     pub email: Option<String>,
     pub token: String,
@@ -241,6 +245,7 @@ pub struct Account {
 /// Builder for upserting an account to the global registry.
 pub struct AccountUpsert<'a> {
     pub server_url: &'a str,
+    pub forge_kind: &'a str,
     pub username: &'a str,
     pub email: Option<&'a str>,
     pub token: &'a str,
@@ -250,11 +255,12 @@ pub struct AccountUpsert<'a> {
 fn row_to_account(row: &rusqlite::Row) -> rusqlite::Result<Account> {
     Ok(Account {
         server_url: row.get(0)?,
-        username: row.get(1)?,
-        email: row.get(2)?,
-        token: row.get(3)?,
-        is_default: row.get(4)?,
-        last_used: row.get(5)?,
+        forge_kind: row.get(1)?,
+        username: row.get(2)?,
+        email: row.get(3)?,
+        token: row.get(4)?,
+        is_default: row.get(5)?,
+        last_used: row.get(6)?,
     })
 }
 
@@ -266,15 +272,16 @@ pub fn upsert_account(conn: &Connection, account: &AccountUpsert<'_>) -> Result<
     let now = chrono::Utc::now().to_rfc3339();
 
     conn.execute(
-        "INSERT INTO accounts (server_url, username, email, token, is_default, last_used)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6)
-         ON CONFLICT(server_url, username) DO UPDATE SET
+        "INSERT INTO accounts (server_url, forge_kind, username, email, token, is_default, last_used)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+         ON CONFLICT(server_url, forge_kind, username) DO UPDATE SET
              email = COALESCE(excluded.email, accounts.email),
              token = excluded.token,
              is_default = excluded.is_default,
              last_used = excluded.last_used",
         params![
             account.server_url,
+            account.forge_kind,
             account.username,
             account.email,
             account.token,
@@ -286,12 +293,17 @@ pub fn upsert_account(conn: &Connection, account: &AccountUpsert<'_>) -> Result<
     Ok(())
 }
 
-/// Get an account by server URL and username.
-pub fn get_account(conn: &Connection, server_url: &str, username: &str) -> Result<Option<Account>> {
+/// Get an account by server URL, forge kind, and username.
+pub fn get_account(
+    conn: &Connection,
+    server_url: &str,
+    forge_kind: &str,
+    username: &str,
+) -> Result<Option<Account>> {
     conn.query_row(
-        "SELECT server_url, username, email, token, is_default, last_used
-         FROM accounts WHERE server_url = ?1 AND username = ?2",
-        params![server_url, username],
+        "SELECT server_url, forge_kind, username, email, token, is_default, last_used
+         FROM accounts WHERE server_url = ?1 AND forge_kind = ?2 AND username = ?3",
+        params![server_url, forge_kind, username],
         row_to_account,
     )
     .optional()
@@ -301,7 +313,7 @@ pub fn get_account(conn: &Connection, server_url: &str, username: &str) -> Resul
 /// Get the default account for a server (highest is_default, most recent last_used).
 pub fn get_default_account(conn: &Connection, server_url: &str) -> Result<Option<Account>> {
     conn.query_row(
-        "SELECT server_url, username, email, token, is_default, last_used
+        "SELECT server_url, forge_kind, username, email, token, is_default, last_used
          FROM accounts WHERE server_url = ?1
          ORDER BY is_default DESC, last_used DESC
          LIMIT 1",
@@ -316,7 +328,7 @@ pub fn get_default_account(conn: &Connection, server_url: &str) -> Result<Option
 pub fn list_accounts(conn: &Connection, server_url: Option<&str>) -> Result<Vec<Account>> {
     if let Some(url) = server_url {
         let mut stmt = conn.prepare(
-            "SELECT server_url, username, email, token, is_default, last_used
+            "SELECT server_url, forge_kind, username, email, token, is_default, last_used
              FROM accounts WHERE server_url = ?1
              ORDER BY is_default DESC, last_used DESC",
         )?;
@@ -326,7 +338,7 @@ pub fn list_accounts(conn: &Connection, server_url: Option<&str>) -> Result<Vec<
         Ok(accounts)
     } else {
         let mut stmt = conn.prepare(
-            "SELECT server_url, username, email, token, is_default, last_used
+            "SELECT server_url, forge_kind, username, email, token, is_default, last_used
              FROM accounts ORDER BY server_url, is_default DESC, last_used DESC",
         )?;
         let accounts =
@@ -339,14 +351,37 @@ pub fn list_accounts(conn: &Connection, server_url: Option<&str>) -> Result<Vec<
 ///
 /// Also clears `server_url` on any `known_repos` rows that referenced this server
 /// when all accounts for the server are removed.
-pub fn delete_account(conn: &Connection, server_url: &str, username: Option<&str>) -> Result<()> {
-    if let Some(user) = username {
-        conn.execute(
-            "DELETE FROM accounts WHERE server_url = ?1 AND username = ?2",
-            params![server_url, user],
-        )?;
-    } else {
-        conn.execute("DELETE FROM accounts WHERE server_url = ?1", params![server_url])?;
+pub fn delete_account(
+    conn: &Connection,
+    server_url: &str,
+    username: Option<&str>,
+    forge_kind: Option<&str>,
+) -> Result<()> {
+    match (username, forge_kind) {
+        (Some(user), Some(forge)) => {
+            conn.execute(
+                "DELETE FROM accounts WHERE server_url = ?1 AND forge_kind = ?2 AND username = ?3",
+                params![server_url, forge, user],
+            )?;
+        }
+        (Some(user), None) => {
+            conn.execute(
+                "DELETE FROM accounts WHERE server_url = ?1 AND username = ?2",
+                params![server_url, user],
+            )?;
+        }
+        (None, Some(forge)) => {
+            conn.execute(
+                "DELETE FROM accounts WHERE server_url = ?1 AND forge_kind = ?2",
+                params![server_url, forge],
+            )?;
+        }
+        (None, None) => {
+            conn.execute(
+                "DELETE FROM accounts WHERE server_url = ?1",
+                params![server_url],
+            )?;
+        }
     }
 
     // If no accounts remain for this server, clear dangling known_repos references
@@ -368,7 +403,7 @@ pub fn delete_account(conn: &Connection, server_url: &str, username: Option<&str
 /// Get the global default account across all servers (most recently used default).
 pub fn get_global_default_account(conn: &Connection) -> Result<Option<Account>> {
     conn.query_row(
-        "SELECT server_url, username, email, token, is_default, last_used
+        "SELECT server_url, forge_kind, username, email, token, is_default, last_used
          FROM accounts
          ORDER BY is_default DESC, last_used DESC
          LIMIT 1",
@@ -390,18 +425,21 @@ pub fn clear_default_account(conn: &Connection, server_url: &str) -> Result<()> 
 /// Resolve the best token for a server given an optional identity hint.
 ///
 /// Priority:
-/// 1. Exact username match → return token
+/// 1. Exact username + forge_kind match → return token
 /// 2. Email match → return token
 /// 3. Default account (is_default DESC, last_used DESC) → return token
 pub fn resolve_token(
     conn: &Connection,
     server_url: &str,
     identity_hint: Option<&str>,
+    forge_kind: Option<&str>,
 ) -> Result<Option<String>> {
     if let Some(hint) = identity_hint {
-        // Try exact username match
-        if let Some(account) = get_account(conn, server_url, hint)? {
-            return Ok(Some(account.token));
+        // Try exact username match (with forge_kind when provided)
+        if let Some(forge) = forge_kind {
+            if let Some(account) = get_account(conn, server_url, forge, hint)? {
+                return Ok(Some(account.token));
+            }
         }
 
         // Try email match
@@ -860,6 +898,7 @@ mod account_tests {
             &conn,
             &AccountUpsert {
                 server_url: "https://codemark.example.com",
+                forge_kind: "github",
                 username: "alice",
                 email: Some("alice@example.com"),
                 token: "token123",
@@ -868,7 +907,7 @@ mod account_tests {
         )
         .unwrap();
 
-        let account = get_account(&conn, "https://codemark.example.com", "alice").unwrap().unwrap();
+        let account = get_account(&conn, "https://codemark.example.com", "github", "alice").unwrap().unwrap();
         assert_eq!(account.server_url, "https://codemark.example.com");
         assert_eq!(account.username, "alice");
         assert_eq!(account.email, Some("alice@example.com".to_string()));
@@ -881,6 +920,7 @@ mod account_tests {
             &conn,
             &AccountUpsert {
                 server_url: "https://codemark.example.com",
+                forge_kind: "github",
                 username: "alice",
                 email: Some("alice@example.com"),
                 token: "new_token",
@@ -888,7 +928,7 @@ mod account_tests {
             },
         )
         .unwrap();
-        let account = get_account(&conn, "https://codemark.example.com", "alice").unwrap().unwrap();
+        let account = get_account(&conn, "https://codemark.example.com", "github", "alice").unwrap().unwrap();
         assert_eq!(account.token, "new_token");
     }
 
@@ -900,6 +940,7 @@ mod account_tests {
             &conn,
             &AccountUpsert {
                 server_url: "https://server1.com",
+                forge_kind: "github",
                 username: "user1",
                 email: None,
                 token: "token1",
@@ -911,6 +952,7 @@ mod account_tests {
             &conn,
             &AccountUpsert {
                 server_url: "https://server2.com",
+                forge_kind: "github",
                 username: "user2",
                 email: None,
                 token: "token2",
@@ -936,6 +978,7 @@ mod account_tests {
             &conn,
             &AccountUpsert {
                 server_url: "https://server.com",
+                forge_kind: "github",
                 username: "user",
                 email: None,
                 token: "token",
@@ -943,10 +986,10 @@ mod account_tests {
             },
         )
         .unwrap();
-        assert!(get_account(&conn, "https://server.com", "user").unwrap().is_some());
+        assert!(get_account(&conn, "https://server.com", "github", "user").unwrap().is_some());
 
-        delete_account(&conn, "https://server.com", Some("user")).unwrap();
-        assert!(get_account(&conn, "https://server.com", "user").unwrap().is_none());
+        delete_account(&conn, "https://server.com", Some("user"), None).unwrap();
+        assert!(get_account(&conn, "https://server.com", "github", "user").unwrap().is_none());
     }
 
     #[test]
@@ -957,6 +1000,7 @@ mod account_tests {
             &conn,
             &AccountUpsert {
                 server_url: "https://server.com",
+                forge_kind: "github",
                 username: "alice",
                 email: None,
                 token: "token1",
@@ -968,6 +1012,7 @@ mod account_tests {
             &conn,
             &AccountUpsert {
                 server_url: "https://server.com",
+                forge_kind: "github",
                 username: "bob",
                 email: None,
                 token: "token2",
@@ -979,7 +1024,7 @@ mod account_tests {
         assert_eq!(list_accounts(&conn, Some("https://server.com")).unwrap().len(), 2);
 
         // Delete all accounts for server (username = None)
-        delete_account(&conn, "https://server.com", None).unwrap();
+        delete_account(&conn, "https://server.com", None, None).unwrap();
         assert_eq!(list_accounts(&conn, Some("https://server.com")).unwrap().len(), 0);
     }
 
@@ -991,6 +1036,7 @@ mod account_tests {
             &conn,
             &AccountUpsert {
                 server_url: "https://server.com",
+                forge_kind: "github",
                 username: "alice",
                 email: Some("alice@example.com"),
                 token: "alice_token",
@@ -1002,6 +1048,7 @@ mod account_tests {
             &conn,
             &AccountUpsert {
                 server_url: "https://server.com",
+                forge_kind: "github",
                 username: "bob",
                 email: Some("bob@example.com"),
                 token: "bob_token",
@@ -1011,7 +1058,7 @@ mod account_tests {
         .unwrap();
 
         // Exact username match
-        let token = resolve_token(&conn, "https://server.com", Some("alice")).unwrap();
+        let token = resolve_token(&conn, "https://server.com", Some("alice"), Some("github")).unwrap();
         assert_eq!(token, Some("alice_token".to_string()));
     }
 
@@ -1023,6 +1070,7 @@ mod account_tests {
             &conn,
             &AccountUpsert {
                 server_url: "https://server.com",
+                forge_kind: "github",
                 username: "alice",
                 email: Some("alice@example.com"),
                 token: "alice_token",
@@ -1032,7 +1080,7 @@ mod account_tests {
         .unwrap();
 
         // Email match
-        let token = resolve_token(&conn, "https://server.com", Some("alice@example.com")).unwrap();
+        let token = resolve_token(&conn, "https://server.com", Some("alice@example.com"), Some("github")).unwrap();
         assert_eq!(token, Some("alice_token".to_string()));
     }
 
@@ -1044,6 +1092,7 @@ mod account_tests {
             &conn,
             &AccountUpsert {
                 server_url: "https://server.com",
+                forge_kind: "github",
                 username: "alice",
                 email: None,
                 token: "alice_token",
@@ -1055,6 +1104,7 @@ mod account_tests {
             &conn,
             &AccountUpsert {
                 server_url: "https://server.com",
+                forge_kind: "github",
                 username: "bob",
                 email: None,
                 token: "bob_token",
@@ -1064,11 +1114,11 @@ mod account_tests {
         .unwrap();
 
         // No hint → falls back to default (bob, is_default=true)
-        let token = resolve_token(&conn, "https://server.com", None).unwrap();
+        let token = resolve_token(&conn, "https://server.com", None, None).unwrap();
         assert_eq!(token, Some("bob_token".to_string()));
 
         // Non-matching hint → also falls back to default
-        let token = resolve_token(&conn, "https://server.com", Some("nonexistent")).unwrap();
+        let token = resolve_token(&conn, "https://server.com", Some("nonexistent"), Some("github")).unwrap();
         assert_eq!(token, Some("bob_token".to_string()));
     }
 
@@ -1080,6 +1130,7 @@ mod account_tests {
             &conn,
             &AccountUpsert {
                 server_url: "https://server.com",
+                forge_kind: "github",
                 username: "personal",
                 email: Some("me@personal.com"),
                 token: "personal_token",
@@ -1091,6 +1142,7 @@ mod account_tests {
             &conn,
             &AccountUpsert {
                 server_url: "https://server.com",
+                forge_kind: "github",
                 username: "work",
                 email: Some("me@work.com"),
                 token: "work_token",
@@ -1224,12 +1276,12 @@ mod account_tests {
         assert_eq!(accounts.len(), 2);
 
         // The server with a matching repo should use db_owner_email as username
-        let matched = get_account(&conn, "https://server.com", "user@example.com").unwrap();
+        let matched = get_account(&conn, "https://server.com", "github", "user@example.com").unwrap();
         assert!(matched.is_some());
         assert_eq!(matched.unwrap().token, "old_token");
 
         // The server with no matching repo should use "default"
-        let unmatched = get_account(&conn, "https://other.com", "default").unwrap();
+        let unmatched = get_account(&conn, "https://other.com", "github", "default").unwrap();
         assert!(unmatched.is_some());
         assert_eq!(unmatched.unwrap().token, "other_token");
 

@@ -1204,6 +1204,10 @@ pub struct AuthLoginArgs {
     /// Username for this account (defaults to "default")
     #[arg(long)]
     pub username: Option<String>,
+
+    /// Forge type (github, gitlab, bitbucket, generic)
+    #[arg(long, default_value = "github")]
+    pub forge: String,
 }
 
 #[derive(Debug, clap::Args)]
