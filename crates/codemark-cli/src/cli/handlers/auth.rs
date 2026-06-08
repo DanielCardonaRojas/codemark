@@ -303,10 +303,7 @@ pub async fn handle_list(_cli: &Cli, mode: &OutputMode) -> Result<()> {
     } else {
         println!("{}", message);
         for account in &accounts {
-            println!(
-                "  - {} @ {} ({})",
-                account.username, account.server_url, account.forge_kind
-            );
+            println!("  - {} @ {} ({})", account.username, account.server_url, account.forge_kind);
         }
     }
 

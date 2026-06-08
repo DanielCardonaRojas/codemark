@@ -106,9 +106,7 @@ fn init_schema(conn: &Connection) -> Result<()> {
     }
 
     // Standard migration loop for fresh DBs and future upgrades
-    let migrations: &[(i64, &str)] = &[
-        (1, REGISTRY_MIGRATION_001),
-    ];
+    let migrations: &[(i64, &str)] = &[(1, REGISTRY_MIGRATION_001)];
 
     for &(target_version, sql) in migrations {
         if version < target_version {
@@ -363,10 +361,7 @@ pub fn delete_account(
             )?;
         }
         (None, None) => {
-            conn.execute(
-                "DELETE FROM accounts WHERE server_url = ?1",
-                params![server_url],
-            )?;
+            conn.execute("DELETE FROM accounts WHERE server_url = ?1", params![server_url])?;
         }
     }
 
@@ -907,7 +902,8 @@ mod account_tests {
         )
         .unwrap();
 
-        let account = get_account(&conn, "https://codemark.example.com", "github", "alice").unwrap().unwrap();
+        let account =
+            get_account(&conn, "https://codemark.example.com", "github", "alice").unwrap().unwrap();
         assert_eq!(account.server_url, "https://codemark.example.com");
         assert_eq!(account.username, "alice");
         assert_eq!(account.email, Some("alice@example.com".to_string()));
@@ -928,7 +924,8 @@ mod account_tests {
             },
         )
         .unwrap();
-        let account = get_account(&conn, "https://codemark.example.com", "github", "alice").unwrap().unwrap();
+        let account =
+            get_account(&conn, "https://codemark.example.com", "github", "alice").unwrap().unwrap();
         assert_eq!(account.token, "new_token");
     }
 
@@ -1058,7 +1055,8 @@ mod account_tests {
         .unwrap();
 
         // Exact username match
-        let token = resolve_token(&conn, "https://server.com", Some("alice"), Some("github")).unwrap();
+        let token =
+            resolve_token(&conn, "https://server.com", Some("alice"), Some("github")).unwrap();
         assert_eq!(token, Some("alice_token".to_string()));
     }
 
@@ -1114,7 +1112,9 @@ mod account_tests {
         .unwrap();
 
         // Email match
-        let token = resolve_token(&conn, "https://server.com", Some("alice@example.com"), Some("github")).unwrap();
+        let token =
+            resolve_token(&conn, "https://server.com", Some("alice@example.com"), Some("github"))
+                .unwrap();
         assert_eq!(token, Some("alice_token".to_string()));
     }
 
@@ -1152,7 +1152,8 @@ mod account_tests {
         assert_eq!(token, Some("bob_token".to_string()));
 
         // Non-matching hint → also falls back to default
-        let token = resolve_token(&conn, "https://server.com", Some("nonexistent"), Some("github")).unwrap();
+        let token = resolve_token(&conn, "https://server.com", Some("nonexistent"), Some("github"))
+            .unwrap();
         assert_eq!(token, Some("bob_token".to_string()));
     }
 
@@ -1310,7 +1311,8 @@ mod account_tests {
         assert_eq!(accounts.len(), 2);
 
         // The server with a matching repo should use db_owner_email as username
-        let matched = get_account(&conn, "https://server.com", "github", "user@example.com").unwrap();
+        let matched =
+            get_account(&conn, "https://server.com", "github", "user@example.com").unwrap();
         assert!(matched.is_some());
         assert_eq!(matched.unwrap().token, "old_token");
 
