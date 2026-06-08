@@ -31,27 +31,26 @@ pub fn open_registry() -> Result<Connection> {
     let path = registry_path()?;
 
     // Migrate from old config-dir location if needed
-    if !path.exists() {
-        if let Some(old_path) = global_config_dir().map(|d| d.join("registry.db")) {
-            if old_path.exists() {
-                if let Some(parent) = path.parent() {
-                    std::fs::create_dir_all(parent)?;
-                }
-                if let Err(rename_err) = std::fs::rename(&old_path, &path) {
-                    // rename(2) fails with EXDEV when src and dst are on different
-                    // filesystems. Fall back to copy + delete.
-                    std::fs::copy(&old_path, &path).map_err(|e| {
-                        Error::Operation(format!(
-                            "Failed to move registry from {} to {}: rename failed ({}), copy also failed: {}",
-                            old_path.display(),
-                            path.display(),
-                            rename_err,
-                            e
-                        ))
-                    })?;
-                    let _ = std::fs::remove_file(&old_path);
-                }
-            }
+    if !path.exists()
+        && let Some(old_path) = global_config_dir().map(|d| d.join("registry.db"))
+        && old_path.exists()
+    {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        if let Err(rename_err) = std::fs::rename(&old_path, &path) {
+            // rename(2) fails with EXDEV when src and dst are on different
+            // filesystems. Fall back to copy + delete.
+            std::fs::copy(&old_path, &path).map_err(|e| {
+                Error::Operation(format!(
+                    "Failed to move registry from {} to {}: rename failed ({}), copy also failed: {}",
+                    old_path.display(),
+                    path.display(),
+                    rename_err,
+                    e
+                ))
+            })?;
+            let _ = std::fs::remove_file(&old_path);
         }
     }
 

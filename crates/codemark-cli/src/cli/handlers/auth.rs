@@ -212,10 +212,10 @@ pub async fn handle_logout(_cli: &Cli, mode: &OutputMode, args: &AuthLogoutArgs)
     }
 
     // If a specific user was requested, verify that account exists
-    if let Some(ref user) = args.user {
-        if !accounts.iter().any(|a| a.username == *user) {
-            return Err(Error::Operation(format!("Not logged in to {} as {}", server_url, user)));
-        }
+    if let Some(ref user) = args.user
+        && !accounts.iter().any(|a| a.username == *user)
+    {
+        return Err(Error::Operation(format!("Not logged in to {} as {}", server_url, user)));
     }
 
     registry::delete_account(&conn, &server_url, args.user.as_deref())?;
