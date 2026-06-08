@@ -31,9 +31,7 @@ pub async fn handle_login(_cli: &Cli, mode: &OutputMode, args: &AuthLoginArgs) -
 
         // Best-effort: associate this account with the current repo
         let known_repo = associate_repo_identity(&conn, &server_url, username);
-        let email = known_repo
-            .as_ref()
-            .map(|r| r.db_owner_email.as_str());
+        let email = known_repo.as_ref().map(|r| r.db_owner_email.as_str());
 
         registry::upsert_account(
             &conn,
