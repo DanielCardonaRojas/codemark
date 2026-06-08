@@ -60,7 +60,11 @@ pub fn resolve_server_and_token(
             if let Ok(Some(known_repo)) = registry::find_repo_by_origin(&conn, repo)
                 && let Some(ref server_url) = known_repo.server_url
             {
-                let token = get_token_for_server(server_url)?;
+                let token = registry::resolve_token(
+                    &conn,
+                    server_url,
+                    known_repo.default_username.as_deref(),
+                )?;
                 return Ok((server_url.clone(), token));
             }
         }

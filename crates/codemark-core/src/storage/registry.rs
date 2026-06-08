@@ -555,6 +555,19 @@ pub fn set_server_url(conn: &Connection, repo_root: &str, server_url: Option<&st
     Ok(())
 }
 
+/// Update the default username for a repository.
+pub fn set_default_username(
+    conn: &Connection,
+    repo_root: &str,
+    username: Option<&str>,
+) -> Result<()> {
+    conn.execute(
+        "UPDATE known_repos SET default_username = ?1 WHERE repo_root = ?2",
+        params![username, repo_root],
+    )?;
+    Ok(())
+}
+
 /// Get the server URL for a repository by its root path.
 pub fn get_server_url(conn: &Connection, repo_root: &str) -> Result<Option<String>> {
     let url: Option<String> = conn
@@ -717,6 +730,41 @@ mod tests {
 
         let url = get_server_url(&conn, "/another/path").unwrap().unwrap();
         assert_eq!(url, "https://codemark.example.com");
+    }
+
+    #[test]
+    fn test_set_default_username() {
+        let conn = test_registry().unwrap();
+
+        upsert_repo(
+            &conn,
+            &RepoUpsert {
+                id: "test-id-3",
+                repo_owner: "owner",
+                repo_name: "repo",
+                origin_url: None,
+                repo_root: "/some/path",
+                db_owner_email: "user@example.com",
+                db_owner_name: None,
+                server_url: None,
+                default_username: None,
+            },
+        )
+        .unwrap();
+
+        // Initially None
+        let repo = find_repo_by_root(&conn, "/some/path").unwrap().unwrap();
+        assert_eq!(repo.default_username, None);
+
+        // Set username
+        set_default_username(&conn, "/some/path", Some("alice")).unwrap();
+        let repo = find_repo_by_root(&conn, "/some/path").unwrap().unwrap();
+        assert_eq!(repo.default_username, Some("alice".to_string()));
+
+        // Clear username
+        set_default_username(&conn, "/some/path", None).unwrap();
+        let repo = find_repo_by_root(&conn, "/some/path").unwrap().unwrap();
+        assert_eq!(repo.default_username, None);
     }
 
     #[test]

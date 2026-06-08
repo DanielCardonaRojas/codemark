@@ -28,12 +28,19 @@ pub async fn handle_login(_cli: &Cli, mode: &OutputMode, args: &AuthLoginArgs) -
         let username = args.username.as_deref().unwrap_or("default");
         let conn = registry::open_registry()?;
         registry::clear_default_account(&conn, &server_url)?;
+
+        // Best-effort: associate this account with the current repo
+        let known_repo = associate_repo_identity(&conn, &server_url, username);
+        let email = known_repo
+            .as_ref()
+            .map(|r| r.db_owner_email.as_str());
+
         registry::upsert_account(
             &conn,
             &registry::AccountUpsert {
                 server_url: &server_url,
                 username,
-                email: None,
+                email,
                 token,
                 is_default: true,
             },
@@ -163,6 +170,10 @@ async fn handle_device_login(
                     is_default: true,
                 },
             )?;
+
+            // Best-effort: associate this account with the current repo
+            let _ = associate_repo_identity(&conn, server_url, &username);
+
             if matches!(mode, OutputMode::Json) {
                 println!(
                     "{}",
@@ -295,6 +306,32 @@ pub async fn handle_list(_cli: &Cli, mode: &OutputMode) -> Result<()> {
     }
 
     Ok(())
+}
+
+/// Best-effort: associate an account with the current repo in the registry.
+///
+/// If the current directory is inside a known git repo, sets `default_username`
+/// and (if not already set) `server_url` on that repo's registry entry.
+/// Returns the `KnownRepo` if found, for callers that need it (e.g. to extract email).
+fn associate_repo_identity(
+    conn: &rusqlite::Connection,
+    server_url: &str,
+    username: &str,
+) -> Option<registry::KnownRepo> {
+    let cwd = std::env::current_dir().ok()?;
+    let git_ctx = codemark_core::git::context::detect_context(&cwd)?;
+    let repo_root_str = git_ctx.repo_root.to_string_lossy();
+    let known_repo = registry::find_repo_by_root(conn, &repo_root_str).ok()??;
+
+    // Only associate if the repo has no server or matches this server
+    if known_repo.server_url.as_deref().is_none_or(|s| s == server_url) {
+        let _ = registry::set_default_username(conn, &repo_root_str, Some(username));
+        if known_repo.server_url.is_none() {
+            let _ = registry::set_server_url(conn, &repo_root_str, Some(server_url));
+        }
+    }
+
+    Some(known_repo)
 }
 
 /// Normalize a server URL by removing trailing slash and ensuring https:// if no scheme.
