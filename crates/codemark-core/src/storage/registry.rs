@@ -9,7 +9,7 @@
 //! limitation that should be addressed in future versions by using the system keychain
 //! (macOS Keychain, Windows Credential Manager, etc.) or encrypted storage.
 
-use crate::config::global_data_dir;
+use crate::config::{global_config_dir, global_data_dir};
 use crate::error::{Error, Result};
 use rusqlite::{Connection, OptionalExtension, params};
 use std::path::PathBuf;
@@ -24,8 +24,30 @@ pub fn registry_path() -> Result<PathBuf> {
 }
 
 /// Open or create the global registry database.
+///
+/// If the database does not exist at the new data directory but exists at the old
+/// config directory path, it is moved automatically.
 pub fn open_registry() -> Result<Connection> {
     let path = registry_path()?;
+
+    // Migrate from old config-dir location if needed
+    if !path.exists() {
+        if let Some(old_path) = global_config_dir().map(|d| d.join("registry.db")) {
+            if old_path.exists() {
+                if let Some(parent) = path.parent() {
+                    std::fs::create_dir_all(parent)?;
+                }
+                std::fs::rename(&old_path, &path).map_err(|e| {
+                    Error::Operation(format!(
+                        "Failed to move registry from {} to {}: {}",
+                        old_path.display(),
+                        path.display(),
+                        e
+                    ))
+                })?;
+            }
+        }
+    }
 
     // Ensure parent directory exists
     if let Some(parent) = path.parent() {
@@ -142,9 +164,11 @@ fn migrate_v0_to_v1(conn: &Connection) -> Result<()> {
             ",
         )?;
 
-        // 2. Migrate servers → accounts, using db_owner_email from known_repos as username when available
+        // 2. Migrate servers → accounts, using db_owner_email from known_repos as username when available.
+        // Use INSERT OR IGNORE to handle cases where multiple repos reference the same server
+        // (the LEFT JOIN would produce duplicate (server_url, username) rows).
         conn.execute_batch(
-            "INSERT INTO accounts (server_url, username, email, token, is_default, last_used)
+            "INSERT OR IGNORE INTO accounts (server_url, username, email, token, is_default, last_used)
              SELECT s.url,
                     COALESCE(kr.db_owner_email, 'default'),
                     CASE WHEN kr.db_owner_email IS NOT NULL THEN kr.db_owner_email ELSE NULL END,
@@ -330,6 +354,9 @@ pub fn list_accounts(conn: &Connection, server_url: Option<&str>) -> Result<Vec<
 }
 
 /// Delete an account. If username is None, deletes all accounts for the server.
+///
+/// Also clears `server_url` on any `known_repos` rows that referenced this server
+/// when all accounts for the server are removed.
 pub fn delete_account(conn: &Connection, server_url: &str, username: Option<&str>) -> Result<()> {
     if let Some(user) = username {
         conn.execute(
@@ -340,6 +367,27 @@ pub fn delete_account(conn: &Connection, server_url: &str, username: Option<&str
         conn.execute("DELETE FROM accounts WHERE server_url = ?1", params![server_url])?;
     }
 
+    // If no accounts remain for this server, clear dangling known_repos references
+    let remaining: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM accounts WHERE server_url = ?1",
+        params![server_url],
+        |row| row.get(0),
+    )?;
+    if remaining == 0 {
+        conn.execute(
+            "UPDATE known_repos SET server_url = NULL WHERE server_url = ?1",
+            params![server_url],
+        )?;
+    }
+
+    Ok(())
+}
+
+/// Clear the is_default flag on all accounts for a server.
+///
+/// Call this before upserting a new account to ensure only the new account is marked default.
+pub fn clear_default_account(conn: &Connection, server_url: &str) -> Result<()> {
+    conn.execute("UPDATE accounts SET is_default = 0 WHERE server_url = ?1", params![server_url])?;
     Ok(())
 }
 

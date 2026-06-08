@@ -27,6 +27,7 @@ pub async fn handle_login(_cli: &Cli, mode: &OutputMode, args: &AuthLoginArgs) -
     if let Some(token) = &args.token {
         let username = args.username.as_deref().unwrap_or("default");
         let conn = registry::open_registry()?;
+        registry::clear_default_account(&conn, &server_url)?;
         registry::upsert_account(
             &conn,
             &registry::AccountUpsert {
@@ -151,6 +152,7 @@ async fn handle_device_login(
             let email = poll_resp["email"].as_str();
 
             let conn = registry::open_registry()?;
+            registry::clear_default_account(&conn, server_url)?;
             registry::upsert_account(
                 &conn,
                 &registry::AccountUpsert {
