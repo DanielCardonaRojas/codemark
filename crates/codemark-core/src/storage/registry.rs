@@ -157,9 +157,7 @@ fn migrate_v0_to_v1(conn: &Connection) -> Result<()> {
         )?;
 
         // 3. Add default_username column to known_repos
-        conn.execute_batch(
-            "ALTER TABLE known_repos ADD COLUMN default_username TEXT",
-        )?;
+        conn.execute_batch("ALTER TABLE known_repos ADD COLUMN default_username TEXT")?;
 
         // 4. Set default_username from db_owner_email where server_url is set
         conn.execute_batch(
@@ -325,9 +323,8 @@ pub fn list_accounts(conn: &Connection, server_url: Option<&str>) -> Result<Vec<
             "SELECT server_url, username, email, token, is_default, last_used
              FROM accounts ORDER BY server_url, is_default DESC, last_used DESC",
         )?;
-        let accounts = stmt
-            .query_map([], row_to_account)?
-            .collect::<std::result::Result<Vec<_>, _>>()?;
+        let accounts =
+            stmt.query_map([], row_to_account)?.collect::<std::result::Result<Vec<_>, _>>()?;
         Ok(accounts)
     }
 }
@@ -779,8 +776,7 @@ mod account_tests {
         )
         .unwrap();
 
-        let account =
-            get_account(&conn, "https://codemark.example.com", "alice").unwrap().unwrap();
+        let account = get_account(&conn, "https://codemark.example.com", "alice").unwrap().unwrap();
         assert_eq!(account.server_url, "https://codemark.example.com");
         assert_eq!(account.username, "alice");
         assert_eq!(account.email, Some("alice@example.com".to_string()));
@@ -800,8 +796,7 @@ mod account_tests {
             },
         )
         .unwrap();
-        let account =
-            get_account(&conn, "https://codemark.example.com", "alice").unwrap().unwrap();
+        let account = get_account(&conn, "https://codemark.example.com", "alice").unwrap().unwrap();
         assert_eq!(account.token, "new_token");
     }
 
@@ -945,8 +940,7 @@ mod account_tests {
         .unwrap();
 
         // Email match
-        let token =
-            resolve_token(&conn, "https://server.com", Some("alice@example.com")).unwrap();
+        let token = resolve_token(&conn, "https://server.com", Some("alice@example.com")).unwrap();
         assert_eq!(token, Some("alice_token".to_string()));
     }
 
@@ -982,8 +976,7 @@ mod account_tests {
         assert_eq!(token, Some("bob_token".to_string()));
 
         // Non-matching hint → also falls back to default
-        let token =
-            resolve_token(&conn, "https://server.com", Some("nonexistent")).unwrap();
+        let token = resolve_token(&conn, "https://server.com", Some("nonexistent")).unwrap();
         assert_eq!(token, Some("bob_token".to_string()));
     }
 
