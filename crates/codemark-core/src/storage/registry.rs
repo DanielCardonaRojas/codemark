@@ -14,6 +14,9 @@ use crate::error::{Error, Result};
 use rusqlite::{Connection, OptionalExtension, params};
 use std::path::PathBuf;
 
+const REGISTRY_MIGRATION_001: &str =
+    include_str!("../../../../registry_migrations/V1__multi_account.sql");
+
 /// Global registry database path.
 ///
 /// Stores the registry in the data directory (`~/.local/share/codemark/registry.db`).
@@ -86,8 +89,8 @@ fn set_registry_version(conn: &Connection, version: i64) -> Result<()> {
 fn init_schema(conn: &Connection) -> Result<()> {
     let version = get_registry_version(conn)?;
 
+    // Detect legacy v0 databases that need special migration
     if version == 0 {
-        // Check if this is an existing v0 database (has `servers` table) or a fresh DB
         let has_servers: bool = conn
             .query_row(
                 "SELECT COUNT(*) > 0 FROM sqlite_master WHERE type='table' AND name='servers'",
@@ -98,52 +101,22 @@ fn init_schema(conn: &Connection) -> Result<()> {
 
         if has_servers {
             migrate_v0_to_v1(conn)?;
-        } else {
-            create_v1_schema(conn)?;
+            return Ok(());
         }
     }
-    // Future migrations: if version == 1 { migrate_v1_to_v2(conn)?; }
 
-    Ok(())
-}
+    // Standard migration loop for fresh DBs and future upgrades
+    let migrations: &[(i64, &str)] = &[
+        (1, REGISTRY_MIGRATION_001),
+    ];
 
-/// Create a fresh v1 schema (for new databases).
-fn create_v1_schema(conn: &Connection) -> Result<()> {
-    conn.execute_batch(
-        "CREATE TABLE IF NOT EXISTS known_repos (
-            id              TEXT PRIMARY KEY,
-            repo_owner      TEXT NOT NULL,
-            repo_name       TEXT NOT NULL,
-            origin_url      TEXT,
-            repo_root       TEXT NOT NULL UNIQUE,
-            db_owner_email  TEXT NOT NULL,
-            db_owner_name   TEXT,
-            detected_at     TEXT NOT NULL,
-            last_seen_at    TEXT NOT NULL,
-            server_url      TEXT,
-            default_username TEXT
-        );
+    for &(target_version, sql) in migrations {
+        if version < target_version {
+            conn.execute_batch(sql)?;
+            set_registry_version(conn, target_version)?;
+        }
+    }
 
-        CREATE INDEX IF NOT EXISTS idx_known_repos_origin ON known_repos(origin_url);
-        CREATE INDEX IF NOT EXISTS idx_known_repos_root ON known_repos(repo_root);
-        CREATE INDEX IF NOT EXISTS idx_known_repos_owner_name ON known_repos(repo_owner, repo_name);
-
-        CREATE TABLE IF NOT EXISTS accounts (
-            server_url      TEXT NOT NULL,
-            username        TEXT NOT NULL,
-            email           TEXT,
-            token           TEXT NOT NULL,
-            is_default      INTEGER NOT NULL DEFAULT 0,
-            last_used       TEXT,
-            PRIMARY KEY (server_url, username)
-        );
-
-        CREATE INDEX IF NOT EXISTS idx_accounts_server ON accounts(server_url);
-        CREATE INDEX IF NOT EXISTS idx_accounts_email ON accounts(email);
-        ",
-    )?;
-
-    set_registry_version(conn, 1)?;
     Ok(())
 }
 
