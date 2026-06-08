@@ -26,6 +26,32 @@ pub fn global_config_dir() -> Option<PathBuf> {
     directories::BaseDirs::new().map(|dirs| dirs.config_dir().join("codemark"))
 }
 
+/// Returns the global data directory for persistent app-managed state.
+///
+/// Platform-specific locations:
+/// - All platforms: `$XDG_DATA_HOME/codemark` if XDG_DATA_HOME is set
+/// - macOS fallback: `~/.local/share/codemark`
+/// - Linux fallback: `~/.local/share/codemark` (XDG standard)
+/// - Windows fallback: `%APPDATA%\codemark\data`
+///
+/// This is where the registry database and other mutable state files are stored.
+/// Can be overridden by the `CODEMARK_DATA_DIR` environment variable.
+pub fn global_data_dir() -> Option<PathBuf> {
+    // Check environment variable first
+    if let Ok(env_dir) = std::env::var("CODEMARK_DATA_DIR") {
+        return Some(PathBuf::from(env_dir));
+    }
+
+    // Check XDG_DATA_HOME (respects user preference on all platforms)
+    if let Ok(xdg_data) = std::env::var("XDG_DATA_HOME") {
+        let path = PathBuf::from(xdg_data).join("codemark");
+        return Some(path);
+    }
+
+    // Fallback to platform data directory
+    directories::BaseDirs::new().map(|dirs| dirs.data_dir().join("codemark"))
+}
+
 /// Returns the global models cache directory.
 ///
 /// Platform-specific locations:

@@ -9,16 +9,20 @@
 //! limitation that should be addressed in future versions by using the system keychain
 //! (macOS Keychain, Windows Credential Manager, etc.) or encrypted storage.
 
-use crate::config::global_config_dir;
+use crate::config::{global_config_dir, global_data_dir};
 use crate::error::{Error, Result};
 use rusqlite::{Connection, OptionalExtension, params};
 use std::path::PathBuf;
 
 /// Global registry database path.
+///
+/// Stores the registry in the data directory (`~/.local/share/codemark/registry.db`).
+/// Falls back to the config directory if the data directory cannot be determined.
 pub fn registry_path() -> Result<PathBuf> {
-    let config_dir = global_config_dir()
-        .ok_or_else(|| Error::Operation("Could not determine config directory".into()))?;
-    Ok(config_dir.join("registry.db"))
+    let data_dir = global_data_dir()
+        .or_else(global_config_dir)
+        .ok_or_else(|| Error::Operation("Could not determine data directory".into()))?;
+    Ok(data_dir.join("registry.db"))
 }
 
 /// Open or create the global registry database.
