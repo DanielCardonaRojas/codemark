@@ -3147,6 +3147,7 @@ fn collection_list_with_repo_flag() {
             db_owner_email: &repo1.db_owner_email,
             db_owner_name: repo1.db_owner_name.as_deref(),
             server_url: None,
+            default_username: None,
         },
     );
 
@@ -3161,6 +3162,7 @@ fn collection_list_with_repo_flag() {
             db_owner_email: &repo2.db_owner_email,
             db_owner_name: repo2.db_owner_name.as_deref(),
             server_url: None,
+            default_username: None,
         },
     );
 

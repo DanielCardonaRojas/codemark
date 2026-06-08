@@ -60,19 +60,19 @@ pub fn resolve_server_and_token(
             if let Ok(Some(known_repo)) = registry::find_repo_by_origin(&conn, repo)
                 && let Some(ref server_url) = known_repo.server_url
             {
-                let token = get_token_for_server(server_url)?;
+                let token = registry::resolve_token(
+                    &conn,
+                    server_url,
+                    known_repo.default_username.as_deref(),
+                    None,
+                )?;
                 return Ok((server_url.clone(), token));
             }
         }
 
-        // 3. Check for a default server in registry
-        // Note: This uses servers.first() which is non-deterministic.
-        // TODO: Add is_default flag to registry or require explicit default
-        if let Ok(servers) = registry::list_servers(&conn)
-            && let Some(server) = servers.first()
-        {
-            let token = server.token.clone();
-            return Ok((server.url.clone(), token));
+        // 3. Check for a global default account in registry
+        if let Ok(Some(account)) = registry::get_global_default_account(&conn) {
+            return Ok((account.server_url.clone(), Some(account.token.clone())));
         }
     }
 
@@ -124,8 +124,6 @@ pub fn build_auth_headers(token: Option<&String>) -> Result<HeaderMap> {
 /// Get auth token for a server from the registry.
 pub fn get_token_for_server(server_url: &str) -> Result<Option<String>> {
     let conn = registry::open_registry()?;
-    let server = registry::get_server(&conn, server_url)
-        .map_err(|e| Error::Database(format!("Failed to query server: {}", e)))?;
-
-    Ok(server.and_then(|s| s.token))
+    registry::resolve_token(&conn, server_url, None, None)
+        .map_err(|e| Error::Database(format!("Failed to query account: {}", e)))
 }

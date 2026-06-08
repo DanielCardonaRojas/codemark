@@ -1200,10 +1200,22 @@ pub struct AuthLoginArgs {
     /// Auth token (if you have one already)
     #[arg(long)]
     pub token: Option<String>,
+
+    /// Username for this account (defaults to "default")
+    #[arg(long)]
+    pub username: Option<String>,
+
+    /// Forge type (github, gitlab, bitbucket, generic)
+    #[arg(long, default_value = "github")]
+    pub forge: String,
 }
 
 #[derive(Debug, clap::Args)]
 pub struct AuthLogoutArgs {
     /// Server URL (e.g., https://codemark.example.com)
     pub server: String,
+
+    /// Username to log out (omit to log out all accounts for this server)
+    #[arg(long)]
+    pub user: Option<String>,
 }
