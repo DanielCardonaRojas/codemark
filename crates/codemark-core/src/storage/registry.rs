@@ -37,14 +37,20 @@ pub fn open_registry() -> Result<Connection> {
                 if let Some(parent) = path.parent() {
                     std::fs::create_dir_all(parent)?;
                 }
-                std::fs::rename(&old_path, &path).map_err(|e| {
-                    Error::Operation(format!(
-                        "Failed to move registry from {} to {}: {}",
-                        old_path.display(),
-                        path.display(),
-                        e
-                    ))
-                })?;
+                if let Err(rename_err) = std::fs::rename(&old_path, &path) {
+                    // rename(2) fails with EXDEV when src and dst are on different
+                    // filesystems. Fall back to copy + delete.
+                    std::fs::copy(&old_path, &path).map_err(|e| {
+                        Error::Operation(format!(
+                            "Failed to move registry from {} to {}: rename failed ({}), copy also failed: {}",
+                            old_path.display(),
+                            path.display(),
+                            rename_err,
+                            e
+                        ))
+                    })?;
+                    let _ = std::fs::remove_file(&old_path);
+                }
             }
         }
     }
