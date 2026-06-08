@@ -165,18 +165,22 @@ fn migrate_v0_to_v1(conn: &Connection) -> Result<()> {
         )?;
 
         // 2. Migrate servers → accounts, using db_owner_email from known_repos as username when available.
-        // Use INSERT OR IGNORE to handle cases where multiple repos reference the same server
-        // (the LEFT JOIN would produce duplicate (server_url, username) rows).
+        // Use a scalar subquery (not LEFT JOIN) to pick exactly one canonical identity per server,
+        // avoiding duplicate (server_url, username) PK rows when multiple repos reference the same server.
         conn.execute_batch(
-            "INSERT OR IGNORE INTO accounts (server_url, username, email, token, is_default, last_used)
+            "INSERT INTO accounts (server_url, username, email, token, is_default, last_used)
              SELECT s.url,
-                    COALESCE(kr.db_owner_email, 'default'),
-                    CASE WHEN kr.db_owner_email IS NOT NULL THEN kr.db_owner_email ELSE NULL END,
+                    COALESCE(
+                        (SELECT kr.db_owner_email FROM known_repos kr
+                         WHERE kr.server_url = s.url ORDER BY kr.last_seen_at DESC LIMIT 1),
+                        'default'
+                    ),
+                    (SELECT kr.db_owner_email FROM known_repos kr
+                     WHERE kr.server_url = s.url ORDER BY kr.last_seen_at DESC LIMIT 1),
                     s.token,
                     1,
                     s.last_login
              FROM servers s
-             LEFT JOIN known_repos kr ON kr.server_url = s.url
              WHERE s.token IS NOT NULL",
         )?;
 
@@ -381,6 +385,20 @@ pub fn delete_account(conn: &Connection, server_url: &str, username: Option<&str
     }
 
     Ok(())
+}
+
+/// Get the global default account across all servers (most recently used default).
+pub fn get_global_default_account(conn: &Connection) -> Result<Option<Account>> {
+    conn.query_row(
+        "SELECT server_url, username, email, token, is_default, last_used
+         FROM accounts
+         ORDER BY is_default DESC, last_used DESC
+         LIMIT 1",
+        [],
+        row_to_account,
+    )
+    .optional()
+    .map_err(|e| Error::Database(e.to_string()))
 }
 
 /// Clear the is_default flag on all accounts for a server.

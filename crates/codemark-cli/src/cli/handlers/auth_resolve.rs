@@ -65,12 +65,9 @@ pub fn resolve_server_and_token(
             }
         }
 
-        // 3. Check for a default account in registry
-        if let Ok(accounts) = registry::list_accounts(&conn, None)
-            && let Some(account) = accounts.first()
-        {
-            let token = Some(account.token.clone());
-            return Ok((account.server_url.clone(), token));
+        // 3. Check for a global default account in registry
+        if let Ok(Some(account)) = registry::get_global_default_account(&conn) {
+            return Ok((account.server_url.clone(), Some(account.token.clone())));
         }
     }
 
