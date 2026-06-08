@@ -440,7 +440,8 @@ pub fn resolve_token(
         // Try email match
         let email_match: Option<String> = conn
             .query_row(
-                "SELECT token FROM accounts WHERE server_url = ?1 AND email = ?2 LIMIT 1",
+                "SELECT token FROM accounts WHERE server_url = ?1 AND email = ?2
+                     ORDER BY is_default DESC, last_used DESC LIMIT 1",
                 params![server_url, hint],
                 |row| row.get(0),
             )

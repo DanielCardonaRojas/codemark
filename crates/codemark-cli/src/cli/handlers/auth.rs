@@ -65,12 +65,21 @@ pub async fn handle_login(_cli: &Cli, mode: &OutputMode, args: &AuthLoginArgs) -
         return Ok(());
     }
 
-    handle_device_login(&server_url, args.username.as_deref(), mode).await
+    // Device OAuth currently only supports GitHub
+    if args.forge != "github" {
+        return Err(Error::Input(format!(
+            "device OAuth login is only supported for github (got '{}'). Use --token for other forges.",
+            args.forge
+        )));
+    }
+
+    handle_device_login(&server_url, args.username.as_deref(), &args.forge, mode).await
 }
 
 async fn handle_device_login(
     server_url: &str,
     username_override: Option<&str>,
+    forge_kind: &str,
     mode: &OutputMode,
 ) -> Result<()> {
     let server_url = server_url.trim_end_matches('/');
@@ -164,7 +173,7 @@ async fn handle_device_login(
                 &conn,
                 &registry::AccountUpsert {
                     server_url,
-                    forge_kind: "github",
+                    forge_kind,
                     username: &username,
                     email,
                     token,
