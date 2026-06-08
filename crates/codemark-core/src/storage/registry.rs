@@ -125,23 +125,9 @@ fn migrate_v0_to_v1(conn: &Connection) -> Result<()> {
     conn.execute_batch("BEGIN TRANSACTION")?;
 
     let result = (|| -> Result<()> {
-        // 1. Create accounts table
-        conn.execute_batch(
-            "CREATE TABLE IF NOT EXISTS accounts (
-                server_url      TEXT NOT NULL,
-                forge_kind      TEXT NOT NULL DEFAULT 'github',
-                username        TEXT NOT NULL,
-                email           TEXT,
-                token           TEXT NOT NULL,
-                is_default      INTEGER NOT NULL DEFAULT 0,
-                last_used       TEXT,
-                PRIMARY KEY (server_url, forge_kind, username)
-            );
-
-            CREATE INDEX IF NOT EXISTS idx_accounts_server ON accounts(server_url);
-            CREATE INDEX IF NOT EXISTS idx_accounts_email ON accounts(email);
-            ",
-        )?;
+        // 1. Create accounts table (and indexes) from the V1 migration SQL.
+        // The known_repos CREATE is a no-op here (table already exists from v0).
+        conn.execute_batch(REGISTRY_MIGRATION_001)?;
 
         // 2. Migrate servers → accounts, using db_owner_email from known_repos as username when available.
         // Use a scalar subquery (not LEFT JOIN) to pick exactly one canonical identity per server,
