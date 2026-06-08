@@ -421,10 +421,24 @@ pub fn resolve_token(
     forge_kind: Option<&str>,
 ) -> Result<Option<String>> {
     if let Some(hint) = identity_hint {
-        // Try exact username match (with forge_kind when provided)
+        // Try exact username + forge_kind match when forge is known
         if let Some(forge) = forge_kind {
             if let Some(account) = get_account(conn, server_url, forge, hint)? {
                 return Ok(Some(account.token));
+            }
+        } else {
+            // Try username-only match across any forge_kind
+            let username_match: Option<String> = conn
+                .query_row(
+                    "SELECT token FROM accounts WHERE server_url = ?1 AND username = ?2
+                     ORDER BY is_default DESC, last_used DESC LIMIT 1",
+                    params![server_url, hint],
+                    |row| row.get(0),
+                )
+                .optional()
+                .map_err(|e| Error::Database(e.to_string()))?;
+            if let Some(token) = username_match {
+                return Ok(Some(token));
             }
         }
 
@@ -1045,6 +1059,40 @@ mod account_tests {
 
         // Exact username match
         let token = resolve_token(&conn, "https://server.com", Some("alice"), Some("github")).unwrap();
+        assert_eq!(token, Some("alice_token".to_string()));
+    }
+
+    #[test]
+    fn test_resolve_token_by_username_no_forge() {
+        let conn = test_registry();
+
+        upsert_account(
+            &conn,
+            &AccountUpsert {
+                server_url: "https://server.com",
+                forge_kind: "github",
+                username: "alice",
+                email: None,
+                token: "alice_token",
+                is_default: false,
+            },
+        )
+        .unwrap();
+        upsert_account(
+            &conn,
+            &AccountUpsert {
+                server_url: "https://server.com",
+                forge_kind: "github",
+                username: "bob",
+                email: None,
+                token: "bob_token",
+                is_default: true,
+            },
+        )
+        .unwrap();
+
+        // Username hint without forge_kind still resolves to the correct account
+        let token = resolve_token(&conn, "https://server.com", Some("alice"), None).unwrap();
         assert_eq!(token, Some("alice_token".to_string()));
     }
 
