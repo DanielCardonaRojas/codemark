@@ -1639,22 +1639,51 @@ async fn handle_preview_live(
     let absolute_path = git_context::resolve_bookmark_file_path(&result.file_path, db.path())?;
     let live_status = result.live_status();
 
+    // Short-circuit when resolution failed (code not found) to avoid emitting
+    // misleading content from line 0 or partial stdout in raw mode.
+    if live_status == codemark_core::engine::resolution::LiveUIStatus::Broken {
+        if args.raw {
+            return Err(Error::Resolution("live preview could not resolve bookmark".into()));
+        }
+        let data = serde_json::json!({
+            "bookmark_id": bm.id,
+            "resolution_id": null,
+            "file_path": absolute_path.to_string_lossy(),
+            "line_range": null,
+            "line_range_colon": null,
+            "byte_range": null,
+            "snapshot": null,
+            "health": "broken",
+            "status": "broken",
+            "resolution_method": result.method.to_string(),
+            "resolved_at": null,
+            "commit_hash": null,
+            "content_hash": result.content_hash,
+            "breadcrumbs": null,
+            "drifted": true,
+            "live": true,
+        });
+        write_json_success(&data)?;
+        return Ok(());
+    }
+
     if args.raw {
-        // Output breadcrumbs if requested
+        // Read the file first, before emitting any output, to avoid partial
+        // stdout if the file is deleted between resolve and this read.
+        let file_content = std::fs::read_to_string(&absolute_path).map_err(|e| {
+            Error::Input(format!("failed to read file {}: {}", absolute_path.display(), e))
+        })?;
+        let lines: Vec<&str> = file_content.lines().collect();
+        let end = (result.end_line + 1).min(lines.len());
+        let start = result.start_line.min(end);
+
+        // Output breadcrumbs if requested (after successful file read)
         if args.breadcrumbs {
             for bc in &result.breadcrumbs {
                 println!("{}", bc.text);
             }
         }
 
-        // For raw mode, read the file and output the matched text lines
-        let file_content = std::fs::read_to_string(&absolute_path).map_err(|e| {
-            Error::Input(format!("failed to read file {}: {}", absolute_path.display(), e))
-        })?;
-        let lines: Vec<&str> = file_content.lines().collect();
-        // result.start_line and end_line are 0-indexed
-        let end = (result.end_line + 1).min(lines.len());
-        let start = result.start_line.min(end);
         for line in &lines[start..end] {
             println!("{}", line);
         }
