@@ -399,6 +399,13 @@ impl RightPane {
             ))
         })?;
 
+        // Treat Failed resolutions as errors so callers fall back to persisted snapshots
+        if result.live_status() == live_resolution::LiveUIStatus::Broken {
+            return Err(codemark_core::error::Error::Resolution(
+                "bookmark code not found in current file".into(),
+            ));
+        }
+
         // Resolve the file path to absolute
         let abs_path =
             codemark_core::git::context::resolve_bookmark_file_path(&result.file_path, db.path())?;
