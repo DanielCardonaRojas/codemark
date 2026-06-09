@@ -11,7 +11,8 @@ use codemark_core::query::classifier::get_node_icon;
 use codemark_core::query::summarizer;
 
 use super::{
-    BrowserLayout, FocusArea, HealNotification, Panel3Tab, RightPaneFocus, TabContent, shorten_path,
+    BrowserLayout, DetailsPaneSize, FocusArea, HealNotification, Panel3Tab, RightPaneFocus,
+    RightPaneSize, TabContent, shorten_path,
 };
 
 impl BrowserLayout {
@@ -690,17 +691,34 @@ impl BrowserLayout {
         if self.focus == FocusArea::Main {
             if self.right_pane.focused == RightPaneFocus::Details {
                 // Cycle details pane size (Regular → Half → Full)
+                let old_size = self.details_pane_size;
                 self.details_pane_size = if grow {
                     self.details_pane_size.increase()
                 } else {
                     self.details_pane_size.decrease()
                 };
+                // Reset steps fullscreen to avoid conflicting states
+                self.right_pane_size = RightPaneSize::Regular;
+                tracing::debug!(
+                    target: "codemark::ui",
+                    ?old_size,
+                    new_size = ?self.details_pane_size,
+                    grow,
+                    "details pane resized"
+                );
             } else {
                 let next = self.right_pane_size.toggle();
                 self.right_pane_size = next;
+                // Reset details fullscreen to avoid conflicting states
+                self.details_pane_size = DetailsPaneSize::Regular;
                 if next.is_fullscreen() {
                     self.right_pane.focus_steps();
                 }
+                tracing::debug!(
+                    target: "codemark::ui",
+                    ?next,
+                    "right pane size toggled"
+                );
             }
         } else if grow {
             self.left_pane_size = self.left_pane_size.increase();
