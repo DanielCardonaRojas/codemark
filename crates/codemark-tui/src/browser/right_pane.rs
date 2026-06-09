@@ -386,6 +386,10 @@ impl RightPane {
             }
         };
 
+        // Clear cached parse trees so we always re-read the file from disk,
+        // ensuring edits since the last selection are reflected.
+        cache.clear_trees();
+
         let provider = codemark_core::vfs::LocalFileProvider;
         let handle = tokio::runtime::Handle::current();
 

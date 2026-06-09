@@ -160,6 +160,12 @@ impl ParseCache {
         Ok(self.trees.get(&canonical).unwrap())
     }
 
+    /// Clear all cached parse trees so the next `get_or_parse` call re-reads
+    /// from disk. The parser (grammar) is retained.
+    pub fn clear_trees(&mut self) {
+        self.trees.clear();
+    }
+
     pub fn parser_mut(&mut self) -> &mut Parser {
         &mut self.parser
     }
