@@ -1525,8 +1525,7 @@ impl BrowserLayout {
                 self.left_pane.render(chunks[0], buf);
             }
             RenderMode::RightOnly => {
-                self.right_pane
-                    .render(chunks[0], buf, steps_fullscreen, self.details_pane_size);
+                self.right_pane.render(chunks[0], buf, steps_fullscreen, self.details_pane_size);
             }
         }
     }

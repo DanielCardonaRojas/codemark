@@ -651,11 +651,11 @@ impl RightPane {
         for i in 1..=2u16 {
             let x = area.left() + i;
             let y = area.top();
-            if x < area.right() {
-                if let Some(cell) = buf.cell_mut((x, y)) {
-                    cell.set_char('─');
-                    cell.set_style(border_style);
-                }
+            if x < area.right()
+                && let Some(cell) = buf.cell_mut((x, y))
+            {
+                cell.set_char('─');
+                cell.set_style(border_style);
             }
         }
 
