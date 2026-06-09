@@ -6,13 +6,13 @@ use codemark_core::engine::resolution as live_resolution;
 use codemark_core::parser::languages::{Language as CodemarkLanguage, ParseCache};
 use codemark_core::storage::db::Database;
 use codemark_core::templates::{self, load_template};
-use std::collections::HashMap;
 use ratatui::{
     buffer::Buffer,
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Style, Stylize},
     widgets::{Block, BorderType, Widget},
 };
+use std::collections::HashMap;
 
 /// Tab index for the Info tab in the steps panel.
 /// The steps panel has tabs in order: Steps (0), Info (1), Query (2).
@@ -366,13 +366,16 @@ impl RightPane {
         use std::str::FromStr;
 
         let language = CodemarkLanguage::from_str(&bm.language).map_err(|e| {
-            codemark_core::error::Error::Input(format!("unsupported language {}: {}", bm.language, e))
+            codemark_core::error::Error::Input(format!(
+                "unsupported language {}: {}",
+                bm.language, e
+            ))
         })?;
 
         // Get or create a ParseCache for this language
-        let cache = session_cache.entry(language).or_insert_with(|| {
-            ParseCache::new(language).expect("failed to create ParseCache")
-        });
+        let cache = session_cache
+            .entry(language)
+            .or_insert_with(|| ParseCache::new(language).expect("failed to create ParseCache"));
 
         let provider = codemark_core::vfs::LocalFileProvider;
         let handle = tokio::runtime::Handle::current();
@@ -391,11 +394,7 @@ impl RightPane {
         let abs_path =
             codemark_core::git::context::resolve_bookmark_file_path(&result.file_path, db.path())?;
 
-        Ok((
-            abs_path.to_string_lossy().to_string(),
-            result.start_line,
-            result.end_line,
-        ))
+        Ok((abs_path.to_string_lossy().to_string(), result.start_line, result.end_line))
     }
 
     /// Clear the preview state (used when a bookmark cannot be loaded).

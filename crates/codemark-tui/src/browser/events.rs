@@ -170,7 +170,10 @@ impl BrowserLayout {
 
     /// Spawn a background task that resolves all bookmarks and sends
     /// `LiveHealthBatch` events to update the list health dots progressively.
-    pub(super) fn spawn_live_health_task(&self, bookmarks: Vec<codemark_core::engine::bookmark::Bookmark>) {
+    pub(super) fn spawn_live_health_task(
+        &self,
+        bookmarks: Vec<codemark_core::engine::bookmark::Bookmark>,
+    ) {
         if bookmarks.is_empty() {
             return;
         }
@@ -183,8 +186,8 @@ impl BrowserLayout {
             let provider = codemark_core::vfs::LocalFileProvider;
 
             // Group bookmarks by (language, file_path) for parse-tree reuse
-            use std::collections::HashMap;
             use codemark_core::parser::languages::{Language as CL, ParseCache};
+            use std::collections::HashMap;
 
             let mut caches: HashMap<CL, ParseCache> = HashMap::new();
             let mut batch: Vec<(String, LiveUIStatus)> = Vec::new();
@@ -193,33 +196,32 @@ impl BrowserLayout {
             let db_path_ref = &db_path;
 
             for bm in &bookmarks {
-                let status = (|| -> std::result::Result<LiveUIStatus, codemark_core::error::Error> {
-                    use std::str::FromStr;
-                    let language = CL::from_str(&bm.language)?;
-                    let cache = caches.entry(language).or_insert_with(|| {
-                        ParseCache::new(language).expect("failed to create ParseCache")
-                    });
+                let status =
+                    (|| -> std::result::Result<LiveUIStatus, codemark_core::error::Error> {
+                        use std::str::FromStr;
+                        let language = CL::from_str(&bm.language)?;
+                        let cache = caches.entry(language).or_insert_with(|| {
+                            ParseCache::new(language).expect("failed to create ParseCache")
+                        });
 
-                    let result = handle.block_on(
-                        codemark_core::engine::resolution::resolve_transient(
-                            bm,
-                            cache,
-                            language,
-                            db_path_ref,
-                            &provider,
-                        ),
-                    )?;
-                    Ok(result.live_status())
-                })();
+                        let result = handle.block_on(
+                            codemark_core::engine::resolution::resolve_transient(
+                                bm,
+                                cache,
+                                language,
+                                db_path_ref,
+                                &provider,
+                            ),
+                        )?;
+                        Ok(result.live_status())
+                    })();
 
                 let live_status = status.unwrap_or(LiveUIStatus::Broken);
                 batch.push((bm.id.clone(), live_status));
 
                 // Send in batches of 10 for progressive rendering
                 if batch.len() >= 10 {
-                    let _ = event_handler.send(Event::LiveHealthBatch(
-                        std::mem::take(&mut batch),
-                    ));
+                    let _ = event_handler.send(Event::LiveHealthBatch(std::mem::take(&mut batch)));
                 }
             }
 
@@ -469,8 +471,7 @@ impl BrowserLayout {
                     }
                     let tour_name = selected.text().to_string();
                     panel.activate_selected();
-                    self.right_pane
-                        .load_tour_live(&self.db, &tour_name, &mut self.session_cache);
+                    self.right_pane.load_tour_live(&self.db, &tour_name, &mut self.session_cache);
                     self.set_focus(FocusArea::Main);
                     return Some(true);
                 }
@@ -481,8 +482,7 @@ impl BrowserLayout {
                 {
                     let tour_name = selected.text().to_string();
                     panel.activate_selected();
-                    self.right_pane
-                        .load_tour_live(&self.db, &tour_name, &mut self.session_cache);
+                    self.right_pane.load_tour_live(&self.db, &tour_name, &mut self.session_cache);
                     self.set_focus(FocusArea::Main);
                     return Some(true);
                 }
@@ -493,8 +493,7 @@ impl BrowserLayout {
                     && let Some(id) = selected.user_data.clone()
                 {
                     panel.activate_selected();
-                    self.right_pane
-                        .load_bookmark_live(&self.db, &id, &mut self.session_cache);
+                    self.right_pane.load_bookmark_live(&self.db, &id, &mut self.session_cache);
                     self.set_focus(FocusArea::Main);
                     return Some(true);
                 }
@@ -723,8 +722,7 @@ impl BrowserLayout {
                 if self.focus == FocusArea::Panel3
                     && let Some(id) = self.left_pane.panel3.take_selection_change()
                 {
-                    self.right_pane
-                        .load_bookmark_live(&self.db, &id, &mut self.session_cache);
+                    self.right_pane.load_bookmark_live(&self.db, &id, &mut self.session_cache);
                 }
                 handled
             }
@@ -741,8 +739,11 @@ impl BrowserLayout {
                     FocusArea::Panel3 => {
                         let handled = self.left_pane.panel3.handle_event(event);
                         if let Some(id) = self.left_pane.panel3.take_selection_change() {
-                            self.right_pane
-                                .load_bookmark_live(&self.db, &id, &mut self.session_cache);
+                            self.right_pane.load_bookmark_live(
+                                &self.db,
+                                &id,
+                                &mut self.session_cache,
+                            );
                         }
                         handled
                     }

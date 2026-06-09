@@ -30,13 +30,13 @@ use codemark_core::embeddings::config::EmbeddingModel;
 use codemark_core::engine::bookmark::{Bookmark, BookmarkFilter};
 use codemark_core::parser::languages::{Language as CodemarkLanguage, ParseCache};
 use codemark_core::storage::{SemanticRepo, db::Database};
-use std::collections::HashMap;
 use ratatui::{
     buffer::Buffer,
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Style, Stylize},
     text::{Line, Span},
 };
+use std::collections::HashMap;
 
 /// Shorten a file path to fit within a maximum width, prioritizing the last path components.
 ///
@@ -183,9 +183,8 @@ impl BrowserLayout {
         layout.sync_steps_tab_label();
 
         // Spawn background live health resolution so bookmark dots update on startup
-        if let Ok(all_bookmarks) = layout
-            .db
-            .list_bookmarks(&codemark_core::engine::bookmark::BookmarkFilter::default())
+        if let Ok(all_bookmarks) =
+            layout.db.list_bookmarks(&codemark_core::engine::bookmark::BookmarkFilter::default())
         {
             layout.spawn_live_health_task(all_bookmarks);
         }
@@ -205,8 +204,7 @@ impl BrowserLayout {
             && let Some(selected) = panel.selected()
             && let Some(ref id) = selected.user_data
         {
-            self.right_pane
-                .load_bookmark_live(&self.db, id, &mut self.session_cache);
+            self.right_pane.load_bookmark_live(&self.db, id, &mut self.session_cache);
         }
     }
 
@@ -293,7 +291,9 @@ impl BrowserLayout {
                         SemanticRepo::with_config(models_dir, model, distance_metric, threshold);
 
                     let handle = tokio::runtime::Handle::current();
-                    match tokio::task::block_in_place(|| handle.block_on(semantic_repo.search(db.conn(), &query, 20))) {
+                    match tokio::task::block_in_place(|| {
+                        handle.block_on(semantic_repo.search(db.conn(), &query, 20))
+                    }) {
                         Ok(results) => {
                             let mut bookmarks = Vec::new();
                             for result in results {
@@ -824,22 +824,19 @@ impl BrowserLayout {
         // 4. Update Step previews (Right Pane) using live resolution
         let current_step = self.right_pane.pager_current;
         if let Some(tour_name) = self.right_pane.active_tour_name.clone() {
-            self.right_pane
-                .load_tour_live(&self.db, &tour_name, &mut self.session_cache);
+            self.right_pane.load_tour_live(&self.db, &tour_name, &mut self.session_cache);
             // Restore step if possible
             if current_step < self.right_pane.pager_total {
                 self.right_pane.pager_current = current_step;
                 self.right_pane.update_preview(&self.db);
             }
         } else if let Some(bm_id) = self.right_pane.active_bookmark_id.clone() {
-            self.right_pane
-                .load_bookmark_live(&self.db, &bm_id, &mut self.session_cache);
+            self.right_pane.load_bookmark_live(&self.db, &bm_id, &mut self.session_cache);
         } else if let Ok(collections) = self.db.list_collections() {
             // Default to first tour only if nothing was active
             if let Some((first_tour, _)) = collections.first() {
                 let name = first_tour.name.clone();
-                self.right_pane
-                    .load_tour_live(&self.db, &name, &mut self.session_cache);
+                self.right_pane.load_tour_live(&self.db, &name, &mut self.session_cache);
             }
         } else {
             // Clear steps if nothing found
@@ -1236,13 +1233,27 @@ impl BrowserLayout {
                 })
                 .collect();
 
-            let filtered_items: Vec<PanelItem> =
-                filtered_bookmarks.iter().map(|bm| {
-                    let summary_info = bm.language.parse::<codemark_core::parser::languages::Language>().ok()
-                        .and_then(|lang| codemark_core::query::summarizer::summarize_query(&bm.query, Some(lang)).ok());
-                    let summary = summary_info.as_ref().and_then(|s| s.identifier.clone())
-                        .unwrap_or_else(|| if summary_info.is_some() { String::new() } else { bm.query.clone() });
-                    let icon = summary_info.as_ref().map(|s| codemark_core::query::classifier::get_node_icon(&s.label)).unwrap_or("");
+            let filtered_items: Vec<PanelItem> = filtered_bookmarks
+                .iter()
+                .map(|bm| {
+                    let summary_info = bm
+                        .language
+                        .parse::<codemark_core::parser::languages::Language>()
+                        .ok()
+                        .and_then(|lang| {
+                            codemark_core::query::summarizer::summarize_query(&bm.query, Some(lang))
+                                .ok()
+                        });
+                    let summary = summary_info
+                        .as_ref()
+                        .and_then(|s| s.identifier.clone())
+                        .unwrap_or_else(|| {
+                            if summary_info.is_some() { String::new() } else { bm.query.clone() }
+                        });
+                    let icon = summary_info
+                        .as_ref()
+                        .map(|s| codemark_core::query::classifier::get_node_icon(&s.label))
+                        .unwrap_or("");
                     let short_path = shorten_path(&bm.file_path, 25);
 
                     let mut item = PanelItem::new(&short_path)
@@ -1254,7 +1265,8 @@ impl BrowserLayout {
                         item = item.emphasis(summary);
                     }
                     item
-                }).collect();
+                })
+                .collect();
 
             if let Some(TabContent::List(p)) = self.left_pane.panel3.panels.get_mut(0) {
                 p.set_items(filtered_items);

@@ -204,10 +204,9 @@ fn bookmark_to_panel_item_unknown(bookmark: &Bookmark) -> PanelItem {
         .ok()
         .and_then(|lang| summarizer::summarize_query(&bookmark.query, Some(lang)).ok());
 
-    let summary = summary_info
-        .as_ref()
-        .and_then(|s| s.identifier.clone())
-        .unwrap_or_else(|| if summary_info.is_some() { String::new() } else { bookmark.query.clone() });
+    let summary = summary_info.as_ref().and_then(|s| s.identifier.clone()).unwrap_or_else(|| {
+        if summary_info.is_some() { String::new() } else { bookmark.query.clone() }
+    });
 
     let icon = summary_info.as_ref().map(|s| get_node_icon(&s.label)).unwrap_or("");
     let short_path = shorten_path(&bookmark.file_path, 25);
@@ -411,9 +410,7 @@ impl TabbedPanel {
         }
 
         let bookmarks = match db.list_bookmarks(&BookmarkFilter::default()) {
-            Ok(bookmarks) => {
-                bookmarks.iter().map(|bm| bookmark_to_panel_item_unknown(bm)).collect()
-            }
+            Ok(bookmarks) => bookmarks.iter().map(bookmark_to_panel_item_unknown).collect(),
             Err(_) => Vec::new(),
         };
 
