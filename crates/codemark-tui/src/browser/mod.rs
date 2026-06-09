@@ -19,8 +19,8 @@ pub use search::{SearchBar, SearchMode};
 pub use tabbed_panel::{TabbedPanel, bookmark_to_panel_item};
 pub use tabs::{Panel2Tab, Panel3Tab, Tab, TabSelection};
 pub use types::{
-    ExternalCommand, FocusArea, HealNotification, HealTarget, LeftPaneSize, RightPaneSize,
-    SectionConfig, SpinningItem, StepData, TabContent, escape_markdown,
+    DetailsPaneSize, ExternalCommand, FocusArea, HealNotification, HealTarget, LeftPaneSize,
+    RightPaneSize, SectionConfig, SpinningItem, StepData, TabContent, escape_markdown,
 };
 
 use crate::component::{Component, HealthStatus, PanelItem};
@@ -122,6 +122,8 @@ pub struct BrowserLayout {
     left_pane_size: LeftPaneSize,
     /// Current size mode for the right pane (preview)
     right_pane_size: RightPaneSize,
+    /// Current size mode for the details pane
+    details_pane_size: DetailsPaneSize,
     /// Whether a tour pull is in progress (for post-pull panel rebuild)
     is_pulling_tour: bool,
     /// Panel items currently showing an animated spinner
@@ -171,6 +173,7 @@ impl BrowserLayout {
             clipboard: None,
             left_pane_size: LeftPaneSize::Regular,
             right_pane_size: RightPaneSize::Regular,
+            details_pane_size: DetailsPaneSize::Regular,
             is_pulling_tour: false,
             spinning_items: Vec::new(),
             spinner_clear_at: None,
@@ -1484,42 +1487,45 @@ enum RenderMode {
 impl BrowserLayout {
     /// Render the browser layout.
     pub fn render(&self, area: Rect, buf: &mut Buffer) {
-        let (left_constraints, render_mode) = if self.right_pane_size.is_fullscreen() {
-            // Right pane takes full width
-            (vec![Constraint::Percentage(100)], RenderMode::RightOnly)
-        } else {
-            // Use left pane size to determine layout
-            let left_percent = self.left_pane_size.left_width_percent();
-            if let Some(right_percent) = self.left_pane_size.right_width_percent() {
-                // Both panes visible
-                (
-                    vec![
-                        Constraint::Percentage(left_percent),
-                        Constraint::Percentage(right_percent),
-                    ],
-                    RenderMode::Both,
-                )
+        let (left_constraints, render_mode) =
+            if self.right_pane_size.is_fullscreen() || self.details_pane_size.is_fullscreen() {
+                // Right pane (or details) takes full width
+                (vec![Constraint::Percentage(100)], RenderMode::RightOnly)
             } else {
-                // Only left pane visible (right hidden)
-                (vec![Constraint::Percentage(100)], RenderMode::LeftOnly)
-            }
-        };
+                // Use left pane size to determine layout
+                let left_percent = self.left_pane_size.left_width_percent();
+                if let Some(right_percent) = self.left_pane_size.right_width_percent() {
+                    // Both panes visible
+                    (
+                        vec![
+                            Constraint::Percentage(left_percent),
+                            Constraint::Percentage(right_percent),
+                        ],
+                        RenderMode::Both,
+                    )
+                } else {
+                    // Only left pane visible (right hidden)
+                    (vec![Constraint::Percentage(100)], RenderMode::LeftOnly)
+                }
+            };
 
         let chunks = Layout::default()
             .direction(Direction::Horizontal)
             .constraints(left_constraints)
             .split(area);
 
+        let steps_fullscreen = self.right_pane_size.is_fullscreen();
+
         match render_mode {
             RenderMode::Both => {
                 self.left_pane.render(chunks[0], buf);
-                self.right_pane.render(chunks[1], buf, false);
+                self.right_pane.render(chunks[1], buf, false, self.details_pane_size);
             }
             RenderMode::LeftOnly => {
                 self.left_pane.render(chunks[0], buf);
             }
             RenderMode::RightOnly => {
-                self.right_pane.render(chunks[0], buf, true);
+                self.right_pane.render(chunks[0], buf, steps_fullscreen, self.details_pane_size);
             }
         }
     }

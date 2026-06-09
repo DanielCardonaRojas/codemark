@@ -1,4 +1,4 @@
-use crate::browser::{SectionConfig, StepData, TabbedPanel};
+use crate::browser::{DetailsPaneSize, SectionConfig, StepData, TabbedPanel};
 use crate::component::{Component, MarkdownPanel};
 use crate::event::Event;
 use codemark_core::engine::bookmark::{Bookmark, Resolution};
@@ -40,6 +40,8 @@ pub struct RightPane {
     pub pager_current: usize,
     /// Last rendered area
     pub last_area: std::cell::Cell<Rect>,
+    /// Last rendered details area (set during render for accurate mouse hit testing)
+    last_details_area: std::cell::Cell<Rect>,
     /// Details height configuration
     pub info_config: SectionConfig,
     /// Active tour name (if a tour is loaded)
@@ -70,6 +72,7 @@ impl RightPane {
             pager_total: 0,
             pager_current: 0,
             last_area: std::cell::Cell::new(Rect::default()),
+            last_details_area: std::cell::Cell::new(Rect::default()),
             info_config: SectionConfig::new(7, 13),
             active_tour_name: None,
             active_bookmark_id: None,
@@ -574,13 +577,26 @@ impl RightPane {
     /// # Arguments
     /// * `area` - The area to render in
     /// * `buf` - The buffer to render to
-    /// * `fullscreen` - If true, hide the details pane and use full area for steps
-    pub fn render(&self, area: Rect, buf: &mut Buffer, fullscreen: bool) {
+    /// * `steps_fullscreen` - If true, hide the details pane and use full area for steps
+    /// * `details_size` - Current size mode for the details pane
+    pub fn render(
+        &self,
+        area: Rect,
+        buf: &mut Buffer,
+        steps_fullscreen: bool,
+        details_size: DetailsPaneSize,
+    ) {
         self.last_area.set(area);
 
-        if fullscreen {
+        if steps_fullscreen {
             // In fullscreen mode, use the entire area for the steps panel
             self.steps.render(area, buf);
+            return;
+        }
+
+        if details_size.is_expanded() {
+            // Details takes the full right-pane area (steps/pager hidden)
+            self.render_details_block(area, buf);
             return;
         }
 
@@ -611,21 +627,42 @@ impl RightPane {
             pager.render(chunks[1], buf);
         }
 
-        // Render details with border
+        self.render_details_block(chunks[2], buf);
+    }
+
+    /// Render the details block with border, title offset, and content.
+    fn render_details_block(&self, area: Rect, buf: &mut Buffer) {
+        self.last_details_area.set(area);
         let border_style = if self.focused == RightPaneFocus::Details {
             Style::default().fg(Color::Green)
         } else {
             Style::default().fg(Color::DarkGray)
         };
 
+        let title = ratatui::text::Line::from(vec![
+            ratatui::text::Span::raw("  "),
+            ratatui::text::Span::styled("Details", Style::default().bold()),
+        ]);
         let block = Block::bordered()
             .border_type(BorderType::Rounded)
-            .title("Details")
-            .title_style(Style::default().bold())
+            .title(title)
             .border_style(border_style);
 
-        let inner = block.inner(chunks[2]);
-        block.render(chunks[2], buf);
+        let inner = block.inner(area);
+        block.render(area, buf);
+
+        // Extend the top border line after the ╭ character (matching tabbed panels)
+        for i in 1..=2u16 {
+            let x = area.left() + i;
+            let y = area.top();
+            if x < area.right()
+                && let Some(cell) = buf.cell_mut((x, y))
+            {
+                cell.set_char('─');
+                cell.set_style(border_style);
+            }
+        }
+
         self.details.render(inner, buf);
     }
 
@@ -648,11 +685,11 @@ impl RightPane {
             {
                 self.focus_steps();
             } else {
-                let info_area = self.details_area();
-                if col >= info_area.x
-                    && col < info_area.x + info_area.width
-                    && row >= info_area.y
-                    && row < info_area.y + info_area.height
+                let details_area = self.last_details_area.get();
+                if col >= details_area.x
+                    && col < details_area.x + details_area.width
+                    && row >= details_area.y
+                    && row < details_area.y + details_area.height
                 {
                     self.focus_details();
                 }
@@ -749,22 +786,6 @@ impl RightPane {
         match self.focused {
             RightPaneFocus::Steps => self.focus_details(),
             RightPaneFocus::Details => self.focus_steps(),
-        }
-    }
-
-    fn details_area(&self) -> Rect {
-        let area = self.last_area.get();
-        let info_height = if self.focused == RightPaneFocus::Details {
-            self.info_config.max
-        } else {
-            self.info_config.min
-        };
-
-        Rect {
-            x: area.x,
-            y: area.y + area.height.saturating_sub(info_height),
-            width: area.width,
-            height: info_height,
         }
     }
 
