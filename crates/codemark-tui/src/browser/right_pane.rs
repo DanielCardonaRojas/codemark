@@ -373,9 +373,18 @@ impl RightPane {
         })?;
 
         // Get or create a ParseCache for this language
-        let cache = session_cache
-            .entry(language)
-            .or_insert_with(|| ParseCache::new(language).expect("failed to create ParseCache"));
+        let cache = match session_cache.entry(language) {
+            std::collections::hash_map::Entry::Occupied(e) => e.into_mut(),
+            std::collections::hash_map::Entry::Vacant(e) => {
+                let pc = ParseCache::new(language).map_err(|err| {
+                    codemark_core::error::Error::TreeSitter(format!(
+                        "failed to create ParseCache for {}: {}",
+                        bm.language, err
+                    ))
+                })?;
+                e.insert(pc)
+            }
+        };
 
         let provider = codemark_core::vfs::LocalFileProvider;
         let handle = tokio::runtime::Handle::current();

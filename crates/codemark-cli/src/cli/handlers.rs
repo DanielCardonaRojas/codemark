@@ -1460,8 +1460,10 @@ pub async fn handle_preview(cli: &Cli, args: &PreviewArgs) -> Result<()> {
     let (bm, db) = find_bookmark_across(&dbs, id)?;
 
     // Use snapshot mode if --snapshot or any historical flag is given
-    let use_snapshot =
-        args.snapshot || args.at_creation || args.at_commit.is_some() || args.resolution_id.is_some();
+    let use_snapshot = args.snapshot
+        || args.at_creation
+        || args.at_commit.is_some()
+        || args.resolution_id.is_some();
 
     if !use_snapshot {
         // ---- Live resolution path ----
@@ -1497,16 +1499,12 @@ pub async fn handle_preview(cli: &Cli, args: &PreviewArgs) -> Result<()> {
             all_resolutions.iter().filter_map(|r| r.commit_hash.clone()).collect();
 
         match git_context::find_nearest_ancestor(&cwd, &commit_hashes)? {
-            Some(nearest_commit) => {
-                all_resolutions
-                    .into_iter()
-                    .find(|r| r.commit_hash.as_deref() == Some(&nearest_commit))
-                    .ok_or_else(|| {
-                        Error::Resolution(format!(
-                            "resolution for commit {nearest_commit} not found"
-                        ))
-                    })?
-            }
+            Some(nearest_commit) => all_resolutions
+                .into_iter()
+                .find(|r| r.commit_hash.as_deref() == Some(&nearest_commit))
+                .ok_or_else(|| {
+                    Error::Resolution(format!("resolution for commit {nearest_commit} not found"))
+                })?,
             None => {
                 let resolutions = db.list_resolutions(&bm.id, 1)?;
                 match resolutions.first() {
@@ -1655,8 +1653,8 @@ async fn handle_preview_live(
         })?;
         let lines: Vec<&str> = file_content.lines().collect();
         // result.start_line and end_line are 0-indexed
-        let start = result.start_line;
         let end = (result.end_line + 1).min(lines.len());
+        let start = result.start_line.min(end);
         for line in &lines[start..end] {
             println!("{}", line);
         }
@@ -1672,8 +1670,8 @@ async fn handle_preview_live(
         let file_content = std::fs::read_to_string(&absolute_path).ok();
         file_content.map(|content| {
             let lines: Vec<&str> = content.lines().collect();
-            let start = result.start_line;
             let end = (result.end_line + 1).min(lines.len());
+            let start = result.start_line.min(end);
             lines[start..end].join("\n")
         })
     };
@@ -1681,7 +1679,7 @@ async fn handle_preview_live(
     let health_label = match live_status {
         codemark_core::engine::resolution::LiveUIStatus::Healthy => "active",
         codemark_core::engine::resolution::LiveUIStatus::Drifted => "drifted",
-        codemark_core::engine::resolution::LiveUIStatus::Broken => "stale",
+        codemark_core::engine::resolution::LiveUIStatus::Broken => "broken",
     };
 
     let breadcrumbs_json: Option<serde_json::Value> = if result.breadcrumbs.is_empty() {
