@@ -181,6 +181,15 @@ impl BrowserLayout {
         };
         layout.update_focus_state();
         layout.sync_steps_tab_label();
+
+        // Spawn background live health resolution so bookmark dots update on startup
+        if let Ok(all_bookmarks) = layout
+            .db
+            .list_bookmarks(&codemark_core::engine::bookmark::BookmarkFilter::default())
+        {
+            layout.spawn_live_health_task(all_bookmarks);
+        }
+
         layout
     }
 
