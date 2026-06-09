@@ -9,6 +9,69 @@ use crate::git::context as git_context;
 use crate::parser::languages::ParseCache;
 use crate::query::{matcher, relaxer};
 
+/// Lightweight result from on-the-fly resolution, used for live previews
+/// without persisting to the database.
+#[derive(Debug, Clone)]
+pub struct TransientResolution {
+    pub method: ResolutionMethod,
+    pub file_path: String,
+    /// 0-indexed start line (from tree-sitter Point.row)
+    pub start_line: usize,
+    /// 0-indexed end line (from tree-sitter Point.row)
+    pub end_line: usize,
+    pub matched_text: String,
+    pub content_hash: String,
+    pub hash_matches: bool,
+    pub breadcrumbs: Vec<crate::engine::breadcrumbs::Breadcrumb>,
+}
+
+/// Simplified health status derived from live resolution, for UI display.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LiveUIStatus {
+    /// Exact match with hash match — code is unchanged.
+    Healthy,
+    /// Relaxed/HashFallback match, or hash mismatch — code has moved or changed.
+    Drifted,
+    /// Resolution failed — code not found.
+    Broken,
+}
+
+impl TransientResolution {
+    /// Derive a [`LiveUIStatus`] from the resolution method and hash match.
+    pub fn live_status(&self) -> LiveUIStatus {
+        match self.method {
+            ResolutionMethod::Exact if self.hash_matches => LiveUIStatus::Healthy,
+            ResolutionMethod::Failed => LiveUIStatus::Broken,
+            _ => LiveUIStatus::Drifted,
+        }
+    }
+}
+
+/// Resolve a bookmark on-the-fly for live preview, without persisting anything.
+///
+/// Accepts the codemark `Language` enum and calls `tree_sitter_language()` internally.
+/// On file-not-found the error is propagated so the caller can fall back.
+pub async fn resolve_transient(
+    bookmark: &Bookmark,
+    cache: &mut ParseCache,
+    language: crate::parser::languages::Language,
+    db_path: &Path,
+    provider: &dyn crate::vfs::FileProvider,
+) -> Result<TransientResolution> {
+    let ts_lang = language.tree_sitter_language();
+    let result = resolve(bookmark, cache, &ts_lang, db_path, provider).await?;
+    Ok(TransientResolution {
+        method: result.method,
+        file_path: result.file_path,
+        start_line: result.start_line,
+        end_line: result.end_line,
+        matched_text: result.matched_text,
+        content_hash: result.content_hash,
+        hash_matches: result.hash_matches,
+        breadcrumbs: result.breadcrumbs,
+    })
+}
+
 /// The result of resolving a single bookmark.
 #[derive(Debug)]
 pub struct ResolutionResult {

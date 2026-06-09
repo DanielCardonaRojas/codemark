@@ -1459,7 +1459,16 @@ pub async fn handle_preview(cli: &Cli, args: &PreviewArgs) -> Result<()> {
     let id = extract_id(&args.id);
     let (bm, db) = find_bookmark_across(&dbs, id)?;
 
-    // Determine which resolution to use
+    // Use snapshot mode if --snapshot or any historical flag is given
+    let use_snapshot =
+        args.snapshot || args.at_creation || args.at_commit.is_some() || args.resolution_id.is_some();
+
+    if !use_snapshot {
+        // ---- Live resolution path ----
+        return handle_preview_live(args, &bm, db).await;
+    }
+
+    // ---- Snapshot (persisted) resolution path ----
     let resolution = if let Some(ref res_id) = args.resolution_id {
         // Use specific resolution by ID
         db.get_resolution(res_id)?
@@ -1480,19 +1489,15 @@ pub async fn handle_preview(cli: &Cli, args: &PreviewArgs) -> Result<()> {
             .find(|r| r.commit_hash.as_deref().map(|c| c.starts_with(commit)).unwrap_or(false))
             .ok_or_else(|| Error::Resolution(format!("no resolution found at commit {commit}")))?
     } else {
-        // Default: use resolution from nearest ancestor commit
-        // This allows preview to work correctly when checking out old commits
+        // --snapshot without historical flags: use resolution from nearest ancestor commit
         let cwd = std::env::current_dir()?;
         let all_resolutions = db.list_resolutions(&bm.id, 100)?;
 
-        // Extract commit hashes from all resolutions
         let commit_hashes: Vec<String> =
             all_resolutions.iter().filter_map(|r| r.commit_hash.clone()).collect();
 
-        // Find the nearest ancestor commit
         match git_context::find_nearest_ancestor(&cwd, &commit_hashes)? {
             Some(nearest_commit) => {
-                // Find the resolution with this commit hash
                 all_resolutions
                     .into_iter()
                     .find(|r| r.commit_hash.as_deref() == Some(&nearest_commit))
@@ -1503,7 +1508,6 @@ pub async fn handle_preview(cli: &Cli, args: &PreviewArgs) -> Result<()> {
                     })?
             }
             None => {
-                // No ancestor found, fall back to most recent resolution
                 let resolutions = db.list_resolutions(&bm.id, 1)?;
                 match resolutions.first() {
                     Some(r) => r.clone(),
@@ -1549,7 +1553,6 @@ pub async fn handle_preview(cli: &Cli, args: &PreviewArgs) -> Result<()> {
 
         let mut start_byte = byte_location.start_byte;
         if args.breadcrumbs {
-            // Move start_byte back to the beginning of the line to preserve indentation
             while start_byte > 0 && file_bytes[start_byte - 1] != b'\n' {
                 start_byte -= 1;
             }
@@ -1576,7 +1579,6 @@ pub async fn handle_preview(cli: &Cli, args: &PreviewArgs) -> Result<()> {
     // Output JSON with resolution data (using standard envelope)
     let line_range_colon = resolution.line_range.as_ref().map(|r| r.replace('-', ":"));
 
-    // For JSON output, we want the actual snapshot text if it's missing in the resolution record
     let snapshot_text = resolution.snapshot.clone().or_else(|| {
         if let Ok(file_bytes) = std::fs::read(&absolute_path) {
             let byte_range_str = resolution.byte_range.as_ref()?;
@@ -1596,8 +1598,6 @@ pub async fn handle_preview(cli: &Cli, args: &PreviewArgs) -> Result<()> {
         None
     });
 
-    // The "drifted" boolean includes both Drifted and Stale for backward compatibility.
-    // Clients should check the "health" field for the precise tri-state (Active/Drifted/Stale).
     let data = serde_json::json!({
         "bookmark_id": bm.id,
         "resolution_id": resolution.id,
@@ -1614,6 +1614,99 @@ pub async fn handle_preview(cli: &Cli, args: &PreviewArgs) -> Result<()> {
         "content_hash": resolution.content_hash,
         "breadcrumbs": resolution.breadcrumbs.as_ref().and_then(|s| serde_json::from_str::<serde_json::Value>(s).ok()),
         "drifted": bm.health == BookmarkHealth::Drifted || bm.health == BookmarkHealth::Stale,
+    });
+
+    write_json_success(&data)?;
+    Ok(())
+}
+
+/// Live resolution path for `codemark preview` — resolves the bookmark on-the-fly
+/// using tree-sitter against the current disk state, without reading persisted resolutions.
+async fn handle_preview_live(
+    args: &PreviewArgs,
+    bm: &codemark_core::engine::bookmark::Bookmark,
+    db: &Database,
+) -> Result<()> {
+    use codemark_core::engine::resolution::resolve_transient;
+    use codemark_core::parser::languages::ParseCache;
+
+    let lang = bm
+        .language
+        .parse::<Language>()
+        .map_err(|_| Error::Input(format!("unsupported language: {}", bm.language)))?;
+    let mut cache = ParseCache::new(lang)?;
+    let provider = codemark_core::vfs::LocalFileProvider;
+
+    let result = resolve_transient(bm, &mut cache, lang, db.path(), &provider).await?;
+    let absolute_path = git_context::resolve_bookmark_file_path(&result.file_path, db.path())?;
+    let live_status = result.live_status();
+
+    if args.raw {
+        // Output breadcrumbs if requested
+        if args.breadcrumbs {
+            for bc in &result.breadcrumbs {
+                println!("{}", bc.text);
+            }
+        }
+
+        // For raw mode, read the file and output the matched text lines
+        let file_content = std::fs::read_to_string(&absolute_path).map_err(|e| {
+            Error::Input(format!("failed to read file {}: {}", absolute_path.display(), e))
+        })?;
+        let lines: Vec<&str> = file_content.lines().collect();
+        // result.start_line and end_line are 0-indexed
+        let start = result.start_line;
+        let end = (result.end_line + 1).min(lines.len());
+        for line in &lines[start..end] {
+            println!("{}", line);
+        }
+        return Ok(());
+    }
+
+    // Convert 0-indexed lines to 1-indexed for output
+    let line_range = format!("{}-{}", result.start_line + 1, result.end_line + 1);
+    let line_range_colon = format!("{}:{}", result.start_line + 1, result.end_line + 1);
+
+    // Read the matched text from disk
+    let snapshot_text = {
+        let file_content = std::fs::read_to_string(&absolute_path).ok();
+        file_content.map(|content| {
+            let lines: Vec<&str> = content.lines().collect();
+            let start = result.start_line;
+            let end = (result.end_line + 1).min(lines.len());
+            lines[start..end].join("\n")
+        })
+    };
+
+    let health_label = match live_status {
+        codemark_core::engine::resolution::LiveUIStatus::Healthy => "active",
+        codemark_core::engine::resolution::LiveUIStatus::Drifted => "drifted",
+        codemark_core::engine::resolution::LiveUIStatus::Broken => "stale",
+    };
+
+    let breadcrumbs_json: Option<serde_json::Value> = if result.breadcrumbs.is_empty() {
+        None
+    } else {
+        serde_json::to_value(&result.breadcrumbs).ok()
+    };
+
+    let data = serde_json::json!({
+        "bookmark_id": bm.id,
+        "resolution_id": null,
+        "file_path": absolute_path.to_string_lossy(),
+        "line_range": line_range,
+        "line_range_colon": line_range_colon,
+        "byte_range": null,
+        "snapshot": snapshot_text,
+        "health": health_label,
+        "status": health_label,
+        "resolution_method": result.method,
+        "resolved_at": null,
+        "commit_hash": null,
+        "content_hash": result.content_hash,
+        "breadcrumbs": breadcrumbs_json,
+        "drifted": !result.hash_matches || result.method != codemark_core::engine::bookmark::ResolutionMethod::Exact,
+        "live": true,
     });
 
     write_json_success(&data)?;
