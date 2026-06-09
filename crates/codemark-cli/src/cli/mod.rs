@@ -489,6 +489,11 @@ pub struct PreviewArgs {
     /// Bookmark ID (full UUID or unambiguous prefix)
     pub id: String,
 
+    /// Use persisted resolution from the database instead of live resolution.
+    /// Implied by --at_creation, --at_commit, and --resolution_id.
+    #[arg(long)]
+    pub snapshot: bool,
+
     /// Preview the file as it was when the bookmark was created
     #[arg(long)]
     at_creation: bool,

@@ -79,6 +79,17 @@ pub enum HealthStatus {
     Unknown,
 }
 
+impl From<codemark_core::engine::resolution::LiveUIStatus> for HealthStatus {
+    fn from(status: codemark_core::engine::resolution::LiveUIStatus) -> Self {
+        use codemark_core::engine::resolution::LiveUIStatus;
+        match status {
+            LiveUIStatus::Healthy => HealthStatus::Healthy,
+            LiveUIStatus::Drifted => HealthStatus::Drifted,
+            LiveUIStatus::Broken => HealthStatus::Broken,
+        }
+    }
+}
+
 impl From<codemark_core::engine::projection::UIStatus> for HealthStatus {
     fn from(status: codemark_core::engine::projection::UIStatus) -> Self {
         use codemark_core::engine::projection::UIStatus;
@@ -707,6 +718,27 @@ impl Panel {
             for item in &mut self.items {
                 if item.user_data.as_deref() == Some(user_data) {
                     item.spinner_text = text.map(|t| t.to_string());
+                    break;
+                }
+            }
+        }
+    }
+
+    /// Update the health status of an item identified by its user_data value.
+    /// Same pattern as `update_item_spinner()`: mutates both `all_items` and `items`.
+    pub fn update_item_health(&mut self, user_data: &str, health: HealthStatus) {
+        let mut changed = false;
+        for item in &mut self.all_items {
+            if item.user_data.as_deref() == Some(user_data) {
+                item.health = Some(health);
+                changed = true;
+                break;
+            }
+        }
+        if changed {
+            for item in &mut self.items {
+                if item.user_data.as_deref() == Some(user_data) {
+                    item.health = Some(health);
                     break;
                 }
             }

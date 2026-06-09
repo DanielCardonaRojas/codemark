@@ -2,6 +2,8 @@ use crate::browser::{SectionConfig, StepData, TabbedPanel};
 use crate::component::{Component, MarkdownPanel};
 use crate::event::Event;
 use codemark_core::engine::bookmark::{Bookmark, Resolution};
+use codemark_core::engine::resolution as live_resolution;
+use codemark_core::parser::languages::{Language as CodemarkLanguage, ParseCache};
 use codemark_core::storage::db::Database;
 use codemark_core::templates::{self, load_template};
 use ratatui::{
@@ -10,6 +12,7 @@ use ratatui::{
     style::{Color, Style, Stylize},
     widgets::{Block, BorderType, Widget},
 };
+use std::collections::HashMap;
 
 /// Tab index for the Info tab in the steps panel.
 /// The steps panel has tabs in order: Steps (0), Info (1), Query (2).
@@ -213,13 +216,232 @@ impl RightPane {
         }
     }
 
+    /// Load a single bookmark for previewing using live (on-the-fly) resolution.
+    ///
+    /// Runs `resolve_transient()` synchronously via `block_on` to get the current
+    /// location of the bookmarked code directly from disk + tree-sitter, without
+    /// reading persisted resolutions from the database. Falls back to the
+    /// persisted path (`load_bookmark()`) on error.
+    pub fn load_bookmark_live(
+        &mut self,
+        db: &Database,
+        bookmark_id: &str,
+        session_cache: &mut HashMap<CodemarkLanguage, ParseCache>,
+    ) {
+        let Some(bm) = db.get_bookmark(bookmark_id).ok().flatten() else {
+            self.clear_preview_state(db);
+            return;
+        };
+
+        // Try live resolution
+        match Self::resolve_bookmark_live(&bm, db, session_cache) {
+            Ok((abs_path, start_line, end_line)) => {
+                // Get all resolutions for showing full history in Info tab
+                let resolutions = db.list_resolutions(&bm.id, 100).unwrap_or_default();
+
+                self.steps_data = vec![StepData {
+                    file_path: abs_path,
+                    line_number: start_line,
+                    line_end: Some(end_line),
+                    bookmark: bm,
+                    resolution: None,
+                    resolutions,
+                }];
+                self.pager_total = 1;
+                self.pager_current = 0;
+                self.active_bookmark_id = Some(bookmark_id.to_string());
+                self.active_tour_name = None;
+                self.update_preview(db);
+            }
+            Err(e) => {
+                tracing::warn!(
+                    target: "codemark::ui",
+                    bookmark_id = %bookmark_id,
+                    error = %e,
+                    "Live resolution failed, falling back to persisted path"
+                );
+                self.load_bookmark(db, bookmark_id);
+            }
+        }
+    }
+
+    /// Load a tour using live resolution for each step.
+    ///
+    /// Same pattern as `load_tour()` but uses `resolve_transient()` for each
+    /// bookmark in the collection to get current-disk locations.
+    pub fn load_tour_live(
+        &mut self,
+        db: &Database,
+        tour_name: &str,
+        session_cache: &mut HashMap<CodemarkLanguage, ParseCache>,
+    ) {
+        let Some(collection) = db.get_collection_by_name(tour_name).ok().flatten() else {
+            self.clear_preview_state(db);
+            return;
+        };
+
+        let Ok(bookmarks) = db.list_bookmarks_in_collection(&collection.id) else {
+            self.clear_preview_state(db);
+            return;
+        };
+
+        let mut new_steps = Vec::new();
+        for bm in bookmarks {
+            let resolutions = db.list_resolutions(&bm.id, 100).unwrap_or_default();
+
+            match Self::resolve_bookmark_live(&bm, db, session_cache) {
+                Ok((abs_path, start_line, end_line)) => {
+                    new_steps.push(StepData {
+                        file_path: abs_path,
+                        line_number: start_line,
+                        line_end: Some(end_line),
+                        bookmark: bm,
+                        resolution: None,
+                        resolutions,
+                    });
+                }
+                Err(_) => {
+                    // Fallback to persisted resolution for this step
+                    let mut line_number = 0;
+                    let mut line_end = None;
+                    let mut file_path = bm.file_path.clone();
+                    let resolution = db.get_preview_resolution(&bm.id).ok().flatten();
+
+                    if let Some(ref res) = resolution {
+                        if let Some(fp) = res.file_path.as_ref() {
+                            file_path = fp.clone();
+                        }
+                        if let Some(lr) = res.line_range.as_ref() {
+                            let parts: Vec<&str> = lr.split('-').collect();
+                            if let (Some(start), Some(end)) = (
+                                parts.first().and_then(|s| s.parse::<usize>().ok()),
+                                parts.get(1).and_then(|s| s.parse::<usize>().ok()),
+                            ) {
+                                line_number = start.saturating_sub(1);
+                                line_end = Some(end.saturating_sub(1));
+                            } else if let Some(start) =
+                                parts.first().and_then(|s| s.parse::<usize>().ok())
+                            {
+                                line_number = start.saturating_sub(1);
+                            }
+                        }
+                    }
+
+                    if let Ok(abs_path) = codemark_core::git::context::resolve_bookmark_file_path(
+                        &file_path,
+                        db.path(),
+                    ) {
+                        new_steps.push(StepData {
+                            file_path: abs_path.to_string_lossy().to_string(),
+                            line_number,
+                            line_end,
+                            bookmark: bm,
+                            resolution,
+                            resolutions,
+                        });
+                    }
+                }
+            }
+        }
+
+        if !new_steps.is_empty() {
+            self.steps_data = new_steps;
+            self.pager_total = self.steps_data.len();
+            self.pager_current = 0;
+            self.active_tour_name = Some(tour_name.to_string());
+            self.active_bookmark_id = None;
+            self.update_preview(db);
+        } else {
+            self.clear_preview_state(db);
+        }
+    }
+
+    /// Resolve a bookmark on-the-fly using tree-sitter, returning (abs_path, start_line, end_line).
+    /// All line numbers are 0-indexed (from tree-sitter Point.row).
+    fn resolve_bookmark_live(
+        bm: &Bookmark,
+        db: &Database,
+        session_cache: &mut HashMap<CodemarkLanguage, ParseCache>,
+    ) -> std::result::Result<(String, usize, usize), codemark_core::error::Error> {
+        use std::str::FromStr;
+
+        let language = CodemarkLanguage::from_str(&bm.language).map_err(|e| {
+            codemark_core::error::Error::Input(format!(
+                "unsupported language {}: {}",
+                bm.language, e
+            ))
+        })?;
+
+        // Get or create a ParseCache for this language
+        let cache = match session_cache.entry(language) {
+            std::collections::hash_map::Entry::Occupied(e) => e.into_mut(),
+            std::collections::hash_map::Entry::Vacant(e) => {
+                let pc = ParseCache::new(language).map_err(|err| {
+                    codemark_core::error::Error::TreeSitter(format!(
+                        "failed to create ParseCache for {}: {}",
+                        bm.language, err
+                    ))
+                })?;
+                e.insert(pc)
+            }
+        };
+
+        // Clear cached parse trees so we always re-read the file from disk,
+        // ensuring edits since the last selection are reflected.
+        cache.clear_trees();
+
+        let provider = codemark_core::vfs::LocalFileProvider;
+        let handle = tokio::runtime::Handle::current();
+
+        let result = tokio::task::block_in_place(|| {
+            handle.block_on(live_resolution::resolve_transient(
+                bm,
+                cache,
+                language,
+                db.path(),
+                &provider,
+            ))
+        })?;
+
+        // Treat Failed resolutions as errors so callers fall back to persisted snapshots
+        if result.live_status() == live_resolution::LiveUIStatus::Broken {
+            return Err(codemark_core::error::Error::Resolution(
+                "bookmark code not found in current file".into(),
+            ));
+        }
+
+        // Resolve the file path to absolute
+        let abs_path =
+            codemark_core::git::context::resolve_bookmark_file_path(&result.file_path, db.path())?;
+
+        Ok((abs_path.to_string_lossy().to_string(), result.start_line, result.end_line))
+    }
+
     /// Clear the preview state (used when a bookmark cannot be loaded).
+    ///
+    /// Also clears rendered panels so stale content from a previous bookmark
+    /// does not remain visible.
     pub fn clear_preview_state(&mut self, db: &Database) {
         self.steps_data.clear();
         self.pager_total = 0;
         self.pager_current = 0;
         self.active_bookmark_id = None;
         self.active_tour_name = None;
+
+        // Clear the rendered preview panels so old content doesn't linger
+        if let Some(preview) = self.steps.get_step_preview_mut() {
+            preview.set_code(String::new());
+            preview.set_file_header(None);
+        }
+        if let Some(md_panel) = self.steps.get_markdown_mut() {
+            md_panel.set_markdown(String::new());
+        }
+        if let Some(query_preview) = self.steps.get_query_preview_mut() {
+            query_preview.set_code(String::new());
+        }
+        self.details.set_markdown(String::new());
+
+        // Still call update_preview for any additional side effects
         self.update_preview(db);
     }
 

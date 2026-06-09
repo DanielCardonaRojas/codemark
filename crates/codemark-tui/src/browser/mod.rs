@@ -28,6 +28,7 @@ use crate::event::Event;
 use codemark_core::config::Config;
 use codemark_core::embeddings::config::EmbeddingModel;
 use codemark_core::engine::bookmark::{Bookmark, BookmarkFilter};
+use codemark_core::parser::languages::{Language as CodemarkLanguage, ParseCache};
 use codemark_core::storage::{SemanticRepo, db::Database};
 use ratatui::{
     buffer::Buffer,
@@ -35,6 +36,7 @@ use ratatui::{
     style::{Color, Style, Stylize},
     text::{Line, Span},
 };
+use std::collections::HashMap;
 
 /// Shorten a file path to fit within a maximum width, prioritizing the last path components.
 ///
@@ -132,6 +134,9 @@ pub struct BrowserLayout {
     cached_remote_tours: Vec<codemark_core::sync::RemoteTourSummary>,
     /// Repo URL used for the in-flight remote tours fetch (guards against stale responses)
     pending_remote_repo_url: Option<String>,
+    /// Session-level parse cache for live resolution, keyed by language.
+    /// Each `ParseCache` is single-language (parser locked at creation).
+    session_cache: HashMap<CodemarkLanguage, ParseCache>,
 }
 
 impl BrowserLayout {
@@ -172,9 +177,18 @@ impl BrowserLayout {
             tick_count: 0,
             cached_remote_tours: Vec::new(),
             pending_remote_repo_url: None,
+            session_cache: HashMap::new(),
         };
         layout.update_focus_state();
         layout.sync_steps_tab_label();
+
+        // Spawn background live health resolution so bookmark dots update on startup
+        if let Ok(all_bookmarks) =
+            layout.db.list_bookmarks(&codemark_core::engine::bookmark::BookmarkFilter::default())
+        {
+            layout.spawn_live_health_task(all_bookmarks);
+        }
+
         layout
     }
 
@@ -190,7 +204,7 @@ impl BrowserLayout {
             && let Some(selected) = panel.selected()
             && let Some(ref id) = selected.user_data
         {
-            self.right_pane.load_bookmark(&self.db, id);
+            self.right_pane.load_bookmark_live(&self.db, id, &mut self.session_cache);
         }
     }
 
@@ -277,7 +291,9 @@ impl BrowserLayout {
                         SemanticRepo::with_config(models_dir, model, distance_metric, threshold);
 
                     let handle = tokio::runtime::Handle::current();
-                    match handle.block_on(semantic_repo.search(db.conn(), &query, 20)) {
+                    match tokio::task::block_in_place(|| {
+                        handle.block_on(semantic_repo.search(db.conn(), &query, 20))
+                    }) {
                         Ok(results) => {
                             let mut bookmarks = Vec::new();
                             for result in results {
@@ -302,6 +318,7 @@ impl BrowserLayout {
         if db_path.exists() {
             self.db = Database::open(&db_path)?;
             self.right_pane.refresh_head_commit(&self.db);
+            self.session_cache.clear();
             self.refresh_all_panels();
         }
         Ok(())
@@ -799,22 +816,27 @@ impl BrowserLayout {
             p.set_items(tours);
         }
 
-        // 4. Update Step previews (Right Pane)
+        // 3b. Spawn background live health resolution for all bookmarks
+        if let Ok(all_bookmarks) = self.db.list_bookmarks(&BookmarkFilter::default()) {
+            self.spawn_live_health_task(all_bookmarks);
+        }
+
+        // 4. Update Step previews (Right Pane) using live resolution
         let current_step = self.right_pane.pager_current;
         if let Some(tour_name) = self.right_pane.active_tour_name.clone() {
-            self.right_pane.load_tour(&self.db, &tour_name);
+            self.right_pane.load_tour_live(&self.db, &tour_name, &mut self.session_cache);
             // Restore step if possible
             if current_step < self.right_pane.pager_total {
                 self.right_pane.pager_current = current_step;
                 self.right_pane.update_preview(&self.db);
             }
         } else if let Some(bm_id) = self.right_pane.active_bookmark_id.clone() {
-            self.right_pane.load_bookmark(&self.db, &bm_id);
+            self.right_pane.load_bookmark_live(&self.db, &bm_id, &mut self.session_cache);
         } else if let Ok(collections) = self.db.list_collections() {
             // Default to first tour only if nothing was active
             if let Some((first_tour, _)) = collections.first() {
                 let name = first_tour.name.clone();
-                self.right_pane.load_tour(&self.db, &name);
+                self.right_pane.load_tour_live(&self.db, &name, &mut self.session_cache);
             }
         } else {
             // Clear steps if nothing found
@@ -1201,25 +1223,57 @@ impl BrowserLayout {
 
         // 2. Update Bookmarks (Panel 3, tab 0)
         if let Ok(bookmarks) = self.db.list_bookmarks(&BookmarkFilter::default()) {
-            let db_dir = self.db.path().parent().unwrap_or_else(|| self.db.path());
-            let head =
-                codemark_core::git::context::detect_context(db_dir).and_then(|ctx| ctx.head_commit);
-            let head_ref = head.as_deref();
-
-            let filtered_items: Vec<PanelItem> = bookmarks
-                .iter()
+            let filtered_bookmarks: Vec<_> = bookmarks
+                .into_iter()
                 .filter(|bm| {
-                    let branch_match = active_branches.is_empty(); // Bookmarks don't have direct branch column in this version
+                    let branch_match = active_branches.is_empty();
                     let tag_match =
                         active_tags.is_empty() || bm.tags.iter().any(|t| active_tags.contains(t));
                     branch_match && tag_match
                 })
-                .map(|bm| bookmark_to_panel_item(bm, &self.db, false, head_ref))
+                .collect();
+
+            let filtered_items: Vec<PanelItem> = filtered_bookmarks
+                .iter()
+                .map(|bm| {
+                    let summary_info = bm
+                        .language
+                        .parse::<codemark_core::parser::languages::Language>()
+                        .ok()
+                        .and_then(|lang| {
+                            codemark_core::query::summarizer::summarize_query(&bm.query, Some(lang))
+                                .ok()
+                        });
+                    let summary = summary_info
+                        .as_ref()
+                        .and_then(|s| s.identifier.clone())
+                        .unwrap_or_else(|| {
+                            if summary_info.is_some() { String::new() } else { bm.query.clone() }
+                        });
+                    let icon = summary_info
+                        .as_ref()
+                        .map(|s| codemark_core::query::classifier::get_node_icon(&s.label))
+                        .unwrap_or("");
+                    let short_path = shorten_path(&bm.file_path, 25);
+
+                    let mut item = PanelItem::new(&short_path)
+                        .metadata(bm.created_by.clone().unwrap_or_default())
+                        .health(HealthStatus::Unknown)
+                        .icon(icon)
+                        .user_data(bm.id.clone());
+                    if !summary.is_empty() {
+                        item = item.emphasis(summary);
+                    }
+                    item
+                })
                 .collect();
 
             if let Some(TabContent::List(p)) = self.left_pane.panel3.panels.get_mut(0) {
                 p.set_items(filtered_items);
             }
+
+            // Spawn background live health resolution for filtered bookmarks
+            self.spawn_live_health_task(filtered_bookmarks);
         }
     }
 

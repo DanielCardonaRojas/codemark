@@ -5,6 +5,7 @@
 
 use crate::component::{Component, HealthStatus, PanelItem};
 use crate::event::Event;
+use codemark_core::engine::resolution::LiveUIStatus;
 use codemark_core::parser::languages::Language;
 use codemark_core::query::classifier::get_node_icon;
 use codemark_core::query::summarizer;
@@ -107,26 +108,27 @@ impl BrowserLayout {
                 });
                 Some(true)
             }
+            Event::LiveHealthBatch(batch) => {
+                if let Some(panel) = self.left_pane.panel3.get_list_panel_mut(0) {
+                    for (bookmark_id, status) in batch {
+                        panel.update_item_health(bookmark_id, HealthStatus::from(*status));
+                    }
+                }
+                Some(true)
+            }
             _ => None,
         }
     }
 
     /// Populate the bookmarks panel from search results.
+    ///
+    /// Sets health to `Unknown` initially for instant rendering, then spawns
+    /// a background task to resolve all bookmarks and send `LiveHealthBatch`
+    /// events that progressively update the dots.
     fn apply_search_results(&mut self, bookmarks: &[codemark_core::engine::bookmark::Bookmark]) {
-        let db_dir = self.db.path().parent().unwrap_or_else(|| self.db.path());
-        let current_head =
-            codemark_core::git::context::detect_context(db_dir).and_then(|ctx| ctx.head_commit);
         let items: Vec<PanelItem> = bookmarks
             .iter()
             .map(|bm| {
-                let health = codemark_core::engine::projection::compute_bookmark_ui_status(
-                    bm,
-                    &self.db,
-                    current_head.as_deref(),
-                )
-                .map(HealthStatus::from)
-                .unwrap_or(HealthStatus::Unknown);
-
                 let summary_info = bm
                     .language
                     .parse::<Language>()
@@ -150,7 +152,7 @@ impl BrowserLayout {
 
                 PanelItem::new(display_text)
                     .metadata(bm.created_by.clone().unwrap_or_default())
-                    .health(health)
+                    .health(HealthStatus::Unknown)
                     .icon(icon)
                     .user_data(bm.id.clone())
             })
@@ -161,6 +163,82 @@ impl BrowserLayout {
             p.set_selected(0);
             self.left_pane.panel3.tabs.set_selected(0);
         }
+
+        // Spawn background task to resolve health for all bookmarks
+        self.spawn_live_health_task(bookmarks.to_vec());
+    }
+
+    /// Spawn a background task that resolves all bookmarks and sends
+    /// `LiveHealthBatch` events to update the list health dots progressively.
+    pub(super) fn spawn_live_health_task(
+        &self,
+        bookmarks: Vec<codemark_core::engine::bookmark::Bookmark>,
+    ) {
+        if bookmarks.is_empty() {
+            return;
+        }
+
+        let db_path = self.db.path().to_path_buf();
+        let event_handler = self.event_handler.clone();
+
+        tokio::task::spawn_blocking(move || {
+            let handle = tokio::runtime::Handle::current();
+            let provider = codemark_core::vfs::LocalFileProvider;
+
+            // Group bookmarks by (language, file_path) for parse-tree reuse
+            use codemark_core::parser::languages::{Language as CL, ParseCache};
+            use std::collections::HashMap;
+
+            let mut caches: HashMap<CL, ParseCache> = HashMap::new();
+            let mut batch: Vec<(String, LiveUIStatus)> = Vec::new();
+
+            // Open a fresh DB connection for the path (only for db_path)
+            let db_path_ref = &db_path;
+
+            for bm in &bookmarks {
+                let status =
+                    (|| -> std::result::Result<LiveUIStatus, codemark_core::error::Error> {
+                        use std::str::FromStr;
+                        let language = CL::from_str(&bm.language)?;
+                        let cache = match caches.entry(language) {
+                            std::collections::hash_map::Entry::Occupied(e) => e.into_mut(),
+                            std::collections::hash_map::Entry::Vacant(e) => {
+                                let pc = ParseCache::new(language).map_err(|err| {
+                                    codemark_core::error::Error::TreeSitter(format!(
+                                        "failed to create ParseCache for {}: {}",
+                                        bm.language, err
+                                    ))
+                                })?;
+                                e.insert(pc)
+                            }
+                        };
+
+                        let result = handle.block_on(
+                            codemark_core::engine::resolution::resolve_transient(
+                                bm,
+                                cache,
+                                language,
+                                db_path_ref,
+                                &provider,
+                            ),
+                        )?;
+                        Ok(result.live_status())
+                    })();
+
+                let live_status = status.unwrap_or(LiveUIStatus::Broken);
+                batch.push((bm.id.clone(), live_status));
+
+                // Send in batches of 10 for progressive rendering
+                if batch.len() >= 10 {
+                    let _ = event_handler.send(Event::LiveHealthBatch(std::mem::take(&mut batch)));
+                }
+            }
+
+            // Send remaining items
+            if !batch.is_empty() {
+                let _ = event_handler.send(Event::LiveHealthBatch(batch));
+            }
+        });
     }
 
     // ── Mouse events ─────────────────────────────────────────────────────
@@ -402,7 +480,7 @@ impl BrowserLayout {
                     }
                     let tour_name = selected.text().to_string();
                     panel.activate_selected();
-                    self.right_pane.load_tour(&self.db, &tour_name);
+                    self.right_pane.load_tour_live(&self.db, &tour_name, &mut self.session_cache);
                     self.set_focus(FocusArea::Main);
                     return Some(true);
                 }
@@ -413,7 +491,7 @@ impl BrowserLayout {
                 {
                     let tour_name = selected.text().to_string();
                     panel.activate_selected();
-                    self.right_pane.load_tour(&self.db, &tour_name);
+                    self.right_pane.load_tour_live(&self.db, &tour_name, &mut self.session_cache);
                     self.set_focus(FocusArea::Main);
                     return Some(true);
                 }
@@ -424,7 +502,7 @@ impl BrowserLayout {
                     && let Some(id) = selected.user_data.clone()
                 {
                     panel.activate_selected();
-                    self.right_pane.load_bookmark(&self.db, &id);
+                    self.right_pane.load_bookmark_live(&self.db, &id, &mut self.session_cache);
                     self.set_focus(FocusArea::Main);
                     return Some(true);
                 }
@@ -653,7 +731,7 @@ impl BrowserLayout {
                 if self.focus == FocusArea::Panel3
                     && let Some(id) = self.left_pane.panel3.take_selection_change()
                 {
-                    self.right_pane.load_bookmark(&self.db, &id);
+                    self.right_pane.load_bookmark_live(&self.db, &id, &mut self.session_cache);
                 }
                 handled
             }
@@ -670,7 +748,11 @@ impl BrowserLayout {
                     FocusArea::Panel3 => {
                         let handled = self.left_pane.panel3.handle_event(event);
                         if let Some(id) = self.left_pane.panel3.take_selection_change() {
-                            self.right_pane.load_bookmark(&self.db, &id);
+                            self.right_pane.load_bookmark_live(
+                                &self.db,
+                                &id,
+                                &mut self.session_cache,
+                            );
                         }
                         handled
                     }

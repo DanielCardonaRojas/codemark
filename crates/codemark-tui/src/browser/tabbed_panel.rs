@@ -3,7 +3,6 @@ use crate::component::{CodePreview, HealthStatus, MarkdownPanel, Panel, PanelIte
 use crate::event::Event;
 use codemark_core::engine::bookmark::{Bookmark, BookmarkFilter, BookmarkHealth};
 use codemark_core::engine::projection;
-use codemark_core::git::context as git_context;
 use codemark_core::parser::languages::Language;
 use codemark_core::query::classifier::get_node_icon;
 use codemark_core::query::summarizer;
@@ -183,6 +182,38 @@ pub fn bookmark_to_panel_item(
     let mut item = PanelItem::new(&short_path)
         .metadata(bookmark.created_by.clone().unwrap_or_default())
         .health(health)
+        .icon(icon)
+        .user_data(bookmark.id.clone());
+
+    if !summary.is_empty() {
+        item = item.emphasis(summary);
+    }
+
+    item
+}
+
+/// Create a `PanelItem` from a bookmark with `Unknown` health status.
+///
+/// Used when building panels that will have their health dots updated
+/// asynchronously via `LiveHealthBatch` events. Avoids the per-bookmark
+/// DB + git ancestry queries that `bookmark_to_panel_item` performs.
+fn bookmark_to_panel_item_unknown(bookmark: &Bookmark) -> PanelItem {
+    let summary_info = bookmark
+        .language
+        .parse::<Language>()
+        .ok()
+        .and_then(|lang| summarizer::summarize_query(&bookmark.query, Some(lang)).ok());
+
+    let summary = summary_info.as_ref().and_then(|s| s.identifier.clone()).unwrap_or_else(|| {
+        if summary_info.is_some() { String::new() } else { bookmark.query.clone() }
+    });
+
+    let icon = summary_info.as_ref().map(|s| get_node_icon(&s.label)).unwrap_or("");
+    let short_path = shorten_path(&bookmark.file_path, 25);
+
+    let mut item = PanelItem::new(&short_path)
+        .metadata(bookmark.created_by.clone().unwrap_or_default())
+        .health(HealthStatus::Unknown)
         .icon(icon)
         .user_data(bookmark.id.clone());
 
@@ -378,14 +409,8 @@ impl TabbedPanel {
             }
         }
 
-        let db_dir = db.path().parent().unwrap_or_else(|| db.path());
-        let head = git_context::detect_context(db_dir).and_then(|ctx| ctx.head_commit);
-        let head_ref = head.as_deref();
-
         let bookmarks = match db.list_bookmarks(&BookmarkFilter::default()) {
-            Ok(bookmarks) => {
-                bookmarks.iter().map(|bm| bookmark_to_panel_item(bm, db, false, head_ref)).collect()
-            }
+            Ok(bookmarks) => bookmarks.iter().map(bookmark_to_panel_item_unknown).collect(),
             Err(_) => Vec::new(),
         };
 

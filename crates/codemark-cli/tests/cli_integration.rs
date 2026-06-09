@@ -854,13 +854,20 @@ fn preview_shows_code() {
     ]);
     let id = json["data"]["id"].as_str().unwrap().to_string();
 
-    // Preview now outputs JSON with resolution data
+    // Preview now uses live resolution by default (no resolution_id in output)
     let result = cm.run_json(&["preview", &id[..8]]);
     assert_eq!(result["success"], true);
     // Should contain the file path and line range
     assert!(result["data"]["file_path"].as_str().unwrap().contains("auth_service.rs"));
     assert!(result["data"]["line_range"].is_string());
-    assert!(result["data"]["resolution_id"].is_string());
+    // Live mode sets live=true and resolution_id=null
+    assert_eq!(result["data"]["live"], true);
+    assert!(result["data"]["resolution_id"].is_null());
+
+    // Snapshot mode should return resolution_id
+    let snapshot_result = cm.run_json(&["preview", "--snapshot", &id[..8]]);
+    assert_eq!(snapshot_result["success"], true);
+    assert!(snapshot_result["data"]["resolution_id"].is_string());
 }
 
 #[test]
@@ -1440,8 +1447,8 @@ fn preview_uses_nearest_ancestor_resolution() {
         ],
     ).unwrap();
 
-    // Preview should use a resolution (falling back to most recent if no ancestor found)
-    let result = cm.run_json(&["preview", &id[..8]]);
+    // With --snapshot, preview should use a persisted resolution
+    let result = cm.run_json(&["preview", "--snapshot", &id[..8]]);
     assert_eq!(result["success"], true);
     assert!(result["data"]["line_range"].is_string());
 
@@ -1610,8 +1617,8 @@ fn git_repo_preview_uses_nearest_ancestor_resolution() {
     eprintln!("DEBUG: commit_a = {} (first 8: {})", &commit_a[..16], &commit_a[..8]);
     eprintln!("DEBUG: commit_c = {} (first 8: {})", &commit_c[..16], &commit_c[..8]);
 
-    // Preview at commit C should show resolution from C
-    let json = cm.run_json(&["preview", &id[..8]]);
+    // Preview with --snapshot at commit C should show resolution from C
+    let json = cm.run_json(&["preview", "--snapshot", &id[..8]]);
     let preview_commit = json["data"]["commit_hash"].as_str().unwrap();
     eprintln!(
         "DEBUG: preview_commit = {} (first 8: {})",
@@ -1624,10 +1631,10 @@ fn git_repo_preview_uses_nearest_ancestor_resolution() {
         preview_commit
     );
 
-    // Go to commit B and preview - should show resolution from B
+    // Go to commit B and preview (snapshot) - should show resolution from B
     cm.checkout(&commit_b);
     cm.debug_head("after checkout B");
-    let json = cm.run_json(&["preview", &id[..8]]);
+    let json = cm.run_json(&["preview", "--snapshot", &id[..8]]);
     let preview_commit = json["data"]["commit_hash"].as_str().unwrap();
     eprintln!("DEBUG: commit_b = {}, preview_commit = {}", &commit_b[..16], preview_commit);
     assert!(
@@ -1635,10 +1642,10 @@ fn git_repo_preview_uses_nearest_ancestor_resolution() {
         "preview at B should show resolution from B"
     );
 
-    // Go to commit A and preview - should show resolution from A
+    // Go to commit A and preview (snapshot) - should show resolution from A
     cm.checkout(&commit_a);
     cm.debug_head("after checkout A");
-    let json = cm.run_json(&["preview", &id[..8]]);
+    let json = cm.run_json(&["preview", "--snapshot", &id[..8]]);
     let preview_commit = json["data"]["commit_hash"].as_str().unwrap();
     eprintln!("DEBUG: commit_a = {}, preview_commit = {}", &commit_a[..16], preview_commit);
     assert!(
@@ -1705,20 +1712,22 @@ fn git_repo_move_method_then_heal_gets_new_resolution() {
         .find(|r| r["commit_hash"].as_str().unwrap_or("").starts_with(&commit_b[..8]))
         .expect("should have a resolution at commit B");
 
-    // Preview should show the new location
+    // Live preview should show the new location (resolves from current disk state)
     let preview_json = cm.run_json(&["preview", &id[..8]]);
-    let preview_commit = preview_json["data"]["commit_hash"].as_str().unwrap();
-    assert!(
-        preview_commit.starts_with(&commit_b[..8]),
-        "preview should use resolution from commit B"
-    );
-
     let line_range_b = preview_json["data"]["line_range"].as_str().unwrap();
     // After adding a blank line, the function is now at line 2
     assert!(
         line_range_b == "2-3" || line_range_b == "2-2",
         "preview should show updated line range after move: got {}",
         line_range_b
+    );
+
+    // Snapshot preview should use resolution from commit B
+    let snapshot_json = cm.run_json(&["preview", "--snapshot", &id[..8]]);
+    let preview_commit = snapshot_json["data"]["commit_hash"].as_str().unwrap();
+    assert!(
+        preview_commit.starts_with(&commit_b[..8]),
+        "snapshot preview should use resolution from commit B"
     );
 
     // Verify the bookmark still works by resolving it

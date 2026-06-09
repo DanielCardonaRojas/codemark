@@ -4,6 +4,7 @@
 //! including keyboard input, mouse events, and terminal resize events.
 
 use codemark_core::engine::bookmark::Bookmark;
+use codemark_core::engine::resolution::LiveUIStatus;
 use ratatui::crossterm::event::{Event as CrosstermEvent, KeyEvent, MouseEvent};
 use std::sync::Arc;
 use std::time::Duration;
@@ -38,6 +39,9 @@ pub enum Event {
     RemoteToursLoaded(Vec<codemark_core::sync::RemoteTourSummary>, Option<String>),
     /// Remote tours listing failed.
     RemoteToursFetchError(String),
+    /// Background live health resolution results for bookmark list dots.
+    /// Each entry is (bookmark_id, live_status).
+    LiveHealthBatch(Vec<(String, LiveUIStatus)>),
 }
 
 impl Event {
