@@ -10,7 +10,9 @@ use codemark_core::parser::languages::Language;
 use codemark_core::query::classifier::get_node_icon;
 use codemark_core::query::summarizer;
 
-use super::{BrowserLayout, FocusArea, HealNotification, Panel3Tab, TabContent, shorten_path};
+use super::{
+    BrowserLayout, FocusArea, HealNotification, Panel3Tab, RightPaneFocus, TabContent, shorten_path,
+};
 
 impl BrowserLayout {
     /// Handle an event, dispatching to the appropriate sub-handler.
@@ -686,10 +688,19 @@ impl BrowserLayout {
     /// Handle +/= or -/_ keys for resizing panes.
     fn handle_resize(&mut self, grow: bool) -> bool {
         if self.focus == FocusArea::Main {
-            let next = self.right_pane_size.toggle();
-            self.right_pane_size = next;
-            if next.is_fullscreen() {
-                self.right_pane.focus_steps();
+            if self.right_pane.focused == RightPaneFocus::Details {
+                // Cycle details pane size (Regular → Half → Full)
+                self.details_pane_size = if grow {
+                    self.details_pane_size.increase()
+                } else {
+                    self.details_pane_size.decrease()
+                };
+            } else {
+                let next = self.right_pane_size.toggle();
+                self.right_pane_size = next;
+                if next.is_fullscreen() {
+                    self.right_pane.focus_steps();
+                }
             }
         } else if grow {
             self.left_pane_size = self.left_pane_size.increase();

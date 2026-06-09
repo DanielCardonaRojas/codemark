@@ -145,6 +145,50 @@ impl RightPaneSize {
     }
 }
 
+/// Size mode for the details pane, allowing expansion like the preview pane.
+///
+/// Cycles: Regular → Half (full right-pane height) → Full (full screen).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum DetailsPaneSize {
+    /// Regular size (shares vertical space with the steps panel)
+    #[default]
+    Regular,
+    /// Full right-pane height (steps/pager hidden, left pane still visible)
+    Half,
+    /// Full screen (left pane hidden, steps/pager hidden)
+    Full,
+}
+
+impl DetailsPaneSize {
+    /// Cycle to the next larger size.
+    pub fn increase(self) -> Self {
+        match self {
+            Self::Regular => Self::Half,
+            Self::Half => Self::Full,
+            Self::Full => Self::Regular,
+        }
+    }
+
+    /// Cycle to the next smaller size.
+    pub fn decrease(self) -> Self {
+        match self {
+            Self::Regular => Self::Half,
+            Self::Half => Self::Regular,
+            Self::Full => Self::Half,
+        }
+    }
+
+    /// Check if the details pane should take the full screen.
+    pub fn is_fullscreen(self) -> bool {
+        matches!(self, Self::Full)
+    }
+
+    /// Check if the details pane should take the full right-pane height.
+    pub fn is_expanded(self) -> bool {
+        matches!(self, Self::Half | Self::Full)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -194,6 +238,34 @@ mod tests {
     fn test_right_pane_size_is_fullscreen() {
         assert!(!RightPaneSize::Regular.is_fullscreen());
         assert!(RightPaneSize::Full.is_fullscreen());
+    }
+
+    #[test]
+    fn test_details_pane_size_increase() {
+        assert_eq!(DetailsPaneSize::Regular.increase(), DetailsPaneSize::Half);
+        assert_eq!(DetailsPaneSize::Half.increase(), DetailsPaneSize::Full);
+        assert_eq!(DetailsPaneSize::Full.increase(), DetailsPaneSize::Regular);
+    }
+
+    #[test]
+    fn test_details_pane_size_decrease() {
+        assert_eq!(DetailsPaneSize::Regular.decrease(), DetailsPaneSize::Half);
+        assert_eq!(DetailsPaneSize::Half.decrease(), DetailsPaneSize::Regular);
+        assert_eq!(DetailsPaneSize::Full.decrease(), DetailsPaneSize::Half);
+    }
+
+    #[test]
+    fn test_details_pane_size_is_fullscreen() {
+        assert!(!DetailsPaneSize::Regular.is_fullscreen());
+        assert!(!DetailsPaneSize::Half.is_fullscreen());
+        assert!(DetailsPaneSize::Full.is_fullscreen());
+    }
+
+    #[test]
+    fn test_details_pane_size_is_expanded() {
+        assert!(!DetailsPaneSize::Regular.is_expanded());
+        assert!(DetailsPaneSize::Half.is_expanded());
+        assert!(DetailsPaneSize::Full.is_expanded());
     }
 }
 

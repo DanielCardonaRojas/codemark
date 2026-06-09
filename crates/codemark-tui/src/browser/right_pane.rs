@@ -1,4 +1,4 @@
-use crate::browser::{SectionConfig, StepData, TabbedPanel};
+use crate::browser::{DetailsPaneSize, SectionConfig, StepData, TabbedPanel};
 use crate::component::{Component, MarkdownPanel};
 use crate::event::Event;
 use codemark_core::engine::bookmark::{Bookmark, Resolution};
@@ -574,13 +574,26 @@ impl RightPane {
     /// # Arguments
     /// * `area` - The area to render in
     /// * `buf` - The buffer to render to
-    /// * `fullscreen` - If true, hide the details pane and use full area for steps
-    pub fn render(&self, area: Rect, buf: &mut Buffer, fullscreen: bool) {
+    /// * `steps_fullscreen` - If true, hide the details pane and use full area for steps
+    /// * `details_size` - Current size mode for the details pane
+    pub fn render(
+        &self,
+        area: Rect,
+        buf: &mut Buffer,
+        steps_fullscreen: bool,
+        details_size: DetailsPaneSize,
+    ) {
         self.last_area.set(area);
 
-        if fullscreen {
+        if steps_fullscreen {
             // In fullscreen mode, use the entire area for the steps panel
             self.steps.render(area, buf);
+            return;
+        }
+
+        if details_size.is_expanded() {
+            // Details takes the full right-pane area (steps/pager hidden)
+            self.render_details_block(area, buf);
             return;
         }
 
@@ -611,21 +624,41 @@ impl RightPane {
             pager.render(chunks[1], buf);
         }
 
-        // Render details with border
+        self.render_details_block(chunks[2], buf);
+    }
+
+    /// Render the details block with border, title offset, and content.
+    fn render_details_block(&self, area: Rect, buf: &mut Buffer) {
         let border_style = if self.focused == RightPaneFocus::Details {
             Style::default().fg(Color::Green)
         } else {
             Style::default().fg(Color::DarkGray)
         };
 
+        let title = ratatui::text::Line::from(vec![
+            ratatui::text::Span::raw("  "),
+            ratatui::text::Span::styled("Details", Style::default().bold()),
+        ]);
         let block = Block::bordered()
             .border_type(BorderType::Rounded)
-            .title("Details")
-            .title_style(Style::default().bold())
+            .title(title)
             .border_style(border_style);
 
-        let inner = block.inner(chunks[2]);
-        block.render(chunks[2], buf);
+        let inner = block.inner(area);
+        block.render(area, buf);
+
+        // Extend the top border line after the ╭ character (matching tabbed panels)
+        for i in 1..=2u16 {
+            let x = area.left() + i;
+            let y = area.top();
+            if x < area.right() {
+                if let Some(cell) = buf.cell_mut((x, y)) {
+                    cell.set_char('─');
+                    cell.set_style(border_style);
+                }
+            }
+        }
+
         self.details.render(inner, buf);
     }
 
