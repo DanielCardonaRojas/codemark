@@ -58,8 +58,24 @@ pub async fn resolve_transient(
     db_path: &Path,
     provider: &dyn crate::vfs::FileProvider,
 ) -> Result<TransientResolution> {
+    tracing::debug!(
+        target: "codemark::resolution",
+        bookmark_id = %bookmark.id,
+        file_path = %bookmark.file_path,
+        language = %language,
+        "starting transient resolution"
+    );
     let ts_lang = language.tree_sitter_language();
     let result = resolve(bookmark, cache, &ts_lang, db_path, provider).await?;
+    tracing::debug!(
+        target: "codemark::resolution",
+        bookmark_id = %bookmark.id,
+        method = ?result.method,
+        start_line = result.start_line,
+        end_line = result.end_line,
+        hash_matches = result.hash_matches,
+        "transient resolution complete"
+    );
     Ok(TransientResolution {
         method: result.method,
         file_path: result.file_path,

@@ -860,8 +860,9 @@ fn preview_shows_code() {
     // Should contain the file path and line range
     assert!(result["data"]["file_path"].as_str().unwrap().contains("auth_service.rs"));
     assert!(result["data"]["line_range"].is_string());
-    // Live mode sets resolution_id to null; snapshot mode would have a string
-    assert!(result["data"]["live"] == true || result["data"]["resolution_id"].is_string());
+    // Live mode sets live=true and resolution_id=null
+    assert_eq!(result["data"]["live"], true);
+    assert!(result["data"]["resolution_id"].is_null());
 
     // Snapshot mode should return resolution_id
     let snapshot_result = cm.run_json(&["preview", "--snapshot", &id[..8]]);

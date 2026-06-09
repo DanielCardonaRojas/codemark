@@ -407,12 +407,30 @@ impl RightPane {
     }
 
     /// Clear the preview state (used when a bookmark cannot be loaded).
+    ///
+    /// Also clears rendered panels so stale content from a previous bookmark
+    /// does not remain visible.
     pub fn clear_preview_state(&mut self, db: &Database) {
         self.steps_data.clear();
         self.pager_total = 0;
         self.pager_current = 0;
         self.active_bookmark_id = None;
         self.active_tour_name = None;
+
+        // Clear the rendered preview panels so old content doesn't linger
+        if let Some(preview) = self.steps.get_step_preview_mut() {
+            preview.set_code(String::new());
+            preview.set_file_header(None);
+        }
+        if let Some(md_panel) = self.steps.get_markdown_mut() {
+            md_panel.set_markdown(String::new());
+        }
+        if let Some(query_preview) = self.steps.get_query_preview_mut() {
+            query_preview.set_code(String::new());
+        }
+        self.details.set_markdown(String::new());
+
+        // Still call update_preview for any additional side effects
         self.update_preview(db);
     }
 
