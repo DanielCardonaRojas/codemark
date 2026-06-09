@@ -40,6 +40,8 @@ pub struct RightPane {
     pub pager_current: usize,
     /// Last rendered area
     pub last_area: std::cell::Cell<Rect>,
+    /// Last rendered details area (set during render for accurate mouse hit testing)
+    last_details_area: std::cell::Cell<Rect>,
     /// Details height configuration
     pub info_config: SectionConfig,
     /// Active tour name (if a tour is loaded)
@@ -70,6 +72,7 @@ impl RightPane {
             pager_total: 0,
             pager_current: 0,
             last_area: std::cell::Cell::new(Rect::default()),
+            last_details_area: std::cell::Cell::new(Rect::default()),
             info_config: SectionConfig::new(7, 13),
             active_tour_name: None,
             active_bookmark_id: None,
@@ -629,6 +632,7 @@ impl RightPane {
 
     /// Render the details block with border, title offset, and content.
     fn render_details_block(&self, area: Rect, buf: &mut Buffer) {
+        self.last_details_area.set(area);
         let border_style = if self.focused == RightPaneFocus::Details {
             Style::default().fg(Color::Green)
         } else {
@@ -681,11 +685,11 @@ impl RightPane {
             {
                 self.focus_steps();
             } else {
-                let info_area = self.details_area();
-                if col >= info_area.x
-                    && col < info_area.x + info_area.width
-                    && row >= info_area.y
-                    && row < info_area.y + info_area.height
+                let details_area = self.last_details_area.get();
+                if col >= details_area.x
+                    && col < details_area.x + details_area.width
+                    && row >= details_area.y
+                    && row < details_area.y + details_area.height
                 {
                     self.focus_details();
                 }
@@ -782,22 +786,6 @@ impl RightPane {
         match self.focused {
             RightPaneFocus::Steps => self.focus_details(),
             RightPaneFocus::Details => self.focus_steps(),
-        }
-    }
-
-    fn details_area(&self) -> Rect {
-        let area = self.last_area.get();
-        let info_height = if self.focused == RightPaneFocus::Details {
-            self.info_config.max
-        } else {
-            self.info_config.min
-        };
-
-        Rect {
-            x: area.x,
-            y: area.y + area.height.saturating_sub(info_height),
-            width: area.width,
-            height: info_height,
         }
     }
 
