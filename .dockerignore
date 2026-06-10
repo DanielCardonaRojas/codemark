@@ -35,3 +35,4 @@ codetours.toml
 
 # Deploy artifacts (Caddyfile is mounted separately)
 deploy/
+!deploy/config.production.toml

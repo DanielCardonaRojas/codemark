@@ -36,9 +36,8 @@ dev_token = "dev-token"
 # ------------------------------------------------------------------------------
 #
 # [codetours]
-# default_server = "local"
+# default_server = "codetours"
 #
 # [[codetours.servers]]
-# name = "local"
-# url = "http://localhost:8080"
-# token = "dev-token"
+# name = "codetours"
+# url = "https://codetours.fly.dev"

@@ -4,7 +4,7 @@ data_dir = "/data"
 log_level = "info"
 
 [storage]
-pool_size = 8
+pool_size = 4
 
 [auth]
 mode = "github"
@@ -14,4 +14,4 @@ mode = "github"
 #   GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET, JWT_SECRET
 #
 # Must match your public HTTPS domain configured in Caddy/GitHub OAuth app
-callback_url = "https://your-domain.com/auth/github/callback"
+callback_url = "https://codetours.fly.dev/auth/github/callback"
