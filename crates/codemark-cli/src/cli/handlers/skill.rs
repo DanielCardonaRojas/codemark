@@ -18,6 +18,28 @@ use codemark_core::sync::build_sync_http_client;
 const SKILL_NAME: &str = "codemark";
 const REPO_SLUG: &str = "DanielCardonaRojas/codemark";
 
+/// Upper bound on the skill archive download size (16 MiB). The skill is a
+/// handful of markdown files, so anything larger indicates a wrong/corrupt
+/// asset and is rejected before buffering it into memory.
+const MAX_ASSET_BYTES: u64 = 16 * 1024 * 1024;
+
+/// Validate a release version/tag before interpolating it into a URL.
+///
+/// Tags are simple (`0.7.3`); anything with path separators, whitespace, or
+/// URL-special characters is a typo and would produce a confusing HTTP error
+/// rather than the friendly "asset not published" message.
+fn validate_version(version: &str) -> Result<()> {
+    let ok = !version.is_empty()
+        && version.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | '_' | '+'));
+    if ok {
+        Ok(())
+    } else {
+        Err(Error::Input(format!(
+            "invalid version '{version}': expected a release tag like '0.7.3'"
+        )))
+    }
+}
+
 /// Handle `codemark install-skill`.
 pub async fn handle_install_skill(
     _cli: &Cli,
@@ -25,6 +47,7 @@ pub async fn handle_install_skill(
     args: &InstallSkillArgs,
 ) -> Result<()> {
     let version = args.version.clone().unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string());
+    validate_version(&version)?;
 
     let asset_url = format!(
         "https://github.com/{REPO_SLUG}/releases/download/{version}/codemark-skill-{version}.zip"
@@ -72,30 +95,67 @@ pub async fn handle_install_skill(
         )));
     }
 
+    // Reject oversized assets before buffering them into memory. The skill is a
+    // few markdown files, so a large content-length means a wrong/corrupt asset.
+    if let Some(len) = response.content_length()
+        && len > MAX_ASSET_BYTES
+    {
+        return Err(Error::Operation(format!(
+            "skill asset is too large ({len} bytes, limit {MAX_ASSET_BYTES})"
+        )));
+    }
+
     let bytes = response
         .bytes()
         .await
         .map_err(|e| Error::Operation(format!("failed to read skill asset body: {e}")))?;
 
-    // If overwriting, clear the previous install so removed files don't linger.
-    if target_dir.exists() {
-        std::fs::remove_dir_all(&target_dir)
-            .map_err(|e| Error::Operation(format!("failed to remove existing skill: {e}")))?;
+    // Guard again in case content-length was absent or understated.
+    if bytes.len() as u64 > MAX_ASSET_BYTES {
+        return Err(Error::Operation(format!(
+            "skill asset is too large ({} bytes, limit {MAX_ASSET_BYTES})",
+            bytes.len()
+        )));
     }
 
-    // Extract the archive into the skills root. The archive's top-level entry is
-    // `codemark/` (produced by zipping the `codemark` folder), so files land
-    // directly under `<skills_root>/codemark/`.
+    // Extract into a temporary staging directory first, then swap it into place
+    // atomically. This avoids destroying an existing install if extraction fails
+    // partway through (corrupted zip, disk-full, I/O error, etc.).
     std::fs::create_dir_all(&skills_root)
         .map_err(|e| Error::Operation(format!("failed to create install directory: {e}")))?;
-    extract_skill_archive(&bytes, &skills_root)?;
+
+    let staging_root = skills_root.join(format!(".{SKILL_NAME}.tmp-{}", std::process::id()));
+    // Clear any leftover staging dir from a previous interrupted run.
+    let _ = std::fs::remove_dir_all(&staging_root);
+
+    // The archive's top-level entry is `codemark/` (produced by zipping the
+    // `codemark` folder), so files land directly under `<staging_root>/codemark/`.
+    if let Err(e) = extract_skill_archive(&bytes, &staging_root) {
+        let _ = std::fs::remove_dir_all(&staging_root);
+        return Err(e);
+    }
+    let staged_skill = staging_root.join(SKILL_NAME);
+
+    // Swap the freshly extracted skill into place. Only now is the old install
+    // removed, immediately before the rename, minimizing the failure window.
+    if target_dir.exists() {
+        std::fs::remove_dir_all(&target_dir).map_err(|e| {
+            let _ = std::fs::remove_dir_all(&staging_root);
+            Error::Operation(format!("failed to remove existing skill: {e}"))
+        })?;
+    }
+    if let Err(e) = std::fs::rename(&staged_skill, &target_dir) {
+        let _ = std::fs::remove_dir_all(&staging_root);
+        return Err(Error::Operation(format!("failed to install skill: {e}")));
+    }
+    let _ = std::fs::remove_dir_all(&staging_root);
 
     tracing::debug!(target: "codemark::skill", target = %target_dir.display(), "skill extracted");
 
     // Gemini consumes `.toml` custom commands rather than SKILL.md skills, so
     // drop a thin command file that points the agent at the installed SKILL.md.
     if matches!(args.agent, SkillAgent::Gemini) {
-        write_gemini_shim(&skills_root, &target_dir)?;
+        write_gemini_shim(&skills_root, args.scope)?;
     }
 
     report_success(mode, args.agent, &version, &target_dir)
@@ -133,7 +193,12 @@ fn extract_skill_archive(bytes: &[u8], dest: &Path) -> Result<()> {
 }
 
 /// Write a Gemini CLI custom command that delegates to the installed SKILL.md.
-fn write_gemini_shim(skills_root: &Path, skill_dir: &Path) -> Result<()> {
+///
+/// For project scope the SKILL.md reference is written as a path relative to the
+/// commands file so the `.gemini/` directory stays portable when committed and
+/// shared with teammates; for user scope an absolute path under the home
+/// directory is fine and unambiguous.
+fn write_gemini_shim(skills_root: &Path, scope: SkillScope) -> Result<()> {
     // skills_root is `<base>/.gemini/skills`; commands live in `<base>/.gemini/commands`.
     let Some(gemini_root) = skills_root.parent() else {
         return Ok(());
@@ -142,10 +207,14 @@ fn write_gemini_shim(skills_root: &Path, skill_dir: &Path) -> Result<()> {
     std::fs::create_dir_all(&commands_dir)
         .map_err(|e| Error::Operation(format!("failed to create Gemini commands dir: {e}")))?;
 
-    let skill_md = skill_dir.join("SKILL.md");
+    // Commands live in `.gemini/commands` and the skill in `.gemini/skills/codemark`,
+    // so the path from a command file to the skill is `../skills/<name>/SKILL.md`.
+    let skill_ref = match scope {
+        SkillScope::Project => format!("../skills/{SKILL_NAME}/SKILL.md"),
+        SkillScope::User => skills_root.join(SKILL_NAME).join("SKILL.md").display().to_string(),
+    };
     let toml = format!(
-        "description = \"Manage structural code bookmarks with codemark\"\nprompt = \"\"\"\nFollow the instructions in the codemark skill at {} to fulfill the user's request.\n\"\"\"\n",
-        skill_md.display()
+        "description = \"Manage structural code bookmarks with codemark\"\nprompt = \"\"\"\nFollow the instructions in the codemark skill at {skill_ref} to fulfill the user's request.\n\"\"\"\n"
     );
     let command_path = commands_dir.join(format!("{SKILL_NAME}.toml"));
     std::fs::write(&command_path, toml)
@@ -228,6 +297,16 @@ mod tests {
 
         for (agent, scope, expected) in cases {
             assert_eq!(skill_install_root(agent, scope).unwrap(), expected);
+        }
+    }
+
+    #[test]
+    fn test_validate_version() {
+        for ok in ["0.7.3", "1.2.3-rc.1", "v0.1.0", "2024_01", "1.0.0+build.5"] {
+            assert!(validate_version(ok).is_ok(), "expected '{ok}' to be valid");
+        }
+        for bad in ["", "../etc", "0.7.3/foo", "1 2", "a;b", "tag?x=1"] {
+            assert!(validate_version(bad).is_err(), "expected '{bad}' to be invalid");
         }
     }
 }
