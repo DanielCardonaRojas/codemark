@@ -1,0 +1,37 @@
+name: Attach skill to release
+
+# Packages the codemark agent skill (extras/skills/codemark) into
+# codemark-skill-<version>.zip and attaches it to the GitHub release so that
+# `codemark install-skill` can download it. Runs whenever a release is
+# published from the GitHub UI (or by pushing a tag that creates a release).
+on:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  attach-skill:
+    name: Package and upload skill
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.release.tag_name }}
+
+      - name: Package skill archive
+        env:
+          VERSION: ${{ github.event.release.tag_name }}
+        run: |
+          # The archive's top-level entry must be `codemark/` so the extractor
+          # in handlers/skill.rs lands files under <skills_root>/codemark/.
+          ( cd extras/skills && zip -r "${GITHUB_WORKSPACE}/codemark-skill-${VERSION}.zip" codemark )
+
+      - name: Upload skill archive to release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ github.event.release.tag_name }}
+        run: |
+          gh release upload "${VERSION}" "codemark-skill-${VERSION}.zip" --clobber
