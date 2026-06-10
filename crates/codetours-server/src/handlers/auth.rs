@@ -99,6 +99,7 @@ pub async fn github_callback(
     let github_id = user_github_id_to_string(&user_resp.id);
     let user_id = format!("user-{}", Uuid::new_v4());
     let github_login = user_resp.login.clone();
+    let username_for_response = github_login.clone();
     let access_token = token_resp.access_token.clone();
 
     // Get registry connection from pool
@@ -131,7 +132,13 @@ pub async fn github_callback(
     let jwt_secret = config.get_jwt_secret();
     let session_token = generate_jwt(&user_id, &jwt_secret, config.session_expires_in)?;
 
-    Ok((StatusCode::OK, axum::Json(serde_json::json!({ "token": session_token }))))
+    Ok((
+        StatusCode::OK,
+        axum::Json(serde_json::json!({
+            "token": session_token,
+            "username": username_for_response,
+        })),
+    ))
 }
 
 /// Generate a JWT token for the user.
@@ -267,6 +274,7 @@ pub async fn github_device_poll(
     let github_id = user_github_id_to_string(&user_resp.id);
     let user_id = format!("user-{}", Uuid::new_v4());
     let github_login = user_resp.login.clone();
+    let username_for_response = github_login.clone();
 
     let registry_conn =
         state.registry.get_conn().await.map_err(|e| {
@@ -291,7 +299,10 @@ pub async fn github_device_poll(
 
     let session_token =
         generate_jwt(&user_id, &config.get_jwt_secret(), config.session_expires_in)?;
-    Ok(axum::Json(serde_json::json!({ "token": session_token })))
+    Ok(axum::Json(serde_json::json!({
+        "token": session_token,
+        "username": username_for_response,
+    })))
 }
 
 /// Parse the device flow response from GitHub, handling all documented error codes.

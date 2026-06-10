@@ -24,6 +24,7 @@ RUN cargo build --release -p codetours-server 2>&1 || true
 # Copy actual source code and files referenced by include_str! in codemark-core
 COPY config config
 COPY migrations migrations
+COPY registry_migrations registry_migrations
 COPY templates templates
 COPY crates/codemark-core crates/codemark-core
 COPY crates/codetours-server crates/codetours-server
