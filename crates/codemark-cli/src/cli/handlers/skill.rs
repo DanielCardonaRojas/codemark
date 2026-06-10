@@ -200,10 +200,7 @@ fn report_success(
             }))?;
         }
         _ => {
-            println!(
-                "Installed codemark skill {version} for {agent_name} at {}",
-                target.display()
-            );
+            println!("Installed codemark skill {version} for {agent_name} at {}", target.display());
         }
     }
     Ok(())
