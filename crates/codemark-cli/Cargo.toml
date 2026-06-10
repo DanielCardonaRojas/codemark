@@ -52,3 +52,6 @@ axum = { workspace = true }
 tokio-util = "0.7"
 open = "5.3.5"
 copypasta = "0.10.2"
+tracing = { workspace = true }
+tar = "0.4"
+flate2 = "1"

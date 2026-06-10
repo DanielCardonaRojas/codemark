@@ -149,6 +149,9 @@ pub enum Command {
 
     /// Manage repository registry and server configuration
     Repo(RepoArgs),
+
+    /// Install the codemark agent skill for an AI coding agent
+    InstallSkill(InstallSkillArgs),
 }
 
 // --- Subcommand argument structs ---
@@ -1223,4 +1226,46 @@ pub struct AuthLogoutArgs {
     /// Username to log out (omit to log out all accounts for this server)
     #[arg(long)]
     pub user: Option<String>,
+}
+
+/// Arguments for the `codemark install-skill` subcommand.
+#[derive(Debug, clap::Args)]
+pub struct InstallSkillArgs {
+    /// Target AI coding agent (determines the install directory)
+    #[arg(long, value_enum)]
+    pub agent: SkillAgent,
+
+    /// Install scope: user (global) or project (current repo)
+    #[arg(long, value_enum)]
+    pub scope: SkillScope,
+
+    /// Skill version tag to fetch (defaults to this binary's version)
+    #[arg(long)]
+    pub version: Option<String>,
+
+    /// Overwrite an existing install without confirmation
+    #[arg(long)]
+    pub force: bool,
+}
+
+/// Supported agent targets for skill installation.
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum SkillAgent {
+    /// Claude Code (~/.claude/skills or ./.claude/skills)
+    Claude,
+    /// GitHub Copilot (~/.copilot/skills or ./.github/skills)
+    Copilot,
+    /// Generic Agent Skills location (~/.agents/skills or ./.agents/skills)
+    Agents,
+    /// Gemini CLI (~/.gemini or ./.gemini)
+    Gemini,
+}
+
+/// Install scope for a skill.
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum SkillScope {
+    /// Install globally for the current user
+    User,
+    /// Install into the current project/repository
+    Project,
 }
