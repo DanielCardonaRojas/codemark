@@ -34,6 +34,7 @@ pub mod publish;
 pub mod pull;
 pub mod repo;
 pub mod search;
+pub mod skill;
 pub mod tour;
 
 /// Pre-flight detection for `tour list` command.
@@ -104,6 +105,7 @@ pub async fn dispatch(cli: &Cli) -> Result<()> {
         Command::Data(args) => dispatch_data(cli, &mode, args).await,
         Command::Repo(args) => repo::handle_repo(cli, &mode, args).await,
         Command::Auth(args) => auth::handle_auth(cli, &mode, args).await,
+        Command::InstallSkill(args) => skill::handle_install_skill(cli, &mode, args).await,
     }
 }
 

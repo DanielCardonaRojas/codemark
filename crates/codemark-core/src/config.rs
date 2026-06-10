@@ -52,6 +52,14 @@ pub fn global_data_dir() -> Option<PathBuf> {
     directories::BaseDirs::new().map(|dirs| dirs.home_dir().join(".local/share/codemark"))
 }
 
+/// Returns the current user's home directory.
+///
+/// Used by features that install user-scoped files outside codemark's own
+/// data/config dirs (e.g. agent skill directories like `~/.claude/skills`).
+pub fn home_dir() -> Option<PathBuf> {
+    directories::BaseDirs::new().map(|dirs| dirs.home_dir().to_path_buf())
+}
+
 /// Returns the global models cache directory.
 ///
 /// Platform-specific locations:
