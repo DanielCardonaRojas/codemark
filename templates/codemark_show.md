@@ -61,28 +61,14 @@
 {{#each resolutions}}
 {{#if is_current}}**[CURRENT]** {{/if}}**ID:** {{id}}
 **Date:** {{format_date resolved_at "%Y-%m-%d %H:%M:%S"}}
-**Status:** {{status}}{{#if is_current}}{{#if ui_status}}
-**UI Status:** {{ui_status}}{{/if}}{{/if}}
+**Status:** {{status}}{{#if ui_status}}
+**UI Status:** {{ui_status}}{{/if}}
 **Method:** {{method}}
 **Anchored:** {{#if is_anchored}}Yes{{else}}No{{/if}}
-{{#if file_path}}**File:** {{file_path}}{{/if}}
-{{#if line_range}}**Range:** {{line_range}}{{/if}}
+**Range:** {{#if line_range}}{{line_range}}{{/if}}
 {{#if match_count}}**Matches:** {{match_count}}{{/if}}
 {{#if commit_hash}}**Commit:** {{short_commit}}{{/if}}
 
 {{/each}}
 {{/if}}
 
-{{#if snapshot}}
-## Snapshot
-
-```
-{{escape_markdown snapshot}}
-```
-{{/if}}
-
-## Tree-sitter Query
-
-```scm
-{{escape_markdown query}}
-```
