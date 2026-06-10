@@ -4,15 +4,18 @@ primary_region = "iad"
 [build]
   dockerfile = "Dockerfile"
 
-[env]
-  RUST_LOG = "info"
+# log_level is controlled via /etc/codetours/config.toml (log_level = "info").
+# Avoid setting RUST_LOG here — it is read by the tracing layer before the app
+# config, so it would silently shadow any log_level change made in the config.
 
 [http_service]
   internal_port = 8080
   force_https = true
   auto_stop_machines = "suspend"
   auto_start_machines = true
-  min_machines_running = 0
+  # Keep one machine alive so suspended cold starts don't stall the GitHub
+  # OAuth callback round-trip (the browser/GitHub redirect can time out).
+  min_machines_running = 1
 
   [http_service.concurrency]
     type = "connections"

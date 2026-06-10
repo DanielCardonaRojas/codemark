@@ -48,6 +48,7 @@ RUN groupadd --system codetours && useradd --system --gid codetours codetours
 
 COPY --from=builder /build/target/release/codetours /usr/local/bin/codetours
 COPY deploy/config.production.toml /etc/codetours/config.toml
+RUN chown codetours:codetours /etc/codetours/config.toml
 
 RUN mkdir -p /data && chown codetours:codetours /data
 
