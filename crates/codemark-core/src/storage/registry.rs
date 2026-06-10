@@ -16,6 +16,8 @@ use std::path::PathBuf;
 
 const REGISTRY_MIGRATION_001: &str =
     include_str!("../../../../registry_migrations/V1__multi_account.sql");
+const REGISTRY_MIGRATION_002: &str =
+    include_str!("../../../../registry_migrations/V2__add_forge_kind.sql");
 
 /// Global registry database path.
 ///
@@ -101,12 +103,15 @@ fn init_schema(conn: &Connection) -> Result<()> {
 
         if has_servers {
             migrate_v0_to_v1(conn)?;
-            return Ok(());
+            // Fall through to the standard loop so any migrations newer than V1
+            // (which migrate_v0_to_v1 already applied) are also applied.
         }
     }
 
-    // Standard migration loop for fresh DBs and future upgrades
-    let migrations: &[(i64, &str)] = &[(1, REGISTRY_MIGRATION_001)];
+    // Standard migration loop for fresh DBs and future upgrades.
+    // Re-read the version since migrate_v0_to_v1 may have bumped it.
+    let version = get_registry_version(conn)?;
+    let migrations: &[(i64, &str)] = &[(1, REGISTRY_MIGRATION_001), (2, REGISTRY_MIGRATION_002)];
 
     for &(target_version, sql) in migrations {
         if version < target_version {
@@ -1196,14 +1201,14 @@ mod account_tests {
     }
 
     #[test]
-    fn test_fresh_db_creates_v1() {
+    fn test_fresh_db_creates_latest_schema() {
         let conn = Connection::open_in_memory().unwrap();
         init_schema(&conn).unwrap();
 
         let version = get_registry_version(&conn).unwrap();
-        assert_eq!(version, 1);
+        assert_eq!(version, 2);
 
-        // accounts table should exist
+        // accounts table should exist with the forge_kind column
         let has_accounts: bool = conn
             .query_row(
                 "SELECT COUNT(*) > 0 FROM sqlite_master WHERE type='table' AND name='accounts'",
@@ -1212,6 +1217,7 @@ mod account_tests {
             )
             .unwrap();
         assert!(has_accounts);
+        assert!(accounts_has_forge_kind(&conn));
 
         // servers table should NOT exist
         let has_servers: bool = conn
@@ -1292,9 +1298,9 @@ mod account_tests {
         // Run migration
         init_schema(&conn).unwrap();
 
-        // Verify version is 1
+        // Verify version is at the latest (v0 -> v1 -> v2)
         let version = get_registry_version(&conn).unwrap();
-        assert_eq!(version, 1);
+        assert_eq!(version, 2);
 
         // servers table should be gone
         let has_servers: bool = conn
@@ -1325,5 +1331,83 @@ mod account_tests {
         // The repo should have default_username set
         let repo = find_repo_by_root(&conn, "/path/to/repo").unwrap().unwrap();
         assert_eq!(repo.default_username, Some("user@example.com".to_string()));
+    }
+
+    /// Returns true if the `accounts` table has a `forge_kind` column.
+    fn accounts_has_forge_kind(conn: &Connection) -> bool {
+        conn.query_row(
+            "SELECT COUNT(*) > 0 FROM pragma_table_info('accounts') WHERE name = 'forge_kind'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn test_migrate_stale_v1_adds_forge_kind() {
+        let conn = Connection::open_in_memory().unwrap();
+
+        // Reproduce a database stamped at user_version = 1 but carrying the
+        // *original* V1 accounts schema, which lacked forge_kind and used
+        // PRIMARY KEY (server_url, username). This is the state that produced
+        // "table accounts has no column named forge_kind" for early adopters.
+        conn.execute_batch(
+            "CREATE TABLE accounts (
+                server_url      TEXT NOT NULL,
+                username        TEXT NOT NULL,
+                email           TEXT,
+                token           TEXT NOT NULL,
+                is_default      INTEGER NOT NULL DEFAULT 0,
+                last_used       TEXT,
+                PRIMARY KEY (server_url, username)
+            );
+            PRAGMA user_version = 1;",
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO accounts (server_url, username, email, token, is_default, last_used)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![
+                "https://server.com",
+                "alice",
+                "alice@example.com",
+                "tok",
+                1,
+                "2024-01-01T00:00:00Z"
+            ],
+        )
+        .unwrap();
+
+        assert!(!accounts_has_forge_kind(&conn));
+
+        // Opening the registry should run V2 and repair the schema.
+        init_schema(&conn).unwrap();
+
+        assert_eq!(get_registry_version(&conn).unwrap(), 2);
+        assert!(accounts_has_forge_kind(&conn));
+
+        // The existing row is preserved and backfilled with forge_kind = 'github'.
+        let account = get_account(&conn, "https://server.com", "github", "alice")
+            .unwrap()
+            .expect("account should survive migration");
+        assert_eq!(account.token, "tok");
+        assert_eq!(account.email.as_deref(), Some("alice@example.com"));
+        assert!(account.is_default);
+
+        // A second account can now be inserted under a different forge for the
+        // same (server_url, username), which the old PK would have rejected.
+        upsert_account(
+            &conn,
+            &AccountUpsert {
+                server_url: "https://server.com",
+                forge_kind: "gitlab",
+                username: "alice",
+                email: None,
+                token: "tok2",
+                is_default: false,
+            },
+        )
+        .unwrap();
+        assert_eq!(list_accounts(&conn, Some("https://server.com")).unwrap().len(), 2);
     }
 }
