@@ -2,12 +2,12 @@
 //! into the directory expected by a chosen AI coding agent.
 //!
 //! The skill is published as a release asset
-//! (`codemark-skill-<version>.tar.gz`) on the codemark GitHub repository. This
+//! (`codemark-skill-<version>.zip`) on the codemark GitHub repository. This
 //! handler downloads the asset matching the running binary's version (or an
 //! explicit `--version`), extracts it, and installs it into the agent/scope
 //! specific directory.
 
-use std::io::{self, IsTerminal, Write};
+use std::io::{self, Cursor, IsTerminal, Write};
 use std::path::{Path, PathBuf};
 
 use crate::cli::output::OutputMode;
@@ -27,7 +27,7 @@ pub async fn handle_install_skill(
     let version = args.version.clone().unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string());
 
     let asset_url = format!(
-        "https://github.com/{REPO_SLUG}/releases/download/{version}/codemark-skill-{version}.tar.gz"
+        "https://github.com/{REPO_SLUG}/releases/download/{version}/codemark-skill-{version}.zip"
     );
 
     // Resolve the directory that will contain the `codemark/` skill folder.
@@ -84,7 +84,7 @@ pub async fn handle_install_skill(
     }
 
     // Extract the archive into the skills root. The archive's top-level entry is
-    // `codemark/` (produced by `tar -C extras/skills codemark`), so files land
+    // `codemark/` (produced by zipping the `codemark` folder), so files land
     // directly under `<skills_root>/codemark/`.
     std::fs::create_dir_all(&skills_root)
         .map_err(|e| Error::Operation(format!("failed to create install directory: {e}")))?;
@@ -122,12 +122,12 @@ fn skill_install_root(agent: SkillAgent, scope: SkillScope) -> Result<PathBuf> {
     Ok(base.join(rel))
 }
 
-/// Extract a gzip-compressed tar archive into `dest`.
+/// Extract a zip archive into `dest`.
 fn extract_skill_archive(bytes: &[u8], dest: &Path) -> Result<()> {
-    let decoder = flate2::read::GzDecoder::new(bytes);
-    let mut archive = tar::Archive::new(decoder);
+    let mut archive = zip::ZipArchive::new(Cursor::new(bytes))
+        .map_err(|e| Error::Operation(format!("failed to open skill archive: {e}")))?;
     archive
-        .unpack(dest)
+        .extract(dest)
         .map_err(|e| Error::Operation(format!("failed to extract skill archive: {e}")))?;
     Ok(())
 }
