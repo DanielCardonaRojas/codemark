@@ -112,7 +112,8 @@ pub fn build_auth_headers(token: Option<&String>) -> Result<HeaderMap> {
 ///
 /// 1. If `default_server` is a direct URL (starts with http), use it
 /// 2. If `default_server` is a named server, look it up in config.servers
-/// 3. Get token from config (for named servers) or fallback to registry
+/// 3. If no config, use the global default account from the registry
+/// 4. Get token from config (for named servers) or fallback to registry
 ///
 /// Returns `(server_url, token)` tuple where token may be None if not found.
 pub fn resolve_server_and_token(config: &Config) -> Result<(String, Option<String>)> {
@@ -132,6 +133,13 @@ pub fn resolve_server_and_token(config: &Config) -> Result<(String, Option<Strin
                 return Err(Error::Input(format!("server '{}' not found in config", server_name)));
             }
         }
+    } else if let Some(account) = registry::open_registry()
+        .ok()
+        .and_then(|conn| registry::get_global_default_account(&conn).ok())
+        .flatten()
+    {
+        // No config — fall back to the global default account from the registry
+        (account.server_url, Some(account.token))
     } else {
         return Err(Error::Input("No default_server configured".to_string()));
     };
