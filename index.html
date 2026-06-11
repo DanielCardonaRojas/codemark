@@ -4,12 +4,13 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Codemark | Structural Code Bookmarks</title>
-    
+    <meta name="description" content="Structural code bookmarks that survive refactors. Built on tree-sitter for AI agents, code audits, and developer knowledge management.">
+
     <!-- Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Fira+Code:wght@400;500&display=swap" rel="stylesheet">
-    
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=Instrument+Serif:ital@0;1&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+
     <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
     <script>
@@ -18,14 +19,20 @@
                 extend: {
                     fontFamily: {
                         sans: ['Inter', 'sans-serif'],
-                        mono: ['Fira Code', 'monospace'],
+                        serif: ['Instrument Serif', 'serif'],
+                        mono: ['JetBrains Mono', 'monospace'],
                     },
                     colors: {
+                        ink: '#0a0a0b',
                         primary: {
-                            400: '#fb923c', // Orange-400
-                            500: '#f97316', // Orange-500
-                            600: '#ea580c', // Orange-600
+                            300: '#fdba74',
+                            400: '#fb923c',
+                            500: '#f97316',
+                            600: '#ea580c',
                         }
+                    },
+                    maxWidth: {
+                        '8xl': '88rem',
                     }
                 }
             }
@@ -34,269 +41,316 @@
 
     <!-- Prism CSS for syntax highlighting -->
     <link href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css" rel="stylesheet" />
-    
+
     <style>
         body {
-            background-color: #0f172a; /* slate-900 */
-            color: #f8fafc; /* slate-50 */
+            background-color: #0a0a0b;
+            color: #ededee;
+            font-feature-settings: "cv11", "ss01";
         }
-        
-        .glass-panel {
-            background: rgba(30, 41, 59, 0.7); /* slate-800 with opacity */
-            backdrop-filter: blur(12px);
-            border: 1px solid rgba(255, 255, 255, 0.1);
+
+        /* Serif-italic emphasis for headlines */
+        .em {
+            font-family: 'Instrument Serif', serif;
+            font-style: italic;
+            font-weight: 400;
+            letter-spacing: 0.01em;
         }
-        
+
         .text-gradient {
-            background: linear-gradient(to right, #fb923c, #f43f5e);
+            background: linear-gradient(110deg, #fb923c 10%, #f43f5e 90%);
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
             background-clip: text;
         }
 
-        .terminal-header {
-            background: #1e293b;
-            border-bottom: 1px solid #334155;
+        /* Uppercase section eyebrow */
+        .eyebrow {
+            font-size: 0.75rem;
+            font-weight: 600;
+            letter-spacing: 0.18em;
+            text-transform: uppercase;
+            color: #fb923c;
         }
-        
+
+        .panel {
+            background: rgba(255, 255, 255, 0.02);
+            border: 1px solid rgba(255, 255, 255, 0.07);
+        }
+        .panel-hover:hover {
+            border-color: rgba(251, 146, 60, 0.35);
+            background: rgba(255, 255, 255, 0.035);
+        }
+
+        .nav-glass {
+            background: rgba(10, 10, 11, 0.6);
+            backdrop-filter: blur(14px);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+        }
+
+        .terminal-header {
+            background: #131316;
+            border-bottom: 1px solid #232327;
+        }
+
+        .hairline { border-color: rgba(255, 255, 255, 0.07); }
+
         pre[class*="language-"] {
             margin: 0;
             background: transparent;
             border-radius: 0;
             padding: 1.5rem;
-            font-size: 0.9rem;
+            font-size: 0.875rem;
+            line-height: 1.6;
         }
-        
+        code[class*="language-"] { font-family: 'JetBrains Mono', monospace; }
+
         /* Custom scrollbar */
-        ::-webkit-scrollbar {
-            width: 8px;
-            height: 8px;
-        }
-        ::-webkit-scrollbar-track {
-            background: #0f172a;
-        }
-        ::-webkit-scrollbar-thumb {
-            background: #334155;
-            border-radius: 4px;
-        }
-        ::-webkit-scrollbar-thumb:hover {
-            background: #475569;
+        ::-webkit-scrollbar { width: 9px; height: 9px; }
+        ::-webkit-scrollbar-track { background: #0a0a0b; }
+        ::-webkit-scrollbar-thumb { background: #2a2a2e; border-radius: 5px; }
+        ::-webkit-scrollbar-thumb:hover { background: #3a3a40; }
+
+        .grid-glow {
+            background: radial-gradient(60% 50% at 50% 0%, rgba(249,115,22,0.12) 0%, transparent 70%);
         }
     </style>
 </head>
 <body class="antialiased selection:bg-primary-500 selection:text-white">
 
     <!-- Navigation -->
-    <nav class="fixed w-full z-50 glass-panel border-b-0">
-        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+    <nav class="fixed w-full z-50 nav-glass">
+        <div class="max-w-8xl mx-auto px-5 sm:px-8">
             <div class="flex items-center justify-between h-16">
-                <div class="flex items-center space-x-3">
-                    <svg class="w-8 h-8 text-primary-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <a href="#" class="flex items-center space-x-2.5">
+                    <svg class="w-6 h-6 text-primary-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z" />
                     </svg>
-                    <span class="font-bold text-xl tracking-tight">Codemark</span>
-                </div>
-                <div class="hidden md:block">
-                    <div class="ml-10 flex items-baseline space-x-8">
-                        <a href="#features" class="text-slate-300 hover:text-white transition-colors px-3 py-2 rounded-md text-sm font-medium">Features</a>
-                        <a href="#install" class="text-slate-300 hover:text-white transition-colors px-3 py-2 rounded-md text-sm font-medium">Install</a>
-                        <a href="#quickstart" class="text-slate-300 hover:text-white transition-colors px-3 py-2 rounded-md text-sm font-medium">Quick Start</a>
-                        <a href="https://github.com/DanielCardonaRojas/codemark" target="_blank" class="text-slate-300 hover:text-white transition-colors px-3 py-2 rounded-md text-sm font-medium flex items-center gap-2">
-                            <svg class="w-5 h-5" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                                <path fill-rule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z" clip-rule="evenodd" />
-                            </svg>
-                            GitHub
-                        </a>
-                    </div>
+                    <span class="font-bold text-lg tracking-tight">Codemark</span>
+                </a>
+                <div class="hidden md:flex items-center space-x-8">
+                    <a href="#dashboard" class="text-sm text-zinc-400 hover:text-white transition-colors">Dashboard</a>
+                    <a href="#features" class="text-sm text-zinc-400 hover:text-white transition-colors">Features</a>
+                    <a href="#sharing" class="text-sm text-zinc-400 hover:text-white transition-colors">Sharing</a>
+                    <a href="#install" class="text-sm text-zinc-400 hover:text-white transition-colors">Install</a>
+                    <a href="https://github.com/DanielCardonaRojas/codemark" target="_blank" class="text-sm text-zinc-400 hover:text-white transition-colors flex items-center gap-2">
+                        <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+                            <path fill-rule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z" clip-rule="evenodd" />
+                        </svg>
+                        GitHub
+                    </a>
                 </div>
             </div>
         </div>
     </nav>
 
-    <!-- Hero Section -->
-    <main class="pt-32 pb-16 sm:pt-40 sm:pb-24 lg:pb-32 overflow-hidden relative">
-        <!-- Background decorative blobs -->
-        <div class="absolute top-0 left-1/2 -translate-x-1/2 w-[1000px] h-[500px] opacity-20 pointer-events-none blur-[100px] rounded-full bg-gradient-to-tr from-primary-600 to-rose-600 z-0"></div>
-        
-        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 relative z-10 text-center">
-            <h1 class="text-5xl md:text-7xl font-extrabold tracking-tight mb-6">
-                Bookmarks that <br class="hidden md:block"/>
-                <span class="text-gradient">survive refactors.</span>
-            </h1>
-            <p class="mt-4 max-w-3xl mx-auto text-xl text-slate-400 mb-10">
-                <strong>In the age of AI, being in your editor is less important.</strong> <br class="hidden md:block"/>
-                Codemark lets you map out the critical parts of your codebase, providing a structured memory that lets you jump into the editor only when needed.
-            </p>
-            
-            <div class="flex flex-wrap justify-center gap-4 mb-12">
-                <a href="#quickstart" class="bg-primary-500 hover:bg-primary-600 text-white font-medium px-8 py-3 rounded-lg transition-all shadow-[0_0_20px_rgba(249,115,22,0.3)] hover:shadow-[0_0_25px_rgba(249,115,22,0.5)] flex items-center gap-2">
-                    <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 10V3L4 14h7v7l9-11h-7z" />
-                    </svg>
-                    Quick Start
-                </a>
-                <a href="#install" class="glass-panel hover:bg-slate-800 text-white font-medium px-8 py-3 rounded-lg transition-colors flex items-center gap-2">
-                    <svg class="w-5 h-5 text-slate-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
-                    </svg>
-                    Installation
-                </a>
-            </div>
+    <!-- Hero -->
+    <header class="relative overflow-hidden grid-glow">
+        <div class="max-w-8xl mx-auto px-5 sm:px-8 pt-36 pb-20 sm:pt-44 sm:pb-28 text-center relative z-10">
+            <a href="https://crates.io/crates/codemark" target="_blank" class="inline-flex items-center gap-2 panel rounded-full px-4 py-1.5 text-xs text-zinc-300 mb-8 hover:border-primary-400/40 transition-colors">
+                <span class="w-1.5 h-1.5 rounded-full bg-primary-400"></span>
+                Built on tree-sitter · Written in Rust
+            </a>
 
-            <div class="flex justify-center gap-4 mb-16 opacity-80 hover:opacity-100 transition-opacity">
-                <a href="https://crates.io/crates/codemark" target="_blank">
-                    <img src="https://img.shields.io/crates/v/codemark?color=fb923c&style=for-the-badge" alt="crates.io">
+            <h1 class="text-5xl md:text-7xl font-extrabold tracking-tight leading-[1.05] mb-7">
+                Bookmarks that<br class="hidden md:block"/>
+                <span class="em text-gradient text-6xl md:text-8xl">survive refactors.</span>
+            </h1>
+
+            <p class="max-w-2xl mx-auto text-lg md:text-xl text-zinc-400 leading-relaxed mb-10">
+                In the age of AI, you spend less time in the editor. Codemark maps the critical
+                parts of your codebase into a <span class="text-zinc-200">structured memory</span> — so
+                you only jump in when it counts.
+            </p>
+
+            <div class="flex flex-wrap justify-center gap-3 mb-14">
+                <a href="#install" class="bg-primary-500 hover:bg-primary-400 text-black font-semibold px-7 py-3 rounded-lg transition-colors">
+                    Get started
                 </a>
-                <a href="https://github.com/DanielCardonaRojas/codemark/blob/main/LICENSE" target="_blank">
-                    <img src="https://img.shields.io/badge/license-MIT-blue?style=for-the-badge" alt="license">
+                <a href="https://github.com/DanielCardonaRojas/codemark" target="_blank" class="panel panel-hover text-white font-medium px-7 py-3 rounded-lg transition-colors flex items-center gap-2">
+                    <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path fill-rule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z" clip-rule="evenodd" /></svg>
+                    Star on GitHub
                 </a>
             </div>
 
             <!-- Terminal Mockup -->
-            <div class="max-w-4xl mx-auto text-left rounded-xl overflow-hidden shadow-2xl border border-slate-700 bg-[#0d1117]">
+            <div class="max-w-3xl mx-auto text-left rounded-xl overflow-hidden shadow-2xl shadow-black/50 border hairline bg-[#0d0d10]">
                 <div class="terminal-header px-4 py-3 flex items-center gap-2">
-                    <div class="w-3 h-3 rounded-full bg-red-500"></div>
-                    <div class="w-3 h-3 rounded-full bg-yellow-500"></div>
-                    <div class="w-3 h-3 rounded-full bg-green-500"></div>
-                    <div class="ml-4 text-xs font-mono text-slate-400">~/project/codemark</div>
+                    <div class="w-3 h-3 rounded-full bg-[#ff5f57]"></div>
+                    <div class="w-3 h-3 rounded-full bg-[#febc2e]"></div>
+                    <div class="w-3 h-3 rounded-full bg-[#28c840]"></div>
+                    <div class="ml-3 text-xs font-mono text-zinc-500">~/project · codemark</div>
                 </div>
-                <div class="p-4 overflow-x-auto">
-<pre class="!bg-transparent !m-0 !p-0"><code class="language-bash"># Bookmark a function securely
+                <div class="p-1 overflow-x-auto">
+<pre class="!bg-transparent !m-0"><code class="language-bash"># Bookmark a function — captures its AST, not a line number
 $ codemark add --file src/auth.rs --range 42 --tag auth --note "Token validation"
 <span class="text-green-400">✔ Added bookmark 'a1b2c3d' for validate_token in src/auth.rs</span>
 
-# Refactor happens... lines shift... function is renamed...
+# Refactor happens... lines shift... the function is renamed...
 
-# Resolve — finds where the code is *now*
+# Resolve — finds where the code lives *now*
 $ codemark resolve a1b2
-<span class="text-blue-400">src/auth.rs:89:15</span> (Match: Relaxed)
+<span class="text-sky-400">src/auth.rs:89:15</span> (Match: Relaxed)
 
-# Search semantically using local embeddings
+# Search by meaning, with local embeddings — no API key
 $ codemark search --semantic "database connection initialization"
-<span class="text-slate-300">b8x9z2 | src/db.rs:12 | init_pool | score: 0.89</span></code></pre>
+<span class="text-zinc-300">b8x9z2 | src/db.rs:12 | init_pool | score: 0.89</span></code></pre>
                 </div>
+            </div>
+
+            <div class="flex justify-center gap-3 mt-8 opacity-80">
+                <a href="https://crates.io/crates/codemark" target="_blank"><img src="https://img.shields.io/crates/v/codemark?color=fb923c&style=for-the-badge&logo=rust" alt="crates.io"></a>
+                <a href="https://github.com/DanielCardonaRojas/codemark/blob/main/LICENSE" target="_blank"><img src="https://img.shields.io/badge/license-MIT-3f3f46?style=for-the-badge" alt="license"></a>
             </div>
         </div>
-    </main>
+    </header>
 
-    <!-- Features Section -->
-    <section id="features" class="py-24 bg-slate-800/50 border-y border-slate-800">
-        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-            <div class="text-center mb-16">
-                <h2 class="text-3xl md:text-4xl font-bold mb-4">Why use Codemark?</h2>
-                <p class="text-slate-400 text-lg max-w-2xl mx-auto mb-6">
-                    Traditional bookmarks are brittle. Codemark uses abstract syntax trees to understand your code the way a compiler does.
-                </p>
-                <p class="text-slate-300 text-md max-w-2xl mx-auto italic opacity-80">
-                    In the era of AI, we spend more time orchestrating and reviewing than writing line-by-line. Codemark provides the structural memory needed to navigate complex systems without getting lost in the noise.
+    <!-- Native Dashboard / TUI Screenshots -->
+    <section id="dashboard" class="py-24 sm:py-32 border-t hairline">
+        <div class="max-w-8xl mx-auto px-5 sm:px-8">
+            <div class="max-w-2xl mb-14">
+                <p class="eyebrow mb-3">Native Dashboard</p>
+                <h2 class="text-3xl md:text-5xl font-bold tracking-tight mb-5">
+                    A command center for <span class="em text-primary-400">your code's memory.</span>
+                </h2>
+                <p class="text-zinc-400 text-lg leading-relaxed">
+                    Codemark ships with a built-in, keyboard-driven TUI inspired by <code class="text-zinc-300">lazygit</code>.
+                    Browse bookmarks, preview resolved code, run queries, and switch collections — without leaving the terminal.
                 </p>
             </div>
 
-            <div class="grid md:grid-cols-2 lg:grid-cols-3 gap-8">
+            <!-- Main screenshot -->
+            <div class="panel rounded-xl overflow-hidden shadow-2xl shadow-black/50 mb-6">
+                <div class="terminal-header px-4 py-2.5 flex items-center gap-2">
+                    <div class="w-2.5 h-2.5 rounded-full bg-[#ff5f57]"></div>
+                    <div class="w-2.5 h-2.5 rounded-full bg-[#febc2e]"></div>
+                    <div class="w-2.5 h-2.5 rounded-full bg-[#28c840]"></div>
+                    <div class="ml-3 text-xs font-mono text-zinc-500">codemark dashboard</div>
+                </div>
+                <img src="./codemark_tui_screenshot.png" alt="Codemark TUI dashboard showing bookmarks, health status, and preview" class="w-full block">
+            </div>
+
+            <!-- Two secondary screenshots -->
+            <div class="grid md:grid-cols-2 gap-6">
+                <figure class="panel rounded-xl overflow-hidden shadow-xl shadow-black/40">
+                    <img src="./codemark_tui_query_screenshot.png" alt="Codemark TUI tree-sitter query preview" class="w-full block">
+                    <figcaption class="px-5 py-4 border-t hairline">
+                        <span class="font-semibold text-zinc-200">Query preview</span>
+                        <span class="text-zinc-500 text-sm block mt-1">Inspect the tree-sitter query and the code it resolves to, side by side.</span>
+                    </figcaption>
+                </figure>
+                <figure class="panel rounded-xl overflow-hidden shadow-xl shadow-black/40">
+                    <img src="./codemark_tui_collections_screenshot.png" alt="Codemark TUI collections view" class="w-full block">
+                    <figcaption class="px-5 py-4 border-t hairline">
+                        <span class="font-semibold text-zinc-200">Collections</span>
+                        <span class="text-zinc-500 text-sm block mt-1">Group bookmarks into named sets and switch between them instantly.</span>
+                    </figcaption>
+                </figure>
+            </div>
+        </div>
+    </section>
+
+    <!-- Features -->
+    <section id="features" class="py-24 sm:py-32 border-t hairline bg-white/[0.015]">
+        <div class="max-w-8xl mx-auto px-5 sm:px-8">
+            <div class="max-w-2xl mb-16">
+                <p class="eyebrow mb-3">Why Codemark</p>
+                <h2 class="text-3xl md:text-5xl font-bold tracking-tight mb-5">
+                    Line numbers break. <span class="em text-primary-400">Structure doesn't.</span>
+                </h2>
+                <p class="text-zinc-400 text-lg leading-relaxed">
+                    Traditional bookmarks point at a coordinate. Codemark understands your code the way a
+                    compiler does — so a reference knows <em>what</em> it points to, not just <em>where</em>.
+                </p>
+            </div>
+
+            <div class="grid md:grid-cols-2 lg:grid-cols-3 gap-px panel rounded-2xl overflow-hidden">
                 <!-- Feature 1 -->
-                <div class="glass-panel p-8 rounded-2xl transition-transform hover:-translate-y-1">
-                    <div class="w-12 h-12 bg-primary-500/20 text-primary-400 rounded-lg flex items-center justify-center mb-6">
-                        <svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" />
-                        </svg>
+                <div class="bg-ink p-8 panel-hover transition-colors">
+                    <div class="w-10 h-10 bg-primary-500/15 text-primary-400 rounded-lg flex items-center justify-center mb-5">
+                        <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" /></svg>
                     </div>
-                    <h3 class="text-xl font-bold mb-3">Durable References</h3>
-                    <p class="text-slate-400 leading-relaxed">Bookmarks identify code structurally. A renamed function is still found even if it moved across the file.</p>
+                    <h3 class="text-lg font-bold mb-2">Durable references</h3>
+                    <p class="text-zinc-400 leading-relaxed text-[0.95rem]">Bookmarks identify code structurally. A renamed function is still found, even if it moved across the file.</p>
                 </div>
-
                 <!-- Feature 2 -->
-                <div class="glass-panel p-8 rounded-2xl transition-transform hover:-translate-y-1">
-                    <div class="w-12 h-12 bg-blue-500/20 text-blue-400 rounded-lg flex items-center justify-center mb-6">
-                        <svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" />
-                        </svg>
+                <div class="bg-ink p-8 panel-hover transition-colors">
+                    <div class="w-10 h-10 bg-primary-500/15 text-primary-400 rounded-lg flex items-center justify-center mb-5">
+                        <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" /></svg>
                     </div>
-                    <h3 class="text-xl font-bold mb-3">Self-Healing</h3>
-                    <p class="text-slate-400 leading-relaxed">Layered resolution (exact match → relaxed query → content hash fallback) degrades gracefully rather than breaking silently.</p>
+                    <h3 class="text-lg font-bold mb-2">Self-healing</h3>
+                    <p class="text-zinc-400 leading-relaxed text-[0.95rem]">Tiered resolution — exact match → relaxed query → content-hash fallback — degrades gracefully instead of breaking silently.</p>
                 </div>
-
                 <!-- Feature 3 -->
-                <div class="glass-panel p-8 rounded-2xl transition-transform hover:-translate-y-1">
-                    <div class="w-12 h-12 bg-emerald-500/20 text-emerald-400 rounded-lg flex items-center justify-center mb-6">
-                        <svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                        </svg>
+                <div class="bg-ink p-8 panel-hover transition-colors">
+                    <div class="w-10 h-10 bg-primary-500/15 text-primary-400 rounded-lg flex items-center justify-center mb-5">
+                        <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" /></svg>
                     </div>
-                    <h3 class="text-xl font-bold mb-3">Unix Philosophy</h3>
-                    <p class="text-slate-400 leading-relaxed">Produces line-oriented, pipe-friendly JSON output. Integrates naturally with <code class="bg-slate-800 px-1 rounded">fzf</code>, <code class="bg-slate-800 px-1 rounded">bat</code>, and shell scripts.</p>
+                    <h3 class="text-lg font-bold mb-2">Semantic search</h3>
+                    <p class="text-zinc-400 leading-relaxed text-[0.95rem]">Ask "where's the auth logic?" using local vector embeddings (sqlite-vec). No external API calls, no keys.</p>
                 </div>
-
                 <!-- Feature 4 -->
-                <div class="glass-panel p-8 rounded-2xl transition-transform hover:-translate-y-1">
-                    <div class="w-12 h-12 bg-purple-500/20 text-purple-400 rounded-lg flex items-center justify-center mb-6">
-                        <svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                        </svg>
+                <div class="bg-ink p-8 panel-hover transition-colors">
+                    <div class="w-10 h-10 bg-primary-500/15 text-primary-400 rounded-lg flex items-center justify-center mb-5">
+                        <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 9l3 3-3 3m5 0h3M5 20h14a2 2 0 002-2V6a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" /></svg>
                     </div>
-                    <h3 class="text-xl font-bold mb-3">Semantic Search</h3>
-                    <p class="text-slate-400 leading-relaxed">Query "where's the auth logic?" using local vector embeddings (powered by sqlite-vec). No external API calls needed.</p>
+                    <h3 class="text-lg font-bold mb-2">Unix-friendly</h3>
+                    <p class="text-zinc-400 leading-relaxed text-[0.95rem]">Line-oriented, pipe-friendly JSON output that composes naturally with <code class="text-zinc-300">fzf</code>, <code class="text-zinc-300">bat</code>, <code class="text-zinc-300">jq</code>, and shell scripts.</p>
                 </div>
-
                 <!-- Feature 5 -->
-                <div class="glass-panel p-8 rounded-2xl transition-transform hover:-translate-y-1">
-                    <div class="w-12 h-12 bg-pink-500/20 text-pink-400 rounded-lg flex items-center justify-center mb-6">
-                        <svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
-                        </svg>
+                <div class="bg-ink p-8 panel-hover transition-colors">
+                    <div class="w-10 h-10 bg-primary-500/15 text-primary-400 rounded-lg flex items-center justify-center mb-5">
+                        <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" /></svg>
                     </div>
-                    <h3 class="text-xl font-bold mb-3">Collections</h3>
-                    <p class="text-slate-400 leading-relaxed">Group related bookmarks into named sets for bugfixes or feature investigations, ready to load across sessions.</p>
+                    <h3 class="text-lg font-bold mb-2">Rich metadata</h3>
+                    <p class="text-zinc-400 leading-relaxed text-[0.95rem]">Attach notes, tags, authors, and git context to any bookmark. Group them into collections you can reload across sessions.</p>
                 </div>
-
                 <!-- Feature 6 -->
-                <div class="glass-panel p-8 rounded-2xl transition-transform hover:-translate-y-1">
-                    <div class="w-12 h-12 bg-yellow-500/20 text-yellow-400 rounded-lg flex items-center justify-center mb-6">
-                        <svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" />
-                        </svg>
+                <div class="bg-ink p-8 panel-hover transition-colors">
+                    <div class="w-10 h-10 bg-primary-500/15 text-primary-400 rounded-lg flex items-center justify-center mb-5">
+                        <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 20l4-16m4 4l4 4-4 4M6 16l-4-4 4-4" /></svg>
                     </div>
-                    <h3 class="text-xl font-bold mb-3">Multi-Language</h3>
-                    <p class="text-slate-400 leading-relaxed">Auto-detects and parses Rust, Swift, TypeScript, Python, Go, Java, C#, and Dart files seamlessly.</p>
+                    <h3 class="text-lg font-bold mb-2">Speaks 8 languages</h3>
+                    <p class="text-zinc-400 leading-relaxed text-[0.95rem]">Auto-detects and parses Rust, Swift, TypeScript/TSX, Python, Go, Java, C#, and Dart.</p>
                 </div>
             </div>
 
-            <!-- Feature Comparison Table -->
-            <div class="mt-24">
-                <h3 class="text-2xl md:text-3xl font-bold mb-10 text-center">Beyond Simple Line Numbers</h3>
-                <div class="glass-panel rounded-2xl overflow-hidden overflow-x-auto border border-slate-700">
-                    <table class="w-full text-left border-collapse">
+            <!-- Comparison table -->
+            <div class="mt-20">
+                <div class="panel rounded-2xl overflow-hidden overflow-x-auto">
+                    <table class="w-full text-left border-collapse min-w-[640px]">
                         <thead>
-                            <tr class="bg-slate-700/50">
-                                <th class="p-4 md:p-6 font-bold text-slate-200">Feature</th>
-                                <th class="p-4 md:p-6 font-bold text-slate-400">Standard IDE Bookmarks</th>
-                                <th class="p-4 md:p-6 font-bold text-primary-400">Codemark</th>
+                            <tr class="bg-white/[0.03] border-b hairline">
+                                <th class="p-5 md:p-6 font-semibold text-zinc-300 text-sm">Capability</th>
+                                <th class="p-5 md:p-6 font-medium text-zinc-500 text-sm">Standard IDE bookmarks</th>
+                                <th class="p-5 md:p-6 font-semibold text-primary-400 text-sm">Codemark</th>
                             </tr>
                         </thead>
-                        <tbody class="divide-y divide-slate-700">
+                        <tbody class="divide-y divide-white/[0.06] text-[0.95rem]">
                             <tr>
-                                <td class="p-4 md:p-6 font-medium text-slate-200">Refactor Resilience</td>
-                                <td class="p-4 md:p-6 text-slate-500">❌ Breaks on line shifts</td>
-                                <td class="p-4 md:p-6 text-slate-300 font-semibold">✅ Survives renames & moves</td>
+                                <td class="p-5 md:p-6 font-medium text-zinc-200">Refactor resilience</td>
+                                <td class="p-5 md:p-6 text-zinc-500">Breaks on line shifts</td>
+                                <td class="p-5 md:p-6 text-zinc-200">Survives renames &amp; moves</td>
                             </tr>
                             <tr>
-                                <td class="p-4 md:p-6 font-medium text-slate-200">Semantic Search</td>
-                                <td class="p-4 md:p-6 text-slate-500">❌ Literal text only</td>
-                                <td class="p-4 md:p-6 text-slate-300">✅ Local Vector Embeddings</td>
+                                <td class="p-5 md:p-6 font-medium text-zinc-200">Search</td>
+                                <td class="p-5 md:p-6 text-zinc-500">Literal text only</td>
+                                <td class="p-5 md:p-6 text-zinc-200">Local vector embeddings</td>
                             </tr>
                             <tr>
-                                <td class="p-4 md:p-6 font-medium text-slate-200">Rich Metadata</td>
-                                <td class="p-4 md:p-6 text-slate-500">❌ Minimal</td>
-                                <td class="p-4 md:p-6 text-slate-300">✅ Notes, Tags, & Authors</td>
+                                <td class="p-5 md:p-6 font-medium text-zinc-200">Metadata</td>
+                                <td class="p-5 md:p-6 text-zinc-500">Minimal</td>
+                                <td class="p-5 md:p-6 text-zinc-200">Notes, tags &amp; authors</td>
                             </tr>
                             <tr>
-                                <td class="p-4 md:p-6 font-medium text-slate-200">Agent Integration</td>
-                                <td class="p-4 md:p-6 text-slate-500">❌ UI-only</td>
-                                <td class="p-4 md:p-6 text-slate-300">✅ LLM-Native Skills</td>
+                                <td class="p-5 md:p-6 font-medium text-zinc-200">Agent integration</td>
+                                <td class="p-5 md:p-6 text-zinc-500">UI-only</td>
+                                <td class="p-5 md:p-6 text-zinc-200">LLM-native skills</td>
                             </tr>
                             <tr>
-                                <td class="p-4 md:p-6 font-medium text-slate-200">Organization</td>
-                                <td class="p-4 md:p-6 text-slate-500">❌ Flat list</td>
-                                <td class="p-4 md:p-6 text-slate-300">✅ Collections & Workspaces</td>
+                                <td class="p-5 md:p-6 font-medium text-zinc-200">Sharing</td>
+                                <td class="p-5 md:p-6 text-zinc-500">Local &amp; private</td>
+                                <td class="p-5 md:p-6 text-zinc-200">Publish &amp; pull via Codetours</td>
                             </tr>
                         </tbody>
                     </table>
@@ -305,66 +359,47 @@ $ codemark search --semantic "database connection initialization"
         </div>
     </section>
 
-    <!-- Metadata & Context Section -->
-    <section id="metadata" class="py-24 relative overflow-hidden">
-        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+    <!-- Metadata & Context -->
+    <section class="py-24 sm:py-32 border-t hairline">
+        <div class="max-w-8xl mx-auto px-5 sm:px-8">
             <div class="lg:flex items-center gap-16">
                 <div class="lg:w-1/2 mb-12 lg:mb-0">
-                    <h2 class="text-3xl md:text-4xl font-bold mb-6">Metadata & Contextual Memory</h2>
-                    <p class="text-slate-400 text-lg mb-8 leading-relaxed">
-                        A bookmark is more than just a pointer. It's a container for knowledge. Codemark allows you to attach rich metadata to any piece of code, creating a searchable map of your project's architecture.
+                    <p class="eyebrow mb-3">Contextual Memory</p>
+                    <h2 class="text-3xl md:text-5xl font-bold tracking-tight mb-6">More than a <span class="em text-primary-400">pointer.</span></h2>
+                    <p class="text-zinc-400 text-lg mb-8 leading-relaxed">
+                        A bookmark is a container for knowledge. Attach rich metadata to any piece of code and build a
+                        searchable map of your project's architecture.
                     </p>
-                    <ul class="space-y-4">
+                    <ul class="space-y-5">
                         <li class="flex items-start gap-3">
-                            <div class="mt-1 bg-primary-500/20 text-primary-400 rounded-full p-1">
-                                <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
-                                </svg>
-                            </div>
-                            <div>
-                                <span class="font-bold text-slate-200">Notes & Rationale:</span>
-                                <p class="text-slate-400">Explain *why* a piece of code exists, its side effects, or known debt.</p>
-                            </div>
+                            <svg class="w-5 h-5 mt-0.5 text-primary-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" /></svg>
+                            <div><span class="font-semibold text-zinc-100">Notes &amp; rationale.</span> <span class="text-zinc-400">Explain why a piece of code exists, its side effects, or known debt.</span></div>
                         </li>
                         <li class="flex items-start gap-3">
-                            <div class="mt-1 bg-primary-500/20 text-primary-400 rounded-full p-1">
-                                <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
-                                </svg>
-                            </div>
-                            <div>
-                                <span class="font-bold text-slate-200">Categorization:</span>
-                                <p class="text-slate-400">Apply tags like <code class="bg-slate-800 px-1 rounded">#auth</code>, <code class="bg-slate-800 px-1 rounded">#vulnerability</code>, or <code class="bg-slate-800 px-1 rounded">#entrypoint</code>.</p>
-                            </div>
+                            <svg class="w-5 h-5 mt-0.5 text-primary-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" /></svg>
+                            <div><span class="font-semibold text-zinc-100">Tags.</span> <span class="text-zinc-400">Categorize with labels like <code class="text-zinc-300">#auth</code>, <code class="text-zinc-300">#vulnerability</code>, or <code class="text-zinc-300">#entrypoint</code>.</span></div>
                         </li>
                         <li class="flex items-start gap-3">
-                            <div class="mt-1 bg-primary-500/20 text-primary-400 rounded-full p-1">
-                                <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
-                                </svg>
-                            </div>
-                            <div>
-                                <span class="font-bold text-slate-200">Hierarchical Collections:</span>
-                                <p class="text-slate-400">Group bookmarks into named sets for feature development or bug investigations.</p>
-                            </div>
+                            <svg class="w-5 h-5 mt-0.5 text-primary-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" /></svg>
+                            <div><span class="font-semibold text-zinc-100">Collections.</span> <span class="text-zinc-400">Group bookmarks into named sets for a feature, audit, or bug investigation.</span></div>
                         </li>
                     </ul>
                 </div>
-                <div class="lg:w-1/2">
-                    <div class="glass-panel p-2 rounded-xl border-slate-700 shadow-2xl">
-                        <div class="terminal-header px-4 py-2 flex items-center gap-2 rounded-t-lg">
-                            <div class="text-xs font-mono text-slate-400">codemark show a1b2 --format json</div>
+                <div class="lg:w-1/2 w-full">
+                    <div class="panel rounded-xl overflow-hidden shadow-2xl shadow-black/40">
+                        <div class="terminal-header px-4 py-2.5 flex items-center gap-2">
+                            <div class="text-xs font-mono text-zinc-500">codemark show a1b2 --format json</div>
                         </div>
-                        <div class="bg-[#0d1117] p-4 rounded-b-lg overflow-x-auto">
-<pre class="!bg-transparent !m-0 !p-0"><code class="language-json">{
+                        <div class="bg-[#0d0d10] overflow-x-auto">
+<pre class="!bg-transparent !m-0"><code class="language-json">{
   "id": "a1b2c3d",
   "data": {
     "file_path": "src/auth.rs",
     "line_range": "42:67",
-    "note": "Critical JWT validation logic. Contact security team before modifying.",
+    "note": "Critical JWT validation. Contact security before modifying.",
     "tags": ["auth", "security", "entrypoint"],
     "created_by": "daniel",
-    "collection": "security-audit-2024"
+    "collection": "security-audit-2026"
   }
 }</code></pre>
                         </div>
@@ -374,168 +409,254 @@ $ codemark search --semantic "database connection initialization"
         </div>
     </section>
 
-    <!-- Installation Section -->
-    <section id="install" class="py-24 relative">
-        <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
-            <h2 class="text-3xl md:text-4xl font-bold mb-8 text-center">Installation</h2>
-            <p class="text-center text-slate-400 mb-12">Codemark is a self-contained Rust binary with no runtime dependencies. Requires Rust 1.75+.</p>
+    <!-- Works Everywhere -->
+    <section class="py-24 sm:py-32 border-t hairline bg-white/[0.015]">
+        <div class="max-w-8xl mx-auto px-5 sm:px-8">
+            <div class="max-w-2xl mb-16">
+                <p class="eyebrow mb-3">Fits your setup</p>
+                <h2 class="text-3xl md:text-5xl font-bold tracking-tight mb-5">
+                    Works everywhere <span class="em text-primary-400">you do.</span>
+                </h2>
+                <p class="text-zinc-400 text-lg leading-relaxed">
+                    Codemark is built for real-world git workflows — across worktrees, forges, and accounts.
+                </p>
+            </div>
 
-            <div class="grid md:grid-cols-2 gap-8">
-                <!-- Homebrew -->
-                <div class="glass-panel rounded-xl overflow-hidden border border-slate-700">
-                    <div class="bg-slate-800/80 px-4 py-3 border-b border-slate-700 flex items-center gap-2">
-                        <svg class="w-5 h-5 text-slate-400" viewBox="0 0 24 24" fill="currentColor">
-                            <path d="M12 0C5.373 0 0 5.373 0 12c0 5.302 3.438 9.8 8.207 11.387.6.11.793-.26.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576C20.566 21.797 24 17.3 24 12c0-6.627-5.373-12-12-12z"/>
-                        </svg>
-                        <span class="font-semibold">macOS / Linux (Homebrew)</span>
+            <div class="grid md:grid-cols-3 gap-6">
+                <div class="panel panel-hover rounded-2xl p-8 transition-colors">
+                    <div class="w-10 h-10 bg-primary-500/15 text-primary-400 rounded-lg flex items-center justify-center mb-5">
+                        <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 8h10M7 8a3 3 0 11-6 0 3 3 0 016 0zm0 0v8a3 3 0 003 3h4m0 0a3 3 0 106 0 3 3 0 00-6 0z" /></svg>
                     </div>
-                    <div class="p-4 bg-[#0d1117]">
-                        <pre class="!bg-transparent !m-0 !p-0"><code class="language-bash">brew tap DanielCardonaRojas/codemark
+                    <h3 class="text-lg font-bold mb-2">Git worktrees</h3>
+                    <p class="text-zinc-400 leading-relaxed text-[0.95rem]">Worktrees share one <code class="text-zinc-300">.git</code> directory, and Codemark knows it. Bookmarks resolve correctly whichever worktree you're in.</p>
+                </div>
+                <div class="panel panel-hover rounded-2xl p-8 transition-colors">
+                    <div class="w-10 h-10 bg-primary-500/15 text-primary-400 rounded-lg flex items-center justify-center mb-5">
+                        <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h7" /></svg>
+                    </div>
+                    <h3 class="text-lg font-bold mb-2">Multiple forges</h3>
+                    <p class="text-zinc-400 leading-relaxed text-[0.95rem]">GitHub, GitLab, Bitbucket, or a generic host — authenticate against whichever forge each repository lives on.</p>
+                </div>
+                <div class="panel panel-hover rounded-2xl p-8 transition-colors">
+                    <div class="w-10 h-10 bg-primary-500/15 text-primary-400 rounded-lg flex items-center justify-center mb-5">
+                        <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17 20h5v-2a4 4 0 00-3-3.87M9 20H4v-2a4 4 0 013-3.87m6-1.13a4 4 0 10-4-4 4 4 0 004 4zm6 0a4 4 0 10-3-6.65" /></svg>
+                    </div>
+                    <h3 class="text-lg font-bold mb-2">Multiple accounts</h3>
+                    <p class="text-zinc-400 leading-relaxed text-[0.95rem]">Keep your work and personal identities side by side. Log in per account and switch without re-authenticating.</p>
+                </div>
+            </div>
+
+            <div class="panel rounded-xl overflow-hidden shadow-xl shadow-black/40 mt-8">
+                <div class="terminal-header px-4 py-2.5 flex items-center gap-2">
+                    <div class="text-xs font-mono text-zinc-500">~/work · codemark</div>
+                </div>
+                <div class="bg-[#0d0d10] overflow-x-auto">
+<pre class="!bg-transparent !m-0"><code class="language-bash"># Authenticate a second account on a different forge
+$ codemark auth login --forge gitlab --username work
+
+# Query bookmarks across repositories by identity
+$ codemark list --repo acme/api --repo personal/sketch --tag entrypoint</code></pre>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Sharing / Codetours -->
+    <section id="sharing" class="py-24 sm:py-32 border-t hairline">
+        <div class="max-w-8xl mx-auto px-5 sm:px-8">
+            <div class="lg:flex items-center gap-16">
+                <div class="lg:w-1/2 w-full mb-12 lg:mb-0 order-2 lg:order-1">
+                    <div class="panel rounded-xl overflow-hidden shadow-2xl shadow-black/40">
+                        <div class="terminal-header px-4 py-2.5 flex items-center gap-2">
+                            <div class="w-2.5 h-2.5 rounded-full bg-[#ff5f57]"></div>
+                            <div class="w-2.5 h-2.5 rounded-full bg-[#febc2e]"></div>
+                            <div class="w-2.5 h-2.5 rounded-full bg-[#28c840]"></div>
+                            <div class="ml-3 text-xs font-mono text-zinc-500">share a tour</div>
+                        </div>
+                        <div class="bg-[#0d0d10] overflow-x-auto">
+<pre class="!bg-transparent !m-0"><code class="language-bash"># Point this repo at a Codetours server
+$ codemark repo set-server acme/api https://codetours.fly.dev
+
+# Publish a collection as a shareable tour
+$ codemark collection push security-audit
+<span class="text-green-400">✔ Published 'security-audit' (12 bookmarks) → codetours</span>
+
+# A teammate pulls it into their own checkout
+$ codemark collection pull security-audit
+<span class="text-sky-400">↳ 12 bookmarks resolved against local HEAD</span></code></pre>
+                        </div>
+                    </div>
+                </div>
+                <div class="lg:w-1/2 order-1 lg:order-2 mb-12 lg:mb-0">
+                    <p class="eyebrow mb-3">Sharing · Codetours</p>
+                    <h2 class="text-3xl md:text-5xl font-bold tracking-tight mb-6">
+                        Sync &amp; share your <span class="em text-primary-400">code map.</span>
+                    </h2>
+                    <p class="text-zinc-400 text-lg mb-8 leading-relaxed">
+                        Bookmarks shouldn't be stuck on one machine. Push a collection to a
+                        <span class="text-zinc-200">Codetours server</span> as a tour, and your team pulls it into
+                        their own checkout — where each bookmark re-resolves against their local code.
+                    </p>
+                    <ul class="space-y-5">
+                        <li class="flex items-start gap-3">
+                            <svg class="w-5 h-5 mt-0.5 text-primary-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" /></svg>
+                            <div><span class="font-semibold text-zinc-100">Collections become tours.</span> <span class="text-zinc-400">Publish a curated set of bookmarks with a single push.</span></div>
+                        </li>
+                        <li class="flex items-start gap-3">
+                            <svg class="w-5 h-5 mt-0.5 text-primary-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" /></svg>
+                            <div><span class="font-semibold text-zinc-100">Structural, not literal.</span> <span class="text-zinc-400">Tours travel as queries, so they survive the differences between checkouts.</span></div>
+                        </li>
+                        <li class="flex items-start gap-3">
+                            <svg class="w-5 h-5 mt-0.5 text-primary-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" /></svg>
+                            <div><span class="font-semibold text-zinc-100">Self-hosted.</span> <span class="text-zinc-400">Run your own Codetours server, or point at a shared one. Your code stays where you put it.</span></div>
+                        </li>
+                    </ul>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Agent Skills -->
+    <section class="py-24 sm:py-32 border-t hairline bg-white/[0.015]">
+        <div class="max-w-8xl mx-auto px-5 sm:px-8">
+            <div class="lg:flex items-center gap-16">
+                <div class="lg:w-1/2 mb-12 lg:mb-0">
+                    <p class="eyebrow mb-3">Agent-ready</p>
+                    <h2 class="text-3xl md:text-5xl font-bold tracking-tight mb-6">
+                        Structured memory for <span class="em text-primary-400">your AI agent.</span>
+                    </h2>
+                    <p class="text-zinc-400 text-lg mb-6 leading-relaxed">
+                        Codemark isn't only for humans. Install the skill and agents like Claude Code can bookmark
+                        critical discoveries as they explore — keeping context alive across long-running sessions.
+                    </p>
+                    <p class="text-zinc-400 leading-relaxed">
+                        Instead of re-deriving the same map every session, your agent records what it learned and
+                        reloads it next time.
+                    </p>
+                </div>
+                <div class="lg:w-1/2 w-full">
+                    <div class="panel rounded-xl overflow-hidden shadow-2xl shadow-black/40">
+                        <div class="terminal-header px-4 py-2.5 flex items-center gap-2">
+                            <div class="text-xs font-mono text-zinc-500">install &amp; use the agent skill</div>
+                        </div>
+                        <div class="bg-[#0d0d10] overflow-x-auto">
+<pre class="!bg-transparent !m-0"><code class="language-bash"># Teach your agent how to use Codemark
+$ codemark install-skill --agent claude --scope user
+<span class="text-green-400">✔ Installed Codemark skill for claude</span>
+
+# The agent discovers and records auth logic on its own
+$ codemark add --range 42 --author agent --note "Observed entrypoint"
+<span class="text-green-400">✔ Bookmarked 'a1b2' for later reference</span></code></pre>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </section>
+
+    <!-- Installation -->
+    <section id="install" class="py-24 sm:py-32 border-t hairline">
+        <div class="max-w-4xl mx-auto px-5 sm:px-8">
+            <div class="text-center mb-14">
+                <p class="eyebrow mb-3">Installation</p>
+                <h2 class="text-3xl md:text-5xl font-bold tracking-tight mb-4">Up and running in <span class="em text-primary-400">one command.</span></h2>
+                <p class="text-zinc-400 text-lg">A self-contained Rust binary, SQLite bundled. Requires Rust 1.75+.</p>
+            </div>
+
+            <div class="grid md:grid-cols-2 gap-6">
+                <div class="panel rounded-xl overflow-hidden">
+                    <div class="bg-white/[0.03] px-4 py-3 border-b hairline flex items-center gap-2">
+                        <svg class="w-4 h-4 text-zinc-400" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.373 0 0 5.373 0 12c0 5.302 3.438 9.8 8.207 11.387.6.11.793-.26.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576C20.566 21.797 24 17.3 24 12c0-6.627-5.373-12-12-12z"/></svg>
+                        <span class="font-semibold text-sm">macOS / Linux · Homebrew</span>
+                    </div>
+                    <div class="bg-[#0d0d10]">
+                        <pre class="!bg-transparent !m-0"><code class="language-bash">brew tap DanielCardonaRojas/codemark
 brew install codemark</code></pre>
                     </div>
                 </div>
 
-                <!-- Cargo -->
-                <div class="glass-panel rounded-xl overflow-hidden border border-slate-700">
-                    <div class="bg-slate-800/80 px-4 py-3 border-b border-slate-700 flex items-center gap-2">
-                        <span class="font-bold text-slate-300 px-1 border border-slate-600 rounded">rs</span>
-                        <span class="font-semibold">Rust (Cargo)</span>
+                <div class="panel rounded-xl overflow-hidden">
+                    <div class="bg-white/[0.03] px-4 py-3 border-b hairline flex items-center gap-2">
+                        <span class="font-bold text-xs text-zinc-300 px-1.5 py-0.5 border border-zinc-600 rounded">rs</span>
+                        <span class="font-semibold text-sm">Rust · Cargo</span>
                     </div>
-                    <div class="p-4 bg-[#0d1117]">
-                        <pre class="!bg-transparent !m-0 !p-0"><code class="language-bash">cargo install --path .</code></pre>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </section>
-
-    <!-- Agent Skills & Television Integration -->
-    <section class="py-24 bg-slate-800/20">
-        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-            <div class="grid md:grid-cols-2 gap-12">
-                <!-- Agent Skills -->
-                <div>
-                    <div class="flex items-center gap-3 mb-6">
-                        <div class="bg-purple-500/20 text-purple-400 p-2 rounded-lg">
-                            <svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.663 17h4.673M12 3v1m6.364 1.636l-.707.707M21 12h-1M4 12H3m3.364-6.364l-.707-.707M6.343 17.657l-.707.707m12.728 0l-.707-.707M12 11a1 1 0 100-2 1 1 0 000 2z" />
-                            </svg>
-                        </div>
-                        <h3 class="text-2xl font-bold">LLM Agent Skills</h3>
-                    </div>
-                    <p class="text-slate-400 mb-6 leading-relaxed">
-                        Codemark isn't just for humans. It provides a structured "memory" for AI agents. By providing a <code class="bg-slate-800 px-1 rounded">SKILL.md</code>, agents can autonomously bookmark critical discovery paths, helping them maintain context across long-running tasks.
-                    </p>
-                    <div class="bg-[#0d1117] p-4 rounded-xl border border-slate-700 font-mono text-sm overflow-x-auto">
-                        <span class="text-slate-500 italic"># Agent discovers auth logic</span><br>
-                        <span class="text-primary-400">$ codemark add --range 42 --author agent --note "Observed entrypoint"</span><br>
-                        <span class="text-green-400">✔ Bookmarked 'a1b2' for later reference</span>
-                    </div>
-                </div>
-
-                <!-- Television Integration -->
-                <div>
-                    <div class="flex items-center gap-3 mb-6">
-                        <div class="bg-blue-500/20 text-blue-400 p-2 rounded-lg">
-                            <svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
-                            </svg>
-                        </div>
-                        <h3 class="text-2xl font-bold">Television TUI</h3>
-                    </div>
-                    <p class="text-slate-400 mb-6 leading-relaxed">
-                        The recommended way to browse bookmarks. Navigate your codebase at the speed of thought with the <a href="https://alexpasmantier.github.io/television/" class="text-blue-400 hover:underline">Television</a> channel.
-                    </p>
-                    <ul class="text-slate-300 space-y-2 mb-6 text-sm">
-                        <li class="flex items-center gap-2">🔍 Fuzzy find across all your bookmarks</li>
-                        <li class="flex items-center gap-2">📺 Toggle between code and markdown previews</li>
-                        <li class="flex items-center gap-2">🚀 Open directly in your configured editor</li>
-                        <li class="flex items-center gap-2">📋 Copy snippets to clipboard with <kbd class="bg-slate-800 px-1 rounded">Ctrl-C</kbd></li>
-                        <li class="flex items-center gap-2">🗃️ Switch between bookmark collections</li>
-                    </ul>
-                    <div class="bg-[#0d1117] p-4 rounded-xl border border-slate-700 font-mono text-sm overflow-x-auto">
-                        <span class="text-slate-500 italic"># Launch interactive TUI</span><br>
-                        <span class="text-primary-400">$ tv codemark</span><br>
-                        <span class="text-slate-500 italic"># Press Ctrl-C to copy resolved code</span><br>
-                        <span class="text-slate-300">| a1b2 | src/auth.rs | JWT Logic |</span>
+                    <div class="bg-[#0d0d10]">
+                        <pre class="!bg-transparent !m-0"><code class="language-bash">cargo install codemark</code></pre>
                     </div>
                 </div>
             </div>
         </div>
     </section>
 
-    <!-- Quick Start Section -->
-    <section id="quickstart" class="py-24 bg-slate-800/30 border-t border-slate-800">
-        <div class="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
-            <h2 class="text-3xl md:text-4xl font-bold mb-12 text-center">Common Workflows</h2>
+    <!-- Quick Start -->
+    <section id="quickstart" class="py-24 sm:py-32 border-t hairline bg-white/[0.015]">
+        <div class="max-w-4xl mx-auto px-5 sm:px-8">
+            <div class="text-center mb-16">
+                <p class="eyebrow mb-3">Quick Start</p>
+                <h2 class="text-3xl md:text-5xl font-bold tracking-tight">Three steps to a <span class="em text-primary-400">living map.</span></h2>
+            </div>
 
-            <div class="space-y-8">
-                <!-- Add -->
-                <div class="glass-panel rounded-xl overflow-hidden shadow-lg border border-slate-700">
-                    <div class="bg-slate-800 px-4 py-2 border-b border-slate-700 font-semibold text-slate-300">1. Adding a bookmark</div>
-                    <div class="p-6 bg-[#0d1117]">
-                        <pre class="!bg-transparent !m-0 !p-0"><code class="language-bash"># By line range (most common)
-codemark add --file src/auth.rs --range 42
-codemark add --file src/auth.rs --range 42:67
-
-# Preview what would be bookmarked (dry run)
-codemark add --file src/auth.rs --range 42:67 --dry-run</code></pre>
+            <div class="space-y-10">
+                <!-- Step 1 -->
+                <div class="flex gap-5">
+                    <div class="shrink-0 w-9 h-9 rounded-full border border-primary-400/40 text-primary-400 font-mono font-semibold flex items-center justify-center">1</div>
+                    <div class="flex-1">
+                        <h3 class="text-lg font-bold mb-1">Install the agent skill</h3>
+                        <p class="text-zinc-400 mb-4">Teach your AI agent how to use Codemark.</p>
+                        <div class="panel rounded-lg overflow-hidden bg-[#0d0d10]">
+                            <pre class="!bg-transparent !m-0"><code class="language-bash">codemark install-skill --agent claude --scope user</code></pre>
+                        </div>
                     </div>
                 </div>
-
-                <!-- Previewing -->
-                <div class="glass-panel rounded-xl overflow-hidden shadow-lg border border-slate-700">
-                    <div class="bg-slate-800 px-4 py-2 border-b border-slate-700 font-semibold text-slate-300">2. Browsing and Previewing (Piping Output)</div>
-                    <div class="p-6 bg-[#0d1117]">
-                        <pre class="!bg-transparent !m-0 !p-0"><code class="language-bash"># List all bookmarks
-codemark list
-
-# Preview outputs JSON for easy piping to your editor or viewer:
-codemark preview a1b2 | jq -r '"bat --highlight-line \(.data.line_range) \(.data.file_path)"' | sh
-
-# NEW: Output RAW content to stdout (great for copy/paste or scripts)
-codemark preview a1b2 --raw | pbcopy</code></pre>
+                <!-- Step 2 -->
+                <div class="flex gap-5">
+                    <div class="shrink-0 w-9 h-9 rounded-full border border-primary-400/40 text-primary-400 font-mono font-semibold flex items-center justify-center">2</div>
+                    <div class="flex-1">
+                        <h3 class="text-lg font-bold mb-1">Let your agent bookmark for you</h3>
+                        <p class="text-zinc-400 mb-4">Ask it to capture the structure of your codebase as it explores.</p>
+                        <div class="panel rounded-lg p-5 bg-[#0d0d10]">
+                            <p class="text-zinc-300 italic">"Create a collection called <span class="text-primary-300 not-italic">auth-audit</span> and bookmark the key functions involved in authentication."</p>
+                        </div>
                     </div>
                 </div>
-
-                <!-- Health -->
-                <div class="glass-panel rounded-xl overflow-hidden shadow-lg border border-slate-700">
-                    <div class="bg-slate-800 px-4 py-2 border-b border-slate-700 font-semibold text-slate-300">3. Health Management</div>
-                    <div class="p-6 bg-[#0d1117]">
-                        <pre class="!bg-transparent !m-0 !p-0"><code class="language-bash"># See the health of your codebase memory
-codemark status
-# 42 active | 3 drifted | 1 stale | 0 archived
-
-# Re-resolve all and update statuses
-codemark validate</code></pre>
+                <!-- Step 3 -->
+                <div class="flex gap-5">
+                    <div class="shrink-0 w-9 h-9 rounded-full border border-primary-400/40 text-primary-400 font-mono font-semibold flex items-center justify-center">3</div>
+                    <div class="flex-1">
+                        <h3 class="text-lg font-bold mb-1">Browse with the dashboard</h3>
+                        <p class="text-zinc-400 mb-4">Launch the keyboard-driven TUI to review what's been captured.</p>
+                        <div class="panel rounded-lg overflow-hidden bg-[#0d0d10]">
+                            <pre class="!bg-transparent !m-0"><code class="language-bash">codemark dashboard</code></pre>
+                        </div>
                     </div>
                 </div>
+            </div>
+
+            <div class="text-center mt-16">
+                <a href="https://github.com/DanielCardonaRojas/codemark" target="_blank" class="inline-flex items-center gap-2 text-primary-400 hover:text-primary-300 font-medium transition-colors">
+                    Read the full command reference
+                    <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 5l7 7m0 0l-7 7m7-7H3" /></svg>
+                </a>
             </div>
         </div>
     </section>
 
     <!-- Footer -->
-    <footer class="border-t border-slate-800 bg-slate-900 pt-16 pb-8">
-        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+    <footer class="border-t hairline pt-16 pb-10">
+        <div class="max-w-8xl mx-auto px-5 sm:px-8">
             <div class="md:flex md:items-center md:justify-between text-center md:text-left">
-                <div class="flex justify-center md:justify-start items-center space-x-3 mb-6 md:mb-0">
-                    <svg class="w-6 h-6 text-primary-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z" />
-                    </svg>
-                    <span class="font-bold text-lg">Codemark</span>
+                <div class="flex justify-center md:justify-start items-center space-x-2.5 mb-6 md:mb-0">
+                    <svg class="w-5 h-5 text-primary-500" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z" /></svg>
+                    <span class="font-bold">Codemark</span>
                 </div>
-                
-                <p class="text-slate-500 text-sm">
-                    Released under the <a href="https://github.com/DanielCardonaRojas/codemark/blob/main/LICENSE" class="text-slate-300 hover:text-white transition-colors">MIT License</a>. <br class="md:hidden">
-                    Built with Rust and Tree-sitter. © 2026
+                <p class="text-zinc-500 text-sm">
+                    Released under the <a href="https://github.com/DanielCardonaRojas/codemark/blob/main/LICENSE" class="text-zinc-300 hover:text-white transition-colors">MIT License</a>.
+                    Built with Rust &amp; tree-sitter. © 2026
                 </p>
-                
-                <div class="flex justify-center md:justify-end space-x-6 mt-6 md:mt-0">
-                    <a href="https://github.com/DanielCardonaRojas/codemark" class="text-slate-500 hover:text-slate-300">
+                <div class="flex justify-center md:justify-end space-x-5 mt-6 md:mt-0">
+                    <a href="https://github.com/DanielCardonaRojas/codemark" target="_blank" class="text-zinc-500 hover:text-zinc-200 transition-colors">
                         <span class="sr-only">GitHub</span>
-                        <svg class="h-6 w-6" fill="currentColor" viewBox="0 0 24 24" aria-hidden="true">
-                            <path fill-rule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z" clip-rule="evenodd" />
-                        </svg>
+                        <svg class="h-5 w-5" fill="currentColor" viewBox="0 0 24 24"><path fill-rule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z" clip-rule="evenodd" /></svg>
                     </a>
                 </div>
             </div>
@@ -545,5 +666,6 @@ codemark validate</code></pre>
     <!-- Prism JS -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-bash.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-json.min.js"></script>
 </body>
 </html>
