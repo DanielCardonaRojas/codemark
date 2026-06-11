@@ -515,6 +515,10 @@ impl BrowserLayout {
             return;
         };
 
+        // Show a spinner on the collection item being pushed. The spinner is
+        // cleared when the SyncComplete event triggers schedule_clear_spinners().
+        self.add_spinner(&collection_id, Panel3Tab::Collections.index());
+
         // Get config for the push operation
         let codemark_dir = match self.db.path().parent() {
             Some(dir) => dir.to_path_buf(),
