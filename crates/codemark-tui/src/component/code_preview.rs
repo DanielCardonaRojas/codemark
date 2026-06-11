@@ -8,7 +8,7 @@ use ratatui::{
     widgets::{Scrollbar, ScrollbarOrientation, ScrollbarState, StatefulWidget, Widget},
 };
 use std::cell::RefCell;
-use std::sync::LazyLock;
+use std::sync::{Arc, LazyLock};
 use syntect::easy::HighlightLines;
 use syntect::highlighting::{Style as SyntectStyle, Theme};
 use syntect::parsing::SyntaxSet;
@@ -29,21 +29,13 @@ fn load_syntax_set() -> SyntaxSet {
         .clone()
 }
 
-/// Load the theme from embedded syntect-assets data.
-///
-/// This is called once at startup via `LazyLock`. The theme is bundled
-/// at compile time from the syntect-assets package.
-///
-/// Note: `get_theme` returns a reference to the theme directly, not a
-/// `Result`. If the theme name is not found, syntect-assets will
-/// silently fall back to a default theme. This is a known limitation
-/// of the library's API.
-fn load_theme() -> Theme {
-    syntect_assets::assets::HighlightingAssets::from_binary().get_theme("OneHalfDark").clone()
-}
-
 static SYNTAX_SET: LazyLock<SyntaxSet> = LazyLock::new(load_syntax_set);
-static THEME: LazyLock<Theme> = LazyLock::new(load_theme);
+
+/// Default highlighting theme, used until an app-level theme is applied via
+/// [`CodePreview::set_theme`]. Resolves the registry fallback from bundled
+/// assets. Shared via `Arc` so each preview clone is cheap.
+static DEFAULT_THEME: LazyLock<Arc<Theme>> =
+    LazyLock::new(|| Arc::new(crate::theme::default_theme()));
 
 // @lat: [[tui-line-range-selection#CodePreview component]]
 /// A component for displaying syntax-highlighted code with line numbers.
@@ -67,6 +59,9 @@ pub struct CodePreview {
     cached_lines: RefCell<Vec<Line<'static>>>,
     /// Optional file name header displayed above the code
     file_header: Option<String>,
+    /// Theme used for syntax highlighting. Shared via `Arc` so cloning a
+    /// `CodePreview` does not duplicate the (large) theme data.
+    theme: Arc<Theme>,
 }
 
 impl CodePreview {
@@ -84,6 +79,7 @@ impl CodePreview {
             last_area: std::cell::Cell::new(Rect::default()),
             cached_lines: RefCell::new(Vec::new()),
             file_header: None,
+            theme: DEFAULT_THEME.clone(),
         };
         preview.refresh_cache();
         preview
@@ -111,10 +107,19 @@ impl CodePreview {
         self.file_header = header;
     }
 
+    /// Set the syntax highlighting theme and rebuild the highlight cache.
+    ///
+    /// The theme is shared via `Arc`; resolve it once at the app level (e.g. via
+    /// [`crate::theme::ThemeRegistry`]) and hand the same `Arc` to every preview.
+    pub fn set_theme(&mut self, theme: Arc<Theme>) {
+        self.theme = theme;
+        self.refresh_cache();
+    }
+
     /// Refresh the syntax highlighting cache.
     fn refresh_cache(&self) {
         let syntax_set = &*SYNTAX_SET;
-        let theme = &*THEME;
+        let theme = &*self.theme;
         let syntax = syntax_set
             .find_syntax_by_extension(&self.extension)
             .unwrap_or_else(|| syntax_set.find_syntax_plain_text());
@@ -395,5 +400,37 @@ impl Component for CodePreview {
 
     fn set_focus(&mut self, focused: bool) {
         self.focused = focused;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::theme::ThemeRegistry;
+
+    /// Collect the foreground color of every cached span, so two highlight
+    /// passes can be compared.
+    fn span_colors(preview: &CodePreview) -> Vec<Option<Color>> {
+        preview
+            .cached_lines
+            .borrow()
+            .iter()
+            .flat_map(|line| line.spans.iter().map(|span| span.style.fg))
+            .collect()
+    }
+
+    #[test]
+    fn set_theme_rehighlights_with_new_colors() {
+        let code = "fn main() {\n    let x = 42;\n}\n";
+        let mut preview = CodePreview::new(code, "rs");
+        let before = span_colors(&preview);
+
+        // Dracula differs from the default OneHalfDark palette, so the
+        // highlighted span colors must change after applying it.
+        let dracula = ThemeRegistry::new().resolve("Dracula");
+        preview.set_theme(Arc::new(dracula));
+        let after = span_colors(&preview);
+
+        assert_ne!(before, after, "switching theme should change highlight colors");
     }
 }

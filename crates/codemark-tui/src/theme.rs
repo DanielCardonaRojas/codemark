@@ -43,6 +43,13 @@ pub fn themes_dir() -> Option<PathBuf> {
     global_config_dir().map(|d| d.join("themes"))
 }
 
+/// Resolve [`FALLBACK_THEME`] directly from bundled assets, without building a
+/// full [`ThemeRegistry`] or touching the user directory. Used as the default
+/// theme before an app-level theme has been applied.
+pub fn default_theme() -> Theme {
+    HighlightingAssets::from_binary().get_theme(FALLBACK_THEME).clone()
+}
+
 /// Resolves `.tmTheme` themes across the user directory, embedded extras, and
 /// `syntect-assets`, with a guaranteed fallback.
 ///
