@@ -4,6 +4,8 @@
 
 use std::collections::HashMap;
 
+use rusqlite::OptionalExtension;
+
 use crate::engine::bookmark::{
     Annotation, Bookmark, BookmarkFilter, BookmarkHealth, ResolutionMethod, Tag,
 };
@@ -68,20 +70,33 @@ impl Database {
             Err(rusqlite::Error::SqliteFailure(err, _))
                 if err.code == rusqlite::ErrorCode::ConstraintViolation =>
             {
-                // Bookmark with same (repo_id, file_path, query) exists, fetch its ID
+                // A conflicting bookmark exists. Find its ID so callers can reuse it.
+                //
+                // The conflict may come from either the repo-scoped unique index
+                // (repo_id, file_path, query) or the table-level UNIQUE(file_path,
+                // query), which ignores repo_id. So we first try the repo-scoped
+                // match, then fall back to matching on (file_path, query) alone —
+                // otherwise an existing row with a *different* repo_id (e.g. a
+                // local bookmark vs. a repo_id-less imported one) would leave us
+                // with no match and a spurious "Query returned no rows" error.
                 let existing_id: String = if bookmark.repo_id.is_some() {
                     tx.query_row(
                         "SELECT id FROM bookmarks WHERE repo_id = ?1 AND file_path = ?2 AND query = ?3",
                         rusqlite::params![bookmark.repo_id, bookmark.file_path, bookmark.query],
                         |row| row.get(0),
-                    )?
+                    )
+                    .optional()?
                 } else {
+                    None
+                }
+                .map(Ok)
+                .unwrap_or_else(|| {
                     tx.query_row(
-                        "SELECT id FROM bookmarks WHERE repo_id IS NULL AND file_path = ?1 AND query = ?2",
+                        "SELECT id FROM bookmarks WHERE file_path = ?1 AND query = ?2",
                         rusqlite::params![bookmark.file_path, bookmark.query],
                         |row| row.get(0),
-                    )?
-                };
+                    )
+                })?;
                 Ok(existing_id)
             }
             Err(e) => Err(Error::from(e)),
@@ -718,6 +733,44 @@ mod tests {
         db.insert_bookmark(&bm1).unwrap();
         let existing_id = db.insert_bookmark(&bm2).unwrap();
 
+        assert_eq!(existing_id, bm1.id);
+    }
+
+    // Regression: an existing bookmark carrying a repo_id conflicts (via the
+    // table-level UNIQUE(file_path, query)) with an incoming repo_id-less
+    // bookmark — the case hit when re-pulling a tour after deleting it locally.
+    // The recovery lookup must match on (file_path, query) and return the
+    // existing id rather than erroring with "Query returned no rows".
+    #[test]
+    fn insert_repoless_duplicate_of_repo_scoped_bookmark_returns_existing_id() {
+        init_test_env();
+        let db = Database::open_in_memory().unwrap();
+
+        let repo = crate::engine::bookmark::Repo {
+            id: "repo-1".to_string(),
+            repo_owner: "owner".to_string(),
+            repo_name: "repo".to_string(),
+            origin_url: Some("https://github.com/owner/repo".to_string()),
+            repo_root: "/tmp/repo".to_string(),
+            db_owner_email: "test@test.com".to_string(),
+            db_owner_name: Some("Test".to_string()),
+            detected_at: "2024-01-01T00:00:00Z".to_string(),
+        };
+        db.upsert_repo(&repo).unwrap();
+
+        // Existing local bookmark has a repo_id.
+        let mut bm1 = test_bookmark("aaaa-1111-2222-3333");
+        bm1.repo_id = Some("repo-1".to_string());
+        db.insert_bookmark(&bm1).unwrap();
+
+        // Incoming bookmark (e.g. from an imported pack) shares file_path+query
+        // but has no repo_id.
+        let mut bm2 = test_bookmark("bbbb-4444-5555-6666");
+        bm2.query = bm1.query.clone();
+        bm2.file_path = bm1.file_path.clone();
+        bm2.repo_id = None;
+
+        let existing_id = db.insert_bookmark(&bm2).unwrap();
         assert_eq!(existing_id, bm1.id);
     }
 

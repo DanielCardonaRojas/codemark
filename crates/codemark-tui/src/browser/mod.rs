@@ -737,8 +737,13 @@ impl BrowserLayout {
                         None => HealthStatus::Unknown,
                     };
                     let branch = c.created_branch.clone().unwrap_or_else(|| "main".to_string());
+                    // Show the author (if known) before the branch name.
+                    let secondary = match c.created_by.as_deref() {
+                        Some(author) if !author.is_empty() => format!("{author} · {branch}"),
+                        _ => branch,
+                    };
                     let item = PanelItem::new(&c.name)
-                        .secondary_text(&branch)
+                        .secondary_text(secondary)
                         .metadata(format!("{count} steps"))
                         .health(health)
                         .checkmark(true)
@@ -760,8 +765,13 @@ impl BrowserLayout {
             .iter()
             .filter(|t| !matched_remote_ids.contains(&t.tour_id))
             .map(|t| {
+                let date = t.updated_at.chars().take(10).collect::<String>();
+                let secondary = match &t.author {
+                    Some(author) if !author.is_empty() => format!("{author} · {date}"),
+                    _ => date,
+                };
                 PanelItem::new(&t.title)
-                    .secondary_text(t.updated_at.chars().take(10).collect::<String>())
+                    .secondary_text(secondary)
                     .health(HealthStatus::Unknown)
                     .user_data(format!("remote:{}", t.tour_id))
             })

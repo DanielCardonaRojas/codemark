@@ -36,6 +36,8 @@ pub struct TourSummary {
     pub title: String,
     /// Repository URL if available.
     pub repo_url: Option<String>,
+    /// GitHub login of the user who published the tour, if known.
+    pub author: Option<String>,
     /// Timestamp of last update.
     pub updated_at: String,
     /// Relative API URL for this tour.
@@ -187,7 +189,7 @@ pub async fn handler(
                 // Repo filter requires Rust-side filtering because repo_url formats vary
                 // (SSH vs HTTPS vs .git suffix). Fetch all matching tours, filter, then paginate.
                 let query = format!(
-                    "SELECT id, name, repo_url, updated_at FROM collections
+                    "SELECT id, name, repo_url, updated_at, created_by FROM collections
                      WHERE visibility = 'public' AND status = 'ready'
                      ORDER BY {}",
                     sort
@@ -202,6 +204,7 @@ pub async fn handler(
                             title: row.get(1)?,
                             repo_url: row.get(2)?,
                             updated_at: row.get(3)?,
+                            author: row.get(4)?,
                             url: format!("/tours/{}", id),
                         })
                     })?
@@ -230,7 +233,7 @@ pub async fn handler(
                 )?;
 
                 let query = format!(
-                    "SELECT id, name, repo_url, updated_at FROM collections
+                    "SELECT id, name, repo_url, updated_at, created_by FROM collections
                      WHERE visibility = 'public' AND status = 'ready'
                      ORDER BY {}
                      LIMIT ?1 OFFSET ?2",
@@ -246,6 +249,7 @@ pub async fn handler(
                             title: row.get(1)?,
                             repo_url: row.get(2)?,
                             updated_at: row.get(3)?,
+                            author: row.get(4)?,
                             url: format!("/tours/{}", id),
                         })
                     })?
