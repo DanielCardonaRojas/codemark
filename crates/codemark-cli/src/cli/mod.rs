@@ -1202,7 +1202,8 @@ pub enum AuthCommand {
 
 #[derive(Debug, clap::Args)]
 pub struct AuthLoginArgs {
-    /// Server URL (e.g., https://codemark.example.com)
+    /// Server URL (defaults to the public Codetours server)
+    #[arg(default_value = crate::DEFAULT_SERVER_URL)]
     pub server: String,
 
     /// Auth token (if you have one already)
