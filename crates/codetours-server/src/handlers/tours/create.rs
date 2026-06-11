@@ -562,9 +562,14 @@ pub async fn handler(
                     'ready', p.health, p.health_computed_at, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
                     COALESCE(p.created_at, strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
                     strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
-                    COALESCE(?2, p.created_by)
+                    ?2
                 FROM pack.collections AS p
                 WHERE p.id = ?1 AND p.visibility IS NOT NULL",
+                // Only store the server-verified author. We deliberately do NOT fall
+                // back to the pack's own created_by, which is client-controlled and
+                // would let a publisher spoof the displayed author. When the author
+                // can't be resolved (registry unreachable, unregistered user), store
+                // NULL rather than surfacing unverified data.
                 rusqlite::params![&collection_id, &author_for_merge]
             )?;
 

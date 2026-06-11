@@ -737,8 +737,13 @@ impl BrowserLayout {
                         None => HealthStatus::Unknown,
                     };
                     let branch = c.created_branch.clone().unwrap_or_else(|| "main".to_string());
+                    // Show the author (if known) before the branch name.
+                    let secondary = match c.created_by.as_deref() {
+                        Some(author) if !author.is_empty() => format!("{author} · {branch}"),
+                        _ => branch,
+                    };
                     let item = PanelItem::new(&c.name)
-                        .secondary_text(&branch)
+                        .secondary_text(secondary)
                         .metadata(format!("{count} steps"))
                         .health(health)
                         .checkmark(true)
