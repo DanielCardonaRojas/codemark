@@ -760,8 +760,13 @@ impl BrowserLayout {
             .iter()
             .filter(|t| !matched_remote_ids.contains(&t.tour_id))
             .map(|t| {
+                let date = t.updated_at.chars().take(10).collect::<String>();
+                let secondary = match &t.author {
+                    Some(author) if !author.is_empty() => format!("{author} · {date}"),
+                    _ => date,
+                };
                 PanelItem::new(&t.title)
-                    .secondary_text(t.updated_at.chars().take(10).collect::<String>())
+                    .secondary_text(secondary)
                     .health(HealthStatus::Unknown)
                     .user_data(format!("remote:{}", t.tour_id))
             })

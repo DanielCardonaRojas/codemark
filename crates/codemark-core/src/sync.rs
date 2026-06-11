@@ -161,6 +161,8 @@ pub struct RemoteTourSummary {
     pub tour_id: String,
     pub title: String,
     pub repo_url: Option<String>,
+    /// GitHub login of the user who published the tour, if known.
+    pub author: Option<String>,
     pub updated_at: String,
 }
 
@@ -219,6 +221,7 @@ pub async fn list_remote_tours(opts: ListRemoteToursOptions) -> Result<Vec<Remot
             tour_id: t["tour_id"].as_str().unwrap_or_default().to_string(),
             title: t["title"].as_str().unwrap_or("Untitled").to_string(),
             repo_url: t["repo_url"].as_str().map(|s| s.to_string()),
+            author: t["author"].as_str().map(|s| s.to_string()),
             updated_at: t["updated_at"].as_str().unwrap_or_default().to_string(),
         })
         .collect();

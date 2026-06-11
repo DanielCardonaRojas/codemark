@@ -443,6 +443,41 @@ pub async fn handler(
         );
     }
 
+    // 5.6. Resolve the publisher's GitHub login to record as the tour author.
+    // The author is the authenticated user who published the tour, looked up
+    // from the registry by their user ID. Falls back to None if unavailable.
+    let author = match auth.user_id() {
+        Some(user_id) => {
+            let user_id = user_id.to_string();
+            match state.registry.get_conn().await {
+                Ok(reg_conn) => {
+                    let lookup = reg_conn
+                        .interact(move |conn| {
+                            crate::storage::registry::find_user_by_id(conn, &user_id)
+                        })
+                        .await;
+                    match lookup {
+                        Ok(Ok(Some(user))) => Some(user.github_login),
+                        Ok(Ok(None)) => None,
+                        Ok(Err(e)) => {
+                            tracing::warn!("Failed to look up author github_login: {}", e);
+                            None
+                        }
+                        Err(e) => {
+                            tracing::warn!("Registry interact failed during author lookup: {}", e);
+                            None
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!("Failed to get registry connection for author lookup: {}", e);
+                    None
+                }
+            }
+        }
+        None => None,
+    };
+
     // 6. Merge into single tenant DB
     let storage = state.storage.clone();
     let temp_path_clone = temp_path.clone();
@@ -465,6 +500,7 @@ pub async fn handler(
         }
     };
 
+    let author_for_merge = author.clone();
     let result = conn
         .interact(move |conn| {
             // ATTACH the pack BEFORE transaction
@@ -517,17 +553,19 @@ pub async fn handler(
                 "INSERT INTO main.collections (
                     id, name, description, visibility,
                     repo_url, created_branch, published_commit_sha,
-                    status, health, health_computed_at, published_at, created_at, updated_at
+                    status, health, health_computed_at, published_at, created_at, updated_at,
+                    created_by
                 )
                 SELECT
                     p.id, p.name, p.description, p.visibility,
                     p.repo_url, p.created_branch, p.published_commit_sha,
                     'ready', p.health, p.health_computed_at, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
                     COALESCE(p.created_at, strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
-                    strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+                    strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+                    COALESCE(?2, p.created_by)
                 FROM pack.collections AS p
                 WHERE p.id = ?1 AND p.visibility IS NOT NULL",
-                [&collection_id]
+                rusqlite::params![&collection_id, &author_for_merge]
             )?;
 
             tx.execute(

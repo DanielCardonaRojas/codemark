@@ -54,7 +54,7 @@ async fn test_publish_list_get_delete_flow() {
              CREATE TABLE bookmark_tags (bookmark_id TEXT, tag TEXT, added_at TEXT, added_by TEXT);
              CREATE TABLE _pack_meta (pack_id TEXT PRIMARY KEY, protocol_version INTEGER, purpose TEXT, source_client TEXT, generated_at TEXT, notes TEXT);
              
-             INSERT INTO collections (id, name, visibility, created_at, status, health, published_at, updated_at) VALUES ('COL_ID', 'Test Tour', 'public', '2026-05-01T00:00:00Z', 'ready', 'active', '2026-05-01T00:00:00Z', '2026-05-01T00:00:00Z');
+             INSERT INTO collections (id, name, visibility, created_at, created_by, status, health, published_at, updated_at) VALUES ('COL_ID', 'Test Tour', 'public', '2026-05-01T00:00:00Z', 'pack-author', 'ready', 'active', '2026-05-01T00:00:00Z', '2026-05-01T00:00:00Z');
              INSERT INTO bookmarks (id, file_path, query, language, created_at, current_resolution_id) VALUES ('BM_FLOW_1', 'src/main.rs', 'query', 'rust', '2026-05-01T00:00:00Z', 'RES_FLOW_1');
              INSERT INTO collection_bookmarks (collection_id, bookmark_id, position, added_at) VALUES ('COL_ID', 'BM_FLOW_1', 0, '2026-05-01T00:00:00Z');
              INSERT INTO resolutions (id, bookmark_id, resolved_at, health, method, headline, line_range, snapshot, breadcrumbs) VALUES ('RES_FLOW_1', 'BM_FLOW_1', '2026-05-01T00:00:00Z', 'active', 'exact', 'headline', '10', 'snapshot_content', '[{\"line\": 1, \"text\": \"mod auth {\"}]');
@@ -91,6 +91,9 @@ async fn test_publish_list_get_delete_flow() {
     assert_eq!(status, StatusCode::OK);
     assert!(!body["tours"].as_array().unwrap().is_empty());
     assert_eq!(body["tours"][0]["tour_id"], collection_id);
+    // Author falls back to the pack's created_by when the publisher is not in
+    // the registry (stub auth user is not a registered GitHub user).
+    assert_eq!(body["tours"][0]["author"], "pack-author");
 
     // 4. GET /tours/:id (Detail JSON)
     let req = Request::builder()

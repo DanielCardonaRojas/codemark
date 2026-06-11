@@ -47,6 +47,8 @@ struct TourSummary {
     tour_id: String,
     title: String,
     repo_url: Option<String>,
+    #[serde(default)]
+    author: Option<String>,
     updated_at: String,
     url: String,
 }
@@ -135,12 +137,13 @@ pub async fn handle_tour_list(
     }
 
     let mut table = Table::new();
-    table.set_header(vec!["ID", "Title", "Repo", "Updated"]);
+    table.set_header(vec!["ID", "Title", "Author", "Repo", "Updated"]);
 
     for tour in &res.tours {
         table.add_row(vec![
             &tour.tour_id[..8.min(tour.tour_id.len())],
             &tour.title,
+            tour.author.as_deref().unwrap_or("-"),
             tour.repo_url.as_deref().unwrap_or("-"),
             &tour.updated_at,
         ]);
