@@ -1321,6 +1321,19 @@ impl BrowserLayout {
     }
 
     /// Set the focus area.
+    /// Current left pane size mode. Exposed for tests.
+    #[cfg(test)]
+    pub(crate) fn left_pane_size(&self) -> LeftPaneSize {
+        self.left_pane_size
+    }
+
+    /// Set the left pane size mode directly. Exposed for tests.
+    #[cfg(test)]
+    pub(crate) fn set_left_pane_size(&mut self, size: LeftPaneSize) {
+        self.left_pane_size = size;
+        self.left_pane.set_resize_mode(size);
+    }
+
     pub fn set_focus(&mut self, focus: FocusArea) {
         // If we're in filter mode, we don't allow changing focus visually
         // but we allow updating what we'll restore to when exiting filter mode.
@@ -1427,6 +1440,15 @@ impl BrowserLayout {
         // This keeps panes visually inactive while the user is typing in the filter bar at the bottom
         if self.focus == FocusArea::Filter {
             return;
+        }
+
+        // Moving focus to the preview pane restores the left pane to its
+        // default size. Otherwise an expanded left pane (Half/Full from `+`)
+        // stays applied behind the preview, leaving the default vertical-split
+        // layout unreachable while focus is on Main (preview cycles a separate
+        // RightPaneSize state that never touches left_pane_size).
+        if self.focus == FocusArea::Main {
+            self.left_pane_size = LeftPaneSize::Regular;
         }
 
         // Sync focused area and resize mode to left pane
@@ -1554,5 +1576,50 @@ impl Component for BrowserLayout {
 
     fn size_constraints(&self) -> crate::component::SizeConstraints {
         crate::component::SizeConstraints::min(40, 20)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::event::{EventHandler, EventHandlerConfig};
+    use codemark_core::storage::db::Database;
+
+    fn test_layout() -> BrowserLayout {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let db = Database::open(&dir.path().join("test.db")).expect("open db");
+        let handler = EventHandler::new(EventHandlerConfig::default()).expect("event handler");
+        // Keep the tempdir alive for the duration of the test by leaking it;
+        // the OS reclaims it when the test process exits.
+        std::mem::forget(dir);
+        BrowserLayout::new(db, handler)
+    }
+
+    #[test]
+    fn focusing_preview_restores_default_left_pane_size() {
+        let mut layout = test_layout();
+
+        // Simulate the user expanding the left pane while a left panel is focused.
+        layout.set_focus(FocusArea::Panel3);
+        layout.set_left_pane_size(LeftPaneSize::Half);
+        assert_eq!(layout.left_pane_size(), LeftPaneSize::Half);
+
+        // Pressing Enter on a bookmark/collection moves focus to the preview pane.
+        // The default vertical-split layout must be reachable again, so the left
+        // pane size resets to Regular instead of staying expanded behind the preview.
+        layout.set_focus(FocusArea::Main);
+        assert_eq!(layout.left_pane_size(), LeftPaneSize::Regular);
+    }
+
+    #[test]
+    fn left_pane_size_preserved_across_left_panel_focus() {
+        let mut layout = test_layout();
+
+        // Expanding while on Panel3, then moving between left panels must keep the
+        // expanded size — only focusing the preview pane resets it.
+        layout.set_focus(FocusArea::Panel3);
+        layout.set_left_pane_size(LeftPaneSize::Full);
+        layout.set_focus(FocusArea::Panel2);
+        assert_eq!(layout.left_pane_size(), LeftPaneSize::Full);
     }
 }
