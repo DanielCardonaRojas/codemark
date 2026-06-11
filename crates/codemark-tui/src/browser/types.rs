@@ -24,6 +24,30 @@ pub struct HealNotification {
     pub success: bool,
 }
 
+/// A modal confirmation dialog displayed over the browser layout.
+///
+/// While a dialog is active it captures all key input; the user must either
+/// confirm (`y`/Enter) to run the pending [`DialogAction`] or cancel
+/// (`n`/Esc) to dismiss it without side effects.
+#[derive(Debug, Clone)]
+pub struct ConfirmDialog {
+    /// Title rendered in the dialog border.
+    pub title: String,
+    /// Message body explaining the consequence of confirming.
+    pub message: String,
+    /// The action performed when the user confirms.
+    pub action: DialogAction,
+}
+
+/// An action awaiting user confirmation in a [`ConfirmDialog`].
+#[derive(Debug, Clone)]
+pub enum DialogAction {
+    /// Delete the bookmark with the given id.
+    DeleteBookmark(String),
+    /// Delete the collection with the given name.
+    DeleteCollection(String),
+}
+
 /// Target for healing operation.
 #[derive(Debug, Clone)]
 pub enum HealTarget {

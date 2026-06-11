@@ -13,13 +13,23 @@ use codemark_core::query::classifier::get_node_icon;
 use codemark_core::query::summarizer;
 
 use super::{
-    BrowserLayout, ContextTab, DetailsPaneSize, FocusArea, HealNotification, Panel3Tab,
-    RightPaneFocus, RightPaneSize, TabContent, shorten_path,
+    BrowserLayout, ConfirmDialog, ContextTab, DetailsPaneSize, DialogAction, FocusArea,
+    HealNotification, Panel3Tab, RightPaneFocus, RightPaneSize, TabContent, shorten_path,
 };
 
 impl BrowserLayout {
     /// Handle an event, dispatching to the appropriate sub-handler.
     pub fn handle_event(&mut self, event: &Event) -> bool {
+        // A modal dialog captures all key/mouse input while visible. Tick and
+        // app-level events still fall through so background tasks keep updating.
+        if self.has_active_dialog() {
+            match event {
+                Event::Key(key) => return self.handle_dialog_key(key),
+                Event::Mouse(_) => return true,
+                _ => {}
+            }
+        }
+
         if matches!(event, Event::Tick) {
             return self.handle_tick_event();
         }
@@ -759,7 +769,10 @@ impl BrowserLayout {
         None
     }
 
-    /// Handle 'd' key — delete the selected collection or bookmark.
+    /// Handle 'd' key — confirm deletion of the selected collection or bookmark.
+    ///
+    /// This opens a modal confirmation dialog; the actual deletion happens only
+    /// once the user confirms (see [`BrowserLayout::handle_dialog_key`]).
     fn handle_delete_key(&mut self) -> Option<bool> {
         match Panel3Tab::from_index(self.left_pane.panel3.tabs.selected_index()) {
             Some(Panel3Tab::Collections) => {
@@ -769,8 +782,11 @@ impl BrowserLayout {
                     let collection_name = selected.text().to_string();
                     if let Ok(Some(_collection)) = self.db.get_collection_by_name(&collection_name)
                     {
-                        let _ = self.db.delete_collection(&collection_name);
-                        self.refresh_all_panels();
+                        self.request_confirmation(ConfirmDialog {
+                            title: "Delete Collection".to_string(),
+                            message: format!("Delete collection \"{}\"?", collection_name),
+                            action: DialogAction::DeleteCollection(collection_name),
+                        });
                         return Some(true);
                     }
                 }
@@ -780,8 +796,12 @@ impl BrowserLayout {
                     && let Some(selected) = panel.selected()
                     && let Some(id) = selected.user_data.clone()
                 {
-                    let _ = self.db.delete_bookmark(&id);
-                    self.refresh_all_panels();
+                    let label = selected.text().to_string();
+                    self.request_confirmation(ConfirmDialog {
+                        title: "Delete Bookmark".to_string(),
+                        message: format!("Delete bookmark \"{}\"?", label),
+                        action: DialogAction::DeleteBookmark(id),
+                    });
                     return Some(true);
                 }
             }

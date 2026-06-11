@@ -300,9 +300,10 @@ pub fn render_help_panel(area: Rect, buf: &mut Buffer, bindings: &[(&str, &str)]
 
 /// Render a confirmation dialog.
 ///
-/// Used for confirming destructive actions.
-pub fn render_confirmation(area: Rect, buf: &mut Buffer, message: &str) {
-    // Calculate dialog dimensions (centered, 60% of width, max 40 chars)
+/// Used for confirming destructive actions. The dialog is centered over the
+/// given area with a titled border and a `y`/`n` prompt.
+pub fn render_confirmation(area: Rect, buf: &mut Buffer, title: &str, message: &str) {
+    // Calculate dialog dimensions (centered, 60% of width, max 60 chars)
     let width = (area.width as f64 * 0.6).min(60.0) as u16;
     let height = area.height.min(8);
 
@@ -332,7 +333,7 @@ pub fn render_confirmation(area: Rect, buf: &mut Buffer, message: &str) {
     let paragraph = Paragraph::new(text)
         .block(
             Block::bordered()
-                .title("Confirm")
+                .title(title.to_string())
                 .title_style(Style::default().bold())
                 .border_style(Style::default().fg(crate::theme::palette().warning)),
         )
