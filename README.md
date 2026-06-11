@@ -66,23 +66,23 @@ cargo install codemark
 
 ## 🚦 Quick Start
 
-### 1. Create a bookmark
-Bookmark a function by line number. Codemark automatically identifies the AST node.
+### 1. Install the agent skill
+Teach your AI agent how to use Codemark. This installs the Codemark skill into your agent's skills directory:
 ```bash
-codemark add src/auth.rs:42 --tag auth --note "JWT entry point"
+codemark install-skill --agent claude --scope user
 ```
 
-### 2. Launch the Dashboard
-The recommended way to browse and manage your bookmarks:
+### 2. Let your agent bookmark for you
+Ask your agent to capture the structure of your codebase as it explores. For example:
+
+> *"Create a collection called `auth-audit` and bookmark the key functions involved in authentication."*
+
+Your agent will create a collection and add structural bookmarks that survive refactors.
+
+### 3. Browse with the Dashboard
+Launch the keyboard-driven TUI to review and manage what's been captured:
 ```bash
 codemark dashboard
-```
-
-### 3. Search by meaning
-Reindex once to enable semantic search:
-```bash
-codemark reindex
-codemark search --semantic "how are tokens validated?"
 ```
 
 ---
@@ -132,7 +132,7 @@ nano ~/.config/codemark/templates/codemark_show.md
 | `{{file_name}}` | Just the filename |
 | `{{language}}` | Programming language |
 | `{{health}}` | `active`, `drifted`, `stale`, or `archived` |
-| `{{ui_status}}` | Projected UI status (see [Health Projections](#-health-projections)) |
+| `{{ui_status}}` | Projected UI status |
 | `{{current_resolution_id}}` | ID of the current resolution pointer |
 | `{{status}}` | Alias for `{{health}}` (deprecated) |
 | `{{query}}` | Tree-sitter query |
@@ -154,43 +154,6 @@ nano ~/.config/codemark/templates/codemark_show.md
 - `{{truncate value}}` — Truncate string to 8 characters
 
 For the full template specification, see the [templates reference](./dev-docs/templates.md).
-
----
-
-## 🚦 Health Projections
-
-Codemark's raw resolution health (`active`, `drifted`, `stale`) is an observation recorded at a specific commit. The **UI Health Projection** layer translates these observations into context-aware labels based on the relationship between a resolution, the bookmark's current pointer, and the repository HEAD.
-
-### The Confidence Rule
-
-**Healthy** (green) means exactly one thing: the resolution's `commit_hash` matches the current `HEAD`. The code was verified at the exact state you are looking at. When HEAD has moved past the resolution commit, the status is downgraded to a historical fact (**Verified**/**Outdated**), not a current guarantee.
-
-### Anchored vs Unanchored Resolutions
-
-A resolution is **anchored** when the file was clean (`git status --porcelain <file>` reports no changes) at the time of resolution. An **unanchored** resolution was recorded against uncommitted changes, so the `commit_hash` is unreliable. The UI surfaces this distinction with dedicated yellow/orange statuses prompting the user to commit.
-
-### UI Status Map
-
-| UI Status | Condition | Color | Meaning |
-|:---|:---|:---|:---|
-| **Healthy** | Current + `active` + anchored + at HEAD | Green | Verified perfect match at the current HEAD. |
-| **Verified** | Current + `active` + anchored + ancestor | Gray | Was a perfect match in the past; HEAD has moved on. |
-| **Drifted** | Current + `drifted` + anchored + at HEAD | Yellow | Found at HEAD, but content has changed. |
-| **Outdated** | Current + `drifted` + anchored + ancestor | Gray | Was drifted in the past; state is now suspect. |
-| **Unanchored Healthy** | Current + `active` + unanchored | Yellow | Perfect match, but against uncommitted changes. |
-| **Unanchored Drifting** | Current + `drifted` + unanchored | Orange | Drifted match against uncommitted changes. |
-| **Broken** | Current + `stale`/`archived` + anchored | Red | Not found at the current HEAD. |
-| **Broken Unanchored** | Current + `stale`/`archived` + unanchored | Red | Not found, and against uncommitted changes. |
-| **Future** | Resolution commit is a descendant of HEAD | Blue | Recorded at a commit ahead of current HEAD. |
-
-### CLI Usage
-
-Both `codemark list` and `codemark show` include the projected `ui_status` field. Use `--current-head <sha>` to override the detected HEAD for testing or remote viewing:
-
-```bash
-codemark list --current-head abc123
-codemark show <id> --current-head abc123
-```
 
 ---
 
