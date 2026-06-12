@@ -197,7 +197,7 @@ impl Component for SearchBar {
         let border_style = if self.error_message.is_some() {
             Style::default().fg(crate::theme::palette().error)
         } else if self.focused {
-            Style::default().fg(crate::theme::palette().success)
+            Style::default().fg(crate::theme::palette().accent)
         } else {
             Style::default().fg(crate::theme::palette().dim)
         };

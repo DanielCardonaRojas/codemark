@@ -385,7 +385,7 @@ impl Panel {
             list_state: RefCell::new(ListState::default()),
             bordered: true,
             focused: false,
-            focus_style: Style::default().fg(crate::theme::palette().success),
+            focus_style: Style::default().fg(crate::theme::palette().accent),
             normal_style: Style::default().fg(crate::theme::palette().dim),
             show_scrollbar: true,
             multi_select: false,

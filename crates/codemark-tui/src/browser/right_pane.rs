@@ -634,7 +634,7 @@ impl RightPane {
     fn render_details_block(&self, area: Rect, buf: &mut Buffer) {
         self.last_details_area.set(area);
         let border_style = if self.focused == RightPaneFocus::Details {
-            Style::default().fg(crate::theme::palette().success)
+            Style::default().fg(crate::theme::palette().accent)
         } else {
             Style::default().fg(crate::theme::palette().dim)
         };

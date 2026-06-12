@@ -519,7 +519,7 @@ impl TabbedPanel {
 
         // Render outer border for the entire panel area with inline tabs
         let border_style = if self.focused {
-            Style::default().fg(crate::theme::palette().success)
+            Style::default().fg(crate::theme::palette().accent)
         } else {
             Style::default().fg(crate::theme::palette().dim)
         };
