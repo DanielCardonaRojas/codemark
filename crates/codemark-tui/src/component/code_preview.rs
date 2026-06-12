@@ -8,7 +8,7 @@ use ratatui::{
     widgets::{Scrollbar, ScrollbarOrientation, ScrollbarState, StatefulWidget, Widget},
 };
 use std::cell::RefCell;
-use std::sync::LazyLock;
+use std::sync::{Arc, LazyLock, OnceLock};
 use syntect::easy::HighlightLines;
 use syntect::highlighting::{Style as SyntectStyle, Theme};
 use syntect::parsing::SyntaxSet;
@@ -29,21 +29,26 @@ fn load_syntax_set() -> SyntaxSet {
         .clone()
 }
 
-/// Load the theme from embedded syntect-assets data.
-///
-/// This is called once at startup via `LazyLock`. The theme is bundled
-/// at compile time from the syntect-assets package.
-///
-/// Note: `get_theme` returns a reference to the theme directly, not a
-/// `Result`. If the theme name is not found, syntect-assets will
-/// silently fall back to a default theme. This is a known limitation
-/// of the library's API.
-fn load_theme() -> Theme {
-    syntect_assets::assets::HighlightingAssets::from_binary().get_theme("OneHalfDark").clone()
+static SYNTAX_SET: LazyLock<SyntaxSet> = LazyLock::new(load_syntax_set);
+
+/// Process-wide default theme applied to previews created after startup. Set
+/// once from config via [`set_default_theme`]; otherwise resolves the registry
+/// fallback on first use. Shared via `Arc` so each preview clone is cheap.
+static DEFAULT_THEME: OnceLock<Arc<Theme>> = OnceLock::new();
+
+/// Set the default theme for every [`CodePreview`] created afterwards. Intended
+/// to be called once at startup, after loading config and before building the
+/// UI. A no-op if the default has already been resolved (e.g. a preview was
+/// created first), so call it early.
+pub fn set_default_theme(theme: Theme) {
+    let _ = DEFAULT_THEME.set(Arc::new(theme));
 }
 
-static SYNTAX_SET: LazyLock<SyntaxSet> = LazyLock::new(load_syntax_set);
-static THEME: LazyLock<Theme> = LazyLock::new(load_theme);
+/// The current default theme, resolving and caching the registry fallback on
+/// first use if [`set_default_theme`] was never called.
+fn default_theme() -> Arc<Theme> {
+    DEFAULT_THEME.get_or_init(|| Arc::new(crate::theme::default_theme())).clone()
+}
 
 // @lat: [[tui-line-range-selection#CodePreview component]]
 /// A component for displaying syntax-highlighted code with line numbers.
@@ -67,6 +72,9 @@ pub struct CodePreview {
     cached_lines: RefCell<Vec<Line<'static>>>,
     /// Optional file name header displayed above the code
     file_header: Option<String>,
+    /// Theme used for syntax highlighting. Shared via `Arc` so cloning a
+    /// `CodePreview` does not duplicate the (large) theme data.
+    theme: Arc<Theme>,
 }
 
 impl CodePreview {
@@ -84,6 +92,7 @@ impl CodePreview {
             last_area: std::cell::Cell::new(Rect::default()),
             cached_lines: RefCell::new(Vec::new()),
             file_header: None,
+            theme: default_theme(),
         };
         preview.refresh_cache();
         preview
@@ -111,10 +120,19 @@ impl CodePreview {
         self.file_header = header;
     }
 
+    /// Set the syntax highlighting theme and rebuild the highlight cache.
+    ///
+    /// The theme is shared via `Arc`; resolve it once at the app level (e.g. via
+    /// [`crate::theme::ThemeRegistry`]) and hand the same `Arc` to every preview.
+    pub fn set_theme(&mut self, theme: Arc<Theme>) {
+        self.theme = theme;
+        self.refresh_cache();
+    }
+
     /// Refresh the syntax highlighting cache.
     fn refresh_cache(&self) {
         let syntax_set = &*SYNTAX_SET;
-        let theme = &*THEME;
+        let theme = &*self.theme;
         let syntax = syntax_set
             .find_syntax_by_extension(&self.extension)
             .unwrap_or_else(|| syntax_set.find_syntax_plain_text());
@@ -130,11 +148,11 @@ impl CodePreview {
             // Add sign column indicator (1 char) + line number (4 chars) + space (1 char) = 6 chars total gutter
             // Sign column shows: '┃' for lines in the bookmark range
             let sign = " "; // Default: no mark
-            spans.push(Span::styled(sign, Style::default().fg(Color::DarkGray)));
+            spans.push(Span::styled(sign, Style::default().fg(crate::theme::palette().dim)));
 
             // Add line number (gutter)
             let line_num = format!("{:>3} ", i + 1);
-            spans.push(Span::styled(line_num, Style::default().fg(Color::DarkGray)));
+            spans.push(Span::styled(line_num, Style::default().fg(crate::theme::palette().dim)));
 
             // Convert syntect style to ratatui style
             for (style, text) in ranges {
@@ -224,7 +242,9 @@ impl Component for CodePreview {
 
                 let header_line = Line::from(Span::styled(
                     format!(" {}", header),
-                    Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+                    Style::default()
+                        .fg(crate::theme::palette().accent)
+                        .add_modifier(Modifier::BOLD),
                 ));
                 ratatui::widgets::Paragraph::new(header_line).render(header_area, buf);
 
@@ -255,7 +275,8 @@ impl Component for CodePreview {
             };
 
             // Sign color: magenta for range lines, regardless of current selection
-            let sign_color = if in_range { Color::Magenta } else { Color::DarkGray };
+            let sign_color =
+                if in_range { crate::theme::palette().marker } else { crate::theme::palette().dim };
 
             // Rebuild the line with the correct sign indicator
             // The cached line has: sign (1 char) + line number (4 chars) + content
@@ -395,5 +416,37 @@ impl Component for CodePreview {
 
     fn set_focus(&mut self, focused: bool) {
         self.focused = focused;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::theme::ThemeRegistry;
+
+    /// Collect the foreground color of every cached span, so two highlight
+    /// passes can be compared.
+    fn span_colors(preview: &CodePreview) -> Vec<Option<Color>> {
+        preview
+            .cached_lines
+            .borrow()
+            .iter()
+            .flat_map(|line| line.spans.iter().map(|span| span.style.fg))
+            .collect()
+    }
+
+    #[test]
+    fn set_theme_rehighlights_with_new_colors() {
+        let code = "fn main() {\n    let x = 42;\n}\n";
+        let mut preview = CodePreview::new(code, "rs");
+        let before = span_colors(&preview);
+
+        // Dracula differs from the default OneHalfDark palette, so the
+        // highlighted span colors must change after applying it.
+        let dracula = ThemeRegistry::new().resolve("Dracula");
+        preview.set_theme(Arc::new(dracula));
+        let after = span_colors(&preview);
+
+        assert_ne!(before, after, "switching theme should change highlight colors");
     }
 }

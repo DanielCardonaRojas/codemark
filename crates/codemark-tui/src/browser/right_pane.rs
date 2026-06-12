@@ -9,7 +9,7 @@ use codemark_core::templates::{self, load_template};
 use ratatui::{
     buffer::Buffer,
     layout::{Constraint, Direction, Layout, Rect},
-    style::{Color, Style, Stylize},
+    style::{Style, Stylize},
     widgets::{Block, BorderType, Widget},
 };
 use std::collections::HashMap;
@@ -634,9 +634,9 @@ impl RightPane {
     fn render_details_block(&self, area: Rect, buf: &mut Buffer) {
         self.last_details_area.set(area);
         let border_style = if self.focused == RightPaneFocus::Details {
-            Style::default().fg(Color::Green)
+            Style::default().fg(crate::theme::palette().accent)
         } else {
-            Style::default().fg(Color::DarkGray)
+            Style::default().fg(crate::theme::palette().dim)
         };
 
         let title = ratatui::text::Line::from(vec![

@@ -73,6 +73,23 @@ async fn run_app() -> Result<Option<i32>> {
         EventHandlerConfig::default().tick_rate(Duration::from_millis(100)),
     )?;
 
+    // Apply the configured TUI theme to code previews before any are created.
+    // Theme is a user preference resolved from the layered config (global +
+    // per-repo override) using the primary database's `.codemark` directory.
+    codemark_tui::theme::ensure_default_themes_exist();
+    let config = match db.path().parent() {
+        Some(codemark_dir) => codemark_core::config::Config::load_layered(codemark_dir),
+        None => codemark_core::config::Config::default(),
+    };
+    if let Some(theme_name) = config.tui.theme.as_deref() {
+        // Resolve the preview theme and the chrome palette from one source so the
+        // whole TUI is cohesive (base16 schemes drive both from a single palette).
+        let registry = codemark_tui::theme::ThemeRegistry::new();
+        let (theme, palette) = registry.resolve_full(theme_name);
+        codemark_tui::theme::set_palette(palette);
+        codemark_tui::component::code_preview::set_default_theme(theme);
+    }
+
     // Create the browser layout
     let mut layout = BrowserLayout::new(db, event_handler);
 

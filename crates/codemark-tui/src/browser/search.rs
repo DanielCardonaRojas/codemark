@@ -3,7 +3,7 @@
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::{Line, Span},
     widgets::{BorderType, Paragraph, Widget},
 };
@@ -113,11 +113,11 @@ impl SearchBar {
         let width = area.width as usize;
 
         // 1. Build the segmented control for the right side
-        let normal_style = Style::default().fg(Color::DarkGray);
+        let normal_style = Style::default().fg(crate::theme::palette().dim);
         let active_style = if self.focused {
-            Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)
+            Style::default().fg(crate::theme::palette().accent).add_modifier(Modifier::BOLD)
         } else {
-            Style::default().fg(Color::White).add_modifier(Modifier::BOLD)
+            Style::default().fg(crate::theme::palette().emphasis).add_modifier(Modifier::BOLD)
         };
 
         let control_spans = vec![
@@ -151,7 +151,7 @@ impl SearchBar {
         };
 
         let query_span = if self.query.is_empty() {
-            Span::styled(&truncated, Style::default().fg(Color::DarkGray))
+            Span::styled(&truncated, Style::default().fg(crate::theme::palette().dim))
         } else {
             Span::raw(truncated)
         };
@@ -178,7 +178,11 @@ impl SearchBar {
             let cursor_y = area.y;
             let x = cursor_x.min(control_x.saturating_sub(1));
             if let Some(cell) = buf.cell_mut((x, cursor_y)) {
-                cell.set_style(Style::default().bg(Color::White).fg(Color::Black));
+                cell.set_style(
+                    Style::default()
+                        .bg(crate::theme::palette().emphasis)
+                        .fg(crate::theme::palette().inverse),
+                );
             }
         }
     }
@@ -195,11 +199,11 @@ impl Component for SearchBar {
         self.last_area.set(area);
         // Render border
         let border_style = if self.error_message.is_some() {
-            Style::default().fg(Color::Red)
+            Style::default().fg(crate::theme::palette().error)
         } else if self.focused {
-            Style::default().fg(Color::Green)
+            Style::default().fg(crate::theme::palette().accent)
         } else {
-            Style::default().fg(Color::DarkGray)
+            Style::default().fg(crate::theme::palette().dim)
         };
 
         let block = ratatui::widgets::Block::bordered()
@@ -220,10 +224,11 @@ impl Component for SearchBar {
                 width: area.width.min(60),
                 height: 1,
             };
-            let error_style = Style::default().fg(Color::Red).add_modifier(Modifier::BOLD);
+            let error_style =
+                Style::default().fg(crate::theme::palette().error).add_modifier(Modifier::BOLD);
             Paragraph::new(Line::from(vec![
                 Span::styled("! ", error_style),
-                Span::styled(error, Style::default().fg(Color::Red)),
+                Span::styled(error, Style::default().fg(crate::theme::palette().error)),
             ]))
             .render(error_area, buf);
         }

@@ -118,3 +118,30 @@ enabled = true
 # Force a specific identity string (overrides both email and name).
 # force = "custom-identity"
 
+
+[tui]
+# Syntax-highlighting theme for the TUI code preview.
+#
+# Bundled theme names include (case-sensitive):
+#   OneHalfDark (default), OneHalfLight, Dracula, Nord, TwoDark,
+#   gruvbox-dark, gruvbox-light, Solarized (dark), Solarized (light),
+#   Monokai Extended, GitHub, Visual Studio Dark+, zenburn, ansi, base16
+#
+# For a fully cohesive look (the code preview AND the surrounding UI — borders,
+# status colors, accents — all from one palette), use a base16/base24 scheme.
+# Bundled schemes:
+#   Catppuccin Mocha
+# tmTheme-based names only theme the preview fully; the chrome is approximated.
+#
+# You can also drop your own theme files into the "themes" subdirectory of
+# codemark's global config directory, then reference them here by file name
+# (without the extension). The config directory is platform-specific:
+#   - $XDG_CONFIG_HOME/codemark/themes   (if XDG_CONFIG_HOME is set)
+#   - Linux:   ~/.config/codemark/themes
+#   - macOS:   ~/Library/Application Support/codemark/themes
+#   - Windows: %APPDATA%\codemark\themes
+# (It is the same directory that holds this config.toml.) Supported files:
+#   - `.tmTheme` files (syntax highlighting only), or
+#   - `.yaml`/`.yml` base16/base24 schemes (preview + chrome).
+# A user theme that shares a bundled name takes precedence.
+# theme = "Catppuccin Mocha"

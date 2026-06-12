@@ -34,6 +34,7 @@ pub mod event;
 pub mod layout;
 pub mod logging;
 pub mod state;
+pub mod theme;
 pub mod ui;
 
 // Re-export commonly used types

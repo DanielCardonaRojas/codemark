@@ -174,7 +174,6 @@ impl Component for Pager {
         }
 
         use ratatui::layout::Alignment;
-        use ratatui::style::Color;
         use ratatui::text::Span;
         use ratatui::widgets::Paragraph;
 
@@ -184,9 +183,9 @@ impl Component for Pager {
                 spans.push(Span::raw(" "));
             }
             if i == self.current {
-                spans.push(Span::styled("●", Style::default().fg(Color::Green)));
+                spans.push(Span::styled("●", Style::default().fg(crate::theme::palette().accent)));
             } else {
-                spans.push(Span::styled("○", Style::default().fg(Color::DarkGray)));
+                spans.push(Span::styled("○", Style::default().fg(crate::theme::palette().dim)));
             }
         }
 
