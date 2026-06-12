@@ -10,7 +10,7 @@ use codemark_core::storage::db::Database;
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     widgets::Widget,
 };
 
@@ -340,11 +340,11 @@ impl TabbedPanel {
             Ok(tags) if !tags.is_empty() => tags
                 .into_iter()
                 .map(|tag| {
-                    PanelItem::new(format!("#{tag}")).user_data(tag).no_health().color(Color::Cyan)
+                    PanelItem::new(format!("#{tag}")).user_data(tag).no_health().color(crate::theme::palette().accent)
                 })
                 .collect(),
-            Ok(_) => vec![PanelItem::new("No tags found").no_health().color(Color::DarkGray)],
-            Err(e) => vec![PanelItem::new(format!("Error: {e}")).no_health().color(Color::Red)],
+            Ok(_) => vec![PanelItem::new("No tags found").no_health().color(crate::theme::palette().dim)],
+            Err(e) => vec![PanelItem::new(format!("Error: {e}")).no_health().color(crate::theme::palette().error)],
         };
 
         let branches = match db.list_all_branches() {
@@ -352,8 +352,8 @@ impl TabbedPanel {
                 .into_iter()
                 .map(|branch| PanelItem::new(branch).no_health().icon(""))
                 .collect(),
-            Ok(_) => vec![PanelItem::new("No branches found").no_health().color(Color::DarkGray)],
-            Err(e) => vec![PanelItem::new(format!("Error: {e}")).no_health().color(Color::Red)],
+            Ok(_) => vec![PanelItem::new("No branches found").no_health().color(crate::theme::palette().dim)],
+            Err(e) => vec![PanelItem::new(format!("Error: {e}")).no_health().color(crate::theme::palette().error)],
         };
 
         (tags, branches)
@@ -519,9 +519,9 @@ impl TabbedPanel {
 
         // Render outer border for the entire panel area with inline tabs
         let border_style = if self.focused {
-            Style::default().fg(Color::Green)
+            Style::default().fg(crate::theme::palette().success)
         } else {
-            Style::default().fg(Color::DarkGray)
+            Style::default().fg(crate::theme::palette().dim)
         };
 
         let block = ratatui::widgets::Block::bordered()
@@ -567,9 +567,9 @@ impl TabbedPanel {
 
             if x > area.left() {
                 let indicator_style = if self.focused {
-                    Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)
+                    Style::default().fg(crate::theme::palette().success).add_modifier(Modifier::BOLD)
                 } else {
-                    Style::default().fg(Color::DarkGray)
+                    Style::default().fg(crate::theme::palette().dim)
                 };
 
                 // Render the indicator by modifying the border cells

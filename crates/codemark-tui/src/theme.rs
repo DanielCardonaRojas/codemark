@@ -16,9 +16,13 @@
 
 use std::io::Cursor;
 use std::path::PathBuf;
+use std::str::FromStr;
+use std::sync::OnceLock;
 
 use codemark_core::config::global_config_dir;
-use syntect::highlighting::{Theme, ThemeSet};
+use ratatui::style::Color;
+use syntect::highlighting::{Color as SyntectColor, Highlighter, Theme, ThemeSet};
+use syntect::parsing::ScopeStack;
 use syntect_assets::assets::HighlightingAssets;
 
 /// Fallback theme name. Always present in the `syntect-assets` binary data, so
@@ -164,6 +168,110 @@ fn load_embedded() -> ThemeSet {
     set
 }
 
+// ---------------------------------------------------------------------------
+// Chrome palette
+// ---------------------------------------------------------------------------
+
+/// Semantic colors for the TUI "chrome" — everything outside the syntax-
+/// highlighted code preview: borders, titles, status icons, secondary text, etc.
+///
+/// Field defaults reproduce the TUI's original hardcoded ANSI colors, so an
+/// unset or unknown theme renders exactly as before. [`Palette::from_theme`]
+/// overrides the *structural* roles with colors derived from the active syntect
+/// theme so the chrome matches the code preview. The *status* roles (success,
+/// warning, error, info) deliberately stay ANSI: they convey meaning (e.g.
+/// red = broken) that should remain legible regardless of theme aesthetics.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Palette {
+    /// Emphasized foreground text. Default: white.
+    pub emphasis: Color,
+    /// Muted/secondary text, borders, scrollbars. Default: dark gray.
+    pub dim: Color,
+    /// Neutral gray. Default: gray.
+    pub gray: Color,
+    /// Accent for icons, metadata, and links. Default: cyan.
+    pub accent: Color,
+    /// Success / healthy / active focus. Default: green.
+    pub success: Color,
+    /// Warning / drifted / in-progress. Default: yellow.
+    pub warning: Color,
+    /// Error / broken. Default: red.
+    pub error: Color,
+    /// Informational. Default: blue.
+    pub info: Color,
+    /// Bookmark range / selection marker. Default: magenta.
+    pub marker: Color,
+    /// Foreground drawn on inverted/highlighted backgrounds. Default: black.
+    pub inverse: Color,
+}
+
+impl Default for Palette {
+    fn default() -> Self {
+        Self {
+            emphasis: Color::White,
+            dim: Color::DarkGray,
+            gray: Color::Gray,
+            accent: Color::Cyan,
+            success: Color::Green,
+            warning: Color::Yellow,
+            error: Color::Red,
+            info: Color::Blue,
+            marker: Color::Magenta,
+            inverse: Color::Black,
+        }
+    }
+}
+
+impl Palette {
+    /// Derive a palette from a syntect theme. Structural roles (emphasis, dim,
+    /// accent) are taken from the theme; status roles keep their ANSI defaults.
+    pub fn from_theme(theme: &Theme) -> Self {
+        let highlighter = Highlighter::new(theme);
+        let mut palette = Palette::default();
+
+        if let Some(c) = theme.settings.foreground.and_then(to_rgb) {
+            palette.emphasis = c;
+        }
+        if let Some(c) = scope_color(&highlighter, "comment") {
+            palette.dim = c;
+        }
+        if let Some(c) = scope_color(&highlighter, "keyword")
+            .or_else(|| scope_color(&highlighter, "entity.name.function"))
+        {
+            palette.accent = c;
+        }
+
+        palette
+    }
+}
+
+/// Convert a syntect color to a ratatui RGB color, treating fully transparent
+/// colors (alpha 0, syntect's "unset" sentinel) as absent.
+fn to_rgb(c: SyntectColor) -> Option<Color> {
+    (c.a != 0).then_some(Color::Rgb(c.r, c.g, c.b))
+}
+
+/// Foreground color a theme assigns to a TextMate scope (e.g. "comment").
+fn scope_color(highlighter: &Highlighter, scope: &str) -> Option<Color> {
+    let stack = ScopeStack::from_str(scope).ok()?;
+    to_rgb(highlighter.style_for_stack(stack.as_slice()).foreground)
+}
+
+/// Process-wide chrome palette. Set once from config via [`set_palette`];
+/// otherwise the ANSI-based [`Palette::default`].
+static PALETTE: OnceLock<Palette> = OnceLock::new();
+
+/// Set the process-wide chrome palette. Call once at startup (alongside the
+/// preview theme), before the UI is built. A no-op if already set.
+pub fn set_palette(palette: Palette) {
+    let _ = PALETTE.set(palette);
+}
+
+/// The active chrome palette, defaulting to the ANSI [`Palette::default`].
+pub fn palette() -> Palette {
+    *PALETTE.get_or_init(Palette::default)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -227,6 +335,27 @@ mod tests {
             theme.settings.background,
             Some(syntect::highlighting::Color { r: 0xFF, g: 0x00, b: 0x00, a: 0xFF })
         );
+    }
+
+    #[test]
+    fn palette_default_matches_original_ansi_colors() {
+        let p = Palette::default();
+        assert_eq!(p.dim, Color::DarkGray);
+        assert_eq!(p.accent, Color::Cyan);
+        assert_eq!(p.success, Color::Green);
+        assert_eq!(p.error, Color::Red);
+    }
+
+    #[test]
+    fn palette_from_theme_themes_structural_roles_only() {
+        let theme = default_theme();
+        let p = Palette::from_theme(&theme);
+        // Structural roles are taken from the theme (RGB).
+        assert!(matches!(p.emphasis, Color::Rgb(..)));
+        assert!(matches!(p.dim, Color::Rgb(..)));
+        // Status roles keep their ANSI meaning.
+        assert_eq!(p.error, Color::Red);
+        assert_eq!(p.warning, Color::Yellow);
     }
 
     #[test]

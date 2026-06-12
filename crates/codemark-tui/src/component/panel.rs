@@ -111,15 +111,15 @@ impl HealthStatus {
     /// Get the color for this health status.
     fn color(&self) -> Color {
         match self {
-            HealthStatus::Healthy => Color::Green,
-            HealthStatus::UnanchoredHealthy => Color::Yellow,
-            HealthStatus::Drifted => Color::Yellow,
+            HealthStatus::Healthy => crate::theme::palette().success,
+            HealthStatus::UnanchoredHealthy => crate::theme::palette().warning,
+            HealthStatus::Drifted => crate::theme::palette().warning,
             HealthStatus::UnanchoredDrifting => Color::Rgb(255, 165, 0), // Orange
-            HealthStatus::Broken | HealthStatus::BrokenUnanchored => Color::Red,
-            HealthStatus::Verified => Color::Green,
-            HealthStatus::Outdated => Color::Yellow,
-            HealthStatus::Unknown => Color::DarkGray,
-            HealthStatus::Future => Color::Blue,
+            HealthStatus::Broken | HealthStatus::BrokenUnanchored => crate::theme::palette().error,
+            HealthStatus::Verified => crate::theme::palette().success,
+            HealthStatus::Outdated => crate::theme::palette().warning,
+            HealthStatus::Unknown => crate::theme::palette().dim,
+            HealthStatus::Future => crate::theme::palette().info,
         }
     }
 
@@ -298,7 +298,7 @@ impl PanelItem {
         if let Some(icon) = &self.icon
             && !icon.is_empty()
         {
-            spans.push(Span::styled(icon, Style::default().fg(Color::Cyan)));
+            spans.push(Span::styled(icon, Style::default().fg(crate::theme::palette().accent)));
             spans.push(Span::raw(" "));
         }
 
@@ -319,13 +319,13 @@ impl PanelItem {
         // Add secondary text if present
         if let Some(secondary) = &self.secondary_text {
             spans.push(Span::raw(" "));
-            spans.push(Span::styled(secondary, Style::default().fg(Color::DarkGray)));
+            spans.push(Span::styled(secondary, Style::default().fg(crate::theme::palette().dim)));
         }
 
         // Add metadata if present
         if let Some(metadata) = &self.metadata {
             spans.push(Span::raw(" "));
-            spans.push(Span::styled(metadata, Style::default().fg(Color::Cyan)));
+            spans.push(Span::styled(metadata, Style::default().fg(crate::theme::palette().accent)));
         }
 
         // Add sync direction arrow for tours (omit if synced)
@@ -337,8 +337,8 @@ impl PanelItem {
                 _ => {
                     spans.push(Span::raw(" "));
                     let (arrow, color) = match direction {
-                        SyncDirection::Push => ("↑", Color::Cyan),
-                        SyncDirection::Pull => ("↓", Color::Yellow),
+                        SyncDirection::Push => ("↑", crate::theme::palette().accent),
+                        SyncDirection::Pull => ("↓", crate::theme::palette().warning),
                         SyncDirection::Synced => unreachable!(),
                     };
                     spans.push(Span::styled(arrow, Style::default().fg(color)));
@@ -350,20 +350,20 @@ impl PanelItem {
             spans.push(Span::raw(" "));
             spans.push(Span::styled(
                 "✓",
-                Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
+                Style::default().fg(crate::theme::palette().success).add_modifier(Modifier::BOLD),
             ));
         }
 
         // Add cloud upload icon if published to server (pushed)
         if self.published {
             spans.push(Span::raw(" "));
-            spans.push(Span::styled("☁", Style::default().fg(Color::Cyan)));
+            spans.push(Span::styled("☁", Style::default().fg(crate::theme::palette().accent)));
         }
 
         // Add spinner at the very end
         if let Some(spinner) = &self.spinner_text {
             spans.push(Span::raw(" "));
-            spans.push(Span::styled(spinner, Style::default().fg(Color::Yellow)));
+            spans.push(Span::styled(spinner, Style::default().fg(crate::theme::palette().warning)));
         }
 
         let mut line = Line::from(spans);
@@ -385,8 +385,8 @@ impl Panel {
             list_state: RefCell::new(ListState::default()),
             bordered: true,
             focused: false,
-            focus_style: Style::default().fg(Color::Green),
-            normal_style: Style::default().fg(Color::DarkGray),
+            focus_style: Style::default().fg(crate::theme::palette().success),
+            normal_style: Style::default().fg(crate::theme::palette().dim),
             show_scrollbar: true,
             multi_select: false,
             border_type: BorderType::Rounded,

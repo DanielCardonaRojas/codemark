@@ -55,15 +55,15 @@ pub fn render_status_bar(
     search_query: Option<&str>,
 ) {
     // Fill background
-    buf.set_style(area, Style::default().bg(Color::DarkGray));
+    buf.set_style(area, Style::default().bg(crate::theme::palette().dim));
 
     if mode == AppMode::Search {
         let query = search_query.unwrap_or("");
         let text = Line::from(vec![
-            Span::styled("Filter: ", Style::default().fg(Color::Cyan).bold()),
+            Span::styled("Filter: ", Style::default().fg(crate::theme::palette().accent).bold()),
             Span::raw(query),
         ]);
-        let para = Paragraph::new(text).style(Style::default().bg(Color::DarkGray));
+        let para = Paragraph::new(text).style(Style::default().bg(crate::theme::palette().dim));
         para.render(area.inner(Margin { horizontal: 1, vertical: 0 }), buf);
         return;
     }
@@ -80,9 +80,9 @@ pub fn render_status_bar(
     let mut left_spans = Vec::new();
     for (i, binding) in bindings.iter().enumerate() {
         if i > 0 {
-            left_spans.push(Span::styled(" | ", Style::default().fg(Color::Gray)));
+            left_spans.push(Span::styled(" | ", Style::default().fg(crate::theme::palette().gray)));
         }
-        left_spans.push(Span::styled(&binding.description, Style::default().fg(Color::White)));
+        left_spans.push(Span::styled(&binding.description, Style::default().fg(crate::theme::palette().emphasis)));
         left_spans.push(Span::raw(": "));
         left_spans.push(Span::styled(
             &binding.key,
@@ -92,7 +92,7 @@ pub fn render_status_bar(
 
     let left_text = Paragraph::new(Line::from(left_spans))
         .alignment(Alignment::Left)
-        .style(Style::default().bg(Color::DarkGray));
+        .style(Style::default().bg(crate::theme::palette().dim));
 
     // Add some padding
     let left_area = chunks[0].inner(Margin { horizontal: 1, vertical: 0 });
@@ -102,7 +102,7 @@ pub fn render_status_bar(
     if let Some(meta) = right_text {
         let right_para = Paragraph::new(meta)
             .alignment(Alignment::Right)
-            .style(Style::default().bg(Color::DarkGray));
+            .style(Style::default().bg(crate::theme::palette().dim));
 
         let right_area = chunks[1].inner(Margin { horizontal: 1, vertical: 0 });
         right_para.render(right_area, buf);
@@ -120,10 +120,10 @@ pub fn render_command_line(
     _cursor_pos: usize,
 ) {
     let text =
-        Line::from(vec![Span::styled(prompt, Style::default().fg(Color::Cyan)), Span::raw(input)]);
+        Line::from(vec![Span::styled(prompt, Style::default().fg(crate::theme::palette().accent)), Span::raw(input)]);
 
     let paragraph =
-        Paragraph::new(text).style(Style::default().fg(Color::White)).wrap(Wrap { trim: false });
+        Paragraph::new(text).style(Style::default().fg(crate::theme::palette().emphasis)).wrap(Wrap { trim: false });
 
     paragraph.render(area, buf);
 
@@ -142,7 +142,7 @@ pub fn render_help_panel(area: Rect, buf: &mut Buffer, bindings: &[(&str, &str)]
 
     for (key, action) in bindings {
         text.push_line(Line::from(vec![
-            Span::styled(format!(" {:10} ", key), Style::default().fg(Color::Cyan).bold()),
+            Span::styled(format!(" {:10} ", key), Style::default().fg(crate::theme::palette().accent).bold()),
             Span::raw(*action),
         ]));
     }
@@ -178,9 +178,9 @@ pub fn render_confirmation(area: Rect, buf: &mut Buffer, message: &str) {
         Line::from(""),
         Line::from(vec![
             Span::raw("Press "),
-            Span::styled("y", Style::default().fg(Color::Green).bold()),
+            Span::styled("y", Style::default().fg(crate::theme::palette().success).bold()),
             Span::raw(" to confirm, "),
-            Span::styled("n", Style::default().fg(Color::Red).bold()),
+            Span::styled("n", Style::default().fg(crate::theme::palette().error).bold()),
             Span::raw(" to cancel"),
         ]),
     ]);
@@ -190,7 +190,7 @@ pub fn render_confirmation(area: Rect, buf: &mut Buffer, message: &str) {
             Block::bordered()
                 .title("Confirm")
                 .title_style(Style::default().bold())
-                .border_style(Style::default().fg(Color::Yellow)),
+                .border_style(Style::default().fg(crate::theme::palette().warning)),
         )
         .alignment(Alignment::Center)
         .wrap(Wrap { trim: false });
@@ -221,7 +221,7 @@ pub fn render_popup(area: Rect, buf: &mut Buffer, title: &str, content: &Text) {
             Block::bordered()
                 .title(title)
                 .title_style(Style::default().bold())
-                .border_style(Style::default().fg(Color::White)),
+                .border_style(Style::default().fg(crate::theme::palette().emphasis)),
         )
         .wrap(Wrap { trim: false });
 
@@ -238,16 +238,16 @@ pub fn render_notification(
     notification_type: NotificationType,
 ) {
     let (style, icon) = match notification_type {
-        NotificationType::Info => (Style::default().fg(Color::Blue), ""),
-        NotificationType::Success => (Style::default().fg(Color::Green), "✓ "),
-        NotificationType::Warning => (Style::default().fg(Color::Yellow), "! "),
-        NotificationType::Error => (Style::default().fg(Color::Red), "✗ "),
+        NotificationType::Info => (Style::default().fg(crate::theme::palette().info), ""),
+        NotificationType::Success => (Style::default().fg(crate::theme::palette().success), "✓ "),
+        NotificationType::Warning => (Style::default().fg(crate::theme::palette().warning), "! "),
+        NotificationType::Error => (Style::default().fg(crate::theme::palette().error), "✗ "),
     };
 
     let text = Line::from(vec![Span::styled(icon, style), Span::styled(message, style)]);
 
     let paragraph =
-        Paragraph::new(text).style(style.bg(Color::DarkGray)).alignment(Alignment::Left);
+        Paragraph::new(text).style(style.bg(crate::theme::palette().dim)).alignment(Alignment::Left);
 
     // Render at the bottom of the area
     let notification_area =
@@ -275,9 +275,9 @@ pub fn render_spinner(area: Rect, buf: &mut Buffer, frame: usize, message: &str)
     let spinner_char = SPINNER_FRAMES[frame % SPINNER_FRAMES.len()];
 
     let text = Line::from(vec![
-        Span::styled(spinner_char, Style::default().fg(Color::Cyan)),
+        Span::styled(spinner_char, Style::default().fg(crate::theme::palette().accent)),
         Span::raw(" "),
-        Span::styled(message, Style::default().fg(Color::White)),
+        Span::styled(message, Style::default().fg(crate::theme::palette().emphasis)),
     ]);
 
     let paragraph = Paragraph::new(text).alignment(Alignment::Center);
@@ -303,13 +303,13 @@ pub fn render_progress_bar(area: Rect, buf: &mut Buffer, progress: f64, label: O
     text.push_str(&format!("{}%", percentage));
 
     // Draw the bar background
-    let bar_style = Style::default().bg(Color::DarkGray);
+    let bar_style = Style::default().bg(crate::theme::palette().dim);
     buf.set_style(area, bar_style);
 
     // Draw the filled portion
     if filled_width > 0 {
         let filled_area = Rect { x: area.x, y: area.y, width: filled_width, height: area.height };
-        let filled_style = Style::default().bg(Color::Green);
+        let filled_style = Style::default().bg(crate::theme::palette().success);
         buf.set_style(filled_area, filled_style);
     }
 
@@ -317,7 +317,7 @@ pub fn render_progress_bar(area: Rect, buf: &mut Buffer, progress: f64, label: O
     let text_line = Line::from(text);
     let paragraph = Paragraph::new(text_line)
         .alignment(Alignment::Center)
-        .style(Style::default().fg(Color::White).bold());
+        .style(Style::default().fg(crate::theme::palette().emphasis).bold());
 
     paragraph.render(area, buf);
 }

@@ -5,7 +5,7 @@ use crate::event::Event;
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
-    style::{Color, Modifier, Style},
+    style::{Modifier, Style},
     text::{Line, Span, Text},
     widgets::{Paragraph, Widget, Wrap},
 };
@@ -56,7 +56,7 @@ impl MarkdownPanel {
                 lines.push(Line::from(vec![Span::styled(
                     stripped.to_string(),
                     Style::default()
-                        .fg(Color::Yellow)
+                        .fg(crate::theme::palette().warning)
                         .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
                 )]));
                 lines.push(Line::from(""));
@@ -64,19 +64,19 @@ impl MarkdownPanel {
                 // H2
                 lines.push(Line::from(vec![Span::styled(
                     stripped.to_string(),
-                    Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+                    Style::default().fg(crate::theme::palette().accent).add_modifier(Modifier::BOLD),
                 )]));
             } else if let Some(stripped) = line.strip_prefix("> ") {
                 // Blockquote
-                let mut spans = vec![Span::styled("┃ ", Style::default().fg(Color::DarkGray))];
+                let mut spans = vec![Span::styled("┃ ", Style::default().fg(crate::theme::palette().dim))];
                 spans.extend(self.parse_inline(
                     stripped,
-                    Style::default().fg(Color::Gray).add_modifier(Modifier::ITALIC),
+                    Style::default().fg(crate::theme::palette().gray).add_modifier(Modifier::ITALIC),
                 ));
                 lines.push(Line::from(spans));
             } else if let Some(stripped) = line.strip_prefix("- ") {
                 // List item
-                let mut spans = vec![Span::styled("• ", Style::default().fg(Color::Green))];
+                let mut spans = vec![Span::styled("• ", Style::default().fg(crate::theme::palette().success))];
                 spans.extend(self.parse_inline(stripped, Style::default()));
                 lines.push(Line::from(spans));
             } else if line.starts_with('|') {
@@ -94,7 +94,7 @@ impl MarkdownPanel {
                         let clean_key = text.trim_matches('*');
                         spans.push(Span::styled(
                             format!("{:<15}", clean_key),
-                            Style::default().fg(Color::DarkGray),
+                            Style::default().fg(crate::theme::palette().dim),
                         ));
                     } else {
                         // Value
@@ -171,7 +171,7 @@ impl MarkdownPanel {
                     if let Some(end) = current.find('`') {
                         spans.push(Span::styled(
                             current[..end].to_string(),
-                            base_style.fg(Color::Yellow),
+                            base_style.fg(crate::theme::palette().warning),
                         ));
                         current = &current[end + 1..];
                     } else {
@@ -203,7 +203,7 @@ impl MarkdownPanel {
                     if let Some(end) = current.find('`') {
                         spans.push(Span::styled(
                             current[..end].to_string(),
-                            base_style.fg(Color::Yellow),
+                            base_style.fg(crate::theme::palette().warning),
                         ));
                         current = &current[end + 1..];
                     } else {

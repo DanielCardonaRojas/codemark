@@ -148,11 +148,11 @@ impl CodePreview {
             // Add sign column indicator (1 char) + line number (4 chars) + space (1 char) = 6 chars total gutter
             // Sign column shows: '┃' for lines in the bookmark range
             let sign = " "; // Default: no mark
-            spans.push(Span::styled(sign, Style::default().fg(Color::DarkGray)));
+            spans.push(Span::styled(sign, Style::default().fg(crate::theme::palette().dim)));
 
             // Add line number (gutter)
             let line_num = format!("{:>3} ", i + 1);
-            spans.push(Span::styled(line_num, Style::default().fg(Color::DarkGray)));
+            spans.push(Span::styled(line_num, Style::default().fg(crate::theme::palette().dim)));
 
             // Convert syntect style to ratatui style
             for (style, text) in ranges {
@@ -242,7 +242,7 @@ impl Component for CodePreview {
 
                 let header_line = Line::from(Span::styled(
                     format!(" {}", header),
-                    Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+                    Style::default().fg(crate::theme::palette().warning).add_modifier(Modifier::BOLD),
                 ));
                 ratatui::widgets::Paragraph::new(header_line).render(header_area, buf);
 
@@ -273,7 +273,7 @@ impl Component for CodePreview {
             };
 
             // Sign color: magenta for range lines, regardless of current selection
-            let sign_color = if in_range { Color::Magenta } else { Color::DarkGray };
+            let sign_color = if in_range { crate::theme::palette().marker } else { crate::theme::palette().dim };
 
             // Rebuild the line with the correct sign indicator
             // The cached line has: sign (1 char) + line number (4 chars) + content

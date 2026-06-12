@@ -33,7 +33,7 @@ use codemark_core::storage::{SemanticRepo, db::Database};
 use ratatui::{
     buffer::Buffer,
     layout::{Constraint, Direction, Layout, Rect},
-    style::{Color, Style, Stylize},
+    style::{Style, Stylize},
     text::{Line, Span},
 };
 use std::collections::HashMap;
@@ -921,29 +921,29 @@ impl BrowserLayout {
             .unwrap_or_default();
 
         let mut spans = vec![
-            Span::styled("Repo: ", Style::default().fg(Color::DarkGray)),
-            Span::styled(repo_name, Style::default().fg(Color::Cyan)),
+            Span::styled("Repo: ", Style::default().fg(crate::theme::palette().dim)),
+            Span::styled(repo_name, Style::default().fg(crate::theme::palette().accent)),
         ];
 
         if !active_branches.is_empty() {
-            spans.push(Span::styled(" | ", Style::default().fg(Color::Gray)));
-            spans.push(Span::styled("Branch: ", Style::default().fg(Color::DarkGray)));
+            spans.push(Span::styled(" | ", Style::default().fg(crate::theme::palette().gray)));
+            spans.push(Span::styled("Branch: ", Style::default().fg(crate::theme::palette().dim)));
             spans
-                .push(Span::styled(active_branches.join(", "), Style::default().fg(Color::Yellow)));
+                .push(Span::styled(active_branches.join(", "), Style::default().fg(crate::theme::palette().warning)));
         }
 
         if !active_tags.is_empty() {
-            spans.push(Span::styled(" | ", Style::default().fg(Color::Gray)));
+            spans.push(Span::styled(" | ", Style::default().fg(crate::theme::palette().gray)));
             spans.push(Span::styled(
                 active_tags.iter().map(|t| format!("#{t}")).collect::<Vec<_>>().join(" "),
-                Style::default().fg(Color::Magenta),
+                Style::default().fg(crate::theme::palette().marker),
             ));
         }
 
-        spans.push(Span::styled(" | ", Style::default().fg(Color::Gray)));
+        spans.push(Span::styled(" | ", Style::default().fg(crate::theme::palette().gray)));
         spans.push(Span::styled(
             format!("v{}", env!("CARGO_PKG_VERSION")),
-            Style::default().fg(Color::White).bold(),
+            Style::default().fg(crate::theme::palette().emphasis).bold(),
         ));
 
         Line::from(spans)
