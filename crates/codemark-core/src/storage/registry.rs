@@ -515,22 +515,28 @@ pub fn upsert_repo(conn: &Connection, repo: &RepoUpsert<'_>) -> Result<()> {
 pub fn reconcile_repo(conn: &Connection, repo: &RepoUpsert<'_>) -> Result<()> {
     let now = chrono::Utc::now().to_rfc3339();
 
+    // Run the whole reconcile (predecessor delete, stale-row cleanup, and the final
+    // upsert) in a single transaction. The predecessor DELETE is the only place the
+    // inherited server_url/default_username are read from; without atomicity, a crash
+    // after that DELETE but before the INSERT would durably lose them.
+    let tx = conn.unchecked_transaction()?;
+
     // Identify a single unambiguous moved-from predecessor to inherit config from.
-    let predecessor = find_move_predecessor(conn, repo)?;
+    let predecessor = find_move_predecessor(&tx, repo)?;
     let inherited_server_url = predecessor.as_ref().and_then(|p| p.server_url.clone());
     let inherited_default_username = predecessor.as_ref().and_then(|p| p.default_username.clone());
     if let Some(p) = &predecessor {
-        conn.execute("DELETE FROM known_repos WHERE id = ?1", params![p.id])?;
+        tx.execute("DELETE FROM known_repos WHERE id = ?1", params![p.id])?;
     }
 
     // Clear any stale row occupying the target path under a different identity, and any
     // other row carrying this id at a different path, so the UPSERT below collides with
     // neither the UNIQUE(repo_root) constraint nor the id primary key.
-    conn.execute(
+    tx.execute(
         "DELETE FROM known_repos WHERE repo_root = ?1 AND id != ?2",
         params![repo.repo_root, repo.id],
     )?;
-    conn.execute(
+    tx.execute(
         "DELETE FROM known_repos WHERE id = ?1 AND repo_root != ?2",
         params![repo.id, repo.repo_root],
     )?;
@@ -538,7 +544,7 @@ pub fn reconcile_repo(conn: &Connection, repo: &RepoUpsert<'_>) -> Result<()> {
     let server_url = repo.server_url.map(str::to_string).or(inherited_server_url);
     let default_username = repo.default_username.map(str::to_string).or(inherited_default_username);
 
-    conn.execute(
+    tx.execute(
         "INSERT INTO known_repos (id, repo_owner, repo_name, origin_url, repo_root, db_owner_email, db_owner_name, detected_at, last_seen_at, server_url, default_username)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
          ON CONFLICT(repo_root) DO UPDATE SET
@@ -566,27 +572,33 @@ pub fn reconcile_repo(conn: &Connection, repo: &RepoUpsert<'_>) -> Result<()> {
         ],
     )?;
 
+    tx.commit()?;
     Ok(())
 }
 
 /// Find the single unambiguous registry row that this repo moved away from.
 ///
-/// A candidate is a row with the same `(repo_owner, repo_name)` at a different
-/// `repo_root` that no longer exists on disk. Returns `Some` only when there is exactly
-/// one such candidate; zero or multiple candidates are ambiguous and yield `None` (the
-/// caller then just registers the current path rather than guessing). Local-only repos
-/// (no `origin_url`) are never reconciled this way.
+/// A candidate is a row with the same `origin_url` and `(repo_owner, repo_name)` at a
+/// different `repo_root` that no longer exists on disk. Constraining on `origin_url`
+/// prevents matching an unrelated repo that merely shares the same owner/name (e.g. the
+/// same `owner/name` on `github.com` vs. a private GitHub Enterprise host). Returns
+/// `Some` only when there is exactly one such candidate; zero or multiple candidates are
+/// ambiguous and yield `None` (the caller then just registers the current path rather
+/// than guessing). Local-only repos (no `origin_url`) are never reconciled this way.
 fn find_move_predecessor(conn: &Connection, repo: &RepoUpsert<'_>) -> Result<Option<KnownRepo>> {
-    if repo.origin_url.is_none() {
+    let Some(origin_url) = repo.origin_url else {
         return Ok(None);
-    }
+    };
 
     let mut stmt = conn.prepare(
         "SELECT id, repo_owner, repo_name, origin_url, repo_root, db_owner_email, db_owner_name, detected_at, last_seen_at, server_url, default_username
-         FROM known_repos WHERE repo_owner = ?1 AND repo_name = ?2 AND repo_root != ?3",
+         FROM known_repos WHERE repo_owner = ?1 AND repo_name = ?2 AND origin_url = ?3 AND repo_root != ?4",
     )?;
     let candidates = stmt
-        .query_map(params![repo.repo_owner, repo.repo_name, repo.repo_root], row_to_known_repo)?
+        .query_map(
+            params![repo.repo_owner, repo.repo_name, origin_url, repo.repo_root],
+            row_to_known_repo,
+        )?
         .collect::<std::result::Result<Vec<_>, _>>()?;
 
     let mut stale = candidates.into_iter().filter(|r| !r.repo_root.exists());
@@ -1006,6 +1018,53 @@ mod tests {
         assert_eq!(repos[0].repo_root, PathBuf::from("/new/path"));
         assert_eq!(repos[0].server_url, Some("https://codemark.example.com".to_string()));
         assert!(find_repo_by_root(&conn, "/old/path").unwrap().is_none());
+    }
+
+    #[test]
+    fn test_reconcile_repo_does_not_match_different_origin() {
+        let conn = test_registry().unwrap();
+
+        // A stale row with the same owner/name but a *different* origin (e.g. a private
+        // GitHub Enterprise host vs github.com). It must NOT be treated as a predecessor.
+        upsert_repo(
+            &conn,
+            &RepoUpsert {
+                id: "enterprise-id",
+                repo_owner: "owner",
+                repo_name: "repo",
+                origin_url: Some("https://github.example.com/owner/repo"),
+                repo_root: "/gone/enterprise",
+                db_owner_email: "owner@example.com",
+                db_owner_name: None,
+                server_url: None,
+                default_username: None,
+            },
+        )
+        .unwrap();
+        set_server_url(&conn, "/gone/enterprise", Some("https://enterprise.internal")).unwrap();
+
+        reconcile_repo(
+            &conn,
+            &RepoUpsert {
+                id: "github-id",
+                repo_owner: "owner",
+                repo_name: "repo",
+                origin_url: Some("https://github.com/owner/repo"),
+                repo_root: "/current/path",
+                db_owner_email: "owner@example.com",
+                db_owner_name: None,
+                server_url: None,
+                default_username: None,
+            },
+        )
+        .unwrap();
+
+        // Both rows coexist; the unrelated enterprise server_url was NOT carried over.
+        let repos = list_repos(&conn).unwrap();
+        assert_eq!(repos.len(), 2);
+        let current = find_repo_by_root(&conn, "/current/path").unwrap().unwrap();
+        assert_eq!(current.server_url, None);
+        assert!(find_repo_by_root(&conn, "/gone/enterprise").unwrap().is_some());
     }
 
     #[test]

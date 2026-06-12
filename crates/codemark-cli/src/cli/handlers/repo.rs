@@ -21,8 +21,9 @@ pub async fn handle_repo(cli: &Cli, mode: &OutputMode, args: &RepoArgs) -> Resul
 ///
 /// Intended to be run from the repository's new location after it has been moved on
 /// disk. It refreshes the local repos table and reconciles the global registry (keyed
-/// on the repo's stable id), so a moved or not-yet-registered repo is recorded at its
-/// current path without recreating .codemark/.
+/// on `repo_root` and, for repos with an origin, matched by `(repo_owner, repo_name)`
+/// plus `origin_url`), so a moved or not-yet-registered repo is recorded at its current
+/// path without recreating .codemark/.
 fn handle_repo_sync(cli: &Cli, mode: &OutputMode) -> Result<()> {
     let db = super::open_db(cli)?;
     let config = super::load_config(cli);
