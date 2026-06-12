@@ -38,20 +38,24 @@ fn handle_repo_sync(cli: &Cli, mode: &OutputMode) -> Result<()> {
     .ok_or_else(|| Error::Input("Not in a git repository".into()))?;
 
     let conn = registry::open_registry()?;
-    let repo = registry::list_repos(&conn)?.into_iter().find(|r| r.id == repo_id);
+    // The registry write happens via the (intentionally non-fatal) sync inside
+    // resolve_or_create_repo_metadata. Confirm the row actually landed before
+    // reporting success — `repo sync` is run precisely when the registry is broken,
+    // so a false success would be especially misleading.
+    let repo =
+        registry::list_repos(&conn)?.into_iter().find(|r| r.id == repo_id).ok_or_else(|| {
+            Error::Operation("Failed to write repository to the global registry".into())
+        })?;
 
     match mode {
         OutputMode::Json => {
             write_json_success(&serde_json::json!({ "synced": true, "repo": repo }))?;
         }
-        _ => match repo {
-            Some(repo) => {
-                println!("Synced repository to registry:");
-                println!("  {}/{}", repo.repo_owner, repo.repo_name);
-                println!("  Root: {}", repo.repo_root.display());
-            }
-            None => println!("Synced repository to registry."),
-        },
+        _ => {
+            println!("Synced repository to registry:");
+            println!("  {}/{}", repo.repo_owner, repo.repo_name);
+            println!("  Root: {}", repo.repo_root.display());
+        }
     }
 
     Ok(())
