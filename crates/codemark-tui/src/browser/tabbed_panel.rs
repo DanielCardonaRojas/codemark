@@ -567,7 +567,7 @@ impl TabbedPanel {
 
             if x > area.left() {
                 let indicator_style = if self.focused {
-                    Style::default().fg(crate::theme::palette().success).add_modifier(Modifier::BOLD)
+                    Style::default().fg(crate::theme::palette().accent).add_modifier(Modifier::BOLD)
                 } else {
                     Style::default().fg(crate::theme::palette().dim)
                 };

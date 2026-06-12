@@ -76,7 +76,7 @@ impl MarkdownPanel {
                 lines.push(Line::from(spans));
             } else if let Some(stripped) = line.strip_prefix("- ") {
                 // List item
-                let mut spans = vec![Span::styled("• ", Style::default().fg(crate::theme::palette().success))];
+                let mut spans = vec![Span::styled("• ", Style::default().fg(crate::theme::palette().accent))];
                 spans.extend(self.parse_inline(stripped, Style::default()));
                 lines.push(Line::from(spans));
             } else if line.starts_with('|') {

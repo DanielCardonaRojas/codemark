@@ -242,7 +242,7 @@ impl Component for CodePreview {
 
                 let header_line = Line::from(Span::styled(
                     format!(" {}", header),
-                    Style::default().fg(crate::theme::palette().warning).add_modifier(Modifier::BOLD),
+                    Style::default().fg(crate::theme::palette().accent).add_modifier(Modifier::BOLD),
                 ));
                 ratatui::widgets::Paragraph::new(header_line).render(header_area, buf);
 

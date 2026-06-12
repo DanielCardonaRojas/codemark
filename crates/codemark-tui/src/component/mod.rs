@@ -183,7 +183,7 @@ impl Component for Pager {
                 spans.push(Span::raw(" "));
             }
             if i == self.current {
-                spans.push(Span::styled("●", Style::default().fg(crate::theme::palette().success)));
+                spans.push(Span::styled("●", Style::default().fg(crate::theme::palette().accent)));
             } else {
                 spans.push(Span::styled("○", Style::default().fg(crate::theme::palette().dim)));
             }

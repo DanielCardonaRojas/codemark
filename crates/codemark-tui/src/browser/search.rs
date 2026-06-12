@@ -115,7 +115,7 @@ impl SearchBar {
         // 1. Build the segmented control for the right side
         let normal_style = Style::default().fg(crate::theme::palette().dim);
         let active_style = if self.focused {
-            Style::default().fg(crate::theme::palette().success).add_modifier(Modifier::BOLD)
+            Style::default().fg(crate::theme::palette().accent).add_modifier(Modifier::BOLD)
         } else {
             Style::default().fg(crate::theme::palette().emphasis).add_modifier(Modifier::BOLD)
         };
