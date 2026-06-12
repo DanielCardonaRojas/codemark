@@ -80,7 +80,7 @@ pub fn ensure_default_themes_exist() {
     }
     let Some(dir) = themes_dir() else { return };
     if let Err(e) = std::fs::create_dir_all(&dir) {
-        tracing::warn!("failed to create themes dir {}: {e}", dir.display());
+        tracing::warn!(target: "codemark::theme", "failed to create themes dir {}: {e}", dir.display());
         return;
     }
     for (name, bytes) in EMBEDDED_THEMES {
@@ -88,7 +88,7 @@ pub fn ensure_default_themes_exist() {
         if !path.exists()
             && let Err(e) = std::fs::write(&path, bytes)
         {
-            tracing::warn!("failed to write default theme {}: {e}", path.display());
+            tracing::warn!(target: "codemark::theme", "failed to write default theme {}: {e}", path.display());
         }
     }
 }
@@ -199,7 +199,7 @@ fn load_embedded() -> ThemeSet {
                 set.themes.insert((*name).to_owned(), theme);
             }
             Err(e) => {
-                tracing::warn!("failed to parse embedded theme {name:?}: {e}");
+                tracing::warn!(target: "codemark::theme", "failed to parse embedded theme {name:?}: {e}");
             }
         }
     }
@@ -217,7 +217,7 @@ fn load_schemes(dir: Option<&std::path::Path>) -> BTreeMap<String, Base16Scheme>
             Ok(scheme) => {
                 schemes.insert((*name).to_owned(), scheme);
             }
-            Err(e) => tracing::warn!("failed to parse embedded scheme {name:?}: {e}"),
+            Err(e) => tracing::warn!(target: "codemark::theme", "failed to parse embedded scheme {name:?}: {e}"),
         }
     }
 
@@ -239,7 +239,7 @@ fn load_schemes(dir: Option<&std::path::Path>) -> BTreeMap<String, Base16Scheme>
                 Ok(scheme) => {
                     schemes.insert(stem, scheme);
                 }
-                Err(e) => tracing::warn!("failed to load scheme {}: {e}", path.display()),
+                Err(e) => tracing::warn!(target: "codemark::theme", "failed to load scheme {}: {e}", path.display()),
             }
         }
     }

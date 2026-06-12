@@ -8,7 +8,7 @@ use ratatui::{
     backend::Backend,
     buffer::Buffer,
     layout::{Alignment, Constraint, Direction, Layout, Margin, Rect},
-    style::{Color, Style, Stylize},
+    style::{Style, Stylize},
     text::{Line, Span, Text},
     widgets::{Block, Clear, Paragraph, Widget, Wrap},
 };
@@ -61,7 +61,7 @@ pub fn render_status_bar(
         let query = search_query.unwrap_or("");
         let text = Line::from(vec![
             Span::styled("Filter: ", Style::default().fg(crate::theme::palette().accent).bold()),
-            Span::raw(query),
+            Span::styled(query, Style::default().fg(crate::theme::palette().emphasis)),
         ]);
         let para = Paragraph::new(text).style(Style::default().bg(crate::theme::palette().dim));
         para.render(area.inner(Margin { horizontal: 1, vertical: 0 }), buf);
@@ -86,7 +86,7 @@ pub fn render_status_bar(
         left_spans.push(Span::raw(": "));
         left_spans.push(Span::styled(
             &binding.key,
-            Style::default().fg(Color::Rgb(150, 150, 255)).bold(),
+            Style::default().fg(crate::theme::palette().accent).bold(),
         ));
     }
 
