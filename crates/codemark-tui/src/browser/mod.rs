@@ -928,8 +928,10 @@ impl BrowserLayout {
         if !active_branches.is_empty() {
             spans.push(Span::styled(" | ", Style::default().fg(crate::theme::palette().gray)));
             spans.push(Span::styled("Branch: ", Style::default().fg(crate::theme::palette().dim)));
-            spans
-                .push(Span::styled(active_branches.join(", "), Style::default().fg(crate::theme::palette().warning)));
+            spans.push(Span::styled(
+                active_branches.join(", "),
+                Style::default().fg(crate::theme::palette().warning),
+            ));
         }
 
         if !active_tags.is_empty() {

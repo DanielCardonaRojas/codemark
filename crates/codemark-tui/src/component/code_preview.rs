@@ -242,7 +242,9 @@ impl Component for CodePreview {
 
                 let header_line = Line::from(Span::styled(
                     format!(" {}", header),
-                    Style::default().fg(crate::theme::palette().accent).add_modifier(Modifier::BOLD),
+                    Style::default()
+                        .fg(crate::theme::palette().accent)
+                        .add_modifier(Modifier::BOLD),
                 ));
                 ratatui::widgets::Paragraph::new(header_line).render(header_area, buf);
 
@@ -273,7 +275,8 @@ impl Component for CodePreview {
             };
 
             // Sign color: magenta for range lines, regardless of current selection
-            let sign_color = if in_range { crate::theme::palette().marker } else { crate::theme::palette().dim };
+            let sign_color =
+                if in_range { crate::theme::palette().marker } else { crate::theme::palette().dim };
 
             // Rebuild the line with the correct sign indicator
             // The cached line has: sign (1 char) + line number (4 chars) + content

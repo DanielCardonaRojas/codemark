@@ -64,19 +64,27 @@ impl MarkdownPanel {
                 // H2
                 lines.push(Line::from(vec![Span::styled(
                     stripped.to_string(),
-                    Style::default().fg(crate::theme::palette().accent).add_modifier(Modifier::BOLD),
+                    Style::default()
+                        .fg(crate::theme::palette().accent)
+                        .add_modifier(Modifier::BOLD),
                 )]));
             } else if let Some(stripped) = line.strip_prefix("> ") {
                 // Blockquote
-                let mut spans = vec![Span::styled("┃ ", Style::default().fg(crate::theme::palette().dim))];
-                spans.extend(self.parse_inline(
-                    stripped,
-                    Style::default().fg(crate::theme::palette().gray).add_modifier(Modifier::ITALIC),
-                ));
+                let mut spans =
+                    vec![Span::styled("┃ ", Style::default().fg(crate::theme::palette().dim))];
+                spans.extend(
+                    self.parse_inline(
+                        stripped,
+                        Style::default()
+                            .fg(crate::theme::palette().gray)
+                            .add_modifier(Modifier::ITALIC),
+                    ),
+                );
                 lines.push(Line::from(spans));
             } else if let Some(stripped) = line.strip_prefix("- ") {
                 // List item
-                let mut spans = vec![Span::styled("• ", Style::default().fg(crate::theme::palette().accent))];
+                let mut spans =
+                    vec![Span::styled("• ", Style::default().fg(crate::theme::palette().accent))];
                 spans.extend(self.parse_inline(stripped, Style::default()));
                 lines.push(Line::from(spans));
             } else if line.starts_with('|') {

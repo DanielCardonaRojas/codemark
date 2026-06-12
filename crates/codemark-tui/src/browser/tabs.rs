@@ -114,7 +114,9 @@ impl Tab {
     /// Render this tab as a Line.
     fn render(&self, selected: bool, _focused: bool) -> Line<'_> {
         let base_style = if selected {
-            Style::default().fg(crate::theme::palette().accent).add_modifier(ratatui::style::Modifier::BOLD)
+            Style::default()
+                .fg(crate::theme::palette().accent)
+                .add_modifier(ratatui::style::Modifier::BOLD)
         } else {
             Style::default().fg(crate::theme::palette().dim)
         };
@@ -231,7 +233,9 @@ impl TabSelection {
         for (i, tab) in self.tabs.iter().enumerate() {
             let selected = i == self.selected;
             let style = if selected {
-                Style::default().fg(crate::theme::palette().accent).add_modifier(ratatui::style::Modifier::BOLD)
+                Style::default()
+                    .fg(crate::theme::palette().accent)
+                    .add_modifier(ratatui::style::Modifier::BOLD)
             } else {
                 Style::default().fg(crate::theme::palette().dim)
             };

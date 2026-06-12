@@ -112,10 +112,7 @@ impl Base16Scheme {
             ("keyword, storage.modifier, keyword.operator.logical", 0x0E),
             ("storage.type", 0x0A),
             ("entity.name.function, support.function, meta.function-call", 0x0D),
-            (
-                "entity.name.type, entity.name.class, support.type, support.class",
-                0x0A,
-            ),
+            ("entity.name.type, entity.name.class, support.type, support.class", 0x0A),
             ("variable, variable.parameter, meta.definition.variable", 0x08),
             ("entity.name.tag", 0x08),
             ("entity.other.attribute-name", 0x0A),
@@ -137,12 +134,7 @@ impl Base16Scheme {
             })
             .collect();
 
-        Theme {
-            name: Some(self.name.clone()),
-            author: None,
-            settings,
-            scopes,
-        }
+        Theme { name: Some(self.name.clone()), author: None, settings, scopes }
     }
 }
 

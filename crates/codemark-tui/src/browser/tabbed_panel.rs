@@ -340,11 +340,20 @@ impl TabbedPanel {
             Ok(tags) if !tags.is_empty() => tags
                 .into_iter()
                 .map(|tag| {
-                    PanelItem::new(format!("#{tag}")).user_data(tag).no_health().color(crate::theme::palette().accent)
+                    PanelItem::new(format!("#{tag}"))
+                        .user_data(tag)
+                        .no_health()
+                        .color(crate::theme::palette().accent)
                 })
                 .collect(),
-            Ok(_) => vec![PanelItem::new("No tags found").no_health().color(crate::theme::palette().dim)],
-            Err(e) => vec![PanelItem::new(format!("Error: {e}")).no_health().color(crate::theme::palette().error)],
+            Ok(_) => {
+                vec![PanelItem::new("No tags found").no_health().color(crate::theme::palette().dim)]
+            }
+            Err(e) => vec![
+                PanelItem::new(format!("Error: {e}"))
+                    .no_health()
+                    .color(crate::theme::palette().error),
+            ],
         };
 
         let branches = match db.list_all_branches() {
@@ -352,8 +361,14 @@ impl TabbedPanel {
                 .into_iter()
                 .map(|branch| PanelItem::new(branch).no_health().icon(""))
                 .collect(),
-            Ok(_) => vec![PanelItem::new("No branches found").no_health().color(crate::theme::palette().dim)],
-            Err(e) => vec![PanelItem::new(format!("Error: {e}")).no_health().color(crate::theme::palette().error)],
+            Ok(_) => vec![
+                PanelItem::new("No branches found").no_health().color(crate::theme::palette().dim),
+            ],
+            Err(e) => vec![
+                PanelItem::new(format!("Error: {e}"))
+                    .no_health()
+                    .color(crate::theme::palette().error),
+            ],
         };
 
         (tags, branches)

@@ -82,7 +82,10 @@ pub fn render_status_bar(
         if i > 0 {
             left_spans.push(Span::styled(" | ", Style::default().fg(crate::theme::palette().gray)));
         }
-        left_spans.push(Span::styled(&binding.description, Style::default().fg(crate::theme::palette().emphasis)));
+        left_spans.push(Span::styled(
+            &binding.description,
+            Style::default().fg(crate::theme::palette().emphasis),
+        ));
         left_spans.push(Span::raw(": "));
         left_spans.push(Span::styled(
             &binding.key,
@@ -119,11 +122,14 @@ pub fn render_command_line(
     input: &str,
     _cursor_pos: usize,
 ) {
-    let text =
-        Line::from(vec![Span::styled(prompt, Style::default().fg(crate::theme::palette().accent)), Span::raw(input)]);
+    let text = Line::from(vec![
+        Span::styled(prompt, Style::default().fg(crate::theme::palette().accent)),
+        Span::raw(input),
+    ]);
 
-    let paragraph =
-        Paragraph::new(text).style(Style::default().fg(crate::theme::palette().emphasis)).wrap(Wrap { trim: false });
+    let paragraph = Paragraph::new(text)
+        .style(Style::default().fg(crate::theme::palette().emphasis))
+        .wrap(Wrap { trim: false });
 
     paragraph.render(area, buf);
 
@@ -142,7 +148,10 @@ pub fn render_help_panel(area: Rect, buf: &mut Buffer, bindings: &[(&str, &str)]
 
     for (key, action) in bindings {
         text.push_line(Line::from(vec![
-            Span::styled(format!(" {:10} ", key), Style::default().fg(crate::theme::palette().accent).bold()),
+            Span::styled(
+                format!(" {:10} ", key),
+                Style::default().fg(crate::theme::palette().accent).bold(),
+            ),
             Span::raw(*action),
         ]));
     }
@@ -246,8 +255,9 @@ pub fn render_notification(
 
     let text = Line::from(vec![Span::styled(icon, style), Span::styled(message, style)]);
 
-    let paragraph =
-        Paragraph::new(text).style(style.bg(crate::theme::palette().dim)).alignment(Alignment::Left);
+    let paragraph = Paragraph::new(text)
+        .style(style.bg(crate::theme::palette().dim))
+        .alignment(Alignment::Left);
 
     // Render at the bottom of the area
     let notification_area =

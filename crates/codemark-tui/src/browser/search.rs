@@ -178,7 +178,11 @@ impl SearchBar {
             let cursor_y = area.y;
             let x = cursor_x.min(control_x.saturating_sub(1));
             if let Some(cell) = buf.cell_mut((x, cursor_y)) {
-                cell.set_style(Style::default().bg(crate::theme::palette().emphasis).fg(crate::theme::palette().inverse));
+                cell.set_style(
+                    Style::default()
+                        .bg(crate::theme::palette().emphasis)
+                        .fg(crate::theme::palette().inverse),
+                );
             }
         }
     }
@@ -220,7 +224,8 @@ impl Component for SearchBar {
                 width: area.width.min(60),
                 height: 1,
             };
-            let error_style = Style::default().fg(crate::theme::palette().error).add_modifier(Modifier::BOLD);
+            let error_style =
+                Style::default().fg(crate::theme::palette().error).add_modifier(Modifier::BOLD);
             Paragraph::new(Line::from(vec![
                 Span::styled("! ", error_style),
                 Span::styled(error, Style::default().fg(crate::theme::palette().error)),

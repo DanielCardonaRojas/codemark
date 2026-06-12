@@ -217,7 +217,9 @@ fn load_schemes(dir: Option<&std::path::Path>) -> BTreeMap<String, Base16Scheme>
             Ok(scheme) => {
                 schemes.insert((*name).to_owned(), scheme);
             }
-            Err(e) => tracing::warn!(target: "codemark::theme", "failed to parse embedded scheme {name:?}: {e}"),
+            Err(e) => {
+                tracing::warn!(target: "codemark::theme", "failed to parse embedded scheme {name:?}: {e}")
+            }
         }
     }
 
@@ -235,11 +237,16 @@ fn load_schemes(dir: Option<&std::path::Path>) -> BTreeMap<String, Base16Scheme>
             let Some(stem) = path.file_stem().and_then(|s| s.to_str()).map(str::to_owned) else {
                 continue;
             };
-            match std::fs::read_to_string(&path).map_err(|e| e.to_string()).and_then(|s| Base16Scheme::from_yaml(&s)) {
+            match std::fs::read_to_string(&path)
+                .map_err(|e| e.to_string())
+                .and_then(|s| Base16Scheme::from_yaml(&s))
+            {
                 Ok(scheme) => {
                     schemes.insert(stem, scheme);
                 }
-                Err(e) => tracing::warn!(target: "codemark::theme", "failed to load scheme {}: {e}", path.display()),
+                Err(e) => {
+                    tracing::warn!(target: "codemark::theme", "failed to load scheme {}: {e}", path.display())
+                }
             }
         }
     }
@@ -348,9 +355,7 @@ impl Palette {
         if let Some(c) = first_scope_color(&hl, &["invalid.illegal", "invalid"]) {
             palette.error = c;
         }
-        if let Some(c) =
-            first_scope_color(&hl, &["keyword", "storage.type", "storage.modifier"])
-        {
+        if let Some(c) = first_scope_color(&hl, &["keyword", "storage.type", "storage.modifier"]) {
             palette.marker = c;
         }
 
