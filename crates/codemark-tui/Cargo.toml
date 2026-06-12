@@ -18,6 +18,7 @@ ratatui = "0.29"
 crossterm = { version = "0.28", features = ["event-stream"] }
 syntect = "5.2"
 syntect-assets = "0.23"
+serde_yaml = "0.9"
 tokio = { workspace = true }
 codemark-core = { path = "../codemark-core" }
 rusqlite = { workspace = true }

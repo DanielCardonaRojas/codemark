@@ -82,12 +82,12 @@ async fn run_app() -> Result<Option<i32>> {
         None => codemark_core::config::Config::default(),
     };
     if let Some(theme_name) = config.tui.theme.as_deref() {
+        // Resolve the preview theme and the chrome palette from one source so the
+        // whole TUI is cohesive (base16 schemes drive both from a single palette).
         let registry = codemark_tui::theme::ThemeRegistry::new();
-        let resolved = registry.resolve(theme_name);
-        // Derive the chrome palette from the same theme so borders, titles, and
-        // accents match the code preview, then hand the theme to the previews.
-        codemark_tui::theme::set_palette(codemark_tui::theme::Palette::from_theme(&resolved));
-        codemark_tui::component::code_preview::set_default_theme(resolved);
+        let (theme, palette) = registry.resolve_full(theme_name);
+        codemark_tui::theme::set_palette(palette);
+        codemark_tui::component::code_preview::set_default_theme(theme);
     }
 
     // Create the browser layout

@@ -127,8 +127,16 @@ enabled = true
 #   gruvbox-dark, gruvbox-light, Solarized (dark), Solarized (light),
 #   Monokai Extended, GitHub, Visual Studio Dark+, zenburn, ansi, base16
 #
-# You can also drop your own `.tmTheme` files into
+# For a fully cohesive look (the code preview AND the surrounding UI — borders,
+# status colors, accents — all from one palette), use a base16/base24 scheme.
+# Bundled schemes:
+#   Catppuccin Mocha
+# tmTheme-based names only theme the preview fully; the chrome is approximated.
+#
+# You can also drop your own theme files into
 #   ~/.config/codemark/themes/
-# and reference them here by file name (without the `.tmTheme` extension).
+# and reference them here by file name (without the extension):
+#   - `.tmTheme` files (syntax highlighting only), or
+#   - `.yaml`/`.yml` base16/base24 schemes (preview + chrome).
 # A user theme that shares a bundled name takes precedence.
-# theme = "Dracula"
+# theme = "Catppuccin Mocha"

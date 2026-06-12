@@ -1,19 +1,25 @@
 //! Hybrid theme loader for the TUI.
 //!
-//! Resolves syntect `.tmTheme` themes from the following sources, in priority
-//! order (first match wins):
+//! Two kinds of theme are supported:
 //!
-//! 1. **User directory** — `~/.config/codemark/themes/<name>.tmTheme`. Lets users
-//!    drop in their own themes or override a bundled one.
-//! 2. **Embedded extras** — popular themes that `syntect-assets` does not ship
-//!    (e.g. Catppuccin, Tokyo Night), bundled into the binary at compile time.
-//! 3. **`syntect-assets` bundled themes** — Dracula, Nord, Gruvbox, Solarized,
-//!    Monokai, OneHalf, … (vendored from the bat project).
-//! 4. **Fallback** — [`FALLBACK_THEME`], always available via `syntect-assets`.
+//! - **base16/base24 schemes** ([`base16`]) — a full palette that drives *both*
+//!   the code preview and the chrome ([`Palette`]) from one source, for a fully
+//!   cohesive UI. This is the recommended path. Resolve via
+//!   [`ThemeRegistry::resolve_full`].
+//! - **`.tmTheme` themes** — syntax-only; the preview is themed fully and the
+//!   chrome palette is approximated from the theme via [`Palette::from_theme`].
+//!
+//! Both kinds are resolved from these sources, in priority order (first match
+//! wins): the user directory (`~/.config/codemark/themes`), then themes embedded
+//! at compile time, then the `syntect-assets` bundle (Dracula, Nord, Gruvbox, …),
+//! then [`FALLBACK_THEME`].
 //!
 //! This mirrors the bundle-plus-user-directory pattern already used for
 //! templates in `codemark-core` (`templates.rs`).
 
+pub mod base16;
+
+use std::collections::BTreeMap;
 use std::io::Cursor;
 use std::path::PathBuf;
 use std::str::FromStr;
@@ -24,6 +30,8 @@ use ratatui::style::Color;
 use syntect::highlighting::{Color as SyntectColor, Highlighter, Theme, ThemeSet};
 use syntect::parsing::ScopeStack;
 use syntect_assets::assets::HighlightingAssets;
+
+use base16::Base16Scheme;
 
 /// Fallback theme name. Always present in the `syntect-assets` binary data, so
 /// resolution can never fail to produce a usable theme.
@@ -40,6 +48,12 @@ pub const FALLBACK_THEME: &str = "OneHalfDark";
 /// ("Catppuccin Mocha", include_bytes!("../themes/catppuccin-mocha.tmTheme")),
 /// ```
 const EMBEDDED_THEMES: &[(&str, &[u8])] = &[];
+
+/// base16/base24 schemes embedded at compile time. Unlike [`EMBEDDED_THEMES`], a
+/// scheme drives *both* the code preview and the chrome palette from one source,
+/// giving a fully cohesive theme. Each entry is `(name, yaml)`.
+const EMBEDDED_SCHEMES: &[(&str, &str)] =
+    &[("Catppuccin Mocha", include_str!("../themes/catppuccin-mocha.yaml"))];
 
 /// The directory user-supplied themes are read from:
 /// `<global config dir>/themes` (e.g. `~/.config/codemark/themes`).
@@ -91,6 +105,9 @@ pub struct ThemeRegistry {
     embedded: ThemeSet,
     /// Themes loaded from the user's [`themes_dir`].
     user: ThemeSet,
+    /// base16/base24 schemes (embedded + user `.yaml`/`.yml`), keyed by name.
+    /// User schemes override embedded ones with the same name.
+    schemes: BTreeMap<String, Base16Scheme>,
 }
 
 impl ThemeRegistry {
@@ -103,11 +120,17 @@ impl ThemeRegistry {
     /// for testing with a controlled directory.
     fn with_user_dir(dir: Option<PathBuf>) -> Self {
         let user = dir
+            .as_ref()
             .filter(|d| d.is_dir())
-            .and_then(|d| ThemeSet::load_from_folder(&d).ok())
+            .and_then(|d| ThemeSet::load_from_folder(d).ok())
             .unwrap_or_default();
 
-        Self { assets: HighlightingAssets::from_binary(), embedded: load_embedded(), user }
+        Self {
+            assets: HighlightingAssets::from_binary(),
+            embedded: load_embedded(),
+            user,
+            schemes: load_schemes(dir.as_deref()),
+        }
     }
 
     /// Resolve `name` to a [`Theme`], walking the priority chain and falling back
@@ -128,15 +151,30 @@ impl ThemeRegistry {
         self.assets.get_theme(FALLBACK_THEME).clone()
     }
 
+    /// Resolve `name` to both the code-preview [`Theme`] and the chrome
+    /// [`Palette`], so the whole TUI can be themed from a single source.
+    ///
+    /// A base16/base24 scheme drives both from one palette (fully cohesive);
+    /// otherwise the name resolves to a `.tmTheme` via [`resolve`](Self::resolve)
+    /// and the palette is derived from it with [`Palette::from_theme`].
+    pub fn resolve_full(&self, name: &str) -> (Theme, Palette) {
+        if let Some(scheme) = self.schemes.get(name) {
+            return (scheme.to_syntect_theme(), scheme.palette());
+        }
+        let theme = self.resolve(name);
+        let palette = Palette::from_theme(&theme);
+        (theme, palette)
+    }
+
     /// All theme names known to the registry, deduplicated and sorted. Useful for
     /// a theme picker or `--list-themes`-style output.
     pub fn available(&self) -> Vec<String> {
         let mut names: Vec<String> = self
-            .user
-            .themes
+            .schemes
             .keys()
-            .chain(self.embedded.themes.keys())
             .cloned()
+            .chain(self.user.themes.keys().cloned())
+            .chain(self.embedded.themes.keys().cloned())
             .chain(self.assets.themes().map(str::to_owned))
             .collect();
         names.sort();
@@ -166,6 +204,47 @@ fn load_embedded() -> ThemeSet {
         }
     }
     set
+}
+
+/// Load base16 schemes: embedded ([`EMBEDDED_SCHEMES`]) first, then user
+/// `.yaml`/`.yml` files from `dir` (which override embedded ones of the same
+/// name). A scheme that fails to parse is logged and skipped.
+fn load_schemes(dir: Option<&std::path::Path>) -> BTreeMap<String, Base16Scheme> {
+    let mut schemes = BTreeMap::new();
+
+    for (name, yaml) in EMBEDDED_SCHEMES {
+        match Base16Scheme::from_yaml(yaml) {
+            Ok(scheme) => {
+                schemes.insert((*name).to_owned(), scheme);
+            }
+            Err(e) => tracing::warn!("failed to parse embedded scheme {name:?}: {e}"),
+        }
+    }
+
+    if let Some(dir) = dir.filter(|d| d.is_dir())
+        && let Ok(entries) = std::fs::read_dir(dir)
+    {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let is_yaml = path
+                .extension()
+                .is_some_and(|e| e.eq_ignore_ascii_case("yaml") || e.eq_ignore_ascii_case("yml"));
+            if !is_yaml {
+                continue;
+            }
+            let Some(stem) = path.file_stem().and_then(|s| s.to_str()).map(str::to_owned) else {
+                continue;
+            };
+            match std::fs::read_to_string(&path).map_err(|e| e.to_string()).and_then(|s| Base16Scheme::from_yaml(&s)) {
+                Ok(scheme) => {
+                    schemes.insert(stem, scheme);
+                }
+                Err(e) => tracing::warn!("failed to load scheme {}: {e}", path.display()),
+            }
+        }
+    }
+
+    schemes
 }
 
 // ---------------------------------------------------------------------------
@@ -356,6 +435,33 @@ mod tests {
         // Status roles keep their ANSI meaning.
         assert_eq!(p.error, Color::Red);
         assert_eq!(p.warning, Color::Yellow);
+    }
+
+    #[test]
+    fn resolve_full_uses_base16_scheme_for_both_theme_and_palette() {
+        let registry = registry_with_no_user_dir();
+        let (theme, palette) = registry.resolve_full("Catppuccin Mocha");
+        // Both come from the scheme: preview background and chrome error color
+        // are the Catppuccin Mocha palette, not ANSI/fallback.
+        assert_eq!(theme.name.as_deref(), Some("Catppuccin Mocha"));
+        assert_eq!(palette.error, Color::Rgb(0xf3, 0x8b, 0xa8));
+        assert_eq!(palette.success, Color::Rgb(0xa6, 0xe3, 0xa1));
+    }
+
+    #[test]
+    fn resolve_full_falls_back_to_tmtheme_palette_for_non_scheme() {
+        let registry = registry_with_no_user_dir();
+        let (theme, palette) = registry.resolve_full("Dracula");
+        assert_eq!(theme.name.as_deref(), Some("Dracula"));
+        // tmTheme path: status roles stay ANSI, structural roles are themed.
+        assert_eq!(palette.error, Color::Red);
+        assert!(matches!(palette.emphasis, Color::Rgb(..)));
+    }
+
+    #[test]
+    fn scheme_name_appears_in_available() {
+        let registry = registry_with_no_user_dir();
+        assert!(registry.available().contains(&"Catppuccin Mocha".to_string()));
     }
 
     #[test]
