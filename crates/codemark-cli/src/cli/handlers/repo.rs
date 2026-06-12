@@ -29,6 +29,11 @@ fn handle_repo_sync(cli: &Cli, mode: &OutputMode) -> Result<()> {
     let config = super::load_config(cli);
     let (db_owner_email, db_owner_name) = super::resolve_identity(&config);
 
+    // The path the registry row should end up at after the sync. Captured before the
+    // sync so the success check below can require the row to actually point here.
+    let cwd = std::env::current_dir()?;
+    let expected_root = codemark_core::git::context::detect_context(&cwd).map(|ctx| ctx.repo_root);
+
     let repo_id = super::resolve_or_create_repo_metadata(
         &db,
         &config,
@@ -39,11 +44,14 @@ fn handle_repo_sync(cli: &Cli, mode: &OutputMode) -> Result<()> {
 
     let conn = registry::open_registry()?;
     // The registry write happens via the (intentionally non-fatal) sync inside
-    // resolve_or_create_repo_metadata. Confirm the row actually landed before
-    // reporting success — `repo sync` is run precisely when the registry is broken,
-    // so a false success would be especially misleading.
-    let repo =
-        registry::list_repos(&conn)?.into_iter().find(|r| r.id == repo_id).ok_or_else(|| {
+    // resolve_or_create_repo_metadata. Confirm the row actually landed at the current
+    // path before reporting success — `repo sync` is run precisely when the registry is
+    // broken. Requiring the path (not just the id) guards against a silently-failed
+    // write where a stale row sharing this local id still points at the old location.
+    let repo = registry::list_repos(&conn)?
+        .into_iter()
+        .find(|r| r.id == repo_id && expected_root.as_ref().is_none_or(|er| &r.repo_root == er))
+        .ok_or_else(|| {
             Error::Operation("Failed to write repository to the global registry".into())
         })?;
 

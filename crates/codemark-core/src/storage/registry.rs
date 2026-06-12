@@ -620,9 +620,13 @@ pub fn find_stale_repos(conn: &Connection) -> Result<Vec<KnownRepo>> {
 /// be a temporarily unmounted volume rather than a deleted repository.
 pub fn prune_repos(conn: &Connection) -> Result<Vec<KnownRepo>> {
     let stale = find_stale_repos(conn)?;
+    // Delete all stale rows atomically so a mid-loop crash can't leave the prune
+    // half-applied.
+    let tx = conn.unchecked_transaction()?;
     for repo in &stale {
-        conn.execute("DELETE FROM known_repos WHERE id = ?1", params![repo.id])?;
+        tx.execute("DELETE FROM known_repos WHERE id = ?1", params![repo.id])?;
     }
+    tx.commit()?;
     Ok(stale)
 }
 
