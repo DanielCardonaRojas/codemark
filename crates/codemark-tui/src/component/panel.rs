@@ -363,7 +363,7 @@ impl PanelItem {
         // Add spinner at the very end
         if let Some(spinner) = &self.spinner_text {
             spans.push(Span::raw(" "));
-            spans.push(Span::styled(spinner, Style::default().fg(crate::theme::palette().accent)));
+            spans.push(Span::styled(spinner, Style::default().fg(crate::theme::palette().warning)));
         }
 
         let mut line = Line::from(spans);
