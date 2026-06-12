@@ -443,18 +443,26 @@ pub fn resolve_or_create_repo_metadata(
     };
 
     let new_name = db_owner_name.map(|s| s.to_string());
+    let repo_root_str = git_ctx.repo_root.to_string_lossy().to_string();
 
     // Try to find existing repo by origin URL first
-    if let Some(ref origin_url) = repo_metadata.origin_url {
-        if let Ok(Some(existing)) = db.get_repo_by_origin(origin_url)
-            && (existing.db_owner_email != db_owner_email || existing.db_owner_name != new_name)
-        {
+    if let Some(ref origin_url) = repo_metadata.origin_url
+        && let Ok(Some(existing)) = db.get_repo_by_origin(origin_url)
+    {
+        // Detect identity changes and path drift (the repo was moved on disk).
+        let owner_changed =
+            existing.db_owner_email != db_owner_email || existing.db_owner_name != new_name;
+        let root_changed = existing.repo_root != repo_root_str;
+
+        if owner_changed || root_changed {
             let mut updated = existing.clone();
             updated.db_owner_email = db_owner_email.to_string();
             updated.db_owner_name = new_name.clone();
+            // Reconcile the stored path with the repo's current location.
+            updated.repo_root = repo_root_str.clone();
             db.upsert_repo(&updated)?;
 
-            // Sync to global registry
+            // Sync to global registry at the current path.
             sync_to_global_registry(
                 &updated.id,
                 &updated.repo_owner,
@@ -465,28 +473,25 @@ pub fn resolve_or_create_repo_metadata(
                 updated.db_owner_name.as_deref(),
             );
 
-            return Ok(Some(existing.id));
+            return Ok(Some(updated.id));
         }
 
-        if let Ok(Some(existing)) = db.get_repo_by_origin(origin_url) {
-            // Sync to global registry (may update server_url)
-            sync_to_global_registry(
-                &existing.id,
-                &existing.repo_owner,
-                &existing.repo_name,
-                existing.origin_url.as_deref(),
-                &existing.repo_root,
-                &existing.db_owner_email,
-                existing.db_owner_name.as_deref(),
-            );
+        // Sync to global registry (may update server_url)
+        sync_to_global_registry(
+            &existing.id,
+            &existing.repo_owner,
+            &existing.repo_name,
+            existing.origin_url.as_deref(),
+            &existing.repo_root,
+            &existing.db_owner_email,
+            existing.db_owner_name.as_deref(),
+        );
 
-            return Ok(Some(existing.id));
-        }
+        return Ok(Some(existing.id));
     }
 
     // For local repos (no origin_url), try to find by repo_root
     // This prevents duplicate rows when running codemark init multiple times
-    let repo_root_str = git_ctx.repo_root.to_string_lossy().to_string();
     if let Ok(Some(existing)) = db.get_repo_by_root(&repo_root_str)
         && (existing.db_owner_email != db_owner_email || existing.db_owner_name != new_name)
     {
@@ -585,7 +590,7 @@ fn sync_to_global_registry(
     // Get server URL from registry (if already set) instead of from config
     let server_url = registry::get_server_url(&conn, repo_root).ok().flatten();
 
-    let _ = registry::upsert_repo(
+    let _ = registry::reconcile_repo(
         &conn,
         &registry::RepoUpsert {
             id,
@@ -1270,19 +1275,27 @@ pub fn write_resolution_output(
 /// If already initialized, prints a message and does nothing.
 pub async fn handle_init(cli: &Cli, mode: &OutputMode) -> Result<()> {
     if let Some(path) = cli.db.first() {
-        if path.exists() {
-            write_success(mode, &format!("Codemark already initialized at {}", path.display()))?;
-            return Ok(());
+        let already = path.exists();
+        if !already {
+            Database::create(path)?;
         }
-        Database::create(path)?;
 
-        // Populate repos table with identity and repo metadata
+        // Populate (or refresh) repos table and reconcile the global registry. Running
+        // init a second time does not recreate the database, but still re-syncs the
+        // registry so a moved or unregistered repo can be reconciled.
         let db = Database::open(path)?;
         let config = load_config(cli);
         let (db_owner_email, db_owner_name) = resolve_identity(&config);
         resolve_or_create_repo_metadata(&db, &config, &db_owner_email, db_owner_name.as_deref())?;
 
-        write_success(mode, &format!("Initialized codemark database at {}", path.display()))?;
+        if already {
+            write_success(
+                mode,
+                &format!("Codemark already initialized at {}; re-synced registry", path.display()),
+            )?;
+        } else {
+            write_success(mode, &format!("Initialized codemark database at {}", path.display()))?;
+        }
         return Ok(());
     }
 
@@ -1294,26 +1307,35 @@ pub async fn handle_init(cli: &Cli, mode: &OutputMode) -> Result<()> {
         cwd.join(".codemark").join("codemark.db")
     };
 
-    if db_path.exists() {
-        write_success(mode, &format!("Codemark already initialized at {}", db_path.display()))?;
-        return Ok(());
+    let already = db_path.exists();
+    if !already {
+        Database::create(&db_path)?;
     }
 
-    Database::create(&db_path)?;
-
-    // Populate repos table with identity and repo metadata
+    // Populate (or refresh) repos table and reconcile the global registry. Re-running
+    // init does not recreate .codemark/, but re-syncs the registry so a moved or
+    // unregistered repo (e.g. one with a leftover .codemark/ directory) is reconciled.
     let db = Database::open(&db_path)?;
     let config = load_config(cli);
     let (db_owner_email, db_owner_name) = resolve_identity(&config);
     resolve_or_create_repo_metadata(&db, &config, &db_owner_email, db_owner_name.as_deref())?;
 
-    write_success(
-        mode,
-        &format!("Initialized codemark repository in {}", db_path.parent().unwrap().display()),
-    )?;
-
-    if git_ctx.is_some() {
-        eprintln!("Note: It is recommended to add .codemark/ to your .gitignore");
+    if already {
+        write_success(
+            mode,
+            &format!(
+                "Codemark already initialized in {}; re-synced registry",
+                db_path.parent().unwrap().display()
+            ),
+        )?;
+    } else {
+        write_success(
+            mode,
+            &format!("Initialized codemark repository in {}", db_path.parent().unwrap().display()),
+        )?;
+        if git_ctx.is_some() {
+            eprintln!("Note: It is recommended to add .codemark/ to your .gitignore");
+        }
     }
 
     Ok(())

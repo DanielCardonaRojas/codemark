@@ -12,7 +12,91 @@ pub async fn handle_repo(cli: &Cli, mode: &OutputMode, args: &RepoArgs) -> Resul
         RepoCommand::List => handle_repo_list(mode),
         RepoCommand::ShowRepo(args) => handle_repo_show(cli, mode, args),
         RepoCommand::SetServer(args) => handle_repo_set_server(cli, mode, args),
+        RepoCommand::Sync => handle_repo_sync(cli, mode),
+        RepoCommand::Prune(args) => handle_repo_prune(mode, args),
     }
+}
+
+/// Handle `codemark repo sync` - reconcile the current repository's path in the registry.
+///
+/// Intended to be run from the repository's new location after it has been moved on
+/// disk. It refreshes the local repos table and reconciles the global registry (keyed
+/// on the repo's stable id), so a moved or not-yet-registered repo is recorded at its
+/// current path without recreating .codemark/.
+fn handle_repo_sync(cli: &Cli, mode: &OutputMode) -> Result<()> {
+    let db = super::open_db(cli)?;
+    let config = super::load_config(cli);
+    let (db_owner_email, db_owner_name) = super::resolve_identity(&config);
+
+    let repo_id = super::resolve_or_create_repo_metadata(
+        &db,
+        &config,
+        &db_owner_email,
+        db_owner_name.as_deref(),
+    )?
+    .ok_or_else(|| Error::Input("Not in a git repository".into()))?;
+
+    let conn = registry::open_registry()?;
+    let repo = registry::list_repos(&conn)?.into_iter().find(|r| r.id == repo_id);
+
+    match mode {
+        OutputMode::Json => {
+            write_json_success(&serde_json::json!({ "synced": true, "repo": repo }))?;
+        }
+        _ => match repo {
+            Some(repo) => {
+                println!("Synced repository to registry:");
+                println!("  {}/{}", repo.repo_owner, repo.repo_name);
+                println!("  Root: {}", repo.repo_root.display());
+            }
+            None => println!("Synced repository to registry."),
+        },
+    }
+
+    Ok(())
+}
+
+/// Handle `codemark repo prune` - remove registry entries whose path no longer exists.
+fn handle_repo_prune(mode: &OutputMode, args: &RepoPruneArgs) -> Result<()> {
+    let conn = registry::open_registry()?;
+
+    let removed = if args.dry_run {
+        registry::find_stale_repos(&conn)?
+    } else {
+        registry::prune_repos(&conn)?
+    };
+
+    match mode {
+        OutputMode::Json => {
+            write_json_success(&serde_json::json!({
+                "dry_run": args.dry_run,
+                "removed": removed,
+            }))?;
+        }
+        _ => {
+            if removed.is_empty() {
+                println!("No stale repositories to prune.");
+            } else {
+                let verb = if args.dry_run { "Would remove" } else { "Removed" };
+                println!(
+                    "{} {} stale repositor{}:",
+                    verb,
+                    removed.len(),
+                    if removed.len() == 1 { "y" } else { "ies" }
+                );
+                for repo in &removed {
+                    println!(
+                        "  {}/{} — {}",
+                        repo.repo_owner,
+                        repo.repo_name,
+                        repo.repo_root.display()
+                    );
+                }
+            }
+        }
+    }
+
+    Ok(())
 }
 
 /// Handle `codemark repo list` - list all known repositories in the global registry.
