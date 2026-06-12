@@ -255,11 +255,12 @@ fn load_schemes(dir: Option<&std::path::Path>) -> BTreeMap<String, Base16Scheme>
 /// highlighted code preview: borders, titles, status icons, secondary text, etc.
 ///
 /// Field defaults reproduce the TUI's original hardcoded ANSI colors, so an
-/// unset or unknown theme renders exactly as before. [`Palette::from_theme`]
-/// overrides the *structural* roles with colors derived from the active syntect
-/// theme so the chrome matches the code preview. The *status* roles (success,
-/// warning, error, info) deliberately stay ANSI: they convey meaning (e.g.
-/// red = broken) that should remain legible regardless of theme aesthetics.
+/// unset theme renders exactly as before. [`Palette::from_theme`] derives the
+/// whole palette — structural *and* status roles — from a syntect theme by
+/// reading its global settings and a handful of conventional TextMate scopes,
+/// so a `.tmTheme` themes the entire chrome (a base16 scheme does the same, more
+/// precisely, via [`base16::Base16Scheme::palette`]). A role whose scope a theme
+/// doesn't define keeps its ANSI default.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Palette {
     /// Emphasized foreground text. Default: white.
@@ -302,22 +303,55 @@ impl Default for Palette {
 }
 
 impl Palette {
-    /// Derive a palette from a syntect theme. Structural roles (emphasis, dim,
-    /// accent) are taken from the theme; status roles keep their ANSI defaults.
+    /// Derive the full chrome palette from a syntect theme.
+    ///
+    /// Structural roles come from the global settings (`emphasis` from the
+    /// foreground, `gray` from a foreground/background blend) and conventional
+    /// scopes (`dim` from comments, `accent` from functions). Status roles map to
+    /// the scopes that carry each base16-style hue: `error` ← `invalid` (red),
+    /// `success` ← `string` (green), `warning` ← numeric constants (yellow/orange),
+    /// `marker` ← `keyword` (purple). `info` follows `accent` (both are the
+    /// "blue/function" role, matching the base16 mapping). Any role whose scope a
+    /// theme doesn't define keeps its ANSI default.
     pub fn from_theme(theme: &Theme) -> Self {
-        let highlighter = Highlighter::new(theme);
+        let hl = Highlighter::new(theme);
         let mut palette = Palette::default();
 
+        // Structural roles from the global settings.
         if let Some(c) = theme.settings.foreground.and_then(to_rgb) {
             palette.emphasis = c;
         }
-        if let Some(c) = scope_color(&highlighter, "comment") {
+        if let (Some(fg), Some(bg)) = (theme.settings.foreground, theme.settings.background) {
+            palette.gray = mix(fg, bg, 0.5);
+        }
+        if let Some(c) = theme.settings.background.and_then(to_rgb) {
+            palette.inverse = c;
+        }
+
+        // Roles from conventional TextMate scopes (first match wins).
+        if let Some(c) = first_scope_color(&hl, &["comment", "punctuation.definition.comment"]) {
             palette.dim = c;
         }
-        if let Some(c) = scope_color(&highlighter, "keyword")
-            .or_else(|| scope_color(&highlighter, "entity.name.function"))
+        if let Some(c) =
+            first_scope_color(&hl, &["entity.name.function", "support.function", "keyword"])
         {
             palette.accent = c;
+        }
+        palette.info = palette.accent;
+        if let Some(c) = first_scope_color(&hl, &["string", "string.quoted"]) {
+            palette.success = c;
+        }
+        if let Some(c) = first_scope_color(&hl, &["constant.numeric", "constant.other", "constant"])
+        {
+            palette.warning = c;
+        }
+        if let Some(c) = first_scope_color(&hl, &["invalid.illegal", "invalid"]) {
+            palette.error = c;
+        }
+        if let Some(c) =
+            first_scope_color(&hl, &["keyword", "storage.type", "storage.modifier"])
+        {
+            palette.marker = c;
         }
 
         palette
@@ -330,10 +364,23 @@ fn to_rgb(c: SyntectColor) -> Option<Color> {
     (c.a != 0).then_some(Color::Rgb(c.r, c.g, c.b))
 }
 
+/// Foreground color a theme assigns to the first of `scopes` it defines.
+fn first_scope_color(highlighter: &Highlighter, scopes: &[&str]) -> Option<Color> {
+    scopes.iter().find_map(|s| scope_color(highlighter, s))
+}
+
 /// Foreground color a theme assigns to a TextMate scope (e.g. "comment").
 fn scope_color(highlighter: &Highlighter, scope: &str) -> Option<Color> {
     let stack = ScopeStack::from_str(scope).ok()?;
     to_rgb(highlighter.style_for_stack(stack.as_slice()).foreground)
+}
+
+/// Linearly blend two syntect colors (`t` = 0.0 → `a`, 1.0 → `b`) into a ratatui
+/// RGB color. Used to synthesize a muted tone from a theme's foreground and
+/// background.
+fn mix(a: SyntectColor, b: SyntectColor, t: f32) -> Color {
+    let lerp = |x: u8, y: u8| (x as f32 * (1.0 - t) + y as f32 * t).round() as u8;
+    Color::Rgb(lerp(a.r, b.r), lerp(a.g, b.g), lerp(a.b, b.b))
 }
 
 /// Process-wide chrome palette. Set once from config via [`set_palette`];
@@ -426,15 +473,16 @@ mod tests {
     }
 
     #[test]
-    fn palette_from_theme_themes_structural_roles_only() {
+    fn palette_from_theme_themes_every_role() {
         let theme = default_theme();
         let p = Palette::from_theme(&theme);
-        // Structural roles are taken from the theme (RGB).
-        assert!(matches!(p.emphasis, Color::Rgb(..)));
-        assert!(matches!(p.dim, Color::Rgb(..)));
-        // Status roles keep their ANSI meaning.
-        assert_eq!(p.error, Color::Red);
-        assert_eq!(p.warning, Color::Yellow);
+        // Every role that has a reliable source (global settings or a near-
+        // universal scope) is now theme-derived rather than ANSI.
+        for role in [p.emphasis, p.dim, p.gray, p.accent, p.info, p.success, p.inverse] {
+            assert!(matches!(role, Color::Rgb(..)), "expected themed RGB, got {role:?}");
+        }
+        // info mirrors accent (both are the base16 "blue/function" role).
+        assert_eq!(p.info, p.accent);
     }
 
     #[test]
@@ -453,9 +501,9 @@ mod tests {
         let registry = registry_with_no_user_dir();
         let (theme, palette) = registry.resolve_full("Dracula");
         assert_eq!(theme.name.as_deref(), Some("Dracula"));
-        // tmTheme path: status roles stay ANSI, structural roles are themed.
-        assert_eq!(palette.error, Color::Red);
+        // tmTheme path: the palette is derived from the theme (RGB), not ANSI.
         assert!(matches!(palette.emphasis, Color::Rgb(..)));
+        assert!(matches!(palette.success, Color::Rgb(..)));
     }
 
     #[test]
