@@ -518,8 +518,7 @@ pub fn reconcile_repo(conn: &Connection, repo: &RepoUpsert<'_>) -> Result<()> {
     // Identify a single unambiguous moved-from predecessor to inherit config from.
     let predecessor = find_move_predecessor(conn, repo)?;
     let inherited_server_url = predecessor.as_ref().and_then(|p| p.server_url.clone());
-    let inherited_default_username =
-        predecessor.as_ref().and_then(|p| p.default_username.clone());
+    let inherited_default_username = predecessor.as_ref().and_then(|p| p.default_username.clone());
     if let Some(p) = &predecessor {
         conn.execute("DELETE FROM known_repos WHERE id = ?1", params![p.id])?;
     }
@@ -537,8 +536,7 @@ pub fn reconcile_repo(conn: &Connection, repo: &RepoUpsert<'_>) -> Result<()> {
     )?;
 
     let server_url = repo.server_url.map(str::to_string).or(inherited_server_url);
-    let default_username =
-        repo.default_username.map(str::to_string).or(inherited_default_username);
+    let default_username = repo.default_username.map(str::to_string).or(inherited_default_username);
 
     conn.execute(
         "INSERT INTO known_repos (id, repo_owner, repo_name, origin_url, repo_root, db_owner_email, db_owner_name, detected_at, last_seen_at, server_url, default_username)
@@ -578,10 +576,7 @@ pub fn reconcile_repo(conn: &Connection, repo: &RepoUpsert<'_>) -> Result<()> {
 /// one such candidate; zero or multiple candidates are ambiguous and yield `None` (the
 /// caller then just registers the current path rather than guessing). Local-only repos
 /// (no `origin_url`) are never reconciled this way.
-fn find_move_predecessor(
-    conn: &Connection,
-    repo: &RepoUpsert<'_>,
-) -> Result<Option<KnownRepo>> {
+fn find_move_predecessor(conn: &Connection, repo: &RepoUpsert<'_>) -> Result<Option<KnownRepo>> {
     if repo.origin_url.is_none() {
         return Ok(None);
     }
