@@ -7,11 +7,18 @@ members = [
 ]
 resolver = "2"
 
+# `release` stays fast for day-to-day `cargo build/install --release`.
 [profile.release]
-strip = true         # remove symbols: ~32M -> ~10M
+strip = true         # cheap; remove symbols
+opt-level = "z"      # optimize for size
+
+# `dist` is the size-optimized profile used for published binaries. The
+# expensive settings (lto + single codegen unit) live here so they don't slow
+# down ordinary development builds. Build with: cargo build --profile dist
+[profile.dist]
+inherits = "release"
 lto = true           # cross-crate inlining + dead-code elimination
 codegen-units = 1    # better optimization, smaller output
-opt-level = "z"      # optimize for size
 panic = "abort"      # drop unwinding tables
 
 [workspace.dependencies]
