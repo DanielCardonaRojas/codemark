@@ -50,6 +50,31 @@ pub fn default_theme() -> Theme {
     HighlightingAssets::from_binary().get_theme(FALLBACK_THEME).clone()
 }
 
+/// Materialize the embedded extra themes ([`EMBEDDED_THEMES`]) into [`themes_dir`]
+/// so users have real `.tmTheme` files to copy or tweak, mirroring
+/// `ensure_default_template_exists` in `codemark-core`.
+///
+/// Best-effort: existing files are left untouched and any failure is logged
+/// rather than propagated. No-op while [`EMBEDDED_THEMES`] is empty.
+pub fn ensure_default_themes_exist() {
+    if EMBEDDED_THEMES.is_empty() {
+        return;
+    }
+    let Some(dir) = themes_dir() else { return };
+    if let Err(e) = std::fs::create_dir_all(&dir) {
+        tracing::warn!("failed to create themes dir {}: {e}", dir.display());
+        return;
+    }
+    for (name, bytes) in EMBEDDED_THEMES {
+        let path = dir.join(format!("{name}.tmTheme"));
+        if !path.exists()
+            && let Err(e) = std::fs::write(&path, bytes)
+        {
+            tracing::warn!("failed to write default theme {}: {e}", path.display());
+        }
+    }
+}
+
 /// Resolves `.tmTheme` themes across the user directory, embedded extras, and
 /// `syntect-assets`, with a guaranteed fallback.
 ///

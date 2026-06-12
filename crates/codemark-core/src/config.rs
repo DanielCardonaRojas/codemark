@@ -104,6 +104,20 @@ pub struct Config {
     pub codetours: CodetoursConfig,
     #[serde(default)]
     pub publish: PublishConfig,
+    #[serde(default)]
+    pub tui: TuiConfig,
+}
+
+/// Terminal UI configuration.
+#[derive(Debug, Default, Deserialize, Serialize)]
+#[serde(default)]
+pub struct TuiConfig {
+    /// Name of the syntax-highlighting theme for the TUI code preview.
+    ///
+    /// Resolved against bundled themes and user `.tmTheme` files in
+    /// `~/.config/codemark/themes`. When unset, the TUI uses its built-in
+    /// fallback theme.
+    pub theme: Option<String>,
 }
 
 /// Publishing configuration.
@@ -650,6 +664,11 @@ impl Config {
                 self.codetours.servers.push(server.clone());
             }
         }
+
+        // TUI config - override only if explicitly set in local
+        if other.tui.theme.is_some() {
+            self.tui.theme = other.tui.theme;
+        }
     }
 
     /// Write the default config file to the global config directory.
@@ -738,6 +757,37 @@ auto_archive_after_days = 14
     fn load_missing_file_returns_defaults() {
         let config = Config::load(Path::new("/nonexistent/path"));
         assert_eq!(config.storage.max_resolutions(), 20);
+    }
+
+    #[test]
+    fn tui_theme_defaults_to_none() {
+        assert_eq!(Config::default().tui.theme, None);
+    }
+
+    #[test]
+    fn parse_tui_theme() {
+        let toml = r#"
+[tui]
+theme = "Dracula"
+"#;
+        let config: Config = toml::from_str(toml).unwrap();
+        assert_eq!(config.tui.theme.as_deref(), Some("Dracula"));
+    }
+
+    #[test]
+    fn merge_overrides_tui_theme() {
+        let mut global: Config = toml::from_str("[tui]\ntheme = \"Nord\"\n").unwrap();
+        let local: Config = toml::from_str("[tui]\ntheme = \"Dracula\"\n").unwrap();
+        global.merge(local);
+        assert_eq!(global.tui.theme.as_deref(), Some("Dracula"));
+    }
+
+    #[test]
+    fn merge_preserves_tui_theme_when_local_unset() {
+        let mut global: Config = toml::from_str("[tui]\ntheme = \"Nord\"\n").unwrap();
+        let local = Config::default();
+        global.merge(local);
+        assert_eq!(global.tui.theme.as_deref(), Some("Nord"));
     }
 
     #[test]

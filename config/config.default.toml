@@ -118,3 +118,17 @@ enabled = true
 # Force a specific identity string (overrides both email and name).
 # force = "custom-identity"
 
+
+[tui]
+# Syntax-highlighting theme for the TUI code preview.
+#
+# Bundled theme names include (case-sensitive):
+#   OneHalfDark (default), OneHalfLight, Dracula, Nord, TwoDark,
+#   gruvbox-dark, gruvbox-light, Solarized (dark), Solarized (light),
+#   Monokai Extended, GitHub, Visual Studio Dark+, zenburn, ansi, base16
+#
+# You can also drop your own `.tmTheme` files into
+#   ~/.config/codemark/themes/
+# and reference them here by file name (without the `.tmTheme` extension).
+# A user theme that shares a bundled name takes precedence.
+# theme = "Dracula"
