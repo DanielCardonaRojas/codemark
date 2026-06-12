@@ -12,7 +12,104 @@ pub async fn handle_repo(cli: &Cli, mode: &OutputMode, args: &RepoArgs) -> Resul
         RepoCommand::List => handle_repo_list(mode),
         RepoCommand::ShowRepo(args) => handle_repo_show(cli, mode, args),
         RepoCommand::SetServer(args) => handle_repo_set_server(cli, mode, args),
+        RepoCommand::Sync => handle_repo_sync(cli, mode),
+        RepoCommand::Prune(args) => handle_repo_prune(mode, args),
     }
+}
+
+/// Handle `codemark repo sync` - reconcile the current repository's path in the registry.
+///
+/// Intended to be run from the repository's new location after it has been moved on
+/// disk. It refreshes the local repos table and reconciles the global registry (keyed
+/// on `repo_root` and, for repos with an origin, matched by `(repo_owner, repo_name)`
+/// plus `origin_url`), so a moved or not-yet-registered repo is recorded at its current
+/// path without recreating .codemark/.
+fn handle_repo_sync(cli: &Cli, mode: &OutputMode) -> Result<()> {
+    let db = super::open_db(cli)?;
+    let config = super::load_config(cli);
+    let (db_owner_email, db_owner_name) = super::resolve_identity(&config);
+
+    // The path the registry row should end up at after the sync. Captured before the
+    // sync so the success check below can require the row to actually point here.
+    let cwd = std::env::current_dir()?;
+    let expected_root = codemark_core::git::context::detect_context(&cwd).map(|ctx| ctx.repo_root);
+
+    let repo_id = super::resolve_or_create_repo_metadata(
+        &db,
+        &config,
+        &db_owner_email,
+        db_owner_name.as_deref(),
+    )?
+    .ok_or_else(|| Error::Input("Not in a git repository".into()))?;
+
+    let conn = registry::open_registry()?;
+    // The registry write happens via the (intentionally non-fatal) sync inside
+    // resolve_or_create_repo_metadata. Confirm the row actually landed at the current
+    // path before reporting success — `repo sync` is run precisely when the registry is
+    // broken. Requiring the path (not just the id) guards against a silently-failed
+    // write where a stale row sharing this local id still points at the old location.
+    let repo = registry::list_repos(&conn)?
+        .into_iter()
+        .find(|r| r.id == repo_id && expected_root.as_ref().is_none_or(|er| &r.repo_root == er))
+        .ok_or_else(|| {
+            Error::Operation("Failed to write repository to the global registry".into())
+        })?;
+
+    match mode {
+        OutputMode::Json => {
+            write_json_success(&serde_json::json!({ "synced": true, "repo": repo }))?;
+        }
+        _ => {
+            println!("Synced repository to registry:");
+            println!("  {}/{}", repo.repo_owner, repo.repo_name);
+            println!("  Root: {}", repo.repo_root.display());
+        }
+    }
+
+    Ok(())
+}
+
+/// Handle `codemark repo prune` - remove registry entries whose path no longer exists.
+fn handle_repo_prune(mode: &OutputMode, args: &RepoPruneArgs) -> Result<()> {
+    let conn = registry::open_registry()?;
+
+    let removed = if args.dry_run {
+        registry::find_stale_repos(&conn)?
+    } else {
+        registry::prune_repos(&conn)?
+    };
+
+    match mode {
+        OutputMode::Json => {
+            write_json_success(&serde_json::json!({
+                "dry_run": args.dry_run,
+                "removed": removed,
+            }))?;
+        }
+        _ => {
+            if removed.is_empty() {
+                println!("No stale repositories to prune.");
+            } else {
+                let verb = if args.dry_run { "Would remove" } else { "Removed" };
+                println!(
+                    "{} {} stale repositor{}:",
+                    verb,
+                    removed.len(),
+                    if removed.len() == 1 { "y" } else { "ies" }
+                );
+                for repo in &removed {
+                    println!(
+                        "  {}/{} — {}",
+                        repo.repo_owner,
+                        repo.repo_name,
+                        repo.repo_root.display()
+                    );
+                }
+            }
+        }
+    }
+
+    Ok(())
 }
 
 /// Handle `codemark repo list` - list all known repositories in the global registry.

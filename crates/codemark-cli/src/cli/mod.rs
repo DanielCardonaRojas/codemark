@@ -1164,6 +1164,22 @@ pub enum RepoCommand {
     /// Set the server URL for a repository
     #[command(name = "set-server")]
     SetServer(RepoSetServerArgs),
+
+    /// Reconcile the current repository's path in the global registry.
+    ///
+    /// Run this from the repository's new location after moving it on disk to update
+    /// the registry without recreating .codemark/.
+    Sync,
+
+    /// Remove registry entries whose repo_root no longer exists on disk
+    Prune(RepoPruneArgs),
+}
+
+#[derive(Debug, clap::Args)]
+pub struct RepoPruneArgs {
+    /// Show what would be removed without modifying the registry
+    #[arg(long)]
+    pub dry_run: bool,
 }
 
 #[derive(Debug, clap::Args)]
