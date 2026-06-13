@@ -179,20 +179,28 @@ pub async fn list_remote_tours(opts: ListRemoteToursOptions) -> Result<Vec<Remot
     let headers = build_auth_headers(opts.token.as_ref())?;
 
     let url = format!("{}/tours", opts.server_url);
-    tracing::debug!(target: "codemark::http", url = %url, "GET /tours");
 
-    let mut request = client.get(&url).headers(headers);
+    // Collect query params up front so the request URL — including the repo
+    // scope — can be logged (the request builder doesn't expose them afterward).
+    let mut query: Vec<(&str, String)> = Vec::new();
     if let Some(ref repo_url) = opts.repo_url {
         // Parse into owner/repo to avoid URL format mismatch (SSH vs HTTPS)
         if let Some((owner, repo)) = crate::git::remote::parse_remote_url(repo_url) {
-            request = request.query(&[("repo_owner", owner), ("repo_name", repo)]);
+            query.push(("repo_owner", owner));
+            query.push(("repo_name", repo));
         } else {
             // Fallback to raw repo_url if parsing fails
-            request = request.query(&[("repo_url", repo_url.to_string())]);
+            query.push(("repo_url", repo_url.to_string()));
         }
     }
 
-    let response = request
+    let full_url = reqwest::Url::parse_with_params(&url, &query)
+        .map_err(|e| Error::Operation(format!("invalid tours URL {url}: {e}")))?;
+    tracing::debug!(target: "codemark::http", url = %full_url, "GET /tours");
+
+    let response = client
+        .get(full_url)
+        .headers(headers)
         .send()
         .await
         .map_err(|e| Error::Operation(format!("failed to list remote tours: {e}")))?;
