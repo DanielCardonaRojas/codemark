@@ -383,57 +383,59 @@ pub async fn handler(
             }
         };
 
-        // Verify write access using GitHubVerifier
-        let verifier = crate::github::GitHubVerifier::new();
-        let has_write_access = match verifier.verify_write_access(&state, repo_url, user_id).await {
-            Ok(true) => true,
-            Ok(false) => {
-                tracing::warn!(
-                    user_id = %user_id,
-                    repo_url = %repo_url,
-                    "Write access denied for user"
-                );
-                let _ = fs::remove_file(&temp_path).await;
-                return (
-                    StatusCode::FORBIDDEN,
-                    Json(ErrorResponse {
-                        error: "forbidden".to_string(),
-                        reason: Some("You do not have write access to this repository".to_string()),
-                        request_id: Some(request_id),
-                    }),
-                )
-                    .into_response();
-            }
-            Err(crate::github::GitHubVerifyError::NoGitHubToken) => {
-                tracing::warn!(
-                    user_id = %user_id,
-                    "Write access check failed: no GitHub token linked"
-                );
-                let _ = fs::remove_file(&temp_path).await;
-                return (
-                    StatusCode::UNAUTHORIZED,
-                    Json(ErrorResponse {
-                        error: "unauthorized".to_string(),
-                        reason: Some("GitHub account must be linked to publish".to_string()),
-                        request_id: Some(request_id),
-                    }),
-                )
-                    .into_response();
-            }
-            Err(e) => {
-                tracing::error!("Failed to verify write access: {}", e);
-                let _ = fs::remove_file(&temp_path).await;
-                return (
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    Json(ErrorResponse {
-                        error: "internal".to_string(),
-                        reason: Some("Failed to verify repository access".to_string()),
-                        request_id: Some(request_id),
-                    }),
-                )
-                    .into_response();
-            }
-        };
+        // Verify write access using the shared GitHubVerifier
+        let has_write_access =
+            match state.github.verify_write_access(&state, repo_url, user_id).await {
+                Ok(true) => true,
+                Ok(false) => {
+                    tracing::warn!(
+                        user_id = %user_id,
+                        repo_url = %repo_url,
+                        "Write access denied for user"
+                    );
+                    let _ = fs::remove_file(&temp_path).await;
+                    return (
+                        StatusCode::FORBIDDEN,
+                        Json(ErrorResponse {
+                            error: "forbidden".to_string(),
+                            reason: Some(
+                                "You do not have write access to this repository".to_string(),
+                            ),
+                            request_id: Some(request_id),
+                        }),
+                    )
+                        .into_response();
+                }
+                Err(crate::github::GitHubVerifyError::NoGitHubToken) => {
+                    tracing::warn!(
+                        user_id = %user_id,
+                        "Write access check failed: no GitHub token linked"
+                    );
+                    let _ = fs::remove_file(&temp_path).await;
+                    return (
+                        StatusCode::UNAUTHORIZED,
+                        Json(ErrorResponse {
+                            error: "unauthorized".to_string(),
+                            reason: Some("GitHub account must be linked to publish".to_string()),
+                            request_id: Some(request_id),
+                        }),
+                    )
+                        .into_response();
+                }
+                Err(e) => {
+                    tracing::error!("Failed to verify write access: {}", e);
+                    let _ = fs::remove_file(&temp_path).await;
+                    return (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(ErrorResponse {
+                            error: "internal".to_string(),
+                            reason: Some("Failed to verify repository access".to_string()),
+                            request_id: Some(request_id),
+                        }),
+                    )
+                        .into_response();
+                }
+            };
 
         tracing::info!(
             user_id = %user_id,

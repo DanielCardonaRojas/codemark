@@ -1,4 +1,5 @@
 use crate::config::Config;
+use crate::github::GitHubVerifier;
 use crate::handlers::{self, auth, tours};
 use crate::observability::request_id_middleware;
 use crate::storage::{StorageManager, registry::RegistryManager};
@@ -15,6 +16,9 @@ pub struct AppState {
     pub config: Arc<Config>,
     pub storage: Arc<StorageManager>,
     pub registry: Arc<RegistryManager>,
+    /// Shared GitHub access verifier. Shared (not per-request) so its
+    /// `(user,repo)` / public-repo caches actually persist across requests.
+    pub github: Arc<GitHubVerifier>,
 }
 
 impl AppState {
@@ -25,6 +29,7 @@ impl AppState {
             config: Arc::new(config),
             storage: Arc::new(storage),
             registry: Arc::new(registry),
+            github: Arc::new(GitHubVerifier::new()),
         })
     }
 }

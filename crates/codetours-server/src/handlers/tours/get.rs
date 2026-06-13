@@ -5,12 +5,52 @@ use axum::{
     response::IntoResponse,
 };
 use codemark_core::engine::breadcrumbs::Breadcrumb;
+use rusqlite::OptionalExtension;
 use serde::{Deserialize, Serialize};
 use tokio::fs;
 
 use crate::auth::AuthContext;
 use crate::pack_cache::PackCache;
 use crate::router::AppState;
+
+/// Decide whether `auth` may access a tour with the given `visibility` and
+/// `repo_url`.
+///
+/// - `public` tours are accessible to everyone.
+/// - `private` tours require an authenticated caller with **verified GitHub read
+///   access** to the tour's repo (the same per-`(user,repo)` check as discovery).
+///   Anonymous callers, callers without a token, a missing `repo_url`, or any
+///   verification error all fail closed — the caller simply gets a `404` (no
+///   existence leak, no 403).
+async fn can_access(
+    state: &AppState,
+    auth: &AuthContext,
+    visibility: Option<&str>,
+    repo_url: Option<&str>,
+) -> bool {
+    match visibility {
+        Some("public") => true,
+        Some("private") => {
+            let Some(user_id) = auth.user_id() else {
+                return false;
+            };
+            let Some(repo_url) = repo_url else {
+                // Private tour with no repo to verify against: no one can prove
+                // access, so deny.
+                return false;
+            };
+            match state.github.verify_access(state, repo_url, user_id).await {
+                Ok(has_access) => has_access,
+                Err(e) => {
+                    tracing::warn!(error = %e, "Read-access check failed for private tour; denying");
+                    false
+                }
+            }
+        }
+        // NULL/unknown visibility (not published) or anything else: deny.
+        _ => false,
+    }
+}
 
 /// Query parameters for fetching a tour.
 #[derive(Debug, Deserialize)]
@@ -80,7 +120,6 @@ pub async fn handler(
         // Check visibility/auth before serving the pack
         let storage = state.storage.clone();
         let id_clone = id.clone();
-        let is_auth = auth.is_authenticated();
 
         let conn = match storage.get_conn().await {
             Ok(c) => c,
@@ -90,23 +129,28 @@ pub async fn handler(
             }
         };
 
-        let allowed = conn
+        // Fetch the tour's visibility + repo so we can apply the access decision.
+        let meta = conn
             .interact(move |conn| {
-                let sql = if is_auth {
-                    "SELECT EXISTS(SELECT 1 FROM collections WHERE id = ?1 AND visibility IS NOT NULL)"
-                } else {
-                    "SELECT EXISTS(SELECT 1 FROM collections WHERE id = ?1 AND visibility = 'public')"
-                };
-                conn.query_row(sql, [&id_clone], |row| row.get::<_, bool>(0))
+                conn.query_row(
+                    "SELECT visibility, repo_url FROM collections WHERE id = ?1",
+                    [&id_clone],
+                    |row| Ok((row.get::<_, Option<String>>(0)?, row.get::<_, Option<String>>(1)?)),
+                )
+                .optional()
             })
             .await;
 
-        let allowed = match allowed {
-            Ok(Ok(allowed)) => allowed,
+        let meta = match meta {
+            Ok(Ok(m)) => m,
             _ => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
         };
 
-        if !allowed {
+        let Some((visibility, repo_url)) = meta else {
+            return StatusCode::NOT_FOUND.into_response();
+        };
+
+        if !can_access(&state, &auth, visibility.as_deref(), repo_url.as_deref()).await {
             return StatusCode::NOT_FOUND.into_response();
         }
 
@@ -133,7 +177,6 @@ pub async fn handler(
 
     // JSON response
     let storage = state.storage.clone();
-    let is_auth = auth.is_authenticated();
 
     let conn = match storage.get_conn().await {
         Ok(c) => c,
@@ -143,16 +186,38 @@ pub async fn handler(
         }
     };
 
+    // Access gate: fetch visibility + repo, then apply the access decision before
+    // returning any tour content.
+    let id_for_meta = id.clone();
+    let meta = conn
+        .interact(move |conn| {
+            conn.query_row(
+                "SELECT visibility, repo_url FROM collections WHERE id = ?1",
+                [&id_for_meta],
+                |row| Ok((row.get::<_, Option<String>>(0)?, row.get::<_, Option<String>>(1)?)),
+            )
+            .optional()
+        })
+        .await;
+
+    let meta = match meta {
+        Ok(Ok(m)) => m,
+        _ => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    };
+
+    let Some((visibility, repo_url)) = meta else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+
+    if !can_access(&state, &auth, visibility.as_deref(), repo_url.as_deref()).await {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+
     let result = conn
         .interact(move |conn| {
-            // 1. Get collection
-            let sql = if is_auth {
-                "SELECT id, name, description, repo_url, published_at FROM collections 
-             WHERE id = ?1 AND visibility IS NOT NULL"
-            } else {
-                "SELECT id, name, description, repo_url, published_at FROM collections 
-             WHERE id = ?1 AND visibility = 'public'"
-            };
+            // 1. Get collection (access already verified above).
+            let sql = "SELECT id, name, description, repo_url, published_at FROM collections
+             WHERE id = ?1";
 
             let tour: TourDetail = conn
                 .query_row(sql, [&id], |row| {

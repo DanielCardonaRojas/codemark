@@ -10,11 +10,21 @@ pub async fn handle_pull(cli: &Cli, mode: &OutputMode, args: &PullArgs) -> Resul
     // 1. Resolve server and token
     let (server_url, token, mut collection_id) = resolve_pull_params(cli, args)?;
 
-    // 2. Short ID resolution
+    // 2. Short ID resolution.
+    // `GET /tours` is an authorization-scoped lookup, so resolving a short id by
+    // prefix requires naming the repo. Detect the current repo to scope it.
     if uuid::Uuid::parse_str(&collection_id).is_err() {
+        let repos = detect_current_repo().ok_or_else(|| {
+            Error::Input(
+                "resolving a short tour ID requires a repository scope; \
+                 use the full tour ID or URL, or run inside the repository"
+                    .to_string(),
+            )
+        })?;
         let client = build_sync_http_client()?;
         let response: reqwest::Response = client
             .get(format!("{}/tours", server_url))
+            .query(&[("repos", repos.as_str())])
             .send()
             .await
             .map_err(|e| Error::Operation(format!("failed to query tours list: {e}")))?;
@@ -82,6 +92,18 @@ pub async fn handle_pull(cli: &Cli, mode: &OutputMode, args: &PullArgs) -> Resul
     crate::cli::output::write_success(mode, "Collection imported successfully")?;
 
     Ok(())
+}
+
+/// Detect the current Git repository as `owner/name`, for scoping a short-id
+/// lookup against the authorization-scoped `GET /tours`. Returns `None` if no
+/// GitHub repo can be determined (fail-soft).
+fn detect_current_repo() -> Option<String> {
+    use codemark_core::git::{context as git_context, remote};
+    let cwd = std::env::current_dir().ok()?;
+    let ctx = git_context::detect_context(&cwd)?;
+    let origin_url = remote::get_origin_url(&ctx.repo_root).ok()?;
+    let (owner, name) = remote::parse_remote_url(&origin_url)?;
+    Some(format!("{}/{}", owner, name))
 }
 
 fn resolve_pull_params(cli: &Cli, args: &PullArgs) -> Result<(String, Option<String>, String)> {

@@ -23,6 +23,7 @@ async fn setup_app() -> (axum::Router, tempfile::TempDir) {
         config: Arc::new(config),
         storage: Arc::new(storage),
         registry: Arc::new(registry),
+        github: Arc::new(codetours_server::github::GitHubVerifier::new()),
     };
     (router(state), temp_data)
 }
