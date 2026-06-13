@@ -96,8 +96,8 @@ impl BrowserLayout {
                 self.schedule_clear_spinners();
                 Some(true)
             }
-            Event::RemoteToursLoaded(tours, repo_url) => {
-                if *repo_url != self.pending_remote_repo_url {
+            Event::RemoteToursLoaded(tours, scope) => {
+                if *scope != self.pending_remote_repos {
                     return Some(true);
                 }
                 self.cached_remote_tours = tours.clone();
