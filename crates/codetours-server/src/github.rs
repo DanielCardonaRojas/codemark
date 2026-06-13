@@ -211,6 +211,7 @@ impl GitHubVerifier {
         );
 
         tracing::info!(
+            target: "codemark::auth",
             user_id = %user_id_from_db,
             repo_url = %repo_url,
             has_access = %has_access,
@@ -218,6 +219,97 @@ impl GitHubVerifier {
         );
 
         Ok(has_access)
+    }
+
+    /// Verify that a repository is **public**, using an unauthenticated
+    /// `GET /repos/{owner}/{repo}` call.
+    ///
+    /// This is the shared repo-visibility check from the abuse-protection model:
+    /// public repo metadata is anonymously readable, so a `200` means the repo is
+    /// public; a `404` (what GitHub returns for private/nonexistent repos to an
+    /// unauthenticated caller) means it is not visible. No user token is used, so
+    /// the result is cached per `(owner, repo)` and shared across all anonymous
+    /// callers.
+    ///
+    /// Returns `Ok(true)` if the repo is public, `Ok(false)` otherwise. On a
+    /// network/transport error it fails closed (`Ok(false)`): we never reveal a
+    /// repo we could not confirm is public.
+    ///
+    /// Only **authoritative** answers are cached — `200` (public) and `404`
+    /// (private/nonexistent). Transient responses (rate-limit `429`, `5xx`) and
+    /// transport errors fail closed for the current request but are **not**
+    /// cached, so a blip doesn't hide a genuinely-public repo's tours for the
+    /// whole TTL; the next request retries.
+    pub async fn verify_public_repo(&self, owner: &str, repo: &str) -> VerifyResult<bool> {
+        // Cache key namespaced so it can't collide with per-user access entries.
+        let cache_key = format!("anon:public:{}", owner);
+        {
+            let cache = self.cache.read().await;
+            if let Some(entry) = cache.get(&(cache_key.clone(), repo.to_string()))
+                && entry.expires_at > chrono::Utc::now()
+            {
+                return Ok(entry.has_access);
+            }
+        }
+
+        let client = reqwest::Client::new();
+        let api_url = format!("https://api.github.com/repos/{}/{}", owner, repo);
+
+        // (is_public, authoritative): only authoritative results are cached.
+        let (is_public, authoritative) = match client
+            .get(&api_url)
+            .header("User-Agent", "codetours-server")
+            .header("Accept", "application/vnd.github+json")
+            .send()
+            .await
+        {
+            Ok(resp) => {
+                let status = resp.status();
+                if status.is_success() {
+                    (true, true)
+                } else if status == reqwest::StatusCode::NOT_FOUND {
+                    (false, true)
+                } else {
+                    // 429 / 5xx / etc.: non-authoritative. Fail closed, don't cache.
+                    tracing::warn!(
+                        target: "codemark::auth",
+                        owner = %owner,
+                        repo = %repo,
+                        status = %status,
+                        "Public-repo check got a non-authoritative status; not caching"
+                    );
+                    (false, false)
+                }
+            }
+            Err(e) => {
+                // Fail closed: an unreachable GitHub must not expose a repo, and
+                // must not poison the cache with a transient failure.
+                tracing::warn!(
+                    target: "codemark::auth",
+                    owner = %owner,
+                    repo = %repo,
+                    error = %e,
+                    "Public-repo visibility check failed; treating repo as not public"
+                );
+                (false, false)
+            }
+        };
+
+        if authoritative {
+            let mut cache = self.cache.write().await;
+            cache.insert(
+                (cache_key, repo.to_string()),
+                CacheEntry {
+                    has_access: is_public,
+                    expires_at: chrono::Utc::now()
+                        + chrono::Duration::seconds(self.cache_ttl_seconds),
+                },
+            );
+        }
+
+        tracing::debug!(target: "codemark::auth", owner = %owner, repo = %repo, is_public, "Public-repo visibility check completed");
+
+        Ok(is_public)
     }
 
     /// Verify that the user has write access (push or admin) to the repository.
@@ -318,6 +410,7 @@ impl GitHubVerifier {
         );
 
         tracing::info!(
+            target: "codemark::auth",
             user_id = %user_id_for_log,
             repo_url = %repo_url,
             has_write_access = %has_write,
@@ -325,6 +418,60 @@ impl GitHubVerifier {
         );
 
         Ok(has_write)
+    }
+
+    /// Seed the public-repo visibility cache with a known result.
+    ///
+    /// Primarily for tests and offline/dev setups: lets callers avoid a live
+    /// GitHub call by pre-populating the same cache entry `verify_public_repo`
+    /// reads. The entry uses the configured TTL.
+    pub async fn seed_public_repo(&self, owner: &str, repo: &str, is_public: bool) {
+        let cache_key = format!("anon:public:{}", owner);
+        let mut cache = self.cache.write().await;
+        cache.insert(
+            (cache_key, repo.to_string()),
+            CacheEntry {
+                has_access: is_public,
+                expires_at: chrono::Utc::now() + chrono::Duration::seconds(self.cache_ttl_seconds),
+            },
+        );
+    }
+
+    /// Seed the per-`(user, repo)` read-access cache with a known result.
+    ///
+    /// Companion to [`Self::seed_public_repo`] for the authenticated path: lets
+    /// tests pre-populate the same entry `verify_access` reads.
+    pub async fn seed_read_access(&self, user_id: &str, owner: &str, repo: &str, has_access: bool) {
+        let cache_key = format!("{}:{}:read", user_id, owner);
+        let mut cache = self.cache.write().await;
+        cache.insert(
+            (cache_key, repo.to_string()),
+            CacheEntry {
+                has_access,
+                expires_at: chrono::Utc::now() + chrono::Duration::seconds(self.cache_ttl_seconds),
+            },
+        );
+    }
+
+    /// Seed the per-`(user, repo)` write-access cache with a known result.
+    ///
+    /// Companion to [`Self::seed_read_access`] for the publish path.
+    pub async fn seed_write_access(
+        &self,
+        user_id: &str,
+        owner: &str,
+        repo: &str,
+        has_access: bool,
+    ) {
+        let cache_key = format!("{}:{}:write", user_id, owner);
+        let mut cache = self.cache.write().await;
+        cache.insert(
+            (cache_key, repo.to_string()),
+            CacheEntry {
+                has_access,
+                expires_at: chrono::Utc::now() + chrono::Duration::seconds(self.cache_ttl_seconds),
+            },
+        );
     }
 
     /// Clear expired cache entries.

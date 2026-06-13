@@ -134,8 +134,9 @@ pub struct BrowserLayout {
     tick_count: usize,
     /// Last-fetched remote tours (cached to avoid re-fetching after pull)
     cached_remote_tours: Vec<codemark_core::sync::RemoteTourSummary>,
-    /// Repo URL used for the in-flight remote tours fetch (guards against stale responses)
-    pending_remote_repo_url: Option<String>,
+    /// Repos scope (comma-joined `owner/name`) used for the in-flight remote
+    /// tours fetch — guards against applying a stale response after the scope changes.
+    pending_remote_repos: Option<String>,
     /// Session-level parse cache for live resolution, keyed by language.
     /// Each `ParseCache` is single-language (parser locked at creation).
     session_cache: HashMap<CodemarkLanguage, ParseCache>,
@@ -179,7 +180,7 @@ impl BrowserLayout {
             spinner_clear_at: None,
             tick_count: 0,
             cached_remote_tours: Vec::new(),
-            pending_remote_repo_url: None,
+            pending_remote_repos: None,
             session_cache: HashMap::new(),
         };
         layout.update_focus_state();
@@ -605,7 +606,6 @@ impl BrowserLayout {
         };
 
         let config = Config::load_layered(&codemark_dir);
-        let project_root = codemark_dir.parent().unwrap_or(&codemark_dir).to_path_buf();
 
         let (server_url, token) = match codemark_core::sync::resolve_server_and_token(&config) {
             Ok(result) => result,
@@ -616,20 +616,45 @@ impl BrowserLayout {
             }
         };
 
-        // Get repo origin URL for filtering
-        let repo_url = codemark_core::git::remote::get_origin_url(&project_root).ok();
+        // Build the repo scope from the repos *selected* (active) in the Repos
+        // panel (Panel1 tab 0) — not every repo in the registry. Each item carries
+        // the owner (secondary text) and name (primary text). `GET /tours` is an
+        // authorization-scoped lookup, so we name the selected repos in one
+        // `repos=a/b,c/d` request rather than one request per repo.
+        let mut repos: Vec<String> = Vec::new();
+        if let Some(TabContent::List(panel)) = self.left_pane.panel1.panels.first() {
+            for item in panel.all_items().iter().filter(|i| i.is_active()) {
+                if let Some(owner) = item.get_secondary_text() {
+                    repos.push(format!("{}/{}", owner, item.text()));
+                }
+            }
+        }
+        // Dedupe (case-insensitively, matching the server) and cap at the server's
+        // per-query limit so one fetch can't exceed it.
+        repos.sort_by_key(|r| r.to_lowercase());
+        repos.dedup_by_key(|r| r.to_lowercase());
+        const MAX_REPOS: usize = 50;
+        repos.truncate(MAX_REPOS);
 
-        // Record the repo identity so we can discard stale responses if the user switches repos
-        self.pending_remote_repo_url = repo_url.clone();
+        if repos.is_empty() {
+            // No repos to scope to — nothing to fetch (avoids a guaranteed 400).
+            self.pending_remote_repos = None;
+            self.cached_remote_tours.clear();
+            self.rebuild_tours_panel();
+            return;
+        }
+
+        // Record the scope so we can discard stale responses if it changes later.
+        let scope = repos.join(",");
+        self.pending_remote_repos = Some(scope.clone());
 
         // Spawn background task to fetch tours
-        let request_repo_url = repo_url.clone();
         tokio::spawn(async move {
-            let opts = codemark_core::sync::ListRemoteToursOptions { server_url, token, repo_url };
+            let opts = codemark_core::sync::ListRemoteToursOptions { server_url, token, repos };
 
             match codemark_core::sync::list_remote_tours(opts).await {
                 Ok(tours) => {
-                    let _ = event_handler.send(Event::RemoteToursLoaded(tours, request_repo_url));
+                    let _ = event_handler.send(Event::RemoteToursLoaded(tours, Some(scope)));
                 }
                 Err(e) => {
                     let _ = event_handler.send(Event::RemoteToursFetchError(e.to_string()));

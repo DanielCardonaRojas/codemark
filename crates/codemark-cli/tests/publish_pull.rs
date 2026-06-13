@@ -22,6 +22,7 @@ async fn start_test_server(data_dir: std::path::PathBuf) -> (String, tokio::task
         config: Arc::new(config),
         storage: Arc::new(storage),
         registry: Arc::new(registry),
+        github: Arc::new(codetours_server::github::GitHubVerifier::new()),
     };
 
     let app = router(state);
@@ -128,8 +129,11 @@ async fn test_cli_publish_pull_roundtrip() {
         command: Command::Tour(codemark_cli::cli::TourArgs {
             command: codemark_cli::cli::TourCommand::List(codemark_cli::cli::TourListArgs {
                 server: Some(server_url.clone()),
-                repo: None,
-                all: true,
+                // `GET /tours` is repo-scoped now; name a repo (the published tour
+                // has no repo_url, so the list is simply empty — this step just
+                // exercises the endpoint end-to-end).
+                repo: Some("test-owner/test-repo".to_string()),
+                all: false,
                 limit: 10,
                 offset: 0,
                 line_format: None,

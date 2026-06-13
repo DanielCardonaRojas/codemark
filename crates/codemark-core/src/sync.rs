@@ -170,7 +170,11 @@ pub struct RemoteTourSummary {
 pub struct ListRemoteToursOptions {
     pub server_url: String,
     pub token: Option<String>,
-    pub repo_url: Option<String>,
+    /// Repositories to scope the lookup to, each as `owner/name`. Sent as the
+    /// comma-separated `repos` query param (`GET /tours` is an authorization-
+    /// scoped lookup and requires at least one repo). Empty → the server will
+    /// reject the request with `400 repos_required`.
+    pub repos: Vec<String>,
 }
 
 /// Fetch available tours from the server.
@@ -179,20 +183,22 @@ pub async fn list_remote_tours(opts: ListRemoteToursOptions) -> Result<Vec<Remot
     let headers = build_auth_headers(opts.token.as_ref())?;
 
     let url = format!("{}/tours", opts.server_url);
-    tracing::debug!(target: "codemark::http", url = %url, "GET /tours");
 
-    let mut request = client.get(&url).headers(headers);
-    if let Some(ref repo_url) = opts.repo_url {
-        // Parse into owner/repo to avoid URL format mismatch (SSH vs HTTPS)
-        if let Some((owner, repo)) = crate::git::remote::parse_remote_url(repo_url) {
-            request = request.query(&[("repo_owner", owner), ("repo_name", repo)]);
-        } else {
-            // Fallback to raw repo_url if parsing fails
-            request = request.query(&[("repo_url", repo_url.to_string())]);
-        }
+    // Collect query params up front so the request URL — including the repo
+    // scope — can be logged (the request builder doesn't expose them afterward).
+    // Scope via the canonical comma-separated `repos` param (each `owner/name`).
+    let mut query: Vec<(&str, String)> = Vec::new();
+    if !opts.repos.is_empty() {
+        query.push(("repos", opts.repos.join(",")));
     }
 
-    let response = request
+    let full_url = reqwest::Url::parse_with_params(&url, &query)
+        .map_err(|e| Error::Operation(format!("invalid tours URL {url}: {e}")))?;
+    tracing::debug!(target: "codemark::http", url = %full_url, "GET /tours");
+
+    let response = client
+        .get(full_url)
+        .headers(headers)
         .send()
         .await
         .map_err(|e| Error::Operation(format!("failed to list remote tours: {e}")))?;

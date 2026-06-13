@@ -46,6 +46,7 @@ pub fn normalize_repo_url(repo: &str) -> String {
 struct TourSummary {
     tour_id: String,
     title: String,
+    #[serde(default)]
     repo_url: Option<String>,
     #[serde(default)]
     author: Option<String>,
@@ -67,31 +68,40 @@ pub async fn handle_tour_list(
     args: &TourListArgs,
     detected_repo: Option<&str>,
 ) -> Result<()> {
-    // 1. Determine the repository URL to filter by
-    // Priority: explicitly provided --repo flag > auto-detected repo > none (global list)
-    let repo_url = args
+    // 1. Determine the repository URL to filter by.
+    // `GET /tours` is now an authorization-scoped lookup: the caller must name a
+    // repo. Priority: explicit --repo flag > auto-detected repo. There is no
+    // global/browse-everything list anymore.
+    let repo_url = match args
         .repo
         .as_ref()
         .map(|repo| normalize_repo_url(repo))
-        .or_else(|| detected_repo.map(normalize_repo_url));
+        .or_else(|| detected_repo.map(normalize_repo_url))
+    {
+        Some(repo) => repo,
+        None => {
+            return Err(Error::Input(
+                "listing tours requires a repository scope: pass --repo <owner/name> \
+                 or run inside a git repository with a GitHub remote"
+                    .to_string(),
+            ));
+        }
+    };
 
     // 2. Resolve server and token from registry
     let (server_url, token) =
-        resolve_server_and_token(cli, args.server.as_deref(), repo_url.as_deref())?;
+        resolve_server_and_token(cli, args.server.as_deref(), Some(repo_url.as_str()))?;
 
     // 3. Query server
     let client = reqwest::Client::new();
     let headers = build_auth_headers(token.as_ref())?;
 
     let mut query = vec![("limit", args.limit.to_string()), ("offset", args.offset.to_string())];
-    if let Some(ref repo) = repo_url {
-        // Parse into owner/repo to avoid URL format mismatch (SSH vs HTTPS)
-        if let Some((owner, name)) = codemark_core::git::remote::parse_remote_url(repo) {
-            query.push(("repo_owner", owner));
-            query.push(("repo_name", name));
-        } else {
-            query.push(("repo_url", repo.clone()));
-        }
+    // Parse into owner/name to avoid URL format mismatch (SSH vs HTTPS).
+    if let Some((owner, name)) = codemark_core::git::remote::parse_remote_url(&repo_url) {
+        query.push(("repos", format!("{}/{}", owner, name)));
+    } else {
+        query.push(("repo_url", repo_url.clone()));
     }
 
     let url = format!("{}/tours", server_url);
@@ -128,11 +138,7 @@ pub async fn handle_tour_list(
     }
 
     if res.tours.is_empty() {
-        if repo_url.is_some() {
-            println!("No tours found for repository on server.");
-        } else {
-            println!("No tours found on server.");
-        }
+        println!("No tours found for repository on server.");
         return Ok(());
     }
 

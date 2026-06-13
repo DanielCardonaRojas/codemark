@@ -383,12 +383,16 @@ pub async fn handler(
             }
         };
 
-        // Verify write access using GitHubVerifier
-        let verifier = crate::github::GitHubVerifier::new();
-        let has_write_access = match verifier.verify_write_access(&state, repo_url, user_id).await {
+        // Verify write access using the shared GitHubVerifier
+        let has_write_access = match state
+            .github
+            .verify_write_access(&state, repo_url, user_id)
+            .await
+        {
             Ok(true) => true,
             Ok(false) => {
                 tracing::warn!(
+                    target: "codemark::auth",
                     user_id = %user_id,
                     repo_url = %repo_url,
                     "Write access denied for user"
@@ -406,6 +410,7 @@ pub async fn handler(
             }
             Err(crate::github::GitHubVerifyError::NoGitHubToken) => {
                 tracing::warn!(
+                    target: "codemark::auth",
                     user_id = %user_id,
                     "Write access check failed: no GitHub token linked"
                 );
@@ -421,7 +426,7 @@ pub async fn handler(
                     .into_response();
             }
             Err(e) => {
-                tracing::error!("Failed to verify write access: {}", e);
+                tracing::error!(target: "codemark::auth", "Failed to verify write access: {}", e);
                 let _ = fs::remove_file(&temp_path).await;
                 return (
                     StatusCode::INTERNAL_SERVER_ERROR,
@@ -436,6 +441,7 @@ pub async fn handler(
         };
 
         tracing::info!(
+            target: "codemark::auth",
             user_id = %user_id,
             repo_url = %repo_url,
             has_write_access = %has_write_access,
