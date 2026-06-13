@@ -32,17 +32,29 @@ async fn can_access(
         Some("public") => true,
         Some("private") => {
             let Some(user_id) = auth.user_id() else {
+                tracing::debug!(
+                    target: "codemark::auth",
+                    "Denying private tour to anonymous caller"
+                );
                 return false;
             };
             let Some(repo_url) = repo_url else {
                 // Private tour with no repo to verify against: no one can prove
                 // access, so deny.
+                tracing::debug!(
+                    target: "codemark::auth",
+                    "Denying private tour with no repo_url to verify against"
+                );
                 return false;
             };
             match state.github.verify_access(state, repo_url, user_id).await {
                 Ok(has_access) => has_access,
                 Err(e) => {
-                    tracing::warn!(error = %e, "Read-access check failed for private tour; denying");
+                    tracing::warn!(
+                        target: "codemark::auth",
+                        error = %e,
+                        "Read-access check failed for private tour; denying"
+                    );
                     false
                 }
             }

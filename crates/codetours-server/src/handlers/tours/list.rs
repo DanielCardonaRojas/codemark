@@ -189,9 +189,18 @@ pub async fn handler(
                     Ok(has_access) => has_access,
                     // No token / any error: fail closed — exclude private tours,
                     // but still show the repo's public tours.
-                    Err(crate::github::GitHubVerifyError::NoGitHubToken) => false,
+                    Err(crate::github::GitHubVerifyError::NoGitHubToken) => {
+                        tracing::debug!(
+                            target: "codemark::auth",
+                            owner = %owner,
+                            repo = %name,
+                            "No GitHub token linked; excluding private tours (fail-closed)"
+                        );
+                        false
+                    }
                     Err(e) => {
                         tracing::warn!(
+                            target: "codemark::auth",
                             owner = %owner,
                             repo = %name,
                             error = %e,

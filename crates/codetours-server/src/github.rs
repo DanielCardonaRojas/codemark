@@ -211,6 +211,7 @@ impl GitHubVerifier {
         );
 
         tracing::info!(
+            target: "codemark::auth",
             user_id = %user_id_from_db,
             repo_url = %repo_url,
             has_access = %has_access,
@@ -271,6 +272,7 @@ impl GitHubVerifier {
                 } else {
                     // 429 / 5xx / etc.: non-authoritative. Fail closed, don't cache.
                     tracing::warn!(
+                        target: "codemark::auth",
                         owner = %owner,
                         repo = %repo,
                         status = %status,
@@ -283,6 +285,7 @@ impl GitHubVerifier {
                 // Fail closed: an unreachable GitHub must not expose a repo, and
                 // must not poison the cache with a transient failure.
                 tracing::warn!(
+                    target: "codemark::auth",
                     owner = %owner,
                     repo = %repo,
                     error = %e,
@@ -304,7 +307,7 @@ impl GitHubVerifier {
             );
         }
 
-        tracing::debug!(owner = %owner, repo = %repo, is_public, "Public-repo visibility check completed");
+        tracing::debug!(target: "codemark::auth", owner = %owner, repo = %repo, is_public, "Public-repo visibility check completed");
 
         Ok(is_public)
     }
@@ -407,6 +410,7 @@ impl GitHubVerifier {
         );
 
         tracing::info!(
+            target: "codemark::auth",
             user_id = %user_id_for_log,
             repo_url = %repo_url,
             has_write_access = %has_write,
