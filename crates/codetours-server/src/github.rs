@@ -233,6 +233,12 @@ impl GitHubVerifier {
     /// Returns `Ok(true)` if the repo is public, `Ok(false)` otherwise. On a
     /// network/transport error it fails closed (`Ok(false)`): we never reveal a
     /// repo we could not confirm is public.
+    ///
+    /// Only **authoritative** answers are cached — `200` (public) and `404`
+    /// (private/nonexistent). Transient responses (rate-limit `429`, `5xx`) and
+    /// transport errors fail closed for the current request but are **not**
+    /// cached, so a blip doesn't hide a genuinely-public repo's tours for the
+    /// whole TTL; the next request retries.
     pub async fn verify_public_repo(&self, owner: &str, repo: &str) -> VerifyResult<bool> {
         // Cache key namespaced so it can't collide with per-user access entries.
         let cache_key = format!("anon:public:{}", owner);
@@ -248,34 +254,55 @@ impl GitHubVerifier {
         let client = reqwest::Client::new();
         let api_url = format!("https://api.github.com/repos/{}/{}", owner, repo);
 
-        let is_public = match client
+        // (is_public, authoritative): only authoritative results are cached.
+        let (is_public, authoritative) = match client
             .get(&api_url)
             .header("User-Agent", "codetours-server")
             .header("Accept", "application/vnd.github+json")
             .send()
             .await
         {
-            Ok(resp) => resp.status().is_success(),
+            Ok(resp) => {
+                let status = resp.status();
+                if status.is_success() {
+                    (true, true)
+                } else if status == reqwest::StatusCode::NOT_FOUND {
+                    (false, true)
+                } else {
+                    // 429 / 5xx / etc.: non-authoritative. Fail closed, don't cache.
+                    tracing::warn!(
+                        owner = %owner,
+                        repo = %repo,
+                        status = %status,
+                        "Public-repo check got a non-authoritative status; not caching"
+                    );
+                    (false, false)
+                }
+            }
             Err(e) => {
-                // Fail closed: an unreachable GitHub must not expose a repo.
+                // Fail closed: an unreachable GitHub must not expose a repo, and
+                // must not poison the cache with a transient failure.
                 tracing::warn!(
                     owner = %owner,
                     repo = %repo,
                     error = %e,
                     "Public-repo visibility check failed; treating repo as not public"
                 );
-                false
+                (false, false)
             }
         };
 
-        let mut cache = self.cache.write().await;
-        cache.insert(
-            (cache_key, repo.to_string()),
-            CacheEntry {
-                has_access: is_public,
-                expires_at: chrono::Utc::now() + chrono::Duration::seconds(self.cache_ttl_seconds),
-            },
-        );
+        if authoritative {
+            let mut cache = self.cache.write().await;
+            cache.insert(
+                (cache_key, repo.to_string()),
+                CacheEntry {
+                    has_access: is_public,
+                    expires_at: chrono::Utc::now()
+                        + chrono::Duration::seconds(self.cache_ttl_seconds),
+                },
+            );
+        }
 
         tracing::debug!(owner = %owner, repo = %repo, is_public, "Public-repo visibility check completed");
 
