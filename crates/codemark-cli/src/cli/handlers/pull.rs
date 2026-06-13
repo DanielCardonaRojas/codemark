@@ -4,7 +4,7 @@ use codemark_core::error::{Error, Result};
 use codemark_core::sync::{SyncDirection, SyncOptions, build_sync_http_client, sync};
 
 // Re-export auth resolution helpers
-use crate::cli::handlers::auth_resolve::get_token_for_server;
+use crate::cli::handlers::auth_resolve::{build_auth_headers, get_token_for_server};
 
 pub async fn handle_pull(cli: &Cli, mode: &OutputMode, args: &PullArgs) -> Result<()> {
     // 1. Resolve server and token
@@ -21,10 +21,14 @@ pub async fn handle_pull(cli: &Cli, mode: &OutputMode, args: &PullArgs) -> Resul
                     .to_string(),
             )
         })?;
+        // Forward auth: `GET /tours` only surfaces private tours to authenticated
+        // callers, so a private short-ID pull must carry the token or it would
+        // resolve to an empty list and report "not found".
         let client = build_sync_http_client()?;
         let response: reqwest::Response = client
             .get(format!("{}/tours", server_url))
             .query(&[("repos", repos.as_str())])
+            .headers(build_auth_headers(token.as_ref())?)
             .send()
             .await
             .map_err(|e| Error::Operation(format!("failed to query tours list: {e}")))?;

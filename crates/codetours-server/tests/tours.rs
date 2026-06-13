@@ -565,4 +565,28 @@ async fn test_private_tour_detail_requires_access() {
     assert_eq!(response.status(), StatusCode::OK);
     let body = ax_body_to_json(response).await;
     assert_eq!(body["tour_id"], col_id);
+
+    // The pack (binary) branch must enforce the same gate. Anonymous → 404.
+    let req = Request::builder()
+        .method("GET")
+        .uri(format!("/tours/{}?format=pack", col_id))
+        .header(header::ACCEPT, "application/vnd.codetours.pack+sqlite")
+        .body(Body::empty())
+        .unwrap();
+    assert_eq!(app.clone().oneshot(req).await.unwrap().status(), StatusCode::NOT_FOUND);
+
+    // Authenticated with verified read access → 200 + pack content type.
+    let req = Request::builder()
+        .method("GET")
+        .uri(format!("/tours/{}?format=pack", col_id))
+        .header("X-Tour-Token", DEV_TOKEN)
+        .header(header::ACCEPT, "application/vnd.codetours.pack+sqlite")
+        .body(Body::empty())
+        .unwrap();
+    let response = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response.headers().get(header::CONTENT_TYPE).unwrap(),
+        "application/vnd.codetours.pack+sqlite"
+    );
 }

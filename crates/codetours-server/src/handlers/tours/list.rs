@@ -85,6 +85,14 @@ struct AllowedVisibility {
     private: bool,
 }
 
+/// Build a `LIKE` pattern matching any value that *contains* `needle`, with the
+/// LIKE metacharacters (`\`, `%`, `_`) in `needle` escaped (pair with
+/// `ESCAPE '\'`). Used to narrow the `repo_url` scan to the requested repos.
+fn like_contains(needle: &str) -> String {
+    let escaped = needle.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_");
+    format!("%{}%", escaped)
+}
+
 fn bad_request(error: &str, reason: impl Into<String>) -> axum::response::Response {
     (
         StatusCode::BAD_REQUEST,
@@ -164,16 +172,20 @@ pub async fn handler(
     }
 
     // 2. Build the per-repo entitlement map via the appropriate access check.
+    //    Run the checks concurrently — with up to MAX_REPOS_PER_QUERY repos,
+    //    doing them sequentially would stack GitHub round-trips. Keys are
+    //    lowercased: GitHub treats owner/name case-insensitively, so the map must
+    //    too (see the repo_url match below).
+    let state_ref = &state;
     let verifier = &state.github;
     let user_id = auth.user_id();
-    let mut allowed: HashMap<(String, String), AllowedVisibility> = HashMap::new();
 
-    for (owner, name) in &requested {
+    let checks = requested.iter().map(|(owner, name)| async move {
         let vis = match user_id {
             // Authenticated: public tours always; private only with verified read.
             Some(user_id) => {
                 let repo_url = format!("git@github.com:{}/{}.git", owner, name);
-                let private = match verifier.verify_access(&state, &repo_url, user_id).await {
+                let private = match verifier.verify_access(state_ref, &repo_url, user_id).await {
                     Ok(has_access) => has_access,
                     // No token / any error: fail closed — exclude private tours,
                     // but still show the repo's public tours.
@@ -196,11 +208,20 @@ pub async fn handler(
                 AllowedVisibility { public: is_public, private: false }
             }
         };
-        allowed.insert((owner.clone(), name.clone()), vis);
-    }
+        ((owner.to_lowercase(), name.to_lowercase()), vis)
+    });
+    let allowed: HashMap<(String, String), AllowedVisibility> =
+        futures_util::future::join_all(checks).await.into_iter().collect();
 
-    // 3. Fetch ready tours and filter in Rust (repo_url formats vary: SSH vs
-    //    HTTPS vs `.git` suffix), then paginate.
+    // 3. Fetch the named repos' ready tours and filter in Rust (repo_url formats
+    //    vary: SSH vs HTTPS vs `.git` suffix), then paginate. A LIKE pre-filter
+    //    on repo_url narrows the scan to the requested repos so the query doesn't
+    //    read the whole `collections` table; the Rust filter below is still the
+    //    precise, format- and case-exact gate.
+    let like_patterns: Vec<String> = requested
+        .iter()
+        .map(|(owner, name)| like_contains(&format!("{}/{}", owner, name)))
+        .collect();
     let storage = state.storage.clone();
     let conn = match storage.get_conn().await {
         Ok(c) => c,
@@ -218,16 +239,24 @@ pub async fn handler(
                 _ => "updated_at DESC",
             };
 
+            // One `repo_url LIKE ? ESCAPE '\'` per requested repo, OR-ed together.
+            // SQLite's LIKE is case-insensitive for ASCII, matching the lowercased
+            // `allowed` keys. `ESCAPE '\'` neutralizes `_`/`%` in repo names.
+            let like_clause = like_patterns
+                .iter()
+                .map(|_| "repo_url LIKE ? ESCAPE '\\'")
+                .collect::<Vec<_>>()
+                .join(" OR ");
             let query = format!(
                 "SELECT id, name, repo_url, updated_at, created_by, visibility FROM collections
-                 WHERE status = 'ready' AND visibility IN ('public', 'private')
+                 WHERE status = 'ready' AND visibility IN ('public', 'private') AND ({})
                  ORDER BY {}",
-                sort
+                like_clause, sort
             );
 
             let mut stmt = conn.prepare(&query)?;
             let rows: Vec<(TourSummary, String)> = stmt
-                .query_map([], |row| {
+                .query_map(rusqlite::params_from_iter(like_patterns.iter()), |row| {
                     let id: String = row.get(0)?;
                     let repo_url: Option<String> = row.get(2)?;
                     let visibility: String = row.get(5)?;
@@ -248,9 +277,10 @@ pub async fn handler(
             let filtered: Vec<TourSummary> = rows
                 .into_iter()
                 .filter_map(|(summary, visibility)| {
-                    let parsed =
+                    let (owner, name) =
                         summary.repo_url.as_deref().and_then(GitHubVerifier::parse_repo_url)?;
-                    let vis = allowed.get(&parsed)?;
+                    // Lowercased lookup: GitHub owner/name are case-insensitive.
+                    let vis = allowed.get(&(owner.to_lowercase(), name.to_lowercase()))?;
                     let permitted = match visibility.as_str() {
                         "public" => vis.public,
                         "private" => vis.private,
