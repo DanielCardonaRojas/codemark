@@ -234,6 +234,11 @@ impl PanelItem {
         self.secondary_text.as_deref()
     }
 
+    /// Whether this item is currently active (selected/activated).
+    pub fn is_active(&self) -> bool {
+        self.active
+    }
+
     /// Set the secondary text.
     pub fn secondary_text(mut self, text: impl Into<String>) -> Self {
         self.secondary_text = Some(text.into());

@@ -616,15 +616,14 @@ impl BrowserLayout {
             }
         };
 
-        // Build the repo scope from the repos currently shown in the Repos panel
-        // (Panel1 tab 0) — the set the user has narrowed to via the Accounts/owner
-        // filter, not the entire registry. Each visible item carries the owner
-        // (secondary text) and name (primary text). `GET /tours` is an
-        // authorization-scoped lookup, so we name them all in one
+        // Build the repo scope from the repos *selected* (active) in the Repos
+        // panel (Panel1 tab 0) — not every repo in the registry. Each item carries
+        // the owner (secondary text) and name (primary text). `GET /tours` is an
+        // authorization-scoped lookup, so we name the selected repos in one
         // `repos=a/b,c/d` request rather than one request per repo.
         let mut repos: Vec<String> = Vec::new();
         if let Some(TabContent::List(panel)) = self.left_pane.panel1.panels.first() {
-            for item in panel.all_items() {
+            for item in panel.all_items().iter().filter(|i| i.is_active()) {
                 if let Some(owner) = item.get_secondary_text() {
                     repos.push(format!("{}/{}", owner, item.text()));
                 }
