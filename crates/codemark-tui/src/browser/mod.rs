@@ -606,7 +606,6 @@ impl BrowserLayout {
         };
 
         let config = Config::load_layered(&codemark_dir);
-        let project_root = codemark_dir.parent().unwrap_or(&codemark_dir).to_path_buf();
 
         let (server_url, token) = match codemark_core::sync::resolve_server_and_token(&config) {
             Ok(result) => result,
@@ -617,20 +616,19 @@ impl BrowserLayout {
             }
         };
 
-        // Build the repo scope: every repo known to the registry, plus the
-        // current checkout's origin, as `owner/name`. `GET /tours` is an
-        // authorization-scoped lookup, so we name them all in one `repos=a/b,c/d`
-        // request rather than one request per repo.
+        // Build the repo scope from the repos currently shown in the Repos panel
+        // (Panel1 tab 0) — the set the user has narrowed to via the Accounts/owner
+        // filter, not the entire registry. Each visible item carries the owner
+        // (secondary text) and name (primary text). `GET /tours` is an
+        // authorization-scoped lookup, so we name them all in one
+        // `repos=a/b,c/d` request rather than one request per repo.
         let mut repos: Vec<String> = Vec::new();
-        if let Ok(known) = codemark_core::storage::registry::list_repos(&self.registry) {
-            for repo in known {
-                repos.push(format!("{}/{}", repo.repo_owner, repo.repo_name));
+        if let Some(TabContent::List(panel)) = self.left_pane.panel1.panels.first() {
+            for item in panel.all_items() {
+                if let Some(owner) = item.get_secondary_text() {
+                    repos.push(format!("{}/{}", owner, item.text()));
+                }
             }
-        }
-        if let Some(origin) = codemark_core::git::remote::get_origin_url(&project_root).ok()
-            && let Some((owner, name)) = codemark_core::git::remote::parse_remote_url(&origin)
-        {
-            repos.push(format!("{owner}/{name}"));
         }
         // Dedupe (case-insensitively, matching the server) and cap at the server's
         // per-query limit so one fetch can't exceed it.
