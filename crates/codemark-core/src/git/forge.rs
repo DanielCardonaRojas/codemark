@@ -91,8 +91,10 @@ fn host_from_url(url: &str) -> Option<String> {
         .or_else(|| url.strip_prefix("http://"))
         .or_else(|| url.strip_prefix("ssh://"))
     {
-        // Drop any `user@` prefix, then take everything up to the first '/'.
-        let rest = rest.rsplit_once('@').map(|(_, h)| h).unwrap_or(rest);
+        // Drop any leading `userinfo@` prefix, then take everything up to the
+        // first '/'. Split on the leftmost '@' so a later path segment
+        // containing '@' (e.g. `host/path@tag`) can't be mistaken for the host.
+        let rest = rest.split_once('@').map(|(_, h)| h).unwrap_or(rest);
         let host = rest.split('/').next()?;
         // Strip an optional port.
         let host = host.split(':').next()?;
@@ -148,6 +150,16 @@ mod tests {
         assert_eq!(
             ForgeKind::from_origin_url("https://gitlab.example.com/owner/repo.git"),
             ForgeKind::GitLab
+        );
+    }
+
+    #[test]
+    fn from_origin_url_userinfo_and_at_in_path() {
+        // Leading userinfo is stripped, and a later '@' in the path must not be
+        // mistaken for the host delimiter.
+        assert_eq!(
+            ForgeKind::from_origin_url("https://user@github.com/owner/repo@tag"),
+            ForgeKind::GitHub
         );
     }
 

@@ -357,13 +357,18 @@ impl TabbedPanel {
                         .no_health()
                 })
                 .collect(),
-            _ => vec![
+            Ok(_) => vec![
                 PanelItem::new(format!(
                     "No accounts — default: {}",
                     codemark_core::DEFAULT_SERVER_URL
                 ))
                 .no_health()
                 .color(crate::theme::palette().dim),
+            ],
+            Err(e) => vec![
+                PanelItem::new(format!("Error: {e}"))
+                    .no_health()
+                    .color(crate::theme::palette().error),
             ],
         }
     }

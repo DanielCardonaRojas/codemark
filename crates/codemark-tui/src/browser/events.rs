@@ -434,7 +434,7 @@ impl BrowserLayout {
         None
     }
 
-    /// Activate the currently selected item in Panel 1 (Repos or Accounts).
+    /// Activate the currently selected item in Panel 1 (Repos, Owners, or Auth).
     ///
     /// When `move_focus` is true (Enter), a successful repo switch moves focus to Panel 3.
     /// When false (Space), focus stays on Panel 1.
