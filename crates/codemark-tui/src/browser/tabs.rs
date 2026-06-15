@@ -52,6 +52,48 @@ impl Panel3Tab {
     }
 }
 
+/// Tabs for the context panel (Panel 1): Repos/Owners/Auth.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ContextTab {
+    /// Known repositories; selecting one switches the active database.
+    Repos = 0,
+    /// Repo owners (users/orgs); multi-select filters the Repos list.
+    Owners = 1,
+    /// Authenticated accounts (server + username), read-only.
+    Auth = 2,
+}
+
+impl ContextTab {
+    /// Get the index of this tab.
+    pub fn index(self) -> usize {
+        self as usize
+    }
+
+    /// Get all tabs in order.
+    pub fn all() -> &'static [ContextTab] {
+        &[ContextTab::Repos, ContextTab::Owners, ContextTab::Auth]
+    }
+
+    /// Get the tab label.
+    pub fn label(self) -> &'static str {
+        match self {
+            ContextTab::Repos => "Repos",
+            ContextTab::Owners => "Owners",
+            ContextTab::Auth => "Auth",
+        }
+    }
+
+    /// Try to convert an index to a ContextTab.
+    pub fn from_index(index: usize) -> Option<Self> {
+        match index {
+            0 => Some(ContextTab::Repos),
+            1 => Some(ContextTab::Owners),
+            2 => Some(ContextTab::Auth),
+            _ => None,
+        }
+    }
+}
+
 /// Panel 2 tabs (Tags/Branches).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Panel2Tab {
@@ -288,6 +330,18 @@ impl Default for TabSelection {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_context_tab_index_roundtrip() {
+        for (i, tab) in ContextTab::all().iter().enumerate() {
+            assert_eq!(tab.index(), i);
+            assert_eq!(ContextTab::from_index(i), Some(*tab));
+        }
+        assert_eq!(ContextTab::from_index(3), None);
+        assert_eq!(ContextTab::Repos.label(), "Repos");
+        assert_eq!(ContextTab::Owners.label(), "Owners");
+        assert_eq!(ContextTab::Auth.label(), "Auth");
+    }
 
     #[test]
     fn test_tab_creation() {
