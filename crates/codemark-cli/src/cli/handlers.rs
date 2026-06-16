@@ -106,6 +106,16 @@ pub async fn dispatch(cli: &Cli) -> Result<()> {
         Command::Repo(args) => repo::handle_repo(cli, &mode, args).await,
         Command::Auth(args) => auth::handle_auth(cli, &mode, args).await,
         Command::InstallSkill(args) => skill::handle_install_skill(cli, &mode, args).await,
+        // External/plugin subcommands are intercepted in `main` before any
+        // initialization runs; if one reaches here, dispatch it (and on Unix
+        // replace this process) rather than silently doing nothing.
+        Command::External(_) => {
+            if let Some(err) = external::try_dispatch(&cli.command) {
+                eprintln!("{}", err.message);
+                std::process::exit(err.code);
+            }
+            Ok(())
+        }
     }
 }
 

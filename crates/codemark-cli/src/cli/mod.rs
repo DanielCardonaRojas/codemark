@@ -1,3 +1,4 @@
+pub mod external;
 pub mod handlers;
 pub mod output;
 pub mod templates;
@@ -152,6 +153,11 @@ pub enum Command {
 
     /// Install the codemark agent skill for an AI coding agent
     InstallSkill(InstallSkillArgs),
+
+    /// Run an external plugin: `codemark <name>` executes `codemark-<name>`
+    /// (e.g. `codemark tui` launches the `codemark-tui` binary)
+    #[command(external_subcommand)]
+    External(Vec<String>),
 }
 
 // --- Subcommand argument structs ---
