@@ -11,6 +11,7 @@
 
 use crate::config::{global_config_dir, global_data_dir};
 use crate::error::{Error, Result};
+use crate::git::forge::ForgeKind;
 use rusqlite::{Connection, OptionalExtension, params};
 use std::path::PathBuf;
 
@@ -677,6 +678,37 @@ pub fn list_repo_owners(conn: &Connection) -> Result<Vec<String>> {
     Ok(owners)
 }
 
+/// List distinct repo owners (users/orgs) along with the forge inferred from
+/// their most recently seen repository's origin URL.
+///
+/// The forge is a best-effort classification; owners with no recognizable
+/// origin URL are reported as [`ForgeKind::Unknown`].
+pub fn list_repo_owners_with_forge(conn: &Connection) -> Result<Vec<(String, ForgeKind)>> {
+    let mut stmt = conn.prepare(
+        "SELECT repo_owner,
+                (SELECT k2.origin_url FROM known_repos k2
+                 WHERE k2.repo_owner = k1.repo_owner AND k2.origin_url IS NOT NULL
+                 ORDER BY k2.last_seen_at DESC LIMIT 1) AS origin_url
+         FROM known_repos k1
+         GROUP BY repo_owner
+         ORDER BY repo_owner",
+    )?;
+    let rows = stmt.query_map([], |row| {
+        let owner: String = row.get(0)?;
+        let origin: Option<String> = row.get(1)?;
+        Ok((owner, origin))
+    })?;
+
+    let mut owners = Vec::new();
+    for row in rows {
+        let (owner, origin) = row?;
+        let forge =
+            origin.map(|url| ForgeKind::from_origin_url(&url)).unwrap_or(ForgeKind::Unknown);
+        owners.push((owner, forge));
+    }
+    Ok(owners)
+}
+
 /// List all known repositories.
 pub fn list_repos(conn: &Connection) -> Result<Vec<KnownRepo>> {
     let mut stmt = conn.prepare(
@@ -849,6 +881,68 @@ mod tests {
         // Find by root
         let repo = find_repo_by_root(&conn, "/path/to/repo").unwrap().unwrap();
         assert_eq!(repo.id, "test-id-1");
+    }
+
+    #[test]
+    fn test_list_repo_owners_with_forge() {
+        let conn = test_registry().unwrap();
+
+        upsert_repo(
+            &conn,
+            &RepoUpsert {
+                id: "gh-1",
+                repo_owner: "octocat",
+                repo_name: "hello",
+                origin_url: Some("git@github.com:octocat/hello.git"),
+                repo_root: "/repos/hello",
+                db_owner_email: "octo@example.com",
+                db_owner_name: None,
+                server_url: None,
+                default_username: None,
+            },
+        )
+        .unwrap();
+        upsert_repo(
+            &conn,
+            &RepoUpsert {
+                id: "gl-1",
+                repo_owner: "acme",
+                repo_name: "widget",
+                origin_url: Some("https://gitlab.com/acme/widget.git"),
+                repo_root: "/repos/widget",
+                db_owner_email: "dev@example.com",
+                db_owner_name: None,
+                server_url: None,
+                default_username: None,
+            },
+        )
+        .unwrap();
+        upsert_repo(
+            &conn,
+            &RepoUpsert {
+                id: "none-1",
+                repo_owner: "local",
+                repo_name: "scratch",
+                origin_url: None,
+                repo_root: "/repos/scratch",
+                db_owner_email: "dev@example.com",
+                db_owner_name: None,
+                server_url: None,
+                default_username: None,
+            },
+        )
+        .unwrap();
+
+        let owners = list_repo_owners_with_forge(&conn).unwrap();
+        // Ordered by repo_owner: acme, local, octocat
+        assert_eq!(
+            owners,
+            vec![
+                ("acme".to_string(), ForgeKind::GitLab),
+                ("local".to_string(), ForgeKind::Unknown),
+                ("octocat".to_string(), ForgeKind::GitHub),
+            ]
+        );
     }
 
     #[test]

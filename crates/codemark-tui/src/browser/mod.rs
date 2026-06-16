@@ -17,7 +17,7 @@ pub use left_pane::LeftPane;
 pub use right_pane::{RightPane, RightPaneFocus};
 pub use search::{SearchBar, SearchMode};
 pub use tabbed_panel::{TabbedPanel, bookmark_to_panel_item};
-pub use tabs::{Panel2Tab, Panel3Tab, Tab, TabSelection};
+pub use tabs::{ContextTab, Panel2Tab, Panel3Tab, Tab, TabSelection};
 pub use types::{
     DetailsPaneSize, ExternalCommand, FocusArea, HealNotification, HealTarget, LeftPaneSize,
     RightPaneSize, SectionConfig, SpinningItem, StepData, TabContent, escape_markdown,
@@ -812,31 +812,37 @@ impl BrowserLayout {
 
     /// Refresh all panels from the current active database.
     pub fn refresh_all_panels(&mut self) {
-        // 1. Update Panel 1 Accounts (preserving active owner selections)
+        // 1. Update Panel 1 Owners (preserving active owner selections)
         let active_owners: Vec<String> = self
             .left_pane
             .panel1
             .panels
-            .get(1)
+            .get(ContextTab::Owners.index())
             .and_then(|c| match c {
                 TabContent::List(p) => Some(p.active_items()),
                 _ => None,
             })
             .unwrap_or_default();
 
-        let account_items = TabbedPanel::build_account_items(&self.registry);
-        if let Some(p) = self.left_pane.panel1.get_list_panel_mut(1) {
-            p.set_items(account_items);
+        let owner_items = TabbedPanel::build_owner_items(&self.registry);
+        if let Some(p) = self.left_pane.panel1.get_list_panel_mut(ContextTab::Owners.index()) {
+            p.set_items(owner_items);
             // Re-activate previously selected owners
             for owner in &active_owners {
                 p.activate_by_user_data(owner);
             }
         }
 
+        // Update Panel 1 Auth accounts (read-only)
+        let auth_items = TabbedPanel::build_auth_account_items(&self.registry);
+        if let Some(p) = self.left_pane.panel1.get_list_panel_mut(ContextTab::Auth.index()) {
+            p.set_items(auth_items);
+        }
+
         // Update Panel 1 Repos (respecting active owner filter)
         if active_owners.is_empty() {
             let repo_items = TabbedPanel::build_repo_items(&self.db, &self.registry);
-            if let Some(p) = self.left_pane.panel1.get_list_panel_mut(0) {
+            if let Some(p) = self.left_pane.panel1.get_list_panel_mut(ContextTab::Repos.index()) {
                 p.set_items(repo_items);
             }
         } else {
@@ -1321,17 +1327,17 @@ impl BrowserLayout {
         }
     }
 
-    /// Update the Repos panel (Panel 1, tab 0) based on active account (owner) filters.
+    /// Update the Repos panel (Panel 1, Repos tab) based on active owner filters.
     ///
     /// Follows the same pattern as `update_tours_collections()`:
-    /// reads active owners from the Accounts panel, re-queries repos from the registry,
+    /// reads active owners from the Owners panel, re-queries repos from the registry,
     /// and filters to only show repos matching the selected owners.
     fn update_repos_by_owner(&mut self) {
         let active_owners = self
             .left_pane
             .panel1
             .panels
-            .get(1)
+            .get(ContextTab::Owners.index())
             .and_then(|c| match c {
                 TabContent::List(p) => Some(p.active_items()),
                 _ => None,
@@ -1352,7 +1358,7 @@ impl BrowserLayout {
                 .collect()
         };
 
-        if let Some(p) = self.left_pane.panel1.get_list_panel_mut(0) {
+        if let Some(p) = self.left_pane.panel1.get_list_panel_mut(ContextTab::Repos.index()) {
             p.set_items(repo_items);
         }
     }

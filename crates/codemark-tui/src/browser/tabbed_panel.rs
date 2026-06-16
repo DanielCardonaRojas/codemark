@@ -1,8 +1,11 @@
-use crate::browser::{Panel3Tab, Tab, TabContent, TabSelection, tabs::BORDER_EXTENSION};
+use crate::browser::{
+    ContextTab, Panel3Tab, Tab, TabContent, TabSelection, tabs::BORDER_EXTENSION,
+};
 use crate::component::{CodePreview, HealthStatus, MarkdownPanel, Panel, PanelItem};
 use crate::event::Event;
 use codemark_core::engine::bookmark::{Bookmark, BookmarkFilter, BookmarkHealth};
 use codemark_core::engine::projection;
+use codemark_core::git::forge::ForgeKind;
 use codemark_core::parser::languages::Language;
 use codemark_core::query::classifier::get_node_icon;
 use codemark_core::query::summarizer;
@@ -301,7 +304,14 @@ impl TabbedPanel {
                 .into_iter()
                 .map(|repo| {
                     let is_active = repo.repo_root == active_root;
+                    let forge = repo
+                        .origin_url
+                        .as_deref()
+                        .map(ForgeKind::from_origin_url)
+                        .unwrap_or(ForgeKind::Unknown);
                     PanelItem::new(repo.repo_name)
+                        .icon(forge.icon())
+                        .plain_icon()
                         .secondary_text(repo.repo_owner)
                         .user_data(repo.repo_root.to_string_lossy().to_string())
                         .active(is_active)
@@ -313,16 +323,59 @@ impl TabbedPanel {
         }
     }
 
-    /// Build the list of account (repo owner) items from the global registry.
-    pub fn build_account_items(registry: &rusqlite::Connection) -> Vec<PanelItem> {
+    /// Build the list of repo owner (user/org) items from the global registry,
+    /// each tagged with a forge icon inferred from its origin URL.
+    pub fn build_owner_items(registry: &rusqlite::Connection) -> Vec<PanelItem> {
         use codemark_core::storage::registry;
-        if let Ok(owners) = registry::list_repo_owners(registry) {
+        if let Ok(owners) = registry::list_repo_owners_with_forge(registry) {
             owners
                 .into_iter()
-                .map(|owner| PanelItem::new(owner.clone()).user_data(owner).no_health())
+                .map(|(owner, forge)| {
+                    PanelItem::new(owner.clone())
+                        .icon(forge.icon())
+                        .plain_icon()
+                        .user_data(owner)
+                        .no_health()
+                })
                 .collect()
         } else {
             Vec::new()
+        }
+    }
+
+    /// Build the list of authenticated account items from the global registry.
+    ///
+    /// Each item shows the username with a forge icon and the Codetours server
+    /// URL inline as secondary text. Every listed account is active (logout
+    /// removes its row), so no extra status marker is needed. Mirrors
+    /// `codemark auth list`. Read-only.
+    pub fn build_auth_account_items(registry: &rusqlite::Connection) -> Vec<PanelItem> {
+        use codemark_core::storage::registry;
+        match registry::list_accounts(registry, None) {
+            Ok(accounts) if !accounts.is_empty() => accounts
+                .into_iter()
+                .map(|account| {
+                    let forge = ForgeKind::from_forge_str(&account.forge_kind);
+                    PanelItem::new(account.username)
+                        .icon(forge.icon())
+                        .plain_icon()
+                        .secondary_text(account.server_url)
+                        .no_health()
+                })
+                .collect(),
+            Ok(_) => vec![
+                PanelItem::new(format!(
+                    "No accounts — default: {}",
+                    codemark_core::DEFAULT_SERVER_URL
+                ))
+                .no_health()
+                .color(crate::theme::palette().dim),
+            ],
+            Err(e) => vec![
+                PanelItem::new(format!("Error: {e}"))
+                    .no_health()
+                    .color(crate::theme::palette().error),
+            ],
         }
     }
 
@@ -432,20 +485,33 @@ impl TabbedPanel {
         (tours_items, collections_items, bookmarks)
     }
 
-    /// Create panel 1 with Repos/Accounts tabs.
+    /// Create panel 1 with Repos/Owners/Auth tabs.
     pub fn new_repos_accounts(db: &Database, registry: &rusqlite::Connection) -> Self {
         let repos_items = TabbedPanel::build_repo_items(db, registry);
         let mut repos_panel = Panel::new("").bordered(false);
         repos_panel = repos_panel.items(repos_items);
 
-        let account_items = TabbedPanel::build_account_items(registry);
-        let accounts = Panel::new("").items(account_items).bordered(false).multi_select(true);
+        // Owners tab: repo owners (users/orgs); multi-select filters the Repos list.
+        let owner_items = TabbedPanel::build_owner_items(registry);
+        let owners = Panel::new("").items(owner_items).bordered(false).multi_select(true);
 
-        let tabs = TabSelection::new(vec![Tab::new("Repos"), Tab::new("Accounts")]);
+        // Auth tab: authenticated accounts; read-only.
+        let auth_items = TabbedPanel::build_auth_account_items(registry);
+        let auth = Panel::new("").items(auth_items).bordered(false);
+
+        let tabs = TabSelection::new(vec![
+            Tab::new(ContextTab::Repos.label()),
+            Tab::new(ContextTab::Owners.label()),
+            Tab::new(ContextTab::Auth.label()),
+        ]);
 
         Self {
             tabs,
-            panels: vec![TabContent::List(repos_panel), TabContent::List(accounts)],
+            panels: vec![
+                TabContent::List(repos_panel),
+                TabContent::List(owners),
+                TabContent::List(auth),
+            ],
             focused: false,
             last_area: std::cell::Cell::new(Rect::default()),
             pending_selection_change: std::cell::Cell::new(None),

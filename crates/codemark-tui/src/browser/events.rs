@@ -11,8 +11,8 @@ use codemark_core::query::classifier::get_node_icon;
 use codemark_core::query::summarizer;
 
 use super::{
-    BrowserLayout, DetailsPaneSize, FocusArea, HealNotification, Panel3Tab, RightPaneFocus,
-    RightPaneSize, TabContent, shorten_path,
+    BrowserLayout, ContextTab, DetailsPaneSize, FocusArea, HealNotification, Panel3Tab,
+    RightPaneFocus, RightPaneSize, TabContent, shorten_path,
 };
 
 impl BrowserLayout {
@@ -434,19 +434,26 @@ impl BrowserLayout {
         None
     }
 
-    /// Activate the currently selected item in Panel 1 (Repos or Accounts).
+    /// Activate the currently selected item in Panel 1 (Repos, Owners, or Auth).
     ///
     /// When `move_focus` is true (Enter), a successful repo switch moves focus to Panel 3.
     /// When false (Space), focus stays on Panel 1.
     fn activate_panel1_selection(&mut self, move_focus: bool) -> bool {
-        let active_tab = self.left_pane.panel1.tabs.selected_index();
-        if active_tab == 1 {
-            // Accounts tab: toggle owner selection and filter repos
-            if let Some(panel) = self.left_pane.panel1.active_panel_mut() {
-                panel.activate_selected();
+        let active_tab = ContextTab::from_index(self.left_pane.panel1.tabs.selected_index());
+        match active_tab {
+            Some(ContextTab::Owners) => {
+                // Owners tab: toggle owner selection and filter repos
+                if let Some(panel) = self.left_pane.panel1.active_panel_mut() {
+                    panel.activate_selected();
+                }
+                self.update_repos_by_owner();
+                return true;
             }
-            self.update_repos_by_owner();
-            return true;
+            Some(ContextTab::Auth) => {
+                // Auth tab is read-only; nothing to activate.
+                return false;
+            }
+            _ => {}
         }
         if let Some(panel) = self.left_pane.panel1.active_panel_mut()
             && let Some(selected) = panel.selected()
