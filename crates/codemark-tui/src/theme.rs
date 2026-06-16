@@ -405,6 +405,35 @@ pub fn palette() -> Palette {
     *PALETTE.get_or_init(Palette::default)
 }
 
+impl Palette {
+    /// A stable, distinct color for a tag, derived from its name.
+    ///
+    /// Tags are cycled through the palette's vivid hues so that a list of tags
+    /// reads as visually distinct categories (rather than all one accent color),
+    /// while staying within the active theme. The mapping is deterministic: the
+    /// same tag name always gets the same color, regardless of ordering.
+    pub fn tag_color(&self, tag: &str) -> Color {
+        // Vivid, well-separated hues from the active palette. `dim`/`gray`/
+        // `emphasis`/`inverse` are deliberately excluded to keep tags legible.
+        let hues = [
+            self.accent,
+            self.success,
+            self.warning,
+            self.error,
+            self.info,
+            self.marker,
+        ];
+        // FNV-1a over the bytes: a cheap, stable, well-spread hash so adjacent
+        // tag names ("a"/"b") don't collapse onto the same bucket.
+        let mut hash: u64 = 0xcbf29ce484222325;
+        for byte in tag.bytes() {
+            hash ^= u64::from(byte);
+            hash = hash.wrapping_mul(0x100000001b3);
+        }
+        hues[(hash % hues.len() as u64) as usize]
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -511,6 +540,22 @@ mod tests {
         // tmTheme path: the palette is derived from the theme (RGB), not ANSI.
         assert!(matches!(palette.emphasis, Color::Rgb(..)));
         assert!(matches!(palette.success, Color::Rgb(..)));
+    }
+
+    #[test]
+    fn tag_color_is_stable_and_palette_bound() {
+        let p = Palette::default();
+        // Deterministic: same name always yields the same color.
+        assert_eq!(p.tag_color("rust"), p.tag_color("rust"));
+        // Drawn from the palette's vivid hues, never the dim/structural roles.
+        let hues = [p.accent, p.success, p.warning, p.error, p.info, p.marker];
+        for tag in ["rust", "wip", "todo", "auth", "ui", "db"] {
+            assert!(hues.contains(&p.tag_color(tag)), "{tag} color not in palette hues");
+        }
+        // Spreads across more than one bucket for a typical set of tags.
+        let distinct: std::collections::HashSet<_> =
+            ["a", "b", "c", "d", "e", "f"].iter().map(|t| p.tag_color(t)).collect();
+        assert!(distinct.len() > 1, "tag colors should vary across names");
     }
 
     #[test]

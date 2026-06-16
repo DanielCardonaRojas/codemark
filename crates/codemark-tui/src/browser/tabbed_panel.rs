@@ -393,10 +393,8 @@ impl TabbedPanel {
             Ok(tags) if !tags.is_empty() => tags
                 .into_iter()
                 .map(|tag| {
-                    PanelItem::new(format!("#{tag}"))
-                        .user_data(tag)
-                        .no_health()
-                        .color(crate::theme::palette().accent)
+                    let color = crate::theme::palette().tag_color(&tag);
+                    PanelItem::new(format!("#{tag}")).user_data(tag).no_health().color(color)
                 })
                 .collect(),
             Ok(_) => {
