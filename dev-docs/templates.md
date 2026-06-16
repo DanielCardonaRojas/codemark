@@ -52,10 +52,35 @@ This document describes the Handlebars template system for codemark's markdown o
 | `{{commit_hash}}` | String? | Resolution commit |
 | `{{short_commit}}` | String? | First 8 chars (computed) |
 
+### Collection Overview (`codemark_collection_overview.md`)
+
+Rendered in the TUI right pane as a live preview while browsing the Collections
+tab (before a collection is entered with Enter). Uses a different context than
+the bookmark templates:
+
+| Placeholder | Type | Description |
+|-------------|------|-------------|
+| `{{name}}` | String | Collection name |
+| `{{description}}` | String? | Collection description |
+| `{{visibility}}` | String | `public` or `private` |
+| `{{health}}` | String? | `active`, `drifted`, or `stale` |
+| `{{created_at}}` | String | Creation timestamp |
+| `{{created_by}}` | String? | Creator |
+| `{{branch}}` | String? | Branch the collection was created on |
+| `{{published}}` | Bool | Whether the collection has been published |
+| `{{published_at}}` | String? | Publish timestamp |
+| `{{repo_url}}` | String? | Source repository URL |
+| `{{step_count}}` | Number | Number of bookmarks in the collection |
+
+Loops: `{{#each tags}}` (each `{{this}}`), `{{#each links}}` (each `{{kind}}`,
+`{{label}}`, `{{url}}`), and `{{#each steps}}` (each `{{index}}`, `{{file_path}}`,
+`{{file_name}}`, `{{language}}`, `{{summary}}`).
+
 ### Custom Helpers
 
 - `{{escape_markdown value}}` - Escapes special markdown characters
 - `{{truncate value}}` - Truncates a string to 8 characters
+- `{{format_date value "%Y-%m-%d %H:%M:%S"}}` - Formats a timestamp
 
 ## Default Template
 
@@ -119,6 +144,8 @@ This is the default template used when no custom template is provided:
 
 Templates are stored in `.codemark/templates/` directory:
 - `codemark_show.md` - Template for `codemark show` command (default shown above)
+- `details_panel.md` - Template for the TUI bottom Details pane (annotations/notes)
+- `codemark_collection_overview.md` - Template for the TUI live collection overview
 - `list.md` - Template for `codemark list` command (optional, simple format)
 
 Users can override these by creating their own files in this directory.

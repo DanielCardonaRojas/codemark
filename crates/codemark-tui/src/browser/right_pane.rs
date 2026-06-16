@@ -28,6 +28,11 @@ pub enum RightPaneFocus {
 pub struct RightPane {
     /// Steps tabbed panel (Steps/Info)
     pub steps: TabbedPanel,
+    /// Collection overview panel shown live while browsing collections
+    /// (before a collection is entered with Enter).
+    pub overview: MarkdownPanel,
+    /// When true, the overview panel replaces the steps panel in the main area.
+    pub overview_active: bool,
     /// Details panel showing bookmark metadata (now template-driven)
     pub details: MarkdownPanel,
     /// Data for each step in the current tour
@@ -52,6 +57,8 @@ pub struct RightPane {
     cached_show_template: String,
     /// Cached details template content to avoid repeated disk reads
     cached_details_template: String,
+    /// Cached collection overview template content to avoid repeated disk reads
+    cached_collection_overview_template: String,
     /// Flag set when step navigation changes and the caller must call update_preview
     pub needs_preview_update: bool,
     /// Cached HEAD commit hash to avoid re-running git I/O on every preview navigation
@@ -63,9 +70,13 @@ impl RightPane {
     pub fn new(db: &Database) -> Self {
         let cached_show_template = load_template(templates::SHOW_TEMPLATE);
         let cached_details_template = load_template(templates::DETAILS_TEMPLATE);
+        let cached_collection_overview_template =
+            load_template(templates::COLLECTION_OVERVIEW_TEMPLATE);
 
         let mut pane = Self {
             steps: TabbedPanel::new_steps_info(db),
+            overview: MarkdownPanel::new(),
+            overview_active: false,
             details: MarkdownPanel::new(),
             steps_data: Vec::new(),
             focused: RightPaneFocus::Steps,
@@ -79,6 +90,7 @@ impl RightPane {
             needs_preview_update: false,
             cached_show_template,
             cached_details_template,
+            cached_collection_overview_template,
             cached_head_commit: {
                 let db_dir = db.path().parent().unwrap_or_else(|| db.path());
                 codemark_core::git::context::detect_context(db_dir).and_then(|ctx| ctx.head_commit)
@@ -211,6 +223,7 @@ impl RightPane {
                 self.pager_current = 0;
                 self.active_bookmark_id = Some(bookmark_id.to_string());
                 self.active_tour_name = None;
+                self.overview_active = false;
                 self.update_preview(db);
             }
         } else {
@@ -254,6 +267,7 @@ impl RightPane {
                 self.pager_current = 0;
                 self.active_bookmark_id = Some(bookmark_id.to_string());
                 self.active_tour_name = None;
+                self.overview_active = false;
                 self.update_preview(db);
             }
             Err(e) => {
@@ -353,6 +367,7 @@ impl RightPane {
             self.pager_current = 0;
             self.active_tour_name = Some(tour_name.to_string());
             self.active_bookmark_id = None;
+            self.overview_active = false;
             self.update_preview(db);
         } else {
             self.clear_preview_state(db);
@@ -430,6 +445,8 @@ impl RightPane {
         self.pager_current = 0;
         self.active_bookmark_id = None;
         self.active_tour_name = None;
+        self.overview_active = false;
+        self.overview.set_markdown(String::new());
 
         // Clear the rendered preview panels so old content doesn't linger
         if let Some(preview) = self.steps.get_step_preview_mut() {
@@ -446,6 +463,52 @@ impl RightPane {
 
         // Still call update_preview for any additional side effects
         self.update_preview(db);
+    }
+
+    /// Load a live collection overview for the given collection ID.
+    ///
+    /// Renders collection metadata (description, health, tags, links, and the
+    /// ordered list of steps) into the overview panel, which replaces the steps
+    /// panel in the main area while browsing collections. This is shown *before*
+    /// a collection is entered with Enter; entering loads the per-step code
+    /// previews via [`load_tour_live`].
+    pub fn load_collection_overview(&mut self, db: &Database, collection_id: &str) {
+        let Some(collection) = db.get_collection_by_id(collection_id).ok().flatten() else {
+            self.clear_preview_state(db);
+            return;
+        };
+
+        let bookmarks = db.list_bookmarks_in_collection(&collection.id).unwrap_or_default();
+        let tags = db
+            .list_tags_for_collection(&collection.id)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|t| t.tag)
+            .collect::<Vec<_>>();
+        let links = db.list_links_for_collection(&collection.id).unwrap_or_default();
+
+        let markdown = templates::render_collection_overview_with_template(
+            &self.cached_collection_overview_template,
+            &collection,
+            &bookmarks,
+            tags,
+            &links,
+        )
+        .unwrap_or_else(|e| format!("# {}\n\nError rendering overview: {}", collection.name, e));
+
+        self.overview.set_markdown(markdown);
+        self.overview_active = true;
+
+        // Clear the Details pane so stale annotations from a previously viewed
+        // bookmark don't linger beneath the overview.
+        self.details.set_markdown(String::new());
+
+        // No per-step code preview while showing the overview.
+        self.steps_data.clear();
+        self.pager_total = 0;
+        self.pager_current = 0;
+        self.active_tour_name = Some(collection.name.clone());
+        self.active_bookmark_id = None;
     }
 
     /// Load a tour and its steps from the database.
@@ -517,6 +580,7 @@ impl RightPane {
                 self.pager_current = 0;
                 self.active_tour_name = Some(tour_name.to_string());
                 self.active_bookmark_id = None;
+                self.overview_active = false;
                 self.update_preview(db);
             } else {
                 // Clear the right-pane state when no steps are available
@@ -590,7 +654,11 @@ impl RightPane {
 
         if steps_fullscreen {
             // In fullscreen mode, use the entire area for the steps panel
-            self.steps.render(area, buf);
+            if self.overview_active {
+                self.render_overview_block(area, buf);
+            } else {
+                self.steps.render(area, buf);
+            }
             return;
         }
 
@@ -617,8 +685,13 @@ impl RightPane {
         let chunks =
             Layout::default().direction(Direction::Vertical).constraints(constraints).split(area);
 
-        // Render steps tabbed panel
-        self.steps.render(chunks[0], buf);
+        // Render the collection overview (live collection browsing) or the
+        // steps tabbed panel (single bookmark / entered tour).
+        if self.overview_active {
+            self.render_overview_block(chunks[0], buf);
+        } else {
+            self.steps.render(chunks[0], buf);
+        }
 
         // Render pager if needed
         if self.pager_total > 1 {
@@ -666,6 +739,44 @@ impl RightPane {
         self.details.render(inner, buf);
     }
 
+    /// Render the collection overview block with border, title offset, and content.
+    ///
+    /// Mirrors the steps tabbed panel's framing so the live collection overview
+    /// occupies the same main area while browsing collections.
+    fn render_overview_block(&self, area: Rect, buf: &mut Buffer) {
+        let border_style = if self.focused == RightPaneFocus::Steps {
+            Style::default().fg(crate::theme::palette().accent)
+        } else {
+            Style::default().fg(crate::theme::palette().dim)
+        };
+
+        let title = ratatui::text::Line::from(vec![
+            ratatui::text::Span::raw("  "),
+            ratatui::text::Span::styled("Overview", Style::default().bold()),
+        ]);
+        let block = Block::bordered()
+            .border_type(BorderType::Rounded)
+            .title(title)
+            .border_style(border_style);
+
+        let inner = block.inner(area);
+        block.render(area, buf);
+
+        // Extend the top border line after the ╭ character (matching tabbed panels)
+        for i in 1..=2u16 {
+            let x = area.left() + i;
+            let y = area.top();
+            if x < area.right()
+                && let Some(cell) = buf.cell_mut((x, y))
+            {
+                cell.set_char('─');
+                cell.set_style(border_style);
+            }
+        }
+
+        self.overview.render(inner, buf);
+    }
+
     /// Handle an event.
     pub fn handle_event(&mut self, event: &Event) -> bool {
         // Handle mouse clicks for internal focus switching
@@ -696,15 +807,24 @@ impl RightPane {
             }
         }
 
-        // Forward to components
+        // When the overview is shown, it takes the place of the steps panel in
+        // the main area, so route "Steps"-bound events to the overview instead.
         let handled = match event {
             Event::Mouse(_) => {
                 // For mouse events, check both to allow scrolling any hovered pane
-                self.steps.handle_event(event) || self.details.handle_event(event)
+                let main = if self.overview_active {
+                    self.overview.handle_event(event)
+                } else {
+                    self.steps.handle_event(event)
+                };
+                main || self.details.handle_event(event)
             }
             _ => {
                 // For keyboard events, follow focus
                 match self.focused {
+                    RightPaneFocus::Steps if self.overview_active => {
+                        self.overview.handle_event(event)
+                    }
                     RightPaneFocus::Steps => self.steps.handle_event(event),
                     RightPaneFocus::Details => self.details.handle_event(event),
                 }
@@ -757,15 +877,23 @@ impl RightPane {
     /// Set focus state.
     pub fn set_focus(&mut self, focused: bool) {
         match self.focused {
+            RightPaneFocus::Steps if self.overview_active => self.overview.set_focus(focused),
             RightPaneFocus::Steps => self.steps.set_focus(focused),
             RightPaneFocus::Details => self.details.set_focus(focused),
         }
     }
 
-    /// Focus the steps section.
+    /// Focus the steps section (or the overview when it occupies the main area).
     pub fn focus_steps(&mut self) {
         self.focused = RightPaneFocus::Steps;
-        self.steps.set_focus(true);
+        // Only the panel actually rendered in the main area should be focused.
+        if self.overview_active {
+            self.overview.set_focus(true);
+            self.steps.set_focus(false);
+        } else {
+            self.steps.set_focus(true);
+            self.overview.set_focus(false);
+        }
         self.details.set_focus(false);
     }
 
@@ -774,6 +902,7 @@ impl RightPane {
         self.focused = RightPaneFocus::Details;
         self.details.set_focus(true);
         self.steps.set_focus(false);
+        self.overview.set_focus(false);
     }
 
     /// Get the last rendered area.
@@ -794,6 +923,12 @@ impl RightPane {
     /// or from the Info tab's markdown panel when the Info tab is selected.
     /// Returns None if there's no content or the preview state is cleared.
     pub fn active_markdown_content(&self) -> Option<&str> {
+        // When showing a live collection overview, the markdown is the overview
+        // itself (there are no per-step bookmarks loaded).
+        if self.overview_active {
+            return Some(self.overview.markdown()).filter(|m| !m.trim().is_empty());
+        }
+
         // Return None if there are no steps loaded (preview state is cleared)
         if self.steps_data.is_empty() {
             return None;

@@ -11,7 +11,7 @@ use handlebars::{Handlebars, HelperDef, HelperResult, Output, RenderContext, Ren
 use serde::Serialize;
 
 use crate::config::global_config_dir;
-use crate::engine::bookmark::{Annotation, Bookmark, Resolution};
+use crate::engine::bookmark::{Annotation, Bookmark, Collection, CollectionLink, Resolution};
 
 /// Template context for rendering a single bookmark with its resolutions.
 #[derive(Debug, Serialize)]
@@ -140,13 +140,7 @@ impl BookmarkTemplateContext {
         current_head: Option<&str>,
     ) -> Self {
         let short_id = short_id(&bm.id).to_string();
-        let file_name = bm
-            .file_path
-            .rsplit('/')
-            .next()
-            .or_else(|| bm.file_path.rsplit('\\').next())
-            .unwrap_or(&bm.file_path)
-            .to_string();
+        let file_name = file_name_of(&bm.file_path);
 
         let short_commit = bm.commit_hash.as_ref().map(|c| short_id_value(c));
 
@@ -268,6 +262,147 @@ impl ResolutionTemplateContext {
         }
         ctx
     }
+}
+
+/// Template context for rendering a collection overview (live preview).
+#[derive(Debug, Serialize)]
+pub struct CollectionTemplateContext {
+    /// Collection name
+    pub name: String,
+    /// Description (optional)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// Visibility as string
+    pub visibility: String,
+    /// Health status as string (optional)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub health: Option<String>,
+    /// Creation timestamp
+    pub created_at: String,
+    /// Creator (optional)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub created_by: Option<String>,
+    /// Branch the collection was created on (optional)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
+    /// Whether the collection has been published
+    pub published: bool,
+    /// Publish timestamp (optional)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub published_at: Option<String>,
+    /// Source repository URL (optional)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub repo_url: Option<String>,
+    /// Number of steps (bookmarks) in the collection
+    pub step_count: usize,
+    /// Tags
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub tags: Vec<String>,
+    /// External links
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub links: Vec<CollectionLinkTemplateContext>,
+    /// Steps (one per bookmark, in order)
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub steps: Vec<CollectionStepTemplateContext>,
+}
+
+/// Template context for a collection link.
+#[derive(Debug, Serialize)]
+pub struct CollectionLinkTemplateContext {
+    /// Link kind as string (pr, issue, doc, ...)
+    pub kind: String,
+    /// Display label
+    pub label: String,
+    /// URL
+    pub url: String,
+}
+
+/// Template context for a single collection step (bookmark).
+#[derive(Debug, Serialize)]
+pub struct CollectionStepTemplateContext {
+    /// 1-based step number
+    pub index: usize,
+    /// File path
+    pub file_path: String,
+    /// Just the filename
+    pub file_name: String,
+    /// Programming language
+    pub language: String,
+    /// Human-readable summary of the bookmarked code (optional)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub summary: Option<String>,
+}
+
+impl CollectionTemplateContext {
+    /// Create a template context from a collection, its bookmarks, tags, and links.
+    pub fn from_collection(
+        collection: &Collection,
+        bookmarks: &[Bookmark],
+        tags: Vec<String>,
+        links: &[CollectionLink],
+    ) -> Self {
+        let steps = bookmarks
+            .iter()
+            .enumerate()
+            .map(|(i, bm)| CollectionStepTemplateContext::from_bookmark(i + 1, bm))
+            .collect();
+
+        CollectionTemplateContext {
+            name: collection.name.clone(),
+            description: collection.description.clone(),
+            visibility: collection.visibility.to_string(),
+            health: collection.health.map(|h| h.to_string()),
+            created_at: collection.created_at.clone(),
+            created_by: collection.created_by.clone(),
+            branch: collection.created_branch.clone(),
+            published: collection.published_at.is_some(),
+            published_at: collection.published_at.clone(),
+            repo_url: collection.repo_url.clone(),
+            step_count: bookmarks.len(),
+            tags,
+            links: links.iter().map(CollectionLinkTemplateContext::from_link).collect(),
+            steps,
+        }
+    }
+}
+
+impl CollectionLinkTemplateContext {
+    /// Create a template context from a collection link.
+    fn from_link(link: &CollectionLink) -> Self {
+        CollectionLinkTemplateContext {
+            kind: link.kind.to_string(),
+            label: link.label.clone(),
+            url: link.url.clone(),
+        }
+    }
+}
+
+impl CollectionStepTemplateContext {
+    /// Create a template context from a bookmark at the given 1-based position.
+    fn from_bookmark(index: usize, bm: &Bookmark) -> Self {
+        let file_name = file_name_of(&bm.file_path);
+
+        let summary = bm
+            .language
+            .parse::<crate::parser::languages::Language>()
+            .ok()
+            .and_then(|lang| crate::query::summarizer::summarize_query(&bm.query, Some(lang)).ok())
+            .and_then(|s| s.format());
+
+        CollectionStepTemplateContext {
+            index,
+            file_path: bm.file_path.clone(),
+            file_name,
+            language: bm.language.clone(),
+            summary,
+        }
+    }
+}
+
+/// Extract the file name from a path, handling both `/` and `\` separators
+/// regardless of host OS (stored paths may use either separator).
+fn file_name_of(path: &str) -> String {
+    path.rsplit(['/', '\\']).next().unwrap_or(path).to_string()
 }
 
 /// Truncate a string to first 8 characters.
@@ -404,6 +539,7 @@ pub fn templates_dir() -> Option<PathBuf> {
 /// Template names
 pub const SHOW_TEMPLATE: &str = "codemark_show.md";
 pub const DETAILS_TEMPLATE: &str = "details_panel.md";
+pub const COLLECTION_OVERVIEW_TEMPLATE: &str = "codemark_collection_overview.md";
 
 /// Get the default markdown template for the `show` command.
 pub fn default_show_template() -> &'static str {
@@ -415,11 +551,17 @@ pub fn default_details_template() -> &'static str {
     include_str!("../../../templates/details_panel.md")
 }
 
+/// Get the default markdown template for the collection overview panel.
+pub fn default_collection_overview_template() -> &'static str {
+    include_str!("../../../templates/codemark_collection_overview.md")
+}
+
 /// Get the default content for a given template name.
 pub fn default_template_content(name: &str) -> Option<&'static str> {
     match name {
         SHOW_TEMPLATE => Some(default_show_template()),
         DETAILS_TEMPLATE => Some(default_details_template()),
+        COLLECTION_OVERVIEW_TEMPLATE => Some(default_collection_overview_template()),
         _ => None,
     }
 }
@@ -453,7 +595,7 @@ pub fn ensure_default_template_exists() {
         return;
     }
 
-    for name in [SHOW_TEMPLATE, DETAILS_TEMPLATE] {
+    for name in [SHOW_TEMPLATE, DETAILS_TEMPLATE, COLLECTION_OVERVIEW_TEMPLATE] {
         let template_path = templates_dir.join(name);
         if !template_path.exists()
             && let Some(content) = default_template_content(name)
@@ -501,6 +643,34 @@ pub fn render_template(
     handlebars.render_template(&template, &context)
 }
 
+/// Render a collection overview using the collection overview template,
+/// loading it from disk (or the bundled default).
+pub fn render_collection_overview(
+    collection: &Collection,
+    bookmarks: &[Bookmark],
+    tags: Vec<String>,
+    links: &[CollectionLink],
+) -> Result<String, handlebars::RenderError> {
+    let template = load_template(COLLECTION_OVERVIEW_TEMPLATE);
+    render_collection_overview_with_template(&template, collection, bookmarks, tags, links)
+}
+
+/// Render a collection overview using a caller-supplied template string.
+///
+/// Lets callers that cache the template (e.g. the TUI right pane) avoid a disk
+/// read on every render while still sharing context construction + engine setup.
+pub fn render_collection_overview_with_template(
+    template: &str,
+    collection: &Collection,
+    bookmarks: &[Bookmark],
+    tags: Vec<String>,
+    links: &[CollectionLink],
+) -> Result<String, handlebars::RenderError> {
+    let handlebars = create_handlebars_engine();
+    let context = CollectionTemplateContext::from_collection(collection, bookmarks, tags, links);
+    handlebars.render_template(template, &context)
+}
+
 /// Render a bookmark with its resolutions using the show template (backward compatibility).
 pub fn render_show_template(
     bm: &Bookmark,
@@ -517,6 +687,87 @@ mod tests {
     use crate::engine::bookmark::{Bookmark, BookmarkHealth, Resolution, ResolutionMethod};
     use crate::git::context as git_context;
     use std::path::Path;
+
+    #[test]
+    fn test_render_collection_overview() {
+        use crate::engine::bookmark::{
+            Collection, CollectionHealth, CollectionLink, CollectionLinkKind, Visibility,
+        };
+
+        let collection = Collection {
+            id: "col-1".to_string(),
+            name: "Auth Flow".to_string(),
+            description: Some("How login works end to end".to_string()),
+            visibility: Visibility::Private,
+            created_at: "2024-01-01T00:00:00Z".to_string(),
+            created_by: Some("alice".to_string()),
+            created_branch: Some("main".to_string()),
+            published_at: None,
+            published_commit_sha: None,
+            repo_url: None,
+            repo_id: None,
+            status: None,
+            health: Some(CollectionHealth::Active),
+            health_computed_at: None,
+            updated_at: None,
+            imported_from_url: None,
+        };
+
+        let bm = Bookmark {
+            id: "bm-1".to_string(),
+            query: "(function_definition name: (identifier) @target)".to_string(),
+            language: "rust".to_string(),
+            file_path: "src/auth/login.rs".to_string(),
+            content_hash: None,
+            commit_hash: None,
+            health: BookmarkHealth::Active,
+            resolution_method: None,
+            last_resolved_at: None,
+            stale_since: None,
+            created_at: "2024-01-01T00:00:00Z".to_string(),
+            created_by: None,
+            current_resolution_id: None,
+            repo_id: None,
+            tags: vec![],
+            annotations: vec![],
+            comments: vec![],
+        };
+
+        let links = vec![CollectionLink {
+            id: "link-1".to_string(),
+            collection_id: "col-1".to_string(),
+            kind: CollectionLinkKind::Pr,
+            label: "Add login".to_string(),
+            url: "https://example.com/pr/1".to_string(),
+            sort_order: 0,
+            added_at: "2024-01-01T00:00:00Z".to_string(),
+            added_by: None,
+        }];
+
+        let result = render_collection_overview(
+            &collection,
+            std::slice::from_ref(&bm),
+            vec!["auth".to_string(), "demo".to_string()],
+            &links,
+        );
+        assert!(result.is_ok(), "Overview rendering failed: {:?}", result.err());
+        let output = result.unwrap();
+
+        assert!(output.contains("# Auth Flow"));
+        assert!(output.contains("How login works end to end"));
+        assert!(output.contains("| **Steps** | 1 |"));
+        assert!(output.contains("| **Branch** | main |"));
+        assert!(output.contains("| **Visibility** | private |"));
+        assert!(output.contains("| **Health** | active |"));
+        // Tags rendered inline with # prefix
+        assert!(output.contains("#auth"));
+        assert!(output.contains("#demo"));
+        // Link rendered with kind
+        assert!(output.contains("**pr**"));
+        assert!(output.contains("https://example.com/pr/1"));
+        // Step list shows the filename
+        assert!(output.contains("login.rs"));
+    }
 
     #[test]
     fn test_escape_markdown() {
