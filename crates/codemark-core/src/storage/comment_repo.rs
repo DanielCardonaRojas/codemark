@@ -20,6 +20,14 @@ impl Database {
         Ok(())
     }
 
+    /// Insert multiple bookmark comments in a single transaction.
+    pub fn insert_comments(&self, comments: &[BookmarkComment]) -> Result<()> {
+        for comment in comments {
+            self.insert_comment(comment)?;
+        }
+        Ok(())
+    }
+
     /// List all comments for a specific bookmark.
     pub fn list_comments_for_bookmark(&self, bookmark_id: &str) -> Result<Vec<BookmarkComment>> {
         let mut stmt = self.conn().prepare(
