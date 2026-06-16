@@ -106,9 +106,13 @@ pub async fn dispatch(cli: &Cli) -> Result<()> {
         Command::Repo(args) => repo::handle_repo(cli, &mode, args).await,
         Command::Auth(args) => auth::handle_auth(cli, &mode, args).await,
         Command::InstallSkill(args) => skill::handle_install_skill(cli, &mode, args).await,
-        // External/plugin subcommands are intercepted in `main` before any
-        // initialization runs; if one reaches here, dispatch it (and on Unix
-        // replace this process) rather than silently doing nothing.
+        // `main` intercepts external/plugin subcommands before any
+        // initialization runs, so this arm is reached only if `dispatch` is
+        // ever called directly with one. We re-dispatch defensively (on Unix
+        // this replaces the process). A clap `external_subcommand` always
+        // carries the command name, so `try_dispatch` returns `Some` (which
+        // diverges or exits) for every real `External`; the `Ok(())` no-op is
+        // hit only for the impossible empty-vector case.
         Command::External(_) => {
             if let Some(err) = external::try_dispatch(&cli.command) {
                 eprintln!("{}", err.message);

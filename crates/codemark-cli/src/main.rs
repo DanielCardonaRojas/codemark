@@ -6,8 +6,8 @@ use codemark_core::error::exit_with_error;
 async fn main() {
     let cli = Cli::parse();
 
-    // External/plugin subcommands (e.g. `codemark dashboard` -> `codemark-tui`)
-    // are dispatched before any expensive initialization so the backing binary
+    // External/plugin subcommands (e.g. `codemark tui` -> `codemark-tui`) are
+    // dispatched before any expensive initialization so the backing binary
     // launches immediately. On Unix this `exec()`s and never returns; otherwise
     // it returns only when the executable could not be launched.
     if let Some(err) = external::try_dispatch(&cli.command) {
