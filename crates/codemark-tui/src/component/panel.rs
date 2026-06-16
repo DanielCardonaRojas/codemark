@@ -589,6 +589,12 @@ impl Panel {
             .collect()
     }
 
+    /// Count the currently active items in the entire list (regardless of filtering).
+    /// Avoids the allocation `active_items()` performs when only the count is needed.
+    pub fn active_item_count(&self) -> usize {
+        self.all_items.iter().filter(|i| i.active).count()
+    }
+
     /// Select the next item.
     /// Returns true if selection changed.
     pub fn select_next(&mut self) -> bool {

@@ -606,13 +606,13 @@ impl TabbedPanel {
             .iter()
             .map(|panel| match panel {
                 TabContent::List(p) if p.is_multi_select() => {
-                    let count = p.active_items().len();
+                    let count = p.active_item_count();
                     (count > 0).then_some(count)
                 }
                 _ => None,
             })
             .collect();
-        let tab_titles = self.tabs.render_as_titles_with_counts(self.focused, &counts);
+        let tab_titles = self.tabs.render_as_titles_with_counts(&counts);
 
         // Render outer border for the entire panel area with inline tabs
         let border_style = if self.focused {

@@ -267,18 +267,17 @@ impl TabSelection {
     }
 
     /// Render tabs as a Title for use with Block borders (inline with border).
-    pub fn render_as_titles(&self, focused: bool) -> Line<'_> {
-        self.render_as_titles_with_counts(focused, &[])
+    pub fn render_as_titles(&self, _focused: bool) -> Line<'_> {
+        self.render_as_titles_with_counts(&[])
     }
 
     /// Render tabs as a Title, appending a `(n)` count to a tab's label when the
     /// corresponding entry in `counts` is `Some(n)`. A tab's label is shown
     /// unchanged when `counts` has no entry for it (or it is `None`).
-    pub fn render_as_titles_with_counts(
-        &self,
-        _focused: bool,
-        counts: &[Option<usize>],
-    ) -> Line<'static> {
+    ///
+    /// Tab styling depends only on which tab is selected (`self.selected`), not on
+    /// panel focus, so no `focused` argument is taken.
+    pub fn render_as_titles_with_counts(&self, counts: &[Option<usize>]) -> Line<'static> {
         let mut spans = vec![Span::raw(" ".repeat(BORDER_EXTENSION as usize))]; // Offset for border extension
         let mut positions = Vec::new();
         let mut current_x = BORDER_EXTENSION;
@@ -424,7 +423,7 @@ mod tests {
         let mut tabs = TabSelection::new(vec![Tab::new("Tags"), Tab::new("Branches")]);
 
         // Two selected tags, no selected branches -> "Tags (2)" / "Branches".
-        tabs.render_as_titles_with_counts(false, &[Some(2), None]);
+        tabs.render_as_titles_with_counts(&[Some(2), None]);
         let positions = tabs.last_tab_positions.borrow();
         // "Tags (2)" is 8 cols wide (+1 trailing space), after the BORDER_EXTENSION offset.
         assert_eq!(positions[0], (BORDER_EXTENSION, BORDER_EXTENSION + 8 + 1));
