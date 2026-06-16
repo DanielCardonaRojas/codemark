@@ -1,6 +1,6 @@
 //! Integration tests for external subcommand dispatch (the Git/Cargo plugin
-//! model): `codemark <name>` runs `codemark-<name>`, with `dashboard` aliased
-//! to `codemark-tui`.
+//! model): `codemark <name>` runs `codemark-<name>`, e.g. `codemark tui` runs
+//! `codemark-tui`.
 //!
 //! On Unix the dispatcher `exec()`s the plugin, so these tests run the real
 //! `codemark` binary as a subprocess and assert on its stdout/stderr/exit code.
@@ -64,23 +64,13 @@ fn builtin_command_is_not_treated_as_external() {
 }
 
 #[test]
-fn top_level_help_lists_the_dashboard_subcommand() {
-    // The dashboard alias is a real clap subcommand so it shows up in help,
-    // completions, and generated man pages.
-    let dir = plugin_dir();
-    let out = run_with_path(dir.path(), &["--help"]);
-    assert_eq!(out.code, 0, "stderr: {}", out.stderr);
-    assert!(out.stdout.contains("dashboard"), "stdout: {}", out.stdout);
-}
-
-#[test]
-fn dashboard_alias_dispatches_to_codemark_tui_and_forwards_args() {
+fn tui_dispatches_to_codemark_tui_binary() {
     let dir = plugin_dir();
     install_fake_plugin(dir.path(), "codemark-tui", 0);
 
-    let out = run_with_path(dir.path(), &["dashboard", "--project", "foo"]);
+    let out = run_with_path(dir.path(), &["tui"]);
     assert_eq!(out.code, 0, "stderr: {}", out.stderr);
-    assert!(out.stdout.contains("PLUGIN ARGS: --project foo"), "stdout: {}", out.stdout);
+    assert!(out.stdout.contains("PLUGIN ARGS:"), "stdout: {}", out.stdout);
 }
 
 #[test]
@@ -103,17 +93,13 @@ fn plugin_exit_code_is_propagated() {
 }
 
 #[test]
-fn missing_dashboard_executable_shows_install_hint() {
+fn missing_tui_executable_shows_install_hint() {
     // Empty PATH dir -> codemark-tui cannot be found.
     let dir = plugin_dir();
-    let out = run_with_path(dir.path(), &["dashboard"]);
+    let out = run_with_path(dir.path(), &["tui"]);
 
     assert_eq!(out.code, 127, "stdout: {}", out.stdout);
-    assert!(
-        out.stderr.contains("dashboard feature is not installed"),
-        "stderr: {}",
-        out.stderr
-    );
+    assert!(out.stderr.contains("TUI is not installed"), "stderr: {}", out.stderr);
     assert!(out.stderr.contains("cargo install codemark-tui"), "stderr: {}", out.stderr);
 }
 
