@@ -762,12 +762,16 @@ impl BrowserLayout {
                     if Panel3Tab::from_index(new_tab) == Some(Panel3Tab::Tours) {
                         self.fetch_remote_tours();
                     }
+                    // Refresh the preview for the newly active tab so it doesn't
+                    // linger on content from the previous tab.
+                    self.update_panel3_live_preview();
                 }
 
                 if self.focus == FocusArea::Panel3
                     && let Some(id) = self.left_pane.panel3.take_selection_change()
+                    && let Some(tab) = Panel3Tab::from_index(new_tab)
                 {
-                    self.right_pane.load_bookmark_live(&self.db, &id, &mut self.session_cache);
+                    self.preview_panel3_item(tab, &id);
                 }
                 handled
             }
@@ -783,12 +787,11 @@ impl BrowserLayout {
                     FocusArea::Panel2 => self.left_pane.panel2.handle_event(event),
                     FocusArea::Panel3 => {
                         let handled = self.left_pane.panel3.handle_event(event);
-                        if let Some(id) = self.left_pane.panel3.take_selection_change() {
-                            self.right_pane.load_bookmark_live(
-                                &self.db,
-                                &id,
-                                &mut self.session_cache,
-                            );
+                        if let Some(id) = self.left_pane.panel3.take_selection_change()
+                            && let Some(tab) =
+                                Panel3Tab::from_index(self.left_pane.panel3.tabs.selected_index())
+                        {
+                            self.preview_panel3_item(tab, &id);
                         }
                         handled
                     }
@@ -812,6 +815,9 @@ impl BrowserLayout {
                     if Panel3Tab::from_index(new_tab) == Some(Panel3Tab::Tours) {
                         self.fetch_remote_tours();
                     }
+                    // Refresh the preview for the newly active tab so it doesn't
+                    // linger on content from the previous tab.
+                    self.update_panel3_live_preview();
                 }
 
                 handled

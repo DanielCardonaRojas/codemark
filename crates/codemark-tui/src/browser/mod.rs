@@ -196,19 +196,44 @@ impl BrowserLayout {
         layout
     }
 
-    /// Update live preview for bookmarks panel when on the bookmarks tab.
-    fn update_bookmarks_live_preview(&mut self) {
+    /// Update the right-pane live preview for the active Panel 3 tab + selection.
+    ///
+    /// Bookmarks show the bookmark's code content; Collections show a live
+    /// collection overview (metadata + steps). Used when focus enters Panel 3
+    /// and when the active Panel 3 tab changes, so the preview never lingers on
+    /// stale content from a different tab.
+    fn update_panel3_live_preview(&mut self) {
         if self.focus != FocusArea::Panel3 {
             return;
         }
 
-        if let Some(Panel3Tab::Bookmarks) =
-            Panel3Tab::from_index(self.left_pane.panel3.tabs.selected_index())
-            && let Some(TabContent::List(panel)) = self.left_pane.panel3.panels.first()
-            && let Some(selected) = panel.selected()
-            && let Some(ref id) = selected.user_data
-        {
-            self.right_pane.load_bookmark_live(&self.db, id, &mut self.session_cache);
+        let Some(tab) = Panel3Tab::from_index(self.left_pane.panel3.tabs.selected_index()) else {
+            return;
+        };
+
+        let selected_id = self
+            .left_pane
+            .panel3
+            .active_panel()
+            .and_then(|panel| panel.selected())
+            .and_then(|selected| selected.user_data.clone());
+
+        if let Some(id) = selected_id {
+            self.preview_panel3_item(tab, &id);
+        }
+    }
+
+    /// Route a Panel 3 item (by user-data id) to the appropriate live preview.
+    pub(super) fn preview_panel3_item(&mut self, tab: Panel3Tab, id: &str) {
+        match tab {
+            Panel3Tab::Bookmarks => {
+                self.right_pane.load_bookmark_live(&self.db, id, &mut self.session_cache);
+            }
+            Panel3Tab::Collections => {
+                self.right_pane.load_collection_overview(&self.db, id);
+            }
+            // Tours are activated explicitly (pull/open); no live preview.
+            Panel3Tab::Tours => {}
         }
     }
 
@@ -1511,7 +1536,7 @@ impl BrowserLayout {
             }
             FocusArea::Panel3 => {
                 self.left_pane.panel3.set_focus(true);
-                self.update_bookmarks_live_preview();
+                self.update_panel3_live_preview();
             }
             FocusArea::Main => {
                 self.right_pane.set_focus(true);

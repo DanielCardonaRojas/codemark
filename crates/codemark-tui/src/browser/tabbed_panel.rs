@@ -720,9 +720,11 @@ impl TabbedPanel {
             true
         };
 
-        // Check if this is the bookmarks panel (index 0) and selection changed (or tab switched to it)
-        if active_index == 0
-            && let Some(panel) = self.panels.get_mut(0)
+        // Capture selection changes for the active list panel (bookmarks,
+        // collections, or tours) so the right pane can live-update its preview.
+        // This also fires when switching tabs, surfacing the newly active
+        // panel's current selection.
+        if let Some(TabContent::List(panel)) = self.panels.get_mut(active_index)
             && let Some(id) = panel.take_selection_change()
         {
             self.pending_selection_change.set(Some(id));
