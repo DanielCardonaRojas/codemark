@@ -84,6 +84,30 @@ fn generic_plugin_dispatches_to_codemark_prefixed_binary_and_forwards_args() {
 }
 
 #[test]
+fn non_utf8_arguments_are_forwarded_not_rejected() {
+    use std::ffi::OsString;
+    use std::os::unix::ffi::OsStringExt;
+
+    let dir = plugin_dir();
+    install_fake_plugin(dir.path(), "codemark-sync", 0);
+
+    // 0xFF is not valid UTF-8. With a `Vec<String>` external subcommand, clap
+    // would reject this at parse time; `Vec<OsString>` forwards it to the plugin.
+    let bad_arg = OsString::from_vec(vec![b'a', 0xFF, b'b']);
+    let out = Command::new(codemark_bin())
+        .arg("sync")
+        .arg(&bad_arg)
+        .env("PATH", dir.path())
+        .output()
+        .expect("failed to run codemark");
+
+    let code = out.status.code().unwrap_or(-1);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(code, 0, "stderr: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(stdout.contains("PLUGIN ARGS:"), "stdout: {}", stdout);
+}
+
+#[test]
 fn plugin_exit_code_is_propagated() {
     let dir = plugin_dir();
     install_fake_plugin(dir.path(), "codemark-sync", 42);

@@ -11,6 +11,8 @@
 //! launching the child, so it can run *before* config/database initialization
 //! (see `main.rs`).
 
+use std::ffi::{OsStr, OsString};
+
 use crate::cli::Command;
 
 /// Executable backing the `tui` subcommand. Special-cased only to provide a
@@ -66,11 +68,14 @@ pub fn try_dispatch(command: &Command) -> Option<DispatchError> {
 /// Launch the external executable for `subcommand`, forwarding `args`.
 ///
 /// Diverges on success; returns a [`DispatchError`] otherwise.
-fn run(subcommand: &str, args: &[String]) -> DispatchError {
-    let exe = executable_name(subcommand);
+fn run(subcommand: &OsStr, args: &[OsString]) -> DispatchError {
+    // The executable name must be valid UTF-8, so the subcommand is decoded
+    // lossily here; the raw `args` are still forwarded verbatim as `OsString`.
+    let subcommand = subcommand.to_string_lossy();
+    let exe = executable_name(&subcommand);
     let mut command = std::process::Command::new(&exe);
     command.args(args);
-    exec_or_spawn(command, &exe, subcommand)
+    exec_or_spawn(command, &exe, &subcommand)
 }
 
 /// On Unix, replace the current process with the external executable so that

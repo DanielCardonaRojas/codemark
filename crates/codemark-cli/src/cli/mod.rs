@@ -3,6 +3,7 @@ pub mod handlers;
 pub mod output;
 pub mod templates;
 
+use std::ffi::OsString;
 use std::path::PathBuf;
 
 use clap::{CommandFactory, Parser, Subcommand, ValueEnum};
@@ -155,9 +156,12 @@ pub enum Command {
     InstallSkill(InstallSkillArgs),
 
     /// Run an external plugin: `codemark <name>` executes `codemark-<name>`
-    /// (e.g. `codemark tui` launches the `codemark-tui` binary)
+    /// (e.g. `codemark tui` launches the `codemark-tui` binary).
+    ///
+    /// Uses `OsString` so non-UTF-8 trailing arguments (e.g. odd file paths on
+    /// Unix) are captured and forwarded verbatim rather than rejected at parse.
     #[command(external_subcommand)]
-    External(Vec<String>),
+    External(Vec<OsString>),
 }
 
 // --- Subcommand argument structs ---
