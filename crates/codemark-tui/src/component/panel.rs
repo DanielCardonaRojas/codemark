@@ -420,6 +420,11 @@ impl Panel {
         self
     }
 
+    /// Whether the panel supports multi-selection.
+    pub fn is_multi_select(&self) -> bool {
+        self.multi_select
+    }
+
     /// Get the last rendered area.
     pub fn last_area(&self) -> Rect {
         self.last_area.get()

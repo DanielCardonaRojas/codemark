@@ -267,7 +267,18 @@ impl TabSelection {
     }
 
     /// Render tabs as a Title for use with Block borders (inline with border).
-    pub fn render_as_titles(&self, _focused: bool) -> Line<'_> {
+    pub fn render_as_titles(&self, focused: bool) -> Line<'_> {
+        self.render_as_titles_with_counts(focused, &[])
+    }
+
+    /// Render tabs as a Title, appending a `(n)` count to a tab's label when the
+    /// corresponding entry in `counts` is `Some(n)`. A tab's label is shown
+    /// unchanged when `counts` has no entry for it (or it is `None`).
+    pub fn render_as_titles_with_counts(
+        &self,
+        _focused: bool,
+        counts: &[Option<usize>],
+    ) -> Line<'static> {
         let mut spans = vec![Span::raw(" ".repeat(BORDER_EXTENSION as usize))]; // Offset for border extension
         let mut positions = Vec::new();
         let mut current_x = BORDER_EXTENSION;
@@ -287,9 +298,14 @@ impl TabSelection {
                 current_x += 1;
             }
 
+            let label = match counts.get(i).copied().flatten() {
+                Some(count) => format!("{} ({count})", tab.label()),
+                None => tab.label().to_string(),
+            };
+
             let x_start = current_x;
-            spans.push(Span::styled(tab.label(), style));
-            current_x += tab.label().width() as u16;
+            current_x += label.width() as u16;
+            spans.push(Span::styled(label, style));
             spans.push(Span::styled(" ", style));
             current_x += 1;
 
@@ -401,6 +417,20 @@ mod tests {
         // Click outside tabs
         assert!(!tabs.handle_click(100, 0));
         assert_eq!(tabs.selected_index(), 2); // Should remain unchanged
+    }
+
+    #[test]
+    fn test_render_titles_with_counts_appends_suffix() {
+        let mut tabs = TabSelection::new(vec![Tab::new("Tags"), Tab::new("Branches")]);
+
+        // Two selected tags, no selected branches -> "Tags (2)" / "Branches".
+        tabs.render_as_titles_with_counts(false, &[Some(2), None]);
+        let positions = tabs.last_tab_positions.borrow();
+        // "Tags (2)" is 8 cols wide (+1 trailing space), after the BORDER_EXTENSION offset.
+        assert_eq!(positions[0], (BORDER_EXTENSION, BORDER_EXTENSION + 8 + 1));
+        // Separator (1) before the next tab; "Branches" is 8 cols (+1 trailing space).
+        let branches_start = BORDER_EXTENSION + 8 + 1 + 1;
+        assert_eq!(positions[1], (branches_start, branches_start + 8 + 1));
     }
 
     #[test]
