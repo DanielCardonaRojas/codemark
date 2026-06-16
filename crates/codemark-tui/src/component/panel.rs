@@ -420,6 +420,11 @@ impl Panel {
         self
     }
 
+    /// Whether the panel supports multi-selection.
+    pub fn is_multi_select(&self) -> bool {
+        self.multi_select
+    }
+
     /// Get the last rendered area.
     pub fn last_area(&self) -> Rect {
         self.last_area.get()
@@ -582,6 +587,12 @@ impl Panel {
             .filter(|i| i.active)
             .map(|i| i.user_data.clone().unwrap_or_else(|| i.text.clone()))
             .collect()
+    }
+
+    /// Count the currently active items in the entire list (regardless of filtering).
+    /// Avoids the allocation `active_items()` performs when only the count is needed.
+    pub fn active_item_count(&self) -> usize {
+        self.all_items.iter().filter(|i| i.active).count()
     }
 
     /// Select the next item.

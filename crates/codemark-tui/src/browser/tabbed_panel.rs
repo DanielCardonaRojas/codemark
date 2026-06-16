@@ -598,7 +598,21 @@ impl TabbedPanel {
     /// Render the tabbed panel.
     pub fn render(&self, area: Rect, buf: &mut Buffer) {
         self.last_area.set(area);
-        let tab_titles = self.tabs.render_as_titles(self.focused);
+
+        // For multi-select list panels, surface the number of active (selected)
+        // items as a `(n)` suffix on the tab title, e.g. "Tags (2)".
+        let counts: Vec<Option<usize>> = self
+            .panels
+            .iter()
+            .map(|panel| match panel {
+                TabContent::List(p) if p.is_multi_select() => {
+                    let count = p.active_item_count();
+                    (count > 0).then_some(count)
+                }
+                _ => None,
+            })
+            .collect();
+        let tab_titles = self.tabs.render_as_titles_with_counts(&counts);
 
         // Render outer border for the entire panel area with inline tabs
         let border_style = if self.focused {
