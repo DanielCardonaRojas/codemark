@@ -311,6 +311,7 @@ impl TabbedPanel {
                         .unwrap_or(ForgeKind::Unknown);
                     PanelItem::new(repo.repo_name)
                         .icon(forge.icon())
+                        .plain_icon()
                         .secondary_text(repo.repo_owner)
                         .user_data(repo.repo_root.to_string_lossy().to_string())
                         .active(is_active)
@@ -330,7 +331,11 @@ impl TabbedPanel {
             owners
                 .into_iter()
                 .map(|(owner, forge)| {
-                    PanelItem::new(owner.clone()).icon(forge.icon()).user_data(owner).no_health()
+                    PanelItem::new(owner.clone())
+                        .icon(forge.icon())
+                        .plain_icon()
+                        .user_data(owner)
+                        .no_health()
                 })
                 .collect()
         } else {
@@ -353,6 +358,7 @@ impl TabbedPanel {
                     let forge = ForgeKind::from_forge_str(&account.forge_kind);
                     PanelItem::new(account.username)
                         .icon(forge.icon())
+                        .plain_icon()
                         .secondary_text(account.server_url)
                         .no_health()
                 })

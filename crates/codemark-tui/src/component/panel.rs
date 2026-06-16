@@ -145,6 +145,8 @@ pub struct PanelItem {
     metadata: Option<String>,
     /// Optional icon (NERD font symbol)
     icon: Option<String>,
+    /// Render the icon in the normal foreground color instead of the accent color.
+    plain_icon: bool,
     /// Health status indicator
     health: Option<HealthStatus>,
     /// Primary text color
@@ -183,6 +185,7 @@ impl PanelItem {
             secondary_text: None,
             metadata: None,
             icon: None,
+            plain_icon: false,
             health: Some(HealthStatus::Unknown),
             text_color: None,
             checkmark: false,
@@ -197,6 +200,12 @@ impl PanelItem {
     /// Set the icon.
     pub fn icon(mut self, icon: impl Into<String>) -> Self {
         self.icon = Some(icon.into());
+        self
+    }
+
+    /// Render the icon in the normal foreground color instead of the accent color.
+    pub fn plain_icon(mut self) -> Self {
+        self.plain_icon = true;
         self
     }
 
@@ -303,7 +312,12 @@ impl PanelItem {
         if let Some(icon) = &self.icon
             && !icon.is_empty()
         {
-            spans.push(Span::styled(icon, Style::default().fg(crate::theme::palette().accent)));
+            let icon_style = if self.plain_icon {
+                Style::default()
+            } else {
+                Style::default().fg(crate::theme::palette().accent)
+            };
+            spans.push(Span::styled(icon, icon_style));
             spans.push(Span::raw(" "));
         }
 
