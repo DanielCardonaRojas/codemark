@@ -393,8 +393,12 @@ impl TabbedPanel {
             Ok(tags) if !tags.is_empty() => tags
                 .into_iter()
                 .map(|tag| {
-                    let color = crate::theme::palette().tag_color(&tag);
-                    PanelItem::new(format!("#{tag}")).user_data(tag).no_health().color(color)
+                    // `marker` is the keyword hue (base0E) — the same color the
+                    // code preview uses to highlight keywords.
+                    PanelItem::new(format!("#{tag}"))
+                        .user_data(tag)
+                        .no_health()
+                        .color(crate::theme::palette().marker)
                 })
                 .collect(),
             Ok(_) => {
