@@ -140,13 +140,7 @@ impl BookmarkTemplateContext {
         current_head: Option<&str>,
     ) -> Self {
         let short_id = short_id(&bm.id).to_string();
-        let file_name = bm
-            .file_path
-            .rsplit('/')
-            .next()
-            .or_else(|| bm.file_path.rsplit('\\').next())
-            .unwrap_or(&bm.file_path)
-            .to_string();
+        let file_name = file_name_of(&bm.file_path);
 
         let short_commit = bm.commit_hash.as_ref().map(|c| short_id_value(c));
 
@@ -386,13 +380,7 @@ impl CollectionLinkTemplateContext {
 impl CollectionStepTemplateContext {
     /// Create a template context from a bookmark at the given 1-based position.
     fn from_bookmark(index: usize, bm: &Bookmark) -> Self {
-        let file_name = bm
-            .file_path
-            .rsplit('/')
-            .next()
-            .or_else(|| bm.file_path.rsplit('\\').next())
-            .unwrap_or(&bm.file_path)
-            .to_string();
+        let file_name = file_name_of(&bm.file_path);
 
         let summary = bm
             .language
@@ -409,6 +397,12 @@ impl CollectionStepTemplateContext {
             summary,
         }
     }
+}
+
+/// Extract the file name from a path, handling both `/` and `\` separators
+/// regardless of host OS (stored paths may use either separator).
+fn file_name_of(path: &str) -> String {
+    path.rsplit(['/', '\\']).next().unwrap_or(path).to_string()
 }
 
 /// Truncate a string to first 8 characters.
@@ -649,17 +643,32 @@ pub fn render_template(
     handlebars.render_template(&template, &context)
 }
 
-/// Render a collection overview using the collection overview template.
+/// Render a collection overview using the collection overview template,
+/// loading it from disk (or the bundled default).
 pub fn render_collection_overview(
     collection: &Collection,
     bookmarks: &[Bookmark],
     tags: Vec<String>,
     links: &[CollectionLink],
 ) -> Result<String, handlebars::RenderError> {
-    let handlebars = create_handlebars_engine();
     let template = load_template(COLLECTION_OVERVIEW_TEMPLATE);
+    render_collection_overview_with_template(&template, collection, bookmarks, tags, links)
+}
+
+/// Render a collection overview using a caller-supplied template string.
+///
+/// Lets callers that cache the template (e.g. the TUI right pane) avoid a disk
+/// read on every render while still sharing context construction + engine setup.
+pub fn render_collection_overview_with_template(
+    template: &str,
+    collection: &Collection,
+    bookmarks: &[Bookmark],
+    tags: Vec<String>,
+    links: &[CollectionLink],
+) -> Result<String, handlebars::RenderError> {
+    let handlebars = create_handlebars_engine();
     let context = CollectionTemplateContext::from_collection(collection, bookmarks, tags, links);
-    handlebars.render_template(&template, &context)
+    handlebars.render_template(template, &context)
 }
 
 /// Render a bookmark with its resolutions using the show template (backward compatibility).

@@ -487,18 +487,14 @@ impl RightPane {
             .collect::<Vec<_>>();
         let links = db.list_links_for_collection(&collection.id).unwrap_or_default();
 
-        let context = templates::CollectionTemplateContext::from_collection(
+        let markdown = templates::render_collection_overview_with_template(
+            &self.cached_collection_overview_template,
             &collection,
             &bookmarks,
             tags,
             &links,
-        );
-        let handlebars = templates::create_handlebars_engine();
-        let markdown = handlebars
-            .render_template(&self.cached_collection_overview_template, &context)
-            .unwrap_or_else(|e| {
-                format!("# {}\n\nError rendering overview: {}", collection.name, e)
-            });
+        )
+        .unwrap_or_else(|e| format!("# {}\n\nError rendering overview: {}", collection.name, e));
 
         self.overview.set_markdown(markdown);
         self.overview_active = true;
@@ -887,11 +883,17 @@ impl RightPane {
         }
     }
 
-    /// Focus the steps section.
+    /// Focus the steps section (or the overview when it occupies the main area).
     pub fn focus_steps(&mut self) {
         self.focused = RightPaneFocus::Steps;
-        self.steps.set_focus(true);
-        self.overview.set_focus(true);
+        // Only the panel actually rendered in the main area should be focused.
+        if self.overview_active {
+            self.overview.set_focus(true);
+            self.steps.set_focus(false);
+        } else {
+            self.steps.set_focus(true);
+            self.overview.set_focus(false);
+        }
         self.details.set_focus(false);
     }
 
