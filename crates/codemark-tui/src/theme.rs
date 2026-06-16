@@ -52,8 +52,10 @@ const EMBEDDED_THEMES: &[(&str, &[u8])] = &[];
 /// base16/base24 schemes embedded at compile time. Unlike [`EMBEDDED_THEMES`], a
 /// scheme drives *both* the code preview and the chrome palette from one source,
 /// giving a fully cohesive theme. Each entry is `(name, yaml)`.
-const EMBEDDED_SCHEMES: &[(&str, &str)] =
-    &[("Catppuccin Mocha", include_str!("../themes/catppuccin-mocha.yaml"))];
+const EMBEDDED_SCHEMES: &[(&str, &str)] = &[
+    ("Catppuccin Mocha", include_str!("../themes/catppuccin-mocha.yaml")),
+    ("Everforest Dark", include_str!("../themes/everforest-dark.yaml")),
+];
 
 /// The directory user-supplied themes are read from:
 /// `<global config dir>/themes` (e.g. `~/.config/codemark/themes`).
@@ -515,6 +517,16 @@ mod tests {
     fn scheme_name_appears_in_available() {
         let registry = registry_with_no_user_dir();
         assert!(registry.available().contains(&"Catppuccin Mocha".to_string()));
+        assert!(registry.available().contains(&"Everforest Dark".to_string()));
+    }
+
+    #[test]
+    fn resolve_full_uses_everforest_scheme_for_both_theme_and_palette() {
+        let registry = registry_with_no_user_dir();
+        let (theme, palette) = registry.resolve_full("Everforest Dark");
+        assert_eq!(theme.name.as_deref(), Some("Everforest Dark"));
+        assert_eq!(palette.error, Color::Rgb(0xe6, 0x7e, 0x80)); // base08 red
+        assert_eq!(palette.success, Color::Rgb(0xa7, 0xc0, 0x80)); // base0B green
     }
 
     #[test]
