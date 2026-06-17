@@ -78,7 +78,7 @@ Tree-sitter queries use S-expressions to match AST nodes:
 Before creating any bookmark, verify your query captures exactly what you intend:
 
 ```bash
-codemark add --query --file src/auth.swift --query '(function_declaration name: (simple_identifier) @name (#eq? @name "validateToken")) @target' --dry-run
+codemark add --file src/auth.swift --query '(function_declaration name: (simple_identifier) @name (#eq? @name "validateToken")) @target' --dry-run
 ```
 
 Check the output:
@@ -95,7 +95,7 @@ Before bookmarking, check if your target is unique:
 
 ```bash
 # Find all functions with similar names/signatures
-codemark add --query --file src/auth.swift --query '(function_declaration name: (simple_identifier) @name) @target' --dry-run
+codemark add --file src/auth.swift --query '(function_declaration name: (simple_identifier) @name) @target' --dry-run
 ```
 
 If `match_count > 1`, you need more context.
@@ -106,10 +106,10 @@ For uniquely named functions, simple queries are sufficient. Always verify first
 
 ```bash
 # Test first
-codemark add --query --file src/auth.swift --query '(function_declaration name: (simple_identifier) @name (#eq? @name "validateToken")) @target' --dry-run
+codemark add --file src/auth.swift --query '(function_declaration name: (simple_identifier) @name (#eq? @name "validateToken")) @target' --dry-run
 
 # Then create if match_count: 1
-codemark add --query --file src/auth.swift --query '(function_declaration name: (simple_identifier) @name (#eq? @name "validateToken")) @target'
+codemark add --file src/auth.swift --query '(function_declaration name: (simple_identifier) @name (#eq? @name "validateToken")) @target'
 ```
 
 ```
@@ -158,8 +158,8 @@ When a function has siblings or internal steps you also care about, bookmark the
 
 ```bash
 # Bookmark each method individually
-codemark add --query --file src/auth.swift --query '(function_declaration name: (simple_identifier) @name (#eq? @name "validateToken")) @target' --note "Auth validation: validateToken" --tag feature:auth
-codemark add --query --file src/auth.swift --query '(function_declaration name: (simple_identifier) @name (#eq? @name "refreshToken")) @target' --note "Auth validation: refreshToken" --tag feature:auth
+codemark add --file src/auth.swift --query '(function_declaration name: (simple_identifier) @name (#eq? @name "validateToken")) @target' --note "Auth validation: validateToken" --tag feature:auth
+codemark add --file src/auth.swift --query '(function_declaration name: (simple_identifier) @name (#eq? @name "refreshToken")) @target' --note "Auth validation: refreshToken" --tag feature:auth
 ```
 
 ## Targeting Fine-Grained Execution Logic

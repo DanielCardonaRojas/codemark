@@ -14,6 +14,29 @@ The `--note` should be concise and focus on the purpose of the code. **Do not re
 
 *Example:* `Auth Validator: Handles all JWT verification for incoming requests.`
 
+Notes are rendered as **plain prose**, so keep them clean and self-contained — they should make sense to any agent in any future session, independent of the task that created them.
+
+## 1b. Comment Template (Task/Ticket Discussion)
+Use `--comment` for discussion tied to a specific task, ticket, PR, or debugging session — anything that is *not* a durable explanation of the code itself. Comments are rendered as **markdown**, so you can use links, lists, and code blocks. Keep this chatter out of `--note` so notes remain reusable.
+
+**Good comment uses:**
+- `Investigating **ENG-42**: this lock is held across the await — see [trace](https://example.com/t/9).`
+- `Refactored in [PR #128](https://github.com/org/repo/pull/128). TODO: add regression test.`
+- Debugging findings, hypotheses, and decisions that matter for the current work but not forever.
+
+```bash
+codemark add --file src/auth.rs --range 42 \
+  --note "Validates the session cookie before any handler runs" \
+  --comment "Touched for **ENG-42** (session fixation); see [PR #128](https://github.com/org/repo/pull/128)."
+```
+
+| | `--note` | `--comment` |
+|---|----------|-------------|
+| **Purpose** | Explain the code | Discuss a task/ticket/bug |
+| **Lifespan** | Durable, reusable | Ephemeral, session-scoped |
+| **Rendering** | Plain prose | Markdown (links/lists/code) |
+| **Repeatable** | Yes | Yes |
+
 ## 2. Context Template (Extended)
 Include rationale and relationships within the note to provide deeper context.
 

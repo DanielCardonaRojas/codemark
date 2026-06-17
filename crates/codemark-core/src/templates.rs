@@ -352,6 +352,8 @@ pub struct CollectionLinkTemplateContext {
 pub struct CollectionStepTemplateContext {
     /// 1-based step number
     pub index: usize,
+    /// Short bookmark ID (first 8 chars) for drilling into the bookmark
+    pub id: String,
     /// File path
     pub file_path: String,
     /// Just the filename
@@ -361,6 +363,9 @@ pub struct CollectionStepTemplateContext {
     /// Human-readable summary of the bookmarked code (optional)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub summary: Option<String>,
+    /// First annotation note, if any (the durable code explanation)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
 }
 
 impl CollectionTemplateContext {
@@ -419,12 +424,16 @@ impl CollectionStepTemplateContext {
             .and_then(|lang| crate::query::summarizer::summarize_query(&bm.query, Some(lang)).ok())
             .and_then(|s| s.format());
 
+        let note = bm.annotations.iter().find_map(|a| a.notes.clone());
+
         CollectionStepTemplateContext {
             index,
+            id: short_id_value(&bm.id),
             file_path: bm.file_path.clone(),
             file_name,
             language: bm.language.clone(),
             summary,
+            note,
         }
     }
 }
@@ -721,7 +730,8 @@ mod tests {
     #[test]
     fn test_render_collection_overview() {
         use crate::engine::bookmark::{
-            Collection, CollectionHealth, CollectionLink, CollectionLinkKind, Visibility,
+            Annotation, Collection, CollectionHealth, CollectionLink, CollectionLinkKind,
+            Visibility,
         };
 
         let collection = Collection {
@@ -744,7 +754,7 @@ mod tests {
         };
 
         let bm = Bookmark {
-            id: "bm-1".to_string(),
+            id: "bm-1abcdef0".to_string(),
             query: "(function_definition name: (identifier) @target)".to_string(),
             language: "rust".to_string(),
             file_path: "src/auth/login.rs".to_string(),
@@ -759,7 +769,15 @@ mod tests {
             current_resolution_id: None,
             repo_id: None,
             tags: vec![],
-            annotations: vec![],
+            annotations: vec![Annotation {
+                id: "ann-1".to_string(),
+                bookmark_id: "bm-1abcdef0".to_string(),
+                added_at: "2024-01-01T00:00:00Z".to_string(),
+                added_by: None,
+                notes: Some("Login entry point".to_string()),
+                context: None,
+                source: None,
+            }],
             comments: vec![],
         };
 
@@ -774,7 +792,10 @@ mod tests {
             added_by: None,
         }];
 
-        let result = render_collection_overview(
+        // Render against the compiled-in default template (not any on-disk cache)
+        // so the assertions are deterministic regardless of the user's config dir.
+        let result = render_collection_overview_with_template(
+            default_collection_overview_template(),
             &collection,
             std::slice::from_ref(&bm),
             vec!["auth".to_string(), "demo".to_string()],
@@ -795,8 +816,10 @@ mod tests {
         // Link rendered with kind
         assert!(output.contains("**pr**"));
         assert!(output.contains("https://example.com/pr/1"));
-        // Step list shows the filename
+        // Step list shows the filename, the short bookmark ID, and the first note
         assert!(output.contains("login.rs"));
+        assert!(output.contains("bm-1abcd"), "step should show short bookmark id; got:\n{output}");
+        assert!(output.contains("Login entry point"), "step should show first note; got:\n{output}");
     }
 
     #[test]

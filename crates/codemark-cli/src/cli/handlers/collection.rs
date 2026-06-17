@@ -524,9 +524,35 @@ pub async fn handle_collection_show(
             .ok_or_else(|| Error::Input(format!("collection '{}' not found", args.name)))?
     };
 
-    let filter = BookmarkFilter { collection_id: Some(collection.id), ..Default::default() };
-    let bookmarks = db.list_bookmarks(&filter)?;
-    output::write_bookmarks(mode, &bookmarks, None, None)?;
+    match mode {
+        OutputMode::Markdown => {
+            // Render a full collection overview (description, tags, links, steps) so
+            // agents can gather context from a collection in one shot. The bookmark
+            // list (table/line/json) only surfaces per-bookmark rows, not collection
+            // metadata, so markdown gets its own renderer.
+            let bookmarks = db.list_bookmarks_in_collection(&collection.id)?;
+            let tags = db
+                .list_tags_for_collection(&collection.id)?
+                .into_iter()
+                .map(|t| t.tag)
+                .collect::<Vec<_>>();
+            let links = db.list_links_for_collection(&collection.id)?;
+            let rendered = codemark_core::templates::render_collection_overview(
+                &collection,
+                &bookmarks,
+                tags,
+                &links,
+            )
+            .map_err(|e| Error::Input(format!("failed to render collection overview: {e}")))?;
+            print!("{rendered}");
+        }
+        _ => {
+            let filter =
+                BookmarkFilter { collection_id: Some(collection.id), ..Default::default() };
+            let bookmarks = db.list_bookmarks(&filter)?;
+            output::write_bookmarks(mode, &bookmarks, None, None)?;
+        }
+    }
     Ok(())
 }
 
