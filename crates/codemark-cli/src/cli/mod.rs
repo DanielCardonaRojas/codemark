@@ -192,6 +192,10 @@ pub struct AddArgs {
     #[arg(long)]
     pub note: Vec<String>,
 
+    /// Markdown comment (task/ticket/debug discussion); repeatable for multiple comments
+    #[arg(long)]
+    pub comment: Vec<String>,
+
     /// Agent context at time of bookmarking
     #[arg(long)]
     pub context: Option<String>,
@@ -245,6 +249,10 @@ pub struct AddArgsOriginal {
     #[arg(long)]
     pub note: Vec<String>,
 
+    /// Markdown comment (task/ticket/debug discussion); repeatable for multiple comments
+    #[arg(long)]
+    pub comment: Vec<String>,
+
     /// Agent context at time of bookmarking
     #[arg(long)]
     pub context: Option<String>,
@@ -279,6 +287,10 @@ pub struct AddFromSnippetArgs {
     /// Semantic annotation; repeatable for multiple notes
     #[arg(long)]
     pub note: Vec<String>,
+
+    /// Markdown comment (task/ticket/debug discussion); repeatable for multiple comments
+    #[arg(long)]
+    pub comment: Vec<String>,
 
     /// Agent context
     #[arg(long)]
@@ -318,6 +330,10 @@ pub struct AddFromQueryArgs {
     /// Semantic annotation; repeatable for multiple notes
     #[arg(long)]
     pub note: Vec<String>,
+
+    /// Markdown comment (task/ticket/debug discussion); repeatable for multiple comments
+    #[arg(long)]
+    pub comment: Vec<String>,
 
     /// Agent context at time of bookmarking
     #[arg(long)]
@@ -930,6 +946,10 @@ pub struct EditArgs {
     #[arg(long)]
     pub note: Vec<String>,
 
+    /// Markdown comment to add (task/ticket/debug discussion); repeatable
+    #[arg(long)]
+    pub comment: Vec<String>,
+
     /// Agent context to add
     #[arg(long)]
     pub context: Option<String>,
@@ -947,6 +967,10 @@ pub struct AnnotateArgs {
     /// Semantic annotation to add; repeatable for multiple notes
     #[arg(long)]
     pub note: Vec<String>,
+
+    /// Markdown comment to add (task/ticket/debug discussion); repeatable
+    #[arg(long)]
+    pub comment: Vec<String>,
 
     /// Agent context to add
     #[arg(long)]

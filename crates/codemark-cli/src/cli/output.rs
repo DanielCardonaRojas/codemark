@@ -690,6 +690,18 @@ fn write_bookmark_markdown_fallback(bm: &Bookmark, resolutions: &[Resolution]) -
         }
     }
 
+    // Comments section (markdown bodies rendered as-is)
+    if !bm.comments.is_empty() {
+        writeln!(stdout, "## Comments")?;
+        writeln!(stdout)?;
+        for comment in &bm.comments {
+            writeln!(stdout, "{}", comment.body)?;
+            writeln!(stdout)?;
+            writeln!(stdout, "*— {}, {}*", escape_markdown(&comment.author), comment.created_at)?;
+            writeln!(stdout)?;
+        }
+    }
+
     // Resolution history section
     if !resolutions.is_empty() {
         writeln!(stdout, "## Resolution History")?;

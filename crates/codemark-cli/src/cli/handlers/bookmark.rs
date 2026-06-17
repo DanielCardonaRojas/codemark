@@ -7,7 +7,8 @@ use crate::cli::output::{
 };
 use crate::cli::*;
 use codemark_core::engine::bookmark::{
-    Annotation, Bookmark, BookmarkFilter, BookmarkHealth, Resolution, ResolutionMethod, Tag,
+    Annotation, Bookmark, BookmarkComment, BookmarkFilter, BookmarkHealth, Resolution,
+    ResolutionMethod, Tag,
 };
 use codemark_core::engine::{hash, health, resolution};
 use codemark_core::error::{Error, Result};
@@ -20,6 +21,25 @@ use super::{
     generate_embedding_for_bookmark, now_iso, open_all_dbs, open_db_for_write, resolve_batch,
     resolve_identity, resolve_or_create_repo_metadata, write_resolution_output,
 };
+
+/// Build a flat list of `BookmarkComment`s from repeatable `--comment` values.
+///
+/// Comments are durable, markdown-bodied discussion entries (tasks, tickets,
+/// debugging notes) authored by `author`. They are stored separately from
+/// annotations/notes, which explain the code itself.
+fn build_comments(bookmark_id: &str, bodies: &[String], author: &str) -> Vec<BookmarkComment> {
+    bodies
+        .iter()
+        .map(|body| BookmarkComment {
+            id: uuid::Uuid::new_v4().to_string(),
+            bookmark_id: bookmark_id.to_string(),
+            author: author.to_string(),
+            body: body.clone(),
+            created_at: now_iso(),
+            parent_id: None,
+        })
+        .collect()
+}
 
 /// Add a new bookmark from a file range or git hunk.
 pub async fn handle_add(cli: &Cli, mode: &OutputMode, args: &AddArgsOriginal) -> Result<()> {
@@ -145,6 +165,12 @@ pub async fn handle_add(cli: &Cli, mode: &OutputMode, args: &AddArgsOriginal) ->
             });
         }
         db.insert_annotations(&annotations)?;
+    }
+
+    // Insert comments if provided (durable markdown discussion entries)
+    if !args.comment.is_empty() {
+        let comments = build_comments(&actual_bookmark_id, &args.comment, &args.created_by);
+        db.insert_comments(&comments)?;
     }
 
     // Insert tags if provided
@@ -384,6 +410,12 @@ pub async fn handle_add_from_snippet(
         db.insert_annotations(&annotations)?;
     }
 
+    // Insert comments if provided (durable markdown discussion entries)
+    if !args.comment.is_empty() {
+        let comments = build_comments(&actual_bookmark_id, &args.comment, &args.created_by);
+        db.insert_comments(&comments)?;
+    }
+
     // Insert tags if provided
     if !args.tag.is_empty() {
         let tags: Vec<Tag> = args
@@ -619,6 +651,12 @@ pub async fn handle_add_from_query(
             });
         }
         db.insert_annotations(&annotations)?;
+    }
+
+    // Insert comments if provided (durable markdown discussion entries)
+    if !args.comment.is_empty() {
+        let comments = build_comments(&actual_bookmark_id, &args.comment, &args.created_by);
+        db.insert_comments(&comments)?;
     }
 
     // Insert tags if provided
@@ -1016,10 +1054,14 @@ pub async fn handle_remove(cli: &Cli, mode: &OutputMode, args: &RemoveArgs) -> R
 pub async fn handle_annotate(cli: &Cli, mode: &OutputMode, args: &AnnotateArgs) -> Result<()> {
     let db = open_db_for_write(cli)?;
 
-    // Validate that at least one of note, context, or tag is provided
-    if args.note.is_empty() && args.context.is_none() && args.tag.is_empty() {
+    // Validate that at least one of note, comment, context, or tag is provided
+    if args.note.is_empty()
+        && args.comment.is_empty()
+        && args.context.is_none()
+        && args.tag.is_empty()
+    {
         return Err(Error::Input(
-            "At least one of --note, --context, or --tag must be provided".to_string(),
+            "At least one of --note, --comment, --context, or --tag must be provided".to_string(),
         ));
     }
 
@@ -1065,6 +1107,15 @@ pub async fn handle_annotate(cli: &Cli, mode: &OutputMode, args: &AnnotateArgs) 
         bm = find_bookmark(&db, id)?;
     }
 
+    // Add comments if provided (durable markdown discussion entries)
+    if !args.comment.is_empty() {
+        let comments = build_comments(&bm.id, &args.comment, &args.added_by);
+        db.insert_comments(&comments)?;
+
+        // Re-fetch bookmark to get updated comments
+        bm = find_bookmark(&db, id)?;
+    }
+
     // Add tags if provided
     if !args.tag.is_empty() {
         let tags: Vec<Tag> = args
@@ -1094,6 +1145,7 @@ pub async fn handle_annotate(cli: &Cli, mode: &OutputMode, args: &AnnotateArgs) 
                 "status": bm.health,
                 "tags": bm.tags,
                 "annotations": bm.annotations,
+                "comments": bm.comments,
                 "created_at": bm.created_at,
             }))?;
         }
@@ -1123,6 +1175,14 @@ pub async fn handle_annotate(cli: &Cli, mode: &OutputMode, args: &AnnotateArgs) 
                     println!("  Context: {}", ctx);
                 }
                 println!("  Added by: {}", ann.added_by.as_deref().unwrap_or("unknown"));
+            }
+            // Show the count of newly added comments
+            if !args.comment.is_empty() {
+                println!(
+                    "  Added {} comment{}",
+                    args.comment.len(),
+                    if args.comment.len() == 1 { "" } else { "s" }
+                );
             }
             // Show newly added tags
             let added_tags: Vec<&str> = args.tag.iter().map(|t| t.as_str()).collect();

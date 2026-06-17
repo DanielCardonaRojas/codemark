@@ -24,6 +24,16 @@
 {{/if}}
 {{/each}}
 {{/if}}
+{{#if comments}}
+## Comments
+
+{{#each comments}}
+{{body}}
+
+*— {{escape_markdown author}}, {{format_date created_at "%Y-%m-%d %H:%M:%S"}}*
+
+{{/each}}
+{{/if}}
 
 ## Metadata
 | Property | Value |

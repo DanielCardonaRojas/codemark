@@ -67,6 +67,9 @@ pub struct BookmarkTemplateContext {
     /// Annotations
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub annotations: Vec<AnnotationTemplateContext>,
+    /// Comments (durable markdown discussion entries)
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub comments: Vec<CommentTemplateContext>,
     /// Resolution history
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub resolutions: Vec<ResolutionTemplateContext>,
@@ -88,6 +91,20 @@ pub struct AnnotationTemplateContext {
     /// Code context snippet (optional)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub context: Option<String>,
+}
+
+/// Template context for a comment.
+#[derive(Debug, Serialize)]
+pub struct CommentTemplateContext {
+    /// Comment author
+    pub author: String,
+    /// Markdown body of the comment
+    pub body: String,
+    /// When the comment was created
+    pub created_at: String,
+    /// Parent comment ID for threaded replies (optional)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub parent_id: Option<String>,
 }
 
 /// Template context for a resolution.
@@ -191,6 +208,7 @@ impl BookmarkTemplateContext {
                 .iter()
                 .map(AnnotationTemplateContext::from_annotation)
                 .collect(),
+            comments: bm.comments.iter().map(CommentTemplateContext::from_comment).collect(),
             resolutions: resolutions
                 .iter()
                 .map(|r| {
@@ -202,6 +220,18 @@ impl BookmarkTemplateContext {
                     )
                 })
                 .collect(),
+        }
+    }
+}
+
+impl CommentTemplateContext {
+    /// Create a template context from a comment.
+    fn from_comment(comment: &crate::engine::bookmark::BookmarkComment) -> Self {
+        CommentTemplateContext {
+            author: comment.author.clone(),
+            body: comment.body.clone(),
+            created_at: comment.created_at.clone(),
+            parent_id: comment.parent_id.clone(),
         }
     }
 }
@@ -847,6 +877,46 @@ mod tests {
         assert!(output.contains("#tag2"));
         // Resolution status should be present
         assert!(output.contains("active"));
+    }
+
+    #[test]
+    fn test_render_show_template_includes_comments() {
+        let bm = Bookmark {
+            id: "abcdef1234567890".to_string(),
+            query: "(function_definition) @t".to_string(),
+            language: "rust".to_string(),
+            file_path: "/path/to/file.rs".to_string(),
+            content_hash: None,
+            commit_hash: None,
+            health: BookmarkHealth::Active,
+            resolution_method: Some(ResolutionMethod::Exact),
+            last_resolved_at: None,
+            stale_since: None,
+            created_at: "2024-01-01T00:00:00Z".to_string(),
+            created_by: Some("agent".to_string()),
+            current_resolution_id: None,
+            repo_id: None,
+            tags: vec![],
+            annotations: vec![],
+            comments: vec![crate::engine::bookmark::BookmarkComment {
+                id: "c1".to_string(),
+                bookmark_id: "abcdef1234567890".to_string(),
+                author: "agent".to_string(),
+                body: "**Ticket ABC-123**: investigate".to_string(),
+                created_at: "2024-01-02T00:00:00Z".to_string(),
+                parent_id: None,
+            }],
+        };
+
+        let ctx = BookmarkTemplateContext::from_bookmark(&bm, &[], Path::new("."), None);
+        assert_eq!(ctx.comments.len(), 1, "comments should be mapped into the context");
+
+        let handlebars = create_handlebars_engine();
+        let template = default_show_template();
+        let output = handlebars.render_template(template, &ctx).unwrap();
+        assert!(output.contains("## Comments"), "missing Comments section:\n{output}");
+        assert!(output.contains("**Ticket ABC-123**: investigate"), "missing comment body");
+        assert!(output.contains("*— agent,"), "missing comment attribution");
     }
 
     #[test]

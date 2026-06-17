@@ -385,6 +385,59 @@ fn add_with_created_by() {
 }
 
 #[test]
+fn add_with_comments_stores_them_separately_from_notes() {
+    let cm = Codemark::new();
+
+    let json = cm.run_json(&[
+        "add",
+        "--file",
+        &cm.fixture("rust/auth_service.rs"),
+        "--range",
+        "108",
+        "--created-by",
+        "agent",
+        "--note",
+        "Explains the code",
+        "--comment",
+        "Investigating ticket ABC-123",
+        "--comment",
+        "Second debug note",
+    ]);
+    let id = json["data"]["id"].as_str().unwrap().to_string();
+
+    // Comments come back on the listed/shown bookmark, distinct from annotations.
+    let json = cm.run_json(&["show", &id[..8]]);
+    let bm = &json["data"]["bookmark"];
+
+    let annotations = bm["annotations"].as_array().unwrap();
+    assert_eq!(annotations.len(), 1, "note should not become a comment");
+    assert_eq!(annotations[0]["notes"], "Explains the code");
+
+    let comments = bm["comments"].as_array().unwrap();
+    assert_eq!(comments.len(), 2, "both --comment values should persist");
+    assert_eq!(comments[0]["body"], "Investigating ticket ABC-123");
+    assert_eq!(comments[1]["body"], "Second debug note");
+    assert_eq!(comments[0]["author"], "agent");
+    assert_eq!(comments[0]["parent_id"], serde_json::Value::Null);
+}
+
+#[test]
+fn edit_adds_comments() {
+    let cm = Codemark::new();
+
+    let json =
+        cm.run_json(&["add", "--file", &cm.fixture("rust/auth_service.rs"), "--range", "108"]);
+    let id = json["data"]["id"].as_str().unwrap().to_string();
+
+    cm.run_json(&["edit", &id[..8], "--comment", "Follow-up from review"]);
+
+    let json = cm.run_json(&["show", &id[..8]]);
+    let comments = json["data"]["bookmark"]["comments"].as_array().unwrap();
+    assert_eq!(comments.len(), 1);
+    assert_eq!(comments[0]["body"], "Follow-up from review");
+}
+
+#[test]
 fn add_from_snippet() {
     let cm = Codemark::new();
 
