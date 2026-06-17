@@ -819,7 +819,10 @@ mod tests {
         // Step list shows the filename, the short bookmark ID, and the first note
         assert!(output.contains("login.rs"));
         assert!(output.contains("bm-1abcd"), "step should show short bookmark id; got:\n{output}");
-        assert!(output.contains("Login entry point"), "step should show first note; got:\n{output}");
+        assert!(
+            output.contains("Login entry point"),
+            "step should show first note; got:\n{output}"
+        );
     }
 
     #[test]
