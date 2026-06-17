@@ -20,11 +20,24 @@ impl Database {
         Ok(())
     }
 
-    /// Insert multiple bookmark comments in a single transaction.
+    /// Insert multiple bookmark comments atomically.
     pub fn insert_comments(&self, comments: &[BookmarkComment]) -> Result<()> {
+        let tx = self.conn().unchecked_transaction()?;
         for comment in comments {
-            self.insert_comment(comment)?;
+            tx.execute(
+                "INSERT INTO bookmark_comments (id, bookmark_id, author, body, created_at, parent_id)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                rusqlite::params![
+                    comment.id,
+                    comment.bookmark_id,
+                    comment.author,
+                    comment.body,
+                    comment.created_at,
+                    comment.parent_id,
+                ],
+            )?;
         }
+        tx.commit()?;
         Ok(())
     }
 

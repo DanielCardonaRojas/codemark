@@ -30,7 +30,7 @@
 {{#each comments}}
 {{body}}
 
-*— {{author}}, {{format_date created_at "%Y-%m-%d %H:%M:%S"}}*
+*— {{escape_markdown author}}, {{format_date created_at "%Y-%m-%d %H:%M:%S"}}*
 
 {{/each}}
 {{/if}}
