@@ -40,11 +40,11 @@ codemark search "user query" --semantic
 ```
 
 ### 2. Tag-Based Filtering
-When the user mentions specific concepts or categories:
+When the user mentions specific concepts or categories. **`--tag` on `list` is single-valued** — pass one tag and combine it with other filters (`--health`, `--author`, `--lang`, `--file`). To narrow by multiple tags at once, use semantic search instead.
 ```bash
-codemark list --tag feature:auth --tag role:entrypoint
-codemark list --tag layer:api --health active
-codemark list --tag type:config --author agent
+codemark list --tag feature:auth --health active
+codemark list --tag layer:api --author agent
+codemark list --tag type:config --lang rust
 ```
 
 ### 3. File-Aware Search
@@ -54,18 +54,19 @@ codemark list --file src/auth.rs --health active
 codemark list --file src/auth.rs --lang rust
 ```
 
-### 4. Collection Browsing
-When exploring a feature or workflow:
+### 4. Collection Browsing (best for gathering context)
+When exploring a feature or workflow, render the whole collection as markdown — this is the fastest way to load context: it includes the description, tags, links (PRs/docs), and every step's bookmark ID + note.
 ```bash
 codemark tour list
-codemark tour show <collection-name>
+codemark tour show <collection-name> --format markdown
 ```
+Then drill into any step by its short ID: `codemark show <id> --format markdown`.
 
 ### 5. Hybrid Search Pattern
-For best results, combine semantic search with filters:
+For best results, combine semantic search with filters. **Note: `search` has no `--tag` flag** — filter searches with `--lang`, `--author`, `--health`, `--collection`:
 ```bash
 codemark search "authentication" --lang rust --author agent
-codemark search "middleware" --tag layer:api --health active
+codemark search "middleware" --health active --collection auth-flow
 ```
 
 ### Discovery Strategy Summary
@@ -94,7 +95,10 @@ codemark search "middleware" --tag layer:api --health active
 - **Tours/Collections** group related bookmarks (one per feature, bugfix, or investigation).
 - **Health**: active (healthy), drifted (found but moved), stale (lost), archived (cleaned up).
 - **Author**: bookmarks track who created them (`--created-by agent` vs default `user`).
-- **Annotations**: bookmarks can have multiple annotations (notes, context) added by different agents over time, with provenance tracking. Use `--note` multiple times to add several notes at once.
+- **Notes vs. Comments** (two distinct, durable-vs-ephemeral channels):
+  - **Notes** (`--note`) — durable explanations of *what the code is and why it matters*. Context-independent, reusable across any session. Use multiple `--note` flags to capture different aspects. Rendered as plain prose (keep them clean and self-contained).
+  - **Comments** (`--comment`) — **markdown** discussion tied to a *task, ticket, PR, or debugging session*. Ephemeral and session-scoped. Rendered as markdown, so they may contain links, lists, and code blocks. Use these for "investigating X for TICKET-42" rather than polluting notes.
+- **Annotations**: each `--note`/`--context` becomes an annotation with provenance (author, timestamp, source), so multiple agents can layer context over time.
 
 ## Tag Taxonomy
 
@@ -152,6 +156,7 @@ Identify security-sensitive code.
 - `security:sensitive` — Accesses sensitive data
 
 ### Recommended Tag Combinations
+Apply **multiple tags when creating** a bookmark (`add`/`edit`/`annotate` accept repeated `--tag`). Note that *filtering* (`list --tag`) only matches a single tag at a time.
 ```bash
 # Auth entry point
 --tag feature:auth --tag layer:api --tag role:entrypoint --tag security:auth
@@ -249,22 +254,29 @@ codemark add --file internal/auth/handler.go --range 25 --note "HTTP handler for
 > **IMPORTANT**: The `codemark add` command requires `--file <path>` for all operations. The file path is NOT a positional argument.
 
 ### Creating a tour/collection of bookmarks (recommended for agents)
-Use `--collection` when creating bookmarks to add them directly to a tour. **Always prefer range-based targeting** as the first resource. You can add multiple notes using `--note` multiple times:
+Use `--collection` when creating bookmarks to add them directly to a tour. **Always prefer range-based targeting** as the first resource. Add **multiple targeted notes** with repeated `--note` (one per distinct aspect), and use `--comment` for task/ticket-specific discussion:
 
 ```bash
-# 1. Preferred: Range-based targeting (Line or Point)
-codemark add --file src/auth.rs --range 42 --note "Core auth entry point" --note "Handles JWT validation" --collection login-flow
+# 1. Preferred: Range-based targeting (Line or Point) — several focused notes
+codemark add --file src/auth.rs --range 42 \
+  --note "Core auth entry point — all signed requests pass through here" \
+  --note "Verifies JWT signature and expiry" \
+  --collection login-flow --created-by agent
 
 # 2. Alternative: Snippet-based (if range is unknown)
 echo "func validateToken" | codemark add --file src/auth.swift --snippet --note "Validates JWT tokens" --note "Critical for security" --collection login-flow
 
 # 3. Last Resort: Raw tree-sitter query (for extreme precision/disambiguation)
-codemark add --file src/auth.swift --query '(function_declaration) @target' --note "Token validation function" --note "Called by middleware" --collection login-flow
+codemark add --file src/auth.swift --query '(function_declaration) @target' --note "Token validation function" --collection login-flow
 
-# With context attached to first note
-codemark add --file src/auth.rs --range 42 --note "Auth entry point" --context "Part of login refactor" --note "Needs review" --collection login-flow
+# Notes = durable code explanation; comments = markdown discussion for this task/ticket
+codemark add --file src/auth.rs --range 42 \
+  --note "Auth entry point; verifies signature" \
+  --comment "Touched while debugging **TICKET-42** — see [PR #116](https://github.com/org/repo/pull/116). Suspect race on token refresh." \
+  --collection login-flow
 
-codemark tour show login-flow
+# Read the whole collection back as markdown (description, tags, links, steps + notes)
+codemark tour show login-flow --format markdown
 ```
 
 ### Method 1: Range-based bookmarking (Primary Resource)
@@ -317,6 +329,10 @@ For common query patterns across languages, see:
 - **Granularity Strategy**: We prefer **more, highly specific bookmarks** over fewer, general ones. For example, if a function performs three critical steps (auth, validation, DB write), it is better to bookmark those three specific lines/nodes than to bookmark the entire function.
 - Use `--created-by agent` to distinguish your bookmarks from the user's.
 - Use `--collection <name>` when creating bookmarks to add them directly to a tour (tours are auto-created if they don't exist).
+- **Notes are durable, comments are ephemeral**: explain the code with `--note`; record task/ticket/debugging chatter with `--comment`. This keeps notes reusable in any future context instead of coupled to one agentic session.
+- **Link out generously**: attach related PRs, issues, design docs, dashboards, and external references to the *collection* with `codemark tour link add --kind ...`, and embed inline links inside `--comment` markdown. This turns a collection into a self-contained briefing.
+- **Tag collections, not just bookmarks**: `codemark tour tag add` (or `--tag` at create time) makes collections discoverable and gives the markdown overview useful metadata.
+- **Gather context fast**: `codemark tour show <name> --format markdown` renders the description, tags, links, and every step's ID + note in one shot — use it when restoring context from a previous session.
 - **Iterative enhancement**: When working with an existing bookmark and discover new context, use `edit` to add notes without re-parsing the file. Multiple agents can edit the same bookmark over time.
 - For detailed note guidelines, see `templates.md`.
 - For usage examples, see `examples.md`.
@@ -338,21 +354,27 @@ codemark add --file src/auth.rs --query '(function_declaration) @target' --colle
 # With multiple notes (each creates a separate annotation entry)
 codemark add --file src/auth.rs --range 42-67 --note "Primary observation" --note "Secondary note" --note "Action item" --collection my-work
 
+# With a markdown comment for the current task/ticket (repeatable, kept separate from notes)
+codemark add --file src/auth.rs --range 42 --note "Validates the session cookie" --comment "Part of **ENG-42** session-fixation fix." --collection my-work
+
 # Preview what would be bookmarked (dry-run)
 codemark add --file src/auth.rs --range 42 --dry-run
 ```
 
+> **Notes vs. comments**: `--note` is durable, reusable code explanation (rendered as plain prose). `--comment` is markdown discussion tied to a task/ticket/PR/debugging session (rendered as markdown, so links/lists/code blocks work). Keep task chatter in comments so notes stay clean and reusable across sessions.
+
 ### Viewing bookmarks
 ```bash
-# Show bookmark with preview (default)
+# Show bookmark with preview (default output is JSON)
 codemark show <bookmark-id>
+
+# Human-readable markdown (notes, comments, metadata, resolution history)
+codemark show <bookmark-id> --format markdown
 
 # Show only file location (was 'resolve')
 codemark show <bookmark-id> --location
-
-# Show metadata only (no preview)
-codemark show <bookmark-id> --no-preview
 ```
+The global `--format` flag accepts `json` (default), `table`, `line`, `markdown`, or a custom template, and can also be set via `CODEMARK_FORMAT`.
 
 ### Load context
 ```bash
@@ -372,45 +394,58 @@ codemark open <bookmark-id>
 ```
 
 ### Organize with tours (collections)
+
+Tag and link your collections — not just individual bookmarks. A well-tagged collection with links to the relevant PR, issue, and docs is far easier to rediscover and gives the next agent everything it needs.
+
 ```bash
-# Tours are auto-created when using --collection, or create explicitly:
+# Tours are auto-created when using --collection, or create explicitly.
+# Use --description for the collection's prose summary (collections have no --note).
 codemark tour create login-flow --description "Step-by-step login execution path"
 
-# Create with tags, links, and notes in one command
-codemark tour create auth-flow --tag feature:auth --link "https://docs.example.com/auth,Docs" --note "Main authentication flow"
+# Create with description, tags, and links in one command
+codemark tour create auth-flow \
+  --description "End-to-end authentication flow" \
+  --tag feature:auth --tag area:security \
+  --link "https://github.com/org/repo/pull/116,Auth refactor PR"
 
-# Show bookmarks in a tour
-codemark tour show login-flow
+# Tag an existing collection (repeatable)
+codemark tour tag add login-flow feature:auth area:security
+
+# Add links with a typed kind: pr | issue | doc | discussion | dashboard | repo | tour | other
+codemark tour link add login-flow --url "https://github.com/org/repo/pull/116" --label "Auth PR"   --kind pr
+codemark tour link add login-flow --url "https://docs.example.com/auth"        --label "Auth docs" --kind doc
+codemark tour link add login-flow --url "https://linear.app/org/issue/ENG-42"  --label "ENG-42"    --kind issue
+
+# Read a collection as markdown — description, tags, links, and each step's ID + note
+codemark tour show login-flow --format markdown
 
 # List all tours
 codemark tour list
 
-# Add bookmarks to a tour
+# Add existing bookmarks to a tour
 codemark tour add login-flow <bookmark-id-1> <bookmark-id-2>
 
-# Add with metadata
-codemark tour add login-flow <bookmark-id> --tag implementation --note "Core handler"
+# Annotate a tour with tags/links (note: --note is NOT persisted on collections)
+codemark tour annotate login-flow --tag phase:2 --link "https://example.com/runbook,Runbook"
 
-# Annotate a tour (add tags, links, notes)
-codemark tour annotate login-flow --tag phase:2 --link "https://example.com,Related"
-
-# Publish a tour to Codetours
+# Publish / pull from Codetours
 codemark tour push login-flow
-
-# Pull a tour from Codetours
 codemark tour pull <tour-url>
 ```
 
 ### Editing bookmarks
+`edit` (and `annotate`) accept repeatable `--note`, `--comment`, and `--tag`, plus `--context`.
 ```bash
-# Add notes, context, or tags to an existing bookmark
+# Add durable notes, context, or tags to an existing bookmark
 codemark edit <bookmark-id> --note "Additional context discovered during implementation"
 codemark edit <bookmark-id> --context "Related to auth-refactor feature"
 codemark edit <bookmark-id> --tag bug-fix --tag priority:high
 
 # Add multiple notes at once (each --note creates a separate annotation)
 codemark edit <bookmark-id> --note "First observation" --note "Second observation" --note "Third insight"
-codemark edit <bookmark-id> --note "Performance concern" --context "Investigation details" --note "Follow-up needed"
+
+# Add a markdown comment scoped to the current task/ticket (kept separate from durable notes)
+codemark edit <bookmark-id> --comment "Debugging **ENG-42**: this lock is held too long; see [trace](https://example.com/t/9)."
 ```
 
 ### Health and maintenance
