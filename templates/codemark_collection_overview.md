@@ -44,9 +44,7 @@
 ## Steps
 
 {{#each steps}}
-- **{{index}}.** `{{file_name}}` (`{{id}}`){{#if summary}} — {{escape_markdown summary}}{{/if}}
-{{#if note}}
-  {{escape_markdown note}}
-{{/if}}
+- **{{index}}.** `{{file_name}}` (`{{id}}`){{#if summary}} — {{escape_markdown summary}}{{/if}}{{#if note}}
+  {{escape_markdown note}}{{/if}}
 {{/each}}
 {{/if}}
