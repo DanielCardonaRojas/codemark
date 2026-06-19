@@ -1,6 +1,33 @@
 # Handlebars Template Design
 
-This document describes the Handlebars template system for codemark's markdown output.
+This document describes the Handlebars template system for codemark's markdown
+output. Codemark uses [Handlebars](https://handlebarsjs.com/) templates to format
+the output of commands like `codemark show` as well as the markdown previews shown
+in the TUI.
+
+## Customizing Templates
+
+Templates resolve in priority order:
+
+1. **User config directory** (highest priority):
+   `~/.config/codemark/templates/<template>.md`
+   - Create a file here to override the default. The directory is created
+     automatically if it doesn't exist.
+   - On macOS the directory is `~/Library/Application Support/codemark/templates/`;
+     if `$XDG_CONFIG_HOME` is set it is `$XDG_CONFIG_HOME/codemark/templates/`.
+2. **Compiled defaults** (fallback): the templates bundled in `./templates/`,
+   shown in [Default Template](#default-template) below.
+
+To create your own template, copy the bundled default and edit it:
+
+```bash
+mkdir -p ~/.config/codemark/templates
+cp ./templates/codemark_show.md ~/.config/codemark/templates/
+$EDITOR ~/.config/codemark/templates/codemark_show.md
+```
+
+> **Note:** Edited templates are cached. If a change doesn't appear at runtime,
+> clear the on-disk cache (or unset/clean `XDG_CONFIG_HOME`).
 
 ## Template Placeholders
 

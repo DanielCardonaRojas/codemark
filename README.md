@@ -10,6 +10,8 @@
 
 Bookmarks **self-heal** across renames, refactors, and formatting changes, making them perfect for long-running AI agent sessions, code audits, and developer knowledge management.
 
+🌐 **Website & docs:** [danielcardonarojas.github.io/codemark](https://danielcardonarojas.github.io/codemark/)
+
 ---
 
 ## 🚀 Why Codemark?
@@ -25,11 +27,43 @@ Standard bookmarks are "dumb"—they point to a coordinate. When the code moves,
 
 ## 🖥️ Native Dashboard (TUI)
 
-Codemark features a built-in, keyboard-driven dashboard inspired by `lazygit`. It's the primary interface for managing structural bookmarks and tours.
+Codemark features a built-in, keyboard-driven dashboard inspired by `lazygit`. It's the primary interface for managing structural bookmarks, collections, and tours.
+
+```bash
+codemark tui
+```
 
 ![Screenshot](./codemark_tui_screenshot.png)
 [Query Preview](./codemark_tui_query_screenshot.png) |
 [Collections](./codemark_tui_collections_screenshot.png)
+
+### Dashboard features
+
+- **⌨️ Keyboard-driven, vim-style navigation** — A `lazygit`-like, fully
+  keyboard-first interface. Move with `j`/`k` (or arrows), cycle panes with
+  `Tab`, switch tabs with `[` / `]`, and resize panes with `+` / `-`. Press `?`
+  at any time for a context-aware help overlay.
+- **🔄 Push / pull syncing** — Publish collections and tours to a remote
+  [codetours](./crates/codetours-server) server with `P` (push), and pull shared
+  tours back down with `p`. Share curated walkthroughs across a team.
+- **🔍 Semantic & full-text search** — Press `/` to search, then toggle between
+  **FTS** (SQLite full-text) and **Semantic** (local vector embeddings) modes.
+  FTS finds exact terms; Semantic finds bookmarks by meaning — no API key
+  required.
+- **📝 Customizable markdown previews** — The details and collection-overview
+  panes render through [Handlebars templates](./dev-docs/templates.md). Drop your
+  own `details_panel.md` or `codemark_collection_overview.md` into the config
+  directory to reshape what's shown.
+- **🎨 Colorschemes & themes** — Set `[tui].theme` in your config. Bundled
+  options include `OneHalfDark` (default), `Dracula`, `Nord`, `gruvbox-dark`,
+  `Solarized`, `Catppuccin Mocha`, and more. Base16/base24 schemes theme both the
+  code preview *and* the surrounding UI chrome; drop your own `.tmTheme` or
+  base16 `.yaml` files into the `themes/` config subdirectory to add custom ones.
+  See [Configuration](./dev-docs/configuration.md).
+- **✏️ Open in any editor** — Press `o` on a bookmark to jump straight to the
+  code in your configured editor (terminal or GUI). Configure per–file-extension
+  commands via the `[open]` config section — see
+  [Configuration](./dev-docs/configuration.md).
 
 ---
 
@@ -75,14 +109,21 @@ codemark install-skill --agent claude --scope user
 ### 2. Let your agent bookmark for you
 Ask your agent to capture the structure of your codebase as it explores. For example:
 
-> *"Create a collection called `auth-audit` and bookmark the key functions involved in authentication."*
+> *"Trace how a request flows from the HTTP router to the database. Create a
+> collection called `request-lifecycle` and bookmark each key hop — the route
+> handler, the auth middleware, the service layer, and the query builder. Add a
+> short note to each explaining its role."*
 
-Your agent will create a collection and add structural bookmarks that survive refactors.
+Your agent will create a collection and add structural bookmarks — complete with
+notes and tags — that survive refactors. Later, in a fresh session, you (or
+another agent) can reload that context instantly:
+
+> *"Load the `request-lifecycle` collection and walk me through it."*
 
 ### 3. Browse with the Dashboard
 Launch the keyboard-driven TUI to review and manage what's been captured:
 ```bash
-codemark dashboard
+codemark tui
 ```
 
 ---
@@ -90,7 +131,8 @@ codemark dashboard
 ## 📖 Documentation
 
 - [**Full Command Reference**](./dev-docs/CLI.md) — Detailed flag and subcommand guide.
-- [**Configuration**](./dev-docs/configuration.md) — Editor setup, global/local config, and semantic search.
+- [**Configuration**](./dev-docs/configuration.md) — Editor setup, themes, global/local config, and semantic search.
+- [**Templates**](./dev-docs/templates.md) — Customize markdown output and TUI previews.
 - [**Neovim Plugin**](./extras/neovim-plugin/README.md) — Setup for `codemark.nvim`.
 - [**Claude Code Plugin**](./extras/claude-code-plugin/) — Power up your AI agent.
 
@@ -98,62 +140,17 @@ codemark dashboard
 
 ## 🎨 Customizing Markdown Output
 
-Codemark uses [Handlebars](https://handlebarsjs.com/) templates to format bookmark output. You can customize the `codemark show` command output by providing your own template.
-
-### Template Locations
-
-1. **User config directory** (highest priority): `~/.config/codemark/templates/codemark_show.md`
-   - Create this file to override the default template
-   - The directory is created automatically if it doesn't exist
-
-2. **Project template** (for reference): `./templates/codemark_show.md`
-   - Contains the default template that you can copy and modify
-
-### Copy and Customize
-
-To create your custom template:
+Codemark formats command output and TUI previews with [Handlebars](https://handlebarsjs.com/) templates. Override the default for `codemark show` (and the TUI panes) by dropping your own template in the config directory:
 
 ```bash
-# Copy the default template to your config directory
 mkdir -p ~/.config/codemark/templates
 cp ./templates/codemark_show.md ~/.config/codemark/templates/
-
-# Edit it to your liking
-nano ~/.config/codemark/templates/codemark_show.md
+$EDITOR ~/.config/codemark/templates/codemark_show.md
 ```
 
-### Available Template Variables
-
-| Variable | Description |
-|----------|-------------|
-| `{{short_id}}` | First 8 chars of bookmark ID |
-| `{{id}}` | Full bookmark ID |
-| `{{file_path}}` | Path to the file |
-| `{{file_name}}` | Just the filename |
-| `{{language}}` | Programming language |
-| `{{health}}` | `active`, `drifted`, `stale`, or `archived` |
-| `{{ui_status}}` | Projected UI status |
-| `{{current_resolution_id}}` | ID of the current resolution pointer |
-| `{{status}}` | Alias for `{{health}}` (deprecated) |
-| `{{query}}` | Tree-sitter query |
-| `{{created_at}}` | Creation timestamp |
-| `{{created_by}}` | Creator (optional) |
-| `{{commit_hash}}` | Git commit hash (optional) |
-| `{{short_commit}}` | First 8 chars of commit (optional) |
-| `{{last_resolved_at}}` | Last resolution time (optional) |
-| `{{resolution_method}}` | Resolution method (optional) |
-| `{{stale_since}}` | When it became stale (optional) |
-
-### Loops and Conditionals
-
-- `{{#each annotations}}` — Loop through annotations
-- `{{#each resolutions}}` — Loop through resolution history (each has `id`, `is_current`, `is_anchored`, `ui_status`)
-- `{{#each tags}}` — Loop through tags
-- `{{#if created_by}}` — Conditional content
-- `{{escape_markdown value}}` — Escape special markdown characters
-- `{{truncate value}}` — Truncate string to 8 characters
-
-For the full template specification, see the [templates reference](./dev-docs/templates.md).
+For the full template specification — every available variable, loops,
+conditionals, helpers, and the default templates — see the
+**[Templates reference](./dev-docs/templates.md)**.
 
 ---
 
@@ -168,6 +165,24 @@ Codemark speaks AST for:
 - ☕ **Java**
 - 🎯 **Dart**
 - ♯ **C#**
+
+---
+
+## 🏗️ Built With
+
+Codemark is a **local-first** Rust workspace — no cloud service, account, or API
+key is required for any core feature.
+
+| Layer | Technology |
+|-------|------------|
+| **Language** | [Rust](https://www.rust-lang.org) (workspace: `codemark-core`, `codemark-cli`, `codemark-tui`, `codetours-server`) |
+| **Structural parsing** | [tree-sitter](https://tree-sitter.github.io/tree-sitter/) |
+| **Storage** | [SQLite](https://www.sqlite.org) via `rusqlite` (bundled), with [`sqlite-vec`](https://github.com/asg017/sqlite-vec) for vector search and FTS5 for full-text search |
+| **Embeddings** | Local models run on [`candle`](https://github.com/huggingface/candle) — semantic search with no API key |
+| **TUI** | [`ratatui`](https://ratatui.rs) + `crossterm`, with [`syntect`](https://github.com/trishume/syntect) syntax highlighting |
+| **Templating** | [Handlebars](https://handlebarsjs.com/) |
+| **Sync server** | [`axum`](https://github.com/tokio-rs/axum) + `tokio`, JWT auth (the `codetours` server) |
+| **Git integration** | [`git2`](https://github.com/rust-lang/git2-rs) (libgit2) |
 
 ---
 
