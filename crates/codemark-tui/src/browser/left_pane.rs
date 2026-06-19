@@ -67,22 +67,14 @@ impl LeftPane {
             LeftPaneSize::Half | LeftPaneSize::Full => {
                 match self.last_resizable_focus {
                     FocusArea::Panel1 => {
-                        // Render search and panel1 only
-                        let chunks = Layout::default()
-                            .direction(Direction::Vertical)
-                            .constraints([Constraint::Length(3), Constraint::Min(0)])
-                            .split(area);
-                        self.search.render(chunks[0], buf);
-                        self.panel1.render(chunks[1], buf);
+                        // Repos/Owners/Auth are filtered, not searched, so the search
+                        // bar is hidden and the panel takes the full height.
+                        self.panel1.render(area, buf);
                     }
                     FocusArea::Panel2 => {
-                        // Render search and panel2 only
-                        let chunks = Layout::default()
-                            .direction(Direction::Vertical)
-                            .constraints([Constraint::Length(3), Constraint::Min(0)])
-                            .split(area);
-                        self.search.render(chunks[0], buf);
-                        self.panel2.render(chunks[1], buf);
+                        // Tags/Branches are filtered, not searched, so the search bar
+                        // is hidden and the panel takes the full height.
+                        self.panel2.render(area, buf);
                     }
                     FocusArea::Panel3 => {
                         // Render search and panel3 only
