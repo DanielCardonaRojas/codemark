@@ -816,12 +816,11 @@ mod tests {
         // Link rendered with kind
         assert!(output.contains("**pr**"));
         assert!(output.contains("https://example.com/pr/1"));
-        // Step list shows the filename, the short bookmark ID, and the first note
+        // Step list shows the filename and the human-readable query summary
         assert!(output.contains("login.rs"));
-        assert!(output.contains("bm-1abcd"), "step should show short bookmark id; got:\n{output}");
         assert!(
-            output.contains("Login entry point"),
-            "step should show first note; got:\n{output}"
+            output.contains("— identifier"),
+            "step should show the query summary; got:\n{output}"
         );
     }
 

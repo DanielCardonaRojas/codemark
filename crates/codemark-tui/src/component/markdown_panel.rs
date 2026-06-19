@@ -160,72 +160,88 @@ impl MarkdownPanel {
     }
 
     /// Parse inline formatting like `code` and **bold**.
+    ///
+    /// Backslash escapes (e.g. `\_`, `` \` ``) are honored the way a real
+    /// markdown renderer would: the backslash is consumed and the following
+    /// character is emitted literally. Templates escape special characters in
+    /// user-supplied text so it survives markdown export; without this the
+    /// escapes would be drawn verbatim in the panel.
     fn parse_inline(&self, text: &str, base_style: Style) -> Vec<Span<'static>> {
         let mut spans = Vec::new();
+        // Plain text accumulated since the last styled span, so consecutive
+        // escapes and literal runs coalesce into a single span.
+        let mut buf = String::new();
         let mut current = text;
 
         while !current.is_empty() {
-            // Find next occurrence of ` or **
+            // Find next occurrence of an escape, `, or **.
+            let next_escape = current.find('\\');
             let next_code = current.find('`');
             let next_bold = current.find("**");
 
-            match (next_code, next_bold) {
-                (Some(i), Some(j)) if i < j => {
-                    // Handle code first
-                    if i > 0 {
-                        spans.push(Span::styled(current[..i].to_string(), base_style));
+            // Earliest marker wins; ties prefer the escape so it can defuse
+            // an immediately-following formatting character.
+            let next = [next_escape, next_code, next_bold].into_iter().flatten().min();
+
+            match next {
+                None => {
+                    buf.push_str(current);
+                    break;
+                }
+                Some(i) if Some(i) == next_escape => {
+                    buf.push_str(&current[..i]);
+                    let mut chars = current[i + 1..].chars();
+                    if let Some(c) = chars.next() {
+                        // Emit the escaped character literally.
+                        buf.push(c);
+                        current = chars.as_str();
+                    } else {
+                        // Trailing backslash with nothing to escape.
+                        buf.push('\\');
+                        break;
                     }
+                }
+                Some(i) if Some(i) == next_code => {
+                    buf.push_str(&current[..i]);
                     current = &current[i + 1..];
                     if let Some(end) = current.find('`') {
+                        Self::flush(&mut spans, &mut buf, base_style);
                         spans.push(Span::styled(
                             current[..end].to_string(),
                             base_style.fg(crate::theme::palette().warning),
                         ));
                         current = &current[end + 1..];
                     } else {
-                        spans.push(Span::styled("`".to_string(), base_style));
+                        buf.push('`');
                     }
                 }
-                (_, Some(j)) => {
-                    // Handle bold
-                    if j > 0 {
-                        spans.push(Span::styled(current[..j].to_string(), base_style));
-                    }
+                Some(j) => {
+                    // Bold (**).
+                    buf.push_str(&current[..j]);
                     current = &current[j + 2..];
                     if let Some(end) = current.find("**") {
+                        Self::flush(&mut spans, &mut buf, base_style);
                         spans.push(Span::styled(
                             current[..end].to_string(),
                             base_style.add_modifier(Modifier::BOLD),
                         ));
                         current = &current[end + 2..];
                     } else {
-                        spans.push(Span::styled("**".to_string(), base_style));
+                        buf.push_str("**");
                     }
-                }
-                (Some(i), _) => {
-                    // Handle code
-                    if i > 0 {
-                        spans.push(Span::styled(current[..i].to_string(), base_style));
-                    }
-                    current = &current[i + 1..];
-                    if let Some(end) = current.find('`') {
-                        spans.push(Span::styled(
-                            current[..end].to_string(),
-                            base_style.fg(crate::theme::palette().warning),
-                        ));
-                        current = &current[end + 1..];
-                    } else {
-                        spans.push(Span::styled("`".to_string(), base_style));
-                    }
-                }
-                (None, None) => {
-                    spans.push(Span::styled(current.to_string(), base_style));
-                    break;
                 }
             }
         }
 
+        Self::flush(&mut spans, &mut buf, base_style);
         spans
+    }
+
+    /// Emit any pending plain text as a span and clear the buffer.
+    fn flush(spans: &mut Vec<Span<'static>>, buf: &mut String, base_style: Style) {
+        if !buf.is_empty() {
+            spans.push(Span::styled(std::mem::take(buf), base_style));
+        }
     }
 }
 
@@ -325,5 +341,55 @@ impl Component for MarkdownPanel {
 
     fn set_focus(&mut self, focused: bool) {
         self.focused = focused;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Collapse a span list into the visible text it renders.
+    fn rendered_text(panel: &MarkdownPanel, input: &str) -> String {
+        panel
+            .parse_inline(input, Style::default())
+            .into_iter()
+            .map(|s| s.content.into_owned())
+            .collect()
+    }
+
+    #[test]
+    fn backslash_escapes_are_consumed() {
+        let panel = MarkdownPanel::new();
+        // Underscores escaped by the templates must not show their backslash.
+        assert_eq!(rendered_text(&panel, "function upsert\\_repo"), "function upsert_repo");
+        assert_eq!(
+            rendered_text(&panel, "resolve\\_server\\_and\\_token"),
+            "resolve_server_and_token"
+        );
+        // Other escaped punctuation is likewise unescaped.
+        assert_eq!(rendered_text(&panel, "a\\*b\\#c"), "a*b#c");
+        // Escaped double quotes (e.g. from a query predicate's string literal)
+        // are unescaped too.
+        assert_eq!(
+            rendered_text(&panel, "match \\\"create_session\\\""),
+            "match \"create_session\""
+        );
+    }
+
+    #[test]
+    fn escaped_formatting_chars_are_literal() {
+        let panel = MarkdownPanel::new();
+        // An escaped backtick stays literal rather than opening a code span.
+        assert_eq!(rendered_text(&panel, "use \\`code\\` here"), "use `code` here");
+        // A trailing backslash with nothing to escape is preserved.
+        assert_eq!(rendered_text(&panel, "ends with\\"), "ends with\\");
+    }
+
+    #[test]
+    fn unescaped_formatting_still_applies() {
+        let panel = MarkdownPanel::new();
+        // Code spans and bold are stripped of their markers as before.
+        assert_eq!(rendered_text(&panel, "see `registry.rs` now"), "see registry.rs now");
+        assert_eq!(rendered_text(&panel, "this is **bold** text"), "this is bold text");
     }
 }
