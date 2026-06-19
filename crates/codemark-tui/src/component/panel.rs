@@ -19,6 +19,62 @@ use crate::event::Event;
 
 use std::cell::{Cell, RefCell};
 
+/// Shorten a file path to fit within `max_width` display columns, prioritizing
+/// the last path components.
+///
+/// If the path exceeds `max_width`, it is truncated to show the trailing
+/// components with a `../` prefix. For example, `/very/long/path/to/file.rs`
+/// with `max_width=18` becomes `../path/to/file.rs`.
+fn shorten_path(path: &str, max_width: usize) -> String {
+    if path.len() <= max_width {
+        return path.to_string();
+    }
+
+    // Try to find a good breaking point by working backwards from the end
+    let components: Vec<&str> = path.split('/').collect();
+    let mut result = String::new();
+    let prefix_overhead = 3; // "../" prefix that will be added if we truncate
+
+    // Start from the last component and work backwards
+    for component in components.iter().rev() {
+        let component_len = component.len();
+        let separator_len = if result.is_empty() { 0 } else { 1 }; // '/' separator
+
+        // Use max_width - prefix_overhead unconditionally to avoid edge cases
+        // where we build a string that then exceeds max_width after prepending "../"
+        let budget = max_width.saturating_sub(prefix_overhead);
+        if result.len() + component_len + separator_len > budget {
+            // Stop here and add "../" prefix if we have any components
+            if !result.is_empty() {
+                result = format!("../{}", result);
+            }
+            break;
+        }
+
+        // Add this component
+        if result.is_empty() {
+            result = component.to_string();
+        } else {
+            result = format!("{}/{}", component, result);
+        }
+    }
+
+    // Fallback: if we couldn't build anything meaningful, just truncate with ellipsis
+    // Use char_indices() for UTF-8 safety
+    if result.is_empty() || result.len() > max_width {
+        if path.len() > max_width {
+            let take = max_width.saturating_sub(3);
+            let start =
+                path.char_indices().rev().nth(take.saturating_sub(1)).map(|(i, _)| i).unwrap_or(0);
+            format!("...{}", &path[start..])
+        } else {
+            path.to_string()
+        }
+    } else {
+        result
+    }
+}
+
 /// A scrollable panel component.
 ///
 /// Panels display a list of items with a title and optional border.
@@ -161,6 +217,9 @@ pub struct PanelItem {
     published: bool,
     /// Optional spinner text shown at the very end of the item
     spinner_text: Option<String>,
+    /// When true, the primary `text` is treated as a file path that is
+    /// compressed at render time to fit the available width of the pane.
+    compress_path: bool,
     /// Optional hidden user data (e.g., database ID)
     pub user_data: Option<String>,
 }
@@ -193,6 +252,7 @@ impl PanelItem {
             active: false,
             published: false,
             spinner_text: None,
+            compress_path: false,
             user_data: None,
         }
     }
@@ -295,8 +355,54 @@ impl PanelItem {
         self
     }
 
-    /// Render this item as a Line.
-    fn to_line(&self, selected: bool, focused: bool) -> Line<'_> {
+    /// Mark the primary text as a file path that should be compressed at render
+    /// time to fit the available width of the pane. The full, untruncated path
+    /// is kept in `text` so the displayed length can grow or shrink as the pane
+    /// is resized (e.g. when cycling through left-pane layouts).
+    pub fn compressible_path(mut self) -> Self {
+        self.compress_path = true;
+        self
+    }
+
+    /// Total display width consumed by the spans rendered *after* the primary
+    /// text. Used to compute how much horizontal space a compressible path may
+    /// occupy. Each optional segment is preceded by a single space separator,
+    /// mirroring the layout in [`Self::to_line`].
+    fn trailing_width(&self) -> usize {
+        use unicode_width::UnicodeWidthStr;
+
+        let mut width = 0;
+
+        if let Some(emphasis) = &self.emphasis_text {
+            width += 1 + emphasis.width();
+        }
+        if let Some(secondary) = &self.secondary_text {
+            width += 1 + secondary.width();
+        }
+        if let Some(metadata) = &self.metadata {
+            width += 1 + metadata.width();
+        }
+        if matches!(self.sync_direction, Some(SyncDirection::Push) | Some(SyncDirection::Pull)) {
+            width += 2; // separator + arrow
+        }
+        if self.checkmark || self.active {
+            width += 2; // separator + check
+        }
+        if self.published {
+            width += 2; // separator + cloud icon
+        }
+        if let Some(spinner) = &self.spinner_text {
+            width += 1 + spinner.width();
+        }
+
+        width
+    }
+
+    /// Render this item as a Line, compressing a path-style primary text to fit
+    /// `available_width` (the inner content width of the pane) when applicable.
+    fn to_line(&self, selected: bool, focused: bool, available_width: u16) -> Line<'_> {
+        use unicode_width::UnicodeWidthStr;
+
         let mut spans = Vec::new();
 
         // Add padding prefix for alignment
@@ -327,7 +433,19 @@ impl PanelItem {
         } else {
             Style::default()
         };
-        spans.push(Span::styled(&self.text, primary_style));
+        if self.compress_path {
+            // Reserve the width consumed by the leading spans (padding, health,
+            // icon) and the trailing spans (emphasis, secondary, metadata, …),
+            // then give the path whatever width remains in the pane.
+            let leading: usize = spans.iter().map(|s| s.content.width()).sum();
+            let budget = (available_width as usize)
+                .saturating_sub(leading)
+                .saturating_sub(self.trailing_width());
+            let short = shorten_path(&self.text, budget);
+            spans.push(Span::styled(short, primary_style));
+        } else {
+            spans.push(Span::styled(&self.text, primary_style));
+        }
 
         // Add emphasized text if present (bold)
         if let Some(emphasis) = &self.emphasis_text {
@@ -808,6 +926,10 @@ impl Component for Panel {
 
         let height = inner.height as usize;
 
+        // Width available to each item's text. Leave one column for the
+        // scrollbar/selection indicator so compressed paths don't touch the edge.
+        let content_width = inner.width.saturating_sub(1);
+
         // Build all items (Ratatui List handles scrolling internally via ListState)
         let list_items: Vec<ListItem> = self
             .items
@@ -815,7 +937,7 @@ impl Component for Panel {
             .enumerate()
             .map(|(i, item)| {
                 let is_selected = self.list_state.borrow().selected() == Some(i);
-                let line = item.to_line(is_selected, self.focused);
+                let line = item.to_line(is_selected, self.focused, content_width);
                 let mut list_item = ListItem::new(line);
 
                 if is_selected {
@@ -1159,6 +1281,56 @@ mod tests {
         assert_eq!(HealthStatus::UnanchoredHealthy.symbol(), "●");
         assert_eq!(HealthStatus::Drifted.symbol(), "●");
         assert_eq!(HealthStatus::Broken.symbol(), "●");
+    }
+
+    #[test]
+    fn test_shorten_path_short_path() {
+        let path = "src/main.rs";
+        assert_eq!(shorten_path(path, 25), "src/main.rs");
+    }
+
+    #[test]
+    fn test_shorten_path_exact_length() {
+        let path = "src/main.rs"; // 11 characters
+        assert_eq!(shorten_path(path, 11), "src/main.rs");
+    }
+
+    #[test]
+    fn test_shorten_path_long_path() {
+        let path = "very/long/path/to/some/deeply/nested/file.rs";
+        let result = shorten_path(path, 25);
+        assert!(result.len() <= 25);
+        assert!(result.ends_with("file.rs"));
+    }
+
+    #[test]
+    fn test_shorten_path_absolute_path() {
+        let path = "/Users/danielcardona/development/codemark/src/browser/tabbed_panel.rs";
+        let result = shorten_path(path, 25);
+        assert!(result.len() <= 25);
+        assert!(result.contains("tabbed_panel.rs") || result.contains("..."));
+    }
+
+    #[test]
+    fn test_shorten_path_very_long_filename() {
+        let path = "src/very_long_filename_that_exceeds_limit.rs";
+        let result = shorten_path(path, 25);
+        assert!(result.len() <= 25);
+    }
+
+    #[test]
+    fn test_compressible_path_grows_with_width() {
+        // A compressible path item shows more of the path as the pane widens.
+        let path = "crates/codemark-tui/src/component/panel.rs";
+        let item = PanelItem::new(path).no_health().compressible_path();
+
+        let narrow = item.to_line(false, false, 20).to_string();
+        let wide = item.to_line(false, false, 80).to_string();
+
+        // Narrow rendering is compressed; wide rendering shows the full path.
+        assert!(narrow.trim().len() < path.len());
+        assert!(wide.contains(path));
+        assert!(wide.trim_end().len() >= narrow.trim_end().len());
     }
 
     #[test]
