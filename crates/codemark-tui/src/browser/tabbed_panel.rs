@@ -1,5 +1,5 @@
 use crate::browser::{
-    ContextTab, Panel3Tab, Tab, TabContent, TabSelection, tabs::BORDER_EXTENSION,
+    ContextTab, Panel2Tab, Panel3Tab, Tab, TabContent, TabSelection, tabs::BORDER_EXTENSION,
 };
 use crate::component::{CodePreview, HealthStatus, MarkdownPanel, Panel, PanelItem};
 use crate::event::Event;
@@ -471,7 +471,11 @@ impl TabbedPanel {
         let branches_panel =
             Panel::new("").bordered(false).multi_select(true).items(branches_items);
 
-        let tabs = TabSelection::new(vec![Tab::new("Tags"), Tab::new("Branches")]);
+        let mut tabs = TabSelection::new(vec![
+            Tab::new(Panel2Tab::Tags.label()),
+            Tab::new(Panel2Tab::Branches.label()),
+        ]);
+        tabs.set_visible_count(Self::panel2_visible_tab_count(active_tab));
 
         Self {
             tabs,
@@ -480,6 +484,25 @@ impl TabbedPanel {
             last_area: std::cell::Cell::new(Rect::default()),
             pending_selection_change: std::cell::Cell::new(None),
         }
+    }
+
+    /// Number of Panel 2 tabs to show for the given active Panel 3 tab.
+    ///
+    /// Only Collections and Tours have an associated branch (by design), so the
+    /// trailing Branches tab is hidden — leaving just Tags — whenever Bookmarks
+    /// are active in Panel 3.
+    fn panel2_visible_tab_count(active_tab: Panel3Tab) -> usize {
+        match active_tab {
+            Panel3Tab::Bookmarks => Panel2Tab::Branches.index(),
+            Panel3Tab::Collections | Panel3Tab::Tours => Panel2Tab::all().len(),
+        }
+    }
+
+    /// Show or hide Panel 2's trailing Branches tab based on the active Panel 3
+    /// tab. Bookmarks have no branch, so the Branches tab is hidden when they
+    /// are active. See [`Self::panel2_visible_tab_count`].
+    pub fn sync_branches_tab_visibility(&mut self, active_tab: Panel3Tab) {
+        self.tabs.set_visible_count(Self::panel2_visible_tab_count(active_tab));
     }
 
     /// Create panel 3 with Bookmarks/Collections/Tours tabs.

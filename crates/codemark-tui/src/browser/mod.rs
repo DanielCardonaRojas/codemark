@@ -930,6 +930,9 @@ impl BrowserLayout {
         if let Some(p) = self.left_pane.panel2.get_list_panel_mut(1) {
             p.set_items(branches);
         }
+        // Bookmarks have no associated branch, so hide Panel 2's Branches tab
+        // when they are active; only Collections and Tours carry a branch.
+        self.left_pane.panel2.sync_branches_tab_visibility(active_tab);
     }
 
     /// Get the current focus area.
