@@ -1007,6 +1007,26 @@ impl BrowserLayout {
         Line::from(spans)
     }
 
+    /// Queue an external command to open a URL (e.g. a clicked markdown link)
+    /// in the user's default browser/handler. Spawned in the background so the
+    /// TUI keeps running.
+    pub fn open_url(&mut self, url: &str) {
+        let (program, args) = if cfg!(target_os = "macos") {
+            ("open".to_string(), vec![url.to_string()])
+        } else if cfg!(target_os = "windows") {
+            // `start` is a cmd builtin; the empty "" is the (ignored) window title.
+            (
+                "cmd".to_string(),
+                vec!["/C".to_string(), "start".to_string(), String::new(), url.to_string()],
+            )
+        } else {
+            ("xdg-open".to_string(), vec![url.to_string()])
+        };
+
+        tracing::info!(target: "codemark::shell", %url, %program, "queueing open-url command");
+        self.pending_command = Some(ExternalCommand { program, args, should_wait: false });
+    }
+
     /// Open the currently selected bookmark or tour step in the editor.
     pub fn open_in_editor(&mut self) {
         // Special handling for Panel3 bookmarks: open directly without StepData

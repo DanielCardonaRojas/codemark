@@ -753,6 +753,9 @@ impl BrowserLayout {
                     self.right_pane.needs_preview_update = false;
                     self.right_pane.update_preview(&self.db);
                 }
+                if let Some(url) = self.right_pane.take_pending_open_url() {
+                    self.open_url(&url);
+                }
                 let handled = left_handled || right_handled;
 
                 let new_tab = self.left_pane.panel3.tabs.selected_index();

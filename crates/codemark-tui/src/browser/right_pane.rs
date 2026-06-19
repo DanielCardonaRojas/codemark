@@ -949,4 +949,17 @@ impl RightPane {
         // Filter out empty or whitespace-only content
         content.filter(|m| !m.trim().is_empty())
     }
+
+    /// Drain a markdown link URL that was clicked in any of the right pane's
+    /// markdown panels (the steps Info tab, the overview, or the details pane).
+    pub fn take_pending_open_url(&mut self) -> Option<String> {
+        if let Some(md) = self.steps.get_markdown_mut()
+            && let Some(url) = md.take_pending_open_url()
+        {
+            return Some(url);
+        }
+        self.overview
+            .take_pending_open_url()
+            .or_else(|| self.details.take_pending_open_url())
+    }
 }
