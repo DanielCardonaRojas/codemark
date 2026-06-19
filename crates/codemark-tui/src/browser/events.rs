@@ -147,17 +147,19 @@ impl BrowserLayout {
 
                 let short_path = shorten_path(&bm.file_path, 25);
 
-                let display_text = if summary.is_empty() {
-                    short_path
-                } else {
-                    format!("{} {}", short_path, summary)
-                };
-
-                PanelItem::new(display_text)
+                let mut item = PanelItem::new(short_path)
                     .metadata(bm.created_by.clone().unwrap_or_default())
                     .health(HealthStatus::Unknown)
                     .icon(icon)
-                    .user_data(bm.id.clone())
+                    .user_data(bm.id.clone());
+
+                // Render the symbol summary as bold emphasis, matching the
+                // non-search bookmark list so styling is consistent across both.
+                if !summary.is_empty() {
+                    item = item.emphasis(summary);
+                }
+
+                item
             })
             .collect();
 
