@@ -180,6 +180,11 @@ pub struct TabSelection {
     tabs: Vec<Tab>,
     /// Currently selected tab index
     selected: usize,
+    /// Number of leading tabs that are currently visible/selectable. `None`
+    /// means every tab is visible. Used to hide trailing tabs (e.g. the
+    /// Branches tab in Panel 2 when Bookmarks — which have no branch — are the
+    /// active Panel 3 tab). Hidden tabs are neither rendered nor selectable.
+    visible_count: Option<usize>,
     /// Whether the tabs are focused
     focused: bool,
     /// Last rendered tab positions: (x_start, x_end) for each tab
@@ -192,8 +197,25 @@ impl TabSelection {
         Self {
             tabs,
             selected: 0,
+            visible_count: None,
             focused: false,
             last_tab_positions: std::cell::RefCell::new(Vec::new()),
+        }
+    }
+
+    /// Number of currently visible (selectable) leading tabs.
+    fn visible_len(&self) -> usize {
+        self.visible_count.map_or(self.tabs.len(), |n| n.min(self.tabs.len()))
+    }
+
+    /// Limit selection and rendering to the first `count` tabs, hiding any
+    /// trailing tabs. If the current selection falls outside the visible
+    /// range it is clamped back into range.
+    pub fn set_visible_count(&mut self, count: usize) {
+        self.visible_count = Some(count);
+        let visible = self.visible_len();
+        if visible > 0 && self.selected >= visible {
+            self.selected = visible - 1;
         }
     }
 
@@ -209,18 +231,19 @@ impl TabSelection {
         }
     }
 
-    /// Select the next tab.
+    /// Select the next tab, wrapping within the visible range.
     pub fn next(&mut self) {
-        if !self.tabs.is_empty() {
-            self.selected = (self.selected + 1) % self.tabs.len();
+        let visible = self.visible_len();
+        if visible > 0 {
+            self.selected = (self.selected + 1) % visible;
         }
     }
 
-    /// Select the previous tab.
+    /// Select the previous tab, wrapping within the visible range.
     pub fn previous(&mut self) {
-        if !self.tabs.is_empty() {
-            self.selected =
-                if self.selected == 0 { self.tabs.len() - 1 } else { self.selected - 1 };
+        let visible = self.visible_len();
+        if visible > 0 {
+            self.selected = if self.selected == 0 { visible - 1 } else { self.selected - 1 };
         }
     }
 
@@ -282,7 +305,8 @@ impl TabSelection {
         let mut positions = Vec::new();
         let mut current_x = BORDER_EXTENSION;
 
-        for (i, tab) in self.tabs.iter().enumerate() {
+        let visible = self.visible_len();
+        for (i, tab) in self.tabs.iter().take(visible).enumerate() {
             let selected = i == self.selected;
             let style = if selected {
                 Style::default()
@@ -430,6 +454,38 @@ mod tests {
         // Separator (1) before the next tab; "Branches" is 8 cols (+1 trailing space).
         let branches_start = BORDER_EXTENSION + 8 + 1 + 1;
         assert_eq!(positions[1], (branches_start, branches_start + 8 + 1));
+    }
+
+    #[test]
+    fn test_visible_count_hides_trailing_tabs() {
+        let mut tabs = TabSelection::new(vec![Tab::new("Tags"), Tab::new("Branches")]);
+
+        // Hiding the trailing tab leaves navigation pinned to the first tab.
+        tabs.set_visible_count(1);
+        tabs.next();
+        assert_eq!(tabs.selected_index(), 0);
+        tabs.previous();
+        assert_eq!(tabs.selected_index(), 0);
+
+        // Only the visible tab is rendered, so only it records a click position.
+        tabs.render_as_titles_with_counts(&[None, None]);
+        assert_eq!(tabs.last_tab_positions.borrow().len(), 1);
+
+        // Restoring full visibility re-enables the trailing tab.
+        tabs.set_visible_count(2);
+        tabs.next();
+        assert_eq!(tabs.selected_index(), 1);
+    }
+
+    #[test]
+    fn test_set_visible_count_clamps_selection() {
+        let mut tabs = TabSelection::new(vec![Tab::new("Tags"), Tab::new("Branches")]);
+        tabs.set_selected(1);
+        assert_eq!(tabs.selected_index(), 1);
+
+        // Hiding the selected trailing tab clamps the selection back into range.
+        tabs.set_visible_count(1);
+        assert_eq!(tabs.selected_index(), 0);
     }
 
     #[test]
