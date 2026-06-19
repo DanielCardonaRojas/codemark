@@ -224,9 +224,10 @@ impl TabSelection {
         self.selected
     }
 
-    /// Set the selected tab index.
+    /// Set the selected tab index. Indices outside the visible range are
+    /// ignored, so a hidden trailing tab can never become selected.
     pub fn set_selected(&mut self, index: usize) {
-        if index < self.tabs.len() {
+        if index < self.visible_len() {
             self.selected = index;
         }
     }
@@ -268,7 +269,8 @@ impl TabSelection {
     pub fn render(&self, area: Rect, buf: &mut Buffer) {
         let mut lines = Vec::new();
 
-        for (i, tab) in self.tabs.iter().enumerate() {
+        let visible = self.visible_len();
+        for (i, tab) in self.tabs.iter().take(visible).enumerate() {
             let selected = i == self.selected;
             lines.push(tab.render(selected, self.focused));
         }
@@ -485,6 +487,10 @@ mod tests {
 
         // Hiding the selected trailing tab clamps the selection back into range.
         tabs.set_visible_count(1);
+        assert_eq!(tabs.selected_index(), 0);
+
+        // While hidden, the trailing tab can't be re-selected programmatically.
+        tabs.set_selected(1);
         assert_eq!(tabs.selected_index(), 0);
     }
 
