@@ -590,6 +590,7 @@ dependencies = [
  "copypasta",
  "crossterm 0.28.1",
  "futures",
+ "insta",
  "ratatui",
  "reqwest",
  "rusqlite",
