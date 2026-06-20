@@ -25,6 +25,14 @@ SHOTS_DIR="$REPO_ROOT/screenshots"
 command -v vhs >/dev/null || { echo "error: vhs not found (brew install vhs)"; exit 1; }
 command -v jq  >/dev/null || { echo "error: jq not found"; exit 1; }
 
+# The tapes render with FiraCode Nerd Font Mono so the TUI's Nerd Font icons
+# appear. Warn (don't fail) if it's missing — vhs falls back to a default font,
+# which produces iconless screenshots.
+if command -v fc-list >/dev/null && ! fc-list | grep -qi "FiraCode Nerd Font Mono"; then
+  echo "warning: 'FiraCode Nerd Font Mono' not found; icons will not render."
+  echo "         Install it (macOS: brew install --cask font-fira-code-nerd-font)."
+fi
+
 echo "==> Building binaries"
 cargo build --release -p codemark-cli --bin codemark
 cargo build --release -p codemark-tui --bin codemark-tui

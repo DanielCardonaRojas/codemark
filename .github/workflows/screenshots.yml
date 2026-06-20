@@ -33,11 +33,11 @@ jobs:
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
       # vhs renders inside a headless terminal (ttyd) and encodes frames with
-      # ffmpeg; a monospace font is needed for legible output.
+      # ffmpeg.
       - name: Install vhs and dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y ffmpeg fonts-jetbrains-mono jq
+          sudo apt-get install -y ffmpeg jq
           # ttyd (terminal vhs drives)
           TTYD_URL="https://github.com/tsl0922/ttyd/releases/latest/download/ttyd.x86_64"
           sudo curl -fsSL "$TTYD_URL" -o /usr/local/bin/ttyd
@@ -51,6 +51,19 @@ jobs:
             sudo mv /tmp/vhs_${VHS_VER}_Linux_x86_64/vhs /usr/local/bin/vhs
           fi
           echo "$HOME/go/bin" >> "$GITHUB_PATH"
+
+      # The tapes render with "FiraCode Nerd Font Mono" so the TUI's Nerd Font
+      # icons (file/health glyphs) appear. The apt `fonts-firacode` package lacks
+      # the patched glyphs, so install the Nerd Font release directly.
+      - name: Install FiraCode Nerd Font
+        run: |
+          NF_VER="3.2.1"
+          mkdir -p ~/.local/share/fonts
+          curl -fsSL "https://github.com/ryanoasis/nerd-fonts/releases/download/v${NF_VER}/FiraCode.tar.xz" \
+            | tar -xJ -C ~/.local/share/fonts
+          fc-cache -f
+          # Sanity-check the family name the tapes reference is available.
+          fc-list | grep -i "FiraCode Nerd Font Mono" | head -1
 
       - name: Capture screenshots
         run: ./screenshots/capture.sh

@@ -11,10 +11,11 @@
 # needs no navigation. We just select the first bookmark and let it render.
 
 
-Set FontSize 16
-Set Width 1400
-Set Height 850
-Set Padding 20
+Set FontFamily "FiraCode Nerd Font Mono"
+Set FontSize 24
+Set Width 2100
+Set Height 1290
+Set Padding 24
 Set Theme "Catppuccin Mocha"
 
 # Launch the TUI from the seeded demo repo.
