@@ -61,18 +61,11 @@ jobs:
             target: x86_64-pc-windows-msvc
           - os: macos-latest
             target: aarch64-apple-darwin
+          - os: macos-latest
+            target: x86_64-apple-darwin
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-
-      - name: Install Linux build deps (glibc only)
-        # Only the gnu build uses the system C toolchain. The musl build gets its
-        # C/C++ cross toolchain + sysroot from Zig below, so we must NOT mix glibc
-        # xcb headers into it.
-        if: matrix.target == 'x86_64-unknown-linux-gnu'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libxcb1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@master
@@ -105,7 +98,11 @@ jobs:
             target
           key: ${{ matrix.target }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
-      - name: Build client binaries (release dist profile)
+      - name: Build client binaries
+        # This is a portability canary: it must compile and link for each target.
+        # Use the default (dev) profile, not `--profile dist` — the release-only
+        # LTO + single-codegen-unit settings would massively slow CI without
+        # adding signal (the actual optimized build runs in release.yml on tag).
         shell: bash
         env:
           # sqlite-vec.c uses BSD type names (u_int8_t, …) that glibc defines but
@@ -113,9 +110,9 @@ jobs:
           CFLAGS_x86_64_unknown_linux_musl: "-Du_int8_t=uint8_t -Du_int16_t=uint16_t -Du_int32_t=uint32_t -Du_int64_t=uint64_t"
         run: |
           if [[ "${{ matrix.target }}" == *-musl ]]; then
-            cargo zigbuild --profile dist --target "${{ matrix.target }}" --bin codemark --bin codemark-tui
+            cargo zigbuild --target "${{ matrix.target }}" --bin codemark --bin codemark-tui
           else
-            cargo build --profile dist --target "${{ matrix.target }}" --bin codemark --bin codemark-tui
+            cargo build --target "${{ matrix.target }}" --bin codemark --bin codemark-tui
           fi
 
   rustfmt:
