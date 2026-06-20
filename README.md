@@ -33,9 +33,11 @@ Codemark features a built-in, keyboard-driven dashboard inspired by `lazygit`. I
 codemark tui
 ```
 
-![Screenshot](./codemark_tui_screenshot.png)
-[Query Preview](./codemark_tui_query_screenshot.png) |
-[Collections](./codemark_tui_collections_screenshot.png)
+![Browser — bookmarks list and live code preview](./codemark_tui_screenshot.png)
+
+| Query preview | Collections |
+| --- | --- |
+| ![Tree-sitter query for a bookmark](./codemark_tui_query_screenshot.png) | ![Collection steps view](./codemark_tui_collections_screenshot.png) |
 
 ### Dashboard features
 
