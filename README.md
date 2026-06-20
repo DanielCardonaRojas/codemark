@@ -91,18 +91,41 @@ variable; run `codemark-tui --list-schemes` to see what's available.
 
 ## 💻 Installation
 
-### Homebrew (macOS/Linux)
+Prebuilt binaries are published for **macOS** (Apple Silicon & Intel), **Linux** (x86_64, glibc), and **Windows** (x86_64). Choose whichever method you prefer.
+
+### Homebrew (macOS / Linux)
 ```bash
-brew tap DanielCardonaRojas/codemark
-brew install codemark
+brew install DanielCardonaRojas/codemark/codemark
 ```
 
-### Cargo
+### Install script (macOS / Linux)
+```bash
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/DanielCardonaRojas/codemark/releases/latest/download/codemark-cli-installer.sh | sh
+```
+
+### PowerShell (Windows)
+```powershell
+powershell -ExecutionPolicy Bypass -c "irm https://github.com/DanielCardonaRojas/codemark/releases/latest/download/codemark-cli-installer.ps1 | iex"
+```
+
+### mise
+```bash
+mise use -g ubi:DanielCardonaRojas/codemark
+```
+
+### Cargo (build from source)
 ```bash
 cargo install codemark
 ```
-
 *Requires Rust 1.75+. SQLite is bundled.*
+
+> The script, PowerShell, and `mise` methods install prebuilt binaries from the [GitHub releases](https://github.com/DanielCardonaRojas/codemark/releases). You can also download a platform archive there directly.
+
+### Terminal UI (optional)
+`codemark tui` opens the interactive dashboard, which ships as a separate companion binary:
+```bash
+cargo install codemark-tui
+```
 
 ---
 

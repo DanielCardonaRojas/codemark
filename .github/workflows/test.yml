@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [main, develop]
 
+# Minimal token scope: these jobs only read the repo.
+permissions:
+  contents: read
+
 jobs:
   test:
     name: Run Tests
@@ -19,9 +23,13 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@master
+        # Pinned to a commit SHA (rust-toolchain has no version tags; @master is
+        # a mutable branch). Current ref: master @ 2026-06.
+        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9
         with:
           toolchain: ${{ matrix.rust }}
           components: rustfmt, clippy
@@ -66,9 +74,13 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@master
+        # Pinned to a commit SHA (rust-toolchain has no version tags; @master is
+        # a mutable branch). Current ref: master @ 2026-06.
+        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9
         with:
           toolchain: stable
           targets: ${{ matrix.target }}
@@ -122,9 +134,13 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@master
+        # Pinned to a commit SHA (rust-toolchain has no version tags; @master is
+        # a mutable branch). Current ref: master @ 2026-06.
+        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9
         with:
           toolchain: stable
           components: rustfmt
