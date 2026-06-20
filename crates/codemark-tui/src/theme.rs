@@ -183,6 +183,15 @@ impl ThemeRegistry {
         names.dedup();
         names
     }
+
+    /// Names of the base16/base24 schemes only, sorted. Unlike the syntect
+    /// `.tmTheme` entries in [`available`], a scheme drives the *entire* TUI
+    /// chrome (not just the code preview), so these are the themes worth
+    /// showcasing in a per-theme screenshot gallery.
+    pub fn scheme_names(&self) -> Vec<String> {
+        // BTreeMap keys are already sorted.
+        self.schemes.keys().cloned().collect()
+    }
 }
 
 impl Default for ThemeRegistry {

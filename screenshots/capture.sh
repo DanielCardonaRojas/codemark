@@ -62,12 +62,31 @@ echo "==> Capturing screenshots"
 # directory and output location decoupled.
 RENDER_DIR="$SANDBOX/tapes"
 mkdir -p "$RENDER_DIR"
+
+# The three-view gallery is captured on the default theme.
 for tape in main query collections; do
   echo "    - $tape.tape"
   rendered="$RENDER_DIR/$tape.tape"
   sed "s#__OUT__#$REPO_ROOT#g" "$SHOTS_DIR/$tape.tape" > "$rendered"
   ( cd "$DEMO_DIR" && PATH="$BIN_DIR:$PATH" vhs "$rendered" )
 done
+
+# Per-theme gallery: one main-view shot per base16/base24 scheme (the themes
+# that re-theme the whole TUI). The scheme list comes from the binary itself, so
+# the gallery grows automatically as schemes are added. CODEMARK_TUI_THEME
+# selects the scheme at runtime; theme.tape uses Padding 0 so vhs's own theme is
+# irrelevant.
+echo "    - theme.tape (per scheme)"
+slugify() { echo "$1" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9]+/-/g; s/^-+|-+$//g'; }
+while IFS= read -r scheme; do
+  [ -n "$scheme" ] || continue
+  slug="$(slugify "$scheme")"
+  shot="codemark_tui_theme_${slug}.png"
+  echo "        - $scheme -> $shot"
+  rendered="$RENDER_DIR/theme-$slug.tape"
+  sed -e "s#__OUT__#$REPO_ROOT#g" -e "s#__SHOT__#$shot#g" "$SHOTS_DIR/theme.tape" > "$rendered"
+  ( cd "$DEMO_DIR" && PATH="$BIN_DIR:$PATH" CODEMARK_TUI_THEME="$scheme" vhs "$rendered" )
+done < <("$BIN_DIR/codemark-tui" --list-schemes)
 
 echo "==> Done. Updated:"
 ls -1 "$REPO_ROOT"/codemark_tui_*.png

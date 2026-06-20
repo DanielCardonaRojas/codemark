@@ -39,6 +39,16 @@ codemark tui
 | --- | --- |
 | ![Tree-sitter query for a bookmark](./codemark_tui_query_screenshot.png) | ![Collection steps view](./codemark_tui_collections_screenshot.png) |
 
+#### Themes
+
+The TUI ships with built-in color schemes that re-theme the whole interface. Set
+one in your config (`tui.theme`) or via the `CODEMARK_TUI_THEME` environment
+variable; run `codemark-tui --list-schemes` to see what's available.
+
+| Catppuccin Mocha | Everforest Dark |
+| --- | --- |
+| ![Catppuccin Mocha theme](./codemark_tui_theme_catppuccin-mocha.png) | ![Everforest Dark theme](./codemark_tui_theme_everforest-dark.png) |
+
 ### Dashboard features
 
 - **⌨️ Keyboard-driven, vim-style navigation** — A `lazygit`-like, fully

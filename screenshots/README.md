@@ -19,6 +19,16 @@ so the gallery stays faithful to the real interface.
 | `main.tape` | `codemark_tui_screenshot.png` | Bookmarks list + content preview |
 | `query.tape` | `codemark_tui_query_screenshot.png` | Tree-sitter Query tab |
 | `collections.tape` | `codemark_tui_collections_screenshot.png` | Collections view |
+| `theme.tape` | `codemark_tui_theme_<slug>.png` | Main view, once per color scheme |
+
+The three-view gallery is captured on the default theme. The per-theme gallery
+captures the main view once for each base16/base24 **scheme** (the themes that
+re-theme the whole TUI chrome — syntect `.tmTheme` themes only recolor the code
+preview, so they're excluded). The scheme list is read from the binary itself
+(`codemark-tui --list-schemes`), so the gallery grows automatically as schemes
+are added. `theme.tape` selects the scheme at runtime via the
+`CODEMARK_TUI_THEME` env var and uses `Padding 0` so the TUI fills the frame —
+which is why no vhs-theme mapping is needed.
 
 ## Run locally
 

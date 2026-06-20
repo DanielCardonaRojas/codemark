@@ -22,6 +22,25 @@ use codemark_tui::{
 /// Main entry point for the TUI application.
 #[tokio::main]
 async fn main() -> Result<()> {
+    // `--list-themes` prints every known theme name (one per line) and exits,
+    // without entering the alternate screen; `--list-schemes` prints only the
+    // base16/base24 schemes (which re-theme the whole TUI chrome). Used by the
+    // screenshot tooling to drive a per-theme capture loop, and handy for
+    // discovering theme names.
+    let args: Vec<String> = std::env::args().collect();
+    if args.iter().any(|a| a == "--list-themes" || a == "--list-schemes") {
+        let registry = codemark_tui::theme::ThemeRegistry::new();
+        let names = if args.iter().any(|a| a == "--list-schemes") {
+            registry.scheme_names()
+        } else {
+            registry.available()
+        };
+        for name in names {
+            println!("{name}");
+        }
+        return Ok(());
+    }
+
     // Initialize file-based logging before anything else
     let _log_guard = codemark_tui::logging::init_logging();
 
@@ -81,7 +100,13 @@ async fn run_app() -> Result<Option<i32>> {
         Some(codemark_dir) => codemark_core::config::Config::load_layered(codemark_dir),
         None => codemark_core::config::Config::default(),
     };
-    if let Some(theme_name) = config.tui.theme.as_deref() {
+    // Theme precedence: the CODEMARK_TUI_THEME env var (used by the screenshot
+    // tooling and for ad-hoc previewing) overrides the layered config value.
+    let theme_name = std::env::var("CODEMARK_TUI_THEME")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .or_else(|| config.tui.theme.clone());
+    if let Some(theme_name) = theme_name.as_deref() {
         // Resolve the preview theme and the chrome palette from one source so the
         // whole TUI is cohesive (base16 schemes drive both from a single palette).
         let registry = codemark_tui::theme::ThemeRegistry::new();
