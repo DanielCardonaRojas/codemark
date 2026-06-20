@@ -26,4 +26,4 @@ Sleep 2.5s
 Enter
 Sleep 1.5s
 
-Screenshot ${OUT_DIR}/codemark_tui_screenshot.png
+Screenshot "__OUT__/codemark_tui_screenshot.png"

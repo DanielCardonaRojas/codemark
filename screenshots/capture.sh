@@ -46,15 +46,19 @@ echo "==> Seeding demo repo"
 "$SHOTS_DIR/seed.sh" "$DEMO_DIR" "$CM"
 
 echo "==> Capturing screenshots"
-# Run vhs from the seeded demo repo so the TUI (`codemark-tui`, resolved from
-# PATH) auto-detects its database. The tapes write their PNGs to absolute paths
-# under $OUT_DIR (the repo root) via the OUT_DIR env var, so the working
-# directory and the output location stay decoupled.
-export OUT_DIR="$REPO_ROOT"
+# vhs does not interpolate env vars in `Screenshot` paths, so we template the
+# tapes instead: each tape uses a literal `__OUT__` token for its output dir,
+# which we substitute with the repo root into a rendered copy. vhs runs from the
+# seeded demo repo (so the TUI, resolved from PATH, auto-detects its database)
+# while the rendered Screenshot path stays absolute — keeping the working
+# directory and output location decoupled.
+RENDER_DIR="$SANDBOX/tapes"
+mkdir -p "$RENDER_DIR"
 for tape in main query collections; do
   echo "    - $tape.tape"
-  ( cd "$DEMO_DIR" && PATH="$BIN_DIR:$PATH" \
-      vhs "$SHOTS_DIR/$tape.tape" )
+  rendered="$RENDER_DIR/$tape.tape"
+  sed "s#__OUT__#$REPO_ROOT#g" "$SHOTS_DIR/$tape.tape" > "$rendered"
+  ( cd "$DEMO_DIR" && PATH="$BIN_DIR:$PATH" vhs "$rendered" )
 done
 
 echo "==> Done. Updated:"
