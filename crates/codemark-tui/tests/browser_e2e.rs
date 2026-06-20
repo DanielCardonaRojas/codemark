@@ -46,8 +46,9 @@ fn env_lock() -> MutexGuard<'static, ()> {
 /// global data/config/cache dirs, plus an isolated per-repo database.
 ///
 /// Holds the env lock for its lifetime so concurrent tests don't clobber each
-/// other's environment. Drop order (db, then guard, then tempdir) is fine: the
-/// `TempDir` is cleaned up last.
+/// other's environment. Fields drop in declaration order (`db` → `_tmp` →
+/// `_guard`), which is what we want: the database is closed before its
+/// `TempDir` is removed, and the env lock is released last.
 struct Sandbox {
     db: Database,
     _tmp: TempDir,
@@ -135,8 +136,14 @@ fn sample_bookmark(id: &str, query: &str, file_path: &str) -> Bookmark {
 fn make_layout(sandbox: Sandbox) -> (BrowserLayout, Sandbox) {
     // A real event handler; its background event loop polls a terminal we never
     // touch in tests, but `BrowserLayout` needs a handle to send custom events.
+    // Disable mouse capture and bracketed paste: the default config writes their
+    // enable escape sequences to stdout (with no matching cleanup), which would
+    // leave an interactive shell in a broken state after the test process exits.
     let (_rx, handler) = EventHandler::with_receiver(
-        EventHandlerConfig::default().tick_rate(Duration::from_millis(100)),
+        EventHandlerConfig::default()
+            .tick_rate(Duration::from_millis(100))
+            .enable_mouse(false)
+            .enable_paste(false),
     )
     .expect("event handler");
 
@@ -237,8 +244,13 @@ async fn filtering_narrows_the_bookmark_list() {
 
     // `apply_filter` is exactly what the real event loop calls each keystroke
     // (main.rs computes the focused panel's active filter and applies it). With
-    // the bookmarks pane focused, this narrows the list to matching entries.
-    // The snapshot should show only `src/config.rs` ("1 of 1").
+    // the bookmarks pane focused, this narrows the *list* to matching entries:
+    // the snapshot's bookmarks pane shows only `src/config.rs` ("1 of 1").
+    //
+    // Note: `apply_filter` only calls `set_filter` on the panel; it does not
+    // refresh the right-hand preview pane (that happens on selection change, not
+    // on filter). So the preview still shows `src/main.rs` from layout init.
+    // That stale-preview state is expected here and is what the snapshot captures.
     layout.apply_filter("config");
 
     insta::assert_snapshot!(render_to_string(&layout, 100, 30));
