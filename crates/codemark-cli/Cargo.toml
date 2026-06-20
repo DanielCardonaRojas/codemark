@@ -4,14 +4,24 @@ version = "0.7.11"
 edition = "2024"
 description = "CLI for Codemark"
 license = "MIT"
+repository = "https://github.com/DanielCardonaRojas/codemark"
+homepage = "https://github.com/DanielCardonaRojas/codemark"
+
+# dist release config: ship a single app whose Homebrew formula is `codemark`
+# (matching the existing tap), not `codemark-cli`.
+[package.metadata.dist]
+formula = "codemark"
 
 [[bin]]
 name = "codemark"
 path = "src/main.rs"
 
-[[bin]]
+# Maintainer tool, not a shipped binary: an example so it's excluded from
+# `dist` release artifacts and `cargo install`. Generate man pages with:
+#   cargo run --example gen-man-pages --features man-pages
+[[example]]
 name = "gen-man-pages"
-path = "src/bin/gen-man-pages.rs"
+path = "examples/gen-man-pages.rs"
 required-features = ["man-pages"]
 
 [features]
