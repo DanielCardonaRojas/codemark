@@ -37,15 +37,18 @@ which is why no vhs-theme mapping is needed.
 ## Run locally
 
 ```bash
-brew install vhs                              # macOS; see vhs README for Linux
-brew install --cask font-fira-code-nerd-font  # so the TUI icons render
+brew install vhs                            # macOS; see vhs README for Linux
+brew tap epk/epk                            # SF Mono Nerd Font tap
+brew install font-sf-mono-nerd-font         # so the TUI icons render
 ./screenshots/capture.sh
 ```
 
-The tapes render with **FiraCode Nerd Font Mono** so the TUI's Nerd Font icons
-(file/health glyphs) appear; `capture.sh` warns if the font is missing. The
-font, canvas size (`Set Width`/`Height`), and font size (`Set FontSize`) are set
-identically at the top of each tape — change them there to retune the look.
+The tapes render with **SF Mono Nerd Font** (family `SFMono Nerd Font`) so the
+TUI's Nerd Font icons (file/health glyphs) appear; `capture.sh` warns if the
+font is missing. The font, canvas size (`Set Width`/`Height`), and font size
+(`Set FontSize`) are set identically at the top of each tape — change them there
+to retune the look. (CI installs the font from the same `epk/SF-Mono-Nerd-Font`
+source via its versioned archive.)
 
 All global codemark state (registry/config) is sandboxed into a temp dir, so a
 local run never touches your real `~/.local/share/codemark`.

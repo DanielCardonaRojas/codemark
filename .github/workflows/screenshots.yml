@@ -52,18 +52,19 @@ jobs:
           fi
           echo "$HOME/go/bin" >> "$GITHUB_PATH"
 
-      # The tapes render with "FiraCode Nerd Font Mono" so the TUI's Nerd Font
-      # icons (file/health glyphs) appear. The apt `fonts-firacode` package lacks
-      # the patched glyphs, so install the Nerd Font release directly.
-      - name: Install FiraCode Nerd Font
+      # The tapes render with "SFMono Nerd Font" so the TUI's Nerd Font icons
+      # (file/health glyphs) appear. SFMono is Apple-proprietary and not in the
+      # official Nerd Fonts releases; install the patched build from epk's repo
+      # (same source the `epk/epk` Homebrew cask uses) via its versioned archive.
+      - name: Install SF Mono Nerd Font
         run: |
-          NF_VER="3.2.1"
+          SFMONO_VER="18.0d1e1.0"
           mkdir -p ~/.local/share/fonts
-          curl -fsSL "https://github.com/ryanoasis/nerd-fonts/releases/download/v${NF_VER}/FiraCode.tar.xz" \
-            | tar -xJ -C ~/.local/share/fonts
+          curl -fsSL "https://github.com/epk/SF-Mono-Nerd-Font/archive/v${SFMONO_VER}.zip" -o /tmp/sfmono.zip
+          unzip -j -o /tmp/sfmono.zip '*.otf' -d ~/.local/share/fonts
           fc-cache -f
           # Sanity-check the family name the tapes reference is available.
-          fc-list | grep -i "FiraCode Nerd Font Mono" | head -1
+          fc-list | grep -i "SFMono Nerd Font" | head -1
 
       - name: Capture screenshots
         run: ./screenshots/capture.sh

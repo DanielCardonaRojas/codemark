@@ -28,12 +28,12 @@ mkdir -p "$IMAGES_DIR"
 command -v vhs >/dev/null || { echo "error: vhs not found (brew install vhs)"; exit 1; }
 command -v jq  >/dev/null || { echo "error: jq not found"; exit 1; }
 
-# The tapes render with FiraCode Nerd Font Mono so the TUI's Nerd Font icons
-# appear. Warn (don't fail) if it's missing — vhs falls back to a default font,
-# which produces iconless screenshots.
-if command -v fc-list >/dev/null && ! fc-list | grep -qi "FiraCode Nerd Font Mono"; then
-  echo "warning: 'FiraCode Nerd Font Mono' not found; icons will not render."
-  echo "         Install it (macOS: brew install --cask font-fira-code-nerd-font)."
+# The tapes render with SF Mono Nerd Font so the TUI's Nerd Font icons appear.
+# Warn (don't fail) if it's missing — vhs falls back to a default font, which
+# produces iconless screenshots.
+if command -v fc-list >/dev/null && ! fc-list | grep -qi "SFMono Nerd Font"; then
+  echo "warning: 'SFMono Nerd Font' not found; icons will not render."
+  echo "         Install it (macOS: brew tap epk/epk && brew install font-sf-mono-nerd-font)."
 fi
 
 echo "==> Building binaries"

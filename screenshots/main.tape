@@ -11,7 +11,7 @@
 # needs no navigation. We just select the first bookmark and let it render.
 
 
-Set FontFamily "FiraCode Nerd Font Mono"
+Set FontFamily "SFMono Nerd Font"
 Set FontSize 24
 Set Width 2100
 Set Height 1290

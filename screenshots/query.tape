@@ -7,7 +7,7 @@
 # only cycles the left-side panes). So: focus the right pane, then advance two
 # tabs (Content -> Info -> Query).
 
-Set FontFamily "FiraCode Nerd Font Mono"
+Set FontFamily "SFMono Nerd Font"
 Set FontSize 24
 Set Width 2100
 Set Height 1290

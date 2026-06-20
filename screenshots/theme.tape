@@ -13,7 +13,7 @@
 # (see `codemark-tui --list-schemes`) re-theme the whole chrome, so the gallery
 # is limited to those.
 
-Set FontFamily "FiraCode Nerd Font Mono"
+Set FontFamily "SFMono Nerd Font"
 Set FontSize 24
 Set Width 2100
 Set Height 1290
