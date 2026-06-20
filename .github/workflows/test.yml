@@ -65,21 +65,31 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Install Linux build deps
-        if: runner.os == 'Linux'
+      - name: Install Linux build deps (glibc only)
+        # Only the gnu build uses the system C toolchain. The musl build gets its
+        # C/C++ cross toolchain + sysroot from Zig below, so we must NOT mix glibc
+        # xcb headers into it.
+        if: matrix.target == 'x86_64-unknown-linux-gnu'
         run: |
           sudo apt-get update
-          # copypasta's X11/Wayland clipboard backends need xcb headers at build time.
           sudo apt-get install -y libxcb1-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev
-          if [ "${{ matrix.target }}" = "x86_64-unknown-linux-musl" ]; then
-            sudo apt-get install -y musl-tools
-          fi
 
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@master
         with:
           toolchain: stable
           targets: ${{ matrix.target }}
+
+      - name: Set up Zig (musl C/C++ cross toolchain)
+        # The candle/tokenizers stack pulls in a C++ dep (esaxx-rs); musl-tools
+        # only ships a C compiler, so we use Zig as the C/C++ cross-compiler via
+        # cargo-zigbuild instead.
+        if: endsWith(matrix.target, '-musl')
+        uses: mlugg/setup-zig@v1
+
+      - name: Install cargo-zigbuild
+        if: endsWith(matrix.target, '-musl')
+        run: cargo install cargo-zigbuild --locked
 
       - name: Cache dependencies
         uses: actions/cache@v4
@@ -91,7 +101,17 @@ jobs:
           key: ${{ matrix.target }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
       - name: Build client binaries (release dist profile)
-        run: cargo build --profile dist --target ${{ matrix.target }} --bin codemark --bin codemark-tui
+        shell: bash
+        env:
+          # sqlite-vec.c uses BSD type names (u_int8_t, …) that glibc defines but
+          # musl does not; map them to the standard C99 names for the musl build.
+          CFLAGS_x86_64_unknown_linux_musl: "-Du_int8_t=uint8_t -Du_int16_t=uint16_t -Du_int32_t=uint32_t -Du_int64_t=uint64_t"
+        run: |
+          if [[ "${{ matrix.target }}" == *-musl ]]; then
+            cargo zigbuild --profile dist --target "${{ matrix.target }}" --bin codemark --bin codemark-tui
+          else
+            cargo build --profile dist --target "${{ matrix.target }}" --bin codemark --bin codemark-tui
+          fi
 
   rustfmt:
     name: Check formatting

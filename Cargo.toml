@@ -79,6 +79,14 @@ tap = "DanielCardonaRojas/homebrew-codemark"
 publish-jobs = ["homebrew"]
 # Platforms to ship prebuilt binaries for. musl gives a fully static Linux
 # binary that runs on any distro.
+#
+# NOTE on the musl target: codemark's native C/C++ deps (esaxx-rs via
+# tokenizers, sqlite-vec) don't cross-compile to musl out of the box. The CI
+# matrix in .github/workflows/test.yml proves it works using cargo-zigbuild
+# (Zig as the C/C++ cross toolchain) plus
+#   CFLAGS_x86_64_unknown_linux_musl="-Du_int8_t=uint8_t -Du_int16_t=uint16_t -Du_int32_t=uint32_t -Du_int64_t=uint64_t"
+# (sqlite-vec.c uses BSD type names musl lacks). dist's generated musl build
+# must replicate that setup — or drop musl here and ship glibc-only Linux.
 targets = [
     "aarch64-apple-darwin",
     "x86_64-apple-darwin",
