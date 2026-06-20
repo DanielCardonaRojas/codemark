@@ -940,6 +940,30 @@ impl BrowserLayout {
         self.focus
     }
 
+    /// Drain the tab-change flags from every tabbed panel, returning the
+    /// filter-target key ("panel1"/"panel2"/"panel3"/"main") of each pane whose
+    /// active tab changed during the last handled event.
+    ///
+    /// Filters are pane-scoped (one query per pane, applied to the active tab),
+    /// so the event loop clears these panes' stored filters to keep the filter
+    /// from carrying over to the newly active tab.
+    pub fn take_filter_targets_to_clear(&self) -> Vec<&'static str> {
+        let mut targets = Vec::new();
+        if self.left_pane.panel1.take_tab_changed() {
+            targets.push("panel1");
+        }
+        if self.left_pane.panel2.take_tab_changed() {
+            targets.push("panel2");
+        }
+        if self.left_pane.panel3.take_tab_changed() {
+            targets.push("panel3");
+        }
+        if self.right_pane.steps.take_tab_changed() {
+            targets.push("main");
+        }
+        targets
+    }
+
     /// Get current filters/metadata for the status bar.
     pub fn get_status_metadata(&self) -> Line<'_> {
         let repo_name = self
