@@ -13,6 +13,18 @@ use unicode_width::UnicodeWidthStr;
 /// This must be kept in sync with the rendering in `TabbedPanel`.
 pub const BORDER_EXTENSION: u16 = 2;
 
+/// Nerd Font glyph (nf-fa-filter) shown beside a tab title when that tab's
+/// list has an active filter narrowing its results.
+pub const FILTER_ICON: &str = "\u{f0b0}";
+
+/// Number of terminal columns reserved for [`FILTER_ICON`]. The glyph lives in
+/// Unicode's Private Use Area, where `unicode_width` reports a width of 1, but
+/// many Nerd Font terminals render it two columns wide. Reserving a fixed
+/// 2-column slot (the glyph padded with a trailing space) makes the drawn width
+/// match the recorded tab boundaries on both 1- and 2-column terminals, so tab
+/// click detection stays aligned.
+pub const FILTER_ICON_WIDTH: u16 = 2;
+
 /// Panel 3 tabs (Bookmarks/Collections/Tours).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Panel3Tab {
@@ -303,6 +315,18 @@ impl TabSelection {
     /// Tab styling depends only on which tab is selected (`self.selected`), not on
     /// panel focus, so no `focused` argument is taken.
     pub fn render_as_titles_with_counts(&self, counts: &[Option<usize>]) -> Line<'static> {
+        self.render_as_titles_with_counts_and_filters(counts, &[])
+    }
+
+    /// Like [`Self::render_as_titles_with_counts`], but also appends a filter
+    /// glyph ([`FILTER_ICON`]) to the right of a tab's title when the matching
+    /// entry in `filtered` is `true`, indicating that tab's list is currently
+    /// showing filtered results.
+    pub fn render_as_titles_with_counts_and_filters(
+        &self,
+        counts: &[Option<usize>],
+        filtered: &[bool],
+    ) -> Line<'static> {
         let mut spans = vec![Span::raw(" ".repeat(BORDER_EXTENSION as usize))]; // Offset for border extension
         let mut positions = Vec::new();
         let mut current_x = BORDER_EXTENSION;
@@ -331,6 +355,21 @@ impl TabSelection {
             let x_start = current_x;
             current_x += label.width() as u16;
             spans.push(Span::styled(label, style));
+
+            // A filter glyph sits to the right of the title when this tab's
+            // list has an active filter: a leading space separates it from the
+            // title, then the glyph occupies a fixed `FILTER_ICON_WIDTH` slot.
+            // The glyph is padded with a trailing space so it spans exactly that
+            // slot whether the terminal draws it one or two columns wide, which
+            // keeps the recorded click boundaries (`current_x`) aligned with the
+            // rendered text.
+            if filtered.get(i).copied().unwrap_or(false) {
+                spans.push(Span::styled(" ", style));
+                current_x += 1;
+                spans.push(Span::styled(format!("{FILTER_ICON} "), style));
+                current_x += FILTER_ICON_WIDTH;
+            }
+
             spans.push(Span::styled(" ", style));
             current_x += 1;
 
@@ -455,6 +494,24 @@ mod tests {
         assert_eq!(positions[0], (BORDER_EXTENSION, BORDER_EXTENSION + 8 + 1));
         // Separator (1) before the next tab; "Branches" is 8 cols (+1 trailing space).
         let branches_start = BORDER_EXTENSION + 8 + 1 + 1;
+        assert_eq!(positions[1], (branches_start, branches_start + 8 + 1));
+    }
+
+    #[test]
+    fn test_render_titles_with_filter_icon_widens_tab() {
+        let tabs = TabSelection::new(vec![Tab::new("Tags"), Tab::new("Branches")]);
+
+        // Only the first tab is filtered: its slot widens by a leading space
+        // plus the fixed-width glyph slot, shifting the second tab right by the
+        // same amount.
+        tabs.render_as_titles_with_counts_and_filters(&[None, None], &[true, false]);
+        let positions = tabs.last_tab_positions.borrow();
+        // "Tags" (4) + leading space (1) + glyph slot (FILTER_ICON_WIDTH) +
+        // trailing space (1), after the offset.
+        let filtered_end = BORDER_EXTENSION + 4 + 1 + FILTER_ICON_WIDTH + 1;
+        assert_eq!(positions[0], (BORDER_EXTENSION, filtered_end));
+        // Separator (1) before "Branches" (8) + trailing space (1); no icon.
+        let branches_start = filtered_end + 1;
         assert_eq!(positions[1], (branches_start, branches_start + 8 + 1));
     }
 

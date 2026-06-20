@@ -585,6 +585,11 @@ impl Panel {
         self
     }
 
+    /// Whether a non-empty filter query is currently applied to this panel.
+    pub fn is_filtered(&self) -> bool {
+        !self.filter_query.is_empty()
+    }
+
     /// Set the filter query and apply it.
     pub fn set_filter(&mut self, query: &str) {
         if self.filter_query != query {

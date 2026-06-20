@@ -29,6 +29,11 @@ pub struct TabbedPanel {
     pub last_area: std::cell::Cell<Rect>,
     /// Pending selection change (bookmark ID) to be retrieved after event handling
     pub pending_selection_change: std::cell::Cell<Option<String>>,
+    /// Set when the active tab changed during the last `handle_event`. Filters
+    /// are pane-scoped (one query per pane, applied to the active tab), so the
+    /// owning layout drains this to clear the pane's stored filter on a tab
+    /// switch instead of carrying it over to the newly active tab.
+    pub tab_changed: std::cell::Cell<bool>,
 }
 
 /// Convert a bookmark to a PanelItem with consistent formatting.
@@ -461,6 +466,7 @@ impl TabbedPanel {
             focused: false,
             last_area: std::cell::Cell::new(Rect::default()),
             pending_selection_change: std::cell::Cell::new(None),
+            tab_changed: std::cell::Cell::new(false),
         }
     }
 
@@ -483,6 +489,7 @@ impl TabbedPanel {
             focused: false,
             last_area: std::cell::Cell::new(Rect::default()),
             pending_selection_change: std::cell::Cell::new(None),
+            tab_changed: std::cell::Cell::new(false),
         }
     }
 
@@ -528,6 +535,7 @@ impl TabbedPanel {
             focused: false,
             last_area: std::cell::Cell::new(Rect::default()),
             pending_selection_change: std::cell::Cell::new(None),
+            tab_changed: std::cell::Cell::new(false),
         }
     }
 
@@ -554,6 +562,7 @@ impl TabbedPanel {
             focused: false,
             last_area: std::cell::Cell::new(Rect::default()),
             pending_selection_change: std::cell::Cell::new(None),
+            tab_changed: std::cell::Cell::new(false),
         }
     }
 
@@ -579,7 +588,15 @@ impl TabbedPanel {
                 _ => None,
             })
             .collect();
-        let tab_titles = self.tabs.render_as_titles_with_counts(&counts);
+
+        // Flag each list tab whose results are currently narrowed by a filter,
+        // so a filter glyph can be drawn beside its title.
+        let filtered: Vec<bool> = self
+            .panels
+            .iter()
+            .map(|panel| matches!(panel, TabContent::List(p) if p.is_filtered()))
+            .collect();
+        let tab_titles = self.tabs.render_as_titles_with_counts_and_filters(&counts, &filtered);
 
         // Render outer border for the entire panel area with inline tabs
         let border_style = if self.focused {
@@ -652,6 +669,7 @@ impl TabbedPanel {
     /// Returns true if event was handled.
     pub fn handle_event(&mut self, event: &Event) -> bool {
         // Check for tab switching with [ and ] or mouse click
+        let old_index = self.tabs.selected_index();
         let mut tab_changed = false;
         match event {
             Event::Key(key) => match key.code {
@@ -689,8 +707,17 @@ impl TabbedPanel {
             _ => {}
         }
 
-        // Forward to active panel
+        // A filter is pane-scoped (one query applied to the active tab), so on
+        // an actual tab switch clear every tab's filter and flag the change so
+        // the owning layout can drop the pane's stored filter. Without this the
+        // filter would visually carry over to the newly active tab.
         let active_index = self.tabs.selected_index();
+        if active_index != old_index {
+            self.clear_filters();
+            self.tab_changed.set(true);
+        }
+
+        // Forward to active panel
         let handled = if !tab_changed {
             if let Some(panel) = self.panels.get_mut(active_index) {
                 panel.handle_event(event)
@@ -719,11 +746,81 @@ impl TabbedPanel {
         self.pending_selection_change.take()
     }
 
+    /// Take (and reset) the flag indicating the active tab changed during the
+    /// last `handle_event`. Used by the layout to clear the pane's stored
+    /// filter so it does not carry over to the newly active tab.
+    pub fn take_tab_changed(&self) -> bool {
+        self.tab_changed.replace(false)
+    }
+
+    /// Clear any active filter on every tab's list panel.
+    pub fn clear_filters(&mut self) {
+        for panel in &mut self.panels {
+            if let TabContent::List(p) = panel {
+                p.set_filter("");
+            }
+        }
+    }
+
     /// Set focus state.
     pub fn set_focus(&mut self, focused: bool) {
         self.focused = focused;
         for panel in &mut self.panels {
             panel.set_focus(focused);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    fn two_tab_panel() -> TabbedPanel {
+        let p1 = Panel::new("").items(vec![PanelItem::new("alpha"), PanelItem::new("beta")]);
+        let p2 = Panel::new("").items(vec![PanelItem::new("gamma")]);
+        TabbedPanel {
+            tabs: TabSelection::new(vec![Tab::new("A"), Tab::new("B")]),
+            panels: vec![TabContent::List(p1), TabContent::List(p2)],
+            focused: false,
+            last_area: std::cell::Cell::new(Rect::default()),
+            pending_selection_change: std::cell::Cell::new(None),
+            tab_changed: std::cell::Cell::new(false),
+        }
+    }
+
+    #[test]
+    fn test_tab_switch_clears_filter_and_flags_change() {
+        let mut panel = two_tab_panel();
+        panel.active_panel_mut().unwrap().set_filter("alp");
+        assert!(panel.active_panel().unwrap().is_filtered());
+
+        // Switching tabs clears every tab's filter and raises the change flag.
+        let next = Event::Key(KeyEvent::new(KeyCode::Char(']'), KeyModifiers::NONE));
+        panel.handle_event(&next);
+
+        assert_eq!(panel.tabs.selected_index(), 1);
+        assert!(panel.take_tab_changed());
+        // The flag is drained on read.
+        assert!(!panel.take_tab_changed());
+        for content in &panel.panels {
+            if let TabContent::List(p) = content {
+                assert!(!p.is_filtered());
+            }
+        }
+    }
+
+    #[test]
+    fn test_non_tab_key_keeps_filter() {
+        let mut panel = two_tab_panel();
+        panel.active_panel_mut().unwrap().set_filter("alp");
+
+        // A non-tab key doesn't switch tabs, so the filter and flag are untouched.
+        let down = Event::Key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE));
+        panel.handle_event(&down);
+
+        assert_eq!(panel.tabs.selected_index(), 0);
+        assert!(!panel.take_tab_changed());
+        assert!(panel.active_panel().unwrap().is_filtered());
     }
 }

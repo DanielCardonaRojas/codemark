@@ -310,6 +310,17 @@ async fn run_app() -> Result<Option<i32>> {
                     }
                 }
 
+                // A tab switch clears that pane's stored filter so it doesn't
+                // carry over to the newly active tab (filters are pane-scoped
+                // and applied to whichever tab is active).
+                for target in layout.take_filter_targets_to_clear() {
+                    state.set_string(format!("active_filter_{target}"), "");
+                    state.set_string(format!("filter_buffer_{target}"), "");
+                    if state.get_string("filter_target") == Some(target) {
+                        state.set_string("filter_buffer", "");
+                    }
+                }
+
                 // Update filter based on the focused panel's active_filter (live updated on each keystroke)
                 // When in Search mode, use the filter_target to determine which panel's filter to apply.
                 // Otherwise, use the current layout focus.
