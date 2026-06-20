@@ -579,7 +579,15 @@ impl TabbedPanel {
                 _ => None,
             })
             .collect();
-        let tab_titles = self.tabs.render_as_titles_with_counts(&counts);
+
+        // Flag each list tab whose results are currently narrowed by a filter,
+        // so a filter glyph can be drawn beside its title.
+        let filtered: Vec<bool> = self
+            .panels
+            .iter()
+            .map(|panel| matches!(panel, TabContent::List(p) if p.is_filtered()))
+            .collect();
+        let tab_titles = self.tabs.render_as_titles_with_counts_and_filters(&counts, &filtered);
 
         // Render outer border for the entire panel area with inline tabs
         let border_style = if self.focused {

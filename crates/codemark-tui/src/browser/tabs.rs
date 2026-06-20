@@ -13,6 +13,10 @@ use unicode_width::UnicodeWidthStr;
 /// This must be kept in sync with the rendering in `TabbedPanel`.
 pub const BORDER_EXTENSION: u16 = 2;
 
+/// Nerd Font glyph (nf-fa-filter) shown beside a tab title when that tab's
+/// list has an active filter narrowing its results.
+pub const FILTER_ICON: &str = "\u{f0b0}";
+
 /// Panel 3 tabs (Bookmarks/Collections/Tours).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Panel3Tab {
@@ -303,6 +307,18 @@ impl TabSelection {
     /// Tab styling depends only on which tab is selected (`self.selected`), not on
     /// panel focus, so no `focused` argument is taken.
     pub fn render_as_titles_with_counts(&self, counts: &[Option<usize>]) -> Line<'static> {
+        self.render_as_titles_with_counts_and_filters(counts, &[])
+    }
+
+    /// Like [`Self::render_as_titles_with_counts`], but also appends a filter
+    /// glyph ([`FILTER_ICON`]) to the right of a tab's title when the matching
+    /// entry in `filtered` is `true`, indicating that tab's list is currently
+    /// showing filtered results.
+    pub fn render_as_titles_with_counts_and_filters(
+        &self,
+        counts: &[Option<usize>],
+        filtered: &[bool],
+    ) -> Line<'static> {
         let mut spans = vec![Span::raw(" ".repeat(BORDER_EXTENSION as usize))]; // Offset for border extension
         let mut positions = Vec::new();
         let mut current_x = BORDER_EXTENSION;
@@ -331,6 +347,15 @@ impl TabSelection {
             let x_start = current_x;
             current_x += label.width() as u16;
             spans.push(Span::styled(label, style));
+
+            // A filter glyph sits to the right of the title, set apart by a
+            // leading space, when this tab's list has an active filter.
+            if filtered.get(i).copied().unwrap_or(false) {
+                let icon = format!(" {FILTER_ICON}");
+                current_x += icon.width() as u16;
+                spans.push(Span::styled(icon, style));
+            }
+
             spans.push(Span::styled(" ", style));
             current_x += 1;
 
@@ -455,6 +480,22 @@ mod tests {
         assert_eq!(positions[0], (BORDER_EXTENSION, BORDER_EXTENSION + 8 + 1));
         // Separator (1) before the next tab; "Branches" is 8 cols (+1 trailing space).
         let branches_start = BORDER_EXTENSION + 8 + 1 + 1;
+        assert_eq!(positions[1], (branches_start, branches_start + 8 + 1));
+    }
+
+    #[test]
+    fn test_render_titles_with_filter_icon_widens_tab() {
+        let tabs = TabSelection::new(vec![Tab::new("Tags"), Tab::new("Branches")]);
+
+        // Only the first tab is filtered: its position widens by the leading
+        // space + filter glyph, shifting the second tab right by the same amount.
+        tabs.render_as_titles_with_counts_and_filters(&[None, None], &[true, false]);
+        let positions = tabs.last_tab_positions.borrow();
+        let icon_w = format!(" {FILTER_ICON}").width() as u16;
+        // "Tags" (4) + filter icon + trailing space (1), after the offset.
+        assert_eq!(positions[0], (BORDER_EXTENSION, BORDER_EXTENSION + 4 + icon_w + 1));
+        // Separator (1) before "Branches" (8) + trailing space (1); no icon.
+        let branches_start = BORDER_EXTENSION + 4 + icon_w + 1 + 1;
         assert_eq!(positions[1], (branches_start, branches_start + 8 + 1));
     }
 
