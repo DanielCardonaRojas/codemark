@@ -981,17 +981,6 @@ impl BrowserLayout {
                     .unwrap_or_else(|| "unknown".to_string())
             });
 
-        let active_tags = self
-            .left_pane
-            .panel2
-            .panels
-            .first()
-            .and_then(|c| match c {
-                TabContent::List(p) => Some(p.active_items()),
-                _ => None,
-            })
-            .unwrap_or_default();
-
         let active_branches = self
             .left_pane
             .panel2
@@ -1014,14 +1003,6 @@ impl BrowserLayout {
             spans.push(Span::styled(
                 active_branches.join(", "),
                 Style::default().fg(crate::theme::palette().warning),
-            ));
-        }
-
-        if !active_tags.is_empty() {
-            spans.push(Span::styled(" | ", Style::default().fg(crate::theme::palette().gray)));
-            spans.push(Span::styled(
-                active_tags.iter().map(|t| format!("#{t}")).collect::<Vec<_>>().join(" "),
-                Style::default().fg(crate::theme::palette().marker),
             ));
         }
 
