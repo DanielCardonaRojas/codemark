@@ -86,6 +86,11 @@ jobs:
         # cargo-zigbuild instead.
         if: endsWith(matrix.target, '-musl')
         uses: mlugg/setup-zig@v1
+        with:
+          # Pin a stable, archived release. `latest` resolved to a version the
+          # download mirrors hadn't synced (looked under /builds/ and 404'd);
+          # an explicit version uses the reliable /download/<ver>/ path.
+          version: 0.14.1
 
       - name: Install cargo-zigbuild
         if: endsWith(matrix.target, '-musl')
