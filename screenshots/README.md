@@ -5,18 +5,25 @@ so the gallery stays faithful to the real interface.
 
 ## How it works
 
-1. **`seed.sh`** builds a self-contained demo git repo with realistic source
-   files and seeds it with bookmarks + a collection via the `codemark` CLI, so
-   the screens are populated and meaningful.
-2. **`*.tape`** are [vhs](https://github.com/charmbracelet/vhs) scripts — one per
+The gallery uses **this repository's own knowledge base** as its fixture: the
+TUI is run against the tracked `.codemark/codemark.db` (committed to git), so the
+screenshots show real bookmarks and collections and the previews resolve against
+real source files. No synthetic demo data is generated — it's dogfooding.
+
+1. **`*.tape`** are [vhs](https://github.com/charmbracelet/vhs) scripts — one per
    screenshot — that launch `codemark-tui`, drive the keystrokes to reach a
    view, and capture a PNG.
-3. **`capture.sh`** ties it together: build binaries → seed → run each tape,
-   writing the PNGs to `screenshots/images/` (overwriting the committed gallery
-   images).
+2. **`capture.sh`** ties it together: build the TUI → run each tape from the
+   repo root → write PNGs to `screenshots/images/` (overwriting the committed
+   gallery images). It sandboxes the *global* codemark state and snapshots the
+   tracked db so a run leaves the fixture byte-identical.
 
-The generated images live in `screenshots/images/`; the tooling (scripts and
-tapes) lives in `screenshots/` alongside it.
+The generated images live in `screenshots/images/`; the tooling (tapes and
+`capture.sh`) lives in `screenshots/` alongside it.
+
+Because the fixture is the live knowledge base, the gallery is **live**: it
+reflects whatever bookmarks/collections currently exist. Regenerate it (locally
+or via the workflow) whenever the knowledge base changes enough to matter.
 
 | Tape | Output (in `images/`) | View |
 |------|------------------------|------|

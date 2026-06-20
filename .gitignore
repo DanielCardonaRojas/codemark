@@ -1,6 +1,12 @@
 target/
 .DS_Store
-.codemark/
+# Ignore the local codemark workspace, but track the repo's own knowledge-base
+# database — it doubles as the fixture for the TUI screenshot gallery.
+.codemark/*
+!.codemark/codemark.db
+# SQLite sidecar files are transient; never track them.
+.codemark/codemark.db-wal
+.codemark/codemark.db-shm
 *.tar.gz
 man/
 node_modules/

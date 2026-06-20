@@ -37,7 +37,7 @@ jobs:
       - name: Install vhs and dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y ffmpeg jq
+          sudo apt-get install -y ffmpeg unzip
           # ttyd (terminal vhs drives)
           TTYD_URL="https://github.com/tsl0922/ttyd/releases/latest/download/ttyd.x86_64"
           sudo curl -fsSL "$TTYD_URL" -o /usr/local/bin/ttyd
