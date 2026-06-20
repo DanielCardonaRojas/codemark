@@ -31,6 +31,11 @@ or via the workflow) whenever the knowledge base changes enough to matter.
 | `query.tape` | `codemark_tui_query_screenshot.png` | Tree-sitter Query tab |
 | `collections.tape` | `codemark_tui_collections_screenshot.png` | Collections view |
 | `theme.tape` | `codemark_tui_theme_<slug>.png` | Main view, once per color scheme |
+| `demo.tape` | `codemark_tui_demo.gif` | Animated browse through bookmarks (arrow keys) |
+
+The demo GIF is recorded at full TUI resolution by vhs, then downscaled and
+repaletted with ffmpeg (~1280px wide) to keep the committed file
+README-friendly; `capture.sh` skips the downscale if ffmpeg is unavailable.
 
 The three-view gallery is captured on the default theme. The per-theme gallery
 captures the main view once for each base16/base24 **scheme** (the themes that

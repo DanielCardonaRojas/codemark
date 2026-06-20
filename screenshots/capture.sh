@@ -107,5 +107,31 @@ while IFS= read -r scheme; do
   ( cd "$REPO_ROOT" && PATH="$BIN_DIR:$PATH" CODEMARK_TUI_THEME="$scheme" vhs "$rendered" )
 done < <("$BIN_DIR/codemark-tui" --list-schemes)
 
+# Animated demo GIF: browse through bookmarks with the arrow keys. vhs records
+# at full TUI resolution; we then downscale + repalette with ffmpeg to keep the
+# committed GIF README-friendly (~1280px wide). Skipped if ffmpeg is missing.
+echo "    - demo.tape (gif)"
+GIF_FINAL="$IMAGES_DIR/codemark_tui_demo.gif"
+if command -v ffmpeg >/dev/null; then
+  GIF_RAW="$SANDBOX/demo_raw.gif"
+  rendered="$RENDER_DIR/demo.tape"
+  sed "s#__OUT__#$SANDBOX#g" "$SHOTS_DIR/demo.tape" > "$rendered"
+  # demo.tape writes codemark_tui_demo.gif into the __OUT__ dir (the sandbox).
+  ( cd "$REPO_ROOT" && PATH="$BIN_DIR:$PATH" vhs "$rendered" )
+  mv "$SANDBOX/codemark_tui_demo.gif" "$GIF_RAW"
+  # Two-pass palette for clean colors at the smaller size.
+  PAL="$SANDBOX/palette.png"
+  ffmpeg -y -loglevel error -i "$GIF_RAW" \
+    -vf "scale=1280:-1:flags=lanczos,palettegen=stats_mode=diff" "$PAL"
+  ffmpeg -y -loglevel error -i "$GIF_RAW" -i "$PAL" \
+    -lavfi "scale=1280:-1:flags=lanczos[x];[x][1:v]paletteuse=dither=bayer:bayer_scale=3" \
+    "$GIF_FINAL"
+else
+  echo "      warning: ffmpeg not found; recording GIF at full size (large file)."
+  rendered="$RENDER_DIR/demo.tape"
+  sed "s#__OUT__#$IMAGES_DIR#g" "$SHOTS_DIR/demo.tape" > "$rendered"
+  ( cd "$REPO_ROOT" && PATH="$BIN_DIR:$PATH" vhs "$rendered" )
+fi
+
 echo "==> Done. Updated:"
-ls -1 "$IMAGES_DIR"/codemark_tui_*.png
+ls -1 "$IMAGES_DIR"/codemark_tui_*.png "$IMAGES_DIR"/codemark_tui_*.gif 2>/dev/null
