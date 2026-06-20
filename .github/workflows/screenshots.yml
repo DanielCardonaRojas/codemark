@@ -81,6 +81,4 @@ jobs:
 
             Triggered by: `${{ github.event_name }}`.
           add-paths: |
-            codemark_tui_screenshot.png
-            codemark_tui_query_screenshot.png
-            codemark_tui_collections_screenshot.png
+            screenshots/images/*.png

@@ -33,11 +33,11 @@ Codemark features a built-in, keyboard-driven dashboard inspired by `lazygit`. I
 codemark tui
 ```
 
-![Browser — bookmarks list and live code preview](./codemark_tui_screenshot.png)
+![Browser — bookmarks list and live code preview](./screenshots/images/codemark_tui_screenshot.png)
 
 | Query preview | Collections |
 | --- | --- |
-| ![Tree-sitter query for a bookmark](./codemark_tui_query_screenshot.png) | ![Collection steps view](./codemark_tui_collections_screenshot.png) |
+| ![Tree-sitter query for a bookmark](./screenshots/images/codemark_tui_query_screenshot.png) | ![Collection steps view](./screenshots/images/codemark_tui_collections_screenshot.png) |
 
 #### Themes
 
@@ -47,7 +47,7 @@ variable; run `codemark-tui --list-schemes` to see what's available.
 
 | Catppuccin Mocha | Everforest Dark |
 | --- | --- |
-| ![Catppuccin Mocha theme](./codemark_tui_theme_catppuccin-mocha.png) | ![Everforest Dark theme](./codemark_tui_theme_everforest-dark.png) |
+| ![Catppuccin Mocha theme](./screenshots/images/codemark_tui_theme_catppuccin-mocha.png) | ![Everforest Dark theme](./screenshots/images/codemark_tui_theme_everforest-dark.png) |
 
 ### Dashboard features
 

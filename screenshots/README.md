@@ -12,10 +12,14 @@ so the gallery stays faithful to the real interface.
    screenshot — that launch `codemark-tui`, drive the keystrokes to reach a
    view, and capture a PNG.
 3. **`capture.sh`** ties it together: build binaries → seed → run each tape,
-   writing the PNGs to the repo root (overwriting the committed gallery images).
+   writing the PNGs to `screenshots/images/` (overwriting the committed gallery
+   images).
 
-| Tape | Output | View |
-|------|--------|------|
+The generated images live in `screenshots/images/`; the tooling (scripts and
+tapes) lives in `screenshots/` alongside it.
+
+| Tape | Output (in `images/`) | View |
+|------|------------------------|------|
 | `main.tape` | `codemark_tui_screenshot.png` | Bookmarks list + content preview |
 | `query.tape` | `codemark_tui_query_screenshot.png` | Tree-sitter Query tab |
 | `collections.tape` | `codemark_tui_collections_screenshot.png` | Collections view |

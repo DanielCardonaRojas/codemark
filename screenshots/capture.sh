@@ -12,15 +12,18 @@
 #
 # Usage: screenshots/capture.sh
 #
-# Output (overwrites the committed gallery images at the repo root):
+# Output (overwrites the committed gallery images in screenshots/images/):
 #   codemark_tui_screenshot.png
 #   codemark_tui_query_screenshot.png
 #   codemark_tui_collections_screenshot.png
+#   codemark_tui_theme_<slug>.png   (one per color scheme)
 
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SHOTS_DIR="$REPO_ROOT/screenshots"
+IMAGES_DIR="$SHOTS_DIR/images"
+mkdir -p "$IMAGES_DIR"
 
 command -v vhs >/dev/null || { echo "error: vhs not found (brew install vhs)"; exit 1; }
 command -v jq  >/dev/null || { echo "error: jq not found"; exit 1; }
@@ -56,10 +59,10 @@ echo "==> Seeding demo repo"
 echo "==> Capturing screenshots"
 # vhs does not interpolate env vars in `Screenshot` paths, so we template the
 # tapes instead: each tape uses a literal `__OUT__` token for its output dir,
-# which we substitute with the repo root into a rendered copy. vhs runs from the
-# seeded demo repo (so the TUI, resolved from PATH, auto-detects its database)
-# while the rendered Screenshot path stays absolute — keeping the working
-# directory and output location decoupled.
+# which we substitute with the absolute images dir into a rendered copy. vhs runs
+# from the seeded demo repo (so the TUI, resolved from PATH, auto-detects its
+# database) while the rendered Screenshot path stays absolute — keeping the
+# working directory and output location decoupled.
 RENDER_DIR="$SANDBOX/tapes"
 mkdir -p "$RENDER_DIR"
 
@@ -67,7 +70,7 @@ mkdir -p "$RENDER_DIR"
 for tape in main query collections; do
   echo "    - $tape.tape"
   rendered="$RENDER_DIR/$tape.tape"
-  sed "s#__OUT__#$REPO_ROOT#g" "$SHOTS_DIR/$tape.tape" > "$rendered"
+  sed "s#__OUT__#$IMAGES_DIR#g" "$SHOTS_DIR/$tape.tape" > "$rendered"
   ( cd "$DEMO_DIR" && PATH="$BIN_DIR:$PATH" vhs "$rendered" )
 done
 
@@ -84,9 +87,9 @@ while IFS= read -r scheme; do
   shot="codemark_tui_theme_${slug}.png"
   echo "        - $scheme -> $shot"
   rendered="$RENDER_DIR/theme-$slug.tape"
-  sed -e "s#__OUT__#$REPO_ROOT#g" -e "s#__SHOT__#$shot#g" "$SHOTS_DIR/theme.tape" > "$rendered"
+  sed -e "s#__OUT__#$IMAGES_DIR#g" -e "s#__SHOT__#$shot#g" "$SHOTS_DIR/theme.tape" > "$rendered"
   ( cd "$DEMO_DIR" && PATH="$BIN_DIR:$PATH" CODEMARK_TUI_THEME="$scheme" vhs "$rendered" )
 done < <("$BIN_DIR/codemark-tui" --list-schemes)
 
 echo "==> Done. Updated:"
-ls -1 "$REPO_ROOT"/codemark_tui_*.png
+ls -1 "$IMAGES_DIR"/codemark_tui_*.png
