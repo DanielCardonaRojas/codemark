@@ -501,7 +501,7 @@ dependencies = [
 
 [[package]]
 name = "codemark-cli"
-version = "0.7.10"
+version = "0.7.11"
 dependencies = [
  "anyhow",
  "axum",
@@ -539,7 +539,7 @@ dependencies = [
 
 [[package]]
 name = "codemark-core"
-version = "0.7.10"
+version = "0.7.11"
 dependencies = [
  "async-trait",
  "candle-core",
@@ -583,7 +583,7 @@ dependencies = [
 
 [[package]]
 name = "codemark-tui"
-version = "0.7.10"
+version = "0.7.11"
 dependencies = [
  "anyhow",
  "codemark-core",
@@ -610,7 +610,7 @@ dependencies = [
 
 [[package]]
 name = "codetours-server"
-version = "0.7.10"
+version = "0.7.11"
 dependencies = [
  "anyhow",
  "axum",
