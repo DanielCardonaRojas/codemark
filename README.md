@@ -33,9 +33,17 @@ Codemark features a built-in, keyboard-driven dashboard inspired by `lazygit`. I
 codemark tui
 ```
 
-![Screenshot](./codemark_tui_screenshot.png)
-[Query Preview](./codemark_tui_query_screenshot.png) |
-[Collections](./codemark_tui_collections_screenshot.png)
+![Browsing bookmarks in the TUI](./screenshots/images/codemark_tui_demo.gif)
+
+### Themes
+
+The TUI ships with built-in color schemes that re-theme the whole interface. Set
+one in your config (`tui.theme`) or via the `CODEMARK_TUI_THEME` environment
+variable; run `codemark-tui --list-schemes` to see what's available.
+
+| Catppuccin Mocha | Everforest Dark |
+| --- | --- |
+| ![Catppuccin Mocha theme](./screenshots/images/codemark_tui_theme_catppuccin-mocha.png) | ![Everforest Dark theme](./screenshots/images/codemark_tui_theme_everforest-dark.png) |
 
 ### Dashboard features
 

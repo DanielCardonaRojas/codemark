@@ -1,0 +1,93 @@
+name: Screenshots
+
+# Regenerate the README TUI screenshot gallery from the live binary and open a
+# PR with the updated images. Run manually, or automatically when a release is
+# published (so the gallery tracks the released UI).
+on:
+  workflow_dispatch:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  screenshots:
+    name: Regenerate gallery
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      # vhs renders inside a headless terminal (ttyd) and encodes frames with
+      # ffmpeg. ttyd and vhs are installed from pinned releases and verified
+      # against known SHA-256 checksums before being placed on PATH, so a
+      # compromised upstream or floating "latest" redirect can't inject code.
+      - name: Install vhs and dependencies
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg unzip
+
+          # ttyd (the terminal vhs drives)
+          TTYD_VER="1.7.7"
+          TTYD_SHA="8a217c968aba172e0dbf3f34447218dc015bc4d5e59bf51db2f2cd12b7be4f55"
+          curl -fsSL "https://github.com/tsl0922/ttyd/releases/download/${TTYD_VER}/ttyd.x86_64" -o /tmp/ttyd
+          echo "${TTYD_SHA}  /tmp/ttyd" | sha256sum -c -
+          sudo install -m 0755 /tmp/ttyd /usr/local/bin/ttyd
+
+          # vhs (pinned release tarball; the binary lives in a versioned subdir)
+          VHS_VER="0.8.0"
+          VHS_SHA="0371e5b57b335330272aba6992656b6785e2e5d8538d6e4d85dcfd9f70400c5b"
+          curl -fsSL "https://github.com/charmbracelet/vhs/releases/download/v${VHS_VER}/vhs_${VHS_VER}_Linux_x86_64.tar.gz" -o /tmp/vhs.tar.gz
+          echo "${VHS_SHA}  /tmp/vhs.tar.gz" | sha256sum -c -
+          tar -xzf /tmp/vhs.tar.gz -C /tmp
+          sudo install -m 0755 "/tmp/vhs_${VHS_VER}_Linux_x86_64/vhs" /usr/local/bin/vhs
+
+      # The tapes render with "SFMono Nerd Font" so the TUI's Nerd Font icons
+      # (file/health glyphs) appear. SFMono is Apple-proprietary and not in the
+      # official Nerd Fonts releases; install the patched build from epk's repo
+      # (same source the `epk/epk` Homebrew cask uses) via its versioned archive.
+      - name: Install SF Mono Nerd Font
+        run: |
+          SFMONO_VER="18.0d1e1.0"
+          mkdir -p ~/.local/share/fonts
+          curl -fsSL "https://github.com/epk/SF-Mono-Nerd-Font/archive/v${SFMONO_VER}.zip" -o /tmp/sfmono.zip
+          unzip -j -o /tmp/sfmono.zip '*.otf' -d ~/.local/share/fonts
+          fc-cache -f
+          # Sanity-check the family name the tapes reference is available.
+          fc-list | grep -i "SFMono Nerd Font" | head -1
+
+      - name: Capture screenshots
+        run: ./screenshots/capture.sh
+
+      - name: Open PR with updated screenshots
+        # Pinned to a commit SHA (v6) — this job has contents/PR write access, so
+        # a mutable tag here would be a supply-chain risk. Audit before bumping.
+        uses: peter-evans/create-pull-request@c5a7806660adbe173f04e3e038b0ccdcd758773c # v6
+        with:
+          branch: chore/update-screenshots
+          base: main
+          commit-message: "chore: regenerate TUI screenshot gallery"
+          title: "chore: regenerate TUI screenshot gallery"
+          body: |
+            Automated regeneration of the README screenshot gallery from the
+            live TUI (`screenshots/capture.sh`).
+
+            Triggered by: `${{ github.event_name }}`.
+          add-paths: |
+            screenshots/images/*.png
+            screenshots/images/*.gif
