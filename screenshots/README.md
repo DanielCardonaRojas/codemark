@@ -27,18 +27,16 @@ or via the workflow) whenever the knowledge base changes enough to matter.
 
 | Tape | Output (in `images/`) | View |
 |------|------------------------|------|
-| `main.tape` | `codemark_tui_screenshot.png` | Bookmarks list + content preview |
-| `query.tape` | `codemark_tui_query_screenshot.png` | Tree-sitter Query tab |
-| `collections.tape` | `codemark_tui_collections_screenshot.png` | Collections view |
+| `demo.tape` | `codemark_tui_demo.gif` | Animated tour: browse bookmarks, Content/Info/Query tabs, open a collection, step through it |
 | `theme.tape` | `codemark_tui_theme_<slug>.png` | Main view, once per color scheme |
-| `demo.tape` | `codemark_tui_demo.gif` | Animated browse through bookmarks (arrow keys) |
 
-The demo GIF is recorded at full TUI resolution by vhs, then downscaled and
-repaletted with ffmpeg (~1280px wide) to keep the committed file
-README-friendly; `capture.sh` skips the downscale if ffmpeg is unavailable.
+The demo GIF is the README's lead visual. It's recorded at full TUI resolution
+by vhs, then downscaled and repaletted with ffmpeg (~1280px wide) to keep the
+committed file README-friendly; `capture.sh` skips the downscale if ffmpeg is
+unavailable.
 
-The three-view gallery is captured on the default theme. The per-theme gallery
-captures the main view once for each base16/base24 **scheme** (the themes that
+The per-theme gallery captures the main view once for each base16/base24
+**scheme** (the themes that
 re-theme the whole TUI chrome — syntect `.tmTheme` themes only recolor the code
 preview, so they're excluded). The scheme list is read from the binary itself
 (`codemark-tui --list-schemes`), so the gallery grows automatically as schemes

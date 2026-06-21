@@ -17,9 +17,7 @@
 # Usage: screenshots/capture.sh
 #
 # Output (overwrites the committed gallery images in screenshots/images/):
-#   codemark_tui_screenshot.png
-#   codemark_tui_query_screenshot.png
-#   codemark_tui_collections_screenshot.png
+#   codemark_tui_demo.gif           (the animated tour — the README's lead visual)
 #   codemark_tui_theme_<slug>.png   (one per color scheme)
 
 set -euo pipefail
@@ -74,21 +72,13 @@ restore_db() {
 trap restore_db EXIT
 
 echo "==> Capturing screenshots"
-# vhs does not interpolate env vars in `Screenshot` paths, so we template the
-# tapes instead: each tape uses a literal `__OUT__` token for its output dir,
-# which we substitute with the absolute images dir into a rendered copy. vhs runs
+# vhs does not interpolate env vars in `Screenshot`/`Output` paths, so we
+# template the tapes instead: each uses a literal `__OUT__` token for its output
+# dir, substituted with the absolute images dir into a rendered copy. vhs runs
 # from the repo root (so the TUI auto-detects .codemark/codemark.db) while the
-# rendered Screenshot path stays absolute — decoupling cwd from output location.
+# rendered output path stays absolute — decoupling cwd from output location.
 RENDER_DIR="$SANDBOX/tapes"
 mkdir -p "$RENDER_DIR"
-
-# The three-view gallery is captured on the default theme.
-for tape in main query collections; do
-  echo "    - $tape.tape"
-  rendered="$RENDER_DIR/$tape.tape"
-  sed "s#__OUT__#$IMAGES_DIR#g" "$SHOTS_DIR/$tape.tape" > "$rendered"
-  ( cd "$REPO_ROOT" && PATH="$BIN_DIR:$PATH" vhs "$rendered" )
-done
 
 # Per-theme gallery: one main-view shot per base16/base24 scheme (the themes
 # that re-theme the whole TUI). The scheme list comes from the binary itself, so

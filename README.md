@@ -35,10 +35,6 @@ codemark tui
 
 ![Browsing bookmarks in the TUI](./screenshots/images/codemark_tui_demo.gif)
 
-| Query preview | Collections |
-| --- | --- |
-| ![Tree-sitter query for a bookmark](./screenshots/images/codemark_tui_query_screenshot.png) | ![Collection steps view](./screenshots/images/codemark_tui_collections_screenshot.png) |
-
 #### Themes
 
 The TUI ships with built-in color schemes that re-theme the whole interface. Set
