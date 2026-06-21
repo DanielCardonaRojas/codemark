@@ -90,3 +90,4 @@ jobs:
             Triggered by: `${{ github.event_name }}`.
           add-paths: |
             screenshots/images/*.png
+            screenshots/images/*.gif
