@@ -308,8 +308,18 @@ impl Component for CodePreview {
                 .track_symbol(None)
                 .thumb_symbol("┃");
 
+            // Ratatui 0.29's thumb math sizes the thumb as
+            // `viewport / (content_length - 1 + viewport)` and caps the thumb position at
+            // `content_length - 1`. Passing the raw line count there makes the thumb too
+            // short and unable to reach the bottom (a gap of one thumb-height is left).
+            // Instead, model `content_length` as the number of scroll positions
+            // (`list_len - height + 1`) and leave `viewport_content_length` at its default
+            // so Ratatui uses the track height as the viewport. This yields a thumb of size
+            // `height^2 / list_len` (the correct visible/total ratio) and a max position of
+            // `list_len - height`, so the thumb reaches the bottom on the last page.
+            let scroll_positions = list_len - height + 1;
             let mut scrollbar_state =
-                ScrollbarState::new(list_len).position(self.scroll_offset as usize);
+                ScrollbarState::new(scroll_positions).position(self.scroll_offset as usize);
 
             let scrollbar_area = Rect {
                 x: code_area.right().saturating_sub(1),
