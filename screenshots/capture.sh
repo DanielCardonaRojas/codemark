@@ -27,7 +27,8 @@ SHOTS_DIR="$REPO_ROOT/screenshots"
 IMAGES_DIR="$SHOTS_DIR/images"
 mkdir -p "$IMAGES_DIR"
 
-command -v vhs >/dev/null || { echo "error: vhs not found (brew install vhs)"; exit 1; }
+command -v vhs   >/dev/null || { echo "error: vhs not found (brew install vhs)"; exit 1; }
+command -v cargo >/dev/null || { echo "error: cargo not found"; exit 1; }
 
 [ -f "$REPO_ROOT/.codemark/codemark.db" ] || {
   echo "error: $REPO_ROOT/.codemark/codemark.db not found — the gallery uses the"

@@ -35,7 +35,7 @@ codemark tui
 
 ![Browsing bookmarks in the TUI](./screenshots/images/codemark_tui_demo.gif)
 
-#### Themes
+### Themes
 
 The TUI ships with built-in color schemes that re-theme the whole interface. Set
 one in your config (`tui.theme`) or via the `CODEMARK_TUI_THEME` environment
