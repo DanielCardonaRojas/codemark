@@ -44,8 +44,11 @@ if command -v fc-list >/dev/null && ! fc-list | grep -qi "SFMono Nerd Font"; the
   echo "         Install it (macOS: brew tap epk/epk && brew install font-sf-mono-nerd-font)."
 fi
 
-echo "==> Building binary"
+echo "==> Building binaries"
+# Build both the TUI (what we screenshot) and the CLI (used below to seed the
+# sandboxed global registry so the Repos tab is populated).
 cargo build --release -p codemark-tui --bin codemark-tui
+cargo build --release -p codemark-cli --bin codemark
 
 BIN_DIR="$REPO_ROOT/target/release"
 
@@ -71,6 +74,14 @@ restore_db() {
   rm -rf "$SANDBOX"
 }
 trap restore_db EXIT
+
+# Seed the sandboxed global registry. The Repos tab reads the global registry.db
+# (under CODEMARK_DATA_DIR), which the sandbox above points at an empty temp dir.
+# The registry is only ever populated as a side effect of running a codemark CLI
+# command in a repo — the TUI just reads it. So run one CLI command in the repo
+# root to register this repo, otherwise the Repos tab renders empty.
+echo "==> Seeding sandboxed registry (Repos tab)"
+( cd "$REPO_ROOT" && "$BIN_DIR/codemark" init >/dev/null )
 
 echo "==> Capturing screenshots"
 # vhs does not interpolate env vars in `Screenshot`/`Output` paths, so we
