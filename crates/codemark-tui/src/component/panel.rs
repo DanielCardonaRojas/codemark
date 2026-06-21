@@ -1019,13 +1019,19 @@ impl Component for Panel {
                 .thumb_symbol("┃")
                 .style(scrollbar_style);
 
-            // Note: We don't set viewport_content_length because Ratatui's scrollbar has a bug
-            // where it calculates thumb size incorrectly. When viewport_content_length is 0,
-            // the scrollbar uses its track height, which happens to be correct for our use case
-            // since the list and scrollbar have the same height.
-            // See: https://github.com/ratatui/ratatui/issues/966
+            // Ratatui 0.29's thumb math sizes the thumb as
+            // `viewport / (content_length - 1 + viewport)` and caps the thumb position at
+            // `content_length - 1`. Passing the raw item count there makes the thumb too
+            // short and unable to reach the bottom (a gap of one thumb-height is left).
+            // Instead, model `content_length` as the number of scroll positions
+            // (`items.len() - height + 1`) and leave `viewport_content_length` at its
+            // default so Ratatui uses the track height (which equals `height` here) as the
+            // viewport. This yields a thumb of size `height^2 / items.len()` (the correct
+            // visible/total ratio) and a max position of `items.len() - height`, so the
+            // thumb reaches the bottom on the last page.
+            let scroll_positions = self.items.len() - height + 1;
             let mut scrollbar_state =
-                ScrollbarState::new(self.items.len()).position(state.offset());
+                ScrollbarState::new(scroll_positions).position(state.offset());
 
             let scrollbar_area = if self.bordered {
                 Rect {
