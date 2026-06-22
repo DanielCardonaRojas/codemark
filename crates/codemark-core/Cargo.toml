@@ -36,14 +36,17 @@ tree-sitter-tsquery = "0.7"
 tree-sitter-rust = "0.23"
 tree-sitter-swift = "0.7"
 tree-sitter-typescript = "0.23"
-hf-hub = "0.4"
+# Sync (ureq) API only — see embeddings/local.rs. Drop the default native-tls
+# backend (and unused async `tokio` API) for rustls so we stay openssl-free;
+# otherwise Cargo feature unification flips reqwest's native-tls back on too.
+hf-hub = { version = "0.4", default-features = false, features = ["ureq", "rustls-tls"] }
 zstd = "0.13"
 sqlite-vec = "0.1.9"
 zerocopy = "0.8"
 directories = "5"
 shellexpand = "3"
 handlebars = "6"
-reqwest = { version = "0.12", features = ["json", "stream"] }
+reqwest = { workspace = true, features = ["stream"] }
 tracing = { workspace = true }
 shlex = "1.3"
 

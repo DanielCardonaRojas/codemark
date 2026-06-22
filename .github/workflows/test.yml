@@ -6,6 +6,10 @@ on:
   pull_request:
     branches: [main, develop]
 
+# Minimal token scope: these jobs only read the repo.
+permissions:
+  contents: read
+
 jobs:
   test:
     name: Run Tests
@@ -19,9 +23,13 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@master
+        # Pinned to a commit SHA (rust-toolchain has no version tags; @master is
+        # a mutable branch). Current ref: master @ 2026-06.
+        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9
         with:
           toolchain: ${{ matrix.rust }}
           components: rustfmt, clippy
@@ -44,15 +52,95 @@ jobs:
       - name: Run cargo clippy
         run: cargo clippy -- -D warnings
 
+  cross-platform:
+    name: Build ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # Report every target independently so one platform's failure doesn't
+      # mask the others — important while we're stabilizing Linux/Windows.
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+          - os: macos-latest
+            target: aarch64-apple-darwin
+          - os: macos-latest
+            target: x86_64-apple-darwin
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        # Pinned to a commit SHA (rust-toolchain has no version tags; @master is
+        # a mutable branch). Current ref: master @ 2026-06.
+        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9
+        with:
+          toolchain: stable
+          targets: ${{ matrix.target }}
+
+      - name: Set up Zig (musl C/C++ cross toolchain)
+        # The candle/tokenizers stack pulls in a C++ dep (esaxx-rs); musl-tools
+        # only ships a C compiler, so we use Zig as the C/C++ cross-compiler via
+        # cargo-zigbuild. Install Zig from PyPI rather than mlugg/setup-zig:
+        # that action races flaky community download mirrors (intermittent
+        # 404/503). cargo-zigbuild auto-detects `python3 -m ziglang` when no
+        # `zig` binary is on PATH, so putting the venv first is all we need.
+        if: endsWith(matrix.target, '-musl')
+        run: |
+          python3 -m venv "$HOME/zigvenv"
+          "$HOME/zigvenv/bin/pip" install --quiet ziglang==0.14.1
+          echo "$HOME/zigvenv/bin" >> "$GITHUB_PATH"
+
+      - name: Install cargo-zigbuild
+        if: endsWith(matrix.target, '-musl')
+        run: cargo install cargo-zigbuild --locked
+
+      - name: Cache dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ matrix.target }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build client binaries
+        # This is a portability canary: it must compile and link for each target.
+        # Use the default (dev) profile, not `--profile dist` — the release-only
+        # LTO + single-codegen-unit settings would massively slow CI without
+        # adding signal (the actual optimized build runs in release.yml on tag).
+        shell: bash
+        env:
+          # sqlite-vec.c uses BSD type names (u_int8_t, …) that glibc defines but
+          # musl does not; map them to the standard C99 names for the musl build.
+          CFLAGS_x86_64_unknown_linux_musl: "-Du_int8_t=uint8_t -Du_int16_t=uint16_t -Du_int32_t=uint32_t -Du_int64_t=uint64_t"
+        run: |
+          if [[ "${{ matrix.target }}" == *-musl ]]; then
+            cargo zigbuild --target "${{ matrix.target }}" --bin codemark --bin codemark-tui
+          else
+            cargo build --target "${{ matrix.target }}" --bin codemark --bin codemark-tui
+          fi
+
   rustfmt:
     name: Check formatting
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@master
+        # Pinned to a commit SHA (rust-toolchain has no version tags; @master is
+        # a mutable branch). Current ref: master @ 2026-06.
+        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9
         with:
           toolchain: stable
           components: rustfmt
