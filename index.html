@@ -189,7 +189,7 @@ $ codemark add --file src/auth.rs --range 42 --tag auth --note "Token validation
 # Refactor happens... lines shift... the function is renamed...
 
 # Resolve — finds where the code lives *now*
-$ codemark resolve a1b2
+$ codemark show a1b2 --location
 <span class="text-sky-400">src/auth.rs:89:15</span> (Match: Relaxed)
 
 # Search by meaning, with local embeddings — no API key
@@ -225,25 +225,25 @@ $ codemark search --semantic "database connection initialization"
                     <div class="w-2.5 h-2.5 rounded-full bg-[#ff5f57]"></div>
                     <div class="w-2.5 h-2.5 rounded-full bg-[#febc2e]"></div>
                     <div class="w-2.5 h-2.5 rounded-full bg-[#28c840]"></div>
-                    <div class="ml-3 text-xs font-mono text-zinc-500">codemark dashboard</div>
+                    <div class="ml-3 text-xs font-mono text-zinc-500">codemark tui</div>
                 </div>
-                <img src="./codemark_tui_screenshot.png" alt="Codemark TUI dashboard showing bookmarks, health status, and preview" class="w-full block">
+                <img src="./codemark_tui_demo.gif" alt="Browsing bookmarks in the Codemark TUI — navigating panes, previewing resolved code, and switching collections" class="w-full block">
             </div>
 
-            <!-- Two secondary screenshots -->
+            <!-- Two secondary screenshots: built-in themes -->
             <div class="grid md:grid-cols-2 gap-6">
                 <figure class="panel rounded-xl overflow-hidden shadow-xl shadow-black/40">
-                    <img src="./codemark_tui_query_screenshot.png" alt="Codemark TUI tree-sitter query preview" class="w-full block">
+                    <img src="./codemark_tui_theme_catppuccin-mocha.png" alt="Codemark TUI with the Catppuccin Mocha theme" class="w-full block">
                     <figcaption class="px-5 py-4 border-t hairline">
-                        <span class="font-semibold text-zinc-200">Query preview</span>
-                        <span class="text-zinc-500 text-sm block mt-1">Inspect the tree-sitter query and the code it resolves to, side by side.</span>
+                        <span class="font-semibold text-zinc-200">Catppuccin Mocha</span>
+                        <span class="text-zinc-500 text-sm block mt-1">Built-in color schemes re-theme the whole interface — code preview and UI chrome alike.</span>
                     </figcaption>
                 </figure>
                 <figure class="panel rounded-xl overflow-hidden shadow-xl shadow-black/40">
-                    <img src="./codemark_tui_collections_screenshot.png" alt="Codemark TUI collections view" class="w-full block">
+                    <img src="./codemark_tui_theme_everforest-dark.png" alt="Codemark TUI with the Everforest Dark theme" class="w-full block">
                     <figcaption class="px-5 py-4 border-t hairline">
-                        <span class="font-semibold text-zinc-200">Collections</span>
-                        <span class="text-zinc-500 text-sm block mt-1">Group bookmarks into named sets and switch between them instantly.</span>
+                        <span class="font-semibold text-zinc-200">Everforest Dark</span>
+                        <span class="text-zinc-500 text-sm block mt-1">Set <code class="text-zinc-300">tui.theme</code> in your config or via <code class="text-zinc-300">CODEMARK_TUI_THEME</code> to switch.</span>
                     </figcaption>
                 </figure>
             </div>
@@ -475,14 +475,14 @@ $ codemark list --repo acme/api --repo personal/sketch --tag entrypoint</code></
                         </div>
                         <div class="bg-[#0d0d10] overflow-x-auto">
 <pre class="!bg-transparent !m-0"><code class="language-bash"># Point this repo at a Codetours server
-$ codemark repo set-server acme/api https://codetours.fly.dev
+$ codemark repo set-server https://codetours.fly.dev
 
 # Publish a collection as a shareable tour
-$ codemark collection push security-audit
+$ codemark tour push security-audit
 <span class="text-green-400">✔ Published 'security-audit' (12 bookmarks) → codetours</span>
 
 # A teammate pulls it into their own checkout
-$ codemark collection pull security-audit
+$ codemark tour pull security-audit
 <span class="text-sky-400">↳ 12 bookmarks resolved against local HEAD</span></code></pre>
                         </div>
                     </div>
@@ -545,7 +545,7 @@ $ codemark install-skill --agent claude --scope user
 <span class="text-green-400">✔ Installed Codemark skill for claude</span>
 
 # The agent discovers and records auth logic on its own
-$ codemark add --range 42 --author agent --note "Observed entrypoint"
+$ codemark add --file src/auth.rs --range 42 --created-by agent --note "Observed entrypoint"
 <span class="text-green-400">✔ Bookmarked 'a1b2' for later reference</span></code></pre>
                         </div>
                     </div>
@@ -626,7 +626,7 @@ brew install codemark</code></pre>
                         <h3 class="text-lg font-bold mb-1">Browse with the dashboard</h3>
                         <p class="text-zinc-400 mb-4">Launch the keyboard-driven TUI to review what's been captured.</p>
                         <div class="panel rounded-lg overflow-hidden bg-[#0d0d10]">
-                            <pre class="!bg-transparent !m-0"><code class="language-bash">codemark dashboard</code></pre>
+                            <pre class="!bg-transparent !m-0"><code class="language-bash">codemark tui</code></pre>
                         </div>
                     </div>
                 </div>
