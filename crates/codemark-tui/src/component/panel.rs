@@ -963,11 +963,9 @@ impl Component for Panel {
                 let mut list_item = ListItem::new(line);
 
                 if is_selected {
-                    let bg_color = if self.focused {
-                        Color::Rgb(62, 68, 81) // Light gray-blue highlight for focused (One Dark)
-                    } else {
-                        Color::Rgb(40, 44, 52) // Darker gray-blue for unfocused
-                    };
+                    // Keep the same highlight background whether or not the pane is
+                    // focused — the previous dimmed/blackish color looked poor.
+                    let bg_color = Color::Rgb(62, 68, 81); // Light gray-blue highlight (One Dark)
                     list_item = list_item.style(Style::default().bg(bg_color));
                 }
                 list_item
