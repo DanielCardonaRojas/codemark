@@ -1,6 +1,6 @@
 use crate::browser::right_pane::INFO_TAB_INDEX;
 use crate::browser::{BrowserLayout, FocusArea, Panel3Tab};
-use crate::ui::KeyBinding;
+use crate::ui::{HIDDEN_BINDING_PRIORITY, KeyBinding};
 
 impl BrowserLayout {
     /// Get context-aware keybindings for the status bar.
@@ -90,72 +90,102 @@ impl BrowserLayout {
     }
 
     /// Get context-aware bindings as KeyBinding structs.
+    ///
+    /// Bindings carry a relevance priority so the status bar can drop the least
+    /// relevant ones when space is tight. The `?` Help binding is pinned so it
+    /// is always shown — it's how users reach the exhaustive help popup.
+    ///
+    /// Priority bands (higher = more relevant, shown first):
+    /// - 90+: primary context action (the thing you most likely want here)
+    /// - 70..90: secondary context actions
+    /// - 50..70: common global actions (Filter, Quit)
+    /// - 1..50: low-value extras (Resize, Copy ID)
+    /// - 0: hidden from the bar entirely (e.g. Enter, which is universal)
     fn get_context_bindings(&self) -> Vec<KeyBinding> {
-        let mut bindings = vec![
-            KeyBinding::new("/", "Filter"),
-            KeyBinding::new("?", "Help"),
-            KeyBinding::new("q", "Quit"),
-        ];
+        // Context-specific bindings first (most relevant), then globals.
+        let mut bindings: Vec<KeyBinding> = Vec::new();
 
         match self.focus {
             FocusArea::Search => {
-                bindings.insert(0, KeyBinding::new("Enter", "Search"));
+                // Enter is universal; hidden from the bar but kept for the help popup.
+                bindings.push(
+                    KeyBinding::new("Enter", "Search").with_priority(HIDDEN_BINDING_PRIORITY),
+                );
             }
             FocusArea::Panel1 => {
                 // Repos / Accounts
-                bindings.insert(0, KeyBinding::new("Enter", "Select"));
-                bindings.insert(1, KeyBinding::new("+/-", "Resize"));
+                bindings.push(
+                    KeyBinding::new("Enter", "Select").with_priority(HIDDEN_BINDING_PRIORITY),
+                );
+                bindings.push(KeyBinding::new("+/-", "Resize").with_priority(20));
             }
             FocusArea::Panel2 => {
                 // Tags / Branches
-                bindings.insert(0, KeyBinding::new("Enter", "Filter"));
-                bindings.insert(1, KeyBinding::new("+/-", "Resize"));
+                bindings.push(
+                    KeyBinding::new("Enter", "Filter").with_priority(HIDDEN_BINDING_PRIORITY),
+                );
+                bindings.push(KeyBinding::new("+/-", "Resize").with_priority(20));
             }
             FocusArea::Panel3 => {
                 // Tours / Collections / Bookmarks
                 match Panel3Tab::from_index(self.left_pane.panel3.tabs.selected_index()) {
                     Some(Panel3Tab::Tours) => {
-                        bindings.insert(0, KeyBinding::new("p", "Pull"));
-                        bindings.insert(1, KeyBinding::new("P", "Push"));
-                        bindings.insert(2, KeyBinding::new("H", "Heal all"));
-                        bindings.insert(3, KeyBinding::new("+/-", "Resize"));
+                        bindings.push(KeyBinding::new("p", "Pull").with_priority(90));
+                        bindings.push(KeyBinding::new("P", "Push").with_priority(85));
+                        bindings.push(
+                            KeyBinding::new("H", "Heal all").with_priority(HIDDEN_BINDING_PRIORITY),
+                        );
+                        bindings.push(KeyBinding::new("+/-", "Resize").with_priority(20));
                     }
                     Some(Panel3Tab::Collections) => {
-                        bindings.insert(0, KeyBinding::new("P", "Push"));
-                        bindings.insert(1, KeyBinding::new("Enter", "Open"));
-                        bindings.insert(2, KeyBinding::new("d", "Delete"));
-                        bindings.insert(3, KeyBinding::new("H", "Heal all"));
-                        bindings.insert(4, KeyBinding::new("Ctrl+O", "Copy ID"));
-                        bindings.insert(5, KeyBinding::new("+/-", "Resize"));
+                        bindings.push(
+                            KeyBinding::new("Enter", "Open").with_priority(HIDDEN_BINDING_PRIORITY),
+                        );
+                        bindings.push(KeyBinding::new("P", "Push").with_priority(85));
+                        bindings.push(KeyBinding::new("d", "Delete").with_priority(75));
+                        bindings.push(
+                            KeyBinding::new("H", "Heal all").with_priority(HIDDEN_BINDING_PRIORITY),
+                        );
+                        bindings.push(KeyBinding::new("Ctrl+O", "Copy ID").with_priority(30));
+                        bindings.push(KeyBinding::new("+/-", "Resize").with_priority(20));
                     }
                     Some(Panel3Tab::Bookmarks) => {
-                        bindings.insert(0, KeyBinding::new("o", "Open"));
-                        bindings.insert(1, KeyBinding::new("Enter", "Preview"));
-                        bindings.insert(2, KeyBinding::new("d", "Delete"));
-                        bindings.insert(3, KeyBinding::new("H", "Heal"));
-                        bindings.insert(4, KeyBinding::new("Ctrl+O", "Copy ID"));
-                        bindings.insert(5, KeyBinding::new("+/-", "Resize"));
+                        bindings.push(
+                            KeyBinding::new("Enter", "Preview")
+                                .with_priority(HIDDEN_BINDING_PRIORITY),
+                        );
+                        bindings.push(KeyBinding::new("o", "Open").with_priority(85));
+                        bindings.push(KeyBinding::new("d", "Delete").with_priority(75));
+                        bindings.push(
+                            KeyBinding::new("H", "Heal").with_priority(HIDDEN_BINDING_PRIORITY),
+                        );
+                        bindings.push(KeyBinding::new("Ctrl+O", "Copy ID").with_priority(30));
+                        bindings.push(KeyBinding::new("+/-", "Resize").with_priority(20));
                     }
                     None => {
-                        bindings.insert(0, KeyBinding::new("+/-", "Resize"));
+                        bindings.push(KeyBinding::new("+/-", "Resize").with_priority(20));
                     }
                 }
             }
             FocusArea::Main => {
-                bindings.insert(0, KeyBinding::new("+/-", "Toggle fullscreen"));
-                bindings.insert(1, KeyBinding::new("Enter", "Select Step"));
-                bindings.insert(2, KeyBinding::new("o", "Open File"));
-                bindings.insert(3, KeyBinding::new("H", "Heal"));
-                let insert_pos = if self.right_pane.steps.tabs.selected_index() == INFO_TAB_INDEX {
-                    bindings.insert(4, KeyBinding::new("Ctrl+O", "Copy markdown"));
-                    5
-                } else {
-                    4
-                };
-                bindings.insert(insert_pos, KeyBinding::new("Esc", "Back to Tours"));
+                bindings.push(
+                    KeyBinding::new("Enter", "Select Step").with_priority(HIDDEN_BINDING_PRIORITY),
+                );
+                bindings.push(KeyBinding::new("o", "Open File").with_priority(85));
+                bindings.push(KeyBinding::new("H", "Heal").with_priority(HIDDEN_BINDING_PRIORITY));
+                bindings.push(KeyBinding::new("Esc", "Back to Tours").with_priority(72));
+                if self.right_pane.steps.tabs.selected_index() == INFO_TAB_INDEX {
+                    bindings.push(KeyBinding::new("Ctrl+O", "Copy markdown").with_priority(30));
+                }
+                bindings.push(KeyBinding::new("+/-", "Toggle fullscreen").with_priority(25));
             }
             FocusArea::Filter => {}
         }
+
+        // Global bindings, always appended. `?` is pinned so it never drops.
+        bindings.push(KeyBinding::new("/", "Filter").with_priority(60));
+        bindings.push(KeyBinding::new("q", "Quit").with_priority(55));
+        bindings.push(KeyBinding::new("?", "Help").with_priority(65).pinned());
 
         bindings
     }
