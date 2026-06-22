@@ -1,4 +1,10 @@
-# 🔖 Codemark
+<div align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="codemark_dark_logo.png">
+    <source media="(prefers-color-scheme: light)" srcset="codemark_light_logo.png">
+    <img src="codemark_light_logo.png" alt="Codemark logo" width="400">
+  </picture>
+</div>
 
 [![crates.io](https://img.shields.io/crates/v/codemark)](https://crates.io/crates/codemark)
 [![CI](https://github.com/DanielCardonaRojas/codemark/actions/workflows/test.yml/badge.svg)](https://github.com/DanielCardonaRojas/codemark/actions/workflows/test.yml)
