@@ -35,16 +35,15 @@ pub const DEFAULT_BINDING_PRIORITY: u8 = 50;
 /// A key binding for the status bar.
 ///
 /// Bindings carry a `priority` used to rank them by relevance when the status
-/// bar can't fit them all, and an `always_show` flag for bindings that must
-/// never be dropped (e.g. `?` to open the full help popup).
+/// bar can't fit them all. Two values are sentinels: [`HIDDEN_BINDING_PRIORITY`]
+/// (never shown) and [`ALWAYS_SHOW_BINDING_PRIORITY`] (always shown regardless
+/// of space, e.g. `?` to open the full help popup).
 #[derive(Debug, Clone)]
 pub struct KeyBinding {
     pub key: String,
     pub description: String,
     /// Higher values are considered more relevant and shown first.
     pub priority: u8,
-    /// When true the binding is always shown, regardless of available space.
-    pub always_show: bool,
 }
 
 impl KeyBinding {
@@ -53,7 +52,6 @@ impl KeyBinding {
             key: key.into(),
             description: description.into(),
             priority: DEFAULT_BINDING_PRIORITY,
-            always_show: false,
         }
     }
 
@@ -64,8 +62,10 @@ impl KeyBinding {
     }
 
     /// Mark this binding as always shown, even when space is limited.
+    ///
+    /// Shorthand for the [`ALWAYS_SHOW_BINDING_PRIORITY`] sentinel.
     pub fn pinned(mut self) -> Self {
-        self.always_show = true;
+        self.priority = ALWAYS_SHOW_BINDING_PRIORITY;
         self
     }
 
@@ -89,16 +89,23 @@ const OVERFLOW_HINT_WIDTH: usize = 2;
 /// status-bar space. They still appear in the full help popup.
 pub const HIDDEN_BINDING_PRIORITY: u8 = 0;
 
+/// Priority value marking a binding as always shown, regardless of space.
+///
+/// Used for the `?` Help binding, which is the entry point to the full help
+/// popup, so it must never be dropped.
+pub const ALWAYS_SHOW_BINDING_PRIORITY: u8 = u8::MAX;
+
 /// Select which bindings to show given the available display width.
 ///
-/// Bindings with [`HIDDEN_BINDING_PRIORITY`] are never shown (and don't count
-/// as "dropped"). `always_show` bindings are reserved first so they are never
-/// dropped, then the remaining bindings are added in descending priority order
-/// until the next one would not fit. The returned bindings preserve the input
-/// order so the status bar layout stays stable. Returns the selected bindings
-/// and whether any were dropped for lack of space.
+/// Priority acts as both a ranking and two sentinels:
+/// [`HIDDEN_BINDING_PRIORITY`] bindings are never shown (and don't count as
+/// "dropped"), while [`ALWAYS_SHOW_BINDING_PRIORITY`] bindings are reserved
+/// first so they are never dropped. The remaining bindings are added in
+/// descending priority order until the next one would not fit. The returned
+/// bindings preserve the input order so the status bar layout stays stable.
+/// Returns the selected bindings and whether any were dropped for lack of space.
 fn select_bindings(bindings: &[KeyBinding], available_width: usize) -> (Vec<&KeyBinding>, bool) {
-    // Indices of pinned bindings (always kept) and the rest (ranked).
+    // Indices of always-shown bindings (kept first) and the rest (ranked).
     let mut chosen: Vec<usize> = Vec::with_capacity(bindings.len());
     let mut used_width = 0usize;
     let mut count = 0usize;
@@ -109,9 +116,9 @@ fn select_bindings(bindings: &[KeyBinding], available_width: usize) -> (Vec<&Key
         used + sep + b.display_width()
     };
 
-    // 1. Reserve space for pinned bindings first (they cannot be dropped).
+    // 1. Reserve space for always-shown bindings first (they cannot be dropped).
     for (i, b) in bindings.iter().enumerate() {
-        if b.always_show {
+        if b.priority == ALWAYS_SHOW_BINDING_PRIORITY {
             used_width = cost(used_width, count, b);
             count += 1;
             chosen.push(i);
@@ -119,11 +126,13 @@ fn select_bindings(bindings: &[KeyBinding], available_width: usize) -> (Vec<&Key
     }
 
     // 2. Add remaining bindings by descending priority, then input order.
-    //    Hidden bindings (priority 0) are excluded entirely.
+    //    Hidden (priority 0) and already-reserved always-shown bindings are excluded.
     let mut ranked: Vec<usize> = bindings
         .iter()
         .enumerate()
-        .filter(|(_, b)| !b.always_show && b.priority > HIDDEN_BINDING_PRIORITY)
+        .filter(|(_, b)| {
+            b.priority > HIDDEN_BINDING_PRIORITY && b.priority < ALWAYS_SHOW_BINDING_PRIORITY
+        })
         .map(|(i, _)| i)
         .collect();
     ranked.sort_by(|&a, &b| bindings[b].priority.cmp(&bindings[a].priority).then(a.cmp(&b)));

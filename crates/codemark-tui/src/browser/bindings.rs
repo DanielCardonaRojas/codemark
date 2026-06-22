@@ -96,7 +96,8 @@ impl BrowserLayout {
     /// is always shown — it's how users reach the exhaustive help popup.
     ///
     /// Priority bands (higher = more relevant, shown first):
-    /// - 90+: primary context action (the thing you most likely want here)
+    /// - 255 (`pinned`): always shown, never dropped (e.g. `?` Help)
+    /// - 90..255: primary context action (the thing you most likely want here)
     /// - 70..90: secondary context actions
     /// - 50..70: common global actions (Filter, Quit)
     /// - 1..50: low-value extras (Resize, Copy ID)
@@ -185,7 +186,7 @@ impl BrowserLayout {
         // Global bindings, always appended. `?` is pinned so it never drops.
         bindings.push(KeyBinding::new("/", "Filter").with_priority(60));
         bindings.push(KeyBinding::new("q", "Quit").with_priority(55));
-        bindings.push(KeyBinding::new("?", "Help").with_priority(65).pinned());
+        bindings.push(KeyBinding::new("?", "Help").pinned());
 
         bindings
     }
