@@ -80,6 +80,9 @@ impl KeyBinding {
 /// Width of the " | " separator drawn between bindings.
 const SEPARATOR_WIDTH: usize = 3;
 
+/// Display width of the " …" overflow hint appended when bindings are dropped.
+const OVERFLOW_HINT_WIDTH: usize = 2;
+
 /// Priority value marking a binding as hidden from the status bar entirely.
 ///
 /// Used for universally understood keys (e.g. Enter) that don't need to take up
@@ -185,7 +188,17 @@ pub fn render_status_bar(
 
     // 1. Keybindings (Left side), ranked by relevance to fit the space.
     let left_inner = chunks[0].inner(Margin { horizontal: 1, vertical: 0 });
-    let (selected, dropped) = select_bindings(bindings, left_inner.width as usize);
+    let full_width = left_inner.width as usize;
+    // Try the full width first. If anything was dropped we'll show a " …" hint,
+    // so re-select against a budget that reserves room for it — that way the
+    // hint never overflows, but we don't waste those columns when everything
+    // already fits.
+    let (mut selected, mut dropped) = select_bindings(bindings, full_width);
+    if dropped {
+        let (s, d) = select_bindings(bindings, full_width.saturating_sub(OVERFLOW_HINT_WIDTH));
+        selected = s;
+        dropped = d;
+    }
 
     let mut left_spans = Vec::new();
     for (i, binding) in selected.iter().enumerate() {
