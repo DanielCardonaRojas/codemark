@@ -1525,6 +1525,13 @@ impl BrowserLayout {
         // RightPaneSize state that never touches left_pane_size).
         if self.focus == FocusArea::Main {
             self.left_pane_size = LeftPaneSize::Regular;
+        } else {
+            // Leaving the preview pane resets its expansion (the `+`/`-`
+            // fullscreen state). Otherwise an expanded, full-width preview keeps
+            // rendering RenderMode::RightOnly after focus moves to a left panel,
+            // hiding the now-focused pane entirely.
+            self.right_pane_size = RightPaneSize::Regular;
+            self.details_pane_size = DetailsPaneSize::Regular;
         }
 
         // Sync focused area and resize mode to left pane
@@ -1685,6 +1692,23 @@ mod tests {
         // pane size resets to Regular instead of staying expanded behind the preview.
         layout.set_focus(FocusArea::Main);
         assert_eq!(layout.left_pane_size(), LeftPaneSize::Regular);
+    }
+
+    #[test]
+    fn leaving_preview_resets_fullscreen_expansion() {
+        let mut layout = test_layout();
+
+        // Enter the preview pane and expand it to full width via `+`.
+        layout.set_focus(FocusArea::Main);
+        layout.right_pane_size = RightPaneSize::Full;
+        layout.details_pane_size = DetailsPaneSize::Full;
+
+        // Pressing Esc moves focus back to the bookmarks panel. The fullscreen
+        // expansion must reset so the now-focused panel is actually visible
+        // instead of staying hidden behind a full-width preview.
+        layout.set_focus(FocusArea::Panel3);
+        assert_eq!(layout.right_pane_size, RightPaneSize::Regular);
+        assert_eq!(layout.details_pane_size, DetailsPaneSize::Regular);
     }
 
     #[test]
