@@ -29,17 +29,129 @@ pub fn render_ui<B: Backend>(
     Ok(())
 }
 
+/// Default relevance for a binding that doesn't set one explicitly.
+pub const DEFAULT_BINDING_PRIORITY: u8 = 50;
+
 /// A key binding for the status bar.
+///
+/// Bindings carry a `priority` used to rank them by relevance when the status
+/// bar can't fit them all. Two values are sentinels: [`HIDDEN_BINDING_PRIORITY`]
+/// (never shown) and [`ALWAYS_SHOW_BINDING_PRIORITY`] (always shown regardless
+/// of space, e.g. `?` to open the full help popup).
 #[derive(Debug, Clone)]
 pub struct KeyBinding {
     pub key: String,
     pub description: String,
+    /// Higher values are considered more relevant and shown first.
+    pub priority: u8,
 }
 
 impl KeyBinding {
     pub fn new(key: impl Into<String>, description: impl Into<String>) -> Self {
-        Self { key: key.into(), description: description.into() }
+        Self {
+            key: key.into(),
+            description: description.into(),
+            priority: DEFAULT_BINDING_PRIORITY,
+        }
     }
+
+    /// Set the relevance priority (higher = shown first when space is tight).
+    pub fn with_priority(mut self, priority: u8) -> Self {
+        self.priority = priority;
+        self
+    }
+
+    /// Mark this binding as always shown, even when space is limited.
+    ///
+    /// Shorthand for the [`ALWAYS_SHOW_BINDING_PRIORITY`] sentinel.
+    pub fn pinned(mut self) -> Self {
+        self.priority = ALWAYS_SHOW_BINDING_PRIORITY;
+        self
+    }
+
+    /// Display width of this binding rendered as `description: key`.
+    fn display_width(&self) -> usize {
+        use unicode_width::UnicodeWidthStr;
+        // "description" + ": " + "key"
+        self.description.width() + 2 + self.key.width()
+    }
+}
+
+/// Width of the " | " separator drawn between bindings.
+const SEPARATOR_WIDTH: usize = 3;
+
+/// Display width of the " …" overflow hint appended when bindings are dropped.
+const OVERFLOW_HINT_WIDTH: usize = 2;
+
+/// Priority value marking a binding as hidden from the status bar entirely.
+///
+/// Used for universally understood keys (e.g. Enter) that don't need to take up
+/// status-bar space. They still appear in the full help popup.
+pub const HIDDEN_BINDING_PRIORITY: u8 = 0;
+
+/// Priority value marking a binding as always shown, regardless of space.
+///
+/// Used for the `?` Help binding, which is the entry point to the full help
+/// popup, so it must never be dropped.
+pub const ALWAYS_SHOW_BINDING_PRIORITY: u8 = u8::MAX;
+
+/// Select which bindings to show given the available display width.
+///
+/// Priority acts as both a ranking and two sentinels:
+/// [`HIDDEN_BINDING_PRIORITY`] bindings are never shown (and don't count as
+/// "dropped"), while [`ALWAYS_SHOW_BINDING_PRIORITY`] bindings are reserved
+/// first so they are never dropped. The remaining bindings are added in
+/// descending priority order until the next one would not fit. The returned
+/// bindings preserve the input order so the status bar layout stays stable.
+/// Returns the selected bindings and whether any were dropped for lack of space.
+fn select_bindings(bindings: &[KeyBinding], available_width: usize) -> (Vec<&KeyBinding>, bool) {
+    // Indices of always-shown bindings (kept first) and the rest (ranked).
+    let mut chosen: Vec<usize> = Vec::with_capacity(bindings.len());
+    let mut used_width = 0usize;
+    let mut count = 0usize;
+
+    // Helper closure to compute the width cost of adding one more binding.
+    let cost = |used: usize, count: usize, b: &KeyBinding| -> usize {
+        let sep = if count == 0 { 0 } else { SEPARATOR_WIDTH };
+        used + sep + b.display_width()
+    };
+
+    // 1. Reserve space for always-shown bindings first (they cannot be dropped).
+    for (i, b) in bindings.iter().enumerate() {
+        if b.priority == ALWAYS_SHOW_BINDING_PRIORITY {
+            used_width = cost(used_width, count, b);
+            count += 1;
+            chosen.push(i);
+        }
+    }
+
+    // 2. Add remaining bindings by descending priority, then input order.
+    //    Hidden (priority 0) and already-reserved always-shown bindings are excluded.
+    let mut ranked: Vec<usize> = bindings
+        .iter()
+        .enumerate()
+        .filter(|(_, b)| {
+            b.priority > HIDDEN_BINDING_PRIORITY && b.priority < ALWAYS_SHOW_BINDING_PRIORITY
+        })
+        .map(|(i, _)| i)
+        .collect();
+    ranked.sort_by(|&a, &b| bindings[b].priority.cmp(&bindings[a].priority).then(a.cmp(&b)));
+
+    let mut dropped = false;
+    for i in ranked {
+        let next = cost(used_width, count, &bindings[i]);
+        if next <= available_width {
+            used_width = next;
+            count += 1;
+            chosen.push(i);
+        } else {
+            dropped = true;
+        }
+    }
+
+    // Restore input order for stable rendering.
+    chosen.sort_unstable();
+    (chosen.into_iter().map(|i| &bindings[i]).collect(), dropped)
 }
 
 /// Render a status bar at the bottom of the screen.
@@ -68,17 +180,37 @@ pub fn render_status_bar(
         return;
     }
 
+    // Reserve only as much space for the metadata as it actually needs, so the
+    // keybindings can use the rest of the row. Each side gets 1 column of inner
+    // horizontal padding from the `Margin` applied below.
+    let right_width = right_text.as_ref().map(|m| m.width() as u16 + 2).unwrap_or(0);
+    // Don't let metadata consume more than half the row on narrow terminals.
+    let right_width = right_width.min(area.width / 2);
+
     let chunks = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
-            Constraint::Min(0),         // Keybindings
-            Constraint::Percentage(50), // Metadata (right side)
+            Constraint::Min(0),              // Keybindings
+            Constraint::Length(right_width), // Metadata (right side)
         ])
         .split(area);
 
-    // 1. Keybindings (Left side)
+    // 1. Keybindings (Left side), ranked by relevance to fit the space.
+    let left_inner = chunks[0].inner(Margin { horizontal: 1, vertical: 0 });
+    let full_width = left_inner.width as usize;
+    // Try the full width first. If anything was dropped we'll show a " …" hint,
+    // so re-select against a budget that reserves room for it — that way the
+    // hint never overflows, but we don't waste those columns when everything
+    // already fits.
+    let (mut selected, mut dropped) = select_bindings(bindings, full_width);
+    if dropped {
+        let (s, d) = select_bindings(bindings, full_width.saturating_sub(OVERFLOW_HINT_WIDTH));
+        selected = s;
+        dropped = d;
+    }
+
     let mut left_spans = Vec::new();
-    for (i, binding) in bindings.iter().enumerate() {
+    for (i, binding) in selected.iter().enumerate() {
         if i > 0 {
             left_spans.push(Span::styled(" | ", Style::default().fg(crate::theme::palette().gray)));
         }
@@ -93,13 +225,16 @@ pub fn render_status_bar(
         ));
     }
 
+    // Hint that more bindings exist (use `?` to see the full list).
+    if dropped {
+        left_spans.push(Span::styled(" …", Style::default().fg(crate::theme::palette().gray)));
+    }
+
     let left_text = Paragraph::new(Line::from(left_spans))
         .alignment(Alignment::Left)
         .style(Style::default().bg(crate::theme::palette().dim));
 
-    // Add some padding
-    let left_area = chunks[0].inner(Margin { horizontal: 1, vertical: 0 });
-    left_text.render(left_area, buf);
+    left_text.render(left_inner, buf);
 
     // 2. Metadata (Right side)
     if let Some(meta) = right_text {
@@ -386,5 +521,80 @@ mod tests {
         assert!(!AppMode::Normal.indicator().is_empty());
         assert!(!AppMode::Insert.indicator().is_empty());
         assert!(!AppMode::Command.indicator().is_empty());
+    }
+
+    fn keys(selected: &[&KeyBinding]) -> Vec<String> {
+        selected.iter().map(|b| b.key.clone()).collect()
+    }
+
+    #[test]
+    fn select_bindings_keeps_all_when_space_is_ample() {
+        let bindings = vec![
+            KeyBinding::new("Enter", "Select").with_priority(95),
+            KeyBinding::new("/", "Filter").with_priority(60),
+            KeyBinding::new("?", "Help").pinned(),
+        ];
+        let (selected, dropped) = select_bindings(&bindings, 1000);
+        assert_eq!(selected.len(), 3);
+        assert!(!dropped);
+    }
+
+    #[test]
+    fn select_bindings_always_keeps_pinned_even_at_tiny_width() {
+        let bindings = vec![
+            KeyBinding::new("Enter", "Select Step").with_priority(95),
+            KeyBinding::new("o", "Open File").with_priority(85),
+            KeyBinding::new("?", "Help").with_priority(65).pinned(),
+        ];
+        // Width of 1 cannot fit anything, but the pinned binding must survive.
+        let (selected, dropped) = select_bindings(&bindings, 1);
+        assert_eq!(keys(&selected), vec!["?"]);
+        assert!(dropped);
+    }
+
+    #[test]
+    fn select_bindings_drops_lowest_priority_first() {
+        let bindings = vec![
+            KeyBinding::new("Enter", "Select").with_priority(95),
+            KeyBinding::new("o", "Open").with_priority(85),
+            KeyBinding::new("+/-", "Resize").with_priority(20),
+            KeyBinding::new("?", "Help").pinned(),
+        ];
+        // Enough room for the pinned binding plus the two highest-priority ones,
+        // but not the low-priority "Resize".
+        // pinned "Help: ?" = 4+2+1 = 7
+        // "Select: Enter" = 6+2+5 = 13 (+3 sep)
+        // "Open: o" = 4+2+1 = 7 (+3 sep)
+        let width = 7 + 3 + 13 + 3 + 7;
+        let (selected, dropped) = select_bindings(&bindings, width);
+        assert!(dropped);
+        assert!(selected.iter().any(|b| b.key == "?"));
+        assert!(selected.iter().any(|b| b.key == "Enter"));
+        assert!(selected.iter().any(|b| b.key == "o"));
+        assert!(!selected.iter().any(|b| b.key == "+/-"));
+    }
+
+    #[test]
+    fn select_bindings_hides_priority_zero_without_marking_dropped() {
+        let bindings = vec![
+            KeyBinding::new("Enter", "Select").with_priority(HIDDEN_BINDING_PRIORITY),
+            KeyBinding::new("o", "Open").with_priority(85),
+            KeyBinding::new("?", "Help").pinned(),
+        ];
+        let (selected, dropped) = select_bindings(&bindings, 1000);
+        assert_eq!(keys(&selected), vec!["o", "?"]);
+        // Everything that *can* show is showing, so nothing was dropped for space.
+        assert!(!dropped);
+    }
+
+    #[test]
+    fn select_bindings_preserves_input_order() {
+        let bindings = vec![
+            KeyBinding::new("Enter", "Select").with_priority(95),
+            KeyBinding::new("/", "Filter").with_priority(60),
+            KeyBinding::new("?", "Help").with_priority(65).pinned(),
+        ];
+        let (selected, _) = select_bindings(&bindings, 1000);
+        assert_eq!(keys(&selected), vec!["Enter", "/", "?"]);
     }
 }
