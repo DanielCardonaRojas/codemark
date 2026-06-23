@@ -31,10 +31,7 @@ impl BrowserLayout {
     /// ←/→/Tab move focus between the Cancel and Confirm buttons; Enter activates
     /// the focused button; Esc cancels outright. All other keys are swallowed so
     /// the dialog stays modal. Always returns `true`.
-    pub(super) fn handle_dialog_key(
-        &mut self,
-        key: &ratatui::crossterm::event::KeyEvent,
-    ) -> bool {
+    pub(super) fn handle_dialog_key(&mut self, key: &ratatui::crossterm::event::KeyEvent) -> bool {
         use ratatui::crossterm::event::KeyCode;
         match key.code {
             KeyCode::Left

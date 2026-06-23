@@ -44,11 +44,7 @@ pub struct ConfirmDialog {
 impl ConfirmDialog {
     /// Create a dialog with the Cancel button focused by default, a safe
     /// default for destructive actions.
-    pub fn new(
-        title: impl Into<String>,
-        message: impl Into<String>,
-        action: DialogAction,
-    ) -> Self {
+    pub fn new(title: impl Into<String>, message: impl Into<String>, action: DialogAction) -> Self {
         Self {
             title: title.into(),
             message: message.into(),

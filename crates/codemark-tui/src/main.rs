@@ -226,11 +226,15 @@ async fn run_app() -> Result<Option<i32>> {
                                     layout.focus() == codemark_tui::browser::FocusArea::Search;
                                 let dialog_active = layout.has_active_dialog();
                                 match key.code {
-                                    event::KeyCode::Char('q') if !search_focused && !dialog_active => {
+                                    event::KeyCode::Char('q')
+                                        if !search_focused && !dialog_active =>
+                                    {
                                         state.quit();
                                         handled = true;
                                     }
-                                    event::KeyCode::Char('?') if !search_focused && !dialog_active => {
+                                    event::KeyCode::Char('?')
+                                        if !search_focused && !dialog_active =>
+                                    {
                                         show_help = !show_help;
                                         handled = true;
                                     }
