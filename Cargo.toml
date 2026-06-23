@@ -84,3 +84,8 @@ install-updater = false
 # workflow; dist just uploads its build artifacts/installers to that existing
 # release instead of trying to `gh release create` a tag that already exists.
 create-release = false
+# Allow hand-edits to the generated CI workflow (release.yml) without `dist plan`
+# failing its "out of date contents" check. We add `--clobber` to the release
+# asset upload by hand so re-runs are idempotent; that flag isn't emitted by
+# `dist generate`, so dist must be told the CI file is intentionally dirty.
+allow-dirty = ["ci"]
