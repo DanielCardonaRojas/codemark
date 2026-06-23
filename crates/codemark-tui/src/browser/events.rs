@@ -3,6 +3,8 @@
 //! This module splits the monolithic `handle_event` into smaller, focused methods
 //! organized by event type: tick, app-level, mouse, key, and delegation.
 
+use std::sync::Arc;
+
 use crate::component::{Component, HealthStatus, PanelItem};
 use crate::event::Event;
 use codemark_core::engine::resolution::LiveUIStatus;
@@ -316,17 +318,19 @@ impl BrowserLayout {
     ///
     /// `request_id` is captured from `active_preview_request` so the UI can drop
     /// the result if the selection has since moved on. Mirrors
-    /// [`spawn_live_health_task`](Self::spawn_live_health_task): it reopens the DB
-    /// by path and uses a fresh `ParseCache`, since `Database` isn't `Send`.
+    /// [`spawn_live_health_task`](Self::spawn_live_health_task) in reopening the DB
+    /// by path (since `Database` isn't `Send`), but shares a long-lived
+    /// `preview_cache` across tasks so repeat visits to the same file reuse the
+    /// parse tree. Debounce serializes these tasks, so the lock is effectively
+    /// uncontended.
     fn spawn_preview_task(&self, bookmark_id: String) {
-        use codemark_core::parser::languages::{Language as CL, ParseCache};
         use codemark_core::storage::db::Database;
-        use std::collections::HashMap;
 
         let request_id = self.active_preview_request;
         let db_path = self.db.path().to_path_buf();
         let head = self.right_pane.head_commit().map(|s| s.to_string());
         let event_handler = self.event_handler.clone();
+        let preview_cache = Arc::clone(&self.preview_cache);
 
         tokio::task::spawn_blocking(move || {
             let Ok(db) = Database::open(&db_path) else {
@@ -338,8 +342,12 @@ impl BrowserLayout {
                 codemark_core::templates::load_template(codemark_core::templates::SHOW_TEMPLATE);
             let details_template =
                 codemark_core::templates::load_template(codemark_core::templates::DETAILS_TEMPLATE);
-            let mut cache: HashMap<CL, ParseCache> = HashMap::new();
 
+            // Recover from a poisoned lock: a panicked prior task can't corrupt a
+            // parse cache in a way that matters (entries are independent), so reuse it.
+            let mut cache = preview_cache.lock().unwrap_or_else(|e| e.into_inner());
+
+            // `cache` is a MutexGuard; `&mut cache` derefs to `&mut HashMap`.
             match super::RightPane::build_bookmark_preview(
                 &db,
                 &bookmark_id,

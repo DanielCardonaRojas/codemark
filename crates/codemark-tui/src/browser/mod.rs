@@ -38,6 +38,7 @@ use ratatui::{
     text::{Line, Span},
 };
 use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 
 /// Number of ticks (tick rate ≈ 100ms) to wait after the last Panel 3 selection
 /// change before spawning the background preview resolve. Coalesces fast
@@ -151,7 +152,13 @@ pub struct BrowserLayout {
     pending_remote_repos: Option<String>,
     /// Session-level parse cache for live resolution, keyed by language.
     /// Each `ParseCache` is single-language (parser locked at creation).
+    /// Used by the synchronous preview paths (init, focus-enter, tours).
     session_cache: HashMap<CodemarkLanguage, ParseCache>,
+    /// Parse cache shared with the background preview tasks. Reused across
+    /// selections (debounce serializes the tasks, so contention is rare), so
+    /// scrolling among bookmarks in the same unchanged file is a cache hit on the
+    /// hot async path — not just within a single resolve.
+    preview_cache: Arc<Mutex<HashMap<CodemarkLanguage, ParseCache>>>,
     /// Monotonic counter for bookmark preview requests. Bumped on every Panel 3
     /// selection change so background results can be matched/discarded.
     preview_seq: u64,
@@ -209,6 +216,7 @@ impl BrowserLayout {
             cached_remote_tours: Vec::new(),
             pending_remote_repos: None,
             session_cache: HashMap::new(),
+            preview_cache: Arc::new(Mutex::new(HashMap::new())),
             preview_seq: 0,
             active_preview_request: 0,
             pending_preview: None,
@@ -301,6 +309,10 @@ impl BrowserLayout {
             && self.inflight_preview.is_none()
             && self.right_pane.active_bookmark_id.as_deref() == Some(id)
         {
+            // Cancel any debounced request for a *different* bookmark that hasn't
+            // fired yet (e.g. A→B→A within one tick): otherwise B's queued task
+            // would still spawn and overwrite the already-correct A preview.
+            self.pending_preview = None;
             return;
         }
 
