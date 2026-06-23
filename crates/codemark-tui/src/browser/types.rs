@@ -78,7 +78,10 @@ impl DialogButton {
 pub enum DialogAction {
     /// Delete the bookmark with the given id.
     DeleteBookmark(String),
-    /// Delete the collection with the given name.
+    /// Delete the collection with the given id.
+    ///
+    /// Collection names are not uniquely constrained, so deletion is keyed on
+    /// the stable id rather than the display name.
     DeleteCollection(String),
 }
 

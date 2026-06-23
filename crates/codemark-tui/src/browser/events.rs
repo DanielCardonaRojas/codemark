@@ -780,12 +780,12 @@ impl BrowserLayout {
                     && let Some(selected) = panel.selected()
                 {
                     let collection_name = selected.text().to_string();
-                    if let Ok(Some(_collection)) = self.db.get_collection_by_name(&collection_name)
-                    {
+                    if let Ok(Some(collection)) = self.db.get_collection_by_name(&collection_name) {
+                        // Delete by the stable id; names are not uniquely constrained.
                         self.request_confirmation(ConfirmDialog::new(
                             "Delete Collection",
                             format!("Delete collection \"{}\"?", collection_name),
-                            DialogAction::DeleteCollection(collection_name),
+                            DialogAction::DeleteCollection(collection.id),
                         ));
                         return Some(true);
                     }

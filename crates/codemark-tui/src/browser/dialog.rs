@@ -10,7 +10,7 @@ use ratatui::layout::Rect;
 
 use crate::ui;
 
-use super::{BrowserLayout, ConfirmDialog, DialogAction, DialogButton};
+use super::{BrowserLayout, ConfirmDialog, DialogAction, DialogButton, HealNotification};
 
 impl BrowserLayout {
     /// Whether a modal dialog is currently being displayed.
@@ -23,6 +23,12 @@ impl BrowserLayout {
 
     /// Show a confirmation dialog for the given action.
     pub(super) fn request_confirmation(&mut self, dialog: ConfirmDialog) {
+        tracing::debug!(
+            target: "codemark::ui",
+            title = %dialog.title,
+            action = ?dialog.action,
+            "confirmation dialog opened"
+        );
         self.dialog = Some(dialog);
     }
 
@@ -45,13 +51,20 @@ impl BrowserLayout {
                 }
             }
             KeyCode::Enter => {
-                if let Some(dialog) = self.dialog.take()
-                    && dialog.selected == DialogButton::Confirm
-                {
-                    self.perform_dialog_action(dialog.action);
+                if let Some(dialog) = self.dialog.take() {
+                    match dialog.selected {
+                        DialogButton::Confirm => {
+                            tracing::debug!(target: "codemark::ui", "confirmation dialog confirmed");
+                            self.perform_dialog_action(dialog.action);
+                        }
+                        DialogButton::Cancel => {
+                            tracing::debug!(target: "codemark::ui", "confirmation dialog cancelled");
+                        }
+                    }
                 }
             }
             KeyCode::Esc => {
+                tracing::debug!(target: "codemark::ui", "confirmation dialog cancelled");
                 self.dialog = None;
             }
             _ => {}
@@ -59,17 +72,37 @@ impl BrowserLayout {
         true
     }
 
-    /// Execute a confirmed dialog action and refresh the affected panels.
+    /// Execute a confirmed dialog action, refreshing panels on success.
+    ///
+    /// A failed deletion is surfaced as an error notification rather than
+    /// silently swallowed, so the UI never closes the modal as if a destructive
+    /// action succeeded when it did not.
     fn perform_dialog_action(&mut self, action: DialogAction) {
-        match action {
+        let result = match &action {
             DialogAction::DeleteBookmark(id) => {
-                let _ = self.db.delete_bookmark(&id);
+                tracing::debug!(target: "codemark::ui", %id, "deleting bookmark");
+                self.db.delete_bookmark(id).map(|_| ())
             }
-            DialogAction::DeleteCollection(name) => {
-                let _ = self.db.delete_collection(&name);
+            DialogAction::DeleteCollection(id) => {
+                tracing::debug!(target: "codemark::ui", %id, "deleting collection");
+                self.db.delete_collection_by_id(id).map(|_| ())
+            }
+        };
+
+        match result {
+            Ok(()) => self.refresh_all_panels(),
+            Err(err) => {
+                tracing::warn!(
+                    target: "codemark::ui",
+                    error = %err,
+                    "confirmed delete action failed"
+                );
+                self.pending_notification = Some(HealNotification {
+                    message: format!("Delete failed: {}", err),
+                    success: false,
+                });
             }
         }
-        self.refresh_all_panels();
     }
 
     /// Render the active dialog (if any) centered over the given area.
