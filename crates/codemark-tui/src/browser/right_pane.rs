@@ -367,8 +367,7 @@ impl RightPane {
         // Live resolution carries no persisted resolution, so the header uses
         // the bookmark's own relative path (matches `update_preview`).
         let relative_path = bm.file_path.clone();
-        let info_markdown =
-            render_bookmark_markdown(db, &bm, &resolutions, show_template, head);
+        let info_markdown = render_bookmark_markdown(db, &bm, &resolutions, show_template, head);
         let details_markdown =
             render_bookmark_markdown(db, &bm, &resolutions, details_template, head);
         let query = bm.query.clone();
@@ -948,8 +947,8 @@ impl RightPane {
             message,
             Style::default().fg(crate::theme::palette().dim),
         ));
-        let paragraph = ratatui::widgets::Paragraph::new(line)
-            .alignment(ratatui::layout::Alignment::Center);
+        let paragraph =
+            ratatui::widgets::Paragraph::new(line).alignment(ratatui::layout::Alignment::Center);
         // Vertically center within the inner area.
         if inner.height > 0 {
             let y = inner.y + inner.height / 2;
