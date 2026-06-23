@@ -5,6 +5,7 @@
 
 mod bindings;
 mod data;
+mod dialog;
 mod events;
 mod left_pane;
 mod right_pane;
@@ -19,9 +20,9 @@ pub use search::{SearchBar, SearchMode};
 pub use tabbed_panel::{TabbedPanel, bookmark_to_panel_item};
 pub use tabs::{ContextTab, Panel2Tab, Panel3Tab, Tab, TabSelection};
 pub use types::{
-    DetailsPaneSize, ExternalCommand, FocusArea, HealNotification, HealTarget, LeftPaneSize,
-    PreviewPayload, RightPaneSize, SectionConfig, SpinningItem, StepData, TabContent,
-    escape_markdown,
+    ConfirmDialog, DetailsPaneSize, DialogAction, DialogButton, ExternalCommand, FocusArea,
+    HealNotification, HealTarget, LeftPaneSize, PreviewPayload, RightPaneSize, SectionConfig,
+    SpinningItem, StepData, TabContent, escape_markdown,
 };
 
 use crate::component::{Component, HealthStatus, PanelItem};
@@ -174,6 +175,8 @@ pub struct BrowserLayout {
     /// only appears if the resolve outlives a short grace period, so fast/cached
     /// resolves never flash an intermediate loading state.
     inflight_preview: Option<(Option<String>, usize)>,
+    /// Active modal dialog, if any. Captures all input while displayed.
+    dialog: Option<ConfirmDialog>,
 }
 
 impl BrowserLayout {
@@ -221,6 +224,7 @@ impl BrowserLayout {
             active_preview_request: 0,
             pending_preview: None,
             inflight_preview: None,
+            dialog: None,
         };
         layout.update_focus_state();
         layout.sync_steps_tab_label();
@@ -1742,6 +1746,9 @@ impl BrowserLayout {
                 self.right_pane.render(chunks[0], buf, steps_fullscreen, self.details_pane_size);
             }
         }
+
+        // Modal dialogs draw last so they overlay every pane.
+        self.render_dialog(area, buf);
     }
 }
 

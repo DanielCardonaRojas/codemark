@@ -219,19 +219,26 @@ async fn run_app() -> Result<Option<i32>> {
                     Event::Key(key) => {
                         match state.mode() {
                             AppMode::Normal => {
-                                // Handle global key bindings (disabled when Search is focused)
+                                // Handle global key bindings (disabled when Search is focused).
+                                // A modal dialog also suppresses them so all keys route to the
+                                // dialog via layout.handle_event below.
                                 let search_focused =
                                     layout.focus() == codemark_tui::browser::FocusArea::Search;
+                                let dialog_active = layout.has_active_dialog();
                                 match key.code {
-                                    event::KeyCode::Char('q') if !search_focused => {
+                                    event::KeyCode::Char('q')
+                                        if !search_focused && !dialog_active =>
+                                    {
                                         state.quit();
                                         handled = true;
                                     }
-                                    event::KeyCode::Char('?') if !search_focused => {
+                                    event::KeyCode::Char('?')
+                                        if !search_focused && !dialog_active =>
+                                    {
                                         show_help = !show_help;
                                         handled = true;
                                     }
-                                    event::KeyCode::Char('/') => {
+                                    event::KeyCode::Char('/') if !dialog_active => {
                                         // Set the filter target based on current focus before entering filter mode
                                         let filter_target = match layout.focus() {
                                             codemark_tui::browser::FocusArea::Panel1 => "panel1",
@@ -243,7 +250,7 @@ async fn run_app() -> Result<Option<i32>> {
                                         };
                                         state.set_string("filter_target", filter_target);
                                     }
-                                    event::KeyCode::Esc => {
+                                    event::KeyCode::Esc if !dialog_active => {
                                         if show_help {
                                             show_help = false;
                                             handled = true;

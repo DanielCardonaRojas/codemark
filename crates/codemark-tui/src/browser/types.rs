@@ -24,6 +24,67 @@ pub struct HealNotification {
     pub success: bool,
 }
 
+/// A modal confirmation dialog displayed over the browser layout.
+///
+/// While a dialog is active it captures all key input. The user moves between
+/// the Cancel and Confirm buttons (←/→/Tab) and activates the focused one with
+/// Enter; Esc cancels outright. Confirming runs the pending [`DialogAction`].
+#[derive(Debug, Clone)]
+pub struct ConfirmDialog {
+    /// Title rendered in the dialog border.
+    pub title: String,
+    /// Message body explaining the consequence of confirming.
+    pub message: String,
+    /// The action performed when the user confirms.
+    pub action: DialogAction,
+    /// Which button currently has focus.
+    pub selected: DialogButton,
+}
+
+impl ConfirmDialog {
+    /// Create a dialog with the Cancel button focused by default, a safe
+    /// default for destructive actions.
+    pub fn new(title: impl Into<String>, message: impl Into<String>, action: DialogAction) -> Self {
+        Self {
+            title: title.into(),
+            message: message.into(),
+            action,
+            selected: DialogButton::Cancel,
+        }
+    }
+}
+
+/// The two buttons of a [`ConfirmDialog`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DialogButton {
+    /// Runs the pending action.
+    Confirm,
+    /// Dismisses the dialog without side effects.
+    Cancel,
+}
+
+impl DialogButton {
+    /// Switch focus to the other button.
+    pub fn toggle(self) -> Self {
+        match self {
+            Self::Confirm => Self::Cancel,
+            Self::Cancel => Self::Confirm,
+        }
+    }
+}
+
+/// An action awaiting user confirmation in a [`ConfirmDialog`].
+#[derive(Debug, Clone)]
+pub enum DialogAction {
+    /// Delete the bookmark with the given id.
+    DeleteBookmark(String),
+    /// Delete the collection with the given id.
+    ///
+    /// Collection names are not uniquely constrained, so deletion is keyed on
+    /// the stable id rather than the display name.
+    DeleteCollection(String),
+}
+
 /// Target for healing operation.
 #[derive(Debug, Clone)]
 pub enum HealTarget {

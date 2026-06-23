@@ -13,6 +13,11 @@ impl BrowserLayout {
     /// Returns a list of (key, description) tuples suitable for display in the help panel.
     /// The bindings are contextual based on the current focus area and active tab.
     pub fn get_help_bindings(&self) -> Vec<(&'static str, &'static str)> {
+        // A modal dialog only accepts button navigation/activation.
+        if self.has_active_dialog() {
+            return vec![("←/→", "Select button"), ("Enter", "Activate"), ("Esc", "Cancel")];
+        }
+
         let mut bindings = vec![
             ("q", "Quit"),
             ("?", "Toggle help"),
@@ -103,6 +108,15 @@ impl BrowserLayout {
     /// - 1..50: low-value extras (Resize, Copy ID)
     /// - 0: hidden from the bar entirely (e.g. Enter, which is universal)
     fn get_context_bindings(&self) -> Vec<KeyBinding> {
+        // A modal dialog only accepts button navigation/activation.
+        if self.has_active_dialog() {
+            return vec![
+                KeyBinding::new("←/→", "Select"),
+                KeyBinding::new("Enter", "Activate"),
+                KeyBinding::new("Esc", "Cancel"),
+            ];
+        }
+
         // Context-specific bindings first (most relevant), then globals.
         let mut bindings: Vec<KeyBinding> = Vec::new();
 

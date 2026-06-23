@@ -10,7 +10,7 @@ use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Margin, Rect},
     style::{Style, Stylize},
     text::{Line, Span, Text},
-    widgets::{Block, Clear, Paragraph, Widget, Wrap},
+    widgets::{Block, BorderType, Clear, Paragraph, Widget, Wrap},
 };
 
 use crate::state::{AppMode, AppState};
@@ -300,9 +300,17 @@ pub fn render_help_panel(area: Rect, buf: &mut Buffer, bindings: &[(&str, &str)]
 
 /// Render a confirmation dialog.
 ///
-/// Used for confirming destructive actions.
-pub fn render_confirmation(area: Rect, buf: &mut Buffer, message: &str) {
-    // Calculate dialog dimensions (centered, 60% of width, max 40 chars)
+/// Used for confirming destructive actions. The dialog is centered over the
+/// given area with a titled border and Cancel/Confirm buttons; `confirm_selected`
+/// controls which button is highlighted as focused.
+pub fn render_confirmation(
+    area: Rect,
+    buf: &mut Buffer,
+    title: &str,
+    message: &str,
+    confirm_selected: bool,
+) {
+    // Calculate dialog dimensions (centered, 60% of width, max 60 chars)
     let width = (area.width as f64 * 0.6).min(60.0) as u16;
     let height = area.height.min(8);
 
@@ -316,25 +324,39 @@ pub fn render_confirmation(area: Rect, buf: &mut Buffer, message: &str) {
     // Clear the background to avoid overlap
     Widget::render(Clear, dialog_area, buf);
 
+    let palette = crate::theme::palette();
+
+    // The focused button is filled; the other is drawn as an outline. The
+    // Confirm button stays red to flag it as the destructive choice.
+    let cancel_style = if confirm_selected {
+        Style::default().fg(palette.emphasis)
+    } else {
+        Style::default().bg(palette.accent).fg(palette.inverse).bold()
+    };
+    let confirm_style = if confirm_selected {
+        Style::default().bg(palette.error).fg(palette.inverse).bold()
+    } else {
+        Style::default().fg(palette.error)
+    };
+
     let text = Text::from(vec![
         Line::from(""),
         Line::from(vec![Span::styled(message, Style::default().bold())]),
         Line::from(""),
         Line::from(vec![
-            Span::raw("Press "),
-            Span::styled("y", Style::default().fg(crate::theme::palette().success).bold()),
-            Span::raw(" to confirm, "),
-            Span::styled("n", Style::default().fg(crate::theme::palette().error).bold()),
-            Span::raw(" to cancel"),
+            Span::styled("  Cancel  ", cancel_style),
+            Span::raw("      "),
+            Span::styled("  Confirm  ", confirm_style),
         ]),
     ]);
 
     let paragraph = Paragraph::new(text)
         .block(
             Block::bordered()
-                .title("Confirm")
+                .border_type(BorderType::Rounded)
+                .title(title.to_string())
                 .title_style(Style::default().bold())
-                .border_style(Style::default().fg(crate::theme::palette().warning)),
+                .border_style(Style::default().fg(crate::theme::palette().error)),
         )
         .alignment(Alignment::Center)
         .wrap(Wrap { trim: false });
