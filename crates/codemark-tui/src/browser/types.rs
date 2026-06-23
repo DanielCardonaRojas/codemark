@@ -329,6 +329,7 @@ impl TabContent {
 }
 
 /// Data for a single step in a tour.
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StepData {
     /// Path to the file for this step
     pub file_path: String,
@@ -342,6 +343,32 @@ pub struct StepData {
     pub resolution: Option<Resolution>,
     /// All resolutions for this bookmark (for showing full resolution history)
     pub resolutions: Vec<Resolution>,
+}
+
+/// A fully-computed bookmark preview, produced off the UI thread.
+///
+/// All expensive work (live resolution, file read, markdown rendering) is done
+/// when this is built, so applying it to the [`RightPane`](super::RightPane) is
+/// just field assignment with no I/O. Sent back to the UI thread via
+/// [`Event::PreviewReady`](crate::event::Event::PreviewReady).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PreviewPayload {
+    /// Bookmark this preview belongs to.
+    pub bookmark_id: String,
+    /// Resolved step (file path + line range + bookmark metadata).
+    pub step: StepData,
+    /// File contents for the code preview.
+    pub code: String,
+    /// File extension (for syntax highlighting).
+    pub extension: String,
+    /// Relative path shown in the preview header.
+    pub relative_path: String,
+    /// Rendered markdown for the Info tab.
+    pub info_markdown: String,
+    /// Rendered markdown for the Details pane.
+    pub details_markdown: String,
+    /// The bookmark's query (shown in the Query tab).
+    pub query: String,
 }
 
 /// Escape special markdown characters.
