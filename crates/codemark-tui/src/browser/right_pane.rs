@@ -794,26 +794,17 @@ impl RightPane {
     /// # Arguments
     /// * `area` - The area to render in
     /// * `buf` - The buffer to render to
-    /// * `steps_fullscreen` - If true, hide the details pane and use full area for steps
+    /// * `hide_details` - If true, hide the details pane (preview + pagination
+    ///   only). The pagination widget stays visible regardless.
     /// * `details_size` - Current size mode for the details pane
     pub fn render(
         &self,
         area: Rect,
         buf: &mut Buffer,
-        steps_fullscreen: bool,
+        hide_details: bool,
         details_size: DetailsPaneSize,
     ) {
         self.last_area.set(area);
-
-        if steps_fullscreen {
-            // In fullscreen mode, use the entire area for the steps panel
-            if self.overview_active {
-                self.render_overview_block(area, buf);
-            } else {
-                self.render_steps_or_loading(area, buf);
-            }
-            return;
-        }
 
         if details_size.is_expanded() {
             // Details takes the full right-pane area (steps/pager hidden)
@@ -827,12 +818,15 @@ impl RightPane {
             self.info_config.min
         };
 
-        // If only one step, hide the pager
-        let constraints = if self.pager_total > 1 {
-            vec![Constraint::Min(0), Constraint::Length(1), Constraint::Length(info_height)]
-        } else {
-            vec![Constraint::Min(0), Constraint::Length(0), Constraint::Length(info_height)]
-        };
+        // If only one step, hide the pager. In preview-only mode the details
+        // pane collapses to zero height but the pager is kept.
+        let pager_height = if self.pager_total > 1 { 1 } else { 0 };
+        let details_height = if hide_details { 0 } else { info_height };
+        let constraints = vec![
+            Constraint::Min(0),
+            Constraint::Length(pager_height),
+            Constraint::Length(details_height),
+        ];
 
         // Split vertically: steps (flex), pager (1 row or 0), details (dynamic height)
         let chunks =
@@ -853,7 +847,9 @@ impl RightPane {
             pager.render(chunks[1], buf);
         }
 
-        self.render_details_block(chunks[2], buf);
+        if !hide_details {
+            self.render_details_block(chunks[2], buf);
+        }
     }
 
     /// Render the details block with border, title offset, and content.

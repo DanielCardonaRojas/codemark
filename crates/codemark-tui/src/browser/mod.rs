@@ -1732,7 +1732,7 @@ impl BrowserLayout {
             .constraints(left_constraints)
             .split(area);
 
-        let steps_fullscreen = self.right_pane_size.is_fullscreen();
+        let hide_details = self.right_pane_size.hides_details();
 
         match render_mode {
             RenderMode::Both => {
@@ -1743,7 +1743,7 @@ impl BrowserLayout {
                 self.left_pane.render(chunks[0], buf);
             }
             RenderMode::RightOnly => {
-                self.right_pane.render(chunks[0], buf, steps_fullscreen, self.details_pane_size);
+                self.right_pane.render(chunks[0], buf, hide_details, self.details_pane_size);
             }
         }
 
