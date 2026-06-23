@@ -320,6 +320,14 @@ impl BrowserLayout {
         self.preview_seq = self.preview_seq.wrapping_add(1);
         self.active_preview_request = self.preview_seq;
 
+        // Cancel any in-flight loading state for the previous selection. This
+        // prevents the grace period from expiring and showing the wrong file
+        // label while the new selection is still debouncing.
+        self.inflight_preview = None;
+        if self.right_pane.is_loading() {
+            self.right_pane.finish_loading();
+        }
+
         // Label the (eventual) loading indicator with the selected row's path —
         // cheap, read from the already-rendered list item.
         let label = self
