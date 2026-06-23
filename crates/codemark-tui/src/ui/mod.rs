@@ -301,7 +301,8 @@ pub fn render_help_panel(area: Rect, buf: &mut Buffer, bindings: &[(&str, &str)]
 /// Render a confirmation dialog.
 ///
 /// Used for confirming destructive actions. The dialog is centered over the
-/// given area with a titled border and a `y`/`n` prompt.
+/// given area with a titled border and Cancel/Confirm buttons; `confirm_selected`
+/// controls which button is highlighted as focused.
 pub fn render_confirmation(
     area: Rect,
     buf: &mut Buffer,

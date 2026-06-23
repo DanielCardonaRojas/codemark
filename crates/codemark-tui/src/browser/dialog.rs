@@ -88,14 +88,15 @@ mod tests {
     use codemark_core::storage::db::Database;
     use ratatui::crossterm::event::{KeyCode, KeyEvent};
 
-    fn test_layout() -> BrowserLayout {
+    /// Build a layout backed by a throwaway database. The returned `TempDir`
+    /// must be kept alive for the duration of the test; it is cleaned up when
+    /// it goes out of scope at the end of the test.
+    fn test_layout() -> (BrowserLayout, tempfile::TempDir) {
         let dir = tempfile::tempdir().expect("tempdir");
         let db = Database::open(&dir.path().join("test.db")).expect("open db");
         let handler = EventHandler::new(EventHandlerConfig::default()).expect("event handler");
-        // Keep the tempdir alive for the duration of the test by leaking it;
-        // the OS reclaims it when the test process exits.
-        std::mem::forget(dir);
-        BrowserLayout::new(db, handler)
+        let layout = BrowserLayout::new(db, handler);
+        (layout, dir)
     }
 
     fn sample_dialog() -> ConfirmDialog {
@@ -108,13 +109,13 @@ mod tests {
 
     #[test]
     fn no_dialog_by_default() {
-        let layout = test_layout();
+        let (layout, _dir) = test_layout();
         assert!(!layout.has_active_dialog());
     }
 
     #[test]
     fn requesting_confirmation_activates_dialog_focused_on_cancel() {
-        let mut layout = test_layout();
+        let (mut layout, _dir) = test_layout();
         layout.request_confirmation(sample_dialog());
         assert!(layout.has_active_dialog());
         // Destructive dialogs start on Cancel for safety.
@@ -123,7 +124,7 @@ mod tests {
 
     #[test]
     fn arrow_keys_toggle_button_focus() {
-        let mut layout = test_layout();
+        let (mut layout, _dir) = test_layout();
         layout.request_confirmation(sample_dialog());
 
         layout.handle_dialog_key(&KeyEvent::from(KeyCode::Right));
@@ -135,7 +136,7 @@ mod tests {
 
     #[test]
     fn enter_on_cancel_dismisses_without_action() {
-        let mut layout = test_layout();
+        let (mut layout, _dir) = test_layout();
         layout.request_confirmation(sample_dialog());
 
         // Default focus is Cancel, so Enter just closes the dialog.
@@ -146,7 +147,7 @@ mod tests {
 
     #[test]
     fn esc_key_dismisses_dialog() {
-        let mut layout = test_layout();
+        let (mut layout, _dir) = test_layout();
         layout.request_confirmation(sample_dialog());
 
         layout.handle_dialog_key(&KeyEvent::from(KeyCode::Esc));
@@ -155,7 +156,7 @@ mod tests {
 
     #[test]
     fn enter_on_confirm_runs_action_and_closes_dialog() {
-        let mut layout = test_layout();
+        let (mut layout, _dir) = test_layout();
         layout.request_confirmation(sample_dialog());
 
         // Move focus to Confirm, then activate it. Deleting a missing id is a
@@ -168,7 +169,7 @@ mod tests {
 
     #[test]
     fn unrelated_keys_keep_dialog_open() {
-        let mut layout = test_layout();
+        let (mut layout, _dir) = test_layout();
         layout.request_confirmation(sample_dialog());
 
         let handled = layout.handle_dialog_key(&KeyEvent::from(KeyCode::Char('x')));
