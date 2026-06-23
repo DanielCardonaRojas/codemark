@@ -271,8 +271,11 @@ jobs:
           PRERELEASE_FLAG: "${{ fromJson(steps.host.outputs.manifest).announcement_is_prerelease && '--prerelease' || '' }}"
           RELEASE_COMMIT: "${{ github.sha }}"
         run: |
-          # If we're editing a release in place, we need to upload things ahead of time
-          gh release upload "${{ needs.plan.outputs.tag }}" artifacts/*
+          # If we're editing a release in place, we need to upload things ahead of time.
+          # --clobber is a manual addition (not emitted by `dist generate`): it makes the
+          # upload idempotent so a re-run after a partial/failed upload doesn't error with
+          # "asset already exists". Re-apply this flag if you regenerate this workflow.
+          gh release upload "${{ needs.plan.outputs.tag }}" artifacts/* --clobber
 
           gh release edit "${{ needs.plan.outputs.tag }}" --target "$RELEASE_COMMIT" $PRERELEASE_FLAG --draft=false
 
