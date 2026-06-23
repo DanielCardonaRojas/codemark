@@ -39,6 +39,10 @@ Codemark features a built-in, keyboard-driven dashboard inspired by `lazygit`. I
 codemark tui
 ```
 
+> **Requires a [Nerd Font](https://www.nerdfonts.com/).** The dashboard uses glyph
+> icons throughout — set your terminal to a Nerd Font (e.g. `JetBrainsMono Nerd
+> Font`) so they render correctly instead of showing as `□` placeholders.
+
 ![Browsing bookmarks in the TUI](./screenshots/images/codemark_tui_demo.gif)
 
 ### Themes
@@ -89,9 +93,7 @@ variable; run `codemark-tui --list-schemes` to see what's available.
 - 🔍 **Semantic Search**: Find code by intent (e.g., *"where is authentication handled?"*).
 - 🗃️ **Collections**: Group bookmarks into logical sets for specific tasks.
 - 📦 **Git Integrated**: Track bookmarks across commits and branches.
-- 🧩 **First-class Integrations**:
-    - **Neovim**: Gut signs, visual selection bookmarking, and Telescope support.
-    - **Claude Code**: Specialized plugin for AI-driven bookmarking.
+- 🧩 **Agent Skills**: An installable skill that teaches AI coding agents to bookmark for you — works with Claude Code, GitHub Copilot, Gemini CLI, and any agent that loads `.agents/skills`.
 
 ---
 
@@ -137,11 +139,22 @@ cargo install codemark-tui
 
 ## 🚦 Quick Start
 
+> **Repo-aware by default.** Codemark automatically detects the current Git
+> repository (walking up from your working directory) and stores bookmarks
+> alongside it — no setup required. You can also operate on a repo from any path
+> by referencing it by identity with `--repo <owner/name>`, or point at a
+> specific database with `--db <path>` / the `CODEMARK_DB` env var.
+
 ### 1. Install the agent skill
 Teach your AI agent how to use Codemark. This installs the Codemark skill into your agent's skills directory:
 ```bash
 codemark install-skill --agent claude --scope user
 ```
+
+Supported `--agent` values: `claude` (Claude Code), `copilot` (GitHub Copilot),
+`gemini` (Gemini CLI), and `agents` (the generic `.agents/skills` location for
+any other agent). Use `--scope project` instead of `user` to install into the
+current repository.
 
 ### 2. Let your agent bookmark for you
 Ask your agent to capture the structure of your codebase as it explores. For example:
@@ -170,8 +183,7 @@ codemark tui
 - [**Full Command Reference**](./dev-docs/CLI.md) — Detailed flag and subcommand guide.
 - [**Configuration**](./dev-docs/configuration.md) — Editor setup, themes, global/local config, and semantic search.
 - [**Templates**](./dev-docs/templates.md) — Customize markdown output and TUI previews.
-- [**Neovim Plugin**](./extras/neovim-plugin/README.md) — Setup for `codemark.nvim`.
-- [**Claude Code Plugin**](./extras/claude-code-plugin/) — Power up your AI agent.
+- [**Agent Skill**](./extras/skills/codemark/SKILL.md) — The skill installed by `codemark install-skill` (Claude Code, Copilot, Gemini, and more).
 
 ---
 
