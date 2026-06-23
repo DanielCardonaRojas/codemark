@@ -78,7 +78,7 @@ impl BrowserLayout {
                 bindings.push(("H", "Heal"));
                 bindings.push(("↑", "Focus steps"));
                 bindings.push(("↓", "Focus details"));
-                bindings.push(("+/-", "Toggle fullscreen"));
+                bindings.push(("+/-", "Cycle layout"));
                 // Only show Ctrl+O binding when Info tab is selected
                 if self.right_pane.steps.tabs.selected_index() == INFO_TAB_INDEX {
                     bindings.push(("Ctrl+O", "Copy markdown"));
@@ -192,7 +192,7 @@ impl BrowserLayout {
                 if self.right_pane.steps.tabs.selected_index() == INFO_TAB_INDEX {
                     bindings.push(KeyBinding::new("Ctrl+O", "Copy markdown").with_priority(30));
                 }
-                bindings.push(KeyBinding::new("+/-", "Toggle fullscreen").with_priority(25));
+                bindings.push(KeyBinding::new("+/-", "Cycle layout").with_priority(25));
             }
             FocusArea::Filter => {}
         }

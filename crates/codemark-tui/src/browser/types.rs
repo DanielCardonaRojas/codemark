@@ -181,20 +181,37 @@ impl LeftPaneSize {
 }
 
 /// Size mode for the right pane (preview), allowing expansion to full screen.
+///
+/// Cycles: Regular → Full → PreviewOnly → Regular. Both expanded states take the
+/// full window width (left pane hidden) and always keep the pagination widget
+/// visible; they differ only in whether the details pane is shown.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum RightPaneSize {
     /// Regular size (shares space with left pane based on left_pane_size)
     #[default]
     Regular,
-    /// Full window width (100%) - left pane hidden
+    /// Full window width (100%) - left pane hidden, preview + pagination + details
     Full,
+    /// Full window width (100%) - left pane hidden, preview + pagination only
+    /// (details pane hidden)
+    PreviewOnly,
 }
 
 impl RightPaneSize {
-    /// Toggle between regular and full size.
-    pub fn toggle(self) -> Self {
+    /// Cycle to the next layout (Regular → Full → PreviewOnly → Regular).
+    pub fn increase(self) -> Self {
         match self {
             Self::Regular => Self::Full,
+            Self::Full => Self::PreviewOnly,
+            Self::PreviewOnly => Self::Regular,
+        }
+    }
+
+    /// Cycle to the previous layout (Regular → PreviewOnly → Full → Regular).
+    pub fn decrease(self) -> Self {
+        match self {
+            Self::Regular => Self::PreviewOnly,
+            Self::PreviewOnly => Self::Full,
             Self::Full => Self::Regular,
         }
     }
@@ -202,7 +219,12 @@ impl RightPaneSize {
     /// Check if the right pane should override the default layout.
     /// When true, the right pane takes full width regardless of left pane size.
     pub fn is_fullscreen(self) -> bool {
-        matches!(self, Self::Full)
+        matches!(self, Self::Full | Self::PreviewOnly)
+    }
+
+    /// Check if the details pane should be hidden (preview + pagination only).
+    pub fn hides_details(self) -> bool {
+        matches!(self, Self::PreviewOnly)
     }
 }
 
@@ -290,15 +312,31 @@ mod tests {
     }
 
     #[test]
-    fn test_right_pane_size_toggle() {
-        assert_eq!(RightPaneSize::Regular.toggle(), RightPaneSize::Full);
-        assert_eq!(RightPaneSize::Full.toggle(), RightPaneSize::Regular);
+    fn test_right_pane_size_increase() {
+        assert_eq!(RightPaneSize::Regular.increase(), RightPaneSize::Full);
+        assert_eq!(RightPaneSize::Full.increase(), RightPaneSize::PreviewOnly);
+        assert_eq!(RightPaneSize::PreviewOnly.increase(), RightPaneSize::Regular);
+    }
+
+    #[test]
+    fn test_right_pane_size_decrease() {
+        assert_eq!(RightPaneSize::Regular.decrease(), RightPaneSize::PreviewOnly);
+        assert_eq!(RightPaneSize::PreviewOnly.decrease(), RightPaneSize::Full);
+        assert_eq!(RightPaneSize::Full.decrease(), RightPaneSize::Regular);
     }
 
     #[test]
     fn test_right_pane_size_is_fullscreen() {
         assert!(!RightPaneSize::Regular.is_fullscreen());
         assert!(RightPaneSize::Full.is_fullscreen());
+        assert!(RightPaneSize::PreviewOnly.is_fullscreen());
+    }
+
+    #[test]
+    fn test_right_pane_size_hides_details() {
+        assert!(!RightPaneSize::Regular.hides_details());
+        assert!(!RightPaneSize::Full.hides_details());
+        assert!(RightPaneSize::PreviewOnly.hides_details());
     }
 
     #[test]

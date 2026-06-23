@@ -858,7 +858,13 @@ impl BrowserLayout {
                     "details pane resized"
                 );
             } else {
-                let next = self.right_pane_size.toggle();
+                // Cycle the preview pane layout
+                // (Regular → Full → PreviewOnly → Regular).
+                let next = if grow {
+                    self.right_pane_size.increase()
+                } else {
+                    self.right_pane_size.decrease()
+                };
                 self.right_pane_size = next;
                 // Reset details fullscreen to avoid conflicting states
                 self.details_pane_size = DetailsPaneSize::Regular;
@@ -868,7 +874,7 @@ impl BrowserLayout {
                 tracing::debug!(
                     target: "codemark::ui",
                     ?next,
-                    "right pane size toggled"
+                    "preview pane layout cycled"
                 );
             }
         } else if grow {
