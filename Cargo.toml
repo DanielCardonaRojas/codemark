@@ -79,3 +79,8 @@ cargo-dist-version = "0.32.0"
 install-path = "CARGO_HOME"
 # Whether to install an updater program
 install-updater = false
+# Don't have dist create the GitHub Release. The release is created/published
+# from the GitHub UI (or by pushing a tag), which is what triggers this
+# workflow; dist just uploads its build artifacts/installers to that existing
+# release instead of trying to `gh release create` a tag that already exists.
+create-release = false
