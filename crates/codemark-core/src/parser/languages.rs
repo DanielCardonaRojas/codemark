@@ -133,9 +133,23 @@ impl Parser {
     }
 }
 
-/// Cache of parsed trees within a single CLI invocation.
+/// A cached parse: the tree, its source, and the file mtime it was parsed at.
+struct CachedTree {
+    tree: tree_sitter::Tree,
+    source: String,
+    /// File modification time when this was parsed, or `None` for providers that
+    /// report no mtime (treated as immutable, e.g. commit-pinned reads).
+    mtime: Option<std::time::SystemTime>,
+}
+
+/// Cache of parsed trees, keyed by canonical path and invalidated by mtime.
+///
+/// Long-lived in the TUI (a session-level cache), so scrolling through bookmarks
+/// in the same file reuses the parse tree instead of re-reading and re-parsing
+/// on every selection. Entries are re-parsed only when the file's mtime changes,
+/// so external edits are still picked up.
 pub struct ParseCache {
-    trees: HashMap<PathBuf, (tree_sitter::Tree, String)>,
+    trees: HashMap<PathBuf, CachedTree>,
     parser: Parser,
 }
 
@@ -144,24 +158,35 @@ impl ParseCache {
         Ok(ParseCache { trees: HashMap::new(), parser: Parser::new(language)? })
     }
 
-    /// Get the parsed tree and source for a file, parsing it if not already cached.
+    /// Get the parsed tree and source for a file, parsing it if not already
+    /// cached or if the file has changed on disk since it was last parsed.
     pub async fn get_or_parse(
         &mut self,
         path: &Path,
         provider: &dyn crate::vfs::FileProvider,
-    ) -> Result<&(tree_sitter::Tree, String)> {
+    ) -> Result<(&tree_sitter::Tree, &String)> {
         let canonical: std::path::PathBuf = provider.canonicalize(path).await;
+        let current_mtime = provider.mtime(path).await;
 
-        if !self.trees.contains_key(&canonical) {
+        // Re-parse when there's no entry, or the file changed since we cached it.
+        let needs_parse = match self.trees.get(&canonical) {
+            Some(entry) => entry.mtime != current_mtime,
+            None => true,
+        };
+        if needs_parse {
             let (tree, source) = self.parser.parse_file(path, provider).await?;
-            self.trees.insert(canonical.clone(), (tree, source));
+            self.trees.insert(canonical.clone(), CachedTree { tree, source, mtime: current_mtime });
         }
 
-        Ok(self.trees.get(&canonical).unwrap())
+        let entry = self.trees.get(&canonical).unwrap();
+        Ok((&entry.tree, &entry.source))
     }
 
     /// Clear all cached parse trees so the next `get_or_parse` call re-reads
     /// from disk. The parser (grammar) is retained.
+    ///
+    /// Rarely needed now that [`get_or_parse`](Self::get_or_parse) invalidates by
+    /// mtime; kept for callers that want to force a cold re-read.
     pub fn clear_trees(&mut self) {
         self.trees.clear();
     }

@@ -18,6 +18,18 @@ pub trait FileProvider: Send + Sync {
 
     /// Canonicalizes a path if possible.
     async fn canonicalize(&self, path: &Path) -> PathBuf;
+
+    /// Returns the file's last-modified time, used by [`ParseCache`] to decide
+    /// whether a cached parse tree is still valid.
+    ///
+    /// Defaults to `None`, meaning "treat as immutable" — appropriate for
+    /// commit-pinned reads where the content never changes for a given path.
+    /// Local working-tree providers override this so edits invalidate the cache.
+    ///
+    /// [`ParseCache`]: crate::parser::languages::ParseCache
+    async fn mtime(&self, _path: &Path) -> Option<std::time::SystemTime> {
+        None
+    }
 }
 
 /// A file provider that reads from the local filesystem.
@@ -39,5 +51,9 @@ impl FileProvider for LocalFileProvider {
 
     async fn canonicalize(&self, path: &Path) -> PathBuf {
         tokio::fs::canonicalize(path).await.unwrap_or_else(|_| path.to_path_buf())
+    }
+
+    async fn mtime(&self, path: &Path) -> Option<std::time::SystemTime> {
+        tokio::fs::metadata(path).await.ok().and_then(|m| m.modified().ok())
     }
 }

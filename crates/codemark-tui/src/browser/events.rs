@@ -41,12 +41,40 @@ impl BrowserLayout {
 
     // ── Tick events ──────────────────────────────────────────────────────
 
-    /// Advance spinner animations and process deferred clears.
+    /// Advance spinner animations, fire debounced previews, and process deferred clears.
     fn handle_tick_event(&mut self) -> bool {
-        if self.spinning_items.is_empty() {
-            return false;
-        }
+        // The tick counter must always advance: it drives both the list spinners
+        // and the debounce clock for background previews.
         self.tick_count = self.tick_count.wrapping_add(1);
+
+        let mut dirty = false;
+
+        // Fire a debounced bookmark preview once the selection has settled.
+        if self.maybe_spawn_pending_preview() {
+            dirty = true;
+        }
+
+        // Reveal the loading indicator only if a resolve outlives the grace
+        // period — fast/cached resolves apply their result first, so the previous
+        // preview stays on screen and nothing flashes.
+        if let Some((label, since)) = &self.inflight_preview
+            && !self.right_pane.is_loading()
+            && self.tick_count.wrapping_sub(*since) >= super::PREVIEW_LOADING_GRACE_TICKS
+        {
+            let label = label.clone();
+            self.right_pane.begin_loading(label);
+            dirty = true;
+        }
+
+        // Animate the right-pane "Loading preview…" spinner while resolving.
+        if self.right_pane.is_loading() {
+            self.right_pane.advance_loading_spinner();
+            dirty = true;
+        }
+
+        if self.spinning_items.is_empty() {
+            return dirty;
+        }
 
         // Check if a deferred clear is due
         if let Some(clear_at) = self.spinner_clear_at
@@ -67,6 +95,23 @@ impl BrowserLayout {
             }
         }
         true
+    }
+
+    /// If a debounced preview request is due, spawn the background resolve.
+    /// Returns true if a task was spawned (so the frame is marked dirty).
+    fn maybe_spawn_pending_preview(&mut self) -> bool {
+        let due = matches!(&self.pending_preview, Some((_, _, due)) if self.tick_count >= *due);
+        if !due {
+            return false;
+        }
+        if let Some((bookmark_id, label, _)) = self.pending_preview.take() {
+            self.spawn_preview_task(bookmark_id);
+            // Track when the resolve started so the loading indicator can be
+            // deferred past the grace period.
+            self.inflight_preview = Some((label, self.tick_count));
+            return true;
+        }
+        false
     }
 
     // ── App-level events (search results, heal complete, etc.) ───────────
@@ -116,6 +161,25 @@ impl BrowserLayout {
                     for (bookmark_id, status) in batch {
                         panel.update_item_health(bookmark_id, HealthStatus::from(*status));
                     }
+                }
+                Some(true)
+            }
+            Event::PreviewReady { request_id, payload } => {
+                // Drop stale results: the selection moved on since this resolve
+                // was spawned, so a newer request supersedes it.
+                if *request_id == self.active_preview_request {
+                    self.inflight_preview = None;
+                    self.right_pane.apply_preview((**payload).clone());
+                }
+                Some(true)
+            }
+            Event::PreviewFailed { request_id, bookmark_id } => {
+                if *request_id == self.active_preview_request {
+                    self.inflight_preview = None;
+                    // Live resolution failed; fall back to the persisted snapshot
+                    // synchronously (no tree-sitter parse, so it's cheap).
+                    self.right_pane.load_bookmark(&self.db, bookmark_id);
+                    self.right_pane.finish_loading();
                 }
                 Some(true)
             }
@@ -242,6 +306,56 @@ impl BrowserLayout {
             // Send remaining items
             if !batch.is_empty() {
                 let _ = event_handler.send(Event::LiveHealthBatch(batch));
+            }
+        });
+    }
+
+    /// Spawn a background task that resolves a single bookmark preview off the UI
+    /// thread (live resolution + file read + markdown render) and sends the
+    /// result back as [`Event::PreviewReady`] / [`Event::PreviewFailed`].
+    ///
+    /// `request_id` is captured from `active_preview_request` so the UI can drop
+    /// the result if the selection has since moved on. Mirrors
+    /// [`spawn_live_health_task`](Self::spawn_live_health_task): it reopens the DB
+    /// by path and uses a fresh `ParseCache`, since `Database` isn't `Send`.
+    fn spawn_preview_task(&self, bookmark_id: String) {
+        use codemark_core::parser::languages::{Language as CL, ParseCache};
+        use codemark_core::storage::db::Database;
+        use std::collections::HashMap;
+
+        let request_id = self.active_preview_request;
+        let db_path = self.db.path().to_path_buf();
+        let head = self.right_pane.head_commit().map(|s| s.to_string());
+        let event_handler = self.event_handler.clone();
+
+        tokio::task::spawn_blocking(move || {
+            let Ok(db) = Database::open(&db_path) else {
+                let _ = event_handler.send(Event::PreviewFailed { request_id, bookmark_id });
+                return;
+            };
+
+            let show_template =
+                codemark_core::templates::load_template(codemark_core::templates::SHOW_TEMPLATE);
+            let details_template =
+                codemark_core::templates::load_template(codemark_core::templates::DETAILS_TEMPLATE);
+            let mut cache: HashMap<CL, ParseCache> = HashMap::new();
+
+            match super::RightPane::build_bookmark_preview(
+                &db,
+                &bookmark_id,
+                &mut cache,
+                &show_template,
+                &details_template,
+                head.as_deref(),
+                // This closure runs on a spawn_blocking thread, not a runtime worker.
+                false,
+            ) {
+                Some(payload) => {
+                    let _ = event_handler.send(Event::PreviewReady { request_id, payload });
+                }
+                None => {
+                    let _ = event_handler.send(Event::PreviewFailed { request_id, bookmark_id });
+                }
             }
         });
     }
@@ -773,7 +887,7 @@ impl BrowserLayout {
                     && let Some(id) = self.left_pane.panel3.take_selection_change()
                     && let Some(tab) = Panel3Tab::from_index(new_tab)
                 {
-                    self.preview_panel3_item(tab, &id);
+                    self.on_panel3_selection_changed(tab, &id);
                 }
                 handled
             }
@@ -793,7 +907,7 @@ impl BrowserLayout {
                             && let Some(tab) =
                                 Panel3Tab::from_index(self.left_pane.panel3.tabs.selected_index())
                         {
-                            self.preview_panel3_item(tab, &id);
+                            self.on_panel3_selection_changed(tab, &id);
                         }
                         handled
                     }

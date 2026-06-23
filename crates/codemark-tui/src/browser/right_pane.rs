@@ -1,4 +1,4 @@
-use crate::browser::{DetailsPaneSize, SectionConfig, StepData, TabbedPanel};
+use crate::browser::{DetailsPaneSize, PreviewPayload, SectionConfig, StepData, TabbedPanel};
 use crate::component::{Component, MarkdownPanel};
 use crate::event::Event;
 use codemark_core::engine::bookmark::{Bookmark, Resolution};
@@ -63,6 +63,44 @@ pub struct RightPane {
     pub needs_preview_update: bool,
     /// Cached HEAD commit hash to avoid re-running git I/O on every preview navigation
     cached_head_commit: Option<String>,
+    /// Whether a bookmark preview is currently being resolved on a background
+    /// task. While true the Content area shows a loading indicator instead of
+    /// (possibly stale) code.
+    loading: bool,
+    /// Optional label (file path) shown next to the loading indicator.
+    loading_label: Option<String>,
+    /// Animation frame counter for the loading spinner.
+    loading_tick: usize,
+}
+
+/// Render a bookmark to markdown using the given handlebars template content.
+///
+/// Shared by [`RightPane::generate_markdown`] and the background preview builder
+/// so the two never diverge. Pure computation (no `&self`), safe to call off the
+/// UI thread.
+fn render_bookmark_markdown(
+    db: &Database,
+    bm: &Bookmark,
+    resolutions: &[Resolution],
+    template_content: &str,
+    current_head: Option<&str>,
+) -> String {
+    let repo_path = db.path().parent().unwrap_or_else(|| db.path());
+    let context =
+        templates::BookmarkTemplateContext::from_bookmark(bm, resolutions, repo_path, current_head);
+    let handlebars = templates::create_handlebars_engine();
+
+    match handlebars.render_template(template_content, &context) {
+        Ok(rendered) => rendered,
+        Err(e) => {
+            // Fallback to simple format if template fails
+            format!(
+                "# Bookmark: {}\n\nError rendering template: {}",
+                &bm.id[..8.min(bm.id.len())],
+                e
+            )
+        }
+    }
 }
 
 impl RightPane {
@@ -95,6 +133,9 @@ impl RightPane {
                 let db_dir = db.path().parent().unwrap_or_else(|| db.path());
                 codemark_core::git::context::detect_context(db_dir).and_then(|ctx| ctx.head_commit)
             },
+            loading: false,
+            loading_label: None,
+            loading_tick: 0,
         };
 
         // Try to load the first tour automatically
@@ -113,6 +154,34 @@ impl RightPane {
         let db_dir = db.path().parent().unwrap_or_else(|| db.path());
         self.cached_head_commit =
             codemark_core::git::context::detect_context(db_dir).and_then(|ctx| ctx.head_commit);
+    }
+
+    /// The cached HEAD commit hash, if any (used by background preview tasks).
+    pub fn head_commit(&self) -> Option<&str> {
+        self.cached_head_commit.as_deref()
+    }
+
+    /// Whether a bookmark preview is currently being resolved.
+    pub fn is_loading(&self) -> bool {
+        self.loading
+    }
+
+    /// Enter the loading state for an in-flight preview, optionally labeled with
+    /// the file path so the user sees *what* is loading.
+    pub fn begin_loading(&mut self, label: Option<String>) {
+        self.loading = true;
+        self.loading_label = label;
+    }
+
+    /// Leave the loading state without applying a preview (e.g. on failure).
+    pub fn finish_loading(&mut self) {
+        self.loading = false;
+        self.loading_label = None;
+    }
+
+    /// Advance the loading spinner animation by one frame.
+    pub fn advance_loading_spinner(&mut self) {
+        self.loading_tick = self.loading_tick.wrapping_add(1);
     }
 
     /// Update the code preview based on current step.
@@ -244,42 +313,124 @@ impl RightPane {
         bookmark_id: &str,
         session_cache: &mut HashMap<CodemarkLanguage, ParseCache>,
     ) {
-        let Some(bm) = db.get_bookmark(bookmark_id).ok().flatten() else {
-            self.clear_preview_state(db);
-            return;
-        };
-
-        // Try live resolution
-        match Self::resolve_bookmark_live(&bm, db, session_cache) {
-            Ok((abs_path, start_line, end_line)) => {
-                // Get all resolutions for showing full history in Info tab
-                let resolutions = db.list_resolutions(&bm.id, 100).unwrap_or_default();
-
-                self.steps_data = vec![StepData {
-                    file_path: abs_path,
-                    line_number: start_line,
-                    line_end: Some(end_line),
-                    bookmark: bm,
-                    resolution: None,
-                    resolutions,
-                }];
-                self.pager_total = 1;
-                self.pager_current = 0;
-                self.active_bookmark_id = Some(bookmark_id.to_string());
-                self.active_tour_name = None;
-                self.overview_active = false;
-                self.update_preview(db);
-            }
-            Err(e) => {
+        match Self::build_bookmark_preview(
+            db,
+            bookmark_id,
+            session_cache,
+            &self.cached_show_template,
+            &self.cached_details_template,
+            self.cached_head_commit.as_deref(),
+            // Synchronous path runs on the UI runtime worker thread.
+            true,
+        ) {
+            Some(payload) => self.apply_preview(*payload),
+            None => {
+                // Live resolution failed (or bookmark missing); fall back to the
+                // persisted path, which also clears state when not found.
                 tracing::warn!(
                     target: "codemark::ui",
                     bookmark_id = %bookmark_id,
-                    error = %e,
                     "Live resolution failed, falling back to persisted path"
                 );
                 self.load_bookmark(db, bookmark_id);
             }
         }
+    }
+
+    /// Build a fully-computed bookmark preview using live (on-the-fly) resolution.
+    ///
+    /// Does all the expensive work — live resolution, file read, markdown
+    /// rendering — and returns a [`PreviewPayload`] ready to apply with
+    /// [`apply_preview`](Self::apply_preview). Returns `None` when the bookmark
+    /// is missing or cannot be resolved live (caller falls back to the persisted
+    /// path). This is a free-standing computation (no `&self`) so it can run on a
+    /// background task as well as synchronously.
+    pub(crate) fn build_bookmark_preview(
+        db: &Database,
+        bookmark_id: &str,
+        cache: &mut HashMap<CodemarkLanguage, ParseCache>,
+        show_template: &str,
+        details_template: &str,
+        head: Option<&str>,
+        on_runtime_worker: bool,
+    ) -> Option<Box<PreviewPayload>> {
+        let bm = db.get_bookmark(bookmark_id).ok().flatten()?;
+        let (abs_path, start_line, end_line, code) =
+            Self::resolve_bookmark_live(&bm, db, cache, on_runtime_worker).ok()?;
+
+        let resolutions = db.list_resolutions(&bm.id, 100).unwrap_or_default();
+        let extension = std::path::Path::new(&abs_path)
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("txt")
+            .to_string();
+        // Live resolution carries no persisted resolution, so the header uses
+        // the bookmark's own relative path (matches `update_preview`).
+        let relative_path = bm.file_path.clone();
+        let info_markdown =
+            render_bookmark_markdown(db, &bm, &resolutions, show_template, head);
+        let details_markdown =
+            render_bookmark_markdown(db, &bm, &resolutions, details_template, head);
+        let query = bm.query.clone();
+
+        let step = StepData {
+            file_path: abs_path,
+            line_number: start_line,
+            line_end: Some(end_line),
+            bookmark: bm,
+            resolution: None,
+            resolutions,
+        };
+
+        Some(Box::new(PreviewPayload {
+            bookmark_id: bookmark_id.to_string(),
+            step,
+            code,
+            extension,
+            relative_path,
+            info_markdown,
+            details_markdown,
+            query,
+        }))
+    }
+
+    /// Apply a pre-computed preview to the panels. Pure UI-thread work (no I/O):
+    /// just assigns the already-rendered content, so it never blocks the loop.
+    pub fn apply_preview(&mut self, payload: PreviewPayload) {
+        self.finish_loading();
+
+        let PreviewPayload {
+            bookmark_id,
+            step,
+            code,
+            extension,
+            relative_path,
+            info_markdown,
+            details_markdown,
+            query,
+        } = payload;
+
+        if let Some(preview) = self.steps.get_step_preview_mut() {
+            preview.set_code(code);
+            preview.set_extension(extension);
+            preview.set_file_header(Some(relative_path));
+            preview.jump_to_range(step.line_number, step.line_end);
+        }
+        if let Some(md_panel) = self.steps.get_markdown_mut() {
+            md_panel.set_markdown(info_markdown);
+        }
+        if let Some(query_preview) = self.steps.get_query_preview_mut() {
+            query_preview.set_code(query);
+            query_preview.set_extension("scm".to_string());
+        }
+        self.details.set_markdown(details_markdown);
+
+        self.steps_data = vec![step];
+        self.pager_total = 1;
+        self.pager_current = 0;
+        self.active_bookmark_id = Some(bookmark_id);
+        self.active_tour_name = None;
+        self.overview_active = false;
     }
 
     /// Load a tour using live resolution for each step.
@@ -306,8 +457,8 @@ impl RightPane {
         for bm in bookmarks {
             let resolutions = db.list_resolutions(&bm.id, 100).unwrap_or_default();
 
-            match Self::resolve_bookmark_live(&bm, db, session_cache) {
-                Ok((abs_path, start_line, end_line)) => {
+            match Self::resolve_bookmark_live(&bm, db, session_cache, true) {
+                Ok((abs_path, start_line, end_line, _source)) => {
                     new_steps.push(StepData {
                         file_path: abs_path,
                         line_number: start_line,
@@ -374,13 +525,28 @@ impl RightPane {
         }
     }
 
-    /// Resolve a bookmark on-the-fly using tree-sitter, returning (abs_path, start_line, end_line).
-    /// All line numbers are 0-indexed (from tree-sitter Point.row).
+    /// Resolve a bookmark on-the-fly using tree-sitter, returning
+    /// `(abs_path, start_line, end_line, source)`. Line numbers are 0-indexed
+    /// (from tree-sitter `Point.row`); `source` is the file's contents, returned
+    /// from the parse cache so callers don't read the file a second time.
+    ///
+    /// The session [`ParseCache`] is reused across selections and invalidates by
+    /// mtime, so scrolling through bookmarks in the same (unchanged) file is a
+    /// cache hit — no disk read, no re-parse. External edits are still picked up
+    /// because the mtime changes.
+    ///
+    /// `on_runtime_worker` selects how the async resolution future is driven to
+    /// completion. When called from a Tokio runtime worker thread (the UI event
+    /// loop) it must use `block_in_place` so the worker isn't blocked; when
+    /// called from a `spawn_blocking` thread (the background preview task)
+    /// `block_in_place` would panic, so we drive the future with a plain
+    /// `block_on` instead.
     fn resolve_bookmark_live(
         bm: &Bookmark,
         db: &Database,
         session_cache: &mut HashMap<CodemarkLanguage, ParseCache>,
-    ) -> std::result::Result<(String, usize, usize), codemark_core::error::Error> {
+        on_runtime_worker: bool,
+    ) -> std::result::Result<(String, usize, usize, String), codemark_core::error::Error> {
         use std::str::FromStr;
 
         let language = CodemarkLanguage::from_str(&bm.language).map_err(|e| {
@@ -404,35 +570,44 @@ impl RightPane {
             }
         };
 
-        // Clear cached parse trees so we always re-read the file from disk,
-        // ensuring edits since the last selection are reflected.
-        cache.clear_trees();
-
         let provider = codemark_core::vfs::LocalFileProvider;
         let handle = tokio::runtime::Handle::current();
 
-        let result = tokio::task::block_in_place(|| {
-            handle.block_on(live_resolution::resolve_transient(
-                bm,
-                cache,
-                language,
+        // Resolve, then pull the source straight out of the cache (a hit, since
+        // resolution just parsed this file) to avoid a second disk read.
+        let resolve = async {
+            let result =
+                live_resolution::resolve_transient(bm, cache, language, db.path(), &provider)
+                    .await?;
+
+            // Treat Failed resolutions as errors so callers fall back to persisted snapshots
+            if result.live_status() == live_resolution::LiveUIStatus::Broken {
+                return Err(codemark_core::error::Error::Resolution(
+                    "bookmark code not found in current file".into(),
+                ));
+            }
+
+            let abs_path = codemark_core::git::context::resolve_bookmark_file_path(
+                &result.file_path,
                 db.path(),
-                &provider,
+            )?;
+            let (_tree, source) = cache.get_or_parse(&abs_path, &provider).await?;
+
+            Ok::<_, codemark_core::error::Error>((
+                abs_path.to_string_lossy().to_string(),
+                result.start_line,
+                result.end_line,
+                source.clone(),
             ))
-        })?;
+        };
 
-        // Treat Failed resolutions as errors so callers fall back to persisted snapshots
-        if result.live_status() == live_resolution::LiveUIStatus::Broken {
-            return Err(codemark_core::error::Error::Resolution(
-                "bookmark code not found in current file".into(),
-            ));
+        if on_runtime_worker {
+            // On a runtime worker thread (UI loop): yield the worker while blocking.
+            tokio::task::block_in_place(|| handle.block_on(resolve))
+        } else {
+            // On a spawn_blocking thread: block_in_place would panic, so block directly.
+            handle.block_on(resolve)
         }
-
-        // Resolve the file path to absolute
-        let abs_path =
-            codemark_core::git::context::resolve_bookmark_file_path(&result.file_path, db.path())?;
-
-        Ok((abs_path.to_string_lossy().to_string(), result.start_line, result.end_line))
     }
 
     /// Clear the preview state (used when a bookmark cannot be loaded).
@@ -612,28 +787,7 @@ impl RightPane {
             }
         };
 
-        // Create context and render using the cached template content
-        let repo_path = db.path().parent().unwrap_or_else(|| db.path());
-        let context = templates::BookmarkTemplateContext::from_bookmark(
-            bm,
-            resolutions,
-            repo_path,
-            current_head,
-        );
-        let handlebars = templates::create_handlebars_engine();
-
-        match handlebars.render_template(template_content, &context) {
-            Ok(rendered) => rendered,
-            Err(e) => {
-                // Fallback to simple format if template fails
-                format!(
-                    "# Bookmark: {}\n\nError rendering template {}: {}",
-                    &bm.id[..8.min(bm.id.len())],
-                    template,
-                    e
-                )
-            }
-        }
+        render_bookmark_markdown(db, bm, resolutions, template_content, current_head)
     }
 
     /// Render the right pane.
@@ -657,7 +811,7 @@ impl RightPane {
             if self.overview_active {
                 self.render_overview_block(area, buf);
             } else {
-                self.steps.render(area, buf);
+                self.render_steps_or_loading(area, buf);
             }
             return;
         }
@@ -690,7 +844,7 @@ impl RightPane {
         if self.overview_active {
             self.render_overview_block(chunks[0], buf);
         } else {
-            self.steps.render(chunks[0], buf);
+            self.render_steps_or_loading(chunks[0], buf);
         }
 
         // Render pager if needed
@@ -737,6 +891,71 @@ impl RightPane {
         }
 
         self.details.render(inner, buf);
+    }
+
+    /// Render either the steps panel or, while a preview is resolving in the
+    /// background, a loading indicator in its place.
+    fn render_steps_or_loading(&self, area: Rect, buf: &mut Buffer) {
+        if self.loading {
+            self.render_loading_block(area, buf);
+        } else {
+            self.steps.render(area, buf);
+        }
+    }
+
+    /// Render a bordered "Content" block with a centered animated spinner while a
+    /// bookmark preview resolves on a background task.
+    fn render_loading_block(&self, area: Rect, buf: &mut Buffer) {
+        const SPINNER_FRAMES: &[&str] = &[
+            "\u{28cb}", "\u{2819}", "\u{2839}", "\u{2838}", "\u{283c}", "\u{2834}", "\u{2826}",
+            "\u{2827}", "\u{2807}", "\u{280f}",
+        ];
+        let frame = SPINNER_FRAMES[self.loading_tick % SPINNER_FRAMES.len()];
+
+        let border_style = if self.focused == RightPaneFocus::Steps {
+            Style::default().fg(crate::theme::palette().accent)
+        } else {
+            Style::default().fg(crate::theme::palette().dim)
+        };
+        let title = ratatui::text::Line::from(vec![
+            ratatui::text::Span::raw("  "),
+            ratatui::text::Span::styled("Content", Style::default().bold()),
+        ]);
+        let block = Block::bordered()
+            .border_type(BorderType::Rounded)
+            .title(title)
+            .border_style(border_style);
+        let inner = block.inner(area);
+        block.render(area, buf);
+
+        // Extend the top border line after the ╭ character (matching tabbed panels)
+        for i in 1..=2u16 {
+            let x = area.left() + i;
+            let y = area.top();
+            if x < area.right()
+                && let Some(cell) = buf.cell_mut((x, y))
+            {
+                cell.set_char('─');
+                cell.set_style(border_style);
+            }
+        }
+
+        let message = match &self.loading_label {
+            Some(label) => format!("{frame}  Loading {label}…"),
+            None => format!("{frame}  Loading preview…"),
+        };
+        let line = ratatui::text::Line::from(ratatui::text::Span::styled(
+            message,
+            Style::default().fg(crate::theme::palette().dim),
+        ));
+        let paragraph = ratatui::widgets::Paragraph::new(line)
+            .alignment(ratatui::layout::Alignment::Center);
+        // Vertically center within the inner area.
+        if inner.height > 0 {
+            let y = inner.y + inner.height / 2;
+            let row = Rect { x: inner.x, y, width: inner.width, height: 1 };
+            paragraph.render(row, buf);
+        }
     }
 
     /// Render the collection overview block with border, title offset, and content.

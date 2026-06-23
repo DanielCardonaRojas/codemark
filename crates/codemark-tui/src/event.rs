@@ -43,6 +43,22 @@ pub enum Event {
     /// Background live health resolution results for bookmark list dots.
     /// Each entry is (bookmark_id, live_status).
     LiveHealthBatch(Vec<(String, LiveUIStatus)>),
+    /// A bookmark preview finished resolving on a background task.
+    /// `request_id` guards against applying stale results after the selection moved.
+    PreviewReady {
+        /// Monotonic id of the preview request this result answers.
+        request_id: u64,
+        /// Fully-computed preview, boxed to keep the enum small.
+        payload: Box<crate::browser::PreviewPayload>,
+    },
+    /// A bookmark preview failed to resolve live (broken/missing); the UI falls
+    /// back to the persisted resolution on the main thread.
+    PreviewFailed {
+        /// Monotonic id of the preview request this result answers.
+        request_id: u64,
+        /// Bookmark that failed to resolve.
+        bookmark_id: String,
+    },
 }
 
 impl Event {

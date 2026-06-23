@@ -20,7 +20,8 @@ pub use tabbed_panel::{TabbedPanel, bookmark_to_panel_item};
 pub use tabs::{ContextTab, Panel2Tab, Panel3Tab, Tab, TabSelection};
 pub use types::{
     DetailsPaneSize, ExternalCommand, FocusArea, HealNotification, HealTarget, LeftPaneSize,
-    RightPaneSize, SectionConfig, SpinningItem, StepData, TabContent, escape_markdown,
+    PreviewPayload, RightPaneSize, SectionConfig, SpinningItem, StepData, TabContent,
+    escape_markdown,
 };
 
 use crate::component::{Component, HealthStatus, PanelItem};
@@ -37,6 +38,17 @@ use ratatui::{
     text::{Line, Span},
 };
 use std::collections::HashMap;
+
+/// Number of ticks (tick rate ≈ 100ms) to wait after the last Panel 3 selection
+/// change before spawning the background preview resolve. Coalesces fast
+/// scrolling so only the item the user lands on is resolved.
+const PREVIEW_DEBOUNCE_TICKS: usize = 1;
+
+/// Number of ticks a preview may stay in flight before the loading indicator is
+/// shown. Fast/cached resolves complete (and the result event is applied) within
+/// this window, so the previous preview stays put and no spinner flashes; only a
+/// genuinely slow resolve reveals the indicator.
+const PREVIEW_LOADING_GRACE_TICKS: usize = 2;
 
 /// Shorten a file path to fit within a maximum width, prioritizing the last path components.
 ///
@@ -140,6 +152,21 @@ pub struct BrowserLayout {
     /// Session-level parse cache for live resolution, keyed by language.
     /// Each `ParseCache` is single-language (parser locked at creation).
     session_cache: HashMap<CodemarkLanguage, ParseCache>,
+    /// Monotonic counter for bookmark preview requests. Bumped on every Panel 3
+    /// selection change so background results can be matched/discarded.
+    preview_seq: u64,
+    /// The id of the preview request whose result we currently want to apply.
+    /// Results carrying a different id are stale (the selection moved on) and
+    /// are dropped — this is how superseded previews are "cancelled".
+    active_preview_request: u64,
+    /// A debounced, not-yet-spawned preview request: (bookmark_id, label, due tick).
+    /// Coalesces rapid scrolling into a single resolve once movement settles.
+    pending_preview: Option<(String, Option<String>, usize)>,
+    /// A spawned-but-not-yet-resolved preview: (label, spawn tick). Used to defer
+    /// the loading indicator — the previous preview stays visible and the spinner
+    /// only appears if the resolve outlives a short grace period, so fast/cached
+    /// resolves never flash an intermediate loading state.
+    inflight_preview: Option<(Option<String>, usize)>,
 }
 
 impl BrowserLayout {
@@ -182,6 +209,10 @@ impl BrowserLayout {
             cached_remote_tours: Vec::new(),
             pending_remote_repos: None,
             session_cache: HashMap::new(),
+            preview_seq: 0,
+            active_preview_request: 0,
+            pending_preview: None,
+            inflight_preview: None,
         };
         layout.update_focus_state();
         layout.sync_steps_tab_label();
@@ -224,6 +255,10 @@ impl BrowserLayout {
     }
 
     /// Route a Panel 3 item (by user-data id) to the appropriate live preview.
+    ///
+    /// Synchronous: used for focus-enter / tab-change previews where an instant,
+    /// fully-rendered pane is expected (and exercised by the e2e snapshots). The
+    /// hot scrolling path uses [`on_panel3_selection_changed`] instead.
     pub(super) fn preview_panel3_item(&mut self, tab: Panel3Tab, id: &str) {
         match tab {
             Panel3Tab::Bookmarks => {
@@ -235,6 +270,56 @@ impl BrowserLayout {
             // Tours are activated explicitly (pull/open); no live preview.
             Panel3Tab::Tours => {}
         }
+    }
+
+    /// Handle a Panel 3 selection change from keyboard/mouse navigation.
+    ///
+    /// For Bookmarks this is the lag-prone path (every up/down used to block the
+    /// event loop on a tree-sitter resolve + file read + markdown render), so it
+    /// is now debounced and resolved on a background task — see
+    /// [`request_bookmark_preview`](Self::request_bookmark_preview). Collections
+    /// are cheap (no parse) and stay synchronous.
+    pub(super) fn on_panel3_selection_changed(&mut self, tab: Panel3Tab, id: &str) {
+        match tab {
+            Panel3Tab::Bookmarks => self.request_bookmark_preview(id),
+            Panel3Tab::Collections => self.right_pane.load_collection_overview(&self.db, id),
+            Panel3Tab::Tours => {}
+        }
+    }
+
+    /// Queue a debounced background preview for the given bookmark.
+    ///
+    /// Moves the selection instantly: it records a pending request but leaves the
+    /// *previous* preview on screen (no immediate loading state — see
+    /// [`inflight_preview`](Self::inflight_preview)). The resolve is spawned later
+    /// from the tick handler once movement settles
+    /// (see [`maybe_spawn_pending_preview`]), so a fast scroll through many items
+    /// resolves only the final one.
+    fn request_bookmark_preview(&mut self, id: &str) {
+        // Re-entering the same already-loaded bookmark needs no work.
+        if !self.right_pane.is_loading()
+            && self.inflight_preview.is_none()
+            && self.right_pane.active_bookmark_id.as_deref() == Some(id)
+        {
+            return;
+        }
+
+        // Bump the request id so any in-flight/older result is treated as stale.
+        self.preview_seq = self.preview_seq.wrapping_add(1);
+        self.active_preview_request = self.preview_seq;
+
+        // Label the (eventual) loading indicator with the selected row's path —
+        // cheap, read from the already-rendered list item.
+        let label = self
+            .left_pane
+            .panel3
+            .active_panel()
+            .and_then(|panel| panel.selected())
+            .map(|selected| selected.text().to_string());
+
+        // Debounce: fire one tick from now; rapid moves keep resetting this.
+        self.pending_preview =
+            Some((id.to_string(), label, self.tick_count + PREVIEW_DEBOUNCE_TICKS));
     }
 
     /// Sync the right pane's first tab label based on the active Panel3 tab.
