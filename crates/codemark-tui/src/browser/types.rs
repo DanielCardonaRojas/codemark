@@ -26,9 +26,9 @@ pub struct HealNotification {
 
 /// A modal confirmation dialog displayed over the browser layout.
 ///
-/// While a dialog is active it captures all key input; the user must either
-/// confirm (`y`/Enter) to run the pending [`DialogAction`] or cancel
-/// (`n`/Esc) to dismiss it without side effects.
+/// While a dialog is active it captures all key input. The user moves between
+/// the Cancel and Confirm buttons (←/→/Tab) and activates the focused one with
+/// Enter; Esc cancels outright. Confirming runs the pending [`DialogAction`].
 #[derive(Debug, Clone)]
 pub struct ConfirmDialog {
     /// Title rendered in the dialog border.
@@ -37,6 +37,44 @@ pub struct ConfirmDialog {
     pub message: String,
     /// The action performed when the user confirms.
     pub action: DialogAction,
+    /// Which button currently has focus.
+    pub selected: DialogButton,
+}
+
+impl ConfirmDialog {
+    /// Create a dialog with the Cancel button focused by default, a safe
+    /// default for destructive actions.
+    pub fn new(
+        title: impl Into<String>,
+        message: impl Into<String>,
+        action: DialogAction,
+    ) -> Self {
+        Self {
+            title: title.into(),
+            message: message.into(),
+            action,
+            selected: DialogButton::Cancel,
+        }
+    }
+}
+
+/// The two buttons of a [`ConfirmDialog`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DialogButton {
+    /// Runs the pending action.
+    Confirm,
+    /// Dismisses the dialog without side effects.
+    Cancel,
+}
+
+impl DialogButton {
+    /// Switch focus to the other button.
+    pub fn toggle(self) -> Self {
+        match self {
+            Self::Confirm => Self::Cancel,
+            Self::Cancel => Self::Confirm,
+        }
+    }
 }
 
 /// An action awaiting user confirmation in a [`ConfirmDialog`].

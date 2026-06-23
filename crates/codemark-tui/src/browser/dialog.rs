@@ -10,7 +10,7 @@ use ratatui::layout::Rect;
 
 use crate::ui;
 
-use super::{BrowserLayout, ConfirmDialog, DialogAction};
+use super::{BrowserLayout, ConfirmDialog, DialogAction, DialogButton};
 
 impl BrowserLayout {
     /// Whether a modal dialog is currently being displayed.
@@ -28,20 +28,33 @@ impl BrowserLayout {
 
     /// Handle a key event while a dialog is active.
     ///
-    /// `y`/Enter confirms the pending action; `n`/Esc dismisses it. All other
-    /// keys are swallowed so the dialog stays modal. Always returns `true`.
+    /// ←/→/Tab move focus between the Cancel and Confirm buttons; Enter activates
+    /// the focused button; Esc cancels outright. All other keys are swallowed so
+    /// the dialog stays modal. Always returns `true`.
     pub(super) fn handle_dialog_key(
         &mut self,
         key: &ratatui::crossterm::event::KeyEvent,
     ) -> bool {
         use ratatui::crossterm::event::KeyCode;
         match key.code {
-            KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
-                if let Some(dialog) = self.dialog.take() {
+            KeyCode::Left
+            | KeyCode::Right
+            | KeyCode::Tab
+            | KeyCode::BackTab
+            | KeyCode::Char('h')
+            | KeyCode::Char('l') => {
+                if let Some(dialog) = self.dialog.as_mut() {
+                    dialog.selected = dialog.selected.toggle();
+                }
+            }
+            KeyCode::Enter => {
+                if let Some(dialog) = self.dialog.take()
+                    && dialog.selected == DialogButton::Confirm
+                {
                     self.perform_dialog_action(dialog.action);
                 }
             }
-            KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+            KeyCode::Esc => {
                 self.dialog = None;
             }
             _ => {}
@@ -65,14 +78,15 @@ impl BrowserLayout {
     /// Render the active dialog (if any) centered over the given area.
     pub(super) fn render_dialog(&self, area: Rect, buf: &mut Buffer) {
         if let Some(dialog) = &self.dialog {
-            ui::render_confirmation(area, buf, &dialog.title, &dialog.message);
+            let confirm_selected = dialog.selected == DialogButton::Confirm;
+            ui::render_confirmation(area, buf, &dialog.title, &dialog.message, confirm_selected);
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::browser::{BrowserLayout, ConfirmDialog, DialogAction};
+    use crate::browser::{BrowserLayout, ConfirmDialog, DialogAction, DialogButton};
     use crate::event::{EventHandler, EventHandlerConfig};
     use codemark_core::storage::db::Database;
     use ratatui::crossterm::event::{KeyCode, KeyEvent};
@@ -88,11 +102,11 @@ mod tests {
     }
 
     fn sample_dialog() -> ConfirmDialog {
-        ConfirmDialog {
-            title: "Delete Bookmark".to_string(),
-            message: "Delete bookmark \"foo\"?".to_string(),
-            action: DialogAction::DeleteBookmark("missing-id".to_string()),
-        }
+        ConfirmDialog::new(
+            "Delete Bookmark",
+            "Delete bookmark \"foo\"?",
+            DialogAction::DeleteBookmark("missing-id".to_string()),
+        )
     }
 
     #[test]
@@ -102,18 +116,33 @@ mod tests {
     }
 
     #[test]
-    fn requesting_confirmation_activates_dialog() {
+    fn requesting_confirmation_activates_dialog_focused_on_cancel() {
         let mut layout = test_layout();
         layout.request_confirmation(sample_dialog());
         assert!(layout.has_active_dialog());
+        // Destructive dialogs start on Cancel for safety.
+        assert_eq!(layout.dialog.as_ref().unwrap().selected, DialogButton::Cancel);
     }
 
     #[test]
-    fn cancel_key_dismisses_without_action() {
+    fn arrow_keys_toggle_button_focus() {
         let mut layout = test_layout();
         layout.request_confirmation(sample_dialog());
 
-        let handled = layout.handle_dialog_key(&KeyEvent::from(KeyCode::Char('n')));
+        layout.handle_dialog_key(&KeyEvent::from(KeyCode::Right));
+        assert_eq!(layout.dialog.as_ref().unwrap().selected, DialogButton::Confirm);
+
+        layout.handle_dialog_key(&KeyEvent::from(KeyCode::Left));
+        assert_eq!(layout.dialog.as_ref().unwrap().selected, DialogButton::Cancel);
+    }
+
+    #[test]
+    fn enter_on_cancel_dismisses_without_action() {
+        let mut layout = test_layout();
+        layout.request_confirmation(sample_dialog());
+
+        // Default focus is Cancel, so Enter just closes the dialog.
+        let handled = layout.handle_dialog_key(&KeyEvent::from(KeyCode::Enter));
         assert!(handled);
         assert!(!layout.has_active_dialog());
     }
@@ -128,13 +157,14 @@ mod tests {
     }
 
     #[test]
-    fn confirm_key_runs_action_and_closes_dialog() {
+    fn enter_on_confirm_runs_action_and_closes_dialog() {
         let mut layout = test_layout();
         layout.request_confirmation(sample_dialog());
 
-        // Confirming a deletion for a missing id is a no-op on the DB but must
-        // still close the dialog without panicking.
-        let handled = layout.handle_dialog_key(&KeyEvent::from(KeyCode::Char('y')));
+        // Move focus to Confirm, then activate it. Deleting a missing id is a
+        // no-op on the DB but must still close the dialog without panicking.
+        layout.handle_dialog_key(&KeyEvent::from(KeyCode::Tab));
+        let handled = layout.handle_dialog_key(&KeyEvent::from(KeyCode::Enter));
         assert!(handled);
         assert!(!layout.has_active_dialog());
     }

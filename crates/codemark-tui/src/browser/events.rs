@@ -782,11 +782,11 @@ impl BrowserLayout {
                     let collection_name = selected.text().to_string();
                     if let Ok(Some(_collection)) = self.db.get_collection_by_name(&collection_name)
                     {
-                        self.request_confirmation(ConfirmDialog {
-                            title: "Delete Collection".to_string(),
-                            message: format!("Delete collection \"{}\"?", collection_name),
-                            action: DialogAction::DeleteCollection(collection_name),
-                        });
+                        self.request_confirmation(ConfirmDialog::new(
+                            "Delete Collection",
+                            format!("Delete collection \"{}\"?", collection_name),
+                            DialogAction::DeleteCollection(collection_name),
+                        ));
                         return Some(true);
                     }
                 }
@@ -797,11 +797,11 @@ impl BrowserLayout {
                     && let Some(id) = selected.user_data.clone()
                 {
                     let label = selected.text().to_string();
-                    self.request_confirmation(ConfirmDialog {
-                        title: "Delete Bookmark".to_string(),
-                        message: format!("Delete bookmark \"{}\"?", label),
-                        action: DialogAction::DeleteBookmark(id),
-                    });
+                    self.request_confirmation(ConfirmDialog::new(
+                        "Delete Bookmark",
+                        format!("Delete bookmark \"{}\"?", label),
+                        DialogAction::DeleteBookmark(id),
+                    ));
                     return Some(true);
                 }
             }

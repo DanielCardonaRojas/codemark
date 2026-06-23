@@ -20,9 +20,9 @@ pub use search::{SearchBar, SearchMode};
 pub use tabbed_panel::{TabbedPanel, bookmark_to_panel_item};
 pub use tabs::{ContextTab, Panel2Tab, Panel3Tab, Tab, TabSelection};
 pub use types::{
-    ConfirmDialog, DetailsPaneSize, DialogAction, ExternalCommand, FocusArea, HealNotification,
-    HealTarget, LeftPaneSize, PreviewPayload, RightPaneSize, SectionConfig, SpinningItem, StepData,
-    TabContent, escape_markdown,
+    ConfirmDialog, DetailsPaneSize, DialogAction, DialogButton, ExternalCommand, FocusArea,
+    HealNotification, HealTarget, LeftPaneSize, PreviewPayload, RightPaneSize, SectionConfig,
+    SpinningItem, StepData, TabContent, escape_markdown,
 };
 
 use crate::component::{Component, HealthStatus, PanelItem};
