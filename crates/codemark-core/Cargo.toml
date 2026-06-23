@@ -1,6 +1,6 @@
 [package]
 name = "codemark-core"
-version = "0.7.11"
+version = "0.7.12"
 edition = "2024"
 description = "Core logic for Codemark: AST queries, resolution engine, and storage"
 license = "MIT"
@@ -39,7 +39,10 @@ tree-sitter-typescript = "0.23"
 # Sync (ureq) API only — see embeddings/local.rs. Drop the default native-tls
 # backend (and unused async `tokio` API) for rustls so we stay openssl-free;
 # otherwise Cargo feature unification flips reqwest's native-tls back on too.
-hf-hub = { version = "0.4", default-features = false, features = ["ureq", "rustls-tls"] }
+hf-hub = { version = "0.4", default-features = false, features = [
+  "ureq",
+  "rustls-tls",
+] }
 zstd = "0.13"
 sqlite-vec = "0.1.9"
 zerocopy = "0.8"
