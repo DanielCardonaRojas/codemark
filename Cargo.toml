@@ -79,3 +79,13 @@ cargo-dist-version = "0.32.0"
 install-path = "CARGO_HOME"
 # Whether to install an updater program
 install-updater = false
+# Don't have dist create the GitHub Release. The release is created/published
+# from the GitHub UI (or by pushing a tag), which is what triggers this
+# workflow; dist just uploads its build artifacts/installers to that existing
+# release instead of trying to `gh release create` a tag that already exists.
+create-release = false
+# Allow hand-edits to the generated CI workflow (release.yml) without `dist plan`
+# failing its "out of date contents" check. We add `--clobber` to the release
+# asset upload by hand so re-runs are idempotent; that flag isn't emitted by
+# `dist generate`, so dist must be told the CI file is intentionally dirty.
+allow-dirty = ["ci"]
