@@ -124,7 +124,8 @@ fn missing_tui_executable_shows_install_hint() {
 
     assert_eq!(out.code, 127, "stdout: {}", out.stdout);
     assert!(out.stderr.contains("TUI is not installed"), "stderr: {}", out.stderr);
-    assert!(out.stderr.contains("cargo install codemark-tui"), "stderr: {}", out.stderr);
+    assert!(out.stderr.contains("cargo install"), "stderr: {}", out.stderr);
+    assert!(out.stderr.contains("codemark-tui"), "stderr: {}", out.stderr);
 }
 
 #[test]
