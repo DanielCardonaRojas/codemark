@@ -30,11 +30,7 @@ syntect = "5.2"
 syntect-assets = "0.23"
 serde_yaml = "0.9"
 tokio = { workspace = true }
-# `version` is required to publish to crates.io (cargo uses the registry version
-# for consumers and the path for local builds). Keep it in sync with
-# codemark-core's [package] version on every bump — `cargo set-version` does
-# this automatically; a manual version bump must update it here too.
-codemark-core = { path = "../codemark-core", version = "0.7.14" }
+codemark-core = { path = "../codemark-core" }
 rusqlite = { workspace = true }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
