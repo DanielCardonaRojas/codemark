@@ -566,6 +566,26 @@ impl TabbedPanel {
         }
     }
 
+    /// Create details/comments tabs for right pane bottom area.
+    pub fn new_details_comments() -> Self {
+        let details = MarkdownPanel::new();
+        let comments = MarkdownPanel::new();
+
+        let tabs = TabSelection::new(vec![Tab::new("Details"), Tab::new("Comments")]);
+
+        Self {
+            tabs,
+            panels: vec![
+                TabContent::Markdown(details),
+                TabContent::Markdown(comments),
+            ],
+            focused: false,
+            last_area: std::cell::Cell::new(Rect::default()),
+            pending_selection_change: std::cell::Cell::new(None),
+            tab_changed: std::cell::Cell::new(false),
+        }
+    }
+
     /// Get the last rendered area.
     pub fn last_area(&self) -> Rect {
         self.last_area.get()

@@ -33,8 +33,8 @@ pub struct RightPane {
     pub overview: MarkdownPanel,
     /// When true, the overview panel replaces the steps panel in the main area.
     pub overview_active: bool,
-    /// Details panel showing bookmark metadata (now template-driven)
-    pub details: MarkdownPanel,
+    /// Details panel showing bookmark metadata and comments (now template-driven)
+    pub details: TabbedPanel,
     /// Data for each step in the current tour
     pub steps_data: Vec<StepData>,
     /// Currently focused section
@@ -57,6 +57,8 @@ pub struct RightPane {
     cached_show_template: String,
     /// Cached details template content to avoid repeated disk reads
     cached_details_template: String,
+    /// Cached comments template content to avoid repeated disk reads
+    cached_comments_template: String,
     /// Cached collection overview template content to avoid repeated disk reads
     cached_collection_overview_template: String,
     /// Flag set when step navigation changes and the caller must call update_preview
@@ -108,6 +110,7 @@ impl RightPane {
     pub fn new(db: &Database) -> Self {
         let cached_show_template = load_template(templates::SHOW_TEMPLATE);
         let cached_details_template = load_template(templates::DETAILS_TEMPLATE);
+        let cached_comments_template = load_template(templates::COMMENTS_TEMPLATE);
         let cached_collection_overview_template =
             load_template(templates::COLLECTION_OVERVIEW_TEMPLATE);
 
@@ -115,7 +118,7 @@ impl RightPane {
             steps: TabbedPanel::new_steps_info(db),
             overview: MarkdownPanel::new(),
             overview_active: false,
-            details: MarkdownPanel::new(),
+            details: TabbedPanel::new_details_comments(),
             steps_data: Vec::new(),
             focused: RightPaneFocus::Steps,
             pager_total: 0,
@@ -128,6 +131,7 @@ impl RightPane {
             needs_preview_update: false,
             cached_show_template,
             cached_details_template,
+            cached_comments_template,
             cached_collection_overview_template,
             cached_head_commit: {
                 let db_dir = db.path().parent().unwrap_or_else(|| db.path());
@@ -239,7 +243,19 @@ impl RightPane {
                 templates::DETAILS_TEMPLATE,
                 head_ref,
             );
-            self.details.set_markdown(details_markdown);
+            let comments_markdown = self.generate_markdown(
+                db,
+                &step.bookmark,
+                &step.resolutions,
+                templates::COMMENTS_TEMPLATE,
+                head_ref,
+            );
+            if let Some(crate::browser::TabContent::Markdown(md)) = self.details.panels.get_mut(0) {
+                md.set_markdown(details_markdown);
+            }
+            if let Some(crate::browser::TabContent::Markdown(md)) = self.details.panels.get_mut(1) {
+                md.set_markdown(comments_markdown);
+            }
         }
     }
 
@@ -319,6 +335,7 @@ impl RightPane {
             session_cache,
             &self.cached_show_template,
             &self.cached_details_template,
+            &self.cached_comments_template,
             self.cached_head_commit.as_deref(),
             // Synchronous path runs on the UI runtime worker thread.
             true,
@@ -351,6 +368,7 @@ impl RightPane {
         cache: &mut HashMap<CodemarkLanguage, ParseCache>,
         show_template: &str,
         details_template: &str,
+        comments_template: &str,
         head: Option<&str>,
         on_runtime_worker: bool,
     ) -> Option<Box<PreviewPayload>> {
@@ -370,6 +388,8 @@ impl RightPane {
         let info_markdown = render_bookmark_markdown(db, &bm, &resolutions, show_template, head);
         let details_markdown =
             render_bookmark_markdown(db, &bm, &resolutions, details_template, head);
+        let comments_markdown =
+            render_bookmark_markdown(db, &bm, &resolutions, comments_template, head);
         let query = bm.query.clone();
 
         let step = StepData {
@@ -389,6 +409,7 @@ impl RightPane {
             relative_path,
             info_markdown,
             details_markdown,
+            comments_markdown,
             query,
         }))
     }
@@ -406,6 +427,7 @@ impl RightPane {
             relative_path,
             info_markdown,
             details_markdown,
+            comments_markdown,
             query,
         } = payload;
 
@@ -422,7 +444,12 @@ impl RightPane {
             query_preview.set_code(query);
             query_preview.set_extension("scm".to_string());
         }
-        self.details.set_markdown(details_markdown);
+        if let Some(crate::browser::TabContent::Markdown(md)) = self.details.panels.get_mut(0) {
+            md.set_markdown(details_markdown);
+        }
+        if let Some(crate::browser::TabContent::Markdown(md)) = self.details.panels.get_mut(1) {
+            md.set_markdown(comments_markdown);
+        }
 
         self.steps_data = vec![step];
         self.pager_total = 1;
@@ -633,7 +660,12 @@ impl RightPane {
         if let Some(query_preview) = self.steps.get_query_preview_mut() {
             query_preview.set_code(String::new());
         }
-        self.details.set_markdown(String::new());
+        if let Some(crate::browser::TabContent::Markdown(md)) = self.details.panels.get_mut(0) {
+            md.set_markdown(String::new());
+        }
+        if let Some(crate::browser::TabContent::Markdown(md)) = self.details.panels.get_mut(1) {
+            md.set_markdown(String::new());
+        }
 
         // Still call update_preview for any additional side effects
         self.update_preview(db);
@@ -675,7 +707,12 @@ impl RightPane {
 
         // Clear the Details pane so stale annotations from a previously viewed
         // bookmark don't linger beneath the overview.
-        self.details.set_markdown(String::new());
+        if let Some(crate::browser::TabContent::Markdown(md)) = self.details.panels.get_mut(0) {
+            md.set_markdown(String::new());
+        }
+        if let Some(crate::browser::TabContent::Markdown(md)) = self.details.panels.get_mut(1) {
+            md.set_markdown(String::new());
+        }
 
         // No per-step code preview while showing the overview.
         self.steps_data.clear();
@@ -776,6 +813,7 @@ impl RightPane {
         let template_content = match template {
             templates::SHOW_TEMPLATE => &self.cached_show_template,
             templates::DETAILS_TEMPLATE => &self.cached_details_template,
+            templates::COMMENTS_TEMPLATE => &self.cached_comments_template,
             _ => {
                 // Fallback for unknown templates (shouldn't happen in normal use)
                 return format!(
@@ -855,37 +893,7 @@ impl RightPane {
     /// Render the details block with border, title offset, and content.
     fn render_details_block(&self, area: Rect, buf: &mut Buffer) {
         self.last_details_area.set(area);
-        let border_style = if self.focused == RightPaneFocus::Details {
-            Style::default().fg(crate::theme::palette().accent)
-        } else {
-            Style::default().fg(crate::theme::palette().dim)
-        };
-
-        let title = ratatui::text::Line::from(vec![
-            ratatui::text::Span::raw("  "),
-            ratatui::text::Span::styled("Details", Style::default().bold()),
-        ]);
-        let block = Block::bordered()
-            .border_type(BorderType::Rounded)
-            .title(title)
-            .border_style(border_style);
-
-        let inner = block.inner(area);
-        block.render(area, buf);
-
-        // Extend the top border line after the ╭ character (matching tabbed panels)
-        for i in 1..=2u16 {
-            let x = area.left() + i;
-            let y = area.top();
-            if x < area.right()
-                && let Some(cell) = buf.cell_mut((x, y))
-            {
-                cell.set_char('─');
-                cell.set_style(border_style);
-            }
-        }
-
-        self.details.render(inner, buf);
+        self.details.render(area, buf);
     }
 
     /// Render either the steps panel or, while a preview is resolving in the
@@ -1149,7 +1157,15 @@ impl RightPane {
         }
 
         let content = match self.focused {
-            RightPaneFocus::Details => Some(self.details.markdown()),
+            RightPaneFocus::Details => {
+                if let Some(crate::browser::TabContent::Markdown(md)) =
+                    self.details.panels.get(self.details.tabs.selected_index())
+                {
+                    Some(md.markdown())
+                } else {
+                    None
+                }
+            }
             RightPaneFocus::Steps => {
                 // Only return markdown if the Info tab is selected
                 if self.steps.tabs.selected_index() == INFO_TAB_INDEX {

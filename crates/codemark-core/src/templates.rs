@@ -579,6 +579,7 @@ pub fn templates_dir() -> Option<PathBuf> {
 pub const SHOW_TEMPLATE: &str = "codemark_show.md";
 pub const DETAILS_TEMPLATE: &str = "details_panel.md";
 pub const COLLECTION_OVERVIEW_TEMPLATE: &str = "codemark_collection_overview.md";
+pub const COMMENTS_TEMPLATE: &str = "comments_panel.md";
 
 /// Get the default markdown template for the `show` command.
 pub fn default_show_template() -> &'static str {
@@ -595,12 +596,18 @@ pub fn default_collection_overview_template() -> &'static str {
     include_str!("../../../templates/codemark_collection_overview.md")
 }
 
+/// Get the default markdown template for the comments panel.
+pub fn default_comments_template() -> &'static str {
+    include_str!("../../../templates/comments_panel.md")
+}
+
 /// Get the default content for a given template name.
 pub fn default_template_content(name: &str) -> Option<&'static str> {
     match name {
         SHOW_TEMPLATE => Some(default_show_template()),
         DETAILS_TEMPLATE => Some(default_details_template()),
         COLLECTION_OVERVIEW_TEMPLATE => Some(default_collection_overview_template()),
+        COMMENTS_TEMPLATE => Some(default_comments_template()),
         _ => None,
     }
 }
@@ -634,7 +641,7 @@ pub fn ensure_default_template_exists() {
         return;
     }
 
-    for name in [SHOW_TEMPLATE, DETAILS_TEMPLATE, COLLECTION_OVERVIEW_TEMPLATE] {
+    for name in [SHOW_TEMPLATE, DETAILS_TEMPLATE, COLLECTION_OVERVIEW_TEMPLATE, COMMENTS_TEMPLATE] {
         let template_path = templates_dir.join(name);
         if !template_path.exists()
             && let Some(content) = default_template_content(name)
