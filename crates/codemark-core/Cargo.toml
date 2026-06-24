@@ -4,6 +4,8 @@ version = "0.7.14"
 edition = "2024"
 description = "Core logic for Codemark: AST queries, resolution engine, and storage"
 license = "MIT"
+repository = "https://github.com/DanielCardonaRojas/codemark"
+homepage = "https://github.com/DanielCardonaRojas/codemark"
 
 [lib]
 name = "codemark_core"
