@@ -299,14 +299,18 @@ jobs:
         with:
           persist-credentials: false
       # Tap repo: where the rendered formula is committed/pushed.
+      # persist-credentials: false keeps HOMEBREW_TAP_TOKEN out of tap/.git/config;
+      # it's passed explicitly to the single push below instead.
       - uses: actions/checkout@v6
         with:
           repository: "DanielCardonaRojas/homebrew-codemark"
           token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          persist-credentials: false
           path: tap
       - name: Render and push the combined formula
         env:
           VERSION: ${{ needs.plan.outputs.tag }}
+          TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
         run: |
           bash scripts/render-homebrew-formula.sh "${VERSION}" tap/Formula/codemark.rb
           cd tap
@@ -314,8 +318,13 @@ jobs:
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add Formula/codemark.rb
           # Nothing to do if the formula is byte-for-byte unchanged (e.g. a re-run).
-          git diff --quiet --cached || git commit -m "Update codemark to ${VERSION}"
-          git push
+          if git diff --quiet --cached; then
+            echo "Formula unchanged; nothing to push."
+            exit 0
+          fi
+          git commit -m "Update codemark to ${VERSION}"
+          # Token supplied only here (not persisted); Actions masks it in logs.
+          git push "https://x-access-token:${TAP_TOKEN}@github.com/DanielCardonaRojas/homebrew-codemark.git" HEAD:main
 
   announce:
     needs:

@@ -22,12 +22,24 @@ OUTPUT=${2:?Output formula path required}
 REPO=${CODEMARK_REPO:-DanielCardonaRojas/codemark}
 BASE_URL="https://github.com/${REPO}/releases/download/${VERSION}"
 
+# Fail loudly and up front on the systemic problems (gh missing/unauthenticated,
+# network down, or the release/tag not existing) so they aren't later
+# misreported as a "missing sha256". After this, a failed per-asset download can
+# only mean that specific archive isn't uploaded yet — exactly the empty-string
+# case the validation loop below reports.
+command -v gh >/dev/null 2>&1 || { echo "error: 'gh' (GitHub CLI) is required but not installed." >&2; exit 1; }
+if ! gh release view "${VERSION}" --repo "${REPO}" >/dev/null 2>&1; then
+  echo "error: cannot read release '${VERSION}' in ${REPO}. Check that the release exists and that 'gh' is authenticated and online (gh auth status)." >&2
+  exit 1
+fi
+
 # Read the sha256 of a release asset from its uploaded `<asset>.sha256` file,
-# which is formatted as `<sha256> *<filename>` (shasum style).
+# which is formatted as `<sha256> *<filename>` (shasum style). `|| true` maps a
+# genuinely-absent asset to an empty string (reported by the validation loop)
+# without tripping `set -e`/`pipefail`; systemic failures are already ruled out
+# by the preflight above.
 asset_sha256() {
   local asset="$1"
-  # `|| true` so a missing asset yields an empty string (reported by the
-  # validation loop below) instead of tripping `set -e`/`pipefail` here.
   { gh release download "${VERSION}" --repo "${REPO}" \
     --pattern "${asset}.sha256" --output - 2>/dev/null | awk '{print $1; exit}'; } || true
 }
