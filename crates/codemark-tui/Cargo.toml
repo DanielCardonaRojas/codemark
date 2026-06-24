@@ -11,11 +11,13 @@ homepage = "https://github.com/DanielCardonaRojas/codemark"
 name = "codemark_tui"
 path = "src/lib.rs"
 
-# The TUI is an optional companion binary that `codemark tui` shells out to;
-# it ships via `cargo install codemark-tui`, not the prebuilt dist installers,
-# so it doesn't generate its own second installer/Homebrew formula.
+# The TUI is a companion binary that `codemark tui` shells out to. dist builds
+# and uploads its precompiled archives (codemark-tui-<target>.tar.xz) so the
+# hand-maintained `codemark` Homebrew formula can bundle this binary alongside
+# the CLI from prebuilt artifacts. It still has no Homebrew formula of its own:
+# `installers` excludes homebrew workspace-wide (see the root Cargo.toml).
 [package.metadata.dist]
-dist = false
+dist = true
 
 [[bin]]
 name = "codemark-tui"

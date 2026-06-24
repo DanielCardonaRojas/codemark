@@ -279,6 +279,12 @@ jobs:
 
           gh release edit "${{ needs.plan.outputs.tag }}" --target "$RELEASE_COMMIT" $PRERELEASE_FLAG --draft=false
 
+  # Publish a single, hand-maintained `codemark` Homebrew formula that ships the
+  # precompiled binaries for BOTH workspace packages (codemark-cli's `codemark`
+  # and codemark-tui's `codemark-tui`). dist can't emit one formula spanning two
+  # packages, so this job renders it from the archives dist just uploaded to the
+  # release (reading each `<asset>.sha256`) and pushes it to the tap. This is a
+  # hand-edit of the dist-generated workflow; `allow-dirty = ["ci"]` keeps it.
   publish-homebrew-formula:
     needs:
       - plan
@@ -286,44 +292,39 @@ jobs:
     runs-on: "ubuntu-22.04"
     env:
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      PLAN: ${{ needs.plan.outputs.val }}
-      GITHUB_USER: "axo bot"
-      GITHUB_EMAIL: "admin+bot@axo.dev"
     if: ${{ !fromJson(needs.plan.outputs.val).announcement_is_prerelease || fromJson(needs.plan.outputs.val).publish_prereleases }}
     steps:
+      # Source repo, at the release ref: provides the formula renderer.
       - uses: actions/checkout@v6
         with:
-          persist-credentials: true
+          persist-credentials: false
+      # Tap repo: where the rendered formula is committed/pushed.
+      # persist-credentials: false keeps HOMEBREW_TAP_TOKEN out of tap/.git/config;
+      # it's passed explicitly to the single push below instead.
+      - uses: actions/checkout@v6
+        with:
           repository: "DanielCardonaRojas/homebrew-codemark"
           token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
-      # So we have access to the formula
-      - name: Fetch homebrew formulae
-        uses: actions/download-artifact@v8
-        with:
-          pattern: artifacts-*
-          path: Formula/
-          merge-multiple: true
-      # This is extra complex because you can make your Formula name not match your app name
-      # so we need to find releases with a *.rb file, and publish with that filename.
-      - name: Commit formula files
+          persist-credentials: false
+          path: tap
+      - name: Render and push the combined formula
+        env:
+          VERSION: ${{ needs.plan.outputs.tag }}
+          TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
         run: |
-          git config --global user.name "${GITHUB_USER}"
-          git config --global user.email "${GITHUB_EMAIL}"
-
-          for release in $(echo "$PLAN" | jq --compact-output '.releases[] | select([.artifacts[] | endswith(".rb")] | any)'); do
-            filename=$(echo "$release" | jq '.artifacts[] | select(endswith(".rb"))' --raw-output)
-            name=$(echo "$filename" | sed "s/\.rb$//")
-            version=$(echo "$release" | jq .app_version --raw-output)
-
-            export PATH="/home/linuxbrew/.linuxbrew/bin:$PATH"
-            brew update
-            # We avoid reformatting user-provided data such as the app description and homepage.
-            brew style --except-cops FormulaAudit/Homepage,FormulaAudit/Desc,FormulaAuditStrict --fix "Formula/${filename}" || true
-
-            git add "Formula/${filename}"
-            git commit -m "${name} ${version}"
-          done
-          git push
+          bash scripts/render-homebrew-formula.sh "${VERSION}" tap/Formula/codemark.rb
+          cd tap
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/codemark.rb
+          # Nothing to do if the formula is byte-for-byte unchanged (e.g. a re-run).
+          if git diff --quiet --cached; then
+            echo "Formula unchanged; nothing to push."
+            exit 0
+          fi
+          git commit -m "Update codemark to ${VERSION}"
+          # Token supplied only here (not persisted); Actions masks it in logs.
+          git push "https://x-access-token:${TAP_TOKEN}@github.com/DanielCardonaRojas/homebrew-codemark.git" HEAD:main
 
   announce:
     needs:

@@ -7,11 +7,6 @@ license = "MIT"
 repository = "https://github.com/DanielCardonaRojas/codemark"
 homepage = "https://github.com/DanielCardonaRojas/codemark"
 
-# dist release config: ship a single app whose Homebrew formula is `codemark`
-# (matching the existing tap), not `codemark-cli`.
-[package.metadata.dist]
-formula = "codemark"
-
 [[bin]]
 name = "codemark"
 path = "src/main.rs"
