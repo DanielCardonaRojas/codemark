@@ -116,7 +116,10 @@ fn not_found_message(exe: &str, subcommand: &str) -> String {
     if exe == TUI_EXECUTABLE {
         format!(
             "The TUI is not installed.\n\n\
-             Install it with:\n\n    cargo install {exe}"
+             It ships bundled with Homebrew:\n\n    \
+             brew install DanielCardonaRojas/codemark/codemark\n\n\
+             or build it from source:\n\n    \
+             cargo install --git https://github.com/DanielCardonaRojas/codemark {exe}"
         )
     } else {
         format!(
@@ -141,7 +144,9 @@ mod tests {
     fn tui_not_found_message_points_at_install_command() {
         let msg = not_found_message("codemark-tui", "tui");
         assert!(msg.contains("TUI is not installed"), "{msg}");
-        assert!(msg.contains("cargo install codemark-tui"), "{msg}");
+        assert!(msg.contains("brew install"), "{msg}");
+        assert!(msg.contains("cargo install --git"), "{msg}");
+        assert!(msg.contains("codemark-tui"), "{msg}");
     }
 
     #[test]
