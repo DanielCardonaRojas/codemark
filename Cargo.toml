@@ -60,12 +60,17 @@ urlencoding = "2"
 cargo-dist-profile = "dist"
 # CI backends to support
 ci = "github"
-# The installers to generate for each app
-installers = ["shell", "powershell", "homebrew"]
-# A GitHub repo to push Homebrew formulas to
-tap = "DanielCardonaRojas/homebrew-codemark"
-# Publish jobs to run in CI
-publish-jobs = ["homebrew"]
+# The installers to generate for each app.
+#
+# Homebrew is intentionally NOT a dist installer. dist generates one formula per
+# *package* (codemark-cli -> codemark.rb shipping only `codemark`; codemark-tui
+# -> codemark-tui.rb), and there's no way to merge two packages' binaries into a
+# single formula. We want one `brew install .../codemark` to ship *both*
+# binaries, so the formula is hand-maintained in the tap and rendered from the
+# precompiled archives dist uploads (see the `publish-homebrew-formula` job in
+# .github/workflows/release.yml). Letting dist also publish homebrew would
+# clobber that combined formula on every release.
+installers = ["shell", "powershell"]
 # Target platforms to build apps for (Rust target-triple syntax).
 # Linux is glibc-only (gnu) on purpose: codemark's native C/C++ deps (esaxx-rs
 # via tokenizers, sqlite-vec) need a Zig toolchain + CFLAGS shim to build for

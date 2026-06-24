@@ -1,29 +1,34 @@
 #!/bin/bash
 set -euo pipefail
 
-# Helper script to prepare a Homebrew formula update for a new release
-# Usage: ./release.sh <version>
+# Manual fallback for updating the Homebrew formula after a release.
+#
+# The `codemark` formula ships PRECOMPILED binaries for both `codemark`
+# (codemark-cli) and `codemark-tui` (codemark-tui), rendered from the archives
+# dist uploads to the GitHub release. CI normally does this automatically (the
+# `publish-homebrew-formula` job in .github/workflows/release.yml); use this
+# script only if you need to render/push the formula by hand.
+#
+# Run it AFTER the release's archives have been uploaded.
+#
+# Usage:   ./release.sh <version>
+# Env:     TAP_DIR  override the tap checkout (default: ../homebrew-codemark)
 
 VERSION=${1:?Version required}
-TAG="${VERSION}"
-ARCHIVE_URL="https://github.com/DanielCardonaRojas/codemark/archive/refs/tags/${TAG}.tar.gz"
-ARCHIVE_NAME="${TAG}.tar.gz"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+TAP_DIR=${TAP_DIR:-"${SCRIPT_DIR}/../homebrew-codemark"}
+FORMULA="${TAP_DIR}/Formula/codemark.rb"
 
-echo "Fetching ${ARCHIVE_URL}..."
-curl -L -o "${ARCHIVE_NAME}" "${ARCHIVE_URL}"
+if [ ! -d "${TAP_DIR}" ]; then
+  echo "error: tap repo not found at ${TAP_DIR} (set TAP_DIR to override)" >&2
+  exit 1
+fi
 
-echo "Calculating SHA256..."
-SHA256=$(shasum -a 256 "${ARCHIVE_NAME}" | cut -d' ' -f1)
+"${SCRIPT_DIR}/scripts/render-homebrew-formula.sh" "${VERSION}" "${FORMULA}"
 
-echo "================================"
-echo "Version: ${VERSION}"
-echo "SHA256:  ${SHA256}"
-echo "================================"
 echo ""
-echo "To update the Homebrew formula, run:"
-echo "  cd ../homebrew-codemark && ./update.sh ${VERSION} ${SHA256}"
-echo ""
-echo "Then commit and push:"
+echo "Review the changes and push:"
+echo "  cd ${TAP_DIR}"
 echo "  git add Formula/codemark.rb"
 echo "  git commit -m 'Update codemark to ${VERSION}'"
 echo "  git push"
