@@ -102,7 +102,10 @@ class Codemark < Formula
 
   test do
     assert_match "codemark", shell_output("#{bin}/codemark --version")
-    assert_match "codemark-tui", shell_output("#{bin}/codemark-tui --version")
+    # codemark-tui has no --version flag (an unknown arg just launches the TUI,
+    # which needs a TTY). --list-schemes prints headlessly and exits 0, so it's
+    # the right smoke test for the bundled binary.
+    system bin/"codemark-tui", "--list-schemes"
   end
 end
 EOF
