@@ -118,7 +118,7 @@ powershell -ExecutionPolicy Bypass -c "irm https://github.com/DanielCardonaRojas
 
 ### mise
 ```bash
-mise use -g ubi:DanielCardonaRojas/codemark
+mise use -g github:DanielCardonaRojas/codemark
 ```
 
 ### Cargo (build from source)
@@ -130,7 +130,7 @@ cargo install codemark
 > The script, PowerShell, and `mise` methods install prebuilt binaries from the [GitHub releases](https://github.com/DanielCardonaRojas/codemark/releases). You can also download a platform archive there directly.
 
 ### Terminal UI (optional)
-`codemark tui` opens the interactive dashboard, which ships as a separate companion binary:
+`codemark tui` opens the interactive dashboard, a separate companion binary. **Homebrew installs it automatically** alongside the CLI. The other prebuilt methods (script, PowerShell, mise) install the `codemark` CLI only; add the dashboard with:
 ```bash
 cargo install codemark-tui
 ```
