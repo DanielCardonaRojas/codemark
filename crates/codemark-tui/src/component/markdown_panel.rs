@@ -58,6 +58,9 @@ impl MarkdownPanel {
     /// correctly, plus a little context to inject blockquote/list prefixes and
     /// emulate the prior table layout.
     fn parse_to_text(&self) -> Text<'static> {
+        /// Visual prefix prepended to every line inside a blockquote.
+        const QUOTE_PREFIX: &str = "┃ ";
+
         let palette = crate::theme::palette();
 
         let mut lines: Vec<Line<'static>> = Vec::new();
@@ -77,7 +80,8 @@ impl MarkdownPanel {
             () => {{
                 lines.push(Line::from(std::mem::take(&mut current_spans)));
                 if blockquote_depth > 0 {
-                    current_spans.push(Span::styled("┃ ", Style::default().fg(palette.dim)));
+                    current_spans
+                        .push(Span::styled(QUOTE_PREFIX, Style::default().fg(palette.dim)));
                 }
             }};
         }
@@ -124,7 +128,8 @@ impl MarkdownPanel {
                         // Blockquote body renders gray + italic, prefixed `┃ `.
                         style_stack
                             .push(Style::default().fg(palette.gray).add_modifier(Modifier::ITALIC));
-                        current_spans.push(Span::styled("┃ ", Style::default().fg(palette.dim)));
+                        current_spans
+                            .push(Span::styled(QUOTE_PREFIX, Style::default().fg(palette.dim)));
                     }
                     Tag::Table(_) => {
                         ensure_blank!();
@@ -179,7 +184,19 @@ impl MarkdownPanel {
                     TagEnd::BlockQuote(_) => {
                         style_stack.pop();
                         blockquote_depth = blockquote_depth.saturating_sub(1);
-                        flush_line!();
+                        // The inner paragraph's flush already emitted the quote's
+                        // last line and speculatively re-seeded `current_spans`
+                        // with a "┃ " prefix. If only that prefix (or nothing) is
+                        // pending, drop it so the closed quote leaves no stray bar
+                        // line; otherwise flush any genuine trailing content.
+                        let only_prefix = current_spans
+                            .iter()
+                            .all(|s| s.content.is_empty() || s.content.as_ref() == QUOTE_PREFIX);
+                        if only_prefix {
+                            current_spans.clear();
+                        } else {
+                            flush_line!();
+                        }
                     }
                     TagEnd::Item => {
                         flush_line!();
@@ -536,6 +553,18 @@ mod tests {
     fn blockquotes_get_bar_prefix() {
         let lines = rendered_lines("> quoted text");
         assert!(lines.iter().any(|l| l.starts_with("┃ ") && l.contains("quoted text")));
+        // The quote must not leave a stray prefix-only "┃ " line behind it: the
+        // flush at `End(BlockQuote)` should not emit the seeded prefix as a line.
+        assert!(!lines.iter().any(|l| l.trim_end() == "┃"), "stray blockquote bar line: {lines:?}");
+    }
+
+    #[test]
+    fn multiline_blockquote_has_no_phantom_lines() {
+        // Each quoted line keeps its prefix; no extra bar line trails the block.
+        let lines = rendered_lines("> line one\n> line two\n\nafter");
+        let bar_lines: Vec<&String> = lines.iter().filter(|l| l.starts_with("┃ ")).collect();
+        assert_eq!(bar_lines.len(), 2, "expected exactly two quoted lines: {lines:?}");
+        assert!(lines.iter().any(|l| l == "after"));
     }
 
     #[test]
