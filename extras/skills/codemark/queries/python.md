@@ -147,11 +147,11 @@ Python uses `package:<path>` with dot notation matching the import path:
 ### Bookmark an Auth Validator
 
 ```bash
-codemark add --file app/auth/service.py --query '(function_definition name: (identifier) @name (#eq? @name "validate_token")) @target' --note "Core JWT validation. Entry point for all authenticated requests." --context "Package: app.auth | Validates JWT tokens with expiry check" --tag package:app.auth --tag feature:auth --tag role:validator --created-by agent
+codemark add --file app/auth/service.py --query '(function_definition name: (identifier) @name (#eq? @name "validate_token")) @target' --note "Core JWT validation. Entry point for all authenticated requests." --context "Package: app.auth | Validates JWT tokens with expiry check" --tag package:app.auth --tag feature:auth --tag role:validator --created-by claude
 ```
 
 ### Bookmark a Class Method
 
 ```bash
-codemark add --file app/auth/service.py --query '(class_definition name: (identifier) @class (#eq? @class "AuthService") body: (block (function_definition name: (identifier) @method (#eq? @method "invalidate_cache")) @target))' --note "Clears the JWT token cache" --context "Package: app.auth | Cache invalidation logic" --tag package:app.auth --tag feature:auth --tag layer:business --created-by agent
+codemark add --file app/auth/service.py --query '(class_definition name: (identifier) @class (#eq? @class "AuthService") body: (block (function_definition name: (identifier) @method (#eq? @method "invalidate_cache")) @target))' --note "Clears the JWT token cache" --context "Package: app.auth | Cache invalidation logic" --tag package:app.auth --tag feature:auth --tag layer:business --created-by claude
 ```
