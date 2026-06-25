@@ -485,7 +485,7 @@ mod tests {
 
     #[test]
     fn test_render_titles_with_counts_appends_suffix() {
-        let mut tabs = TabSelection::new(vec![Tab::new("Tags"), Tab::new("Branches")]);
+        let tabs = TabSelection::new(vec![Tab::new("Tags"), Tab::new("Branches")]);
 
         // Two selected tags, no selected branches -> "Tags (2)" / "Branches".
         tabs.render_as_titles_with_counts(&[Some(2), None]);
