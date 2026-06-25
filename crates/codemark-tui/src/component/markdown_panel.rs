@@ -82,12 +82,31 @@ impl MarkdownPanel {
             }};
         }
 
+        // Ensure a blank separator line precedes the next top-level block.
+        // `pulldown-cmark` collapses the blank lines between blocks into block
+        // structure, so we re-synthesize one space between adjacent blocks
+        // (table → heading, paragraph → heading, etc.) — but never at the very
+        // top and never two in a row. Nested blocks (list items, blockquote
+        // bodies) opt out so their lines stay tight.
+        macro_rules! ensure_blank {
+            () => {{
+                let has_pending = !current_spans.iter().all(|s| s.content.is_empty());
+                let last_blank =
+                    lines.last().is_none_or(|l| l.spans.iter().all(|s| s.content.is_empty()));
+                if !has_pending && !lines.is_empty() && !last_blank {
+                    lines.push(Line::from(""));
+                }
+            }};
+        }
+
         let parser = Parser::new_ext(&self.content, Options::ENABLE_TABLES);
 
         for event in parser {
             match event {
                 MdEvent::Start(tag) => match tag {
                     Tag::Heading { level, .. } => {
+                        // Headings always stand apart from the preceding block.
+                        ensure_blank!();
                         let style = match level {
                             HeadingLevel::H1 => Style::default()
                                 .fg(palette.warning)
@@ -96,12 +115,25 @@ impl MarkdownPanel {
                         };
                         style_stack.push(style);
                     }
+                    Tag::Paragraph => {
+                        ensure_blank!();
+                    }
                     Tag::BlockQuote(_) => {
+                        ensure_blank!();
                         blockquote_depth += 1;
                         // Blockquote body renders gray + italic, prefixed `┃ `.
                         style_stack
                             .push(Style::default().fg(palette.gray).add_modifier(Modifier::ITALIC));
                         current_spans.push(Span::styled("┃ ", Style::default().fg(palette.dim)));
+                    }
+                    Tag::Table(_) => {
+                        ensure_blank!();
+                        in_table = true;
+                    }
+                    Tag::List(_) => {
+                        // Separate the list from the preceding block, but keep
+                        // items themselves tight (no blank between them).
+                        ensure_blank!();
                     }
                     Tag::Item => {
                         current_spans.push(Span::styled("• ", Style::default().fg(palette.accent)));
@@ -113,9 +145,6 @@ impl MarkdownPanel {
                     Tag::Emphasis => {
                         let style = self.top_style(&style_stack).add_modifier(Modifier::ITALIC);
                         style_stack.push(style);
-                    }
-                    Tag::Table(_) => {
-                        in_table = true;
                     }
                     Tag::TableHead => {
                         cell_index = 0;
@@ -138,17 +167,14 @@ impl MarkdownPanel {
                     TagEnd::Heading(_) => {
                         style_stack.pop();
                         flush_line!();
-                        // H1 keeps the trailing blank line the old renderer added.
+                        // H1 keeps a trailing blank line so the title stands out
+                        // even when content follows immediately.
                         if matches!(tag, TagEnd::Heading(HeadingLevel::H1)) {
                             flush_line!();
                         }
                     }
                     TagEnd::Paragraph => {
                         flush_line!();
-                        // Blank line between paragraphs (outside blockquotes/tables).
-                        if blockquote_depth == 0 && !in_table {
-                            flush_line!();
-                        }
                     }
                     TagEnd::BlockQuote(_) => {
                         style_stack.pop();
@@ -383,6 +409,47 @@ mod tests {
     fn rendered_text(input: &str) -> String {
         rendered_lines(input).join("\n")
     }
+
+    /// The index of the line whose visible text equals `needle`.
+    fn line_index(lines: &[String], needle: &str) -> usize {
+        lines.iter().position(|l| l == needle).unwrap_or_else(|| panic!("missing {needle:?}"))
+    }
+
+    #[test]
+    fn adjacent_blocks_are_separated_by_a_blank_line() {
+        // pulldown-cmark collapses the blank lines between blocks into block
+        // structure, so the renderer must re-synthesize a separator. A heading
+        // following a table (as in `codemark_show.md`'s Metadata → Resolution
+        // History) previously butted right up against the table's last row.
+        let md = "## Metadata\n| Property | Value |\n|---|---|\n| **Commit** | abc |\n\n## Resolution History\n\nbody";
+        let lines = rendered_lines(md);
+
+        let commit = line_index(&lines, "Commit         abc");
+        let history = line_index(&lines, "Resolution History");
+        assert!(history > commit + 1, "expected blank line between table and heading: {lines:?}");
+        assert!(lines[commit + 1].is_empty(), "line after table row should be blank: {lines:?}");
+
+        // The heading is likewise separated from the paragraph that follows it.
+        let body = line_index(&lines, "body");
+        assert!(body > history + 1, "expected blank line between heading and body: {lines:?}");
+    }
+
+    #[test]
+    fn consecutive_label_lines_stay_tight() {
+        // Resolution History emits `**ID:** ...\n**Date:** ...` with single
+        // newlines (soft breaks); those must remain adjacent, not blank-separated.
+        let lines = rendered_lines("**ID:** 56c2fc13\n**Date:** 2026");
+        let id = line_index(&lines, "ID: 56c2fc13");
+        assert_eq!(lines.get(id + 1).map(String::as_str), Some("Date: 2026"), "{lines:?}");
+    }
+
+    #[test]
+    fn no_leading_blank_line() {
+        // The first block never gets a synthesized blank line above it.
+        let lines = rendered_lines("# Title\n\nbody");
+        assert_eq!(lines.first().map(String::as_str), Some("Title"));
+    }
+
 
     /// Find the first span whose content matches `needle`, returning its style.
     fn style_of(panel: &MarkdownPanel, needle: &str) -> Option<Style> {
