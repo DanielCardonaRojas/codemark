@@ -466,6 +466,8 @@ pub struct PreviewPayload {
     pub info_markdown: String,
     /// Rendered markdown for the Details pane.
     pub details_markdown: String,
+    /// Rendered markdown for the Comments pane.
+    pub comments_markdown: String,
     /// The bookmark's query (shown in the Query tab).
     pub query: String,
 }
