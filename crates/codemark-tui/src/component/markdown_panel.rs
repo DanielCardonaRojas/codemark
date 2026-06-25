@@ -117,12 +117,14 @@ impl MarkdownPanel {
         let mut style_stack: Vec<Style> = vec![Style::default()];
 
         // Links discovered so far, plus the in-progress link (if any). When a
-        // `Tag::Link` opens we record its URL and the span index where its text
-        // begins; when it closes we capture the span range on the current line.
-        // Link text in these templates is single-line, so we tie the link to the
-        // line index it will land on once flushed (`lines.len()`).
+        // `Tag::Link` opens we record its URL, the span index where its text
+        // begins, and the line it begins on (`lines.len()`); when it closes we
+        // capture the span range. Link text is single-line in practice, but a
+        // soft break inside it would flush the line and invalidate the start span
+        // index — the recorded start line lets us detect that and recover (see
+        // `TagEnd::Link`) instead of silently dropping the link.
         let mut links: Vec<LinkSpan> = Vec::new();
-        let mut pending_link: Option<(String, usize)> = None;
+        let mut pending_link: Option<(String, usize, usize)> = None;
 
         // Context flags/counters for prefixes and the table layout hack.
         let mut blockquote_depth: usize = 0;
@@ -220,7 +222,8 @@ impl MarkdownPanel {
                         let style =
                             Style::default().fg(palette.info).add_modifier(Modifier::UNDERLINED);
                         style_stack.push(style);
-                        pending_link = Some((dest_url.into_string(), current_spans.len()));
+                        pending_link =
+                            Some((dest_url.into_string(), current_spans.len(), lines.len()));
                     }
                     Tag::TableHead => {
                         cell_index = 0;
@@ -278,9 +281,13 @@ impl MarkdownPanel {
                     TagEnd::Link => {
                         style_stack.pop();
                         // Record the link's text span range on the line it will
-                        // occupy once flushed. If the link emitted no spans (empty
-                        // text), skip it — there's nothing to focus or highlight.
-                        if let Some((url, start)) = pending_link.take() {
+                        // occupy once flushed. If a soft break flushed the line
+                        // mid-link (`start_line != lines.len()`), the recorded
+                        // `start` indexes a now-emitted line, so anchor to the
+                        // final line's spans (`start = 0`) rather than dropping the
+                        // link. If the link emitted no spans (empty text), skip it.
+                        if let Some((url, start, start_line)) = pending_link.take() {
+                            let start = if start_line == lines.len() { start } else { 0 };
                             let end = current_spans.len();
                             if end > start {
                                 links.push(LinkSpan {
@@ -585,6 +592,12 @@ impl Component for MarkdownPanel {
 
     fn set_focus(&mut self, focused: bool) {
         self.focused = focused;
+        // Clear the focused link when focus leaves so the REVERSED highlight,
+        // which `render` applies unconditionally, doesn't linger on an unfocused
+        // panel after the user tabs away.
+        if !focused {
+            self.focused_link_index = None;
+        }
     }
 }
 
@@ -904,5 +917,39 @@ mod tests {
         press(&mut panel, KeyCode::Char('n')); // focus the link
         assert!(press(&mut panel, KeyCode::Enter));
         OPENED.with(|o| assert_eq!(o.borrow().as_slice(), ["https://home.test".to_string()]));
+    }
+
+    #[test]
+    fn losing_focus_clears_the_highlight() {
+        // The REVERSED highlight must not linger after the panel is unfocused:
+        // `set_focus(false)` clears the focused link so render adds no highlight.
+        let mut panel = link_panel("[a](https://a.test) [b](https://b.test)");
+        press(&mut panel, KeyCode::Char('n')); // focus link 0
+        assert_eq!(panel.focused_link_index, Some(0));
+
+        panel.set_focus(false);
+        assert_eq!(panel.focused_link_index, None, "focus loss must clear the focused link");
+
+        let mut buf = Buffer::empty(Rect::new(0, 0, 80, 4));
+        panel.render(Rect::new(0, 0, 80, 4), &mut buf);
+        let a_cell = buf.cell((0, 0)).expect("cell at link a");
+        assert!(
+            !a_cell.modifier.contains(Modifier::REVERSED),
+            "highlight should not persist on an unfocused panel"
+        );
+    }
+
+    #[test]
+    fn link_text_split_across_a_soft_break_is_still_tracked() {
+        // A soft break inside the link text flushes the line mid-link, so the
+        // span-start index recorded at link open no longer indexes the final
+        // line. The link must anchor to its last line rather than being dropped.
+        let panel = link_panel("[multi\nline link](https://wrapped.test)");
+        panel.refresh_cache();
+        let links = panel.links.borrow();
+        assert_eq!(links.len(), 1, "wrapped link was dropped: {links:?}");
+        assert_eq!(links[0].url, "https://wrapped.test");
+        // It anchors to the final line of the link text, from span 0.
+        assert_eq!(links[0].span_range.start, 0);
     }
 }
