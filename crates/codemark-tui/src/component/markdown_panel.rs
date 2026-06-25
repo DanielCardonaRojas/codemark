@@ -450,7 +450,6 @@ mod tests {
         assert_eq!(lines.first().map(String::as_str), Some("Title"));
     }
 
-
     /// Find the first span whose content matches `needle`, returning its style.
     fn style_of(panel: &MarkdownPanel, needle: &str) -> Option<Style> {
         panel
