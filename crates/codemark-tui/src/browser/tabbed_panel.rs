@@ -575,10 +575,7 @@ impl TabbedPanel {
 
         Self {
             tabs,
-            panels: vec![
-                TabContent::Markdown(details),
-                TabContent::Markdown(comments),
-            ],
+            panels: vec![TabContent::Markdown(details), TabContent::Markdown(comments)],
             focused: false,
             last_area: std::cell::Cell::new(Rect::default()),
             pending_selection_change: std::cell::Cell::new(None),

@@ -352,8 +352,9 @@ impl BrowserLayout {
                 codemark_core::templates::load_template(codemark_core::templates::SHOW_TEMPLATE);
             let details_template =
                 codemark_core::templates::load_template(codemark_core::templates::DETAILS_TEMPLATE);
-            let comments_template =
-                codemark_core::templates::load_template(codemark_core::templates::COMMENTS_TEMPLATE);
+            let comments_template = codemark_core::templates::load_template(
+                codemark_core::templates::COMMENTS_TEMPLATE,
+            );
 
             // Recover from a poisoned lock: a panicked prior task can't corrupt a
             // parse cache in a way that matters (entries are independent), so reuse it.
