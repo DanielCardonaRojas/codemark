@@ -24,6 +24,15 @@ pub const INFO_TAB_INDEX: usize = 1;
 const DETAILS_TAB_INDEX: usize = 0;
 const COMMENTS_TAB_INDEX: usize = 1;
 
+/// Borrowed markdown templates used to render a bookmark preview. Bundled so
+/// the render path takes one grouped argument instead of three loose strings.
+#[derive(Clone, Copy)]
+pub(crate) struct PreviewTemplates<'a> {
+    pub show: &'a str,
+    pub details: &'a str,
+    pub comments: &'a str,
+}
+
 /// Focus areas within the right pane.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RightPaneFocus {
@@ -334,9 +343,11 @@ impl RightPane {
             db,
             bookmark_id,
             session_cache,
-            &self.cached_show_template,
-            &self.cached_details_template,
-            &self.cached_comments_template,
+            PreviewTemplates {
+                show: &self.cached_show_template,
+                details: &self.cached_details_template,
+                comments: &self.cached_comments_template,
+            },
             self.cached_head_commit.as_deref(),
             // Synchronous path runs on the UI runtime worker thread.
             true,
@@ -367,9 +378,7 @@ impl RightPane {
         db: &Database,
         bookmark_id: &str,
         cache: &mut HashMap<CodemarkLanguage, ParseCache>,
-        show_template: &str,
-        details_template: &str,
-        comments_template: &str,
+        templates: PreviewTemplates<'_>,
         head: Option<&str>,
         on_runtime_worker: bool,
     ) -> Option<Box<PreviewPayload>> {
@@ -386,11 +395,11 @@ impl RightPane {
         // Live resolution carries no persisted resolution, so the header uses
         // the bookmark's own relative path (matches `update_preview`).
         let relative_path = bm.file_path.clone();
-        let info_markdown = render_bookmark_markdown(db, &bm, &resolutions, show_template, head);
+        let info_markdown = render_bookmark_markdown(db, &bm, &resolutions, templates.show, head);
         let details_markdown =
-            render_bookmark_markdown(db, &bm, &resolutions, details_template, head);
+            render_bookmark_markdown(db, &bm, &resolutions, templates.details, head);
         let comments_markdown =
-            render_bookmark_markdown(db, &bm, &resolutions, comments_template, head);
+            render_bookmark_markdown(db, &bm, &resolutions, templates.comments, head);
         let query = bm.query.clone();
 
         let step = StepData {

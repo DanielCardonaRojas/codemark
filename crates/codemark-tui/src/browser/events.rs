@@ -365,9 +365,11 @@ impl BrowserLayout {
                 &db,
                 &bookmark_id,
                 &mut cache,
-                &show_template,
-                &details_template,
-                &comments_template,
+                super::right_pane::PreviewTemplates {
+                    show: &show_template,
+                    details: &details_template,
+                    comments: &comments_template,
+                },
                 head.as_deref(),
                 // This closure runs on a spawn_blocking thread, not a runtime worker.
                 false,
