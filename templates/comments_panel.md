@@ -6,4 +6,6 @@
 
 ---
 {{/each}}
+{{else}}
+_No comments._
 {{/if}}

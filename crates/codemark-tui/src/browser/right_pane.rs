@@ -18,6 +18,12 @@ use std::collections::HashMap;
 /// The steps panel has tabs in order: Steps (0), Info (1), Query (2).
 pub const INFO_TAB_INDEX: usize = 1;
 
+/// Tab indices for the bottom details panel, which holds Details (0) and
+/// Comments (1) tabs created by [`TabbedPanel::new_details_comments`]. Keeping
+/// these named avoids coupling the markdown-update sites to positional literals.
+const DETAILS_TAB_INDEX: usize = 0;
+const COMMENTS_TAB_INDEX: usize = 1;
+
 /// Focus areas within the right pane.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RightPaneFocus {
@@ -250,12 +256,7 @@ impl RightPane {
                 templates::COMMENTS_TEMPLATE,
                 head_ref,
             );
-            if let Some(crate::browser::TabContent::Markdown(md)) = self.details.panels.get_mut(0) {
-                md.set_markdown(details_markdown);
-            }
-            if let Some(crate::browser::TabContent::Markdown(md)) = self.details.panels.get_mut(1) {
-                md.set_markdown(comments_markdown);
-            }
+            self.set_details_and_comments(details_markdown, comments_markdown);
         }
     }
 
@@ -444,12 +445,7 @@ impl RightPane {
             query_preview.set_code(query);
             query_preview.set_extension("scm".to_string());
         }
-        if let Some(crate::browser::TabContent::Markdown(md)) = self.details.panels.get_mut(0) {
-            md.set_markdown(details_markdown);
-        }
-        if let Some(crate::browser::TabContent::Markdown(md)) = self.details.panels.get_mut(1) {
-            md.set_markdown(comments_markdown);
-        }
+        self.set_details_and_comments(details_markdown, comments_markdown);
 
         self.steps_data = vec![step];
         self.pager_total = 1;
@@ -660,12 +656,7 @@ impl RightPane {
         if let Some(query_preview) = self.steps.get_query_preview_mut() {
             query_preview.set_code(String::new());
         }
-        if let Some(crate::browser::TabContent::Markdown(md)) = self.details.panels.get_mut(0) {
-            md.set_markdown(String::new());
-        }
-        if let Some(crate::browser::TabContent::Markdown(md)) = self.details.panels.get_mut(1) {
-            md.set_markdown(String::new());
-        }
+        self.set_details_and_comments(String::new(), String::new());
 
         // Still call update_preview for any additional side effects
         self.update_preview(db);
@@ -707,12 +698,7 @@ impl RightPane {
 
         // Clear the Details pane so stale annotations from a previously viewed
         // bookmark don't linger beneath the overview.
-        if let Some(crate::browser::TabContent::Markdown(md)) = self.details.panels.get_mut(0) {
-            md.set_markdown(String::new());
-        }
-        if let Some(crate::browser::TabContent::Markdown(md)) = self.details.panels.get_mut(1) {
-            md.set_markdown(String::new());
-        }
+        self.set_details_and_comments(String::new(), String::new());
 
         // No per-step code preview while showing the overview.
         self.steps_data.clear();
@@ -887,6 +873,27 @@ impl RightPane {
 
         if !hide_details {
             self.render_details_block(chunks[2], buf);
+        }
+    }
+
+    /// Borrow the markdown panel backing one of the bottom details tabs
+    /// (`DETAILS_TAB_INDEX` or `COMMENTS_TAB_INDEX`). Returns `None` if the tab
+    /// isn't a markdown panel, so callers can update content without depending
+    /// on the positional layout of `new_details_comments`.
+    fn details_markdown_mut(&mut self, tab_index: usize) -> Option<&mut MarkdownPanel> {
+        match self.details.panels.get_mut(tab_index) {
+            Some(crate::browser::TabContent::Markdown(md)) => Some(md),
+            _ => None,
+        }
+    }
+
+    /// Set the markdown for both bottom details tabs in one call.
+    fn set_details_and_comments(&mut self, details_markdown: String, comments_markdown: String) {
+        if let Some(md) = self.details_markdown_mut(DETAILS_TAB_INDEX) {
+            md.set_markdown(details_markdown);
+        }
+        if let Some(md) = self.details_markdown_mut(COMMENTS_TAB_INDEX) {
+            md.set_markdown(comments_markdown);
         }
     }
 
