@@ -72,6 +72,11 @@ impl MarkdownPanel {
         let mut blockquote_depth: usize = 0;
         let mut in_table = false;
         let mut cell_index: usize = 0;
+        // The first ("key") table column is padded to a fixed width. Inline
+        // formatting splits a cell into several text/code events, so accumulate
+        // the cell's visible text here and pad it exactly once on cell close —
+        // padding each fragment would inflate the column far past the target.
+        let mut key_buf = String::new();
 
         // Push `current_spans` as a finished line (even when empty, so blank
         // lines and paragraph spacing survive), then start a fresh line. When
@@ -214,26 +219,35 @@ impl MarkdownPanel {
                         flush_line!();
                     }
                     TagEnd::TableCell => {
+                        if cell_index == 0 {
+                            // Pad the fully-accumulated key once, so inline
+                            // formatting in the cell can't inflate the width.
+                            let style = self.top_style(&style_stack);
+                            current_spans.push(Span::styled(format!("{:<15}", key_buf), style));
+                            key_buf.clear();
+                        }
                         style_stack.pop();
                         cell_index += 1;
                     }
                     _ => {}
                 },
                 MdEvent::Text(text) => {
-                    let style = self.top_style(&style_stack);
                     if in_table && cell_index == 0 {
-                        // Pad the "key" column to a fixed width, matching the
-                        // previous `format!("{:<15}", key)` table layout. `text`
-                        // is a `CowStr`; format it through `&str` so the width
-                        // specifier is honored.
-                        current_spans.push(Span::styled(format!("{:<15}", text.as_ref()), style));
+                        // Buffer the key column; padded once at TagEnd::TableCell.
+                        key_buf.push_str(text.as_ref());
                     } else {
+                        let style = self.top_style(&style_stack);
                         current_spans.push(Span::styled(text.into_string(), style));
                     }
                 }
                 MdEvent::Code(text) => {
-                    let style = self.top_style(&style_stack).fg(palette.warning);
-                    current_spans.push(Span::styled(text.into_string(), style));
+                    if in_table && cell_index == 0 {
+                        // Inline code in a key cell still counts toward its width.
+                        key_buf.push_str(text.as_ref());
+                    } else {
+                        let style = self.top_style(&style_stack).fg(palette.warning);
+                        current_spans.push(Span::styled(text.into_string(), style));
+                    }
                 }
                 MdEvent::SoftBreak | MdEvent::HardBreak => {
                     flush_line!();
@@ -591,5 +605,19 @@ mod tests {
         // The key column is left-padded to 15 columns.
         let file_row = lines.iter().find(|l| l.contains("src/lib.rs")).expect("value row");
         assert!(file_row.starts_with("File           "), "got: {file_row:?}");
+    }
+
+    #[test]
+    fn table_key_with_inline_formatting_pads_once() {
+        // A key cell split into several events by inline formatting must be
+        // padded as a single 15-wide field, not per fragment.
+        let table = "| Key **X** | val |\n|---|---|\n| Row | v |";
+        let lines = rendered_lines(table);
+        let header = lines.iter().find(|l| l.contains("val")).expect("header row");
+        // The cell text ("Key X") is padded to a single 15-wide field, then the
+        // value follows — not each fragment padded separately.
+        assert!(header.starts_with("Key X          val"), "got: {header:?}");
+        // The value sits at column 15, proving the key was padded exactly once.
+        assert_eq!(header.find("val"), Some(15), "value not at column 15: {header:?}");
     }
 }
