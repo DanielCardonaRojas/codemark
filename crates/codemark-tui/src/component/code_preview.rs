@@ -382,8 +382,6 @@ impl Component for CodePreview {
                         }
                         true
                     }
-                    ratatui::crossterm::event::KeyCode::Char('J') => self.scroll_by(5),
-                    ratatui::crossterm::event::KeyCode::Char('K') => self.scroll_by(-5),
                     _ => false,
                 }
             }

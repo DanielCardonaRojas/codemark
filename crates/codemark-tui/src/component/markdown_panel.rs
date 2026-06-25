@@ -556,8 +556,6 @@ impl Component for MarkdownPanel {
                     | ratatui::crossterm::event::KeyCode::Char('j') => self.scroll_by(1),
                     ratatui::crossterm::event::KeyCode::Up
                     | ratatui::crossterm::event::KeyCode::Char('k') => self.scroll_by(-1),
-                    ratatui::crossterm::event::KeyCode::Char('J') => self.scroll_by(5),
-                    ratatui::crossterm::event::KeyCode::Char('K') => self.scroll_by(-5),
                     // Link navigation: `n` focuses the next link, `N` the previous
                     // one (wrapping). `n`/`N` reach the panel only when the right
                     // pane is focused. `Tab` (focus cycling) and `[`/`]` (tab
