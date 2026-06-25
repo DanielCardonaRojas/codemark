@@ -91,7 +91,12 @@ impl BrowserLayout {
         // Navigation keys (always available)
         bindings.push(("j/↓", "Move down"));
         bindings.push(("k/↑", "Move up"));
-        bindings.push(("J/K", "Scroll preview"));
+        // J/K scroll the preview from any pane, but in Search focus those keys
+        // type into the query box instead (the handler guards on the same
+        // condition), so only advertise them when they're actually live.
+        if self.focus != FocusArea::Search {
+            bindings.push(("J/K", "Scroll preview"));
+        }
 
         bindings
     }
