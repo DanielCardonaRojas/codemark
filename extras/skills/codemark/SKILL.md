@@ -93,7 +93,7 @@ codemark search "middleware" --health active --collection auth-flow
 | "Show my auth bookmarks" | `--tag feature:auth` | semantic search |
 | "Where's the config?" | `--tag type:config` | `--tag role:config` |
 | "Bookmarks in auth.rs" | `--file src/auth.rs` | semantic search |
-| "Recent agent bookmarks" | `--author claude` | semantic search |
+| "Bookmarks a specific agent authored" | `--author <agent-slug>` (e.g. `--author claude`) | semantic search |
 | "What did I mark for X?" | semantic search | tour browse |
 
 ## When to use codemark
@@ -397,7 +397,7 @@ The global `--format` flag accepts `json` (default), `table`, `line`, `markdown`
 ### Load context
 ```bash
 codemark list --health active
-codemark list --author claude
+codemark list --author claude   # substitute your own agent slug to find your bookmarks
 codemark search "authentication"
 ```
 

@@ -111,7 +111,7 @@ codemark list --tag role:entrypoint --health active
 # Search for bookmarks involving "JWT" (no --tag flag on search)
 codemark search "JWT" --lang rust
 
-# List bookmarks created by agents
+# List bookmarks authored by a specific agent (substitute your own slug)
 codemark list --author claude
 ```
 
