@@ -28,6 +28,7 @@ ratatui = "0.29"
 crossterm = { version = "0.28", features = ["event-stream"] }
 syntect = "5.2"
 syntect-assets = "0.23"
+pulldown-cmark = { version = "0.13", default-features = false }
 serde_yaml = "0.9"
 tokio = { workspace = true }
 codemark-core = { path = "../codemark-core" }

@@ -2,6 +2,7 @@
 
 use crate::component::Component;
 use crate::event::Event;
+use pulldown_cmark::{Event as MdEvent, HeadingLevel, Options, Parser, Tag, TagEnd};
 use ratatui::{
     buffer::Buffer,
     layout::Rect,
@@ -46,80 +47,239 @@ impl MarkdownPanel {
         &self.content
     }
 
-    /// Convert the simple markdown string into Ratatui Text.
+    /// Convert the markdown string into Ratatui `Text` by walking the
+    /// `pulldown-cmark` event stream.
+    ///
+    /// `pulldown-cmark` handles CommonMark parsing (including backslash escapes
+    /// like `\_` and `\*`, which the templates emit via `escape_markdown`) so
+    /// we no longer scan for inline markers by hand. We translate the linear
+    /// event stream into styled [`Line`]s, maintaining a [`Style`] stack so
+    /// nested inline formatting (`**bold**`, `_italic_`, `` `code` ``) composes
+    /// correctly, plus a little context to inject blockquote/list prefixes and
+    /// emulate the prior table layout.
     fn parse_to_text(&self) -> Text<'static> {
-        let mut lines = Vec::new();
+        /// Visual prefix prepended to every line inside a blockquote.
+        const QUOTE_PREFIX: &str = "┃ ";
 
-        for line in self.content.lines() {
-            if let Some(stripped) = line.strip_prefix("# ") {
-                // H1
-                lines.push(Line::from(vec![Span::styled(
-                    stripped.to_string(),
-                    Style::default()
-                        .fg(crate::theme::palette().warning)
-                        .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
-                )]));
-                lines.push(Line::from(""));
-            } else if let Some(stripped) = line.strip_prefix("## ") {
-                // H2
-                lines.push(Line::from(vec![Span::styled(
-                    stripped.to_string(),
-                    Style::default()
-                        .fg(crate::theme::palette().accent)
-                        .add_modifier(Modifier::BOLD),
-                )]));
-            } else if let Some(stripped) = line.strip_prefix("> ") {
-                // Blockquote
-                let mut spans =
-                    vec![Span::styled("┃ ", Style::default().fg(crate::theme::palette().dim))];
-                spans.extend(
-                    self.parse_inline(
-                        stripped,
-                        Style::default()
-                            .fg(crate::theme::palette().gray)
-                            .add_modifier(Modifier::ITALIC),
-                    ),
-                );
-                lines.push(Line::from(spans));
-            } else if let Some(stripped) = line.strip_prefix("- ") {
-                // List item
-                let mut spans =
-                    vec![Span::styled("• ", Style::default().fg(crate::theme::palette().accent))];
-                spans.extend(self.parse_inline(stripped, Style::default()));
-                lines.push(Line::from(spans));
-            } else if line.starts_with('|') {
-                // Table line (simple parsing)
-                if line.contains("---") {
-                    // Ignore separator
-                    continue;
+        let palette = crate::theme::palette();
+
+        let mut lines: Vec<Line<'static>> = Vec::new();
+        let mut current_spans: Vec<Span<'static>> = Vec::new();
+        // Text inherits the style at the top of this stack.
+        let mut style_stack: Vec<Style> = vec![Style::default()];
+
+        // Context flags/counters for prefixes and the table layout hack.
+        let mut blockquote_depth: usize = 0;
+        let mut in_table = false;
+        let mut cell_index: usize = 0;
+        // The first ("key") table column is padded to a fixed width. Inline
+        // formatting splits a cell into several text/code events, so accumulate
+        // the cell's visible text here and pad it exactly once on cell close —
+        // padding each fragment would inflate the column far past the target.
+        let mut key_buf = String::new();
+
+        // Push `current_spans` as a finished line (even when empty, so blank
+        // lines and paragraph spacing survive), then start a fresh line. When
+        // inside a blockquote, seed the new line with the `┃ ` prefix.
+        macro_rules! flush_line {
+            () => {{
+                lines.push(Line::from(std::mem::take(&mut current_spans)));
+                if blockquote_depth > 0 {
+                    current_spans
+                        .push(Span::styled(QUOTE_PREFIX, Style::default().fg(palette.dim)));
                 }
-                let parts: Vec<&str> = line.split('|').filter(|s| !s.is_empty()).collect();
-                let mut spans = Vec::new();
-                for (i, part) in parts.iter().enumerate() {
-                    let text = part.trim();
-                    if i == 0 {
-                        // Key
-                        let clean_key = text.trim_matches('*');
-                        spans.push(Span::styled(
-                            format!("{:<15}", clean_key),
-                            Style::default().fg(crate::theme::palette().dim),
-                        ));
-                    } else {
-                        // Value
-                        spans.extend(self.parse_inline(text, Style::default()));
-                        if i < parts.len() - 1 {
-                            spans.push(Span::raw(" "));
+            }};
+        }
+
+        // Ensure a blank separator line precedes the next top-level block.
+        // `pulldown-cmark` collapses the blank lines between blocks into block
+        // structure, so we re-synthesize one space between adjacent blocks
+        // (table → heading, paragraph → heading, etc.) — but never at the very
+        // top and never two in a row. Nested blocks (list items, blockquote
+        // bodies) opt out so their lines stay tight.
+        macro_rules! ensure_blank {
+            () => {{
+                let has_pending = !current_spans.iter().all(|s| s.content.is_empty());
+                let last_blank =
+                    lines.last().is_none_or(|l| l.spans.iter().all(|s| s.content.is_empty()));
+                if !has_pending && !lines.is_empty() && !last_blank {
+                    lines.push(Line::from(""));
+                }
+            }};
+        }
+
+        let parser = Parser::new_ext(&self.content, Options::ENABLE_TABLES);
+
+        for event in parser {
+            match event {
+                MdEvent::Start(tag) => match tag {
+                    Tag::Heading { level, .. } => {
+                        // Headings always stand apart from the preceding block.
+                        ensure_blank!();
+                        let style = match level {
+                            HeadingLevel::H1 => Style::default()
+                                .fg(palette.warning)
+                                .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
+                            _ => Style::default().fg(palette.accent).add_modifier(Modifier::BOLD),
+                        };
+                        style_stack.push(style);
+                    }
+                    Tag::Paragraph => {
+                        ensure_blank!();
+                    }
+                    Tag::BlockQuote(_) => {
+                        ensure_blank!();
+                        blockquote_depth += 1;
+                        // Blockquote body renders gray + italic, prefixed `┃ `.
+                        style_stack
+                            .push(Style::default().fg(palette.gray).add_modifier(Modifier::ITALIC));
+                        current_spans
+                            .push(Span::styled(QUOTE_PREFIX, Style::default().fg(palette.dim)));
+                    }
+                    Tag::Table(_) => {
+                        ensure_blank!();
+                        in_table = true;
+                    }
+                    Tag::List(_) => {
+                        // Separate the list from the preceding block, but keep
+                        // items themselves tight (no blank between them).
+                        ensure_blank!();
+                    }
+                    Tag::Item => {
+                        current_spans.push(Span::styled("• ", Style::default().fg(palette.accent)));
+                    }
+                    Tag::Strong => {
+                        let style = self.top_style(&style_stack).add_modifier(Modifier::BOLD);
+                        style_stack.push(style);
+                    }
+                    Tag::Emphasis => {
+                        let style = self.top_style(&style_stack).add_modifier(Modifier::ITALIC);
+                        style_stack.push(style);
+                    }
+                    Tag::TableHead => {
+                        cell_index = 0;
+                    }
+                    Tag::TableRow => {
+                        cell_index = 0;
+                    }
+                    Tag::TableCell => {
+                        // First column ("key") renders dim, like the prior layout.
+                        let style = if cell_index == 0 {
+                            Style::default().fg(palette.dim)
+                        } else {
+                            self.top_style(&style_stack)
+                        };
+                        style_stack.push(style);
+                    }
+                    _ => {}
+                },
+                MdEvent::End(tag) => match tag {
+                    TagEnd::Heading(_) => {
+                        style_stack.pop();
+                        flush_line!();
+                        // H1 keeps a trailing blank line so the title stands out
+                        // even when content follows immediately.
+                        if matches!(tag, TagEnd::Heading(HeadingLevel::H1)) {
+                            flush_line!();
                         }
                     }
+                    TagEnd::Paragraph => {
+                        flush_line!();
+                    }
+                    TagEnd::BlockQuote(_) => {
+                        style_stack.pop();
+                        blockquote_depth = blockquote_depth.saturating_sub(1);
+                        // The inner paragraph's flush already emitted the quote's
+                        // last line and speculatively re-seeded `current_spans`
+                        // with a "┃ " prefix. If only that prefix (or nothing) is
+                        // pending, drop it so the closed quote leaves no stray bar
+                        // line; otherwise flush any genuine trailing content.
+                        let only_prefix = current_spans
+                            .iter()
+                            .all(|s| s.content.is_empty() || s.content.as_ref() == QUOTE_PREFIX);
+                        if only_prefix {
+                            current_spans.clear();
+                        } else {
+                            flush_line!();
+                        }
+                    }
+                    TagEnd::Item => {
+                        flush_line!();
+                    }
+                    TagEnd::Strong | TagEnd::Emphasis => {
+                        style_stack.pop();
+                    }
+                    TagEnd::Table => {
+                        in_table = false;
+                    }
+                    TagEnd::TableHead => {
+                        flush_line!();
+                    }
+                    TagEnd::TableRow => {
+                        flush_line!();
+                    }
+                    TagEnd::TableCell => {
+                        if cell_index == 0 {
+                            // Pad the fully-accumulated key once, so inline
+                            // formatting in the cell can't inflate the width.
+                            let style = self.top_style(&style_stack);
+                            current_spans.push(Span::styled(format!("{:<15}", key_buf), style));
+                            key_buf.clear();
+                        }
+                        style_stack.pop();
+                        cell_index += 1;
+                    }
+                    _ => {}
+                },
+                MdEvent::Text(text) => {
+                    if in_table && cell_index == 0 {
+                        // Buffer the key column; padded once at TagEnd::TableCell.
+                        key_buf.push_str(text.as_ref());
+                    } else {
+                        let style = self.top_style(&style_stack);
+                        current_spans.push(Span::styled(text.into_string(), style));
+                    }
                 }
-                lines.push(Line::from(spans));
-            } else {
-                // Normal text
-                lines.push(Line::from(self.parse_inline(line, Style::default())));
+                MdEvent::Code(text) => {
+                    if in_table && cell_index == 0 {
+                        // Inline code in a key cell still counts toward its width.
+                        key_buf.push_str(text.as_ref());
+                    } else {
+                        let style = self.top_style(&style_stack).fg(palette.warning);
+                        current_spans.push(Span::styled(text.into_string(), style));
+                    }
+                }
+                MdEvent::SoftBreak | MdEvent::HardBreak => {
+                    flush_line!();
+                }
+                MdEvent::Rule => {
+                    flush_line!();
+                    lines.push(Line::from(Span::styled(
+                        "─".repeat(20),
+                        Style::default().fg(palette.dim),
+                    )));
+                }
+                _ => {}
             }
         }
 
+        // Emit any trailing spans that weren't terminated by a block end.
+        if !current_spans.is_empty() {
+            lines.push(Line::from(std::mem::take(&mut current_spans)));
+        }
+
+        // Drop trailing blank lines so block terminators (paragraphs, the H1
+        // spacer) don't leave dangling empty rows at the end of the panel.
+        while lines.last().is_some_and(|l| l.spans.iter().all(|s| s.content.is_empty())) {
+            lines.pop();
+        }
+
         Text::from(lines)
+    }
+
+    /// The style currently at the top of the stack (defaulting if somehow empty).
+    fn top_style(&self, style_stack: &[Style]) -> Style {
+        style_stack.last().copied().unwrap_or_default()
     }
 
     /// Refresh the cached text if content has changed.
@@ -157,91 +317,6 @@ impl MarkdownPanel {
                 if char_count == 0 { 1 } else { char_count.div_ceil(width) }
             })
             .sum()
-    }
-
-    /// Parse inline formatting like `code` and **bold**.
-    ///
-    /// Backslash escapes (e.g. `\_`, `` \` ``) are honored the way a real
-    /// markdown renderer would: the backslash is consumed and the following
-    /// character is emitted literally. Templates escape special characters in
-    /// user-supplied text so it survives markdown export; without this the
-    /// escapes would be drawn verbatim in the panel.
-    fn parse_inline(&self, text: &str, base_style: Style) -> Vec<Span<'static>> {
-        let mut spans = Vec::new();
-        // Plain text accumulated since the last styled span, so consecutive
-        // escapes and literal runs coalesce into a single span.
-        let mut buf = String::new();
-        let mut current = text;
-
-        while !current.is_empty() {
-            // Find next occurrence of an escape, `, or **.
-            let next_escape = current.find('\\');
-            let next_code = current.find('`');
-            let next_bold = current.find("**");
-
-            // Earliest marker wins; ties prefer the escape so it can defuse
-            // an immediately-following formatting character.
-            let next = [next_escape, next_code, next_bold].into_iter().flatten().min();
-
-            match next {
-                None => {
-                    buf.push_str(current);
-                    break;
-                }
-                Some(i) if Some(i) == next_escape => {
-                    buf.push_str(&current[..i]);
-                    let mut chars = current[i + 1..].chars();
-                    if let Some(c) = chars.next() {
-                        // Emit the escaped character literally.
-                        buf.push(c);
-                        current = chars.as_str();
-                    } else {
-                        // Trailing backslash with nothing to escape.
-                        buf.push('\\');
-                        break;
-                    }
-                }
-                Some(i) if Some(i) == next_code => {
-                    buf.push_str(&current[..i]);
-                    current = &current[i + 1..];
-                    if let Some(end) = current.find('`') {
-                        Self::flush(&mut spans, &mut buf, base_style);
-                        spans.push(Span::styled(
-                            current[..end].to_string(),
-                            base_style.fg(crate::theme::palette().warning),
-                        ));
-                        current = &current[end + 1..];
-                    } else {
-                        buf.push('`');
-                    }
-                }
-                Some(j) => {
-                    // Bold (**).
-                    buf.push_str(&current[..j]);
-                    current = &current[j + 2..];
-                    if let Some(end) = current.find("**") {
-                        Self::flush(&mut spans, &mut buf, base_style);
-                        spans.push(Span::styled(
-                            current[..end].to_string(),
-                            base_style.add_modifier(Modifier::BOLD),
-                        ));
-                        current = &current[end + 2..];
-                    } else {
-                        buf.push_str("**");
-                    }
-                }
-            }
-        }
-
-        Self::flush(&mut spans, &mut buf, base_style);
-        spans
-    }
-
-    /// Emit any pending plain text as a span and clear the buffer.
-    fn flush(spans: &mut Vec<Span<'static>>, buf: &mut String, base_style: Style) {
-        if !buf.is_empty() {
-            spans.push(Span::styled(std::mem::take(buf), base_style));
-        }
     }
 }
 
@@ -348,48 +423,201 @@ impl Component for MarkdownPanel {
 mod tests {
     use super::*;
 
-    /// Collapse a span list into the visible text it renders.
-    fn rendered_text(panel: &MarkdownPanel, input: &str) -> String {
+    /// Render `input` through the full markdown pipeline and collapse the
+    /// result into the visible text it produces, one entry per line.
+    fn rendered_lines(input: &str) -> Vec<String> {
+        let mut panel = MarkdownPanel::new();
+        panel.set_markdown(input);
         panel
-            .parse_inline(input, Style::default())
+            .parse_to_text()
+            .lines
             .into_iter()
-            .map(|s| s.content.into_owned())
+            .map(|line| line.spans.iter().map(|s| s.content.as_ref()).collect::<String>())
             .collect()
+    }
+
+    /// Render `input` and join every line's visible text into one string.
+    fn rendered_text(input: &str) -> String {
+        rendered_lines(input).join("\n")
+    }
+
+    /// The index of the line whose visible text equals `needle`.
+    fn line_index(lines: &[String], needle: &str) -> usize {
+        lines.iter().position(|l| l == needle).unwrap_or_else(|| panic!("missing {needle:?}"))
+    }
+
+    #[test]
+    fn adjacent_blocks_are_separated_by_a_blank_line() {
+        // pulldown-cmark collapses the blank lines between blocks into block
+        // structure, so the renderer must re-synthesize a separator. A heading
+        // following a table (as in `codemark_show.md`'s Metadata → Resolution
+        // History) previously butted right up against the table's last row.
+        let md = "## Metadata\n| Property | Value |\n|---|---|\n| **Commit** | abc |\n\n## Resolution History\n\nbody";
+        let lines = rendered_lines(md);
+
+        let commit = line_index(&lines, "Commit         abc");
+        let history = line_index(&lines, "Resolution History");
+        assert!(history > commit + 1, "expected blank line between table and heading: {lines:?}");
+        assert!(lines[commit + 1].is_empty(), "line after table row should be blank: {lines:?}");
+
+        // The heading is likewise separated from the paragraph that follows it.
+        let body = line_index(&lines, "body");
+        assert!(body > history + 1, "expected blank line between heading and body: {lines:?}");
+    }
+
+    #[test]
+    fn consecutive_label_lines_stay_tight() {
+        // Resolution History emits `**ID:** ...\n**Date:** ...` with single
+        // newlines (soft breaks); those must remain adjacent, not blank-separated.
+        let lines = rendered_lines("**ID:** 56c2fc13\n**Date:** 2026");
+        let id = line_index(&lines, "ID: 56c2fc13");
+        assert_eq!(lines.get(id + 1).map(String::as_str), Some("Date: 2026"), "{lines:?}");
+    }
+
+    #[test]
+    fn no_leading_blank_line() {
+        // The first block never gets a synthesized blank line above it.
+        let lines = rendered_lines("# Title\n\nbody");
+        assert_eq!(lines.first().map(String::as_str), Some("Title"));
+    }
+
+    /// Find the first span whose content matches `needle`, returning its style.
+    fn style_of(panel: &MarkdownPanel, needle: &str) -> Option<Style> {
+        panel
+            .parse_to_text()
+            .lines
+            .into_iter()
+            .flat_map(|line| line.spans.into_iter())
+            .find(|s| s.content.contains(needle))
+            .map(|s| s.style)
     }
 
     #[test]
     fn backslash_escapes_are_consumed() {
-        let panel = MarkdownPanel::new();
-        // Underscores escaped by the templates must not show their backslash.
-        assert_eq!(rendered_text(&panel, "function upsert\\_repo"), "function upsert_repo");
-        assert_eq!(
-            rendered_text(&panel, "resolve\\_server\\_and\\_token"),
-            "resolve_server_and_token"
-        );
+        // Underscores escaped by the templates (via `escape_markdown`) must not
+        // show their backslash. pulldown-cmark unescapes them per CommonMark.
+        assert_eq!(rendered_text("function upsert\\_repo"), "function upsert_repo");
+        assert_eq!(rendered_text("resolve\\_server\\_and\\_token"), "resolve_server_and_token");
         // Other escaped punctuation is likewise unescaped.
-        assert_eq!(rendered_text(&panel, "a\\*b\\#c"), "a*b#c");
+        assert_eq!(rendered_text("a\\*b\\#c"), "a*b#c");
         // Escaped double quotes (e.g. from a query predicate's string literal)
-        // are unescaped too.
-        assert_eq!(
-            rendered_text(&panel, "match \\\"create_session\\\""),
-            "match \"create_session\""
-        );
+        // are unescaped too. CommonMark unescapes any backslashed ASCII
+        // punctuation, so `\"` collapses to a literal `"`.
+        assert_eq!(rendered_text("match \\\"create_session\\\""), "match \"create_session\"");
     }
 
     #[test]
     fn escaped_formatting_chars_are_literal() {
-        let panel = MarkdownPanel::new();
         // An escaped backtick stays literal rather than opening a code span.
-        assert_eq!(rendered_text(&panel, "use \\`code\\` here"), "use `code` here");
+        assert_eq!(rendered_text("use \\`code\\` here"), "use `code` here");
         // A trailing backslash with nothing to escape is preserved.
-        assert_eq!(rendered_text(&panel, "ends with\\"), "ends with\\");
+        assert_eq!(rendered_text("ends with\\"), "ends with\\");
     }
 
     #[test]
     fn unescaped_formatting_still_applies() {
-        let panel = MarkdownPanel::new();
-        // Code spans and bold are stripped of their markers as before.
-        assert_eq!(rendered_text(&panel, "see `registry.rs` now"), "see registry.rs now");
-        assert_eq!(rendered_text(&panel, "this is **bold** text"), "this is bold text");
+        // Code spans and bold/italic markers are stripped, leaving plain text.
+        assert_eq!(rendered_text("see `registry.rs` now"), "see registry.rs now");
+        assert_eq!(rendered_text("this is **bold** text"), "this is bold text");
+        assert_eq!(rendered_text("this is _italic_ text"), "this is italic text");
+    }
+
+    #[test]
+    fn inline_styles_carry_their_modifiers() {
+        let mut panel = MarkdownPanel::new();
+        panel.set_markdown("a **bold** and `code` and _em_ word");
+
+        let bold = style_of(&panel, "bold").expect("bold span");
+        assert!(bold.add_modifier.contains(Modifier::BOLD));
+
+        let em = style_of(&panel, "em").expect("italic span");
+        assert!(em.add_modifier.contains(Modifier::ITALIC));
+
+        let code = style_of(&panel, "code").expect("code span");
+        assert_eq!(code.fg, Some(crate::theme::palette().warning));
+    }
+
+    #[test]
+    fn headings_get_their_styles_and_h1_spacing() {
+        let lines = rendered_lines("# Title\n\nbody");
+        // H1 keeps the trailing blank line the prior renderer emitted.
+        assert_eq!(lines.first().map(String::as_str), Some("Title"));
+        assert_eq!(lines.get(1).map(String::as_str), Some(""));
+
+        let mut panel = MarkdownPanel::new();
+        panel.set_markdown("# Title");
+        let h1 = style_of(&panel, "Title").expect("h1 span");
+        assert_eq!(h1.fg, Some(crate::theme::palette().warning));
+        assert!(h1.add_modifier.contains(Modifier::BOLD | Modifier::UNDERLINED));
+
+        panel.set_markdown("## Sub");
+        let h2 = style_of(&panel, "Sub").expect("h2 span");
+        assert_eq!(h2.fg, Some(crate::theme::palette().accent));
+        assert!(h2.add_modifier.contains(Modifier::BOLD));
+    }
+
+    #[test]
+    fn list_items_get_bullet_prefix() {
+        let lines = rendered_lines("- one\n- two");
+        assert!(lines.iter().any(|l| l == "• one"));
+        assert!(lines.iter().any(|l| l == "• two"));
+    }
+
+    #[test]
+    fn blockquotes_get_bar_prefix() {
+        let lines = rendered_lines("> quoted text");
+        assert!(lines.iter().any(|l| l.starts_with("┃ ") && l.contains("quoted text")));
+        // The quote must not leave a stray prefix-only "┃ " line behind it: the
+        // flush at `End(BlockQuote)` should not emit the seeded prefix as a line.
+        assert!(!lines.iter().any(|l| l.trim_end() == "┃"), "stray blockquote bar line: {lines:?}");
+    }
+
+    #[test]
+    fn multiline_blockquote_has_no_phantom_lines() {
+        // Each quoted line keeps its prefix; no extra bar line trails the block.
+        let lines = rendered_lines("> line one\n> line two\n\nafter");
+        let bar_lines: Vec<&String> = lines.iter().filter(|l| l.starts_with("┃ ")).collect();
+        assert_eq!(bar_lines.len(), 2, "expected exactly two quoted lines: {lines:?}");
+        assert!(lines.iter().any(|l| l == "after"));
+    }
+
+    #[test]
+    fn tag_line_and_thematic_break_render_sanely() {
+        // The `## Tags` body in the templates renders ` #foo #bar ` — the
+        // leading space means it is plain text, not an ATX heading.
+        assert_eq!(rendered_lines(" #foo #bar "), vec!["#foo #bar".to_string()]);
+
+        // The `---` separator between comments is a thematic break, drawn as a
+        // dim horizontal rule rather than literal dashes.
+        let lines = rendered_lines("first\n\n---\n\nsecond");
+        assert!(lines.iter().any(|l| l.contains('─')), "expected rule, got {lines:?}");
+        assert!(!lines.iter().any(|l| l == "---"), "raw dashes leaked: {lines:?}");
+    }
+
+    #[test]
+    fn tables_pad_the_key_column_and_drop_separator() {
+        let table = "| Property | Value |\n|----------|-------|\n| **File** | src/lib.rs |";
+        let lines = rendered_lines(table);
+        // Header row renders, padded to the fixed key width.
+        assert!(lines.iter().any(|l| l.starts_with("Property") && l.contains("Value")));
+        // The `---` separator row is consumed, not rendered.
+        assert!(!lines.iter().any(|l| l.contains("---")));
+        // The key column is left-padded to 15 columns.
+        let file_row = lines.iter().find(|l| l.contains("src/lib.rs")).expect("value row");
+        assert!(file_row.starts_with("File           "), "got: {file_row:?}");
+    }
+
+    #[test]
+    fn table_key_with_inline_formatting_pads_once() {
+        // A key cell split into several events by inline formatting must be
+        // padded as a single 15-wide field, not per fragment.
+        let table = "| Key **X** | val |\n|---|---|\n| Row | v |";
+        let lines = rendered_lines(table);
+        let header = lines.iter().find(|l| l.contains("val")).expect("header row");
+        // The cell text ("Key X") is padded to a single 15-wide field, then the
+        // value follows — not each fragment padded separately.
+        assert!(header.starts_with("Key X          val"), "got: {header:?}");
+        // The value sits at column 15, proving the key was padded exactly once.
+        assert_eq!(header.find("val"), Some(15), "value not at column 15: {header:?}");
     }
 }
