@@ -91,6 +91,7 @@ impl BrowserLayout {
         // Navigation keys (always available)
         bindings.push(("j/↓", "Move down"));
         bindings.push(("k/↑", "Move up"));
+        bindings.push(("J/K", "Scroll preview"));
 
         bindings
     }

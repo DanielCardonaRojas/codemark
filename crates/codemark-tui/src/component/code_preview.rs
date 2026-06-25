@@ -226,6 +226,20 @@ impl CodePreview {
     pub fn last_area(&self) -> Rect {
         self.last_area.get()
     }
+
+    /// Move the viewport by `delta` lines (positive scrolls down, negative up),
+    /// clamped to the content bounds. Returns true if the offset changed.
+    ///
+    /// This is a plain viewport move that leaves the line selection untouched, so
+    /// callers can scroll the preview regardless of focus — e.g. `J`/`K` while
+    /// focus stays on another pane.
+    pub fn scroll_by(&mut self, delta: i32) -> bool {
+        let height = self.last_area.get().height as usize;
+        let max_offset = self.line_count().saturating_sub(height) as i32;
+        let old_offset = self.scroll_offset;
+        self.scroll_offset = (self.scroll_offset as i32 + delta).clamp(0, max_offset) as u16;
+        old_offset != self.scroll_offset
+    }
 }
 
 impl Component for CodePreview {
@@ -368,24 +382,8 @@ impl Component for CodePreview {
                         }
                         true
                     }
-                    ratatui::crossterm::event::KeyCode::Char('J') => {
-                        let height = self.last_area.get().height as usize;
-                        let line_count = self.line_count();
-                        if line_count > height {
-                            let old_offset = self.scroll_offset;
-                            self.scroll_offset = self
-                                .scroll_offset
-                                .saturating_add(5)
-                                .min((line_count - height) as u16);
-                            return old_offset != self.scroll_offset;
-                        }
-                        false
-                    }
-                    ratatui::crossterm::event::KeyCode::Char('K') => {
-                        let old_offset = self.scroll_offset;
-                        self.scroll_offset = self.scroll_offset.saturating_sub(5);
-                        old_offset != self.scroll_offset
-                    }
+                    ratatui::crossterm::event::KeyCode::Char('J') => self.scroll_by(5),
+                    ratatui::crossterm::event::KeyCode::Char('K') => self.scroll_by(-5),
                     _ => false,
                 }
             }

@@ -193,6 +193,18 @@ impl TabbedPanel {
         }
     }
 
+    /// Scroll the active tab's content by `delta` lines (positive scrolls down),
+    /// regardless of focus. Returns true if the viewport moved. Only the
+    /// scrollable content kinds (code preview, markdown) respond; list tabs are
+    /// driven by selection, not a free viewport, so they ignore this.
+    pub fn scroll_active(&mut self, delta: i32) -> bool {
+        match self.panels.get_mut(self.tabs.selected_index()) {
+            Some(TabContent::Preview(p)) => p.scroll_by(delta),
+            Some(TabContent::Markdown(p)) => p.scroll_by(delta),
+            _ => false,
+        }
+    }
+
     /// Get the currently active markdown panel for modification.
     pub fn get_markdown_mut(&mut self) -> Option<&mut MarkdownPanel> {
         for panel in &mut self.panels {
