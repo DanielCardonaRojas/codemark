@@ -29,6 +29,24 @@ If the user invoked you with arguments (e.g. `/codemark something`), use `$ARGUM
 - If user asks to "open", "edit", or view a bookmark: `codemark open "$ARGUMENTS"`
 - If no arguments were provided, interpret the user's intent based on the conversation context.
 
+## Author Identity (REQUIRED)
+
+Whenever **you** create or annotate a bookmark, identify yourself by name with
+`--created-by`. Do **not** use the generic `agent` value — be specific about which
+agent you are. Use the slug that matches your own runtime:
+
+| Agent | `--created-by` value |
+|-------|----------------------|
+| Claude / Claude Code | `claude` |
+| OpenAI Codex | `codex` |
+| GitHub Copilot | `copilot` |
+| Pi | `pi` |
+
+Reserve the default `user` for bookmarks the human creates themselves. The
+examples below use `--created-by claude`; **substitute your own agent slug** from
+the table above. This lets `--author claude`, `--author codex`, etc. filter
+bookmarks by the specific agent that authored them.
+
 ## Intelligent Bookmark Discovery
 
 When the user asks about something, try these strategies in order:
@@ -43,7 +61,7 @@ codemark search "user query" --semantic
 When the user mentions specific concepts or categories. **`--tag` on `list` is single-valued** — pass one tag and combine it with other filters (`--health`, `--author`, `--lang`, `--file`). To narrow by multiple tags at once, use semantic search instead.
 ```bash
 codemark list --tag feature:auth --health active
-codemark list --tag layer:api --author agent
+codemark list --tag layer:api --author claude
 codemark list --tag type:config --lang rust
 ```
 
@@ -65,7 +83,7 @@ Then drill into any step by its short ID: `codemark show <id> --format markdown`
 ### 5. Hybrid Search Pattern
 For best results, combine semantic search with filters. **Note: `search` has no `--tag` flag** — filter searches with `--lang`, `--author`, `--health`, `--collection`:
 ```bash
-codemark search "authentication" --lang rust --author agent
+codemark search "authentication" --lang rust --author claude
 codemark search "middleware" --health active --collection auth-flow
 ```
 
@@ -75,7 +93,7 @@ codemark search "middleware" --health active --collection auth-flow
 | "Show my auth bookmarks" | `--tag feature:auth` | semantic search |
 | "Where's the config?" | `--tag type:config` | `--tag role:config` |
 | "Bookmarks in auth.rs" | `--file src/auth.rs` | semantic search |
-| "Recent agent bookmarks" | `--author agent` | semantic search |
+| "Recent agent bookmarks" | `--author claude` | semantic search |
 | "What did I mark for X?" | semantic search | tour browse |
 
 ## When to use codemark
@@ -94,7 +112,7 @@ codemark search "middleware" --health active --collection auth-flow
 - **Resolution** re-finds bookmarked code even after edits (exact → relaxed → hash fallback).
 - **Tours/Collections** group related bookmarks (one per feature, bugfix, or investigation).
 - **Health**: active (healthy), drifted (found but moved), stale (lost), archived (cleaned up).
-- **Author**: bookmarks track who created them (`--created-by agent` vs default `user`).
+- **Author**: bookmarks track who created them. Set `--created-by` to your specific agent slug (`claude`, `codex`, `copilot`, `pi`) — not the generic `agent`; the default `user` is reserved for the human. See **Author Identity** above.
 - **Notes vs. Comments** (two distinct, durable-vs-ephemeral channels):
   - **Notes** (`--note`) — durable explanations of *what the code is and why it matters*. Context-independent, reusable across any session. Use multiple `--note` flags to capture different aspects. Rendered as plain prose (keep them clean and self-contained).
   - **Comments** (`--comment`) — **markdown** discussion tied to a *task, ticket, PR, or debugging session*. Ephemeral and session-scoped. Rendered as markdown, so they may contain links, lists, and code blocks. Use these for "investigating X for TICKET-42" rather than polluting notes.
@@ -261,7 +279,7 @@ Use `--collection` when creating bookmarks to add them directly to a tour. **Alw
 codemark add --file src/auth.rs --range 42 \
   --note "Core auth entry point — all signed requests pass through here" \
   --note "Verifies JWT signature and expiry" \
-  --collection login-flow --created-by agent
+  --collection login-flow --created-by claude
 
 # 2. Alternative: Snippet-based (if range is unknown)
 echo "func validateToken" | codemark add --file src/auth.swift --snippet --note "Validates JWT tokens" --note "Critical for security" --collection login-flow
@@ -284,30 +302,30 @@ When you know the file and line numbers. This leverages the **Anchored Precision
 
 ```bash
 # Point targeting: targets the smallest node at line 42, column 10
-codemark add --file src/auth.rs --range 42:10 --note "Specific authorization gate" --created-by agent
+codemark add --file src/auth.rs --range 42:10 --note "Specific authorization gate" --created-by claude
 
 # Line targeting: targets the tightest node containing line 42
-codemark add --file src/auth.rs --range 42 --note "Core auth entry point" --created-by agent
+codemark add --file src/auth.rs --range 42 --note "Core auth entry point" --created-by claude
 
 # Span targeting: targets a specific range of lines
-codemark add --file src/auth.rs --range 42-67 --note "Full login method" --created-by agent
+codemark add --file src/auth.rs --range 42-67 --note "Full login method" --created-by claude
 
 # Precise Span targeting: targets a specific range of characters
-codemark add --file src/auth.rs --range 10:5-10:20 --note "Specific expression" --created-by agent
+codemark add --file src/auth.rs --range 10:5-10:20 --note "Specific expression" --created-by claude
 ```
 
 ### Method 2: Snippet-based bookmarking
 When you have the code snippet but need to find it in a file:
 
 ```bash
-echo "func validateToken(_ token: String) -> Claims" | codemark add --file src/auth.swift --snippet --note "Validates JWT tokens" --tag role:validator --created-by agent
+echo "func validateToken(_ token: String) -> Claims" | codemark add --file src/auth.swift --snippet --note "Validates JWT tokens" --tag role:validator --created-by claude
 ```
 
 ### Method 3: Raw tree-sitter query (Last Resort)
 Use this **only** if range-based targeting is ambiguous or you need a highly specific non-positional pattern.
 
 ```bash
-codemark add --file src/auth.swift --query '(function_declaration name: (simple_identifier) @name (#eq? @name "validateToken")) @target' --note "Validates JWT tokens" --created-by agent
+codemark add --file src/auth.swift --query '(function_declaration name: (simple_identifier) @name (#eq? @name "validateToken")) @target' --note "Validates JWT tokens" --created-by claude
 ```
 
 For common query patterns across languages, see:
@@ -327,7 +345,7 @@ For common query patterns across languages, see:
 - **Range-First Policy**: **Always prefer range-based targeting** (`--range`) as your first choice. It leverages the unified "Anchored Precision" engine to generate stable, architecturally-anchored queries automatically. Only use raw tree-sitter queries (`--query`) as a last resort if range-based targeting is ambiguous.
 - **Fine-grained execution targeting**: Don't just bookmark containers (classes/functions). Bookmark **execution boundaries** like critical method calls (`call_expression`), authorization gates (`if_statement`), or complex state transitions (`switch`/`match`).
 - **Granularity Strategy**: We prefer **more, highly specific bookmarks** over fewer, general ones. For example, if a function performs three critical steps (auth, validation, DB write), it is better to bookmark those three specific lines/nodes than to bookmark the entire function.
-- Use `--created-by agent` to distinguish your bookmarks from the user's.
+- Use `--created-by <your-agent-slug>` (`claude`, `codex`, `copilot`, `pi`) to distinguish your bookmarks from the user's — never the generic `agent`. See **Author Identity**.
 - Use `--collection <name>` when creating bookmarks to add them directly to a tour (tours are auto-created if they don't exist).
 - **Notes are durable, comments are ephemeral**: explain the code with `--note`; record task/ticket/debugging chatter with `--comment`. This keeps notes reusable in any future context instead of coupled to one agentic session.
 - **Link out generously**: attach related PRs, issues, design docs, dashboards, and external references to the *collection* with `codemark tour link add --kind ...`, and embed inline links inside `--comment` markdown. This turns a collection into a self-contained briefing.
@@ -379,7 +397,7 @@ The global `--format` flag accepts `json` (default), `table`, `line`, `markdown`
 ### Load context
 ```bash
 codemark list --health active
-codemark list --author agent
+codemark list --author claude
 codemark search "authentication"
 ```
 

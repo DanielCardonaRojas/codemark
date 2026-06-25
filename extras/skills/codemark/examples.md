@@ -26,10 +26,10 @@ Focus on *why* the code matters and its relationships. Avoid repeating informati
 ### 3. Add the bookmark with tags and multiple notes
 ```bash
 # Single note
-codemark add --file src/auth.rs --range 42 --note "Core auth validator. entry point for all signed requests. Relationships: depends on Claims struct." --tag feature:auth --tag role:entrypoint --tag layer:business --created-by agent
+codemark add --file src/auth.rs --range 42 --note "Core auth validator. entry point for all signed requests. Relationships: depends on Claims struct." --tag feature:auth --tag role:entrypoint --tag layer:business --created-by claude
 
 # Multiple notes (each creates a separate annotation entry)
-codemark add --file src/auth.rs --range 42 --note "Core auth validator. entry point for all signed requests." --note "Relationships: depends on Claims struct." --note "Performance: O(1) cache hit rate" --tag feature:auth --tag role:entrypoint --tag layer:business --created-by agent
+codemark add --file src/auth.rs --range 42 --note "Core auth validator. entry point for all signed requests." --note "Relationships: depends on Claims struct." --note "Performance: O(1) cache hit rate" --tag feature:auth --tag role:entrypoint --tag layer:business --created-by claude
 ```
 
 ## Targeting Fine-Grained Execution Logic
@@ -39,7 +39,7 @@ Instead of bookmarking the entire function, target the specific execution point 
 ### Bookmark a specific method call inside a function
 ```bash
 # Target the exact line where the database is updated
-codemark add --file src/db/repo.rs --query '(call_expression function: (member_expression property: (property_identifier) @method (#eq? @method "update_user_balance"))) @target' --note "Critical: Database update point for user balances. Relationships: triggered after payment verification." --tag layer:data --tag role:repository --created-by agent
+codemark add --file src/db/repo.rs --query '(call_expression function: (member_expression property: (property_identifier) @method (#eq? @method "update_user_balance"))) @target' --note "Critical: Database update point for user balances. Relationships: triggered after payment verification." --tag layer:data --tag role:repository --created-by claude
 ```
 
 ## Creating Bookmarks with Raw Queries
@@ -52,7 +52,7 @@ codemark add --file src/auth.swift --query '(function_declaration name: (simple_
 ### 2. Create bookmark with context and multiple notes
 ```bash
 # Context attaches to first note when multiple notes provided
-codemark add --file src/auth.swift --query '(function_declaration name: (simple_identifier) @name (#eq? @name "validateToken")) @target' --note "Validates JWT tokens. checks expiry and cache." --context "Called by API middleware on all authenticated endpoints" --note "Returns Claims struct on success" --note "Raises AuthenticationError on failure" --tag feature:auth --tag role:validator --created-by agent
+codemark add --file src/auth.swift --query '(function_declaration name: (simple_identifier) @name (#eq? @name "validateToken")) @target' --note "Validates JWT tokens. checks expiry and cache." --context "Called by API middleware on all authenticated endpoints" --note "Returns Claims struct on success" --note "Raises AuthenticationError on failure" --tag feature:auth --tag role:validator --created-by claude
 ```
 
 ### 3. Cross-language query examples
@@ -105,14 +105,14 @@ codemark tour show login-flow --format markdown
 
 ```bash
 # Find auth-related bookmarks, narrowed by author/health
-codemark list --tag feature:auth --author agent
+codemark list --tag feature:auth --author claude
 codemark list --tag role:entrypoint --health active
 
 # Search for bookmarks involving "JWT" (no --tag flag on search)
 codemark search "JWT" --lang rust
 
 # List bookmarks created by agents
-codemark list --author agent
+codemark list --author claude
 ```
 
 ## Working with Multiple Notes
@@ -155,7 +155,7 @@ Notes explain the code durably; comments capture task/ticket/debugging discussio
 codemark add --file src/auth.rs --range 42 \
   --note "Validates the session cookie before any handler runs" \
   --comment "Touched for **ENG-42** (session fixation). See [PR #128](https://github.com/org/repo/pull/128); needs a regression test." \
-  --created-by agent
+  --created-by claude
 
 # Add a follow-up comment later without disturbing the notes
 codemark edit <bookmark-id> --comment "Confirmed fixed by rotating the session id on login. Closing ENG-42."
@@ -193,8 +193,8 @@ codemark health check
 codemark list --health active
 
 # 2. During exploration, bookmark critical findings directly to a collection
-codemark add --file src/api/middleware.go --query '(function_declaration name: (identifier) @name (#eq? @name "AuthMiddleware")) @target' --note "Middleware that validates JWT tokens on all protected routes" --tag feature:auth --tag role:middleware --created-by agent --collection auth-investigation
-codemark add --file src/api/handler.go --query '(function_declaration name: (identifier) @name (#eq? @name "LoginHandler")) @target' --note "HTTP handler for login endpoint" --tag feature:auth --tag role:handler --created-by agent --collection auth-investigation
+codemark add --file src/api/middleware.go --query '(function_declaration name: (identifier) @name (#eq? @name "AuthMiddleware")) @target' --note "Middleware that validates JWT tokens on all protected routes" --tag feature:auth --tag role:middleware --created-by claude --collection auth-investigation
+codemark add --file src/api/handler.go --query '(function_declaration name: (identifier) @name (#eq? @name "LoginHandler")) @target' --note "HTTP handler for login endpoint" --tag feature:auth --tag role:handler --created-by claude --collection auth-investigation
 
 # 3. At session end, validate bookmarks
 codemark health check --auto-archive

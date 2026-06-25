@@ -200,7 +200,9 @@ pub struct AddArgs {
     #[arg(long)]
     pub context: Option<String>,
 
-    /// Who created this bookmark (defaults to "user")
+    /// Who created this bookmark. Use the human's "user" (default), or the
+    /// specific agent slug when authored by an AI agent (e.g. claude, codex,
+    /// copilot, pi) rather than the generic "agent".
     #[arg(long, default_value = "user")]
     pub created_by: String,
 
@@ -257,7 +259,9 @@ pub struct AddArgsOriginal {
     #[arg(long)]
     pub context: Option<String>,
 
-    /// Who created this bookmark (defaults to "user")
+    /// Who created this bookmark. Use the human's "user" (default), or the
+    /// specific agent slug when authored by an AI agent (e.g. claude, codex,
+    /// copilot, pi) rather than the generic "agent".
     #[arg(long, default_value = "user")]
     pub created_by: String,
 
@@ -296,7 +300,9 @@ pub struct AddFromSnippetArgs {
     #[arg(long)]
     pub context: Option<String>,
 
-    /// Who created this bookmark (defaults to "user")
+    /// Who created this bookmark. Use the human's "user" (default), or the
+    /// specific agent slug when authored by an AI agent (e.g. claude, codex,
+    /// copilot, pi) rather than the generic "agent".
     #[arg(long, default_value = "user")]
     pub created_by: String,
 
@@ -339,7 +345,9 @@ pub struct AddFromQueryArgs {
     #[arg(long)]
     pub context: Option<String>,
 
-    /// Who created this bookmark (defaults to "user")
+    /// Who created this bookmark. Use the human's "user" (default), or the
+    /// specific agent slug when authored by an AI agent (e.g. claude, codex,
+    /// copilot, pi) rather than the generic "agent".
     #[arg(long, default_value = "user")]
     pub created_by: String,
 
@@ -472,7 +480,8 @@ pub struct ListArgs {
     #[arg(long)]
     pub lang: Option<String>,
 
-    /// Filter by author (user, agent, or any identifier)
+    /// Filter by author: "user", a specific agent slug (claude, codex,
+    /// copilot, pi), or any identifier
     #[arg(long)]
     pub author: Option<String>,
 
@@ -577,7 +586,8 @@ pub struct SearchArgs {
     #[arg(long, hide = true)]
     pub status: Option<String>,
 
-    /// Filter by author (user, agent, or any identifier)
+    /// Filter by author: "user", a specific agent slug (claude, codex,
+    /// copilot, pi), or any identifier
     #[arg(long)]
     pub author: Option<String>,
 
@@ -980,7 +990,9 @@ pub struct AnnotateArgs {
     #[arg(long)]
     pub tag: Vec<String>,
 
-    /// Who is adding this annotation (defaults to "user")
+    /// Who is adding this annotation. Use "user" (default) for the human, or
+    /// the specific agent slug (claude, codex, copilot, pi) when an AI agent
+    /// adds it rather than the generic "agent".
     #[arg(long, default_value = "user")]
     pub added_by: String,
 
