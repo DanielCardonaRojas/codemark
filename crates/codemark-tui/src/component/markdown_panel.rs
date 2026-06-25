@@ -11,8 +11,29 @@ use ratatui::{
     widgets::{Paragraph, Widget, Wrap},
 };
 
+/// The location and target of a rendered link, used to highlight the focused
+/// link and open it. `line_idx` indexes [`MarkdownPanel::cached_text`]'s lines;
+/// `span_range` is the half-open range of spans on that line that make up the
+/// link's visible text.
+#[derive(Debug, Clone)]
+struct LinkSpan {
+    /// Destination URL to open.
+    url: String,
+    /// Index of the line (in the parsed `Text`) the link sits on.
+    line_idx: usize,
+    /// Half-open `[start, end)` range of span indices forming the link text.
+    span_range: std::ops::Range<usize>,
+}
+
+/// Open a URL in the system default browser. The default `open_link` action;
+/// mirrors how `codemark-cli` opens auth URLs (errors are ignored — there is no
+/// useful recovery in a TUI redraw).
+fn open_in_browser(url: &str) {
+    let _ = open::that(url);
+}
+
 /// A component that renders simple markdown-style text.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct MarkdownPanel {
     /// The content to display
     content: String,
@@ -26,6 +47,32 @@ pub struct MarkdownPanel {
     cached_text: std::cell::RefCell<Text<'static>>,
     /// Cached content hash to detect when content changes
     cached_content_hash: std::cell::Cell<u64>,
+    /// Links discovered in the content, in document order. Rebuilt whenever the
+    /// content changes (alongside `cached_text`).
+    links: std::cell::RefCell<Vec<LinkSpan>>,
+    /// The currently highlighted link, if any. Driven by `n`/`N` navigation and
+    /// opened with `Enter`.
+    focused_link_index: Option<usize>,
+    /// How to open a focused link's URL. A function pointer (so the panel stays
+    /// `Clone`/`Debug`) defaulting to the system browser; tests swap in a probe
+    /// to capture the dispatched URL without launching anything.
+    open_link: fn(&str),
+}
+
+impl Default for MarkdownPanel {
+    fn default() -> Self {
+        Self {
+            content: String::new(),
+            scroll_offset: 0,
+            focused: false,
+            last_area: std::cell::Cell::default(),
+            cached_text: std::cell::RefCell::default(),
+            cached_content_hash: std::cell::Cell::default(),
+            links: std::cell::RefCell::default(),
+            focused_link_index: None,
+            open_link: open_in_browser,
+        }
+    }
 }
 
 impl MarkdownPanel {
@@ -38,6 +85,7 @@ impl MarkdownPanel {
     pub fn set_markdown(&mut self, content: impl Into<String>) {
         self.content = content.into();
         self.scroll_offset = 0;
+        self.focused_link_index = None;
         // Invalidate cache by setting hash to 0
         self.cached_content_hash.set(0);
     }
@@ -57,7 +105,7 @@ impl MarkdownPanel {
     /// nested inline formatting (`**bold**`, `_italic_`, `` `code` ``) composes
     /// correctly, plus a little context to inject blockquote/list prefixes and
     /// emulate the prior table layout.
-    fn parse_to_text(&self) -> Text<'static> {
+    fn parse_to_text(&self) -> (Text<'static>, Vec<LinkSpan>) {
         /// Visual prefix prepended to every line inside a blockquote.
         const QUOTE_PREFIX: &str = "┃ ";
 
@@ -67,6 +115,16 @@ impl MarkdownPanel {
         let mut current_spans: Vec<Span<'static>> = Vec::new();
         // Text inherits the style at the top of this stack.
         let mut style_stack: Vec<Style> = vec![Style::default()];
+
+        // Links discovered so far, plus the in-progress link (if any). When a
+        // `Tag::Link` opens we record its URL, the span index where its text
+        // begins, and the line it begins on (`lines.len()`); when it closes we
+        // capture the span range. Link text is single-line in practice, but a
+        // soft break inside it would flush the line and invalidate the start span
+        // index — the recorded start line lets us detect that and recover (see
+        // `TagEnd::Link`) instead of silently dropping the link.
+        let mut links: Vec<LinkSpan> = Vec::new();
+        let mut pending_link: Option<(String, usize, usize)> = None;
 
         // Context flags/counters for prefixes and the table layout hack.
         let mut blockquote_depth: usize = 0;
@@ -156,6 +214,17 @@ impl MarkdownPanel {
                         let style = self.top_style(&style_stack).add_modifier(Modifier::ITALIC);
                         style_stack.push(style);
                     }
+                    Tag::Link { dest_url, .. } => {
+                        // Link text renders underlined in the informational color
+                        // so it reads as a link; the spans it wraps inherit this
+                        // via `top_style`. Remember where the text begins so the
+                        // close can record the span range for highlighting/opening.
+                        let style =
+                            Style::default().fg(palette.info).add_modifier(Modifier::UNDERLINED);
+                        style_stack.push(style);
+                        pending_link =
+                            Some((dest_url.into_string(), current_spans.len(), lines.len()));
+                    }
                     Tag::TableHead => {
                         cell_index = 0;
                     }
@@ -208,6 +277,26 @@ impl MarkdownPanel {
                     }
                     TagEnd::Strong | TagEnd::Emphasis => {
                         style_stack.pop();
+                    }
+                    TagEnd::Link => {
+                        style_stack.pop();
+                        // Record the link's text span range on the line it will
+                        // occupy once flushed. If a soft break flushed the line
+                        // mid-link (`start_line != lines.len()`), the recorded
+                        // `start` indexes a now-emitted line, so anchor to the
+                        // final line's spans (`start = 0`) rather than dropping the
+                        // link. If the link emitted no spans (empty text), skip it.
+                        if let Some((url, start, start_line)) = pending_link.take() {
+                            let start = if start_line == lines.len() { start } else { 0 };
+                            let end = current_spans.len();
+                            if end > start {
+                                links.push(LinkSpan {
+                                    url,
+                                    line_idx: lines.len(),
+                                    span_range: start..end,
+                                });
+                            }
+                        }
                     }
                     TagEnd::Table => {
                         in_table = false;
@@ -270,16 +359,79 @@ impl MarkdownPanel {
 
         // Drop trailing blank lines so block terminators (paragraphs, the H1
         // spacer) don't leave dangling empty rows at the end of the panel.
+        // Links always live on non-blank lines, so trimming never invalidates a
+        // recorded `line_idx`.
         while lines.last().is_some_and(|l| l.spans.iter().all(|s| s.content.is_empty())) {
             lines.pop();
         }
 
-        Text::from(lines)
+        (Text::from(lines), links)
     }
 
     /// The style currently at the top of the stack (defaulting if somehow empty).
     fn top_style(&self, style_stack: &[Style]) -> Style {
         style_stack.last().copied().unwrap_or_default()
+    }
+
+    /// Advance the focused link by `delta` (`+1` next, `-1` previous), wrapping
+    /// around the link list. With no links this is a no-op. From no selection,
+    /// `+1` focuses the first link and `-1` the last. Scrolls the newly focused
+    /// link into view. Returns whether anything changed (so the caller can mark
+    /// the frame dirty).
+    fn focus_link(&mut self, delta: isize) -> bool {
+        self.refresh_cache();
+        let count = self.links.borrow().len();
+        if count == 0 {
+            return false;
+        }
+        let next = match self.focused_link_index {
+            None if delta > 0 => 0,
+            None => count - 1,
+            Some(cur) => (cur as isize + delta).rem_euclid(count as isize) as usize,
+        };
+        if self.focused_link_index == Some(next) {
+            return false;
+        }
+        self.focused_link_index = Some(next);
+        self.scroll_focused_link_into_view();
+        true
+    }
+
+    /// Open the currently focused link in the system browser. Returns whether a
+    /// link was opened.
+    fn open_focused_link(&mut self) -> bool {
+        let url = self
+            .focused_link_index
+            .and_then(|idx| self.links.borrow().get(idx).map(|l| l.url.clone()));
+        match url {
+            Some(url) => {
+                (self.open_link)(&url);
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Scroll so the focused link's line sits within the viewport. Uses the
+    /// recorded `line_idx`; treated as an unwrapped row, which is exact for the
+    /// short, single-line links the templates emit.
+    fn scroll_focused_link_into_view(&mut self) {
+        let height = self.last_area.get().height as usize;
+        if height == 0 {
+            return;
+        }
+        let Some(line_idx) = self
+            .focused_link_index
+            .and_then(|idx| self.links.borrow().get(idx).map(|l| l.line_idx))
+        else {
+            return;
+        };
+        let top = self.scroll_offset as usize;
+        if line_idx < top {
+            self.scroll_offset = line_idx as u16;
+        } else if line_idx >= top + height {
+            self.scroll_offset = (line_idx + 1 - height) as u16;
+        }
     }
 
     /// Refresh the cached text if content has changed.
@@ -292,10 +444,14 @@ impl MarkdownPanel {
         self.content.hash(&mut hasher);
         let current_hash = hasher.finish();
 
-        // If content changed, re-parse and cache
+        // If content changed, re-parse and cache. The cache holds the *base*
+        // (un-highlighted) text and the link table; the focused-link highlight is
+        // a cheap render-time post-pass keyed on `focused_link_index`, so it
+        // doesn't force a re-parse on every `n`/`N` press.
         if self.cached_content_hash.get() != current_hash {
-            let text = self.parse_to_text();
+            let (text, links) = self.parse_to_text();
             *self.cached_text.borrow_mut() = text;
+            *self.links.borrow_mut() = links;
             self.cached_content_hash.set(current_hash);
         }
     }
@@ -324,9 +480,20 @@ impl Component for MarkdownPanel {
     fn render(&self, area: Rect, buf: &mut Buffer) {
         self.last_area.set(area);
         self.refresh_cache();
-        let cached = self.cached_text.borrow().clone();
+        let mut text = self.cached_text.borrow().clone();
+        // Highlight the focused link by reversing its spans. Done here (not in
+        // the cache) so navigation doesn't re-parse; the link table indexes into
+        // the same line/span layout `cached_text` holds.
+        if let Some(idx) = self.focused_link_index
+            && let Some(link) = self.links.borrow().get(idx)
+            && let Some(line) = text.lines.get_mut(link.line_idx)
+        {
+            for span in line.spans.get_mut(link.span_range.clone()).into_iter().flatten() {
+                span.style = span.style.add_modifier(Modifier::REVERSED);
+            }
+        }
         let paragraph =
-            Paragraph::new(cached).wrap(Wrap { trim: false }).scroll((self.scroll_offset, 0));
+            Paragraph::new(text).wrap(Wrap { trim: false }).scroll((self.scroll_offset, 0));
 
         paragraph.render(area, buf);
     }
@@ -376,6 +543,15 @@ impl Component for MarkdownPanel {
                         self.scroll_offset = self.scroll_offset.saturating_sub(5);
                         old_offset != self.scroll_offset
                     }
+                    // Link navigation: `n` focuses the next link, `N` the previous
+                    // one (wrapping). `n`/`N` reach the panel only when the right
+                    // pane is focused. `Tab` (focus cycling) and `[`/`]` (tab
+                    // switching in `TabbedPanel`) are both claimed upstream, so
+                    // neither can drive link navigation here.
+                    ratatui::crossterm::event::KeyCode::Char('n') => self.focus_link(1),
+                    ratatui::crossterm::event::KeyCode::Char('N') => self.focus_link(-1),
+                    // Open the focused link in the system browser.
+                    ratatui::crossterm::event::KeyCode::Enter => self.open_focused_link(),
                     _ => false,
                 }
             }
@@ -416,6 +592,12 @@ impl Component for MarkdownPanel {
 
     fn set_focus(&mut self, focused: bool) {
         self.focused = focused;
+        // Clear the focused link when focus leaves so the REVERSED highlight,
+        // which `render` applies unconditionally, doesn't linger on an unfocused
+        // panel after the user tabs away.
+        if !focused {
+            self.focused_link_index = None;
+        }
     }
 }
 
@@ -430,6 +612,7 @@ mod tests {
         panel.set_markdown(input);
         panel
             .parse_to_text()
+            .0
             .lines
             .into_iter()
             .map(|line| line.spans.iter().map(|s| s.content.as_ref()).collect::<String>())
@@ -485,6 +668,7 @@ mod tests {
     fn style_of(panel: &MarkdownPanel, needle: &str) -> Option<Style> {
         panel
             .parse_to_text()
+            .0
             .lines
             .into_iter()
             .flat_map(|line| line.spans.into_iter())
@@ -619,5 +803,153 @@ mod tests {
         assert!(header.starts_with("Key X          val"), "got: {header:?}");
         // The value sits at column 15, proving the key was padded exactly once.
         assert_eq!(header.find("val"), Some(15), "value not at column 15: {header:?}");
+    }
+
+    // ── Links ────────────────────────────────────────────────────────────
+
+    use ratatui::crossterm::event::{KeyCode, KeyEvent};
+
+    // Captures the last URL passed to `open_link`, so a test can assert which
+    // link `Enter` dispatched without launching a browser. `fn` pointers can't
+    // close over locals, so the probe writes through this thread-local.
+    thread_local! {
+        static OPENED: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
+    }
+
+    fn record_open(url: &str) {
+        OPENED.with(|o| o.borrow_mut().push(url.to_string()));
+    }
+
+    /// A focused panel whose `Enter` action records the URL instead of opening it.
+    fn link_panel(input: &str) -> MarkdownPanel {
+        OPENED.with(|o| o.borrow_mut().clear());
+        let mut panel = MarkdownPanel::new();
+        panel.open_link = record_open;
+        panel.set_markdown(input);
+        panel.set_focus(true);
+        // Give the panel a viewport so scroll-into-view math has a height.
+        panel.last_area.set(Rect::new(0, 0, 80, 24));
+        panel
+    }
+
+    fn press(panel: &mut MarkdownPanel, code: KeyCode) -> bool {
+        panel.handle_event(&Event::Key(KeyEvent::from(code)))
+    }
+
+    #[test]
+    fn link_text_renders_styled_without_markup() {
+        // `[text](url)` shows just `text`, underlined in the info color — no
+        // brackets or parenthesized URL leak into the visible output.
+        let panel = link_panel("see [the docs](https://example.com/docs) now");
+        let lines: Vec<String> = panel
+            .parse_to_text()
+            .0
+            .lines
+            .into_iter()
+            .map(|l| l.spans.iter().map(|s| s.content.as_ref()).collect::<String>())
+            .collect();
+        assert_eq!(lines, vec!["see the docs now".to_string()]);
+
+        let style = style_of(&panel, "the docs").expect("link span");
+        assert_eq!(style.fg, Some(crate::theme::palette().info));
+        assert!(style.add_modifier.contains(Modifier::UNDERLINED));
+    }
+
+    #[test]
+    fn links_are_parsed_in_document_order() {
+        // The link table captures each destination URL, in order.
+        let panel = link_panel("[a](https://a.test) and [b](https://b.test)");
+        panel.refresh_cache();
+        let urls: Vec<String> = panel.links.borrow().iter().map(|l| l.url.clone()).collect();
+        assert_eq!(urls, vec!["https://a.test".to_string(), "https://b.test".to_string()]);
+    }
+
+    #[test]
+    fn n_and_shift_n_cycle_focused_link_with_wraparound() {
+        // `n` advances through links and wraps; `N` steps back and wraps. The
+        // focused link's spans pick up the REVERSED highlight on render.
+        let mut panel = link_panel("[a](https://a.test) [b](https://b.test)");
+        assert_eq!(panel.focused_link_index, None);
+
+        assert!(press(&mut panel, KeyCode::Char('n')));
+        assert_eq!(panel.focused_link_index, Some(0));
+        assert!(press(&mut panel, KeyCode::Char('n')));
+        assert_eq!(panel.focused_link_index, Some(1));
+        // Wrap forward back to the first link.
+        assert!(press(&mut panel, KeyCode::Char('n')));
+        assert_eq!(panel.focused_link_index, Some(0));
+        // `N` wraps backward to the last link.
+        assert!(press(&mut panel, KeyCode::Char('N')));
+        assert_eq!(panel.focused_link_index, Some(1));
+    }
+
+    #[test]
+    fn navigation_keys_are_inert_without_links() {
+        // With no links, `n`/`N` don't claim the key (return false) so they can
+        // fall through to any other handler.
+        let mut panel = link_panel("plain text, no links");
+        assert!(!press(&mut panel, KeyCode::Char('n')));
+        assert!(!press(&mut panel, KeyCode::Char('N')));
+        assert_eq!(panel.focused_link_index, None);
+    }
+
+    #[test]
+    fn focused_link_is_highlighted_on_render() {
+        // The rendered (post-pass) text reverses exactly the focused link's spans.
+        let mut panel = link_panel("[a](https://a.test) [b](https://b.test)");
+        press(&mut panel, KeyCode::Char('n')); // focus link 0
+
+        let mut buf = Buffer::empty(Rect::new(0, 0, 80, 4));
+        panel.render(Rect::new(0, 0, 80, 4), &mut buf);
+
+        // The first cell of "a" should be reversed.
+        let a_cell = buf.cell((0, 0)).expect("cell at link a");
+        assert!(a_cell.modifier.contains(Modifier::REVERSED), "link a not highlighted");
+    }
+
+    #[test]
+    fn enter_opens_the_focused_link() {
+        let mut panel = link_panel("go to [home](https://home.test)");
+        // Enter with no focus opens nothing.
+        assert!(!press(&mut panel, KeyCode::Enter));
+        OPENED.with(|o| assert!(o.borrow().is_empty()));
+
+        press(&mut panel, KeyCode::Char('n')); // focus the link
+        assert!(press(&mut panel, KeyCode::Enter));
+        OPENED.with(|o| assert_eq!(o.borrow().as_slice(), ["https://home.test".to_string()]));
+    }
+
+    #[test]
+    fn losing_focus_clears_the_highlight() {
+        // The REVERSED highlight must not linger after the panel is unfocused:
+        // `set_focus(false)` clears the focused link so render adds no highlight.
+        let mut panel = link_panel("[a](https://a.test) [b](https://b.test)");
+        press(&mut panel, KeyCode::Char('n')); // focus link 0
+        assert_eq!(panel.focused_link_index, Some(0));
+
+        panel.set_focus(false);
+        assert_eq!(panel.focused_link_index, None, "focus loss must clear the focused link");
+
+        let mut buf = Buffer::empty(Rect::new(0, 0, 80, 4));
+        panel.render(Rect::new(0, 0, 80, 4), &mut buf);
+        let a_cell = buf.cell((0, 0)).expect("cell at link a");
+        assert!(
+            !a_cell.modifier.contains(Modifier::REVERSED),
+            "highlight should not persist on an unfocused panel"
+        );
+    }
+
+    #[test]
+    fn link_text_split_across_a_soft_break_is_still_tracked() {
+        // A soft break inside the link text flushes the line mid-link, so the
+        // span-start index recorded at link open no longer indexes the final
+        // line. The link must anchor to its last line rather than being dropped.
+        let panel = link_panel("[multi\nline link](https://wrapped.test)");
+        panel.refresh_cache();
+        let links = panel.links.borrow();
+        assert_eq!(links.len(), 1, "wrapped link was dropped: {links:?}");
+        assert_eq!(links[0].url, "https://wrapped.test");
+        // It anchors to the final line of the link text, from span 0.
+        assert_eq!(links[0].span_range.start, 0);
     }
 }

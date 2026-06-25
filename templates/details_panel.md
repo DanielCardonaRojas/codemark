@@ -6,7 +6,7 @@
 
 {{#if context}}
 **Context**
-{{escape_markdown context}}
+{{context}}
 {{/if}}
 
 {{/each}}
