@@ -217,9 +217,8 @@ impl MarkdownPanel {
                         // so it reads as a link; the spans it wraps inherit this
                         // via `top_style`. Remember where the text begins so the
                         // close can record the span range for highlighting/opening.
-                        let style = Style::default()
-                            .fg(palette.info)
-                            .add_modifier(Modifier::UNDERLINED);
+                        let style =
+                            Style::default().fg(palette.info).add_modifier(Modifier::UNDERLINED);
                         style_stack.push(style);
                         pending_link = Some((dest_url.into_string(), current_spans.len()));
                     }
@@ -414,8 +413,9 @@ impl MarkdownPanel {
         if height == 0 {
             return;
         }
-        let Some(line_idx) =
-            self.focused_link_index.and_then(|idx| self.links.borrow().get(idx).map(|l| l.line_idx))
+        let Some(line_idx) = self
+            .focused_link_index
+            .and_then(|idx| self.links.borrow().get(idx).map(|l| l.line_idx))
         else {
             return;
         };
@@ -481,12 +481,7 @@ impl Component for MarkdownPanel {
             && let Some(link) = self.links.borrow().get(idx)
             && let Some(line) = text.lines.get_mut(link.line_idx)
         {
-            for span in line
-                .spans
-                .get_mut(link.span_range.clone())
-                .into_iter()
-                .flatten()
-            {
+            for span in line.spans.get_mut(link.span_range.clone()).into_iter().flatten() {
                 span.style = span.style.add_modifier(Modifier::REVERSED);
             }
         }
