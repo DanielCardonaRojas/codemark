@@ -597,6 +597,7 @@ dependencies = [
  "crossterm 0.28.1",
  "futures",
  "insta",
+ "open",
  "pulldown-cmark",
  "ratatui",
  "reqwest",
