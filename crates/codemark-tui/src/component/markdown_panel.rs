@@ -8,7 +8,9 @@ use ratatui::{
     layout::Rect,
     style::{Modifier, Style},
     text::{Line, Span, Text},
-    widgets::{Paragraph, Widget, Wrap},
+    widgets::{
+        Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState, StatefulWidget, Widget, Wrap,
+    },
 };
 
 /// The location and target of a rendered link, used to highlight the focused
@@ -496,6 +498,36 @@ impl Component for MarkdownPanel {
             Paragraph::new(text).wrap(Wrap { trim: false }).scroll((self.scroll_offset, 0));
 
         paragraph.render(area, buf);
+
+        // Render a scrollbar on the right edge when content overflows the
+        // viewport, mirroring the code preview. `line_count()` already returns
+        // the wrap-aware total, so the same overflow gating and thumb math apply.
+        let height = area.height as usize;
+        let total = self.line_count();
+        if total > height && height > 0 {
+            let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+                .begin_symbol(None)
+                .end_symbol(None)
+                .track_symbol(None)
+                .thumb_symbol("┃");
+
+            // Model `content_length` as the number of scroll positions
+            // (`total - height + 1`) so Ratatui 0.29's thumb math yields the
+            // correct visible/total ratio and lets the thumb reach the bottom on
+            // the last page. See the code preview for the derivation.
+            let scroll_positions = total - height + 1;
+            let mut scrollbar_state =
+                ScrollbarState::new(scroll_positions).position(self.scroll_offset as usize);
+
+            let scrollbar_area = Rect {
+                x: area.right().saturating_sub(1),
+                y: area.top(),
+                width: 1,
+                height: area.height,
+            };
+
+            scrollbar.render(scrollbar_area, buf, &mut scrollbar_state);
+        }
     }
 
     fn handle_event(&mut self, event: &Event) -> bool {
@@ -951,5 +983,32 @@ mod tests {
         assert_eq!(links[0].url, "https://wrapped.test");
         // It anchors to the final line of the link text, from span 0.
         assert_eq!(links[0].span_range.start, 0);
+    }
+
+    // ── Scrollbar ────────────────────────────────────────────────────────
+
+    /// Whether the right-edge column of `buf` contains the scrollbar thumb.
+    fn has_scrollbar(buf: &Buffer, area: Rect) -> bool {
+        let x = area.right() - 1;
+        (area.top()..area.bottom()).any(|y| buf.cell((x, y)).is_some_and(|c| c.symbol() == "┃"))
+    }
+
+    #[test]
+    fn scrollbar_appears_only_when_content_overflows() {
+        // Content taller than the viewport draws a scrollbar thumb on the right
+        // edge; content that fits does not.
+        let many = (0..40).map(|i| format!("line {i}")).collect::<Vec<_>>().join("\n\n");
+        let mut panel = MarkdownPanel::new();
+        panel.set_markdown(many);
+        let area = Rect::new(0, 0, 20, 6);
+        let mut buf = Buffer::empty(area);
+        panel.render(area, &mut buf);
+        assert!(has_scrollbar(&buf, area), "overflowing content should show a scrollbar");
+
+        let mut small = MarkdownPanel::new();
+        small.set_markdown("just one line");
+        let mut buf2 = Buffer::empty(area);
+        small.render(area, &mut buf2);
+        assert!(!has_scrollbar(&buf2, area), "content that fits should not show a scrollbar");
     }
 }
