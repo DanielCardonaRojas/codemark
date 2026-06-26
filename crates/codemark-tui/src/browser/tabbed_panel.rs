@@ -205,6 +205,21 @@ impl TabbedPanel {
         }
     }
 
+    /// Re-apply the current default syntax theme to every code preview held by
+    /// this panel, re-highlighting their cached content.
+    ///
+    /// Previews capture their theme at construction, so a runtime theme change
+    /// (via the Settings overlay) must push the new theme into existing
+    /// previews — otherwise the chrome re-themes while the code stays stale.
+    pub fn reapply_preview_theme(&mut self) {
+        let theme = crate::component::code_preview::current_default_theme();
+        for panel in &mut self.panels {
+            if let TabContent::Preview(preview) = panel {
+                preview.set_theme(theme.clone());
+            }
+        }
+    }
+
     /// Get the currently active markdown panel for modification.
     pub fn get_markdown_mut(&mut self) -> Option<&mut MarkdownPanel> {
         for panel in &mut self.panels {

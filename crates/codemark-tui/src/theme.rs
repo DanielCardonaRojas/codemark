@@ -23,7 +23,7 @@ use std::collections::BTreeMap;
 use std::io::Cursor;
 use std::path::PathBuf;
 use std::str::FromStr;
-use std::sync::OnceLock;
+use std::sync::RwLock;
 
 use codemark_core::config::global_config_dir;
 use ratatui::style::Color;
@@ -401,17 +401,23 @@ fn mix(a: SyntectColor, b: SyntectColor, t: f32) -> Color {
 
 /// Process-wide chrome palette. Set once from config via [`set_palette`];
 /// otherwise the ANSI-based [`Palette::default`].
-static PALETTE: OnceLock<Palette> = OnceLock::new();
+static PALETTE: RwLock<Option<Palette>> = RwLock::new(None);
 
-/// Set the process-wide chrome palette. Call once at startup (alongside the
-/// preview theme), before the UI is built. A no-op if already set.
+/// Set the process-wide chrome palette.
 pub fn set_palette(palette: Palette) {
-    let _ = PALETTE.set(palette);
+    if let Ok(mut guard) = PALETTE.write() {
+        *guard = Some(palette);
+    }
 }
 
 /// The active chrome palette, defaulting to the ANSI [`Palette::default`].
 pub fn palette() -> Palette {
-    *PALETTE.get_or_init(Palette::default)
+    if let Ok(guard) = PALETTE.read()
+        && let Some(p) = *guard
+    {
+        return p;
+    }
+    Palette::default()
 }
 
 #[cfg(test)]

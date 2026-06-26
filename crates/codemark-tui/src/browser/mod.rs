@@ -4,6 +4,7 @@
 //! containing search, repos, and tours, and a right main content area.
 
 mod bindings;
+mod config_info;
 mod data;
 mod dialog;
 mod events;

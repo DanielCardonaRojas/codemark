@@ -36,6 +36,8 @@ rusqlite = { workspace = true }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
 serde = { workspace = true }
+toml = { workspace = true }
+toml_edit = "0.22"
 unicode-segmentation = "1"
 unicode-width = "0.2"
 futures = "0.3"
