@@ -1122,7 +1122,7 @@ impl BrowserLayout {
 
         spans.push(Span::styled(" | ", Style::default().fg(crate::theme::palette().gray)));
         spans.push(Span::styled(
-            format!("v{}", env!("CARGO_PKG_VERSION")),
+            format!("\u{f0031} v{}", env!("CARGO_PKG_VERSION")),
             Style::default().fg(crate::theme::palette().emphasis).bold(),
         ));
 
