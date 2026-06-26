@@ -14,6 +14,8 @@ pub enum SettingsAction {
     Handled,
     Unhandled,
     ThemeChanged,
+    /// Surface a transient message to the user (e.g. a failed save or open).
+    Notify(String),
 }
 
 /// The tabs available in the settings overlay, in display order.
@@ -181,27 +183,38 @@ impl SettingsOverlay {
         }
     }
 
-    fn save_selected_theme(&mut self) {
-        if let Some(theme_name) = self.available_themes.get(self.selected_theme).cloned() {
-            if let Some(config_dir) = global_config_dir() {
-                let path = config_dir.join("config.toml");
-                let content = std::fs::read_to_string(&path).unwrap_or_default();
-                let mut table = content.parse::<toml::Table>().unwrap_or_default();
+    /// Persist the selected theme to the global `config.toml`'s `tui.theme` key.
+    ///
+    /// Edits the file in place with `toml_edit` so existing comments and
+    /// formatting are preserved, and creates the config directory if it doesn't
+    /// exist yet. `saved_theme` is only updated once the write actually
+    /// succeeds; on failure an `Err(message)` is returned for the caller to
+    /// surface, so a discarded error can't leave the in-memory state claiming a
+    /// theme is persisted when it isn't.
+    fn save_selected_theme(&mut self) -> Result<(), String> {
+        let Some(theme_name) = self.available_themes.get(self.selected_theme).cloned() else {
+            return Ok(());
+        };
+        let Some(config_dir) = global_config_dir() else {
+            return Err("Could not resolve the global config directory".to_string());
+        };
 
-                if let Some(toml::Value::Table(tui)) = table.get_mut("tui") {
-                    tui.insert("theme".to_string(), toml::Value::String(theme_name.clone()));
-                } else {
-                    let mut tui_table = toml::Table::new();
-                    tui_table.insert("theme".to_string(), toml::Value::String(theme_name.clone()));
-                    table.insert("tui".to_string(), toml::Value::Table(tui_table));
-                }
+        std::fs::create_dir_all(&config_dir)
+            .map_err(|e| format!("Failed to create config directory: {e}"))?;
 
-                if let Ok(new_content) = toml::to_string(&table) {
-                    let _ = std::fs::write(&path, new_content);
-                }
-            }
-            self.saved_theme = Some(theme_name);
-        }
+        let path = config_dir.join("config.toml");
+        let content = std::fs::read_to_string(&path).unwrap_or_default();
+        let mut doc = content
+            .parse::<toml_edit::DocumentMut>()
+            .map_err(|e| format!("Failed to parse config.toml: {e}"))?;
+
+        doc["tui"]["theme"] = toml_edit::value(theme_name.clone());
+
+        std::fs::write(&path, doc.to_string())
+            .map_err(|e| format!("Failed to write config.toml: {e}"))?;
+
+        self.saved_theme = Some(theme_name);
+        Ok(())
     }
 
     /// Handle a key while the overlay is open.
@@ -246,27 +259,30 @@ impl SettingsOverlay {
                     if self.selected_about_link > 0 {
                         self.selected_about_link -= 1;
                     }
-                } else if self.tab == SettingsTab::Configuration {
-                    if self.selected_config_row > 0 {
+                } else if self.tab == SettingsTab::Configuration
+                    && self.selected_config_row > 0 {
                         self.selected_config_row -= 1;
                     }
-                }
             }
             KeyCode::Enter => {
                 if self.tab == SettingsTab::Theme {
-                    self.save_selected_theme();
+                    if let Err(msg) = self.save_selected_theme() {
+                        return SettingsAction::Notify(msg);
+                    }
                 } else if self.tab == SettingsTab::About {
                     let url = if self.selected_about_link == 0 {
                         env!("CARGO_PKG_REPOSITORY")
                     } else {
                         "https://github.com/sponsors/DanielCardonaRojas"
                     };
-                    let _ = open::that(url);
-                } else if self.tab == SettingsTab::Configuration {
-                    if let Some((_, _, Some(path))) = config.get(self.selected_config_row) {
-                        let _ = open::that(path);
+                    if let Err(e) = open::that(url) {
+                        return SettingsAction::Notify(format!("Failed to open {url}: {e}"));
                     }
-                }
+                } else if self.tab == SettingsTab::Configuration
+                    && let Some((_, _, Some(path))) = config.get(self.selected_config_row)
+                        && let Err(e) = open::that(path) {
+                            return SettingsAction::Notify(format!("Failed to open {path}: {e}"));
+                        }
             }
             _ => {}
         }
@@ -396,11 +412,8 @@ fn render_configuration(
             Span::raw("  ")
         };
 
-        let label_style = if is_selected {
-            Style::default().fg(palette.accent).bold()
-        } else {
-            Style::default().fg(palette.accent).bold()
-        };
+        // The label colour is constant; only the value/marker reflect selection.
+        let label_style = Style::default().fg(palette.accent).bold();
 
         let value_style = if is_selected {
             if is_link {
@@ -408,12 +421,10 @@ fn render_configuration(
             } else {
                 Style::default().fg(palette.emphasis).bold()
             }
+        } else if is_link {
+            Style::default().fg(palette.emphasis).underlined()
         } else {
-            if is_link {
-                Style::default().fg(palette.emphasis).underlined()
-            } else {
-                Style::default().fg(palette.emphasis)
-            }
+            Style::default().fg(palette.emphasis)
         };
 
         text.push_line(Line::from(vec![

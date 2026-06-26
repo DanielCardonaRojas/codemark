@@ -203,6 +203,13 @@ impl RightPane {
         self.loading_tick = self.loading_tick.wrapping_add(1);
     }
 
+    /// Re-apply the active syntax theme to the code preview panes, re-highlighting
+    /// their current content. Called after a runtime theme change so existing
+    /// previews don't keep their old colors.
+    pub fn reapply_theme(&mut self) {
+        self.steps.reapply_preview_theme();
+    }
+
     /// Update the code preview based on current step.
     pub fn update_preview(&mut self, db: &Database) {
         if let Some(step) = self.steps_data.get(self.pager_current) {

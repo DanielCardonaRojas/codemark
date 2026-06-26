@@ -26,6 +26,15 @@ fn abbreviate(path: &Path) -> String {
 }
 
 impl BrowserLayout {
+    /// Re-apply the active syntax theme to the right-pane code previews.
+    ///
+    /// The Settings overlay's Theme tab swaps the process-wide preview theme,
+    /// but already-built previews captured the old one — this pushes the new
+    /// theme into them so the code re-highlights in step with the chrome.
+    pub fn reapply_preview_theme(&mut self) {
+        self.right_pane.reapply_theme();
+    }
+
     /// Build the labeled rows shown in the help overlay's Configuration tab.
     ///
     /// Each entry is a `(label, value)` pair; missing paths render as

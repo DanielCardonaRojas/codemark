@@ -217,13 +217,19 @@ async fn run_app() -> Result<Option<i32>> {
                                 let config = layout.config_info();
                                 match settings.handle_key(key.code, &config) {
                                     codemark_tui::settings::SettingsAction::ThemeChanged => {
-                                        layout.refresh_all_panels();
+                                        // Re-highlight existing previews with the
+                                        // newly applied theme (the chrome updates
+                                        // automatically on the next render).
+                                        layout.reapply_preview_theme();
                                         handled = true;
                                     }
-                                    codemark_tui::settings::SettingsAction::Handled => {
+                                    codemark_tui::settings::SettingsAction::Notify(msg) => {
+                                        notification =
+                                            Some((msg, NotificationType::Error, Instant::now()));
                                         handled = true;
                                     }
-                                    codemark_tui::settings::SettingsAction::Unhandled => {
+                                    codemark_tui::settings::SettingsAction::Handled
+                                    | codemark_tui::settings::SettingsAction::Unhandled => {
                                         handled = true; // Still modal, so swallow
                                     }
                                 }
@@ -255,11 +261,8 @@ async fn run_app() -> Result<Option<i32>> {
                                         if !search_focused && !dialog_active =>
                                     {
                                         // Open the global settings overlay.
-                                        match settings.toggle() {
-                                            codemark_tui::settings::SettingsAction::ThemeChanged => {
-                                                layout.refresh_all_panels();
-                                            }
-                                            _ => {}
+                                        if settings.toggle() == codemark_tui::settings::SettingsAction::ThemeChanged {
+                                            layout.refresh_all_panels();
                                         }
                                         handled = true;
                                     }

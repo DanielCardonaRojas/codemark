@@ -43,20 +43,27 @@ pub fn set_default_theme(theme: Theme) {
     }
 }
 
+/// The current process-wide default preview theme (shared via `Arc`).
+///
+/// Exposed so existing previews can be re-themed after a runtime theme change:
+/// previews capture their theme at construction, so changing the default alone
+/// does not update them — callers hand this to [`CodePreview::set_theme`].
+pub fn current_default_theme() -> Arc<Theme> {
+    default_theme()
+}
+
 /// The current default theme, resolving and caching the registry fallback on
 /// first use if [`set_default_theme`] was never called.
 fn default_theme() -> Arc<Theme> {
-    if let Ok(guard) = DEFAULT_THEME.read() {
-        if let Some(t) = guard.as_ref() {
+    if let Ok(guard) = DEFAULT_THEME.read()
+        && let Some(t) = guard.as_ref() {
             return t.clone();
         }
-    }
     let theme = Arc::new(crate::theme::default_theme());
-    if let Ok(mut guard) = DEFAULT_THEME.write() {
-        if guard.is_none() {
+    if let Ok(mut guard) = DEFAULT_THEME.write()
+        && guard.is_none() {
             *guard = Some(theme.clone());
         }
-    }
     theme
 }
 
