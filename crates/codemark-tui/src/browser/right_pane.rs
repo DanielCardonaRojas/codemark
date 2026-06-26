@@ -1178,6 +1178,26 @@ impl RightPane {
         }
     }
 
+    /// Whether the currently visible main preview panel supports link
+    /// navigation (`n`/`N`). Only markdown panels render links; the code preview
+    /// (Steps) and query (Query) tabs do not, so the status bar and help popup
+    /// hide the Links binding while one of those is active.
+    pub fn link_navigation_available(&self) -> bool {
+        // The live collection overview is markdown and renders its links.
+        if self.overview_active {
+            return true;
+        }
+        match self.focused {
+            // Both bottom tabs (Details/Comments) are markdown panels.
+            RightPaneFocus::Details => matches!(
+                self.details.panels.get(self.details.tabs.selected_index()),
+                Some(crate::browser::TabContent::Markdown(_))
+            ),
+            // Among the steps tabs only the Info tab is markdown.
+            RightPaneFocus::Steps => self.steps.get_markdown().is_some(),
+        }
+    }
+
     /// Get the markdown content from the currently focused markdown panel.
     /// Returns the content from the Details panel when focused on Details,
     /// or from the Info tab's markdown panel when the Info tab is selected.

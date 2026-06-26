@@ -74,7 +74,10 @@ impl BrowserLayout {
             FocusArea::Main => {
                 bindings.push(("Enter", "Go to step / Open link"));
                 bindings.push(("o", "Open in editor"));
-                bindings.push(("n/N", "Cycle links"));
+                // Links only exist in markdown panels, not the code preview.
+                if self.right_pane.link_navigation_available() {
+                    bindings.push(("n/N", "Cycle links"));
+                }
                 bindings.push(("←/h", "Previous step"));
                 bindings.push(("→/l", "Next step"));
                 bindings.push(("H", "Heal"));
@@ -195,7 +198,10 @@ impl BrowserLayout {
                     KeyBinding::new("Enter", "Select Step").with_priority(HIDDEN_BINDING_PRIORITY),
                 );
                 bindings.push(KeyBinding::new("o", "Open File").with_priority(85));
-                bindings.push(KeyBinding::new("n/N", "Links").with_priority(40));
+                // Links only exist in markdown panels, not the code preview.
+                if self.right_pane.link_navigation_available() {
+                    bindings.push(KeyBinding::new("n/N", "Links").with_priority(40));
+                }
                 bindings.push(KeyBinding::new("H", "Heal").with_priority(HIDDEN_BINDING_PRIORITY));
                 bindings.push(KeyBinding::new("Esc", "Back to Tours").with_priority(72));
                 if self.right_pane.steps.tabs.selected_index() == INFO_TAB_INDEX {
