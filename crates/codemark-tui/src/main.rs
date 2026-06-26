@@ -123,71 +123,38 @@ async fn run_app() -> Result<Option<i32>> {
     let notification_duration = Duration::from_secs(2);
 
     // Main loop
-    let mut show_help = false;
+    let mut help = codemark_tui::help::HelpOverlay::new();
 
     while state.is_running() {
         // Draw the UI
         terminal.draw(|f| {
             let size = f.area();
 
-            if show_help {
-                // Draw help overlay
+            // The main layout + status bar are always drawn; the help overlay
+            // (when visible) is painted on top as a modal popup.
+            let chunks = ratatui::layout::Layout::default()
+                .direction(ratatui::layout::Direction::Vertical)
+                .constraints([
+                    ratatui::layout::Constraint::Min(0),
+                    ratatui::layout::Constraint::Length(1),
+                ])
+                .split(size);
+
+            layout.render(chunks[0], f.buffer_mut());
+
+            ui::render_status_bar(
+                chunks[1],
+                f.buffer_mut(),
+                state.mode(),
+                &layout.get_status_bindings(),
+                Some(layout.get_status_metadata()),
+                state.get_string("filter_buffer"),
+            );
+
+            if help.is_visible() {
                 let bindings = layout.get_help_bindings();
-                let help_width = 50.min(size.width.saturating_sub(4));
-                let help_height = (bindings.len() as u16 + 4).min(size.height.saturating_sub(4));
-
-                let help_area = ratatui::layout::Rect {
-                    x: (size.width - help_width) / 2,
-                    y: (size.height - help_height) / 2,
-                    width: help_width,
-                    height: help_height,
-                };
-
-                // Draw main layout in background
-                let chunks = ratatui::layout::Layout::default()
-                    .direction(ratatui::layout::Direction::Vertical)
-                    .constraints([
-                        ratatui::layout::Constraint::Min(0),
-                        ratatui::layout::Constraint::Length(1),
-                    ])
-                    .split(size);
-
-                layout.render(chunks[0], f.buffer_mut());
-
-                ui::render_status_bar(
-                    chunks[1],
-                    f.buffer_mut(),
-                    state.mode(),
-                    &layout.get_status_bindings(),
-                    Some(layout.get_status_metadata()),
-                    state.get_string("filter_buffer"),
-                );
-
-                // Draw help overlay
-                // Convert &[(&str, &str)] to &[(&str, &str)] - compatible types
-                let bindings_refs: Vec<(&str, &str)> =
-                    bindings.iter().map(|(k, v)| (*k, *v)).collect();
-                ui::render_help_panel(help_area, f.buffer_mut(), &bindings_refs);
-            } else {
-                // Draw normal UI
-                let chunks = ratatui::layout::Layout::default()
-                    .direction(ratatui::layout::Direction::Vertical)
-                    .constraints([
-                        ratatui::layout::Constraint::Min(0),
-                        ratatui::layout::Constraint::Length(1),
-                    ])
-                    .split(size);
-
-                layout.render(chunks[0], f.buffer_mut());
-
-                ui::render_status_bar(
-                    chunks[1],
-                    f.buffer_mut(),
-                    state.mode(),
-                    &layout.get_status_bindings(),
-                    Some(layout.get_status_metadata()),
-                    state.get_string("filter_buffer"),
-                );
+                let config = layout.config_info();
+                help.render(size, f.buffer_mut(), &bindings, &config);
             }
 
             // Draw notification if present
@@ -218,6 +185,11 @@ async fn run_app() -> Result<Option<i32>> {
                 match &event {
                     Event::Key(key) => {
                         match state.mode() {
+                            AppMode::Normal if help.is_visible() => {
+                                // The help overlay is modal: it swallows every
+                                // key (tab switching, Esc/? to close).
+                                handled = help.handle_key(key.code);
+                            }
                             AppMode::Normal => {
                                 // Handle global key bindings (disabled when Search is focused).
                                 // A modal dialog also suppresses them so all keys route to the
@@ -235,7 +207,7 @@ async fn run_app() -> Result<Option<i32>> {
                                     event::KeyCode::Char('?')
                                         if !search_focused && !dialog_active =>
                                     {
-                                        show_help = !show_help;
+                                        help.toggle();
                                         handled = true;
                                     }
                                     event::KeyCode::Char('/') if !dialog_active => {
@@ -251,10 +223,7 @@ async fn run_app() -> Result<Option<i32>> {
                                         state.set_string("filter_target", filter_target);
                                     }
                                     event::KeyCode::Esc if !dialog_active => {
-                                        if show_help {
-                                            show_help = false;
-                                            handled = true;
-                                        } else if notification.is_some() {
+                                        if notification.is_some() {
                                             notification = None;
                                             handled = true;
                                         } else {
@@ -309,20 +278,20 @@ async fn run_app() -> Result<Option<i32>> {
                 }
 
                 // If not handled by global keys, pass to layout (includes mouse events)
-                // Skip when help is shown to make help modal
+                // Skip when help is shown to keep the overlay modal
                 // In input modes (Command/Search/Insert), only pass mouse events to layout
                 // so that Esc can be handled by state to exit the mode
                 let is_input_mode =
                     matches!(state.mode(), AppMode::Command | AppMode::Search | AppMode::Insert);
                 let is_mouse_event = matches!(event, Event::Mouse(_));
-                if !handled && !show_help && (!is_input_mode || is_mouse_event) {
+                if !handled && !help.is_visible() && (!is_input_mode || is_mouse_event) {
                     handled = layout.handle_event(&event);
                 }
 
                 // Let state handle the event too (captures keys for Search mode)
-                // Skip when help is shown to make help modal
+                // Skip when help is shown to keep the overlay modal
                 // Skip if layout already handled the event (prevents keybinding conflicts)
-                if !show_help && !handled {
+                if !help.is_visible() && !handled {
                     state.handle_event(&event);
                 }
 
