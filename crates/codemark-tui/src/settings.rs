@@ -61,6 +61,7 @@ pub struct SettingsOverlay {
     selected_theme: usize,
     saved_theme: Option<String>,
     selected_about_link: usize,
+    selected_config_row: usize,
 }
 
 impl Default for SettingsOverlay {
@@ -110,6 +111,7 @@ impl SettingsOverlay {
             selected_theme,
             saved_theme,
             selected_about_link: 0,
+            selected_config_row: 0,
         }
     }
 
@@ -199,7 +201,7 @@ impl SettingsOverlay {
     }
 
     /// Handle a key while the overlay is open.
-    pub fn handle_key(&mut self, code: KeyCode) -> SettingsAction {
+    pub fn handle_key(&mut self, code: KeyCode, config: &[(&'static str, String, Option<String>)]) -> SettingsAction {
         match code {
             KeyCode::Esc | KeyCode::Char(',') => {
                 return self.hide();
@@ -218,6 +220,11 @@ impl SettingsOverlay {
                     if self.selected_about_link < 1 {
                         self.selected_about_link += 1;
                     }
+                } else if self.tab == SettingsTab::Configuration {
+                    let max = config.len().saturating_sub(1);
+                    if self.selected_config_row < max {
+                        self.selected_config_row += 1;
+                    }
                 }
             }
             KeyCode::Char('k') | KeyCode::Up => {
@@ -231,6 +238,10 @@ impl SettingsOverlay {
                     if self.selected_about_link > 0 {
                         self.selected_about_link -= 1;
                     }
+                } else if self.tab == SettingsTab::Configuration {
+                    if self.selected_config_row > 0 {
+                        self.selected_config_row -= 1;
+                    }
                 }
             }
             KeyCode::Enter => {
@@ -243,6 +254,10 @@ impl SettingsOverlay {
                         "https://github.com/sponsors/DanielCardonaRojas"
                     };
                     let _ = open::that(url);
+                } else if self.tab == SettingsTab::Configuration {
+                    if let Some((_, _, Some(path))) = config.get(self.selected_config_row) {
+                        let _ = open::that(path);
+                    }
                 }
             }
             _ => {}
@@ -251,7 +266,7 @@ impl SettingsOverlay {
     }
 
     /// Render the overlay as a centered modal over `area`.
-    pub fn render(&self, area: Rect, buf: &mut Buffer, config: &[(&'static str, String)]) {
+    pub fn render(&self, area: Rect, buf: &mut Buffer, config: &[(&'static str, String, Option<String>)]) {
         let popup = centered_rect(area, 0.55, 0.7);
         Widget::render(Clear, popup, buf);
 
@@ -284,7 +299,7 @@ impl SettingsOverlay {
             .split(inner);
 
         match self.tab {
-            SettingsTab::Configuration => render_configuration(chunks[0], buf, config),
+            SettingsTab::Configuration => render_configuration(chunks[0], buf, config, self.selected_config_row),
             SettingsTab::Theme => render_theme(chunks[0], buf, &self.available_themes, self.selected_theme),
             SettingsTab::About => render_about(chunks[0], buf, self.selected_about_link),
         }
@@ -301,21 +316,12 @@ impl SettingsOverlay {
                 ])
                 .alignment(Alignment::Center)
             }
-            SettingsTab::About => {
+            SettingsTab::About | SettingsTab::Configuration => {
                 Line::from(vec![
                     Span::styled("j/k", Style::default().fg(palette.accent).bold()),
                     Span::styled(" select link    ", Style::default().fg(palette.dim)),
                     Span::styled("Enter", Style::default().fg(palette.accent).bold()),
                     Span::styled(" open link    ", Style::default().fg(palette.dim)),
-                    Span::styled("[ / ]", Style::default().fg(palette.accent).bold()),
-                    Span::styled(" switch tabs    ", Style::default().fg(palette.dim)),
-                    Span::styled("Esc", Style::default().fg(palette.accent).bold()),
-                    Span::styled(" close", Style::default().fg(palette.dim)),
-                ])
-                .alignment(Alignment::Center)
-            }
-            _ => {
-                Line::from(vec![
                     Span::styled("[ / ]", Style::default().fg(palette.accent).bold()),
                     Span::styled(" switch tabs    ", Style::default().fg(palette.dim)),
                     Span::styled("Esc", Style::default().fg(palette.accent).bold()),
@@ -357,18 +363,48 @@ fn render_theme(area: Rect, buf: &mut Buffer, themes: &[String], selected: usize
 
 /// Render the Configuration tab: a `label : value` list of important paths and
 /// settings, with labels aligned to the widest one.
-fn render_configuration(area: Rect, buf: &mut Buffer, rows: &[(&'static str, String)]) {
+fn render_configuration(area: Rect, buf: &mut Buffer, rows: &[(&'static str, String, Option<String>)], selected_row: usize) {
     let palette = crate::theme::palette();
-    let label_width = rows.iter().map(|(label, _)| label.len()).max().unwrap_or(0);
+    let label_width = rows.iter().map(|(label, _, _)| label.len()).max().unwrap_or(0);
 
     let mut text = Text::default();
-    for (label, value) in rows {
+    for (i, (label, value, has_path)) in rows.iter().enumerate() {
+        let is_selected = i == selected_row;
+        let is_link = has_path.is_some();
+        
+        let marker = if is_selected {
+            Span::styled("\u{276f} ", Style::default().fg(palette.marker).bold())
+        } else {
+            Span::raw("  ")
+        };
+        
+        let label_style = if is_selected {
+            Style::default().fg(palette.accent).bold()
+        } else {
+            Style::default().fg(palette.accent).bold()
+        };
+        
+        let value_style = if is_selected {
+            if is_link {
+                Style::default().fg(palette.inverse).bg(palette.accent).bold()
+            } else {
+                Style::default().fg(palette.emphasis).bold()
+            }
+        } else {
+            if is_link {
+                Style::default().fg(palette.emphasis).underlined()
+            } else {
+                Style::default().fg(palette.emphasis)
+            }
+        };
+
         text.push_line(Line::from(vec![
+            marker,
             Span::styled(
-                format!(" {label:<label_width$}  "),
-                Style::default().fg(palette.accent).bold(),
+                format!("{label:<label_width$}  "),
+                label_style,
             ),
-            Span::styled(value.clone(), Style::default().fg(palette.emphasis)),
+            Span::styled(value.clone(), value_style),
         ]));
     }
     Paragraph::new(text).wrap(Wrap { trim: false }).render(area, buf);
@@ -391,7 +427,7 @@ fn render_about(area: Rect, buf: &mut Buffer, selected_link: usize) {
     
     // Version is not a link
     text.push_line(Line::from(vec![
-        Span::raw("    "),
+        Span::raw("  "),
         Span::styled(format!("{:<10}  ", "Version"), Style::default().fg(palette.accent).bold()),
         Span::styled(crate::VERSION, Style::default().fg(palette.emphasis)),
     ]));
@@ -409,9 +445,9 @@ fn render_about(area: Rect, buf: &mut Buffer, selected_link: usize) {
         };
         
         let marker = if i == selected_link {
-            Span::styled("  \u{276f} ", Style::default().fg(palette.marker).bold())
+            Span::styled("\u{276f} ", Style::default().fg(palette.marker).bold())
         } else {
-            Span::raw("    ")
+            Span::raw("  ")
         };
 
         let link_label = Span::styled(format!("{name:<10}  "), Style::default().fg(palette.accent).bold());
@@ -466,12 +502,12 @@ mod tests {
 
         // Forward wraps from the last tab back to the first.
         for _ in 0..SettingsTab::ALL.len() {
-            overlay.handle_key(KeyCode::Char(']'));
+            assert_eq!(overlay.handle_key(KeyCode::Char(']'), &[]), SettingsAction::Handled);
         }
         assert_eq!(overlay.tab(), SettingsTab::Configuration);
 
         // Backward from the first tab wraps to the last.
-        overlay.handle_key(KeyCode::Char('['));
+        assert_eq!(overlay.handle_key(KeyCode::Char('['), &[]), SettingsAction::Handled);
         assert_eq!(overlay.tab(), *SettingsTab::ALL.last().unwrap());
     }
 
@@ -480,11 +516,11 @@ mod tests {
         let mut overlay = SettingsOverlay::new();
 
         overlay.toggle();
-        assert_eq!(overlay.handle_key(KeyCode::Esc), SettingsAction::Handled);
+        assert_eq!(overlay.handle_key(KeyCode::Esc, &[]), SettingsAction::Handled);
         assert!(!overlay.is_visible());
 
         overlay.toggle();
-        assert_eq!(overlay.handle_key(KeyCode::Char(',')), SettingsAction::Handled);
+        assert_eq!(overlay.handle_key(KeyCode::Char(','), &[]), SettingsAction::Handled);
         assert!(!overlay.is_visible());
     }
 
@@ -493,7 +529,7 @@ mod tests {
         let mut overlay = SettingsOverlay::new();
         overlay.toggle();
         // An unrelated key is still consumed while the overlay is open.
-        assert_eq!(overlay.handle_key(KeyCode::Char('q')), SettingsAction::Handled);
+        assert_eq!(overlay.handle_key(KeyCode::Char('q'), &[]), SettingsAction::Handled);
         assert!(overlay.is_visible());
     }
 }

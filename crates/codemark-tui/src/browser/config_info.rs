@@ -31,23 +31,22 @@ impl BrowserLayout {
     /// Each entry is a `(label, value)` pair; missing paths render as
     /// `<unavailable>` rather than being omitted, so the set of rows is stable.
     /// Paths under the home directory are abbreviated with `~`.
-    pub fn config_info(&self) -> Vec<(&'static str, String)> {
+    pub fn config_info(&self) -> Vec<(&'static str, String, Option<String>)> {
         let db_path = self.db.path();
         let codemark_dir = db_path.parent();
         let config = codemark_dir.map(Config::load_layered).unwrap_or_default();
 
-        // Render an optional path, falling back to a placeholder when the
-        // platform dir can't be resolved.
-        let path = |p: Option<std::path::PathBuf>| {
-            p.map(|p| abbreviate(&p)).unwrap_or_else(|| "<unavailable>".to_string())
+        let path_tuple = |p: Option<std::path::PathBuf>| {
+            p.map(|p| (abbreviate(&p), Some(p.to_string_lossy().to_string())))
+             .unwrap_or_else(|| ("<unavailable>".to_string(), None))
         };
 
-        let registry = codemark_core::storage::registry::registry_path()
-            .map(|p| abbreviate(&p))
-            .unwrap_or_else(|_| "<unavailable>".to_string());
-        // The log writer rolls daily, so the live file is this prefix plus a
-        // `.YYYY-MM-DD` suffix.
+        let registry_path = codemark_core::storage::registry::registry_path().ok();
+        let registry_tuple = path_tuple(registry_path);
+
+        let logs_path = std::env::temp_dir().join("codemark-tui.log");
         let logs = abbreviate(&std::env::temp_dir().join("codemark-tui.log.*"));
+        
         let model = config
             .semantic
             .model
@@ -55,17 +54,22 @@ impl BrowserLayout {
             .unwrap_or_else(|| "all-MiniLM-L6-v2 (default)".to_string());
         let theme = config.tui.theme.clone().unwrap_or_else(|| "default".to_string());
 
+        let global_config = path_tuple(config::global_config_dir().map(|d| d.join("config.toml")));
+        let data_dir = path_tuple(config::global_data_dir());
+        let templates_dir = path_tuple(templates::templates_dir());
+        let models_dir = path_tuple(config.semantic.get_models_dir());
+
         vec![
-            ("Version", crate::VERSION.to_string()),
-            ("Database", abbreviate(db_path)),
-            ("Registry", registry),
-            ("Global config", path(config::global_config_dir().map(|d| d.join("config.toml")))),
-            ("Data dir", path(config::global_data_dir())),
-            ("Templates", path(templates::templates_dir())),
-            ("Logs", logs),
-            ("Models dir", path(config.semantic.get_models_dir())),
-            ("Embeddings model", model),
-            ("TUI theme", theme),
+            ("Version", crate::VERSION.to_string(), None),
+            ("Database", abbreviate(db_path), Some(db_path.to_string_lossy().to_string())),
+            ("Registry", registry_tuple.0, registry_tuple.1),
+            ("Global config", global_config.0, global_config.1),
+            ("Data dir", data_dir.0, data_dir.1),
+            ("Templates", templates_dir.0, templates_dir.1),
+            ("Logs", logs, Some(logs_path.to_string_lossy().to_string())),
+            ("Models dir", models_dir.0, models_dir.1),
+            ("Embeddings model", model, None),
+            ("TUI theme", theme, None),
         ]
     }
 }

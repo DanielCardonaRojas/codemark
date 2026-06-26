@@ -214,7 +214,8 @@ async fn run_app() -> Result<Option<i32>> {
                             AppMode::Normal if settings.is_visible() => {
                                 // The settings overlay is modal: it swallows
                                 // every key (tab switching, Esc/`,` to close).
-                                match settings.handle_key(key.code) {
+                                let config = layout.config_info();
+                                match settings.handle_key(key.code, &config) {
                                     codemark_tui::settings::SettingsAction::ThemeChanged => {
                                         layout.refresh_all_panels();
                                         handled = true;
