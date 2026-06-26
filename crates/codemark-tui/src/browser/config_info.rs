@@ -64,12 +64,13 @@ impl BrowserLayout {
         rows.push(("Models dir", path(config.semantic.get_models_dir())));
         rows.push((
             "Embeddings model",
-            config.semantic.model.clone().unwrap_or_else(|| "all-MiniLM-L6-v2 (default)".to_string()),
+            config
+                .semantic
+                .model
+                .clone()
+                .unwrap_or_else(|| "all-MiniLM-L6-v2 (default)".to_string()),
         ));
-        rows.push((
-            "TUI theme",
-            config.tui.theme.clone().unwrap_or_else(|| "default".to_string()),
-        ));
+        rows.push(("TUI theme", config.tui.theme.clone().unwrap_or_else(|| "default".to_string())));
 
         rows
     }
