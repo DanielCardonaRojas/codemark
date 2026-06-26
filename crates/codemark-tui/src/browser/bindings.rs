@@ -24,7 +24,8 @@ impl BrowserLayout {
             (",", "Settings"),
             ("Tab", "Cycle focus"),
             ("Esc", "Back/Cancel"),
-            ("/", "Search"),
+            ("s", "Focus search"),
+            ("/", "Filter"),
             ("[", "Previous tab"),
             ("]", "Next tab"),
         ];
@@ -32,6 +33,7 @@ impl BrowserLayout {
         match self.focus {
             FocusArea::Search => {
                 bindings.push(("Enter", "Search"));
+                bindings.push(("Ctrl+S", "FTS / Sem"));
             }
             FocusArea::Panel1 => {
                 bindings.push(("Enter", "Select repo"));
@@ -137,6 +139,7 @@ impl BrowserLayout {
                 bindings.push(
                     KeyBinding::new("Enter", "Search").with_priority(HIDDEN_BINDING_PRIORITY),
                 );
+                bindings.push(KeyBinding::new("Ctrl+S", "FTS / Sem").with_priority(90));
             }
             FocusArea::Panel1 => {
                 // Repos / Accounts
@@ -214,6 +217,10 @@ impl BrowserLayout {
 
         // Global bindings, always appended. `?` Help and `,` Settings are
         // pinned so the two overlays stay discoverable even on a narrow bar.
+        // `s` Search is omitted while the bar is focused, where the key types.
+        if self.focus != FocusArea::Search {
+            bindings.push(KeyBinding::new("s", "Search").with_priority(58));
+        }
         bindings.push(KeyBinding::new("/", "Filter").with_priority(60));
         bindings.push(KeyBinding::new("q", "Quit").with_priority(55));
         bindings.push(KeyBinding::new("?", "Help").pinned());
