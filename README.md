@@ -55,6 +55,23 @@ Later — even after the code has been refactored, in a brand-new session — yo
 
 Because the bookmarks are **structural**, they still resolve after the underlying code has moved or changed. Works with **Claude Code**, **GitHub Copilot**, **Gemini CLI**, and any agent that loads `.agents/skills`.
 
+### What you can ask for
+
+Once a flow is captured as a collection, that knowledge becomes reusable — by you, your teammates, and future agent sessions:
+
+- 🧭 **Onboard a new engineer** —
+  > *"Load the `request-lifecycle` collection and give me a guided tour of how
+  > this service handles a request, in the order the code runs."*
+- 🔎 **Explain a code flow** —
+  > *"Bookmark the steps of the checkout flow into a `checkout` collection, then
+  > summarize what each step is responsible for."*
+- 🐞 **Hunt a bug in a known flow** —
+  > *"There's a bug where expired tokens are still accepted. Read the `auth-flow`
+  > collection and tell me which hop is most likely responsible."*
+- 🔗 **Relate two flows** —
+  > *"Compare the `request-lifecycle` and `background-jobs` collections — where do
+  > they share code or state, and where could they conflict?"*
+
 📘 Walkthrough: [**Agent Workflow Guide**](./dev-docs/guides/agent-workflow-walkthrough.md) · [**Agent Skill source**](./extras/skills/codemark/SKILL.md)
 
 ---
