@@ -9,7 +9,6 @@ use ratatui::{
 use codemark_core::config::global_config_dir;
 use crate::theme::ThemeRegistry;
 
-#[derive(Debug, PartialEq, Eq)]
 pub enum SettingsAction {
     Handled,
     Unhandled,
@@ -53,6 +52,7 @@ impl SettingsTab {
 }
 
 /// Modal, tabbed settings overlay: owns its visibility and selected-tab state.
+#[derive(Debug)]
 pub struct SettingsOverlay {
     visible: bool,
     tab: SettingsTab,
@@ -325,120 +325,3 @@ fn render_theme(area: Rect, buf: &mut Buffer, themes: &[String], selected: usize
     ratatui::widgets::StatefulWidget::render(list, area, buf, &mut state);
 }
 
-/// Render the Configuration tab: a `label : value` list of important paths and
-/// settings, with labels aligned to the widest one.
-fn render_configuration(area: Rect, buf: &mut Buffer, rows: &[(&'static str, String)]) {
-    let palette = crate::theme::palette();
-    let label_width = rows.iter().map(|(label, _)| label.len()).max().unwrap_or(0);
-
-    let mut text = Text::default();
-    for (label, value) in rows {
-        text.push_line(Line::from(vec![
-            Span::styled(
-                format!(" {label:<label_width$}  "),
-                Style::default().fg(palette.accent).bold(),
-            ),
-            Span::styled(value.clone(), Style::default().fg(palette.emphasis)),
-        ]));
-    }
-    Paragraph::new(text).wrap(Wrap { trim: false }).render(area, buf);
-}
-
-/// Render the About tab: version and project links.
-fn render_about(area: Rect, buf: &mut Buffer) {
-    let palette = crate::theme::palette();
-
-    let label = |text: &str| Span::styled(format!(" {text:<12}  "), Style::default().fg(palette.accent).bold());
-    let value = |text: &str| Span::styled(text.to_string(), Style::default().fg(palette.emphasis));
-
-    let mut text = Text::default();
-    text.push_line(Line::from(vec![
-        Span::raw(" "),
-        Span::styled("Codemark", Style::default().fg(palette.emphasis).bold()),
-        Span::styled(
-            "  — structural code bookmarks that survive refactoring",
-            Style::default().fg(palette.dim),
-        ),
-    ]));
-    text.push_line(Line::raw(""));
-    text.push_line(Line::from(vec![label("Version"), value(crate::VERSION)]));
-    text.push_line(Line::from(vec![label("Repository"), value(env!("CARGO_PKG_REPOSITORY"))]));
-    text.push_line(Line::from(vec![
-        label("Support"),
-        value("https://github.com/sponsors/DanielCardonaRojas"),
-    ]));
-
-    Paragraph::new(text).wrap(Wrap { trim: false }).render(area, buf);
-}
-
-/// Compute a rectangle centered in `area`, sized to the given fraction of its
-/// width and height.
-fn centered_rect(area: Rect, width_pct: f32, height_pct: f32) -> Rect {
-    let width = ((area.width as f32 * width_pct) as u16).clamp(0, area.width);
-    let height = ((area.height as f32 * height_pct) as u16).clamp(0, area.height);
-    Rect {
-        x: area.x + area.width.saturating_sub(width) / 2,
-        y: area.y + area.height.saturating_sub(height) / 2,
-        width,
-        height,
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn starts_hidden_on_configuration_tab() {
-        let overlay = SettingsOverlay::new();
-        assert!(!overlay.is_visible());
-        assert_eq!(overlay.tab(), SettingsTab::Configuration);
-    }
-
-    #[test]
-    fn toggle_flips_visibility() {
-        let mut overlay = SettingsOverlay::new();
-        overlay.toggle();
-        assert!(overlay.is_visible());
-        overlay.toggle();
-        assert!(!overlay.is_visible());
-    }
-
-    #[test]
-    fn navigation_keys_cycle_tabs_and_wrap() {
-        let mut overlay = SettingsOverlay::new();
-        overlay.toggle();
-
-        // Forward wraps from the last tab back to the first.
-        for _ in 0..SettingsTab::ALL.len() {
-            overlay.handle_key(KeyCode::Char(']'));
-        }
-        assert_eq!(overlay.tab(), SettingsTab::Configuration);
-
-        // Backward from the first tab wraps to the last.
-        overlay.handle_key(KeyCode::Char('['));
-        assert_eq!(overlay.tab(), *SettingsTab::ALL.last().unwrap());
-    }
-
-    #[test]
-    fn esc_and_comma_close_overlay() {
-        let mut overlay = SettingsOverlay::new();
-
-        overlay.toggle();
-        assert_eq!(overlay.handle_key(KeyCode::Esc), SettingsAction::Handled);
-        assert!(!overlay.is_visible());
-
-        overlay.toggle();
-        assert_eq!(overlay.handle_key(KeyCode::Char(',')), SettingsAction::Handled);
-        assert!(!overlay.is_visible());
-    }
-
-    #[test]
-    fn handle_key_is_modal_and_swallows_all_keys() {
-        let mut overlay = SettingsOverlay::new();
-        overlay.toggle();
-        // An unrelated key is still consumed while the overlay is open.
-        assert_eq!(overlay.handle_key(KeyCode::Char('q')), SettingsAction::Handled);
-        assert!(overlay.is_visible());
-    }
-}

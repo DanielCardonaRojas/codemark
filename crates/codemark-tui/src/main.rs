@@ -214,7 +214,18 @@ async fn run_app() -> Result<Option<i32>> {
                             AppMode::Normal if settings.is_visible() => {
                                 // The settings overlay is modal: it swallows
                                 // every key (tab switching, Esc/`,` to close).
-                                handled = settings.handle_key(key.code);
+                                match settings.handle_key(key.code) {
+                                    codemark_tui::settings::SettingsAction::ThemeChanged => {
+                                        layout.refresh_all_panels();
+                                        handled = true;
+                                    }
+                                    codemark_tui::settings::SettingsAction::Handled => {
+                                        handled = true;
+                                    }
+                                    codemark_tui::settings::SettingsAction::Unhandled => {
+                                        handled = true; // Still modal, so swallow
+                                    }
+                                }
                             }
                             AppMode::Normal => {
                                 // Handle global key bindings (disabled when Search is focused).
@@ -243,7 +254,12 @@ async fn run_app() -> Result<Option<i32>> {
                                         if !search_focused && !dialog_active =>
                                     {
                                         // Open the global settings overlay.
-                                        settings.toggle();
+                                        match settings.toggle() {
+                                            codemark_tui::settings::SettingsAction::ThemeChanged => {
+                                                layout.refresh_all_panels();
+                                            }
+                                            _ => {}
+                                        }
                                         handled = true;
                                     }
                                     event::KeyCode::Char('/') if !dialog_active => {

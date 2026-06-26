@@ -8,7 +8,7 @@ use ratatui::{
     widgets::{Scrollbar, ScrollbarOrientation, ScrollbarState, StatefulWidget, Widget},
 };
 use std::cell::RefCell;
-use std::sync::{Arc, LazyLock, OnceLock};
+use std::sync::{Arc, LazyLock, RwLock};
 use syntect::easy::HighlightLines;
 use syntect::highlighting::{Style as SyntectStyle, Theme};
 use syntect::parsing::SyntaxSet;
@@ -34,20 +34,30 @@ static SYNTAX_SET: LazyLock<SyntaxSet> = LazyLock::new(load_syntax_set);
 /// Process-wide default theme applied to previews created after startup. Set
 /// once from config via [`set_default_theme`]; otherwise resolves the registry
 /// fallback on first use. Shared via `Arc` so each preview clone is cheap.
-static DEFAULT_THEME: OnceLock<Arc<Theme>> = OnceLock::new();
+static DEFAULT_THEME: RwLock<Option<Arc<Theme>>> = RwLock::new(None);
 
-/// Set the default theme for every [`CodePreview`] created afterwards. Intended
-/// to be called once at startup, after loading config and before building the
-/// UI. A no-op if the default has already been resolved (e.g. a preview was
-/// created first), so call it early.
+/// Set the default theme for every [`CodePreview`] created afterwards.
 pub fn set_default_theme(theme: Theme) {
-    let _ = DEFAULT_THEME.set(Arc::new(theme));
+    if let Ok(mut guard) = DEFAULT_THEME.write() {
+        *guard = Some(Arc::new(theme));
+    }
 }
 
 /// The current default theme, resolving and caching the registry fallback on
 /// first use if [`set_default_theme`] was never called.
 fn default_theme() -> Arc<Theme> {
-    DEFAULT_THEME.get_or_init(|| Arc::new(crate::theme::default_theme())).clone()
+    if let Ok(guard) = DEFAULT_THEME.read() {
+        if let Some(t) = guard.as_ref() {
+            return t.clone();
+        }
+    }
+    let theme = Arc::new(crate::theme::default_theme());
+    if let Ok(mut guard) = DEFAULT_THEME.write() {
+        if guard.is_none() {
+            *guard = Some(theme.clone());
+        }
+    }
+    theme
 }
 
 // @lat: [[tui-line-range-selection#CodePreview component]]
