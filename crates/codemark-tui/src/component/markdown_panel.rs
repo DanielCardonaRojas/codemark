@@ -97,6 +97,21 @@ impl MarkdownPanel {
         &self.content
     }
 
+    /// Move the viewport by `delta` lines (positive scrolls down, negative up),
+    /// clamped to the content bounds. Returns true if the offset changed.
+    ///
+    /// Unlike the focus-gated key handling, this is a plain viewport move that
+    /// callers can drive regardless of focus — e.g. scrolling the preview with
+    /// `J`/`K` while focus stays on another pane.
+    pub fn scroll_by(&mut self, delta: i32) -> bool {
+        let height = self.last_area.get().height as usize;
+        let line_count = self.line_count();
+        let max_offset = line_count.saturating_sub(height) as i32;
+        let old_offset = self.scroll_offset;
+        self.scroll_offset = (self.scroll_offset as i32 + delta).clamp(0, max_offset) as u16;
+        old_offset != self.scroll_offset
+    }
+
     /// Convert the markdown string into Ratatui `Text` by walking the
     /// `pulldown-cmark` event stream.
     ///
@@ -538,43 +553,9 @@ impl Component for MarkdownPanel {
                 }
                 match key.code {
                     ratatui::crossterm::event::KeyCode::Down
-                    | ratatui::crossterm::event::KeyCode::Char('j') => {
-                        let height = self.last_area.get().height as usize;
-                        let line_count = self.line_count();
-                        if line_count > height {
-                            let old_offset = self.scroll_offset;
-                            self.scroll_offset = self
-                                .scroll_offset
-                                .saturating_add(1)
-                                .min((line_count - height) as u16);
-                            return old_offset != self.scroll_offset;
-                        }
-                        false
-                    }
+                    | ratatui::crossterm::event::KeyCode::Char('j') => self.scroll_by(1),
                     ratatui::crossterm::event::KeyCode::Up
-                    | ratatui::crossterm::event::KeyCode::Char('k') => {
-                        let old_offset = self.scroll_offset;
-                        self.scroll_offset = self.scroll_offset.saturating_sub(1);
-                        old_offset != self.scroll_offset
-                    }
-                    ratatui::crossterm::event::KeyCode::Char('J') => {
-                        let height = self.last_area.get().height as usize;
-                        let line_count = self.line_count();
-                        if line_count > height {
-                            let old_offset = self.scroll_offset;
-                            self.scroll_offset = self
-                                .scroll_offset
-                                .saturating_add(5)
-                                .min((line_count - height) as u16);
-                            return old_offset != self.scroll_offset;
-                        }
-                        false
-                    }
-                    ratatui::crossterm::event::KeyCode::Char('K') => {
-                        let old_offset = self.scroll_offset;
-                        self.scroll_offset = self.scroll_offset.saturating_sub(5);
-                        old_offset != self.scroll_offset
-                    }
+                    | ratatui::crossterm::event::KeyCode::Char('k') => self.scroll_by(-1),
                     // Link navigation: `n` focuses the next link, `N` the previous
                     // one (wrapping). `n`/`N` reach the panel only when the right
                     // pane is focused. `Tab` (focus cycling) and `[`/`]` (tab
@@ -1010,5 +991,32 @@ mod tests {
         let mut buf2 = Buffer::empty(area);
         small.render(area, &mut buf2);
         assert!(!has_scrollbar(&buf2, area), "content that fits should not show a scrollbar");
+    }
+
+    #[test]
+    fn scroll_by_moves_the_viewport_and_clamps() {
+        // `scroll_by` drives the viewport without requiring focus, so the preview
+        // can be scrolled with `J`/`K` from another pane.
+        let many = (0..40).map(|i| format!("line {i}")).collect::<Vec<_>>().join("\n\n");
+        let mut panel = MarkdownPanel::new();
+        panel.set_markdown(many);
+        let area = Rect::new(0, 0, 20, 6);
+        let mut buf = Buffer::empty(area);
+        panel.render(area, &mut buf);
+
+        assert!(!panel.focused, "scroll_by must work even while unfocused");
+        assert!(panel.scroll_by(5));
+        assert_eq!(panel.scroll_offset, 5);
+
+        // Scrolling up clamps at the top and reports no movement past it.
+        assert!(panel.scroll_by(-100));
+        assert_eq!(panel.scroll_offset, 0);
+        assert!(!panel.scroll_by(-1));
+
+        // Scrolling down clamps at the last page (line_count - height).
+        let max = panel.line_count().saturating_sub(area.height as usize) as u16;
+        assert!(panel.scroll_by(10_000));
+        assert_eq!(panel.scroll_offset, max);
+        assert!(!panel.scroll_by(1));
     }
 }

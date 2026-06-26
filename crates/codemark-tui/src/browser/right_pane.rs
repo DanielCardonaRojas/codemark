@@ -1148,6 +1148,21 @@ impl RightPane {
         self.last_area.get()
     }
 
+    /// Scroll the main preview content by `delta` lines (positive scrolls down),
+    /// regardless of focus. This drives the collection overview when one is
+    /// active, otherwise the steps panel's active tab (code preview or info
+    /// markdown). Returns true if the viewport moved.
+    ///
+    /// Lets `J`/`K` scroll the visible preview from anywhere in the browser
+    /// without first focusing the right pane.
+    pub fn scroll_main_content(&mut self, delta: i32) -> bool {
+        if self.overview_active {
+            self.overview.scroll_by(delta)
+        } else {
+            self.steps.scroll_active(delta)
+        }
+    }
+
     /// Toggle internal focus between Steps and Details.
     pub fn toggle_internal_focus(&mut self) {
         match self.focused {

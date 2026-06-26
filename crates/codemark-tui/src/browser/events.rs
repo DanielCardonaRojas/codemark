@@ -517,6 +517,19 @@ impl BrowserLayout {
                 self.start_heal_selection();
                 return Some(true);
             }
+            ratatui::crossterm::event::KeyCode::Char('J')
+                if self.should_handle_keybindings() && self.focus != FocusArea::Search =>
+            {
+                // Scroll the visible preview regardless of which pane has focus;
+                // capital J/K are reserved for this so they never collide with
+                // the lowercase j/k list navigation.
+                return Some(self.right_pane.scroll_main_content(super::PREVIEW_SCROLL_LINES));
+            }
+            ratatui::crossterm::event::KeyCode::Char('K')
+                if self.should_handle_keybindings() && self.focus != FocusArea::Search =>
+            {
+                return Some(self.right_pane.scroll_main_content(-super::PREVIEW_SCROLL_LINES));
+            }
             ratatui::crossterm::event::KeyCode::Char('+')
             | ratatui::crossterm::event::KeyCode::Char('=')
                 if self.should_handle_keybindings() && self.focus.is_resizable() =>

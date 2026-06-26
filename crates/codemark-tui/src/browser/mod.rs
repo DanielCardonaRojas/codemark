@@ -52,6 +52,11 @@ const PREVIEW_DEBOUNCE_TICKS: usize = 1;
 /// genuinely slow resolve reveals the indicator.
 const PREVIEW_LOADING_GRACE_TICKS: usize = 2;
 
+/// Number of lines the preview scrolls per `J`/`K` press. These keys scroll the
+/// visible preview from any focus, so they step a few lines at a time for quick
+/// reading without overshooting.
+const PREVIEW_SCROLL_LINES: i32 = 5;
+
 /// Shorten a file path to fit within a maximum width, prioritizing the last path components.
 ///
 /// If the path exceeds `max_width`, it will be truncated to show the last components
