@@ -173,6 +173,8 @@ pub struct BrowserLayout {
     /// Results carrying a different id are stale (the selection moved on) and
     /// are dropped — this is how superseded previews are "cancelled".
     active_preview_request: u64,
+    /// ID of the most recent search request, used to discard stale background results.
+    pub active_search_request: u64,
     /// A debounced, not-yet-spawned preview request: (bookmark_id, label, due tick).
     /// Coalesces rapid scrolling into a single resolve once movement settles.
     pending_preview: Option<(String, Option<String>, usize)>,
@@ -228,6 +230,7 @@ impl BrowserLayout {
             preview_cache: Arc::new(Mutex::new(HashMap::new())),
             preview_seq: 0,
             active_preview_request: 0,
+            active_search_request: 0,
             pending_preview: None,
             inflight_preview: None,
             dialog: None,
@@ -380,11 +383,14 @@ impl BrowserLayout {
     }
 
     /// Execute a search based on the current search bar query and mode.
-    pub fn execute_search(&self) {
+    pub fn execute_search(&mut self) {
         let query = self.left_pane.search.query().to_string();
         if query.is_empty() {
             return;
         }
+
+        self.active_search_request = self.active_search_request.wrapping_add(1);
+        let request_id = self.active_search_request;
 
         let mode = self.left_pane.search.mode();
         let db_path = self.db.path().to_path_buf();
@@ -397,10 +403,12 @@ impl BrowserLayout {
                     self.db.search_bookmarks(Some(&query), None, None, None, None, None, None);
                 match bookmarks {
                     Ok(bm) => {
-                        let _ = event_handler.send(Event::SearchResults(bm));
+                        let _ =
+                            event_handler.send(Event::SearchResults { request_id, bookmarks: bm });
                     }
                     Err(e) => {
-                        let _ = event_handler.send(Event::SearchError(e.to_string()));
+                        let _ = event_handler
+                            .send(Event::SearchError { request_id, msg: e.to_string() });
                     }
                 }
             }
@@ -414,9 +422,10 @@ impl BrowserLayout {
                 tokio::task::spawn_blocking(move || {
                     // Open a new DB connection for the background task to avoid !Send issues
                     let Ok(db) = Database::open(&db_path) else {
-                        let _ = event_handler.send(Event::SearchError(
-                            "Failed to open database for search".to_string(),
-                        ));
+                        let _ = event_handler.send(Event::SearchError {
+                            request_id,
+                            msg: "Failed to open database for search".to_string(),
+                        });
                         return;
                     };
 
@@ -445,10 +454,12 @@ impl BrowserLayout {
                                     bookmarks.push(bm);
                                 }
                             }
-                            let _ = event_handler.send(Event::SearchResults(bookmarks));
+                            let _ =
+                                event_handler.send(Event::SearchResults { request_id, bookmarks });
                         }
                         Err(e) => {
-                            let _ = event_handler.send(Event::SearchError(e.to_string()));
+                            let _ = event_handler
+                                .send(Event::SearchError { request_id, msg: e.to_string() });
                         }
                     }
                 });

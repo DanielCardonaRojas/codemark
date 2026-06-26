@@ -139,12 +139,16 @@ impl BrowserLayout {
     /// Returns `Some(true)` if the event was handled, `None` if not matched.
     fn handle_app_event(&mut self, event: &Event) -> Option<bool> {
         match event {
-            Event::SearchResults(bookmarks) => {
-                self.apply_search_results(bookmarks);
+            Event::SearchResults { request_id, bookmarks } => {
+                if *request_id == self.active_search_request {
+                    self.apply_search_results(bookmarks);
+                }
                 Some(true)
             }
-            Event::SearchError(msg) => {
-                self.left_pane.search.set_error(msg.clone());
+            Event::SearchError { request_id, msg } => {
+                if *request_id == self.active_search_request {
+                    self.left_pane.search.set_error(msg.clone());
+                }
                 Some(true)
             }
             Event::HealComplete(msg, success) => {

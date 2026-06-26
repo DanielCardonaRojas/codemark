@@ -28,9 +28,9 @@ pub enum Event {
     /// A paste event (clipboard content).
     Paste(String),
     /// Search results returned from background task.
-    SearchResults(Vec<Bookmark>),
+    SearchResults { request_id: u64, bookmarks: Vec<Bookmark> },
     /// Search failed with an error message.
-    SearchError(String),
+    SearchError { request_id: u64, msg: String },
     /// Heal operation completed with a notification message.
     HealComplete(String, bool), // (message, success)
     /// Sync operation (push/pull) completed with a notification message.

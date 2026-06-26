@@ -288,7 +288,7 @@ impl Component for SearchBar {
             return false;
         }
 
-        match event {
+        let handled = match event {
             Event::Key(key) => match key.code {
                 ratatui::crossterm::event::KeyCode::Char('s')
                 | ratatui::crossterm::event::KeyCode::Char('S')
@@ -387,7 +387,13 @@ impl Component for SearchBar {
                 false
             }
             _ => false,
+        };
+
+        if self.query.is_empty() {
+            self.set_loading(false);
         }
+
+        handled
     }
 
     fn focused(&self) -> bool {
