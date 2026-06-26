@@ -6,8 +6,6 @@
   </picture>
 </div>
 
-[![crates.io](https://img.shields.io/crates/v/codemark)](https://crates.io/crates/codemark)
-[![downloads](https://img.shields.io/crates/d/codemark)](https://crates.io/crates/codemark)
 [![CI](https://github.com/DanielCardonaRojas/codemark/actions/workflows/test.yml/badge.svg)](https://github.com/DanielCardonaRojas/codemark/actions/workflows/test.yml)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.85+-orange.svg)](https://www.rust-lang.org)
