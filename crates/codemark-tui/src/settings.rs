@@ -60,6 +60,7 @@ pub struct SettingsOverlay {
     available_themes: Vec<String>,
     selected_theme: usize,
     saved_theme: Option<String>,
+    selected_about_link: usize,
 }
 
 impl Default for SettingsOverlay {
@@ -108,6 +109,7 @@ impl SettingsOverlay {
             available_themes,
             selected_theme,
             saved_theme,
+            selected_about_link: 0,
         }
     }
 
@@ -212,6 +214,10 @@ impl SettingsOverlay {
                         self.apply_preview_theme();
                         return SettingsAction::ThemeChanged;
                     }
+                } else if self.tab == SettingsTab::About {
+                    if self.selected_about_link < 1 {
+                        self.selected_about_link += 1;
+                    }
                 }
             }
             KeyCode::Char('k') | KeyCode::Up => {
@@ -221,11 +227,22 @@ impl SettingsOverlay {
                         self.apply_preview_theme();
                         return SettingsAction::ThemeChanged;
                     }
+                } else if self.tab == SettingsTab::About {
+                    if self.selected_about_link > 0 {
+                        self.selected_about_link -= 1;
+                    }
                 }
             }
             KeyCode::Enter => {
                 if self.tab == SettingsTab::Theme {
                     self.save_selected_theme();
+                } else if self.tab == SettingsTab::About {
+                    let url = if self.selected_about_link == 0 {
+                        env!("CARGO_PKG_REPOSITORY")
+                    } else {
+                        "https://github.com/sponsors/DanielCardonaRojas"
+                    };
+                    let _ = open::that(url);
                 }
             }
             _ => {}
@@ -269,7 +286,7 @@ impl SettingsOverlay {
         match self.tab {
             SettingsTab::Configuration => render_configuration(chunks[0], buf, config),
             SettingsTab::Theme => render_theme(chunks[0], buf, &self.available_themes, self.selected_theme),
-            SettingsTab::About => render_about(chunks[0], buf),
+            SettingsTab::About => render_about(chunks[0], buf, self.selected_about_link),
         }
 
         let hint = match self.tab {
@@ -281,6 +298,19 @@ impl SettingsOverlay {
                     Span::styled(" save    ", Style::default().fg(palette.dim)),
                     Span::styled("Esc", Style::default().fg(palette.accent).bold()),
                     Span::styled(" close/revert", Style::default().fg(palette.dim)),
+                ])
+                .alignment(Alignment::Center)
+            }
+            SettingsTab::About => {
+                Line::from(vec![
+                    Span::styled("j/k", Style::default().fg(palette.accent).bold()),
+                    Span::styled(" select link    ", Style::default().fg(palette.dim)),
+                    Span::styled("Enter", Style::default().fg(palette.accent).bold()),
+                    Span::styled(" open link    ", Style::default().fg(palette.dim)),
+                    Span::styled("[ / ]", Style::default().fg(palette.accent).bold()),
+                    Span::styled(" switch tabs    ", Style::default().fg(palette.dim)),
+                    Span::styled("Esc", Style::default().fg(palette.accent).bold()),
+                    Span::styled(" close", Style::default().fg(palette.dim)),
                 ])
                 .alignment(Alignment::Center)
             }
@@ -345,11 +375,8 @@ fn render_configuration(area: Rect, buf: &mut Buffer, rows: &[(&'static str, Str
 }
 
 /// Render the About tab: version and project links.
-fn render_about(area: Rect, buf: &mut Buffer) {
+fn render_about(area: Rect, buf: &mut Buffer, selected_link: usize) {
     let palette = crate::theme::palette();
-
-    let label = |text: &str| Span::styled(format!(" {text:<12}  "), Style::default().fg(palette.accent).bold());
-    let value = |text: &str| Span::styled(text.to_string(), Style::default().fg(palette.emphasis));
 
     let mut text = Text::default();
     text.push_line(Line::from(vec![
@@ -361,12 +388,40 @@ fn render_about(area: Rect, buf: &mut Buffer) {
         ),
     ]));
     text.push_line(Line::raw(""));
-    text.push_line(Line::from(vec![label("Version"), value(crate::VERSION)]));
-    text.push_line(Line::from(vec![label("Repository"), value(env!("CARGO_PKG_REPOSITORY"))]));
+    
+    // Version is not a link
     text.push_line(Line::from(vec![
-        label("Support"),
-        value("https://github.com/sponsors/DanielCardonaRojas"),
+        Span::raw("    "),
+        Span::styled(format!("{:<10}  ", "Version"), Style::default().fg(palette.accent).bold()),
+        Span::styled(crate::VERSION, Style::default().fg(palette.emphasis)),
     ]));
+
+    let links = [
+        ("Repository", env!("CARGO_PKG_REPOSITORY")),
+        ("Support", "https://github.com/sponsors/DanielCardonaRojas"),
+    ];
+
+    for (i, (name, url)) in links.iter().enumerate() {
+        let value_style = if i == selected_link {
+            Style::default().fg(palette.inverse).bg(palette.accent).bold()
+        } else {
+            Style::default().fg(palette.emphasis).underlined()
+        };
+        
+        let marker = if i == selected_link {
+            Span::styled("  \u{276f} ", Style::default().fg(palette.marker).bold())
+        } else {
+            Span::raw("    ")
+        };
+
+        let link_label = Span::styled(format!("{name:<10}  "), Style::default().fg(palette.accent).bold());
+        
+        text.push_line(Line::from(vec![
+            marker,
+            link_label,
+            Span::styled(url.to_string(), value_style),
+        ]));
+    }
 
     Paragraph::new(text).wrap(Wrap { trim: false }).render(area, buf);
 }
