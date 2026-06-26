@@ -127,7 +127,9 @@ async fn run_app() -> Result<Option<i32>> {
     // settings overlay (`,`). They are mutually exclusive — opening one closes
     // the other.
     let mut show_keys = false;
-    let mut settings = codemark_tui::settings::SettingsOverlay::new();
+    // Baseline the settings theme selector on the theme actually applied above
+    // (env var or layered config), not just the persisted global config.
+    let mut settings = codemark_tui::settings::SettingsOverlay::new(theme_name);
 
     while state.is_running() {
         // Draw the UI

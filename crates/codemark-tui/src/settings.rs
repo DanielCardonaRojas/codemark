@@ -55,6 +55,22 @@ impl SettingsTab {
     }
 }
 
+/// Read the persisted `tui.theme` from the global `config.toml`, if present.
+///
+/// Used only as a fallback when no theme is actively applied — see
+/// [`SettingsOverlay::new`].
+fn read_global_config_theme() -> Option<String> {
+    let path = global_config_dir()?.join("config.toml");
+    let content = std::fs::read_to_string(&path).ok()?;
+    let table = content.parse::<toml::Table>().ok()?;
+    table
+        .get("tui")
+        .and_then(|tui| tui.as_table())
+        .and_then(|tui| tui.get("theme"))
+        .and_then(|theme| theme.as_str())
+        .map(|s| s.to_string())
+}
+
 /// Modal, tabbed settings overlay: owns its visibility and selected-tab state.
 pub struct SettingsOverlay {
     visible: bool,
@@ -69,35 +85,27 @@ pub struct SettingsOverlay {
 
 impl Default for SettingsOverlay {
     fn default() -> Self {
-        Self::new()
+        Self::new(None)
     }
 }
 
 impl SettingsOverlay {
     /// Create a hidden overlay defaulting to the Configuration tab.
-    pub fn new() -> Self {
+    ///
+    /// `active_theme` is the theme that is actually applied right now, as
+    /// resolved by `main.rs` (the `CODEMARK_TUI_THEME` env var or the layered
+    /// config). It is the baseline for both the initial selection and the
+    /// revert-on-close target, so previewing then cancelling restores exactly
+    /// what was on screen — not whatever the persisted global config happens to
+    /// hold. When `None` (no theme applied), we fall back to reading the
+    /// persisted global `config.toml`.
+    pub fn new(active_theme: Option<String>) -> Self {
         let theme_registry = ThemeRegistry::new();
         let available_themes = theme_registry.available();
 
-        let saved_theme = match global_config_dir() {
-            Some(config_dir) => {
-                let path = config_dir.join("config.toml");
-                let content = std::fs::read_to_string(&path).unwrap_or_default();
-                if let Ok(table) = content.parse::<toml::Table>() {
-                    table
-                        .get("tui")
-                        .and_then(|tui| tui.as_table())
-                        .and_then(|tui| tui.get("theme"))
-                        .and_then(|theme| theme.as_str())
-                        .map(|s| s.to_string())
-                } else {
-                    None
-                }
-            }
-            None => None,
-        };
+        let saved_theme = active_theme.or_else(read_global_config_theme);
 
-        // Determine the selected theme index from the saved theme, or use default
+        // Determine the selected theme index from the baseline theme, or use default
         let selected_theme = available_themes
             .iter()
             .position(|t| Some(t) == saved_theme.as_ref())
@@ -203,7 +211,14 @@ impl SettingsOverlay {
             .map_err(|e| format!("Failed to create config directory: {e}"))?;
 
         let path = config_dir.join("config.toml");
-        let content = std::fs::read_to_string(&path).unwrap_or_default();
+        // Only treat a missing file as an empty config — surfacing other read
+        // failures (permissions, encoding, transient I/O) prevents clobbering an
+        // existing config with just `tui.theme`.
+        let content = match std::fs::read_to_string(&path) {
+            Ok(content) => content,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+            Err(e) => return Err(format!("Failed to read config.toml: {e}")),
+        };
         let mut doc = content
             .parse::<toml_edit::DocumentMut>()
             .map_err(|e| format!("Failed to parse config.toml: {e}"))?;
@@ -508,14 +523,14 @@ mod tests {
 
     #[test]
     fn starts_hidden_on_configuration_tab() {
-        let overlay = SettingsOverlay::new();
+        let overlay = SettingsOverlay::new(None);
         assert!(!overlay.is_visible());
         assert_eq!(overlay.tab(), SettingsTab::Configuration);
     }
 
     #[test]
     fn toggle_flips_visibility() {
-        let mut overlay = SettingsOverlay::new();
+        let mut overlay = SettingsOverlay::new(None);
         overlay.toggle();
         assert!(overlay.is_visible());
         overlay.toggle();
@@ -524,7 +539,7 @@ mod tests {
 
     #[test]
     fn navigation_keys_cycle_tabs_and_wrap() {
-        let mut overlay = SettingsOverlay::new();
+        let mut overlay = SettingsOverlay::new(None);
         overlay.toggle();
 
         // Forward wraps from the last tab back to the first.
@@ -540,7 +555,7 @@ mod tests {
 
     #[test]
     fn esc_and_comma_close_overlay() {
-        let mut overlay = SettingsOverlay::new();
+        let mut overlay = SettingsOverlay::new(None);
 
         overlay.toggle();
         assert_eq!(overlay.handle_key(KeyCode::Esc, &[]), SettingsAction::Handled);
@@ -553,7 +568,7 @@ mod tests {
 
     #[test]
     fn handle_key_is_modal_and_swallows_all_keys() {
-        let mut overlay = SettingsOverlay::new();
+        let mut overlay = SettingsOverlay::new(None);
         overlay.toggle();
         // An unrelated key is still consumed while the overlay is open.
         assert_eq!(overlay.handle_key(KeyCode::Char('q'), &[]), SettingsAction::Handled);

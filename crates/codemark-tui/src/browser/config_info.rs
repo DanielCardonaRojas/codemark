@@ -14,15 +14,20 @@ use codemark_core::templates;
 use crate::browser::BrowserLayout;
 
 /// Render a path with the home directory collapsed to `~` for brevity.
+///
+/// Uses [`Path::strip_prefix`] (component-wise) rather than a string prefix so a
+/// sibling like `/home/alice2` isn't mistaken for being under `/home/alice`.
 fn abbreviate(path: &Path) -> String {
-    let display = path.display().to_string();
-    if let Some(home) = config::home_dir() {
-        let home = home.display().to_string();
-        if let Some(rest) = display.strip_prefix(&home) {
-            return format!("~{rest}");
-        }
+    if let Some(home) = config::home_dir()
+        && let Ok(rest) = path.strip_prefix(&home)
+    {
+        return if rest.as_os_str().is_empty() {
+            "~".to_string()
+        } else {
+            format!("~/{}", rest.display())
+        };
     }
-    display
+    path.display().to_string()
 }
 
 impl BrowserLayout {
