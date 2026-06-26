@@ -1,12 +1,16 @@
 name: Screenshots
 
 # Regenerate the README TUI screenshot gallery from the live binary and open a
-# PR with the updated images. Run manually, or automatically when a release is
-# published (so the gallery tracks the released UI).
+# PR with the updated images.
+#
+# NOTE: automatic regeneration is currently bypassed — the hosted run isn't
+# rendering correctly, so the gallery is regenerated locally instead:
+#   ./screenshots/capture.sh   (requires vhs + SF Mono Nerd Font; see screenshots/README.md)
+# then the updated PNGs/GIFs under screenshots/images/ are committed manually.
+# Only manual dispatch remains enabled; re-add the `release` trigger below to
+# restore automatic runs once the hosted job is fixed.
 on:
   workflow_dispatch:
-  release:
-    types: [published]
 
 permissions:
   contents: write
