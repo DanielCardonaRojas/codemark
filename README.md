@@ -24,7 +24,6 @@ That makes them durable enough for long-running AI agent sessions, code audits, 
 ## 📑 Table of Contents
 
 - [Use It With Claude Code](#-use-it-with-claude-code)
-- [How It Works](#-how-it-works)
 - [Native Dashboard (TUI)](#-native-dashboard-tui)
 - [Features](#-features)
 - [Installation](#-installation)
@@ -59,22 +58,6 @@ Later — even after the code has been refactored, in a brand-new session — yo
 Because the bookmarks are **structural**, they still resolve after the underlying code has moved or changed. Works with **Claude Code**, **GitHub Copilot**, **Gemini CLI**, and any agent that loads `.agents/skills`.
 
 📘 Walkthrough: [**Agent Workflow Guide**](./dev-docs/guides/agent-workflow-walkthrough.md) · [**Agent Skill source**](./extras/skills/codemark/SKILL.md)
-
----
-
-## 🧠 How It Works
-
-A normal bookmark stores a coordinate (`auth.rs:42`). Insert one line above it and it now points at the wrong thing. Codemark stores **what** you marked, not **where** — a tree-sitter query like *"the function named `validateToken` inside `impl AuthService`"* — plus a content hash of the original snippet.
-
-To re-locate a bookmark, Codemark runs a tiered resolution and stops at the first tier that matches:
-
-| Tier | Strategy | When it wins |
-| --- | --- | --- |
-| **1 · Exact** | Re-run the original structural query | Code is untouched — an instant, unambiguous match. If the content hash also matches, the bookmark is **healthy**. |
-| **2 · Relaxed** | Progressively loosen the query (drop constraints, then fall back to the core identifier) | The signature changed, params were added, or the node moved into a different block. |
-| **3 · Hash Fallback** | Walk every node in the file looking for one whose content hash matches the original snapshot | The structure changed too much to query, but the code itself was moved wholesale. |
-
-If all three miss, the bookmark is flagged **broken** — so you *know* it needs attention, rather than it silently pointing at the wrong line.
 
 ---
 
@@ -134,7 +117,7 @@ variable; run `codemark-tui --list-schemes` to see what's available.
 
 ## 🛠️ Features
 
-- 🧠 **Smart Resolution**: Bookmarks survive renames and structural changes via [tiered matching](#-how-it-works).
+- 🧠 **Smart Resolution**: Bookmarks survive renames and structural changes via tiered matching (Exact → Relaxed → Hash Fallback).
 - 🖥️ **Interactive Dashboard**: Lazygit-style TUI for efficient, keyboard-first interaction.
 - 📑 **Rich Metadata**: Captures AST structure, git context, content hashes, and append-only notes/tags.
 - 🔍 **Semantic Search**: Find code by intent (e.g., *"where is authentication handled?"*) with local embeddings — no API key.
