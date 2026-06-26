@@ -197,9 +197,7 @@ impl Component for Pager {
             format!("{} / {}", self.current + 1, self.total),
             Style::default().fg(crate::theme::palette().dim),
         );
-        Paragraph::new(Line::from(index))
-            .alignment(Alignment::Right)
-            .render(area, buf);
+        Paragraph::new(Line::from(index)).alignment(Alignment::Right).render(area, buf);
     }
 
     fn handle_event(&mut self, event: &Event) -> bool {
