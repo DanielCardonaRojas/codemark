@@ -191,6 +191,13 @@ impl Component for Pager {
 
         let p = Paragraph::new(Line::from(spans)).alignment(Alignment::Center);
         p.render(area, buf);
+
+        // Show the current page index (1-based) over the total, right-aligned.
+        let index = Span::styled(
+            format!("{} / {}", self.current + 1, self.total),
+            Style::default().fg(crate::theme::palette().dim),
+        );
+        Paragraph::new(Line::from(index)).alignment(Alignment::Right).render(area, buf);
     }
 
     fn handle_event(&mut self, event: &Event) -> bool {
