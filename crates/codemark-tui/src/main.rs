@@ -261,7 +261,9 @@ async fn run_app() -> Result<Option<i32>> {
                                         if !search_focused && !dialog_active =>
                                     {
                                         // Open the global settings overlay.
-                                        if settings.toggle() == codemark_tui::settings::SettingsAction::ThemeChanged {
+                                        if settings.toggle()
+                                            == codemark_tui::settings::SettingsAction::ThemeChanged
+                                        {
                                             layout.refresh_all_panels();
                                         }
                                         handled = true;

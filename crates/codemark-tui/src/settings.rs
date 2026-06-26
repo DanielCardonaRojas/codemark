@@ -259,10 +259,9 @@ impl SettingsOverlay {
                     if self.selected_about_link > 0 {
                         self.selected_about_link -= 1;
                     }
-                } else if self.tab == SettingsTab::Configuration
-                    && self.selected_config_row > 0 {
-                        self.selected_config_row -= 1;
-                    }
+                } else if self.tab == SettingsTab::Configuration && self.selected_config_row > 0 {
+                    self.selected_config_row -= 1;
+                }
             }
             KeyCode::Enter => {
                 if self.tab == SettingsTab::Theme {
@@ -280,9 +279,10 @@ impl SettingsOverlay {
                     }
                 } else if self.tab == SettingsTab::Configuration
                     && let Some((_, _, Some(path))) = config.get(self.selected_config_row)
-                        && let Err(e) = open::that(path) {
-                            return SettingsAction::Notify(format!("Failed to open {path}: {e}"));
-                        }
+                    && let Err(e) = open::that(path)
+                {
+                    return SettingsAction::Notify(format!("Failed to open {path}: {e}"));
+                }
             }
             _ => {}
         }

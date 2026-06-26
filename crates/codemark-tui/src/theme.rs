@@ -413,9 +413,10 @@ pub fn set_palette(palette: Palette) {
 /// The active chrome palette, defaulting to the ANSI [`Palette::default`].
 pub fn palette() -> Palette {
     if let Ok(guard) = PALETTE.read()
-        && let Some(p) = *guard {
-            return p;
-        }
+        && let Some(p) = *guard
+    {
+        return p;
+    }
     Palette::default()
 }
 

@@ -56,14 +56,16 @@ pub fn current_default_theme() -> Arc<Theme> {
 /// first use if [`set_default_theme`] was never called.
 fn default_theme() -> Arc<Theme> {
     if let Ok(guard) = DEFAULT_THEME.read()
-        && let Some(t) = guard.as_ref() {
-            return t.clone();
-        }
+        && let Some(t) = guard.as_ref()
+    {
+        return t.clone();
+    }
     let theme = Arc::new(crate::theme::default_theme());
     if let Ok(mut guard) = DEFAULT_THEME.write()
-        && guard.is_none() {
-            *guard = Some(theme.clone());
-        }
+        && guard.is_none()
+    {
+        *guard = Some(theme.clone());
+    }
     theme
 }
 
