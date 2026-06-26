@@ -487,6 +487,16 @@ impl BrowserLayout {
             {
                 return Some(self.handle_number_key(c));
             }
+            // `s` jumps focus to the search bar from any other pane. The guard
+            // keeps it from firing when search is already focused, so the same
+            // key types "s" into the query there.
+            ratatui::crossterm::event::KeyCode::Char('s')
+                if self.should_handle_keybindings() && self.focus != FocusArea::Search =>
+            {
+                self.focus = FocusArea::Search;
+                self.update_focus_state();
+                return Some(true);
+            }
             ratatui::crossterm::event::KeyCode::Char('o') => {
                 return self.handle_o_key(key);
             }
