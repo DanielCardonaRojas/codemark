@@ -38,7 +38,7 @@ impl BrowserLayout {
 
         let path_tuple = |p: Option<std::path::PathBuf>| {
             p.map(|p| (abbreviate(&p), Some(p.to_string_lossy().to_string())))
-             .unwrap_or_else(|| ("<unavailable>".to_string(), None))
+                .unwrap_or_else(|| ("<unavailable>".to_string(), None))
         };
 
         let registry_path = codemark_core::storage::registry::registry_path().ok();
@@ -46,7 +46,7 @@ impl BrowserLayout {
 
         let logs_path = std::env::temp_dir().join("codemark-tui.log");
         let logs = abbreviate(&std::env::temp_dir().join("codemark-tui.log.*"));
-        
+
         let model = config
             .semantic
             .model

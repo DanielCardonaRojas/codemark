@@ -1,13 +1,13 @@
+use crate::theme::ThemeRegistry;
+use codemark_core::config::global_config_dir;
 use crossterm::event::KeyCode;
 use ratatui::{
     buffer::Buffer,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Style, Stylize},
     text::{Line, Span, Text},
-    widgets::{Block, BorderType, Clear, Paragraph, Widget, Wrap, List, ListItem, ListState},
+    widgets::{Block, BorderType, Clear, List, ListItem, ListState, Paragraph, Widget, Wrap},
 };
-use codemark_core::config::global_config_dir;
-use crate::theme::ThemeRegistry;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum SettingsAction {
@@ -30,7 +30,8 @@ pub enum SettingsTab {
 
 impl SettingsTab {
     /// Every tab, in the order they appear in the tab bar.
-    pub const ALL: &'static [SettingsTab] = &[SettingsTab::Configuration, SettingsTab::Theme, SettingsTab::About];
+    pub const ALL: &'static [SettingsTab] =
+        &[SettingsTab::Configuration, SettingsTab::Theme, SettingsTab::About];
 
     /// The label shown for this tab in the tab bar.
     fn title(self) -> &'static str {
@@ -75,13 +76,14 @@ impl SettingsOverlay {
     pub fn new() -> Self {
         let theme_registry = ThemeRegistry::new();
         let available_themes = theme_registry.available();
-        
+
         let saved_theme = match global_config_dir() {
             Some(config_dir) => {
                 let path = config_dir.join("config.toml");
                 let content = std::fs::read_to_string(&path).unwrap_or_default();
                 if let Ok(table) = content.parse::<toml::Table>() {
-                    table.get("tui")
+                    table
+                        .get("tui")
                         .and_then(|tui| tui.as_table())
                         .and_then(|tui| tui.get("theme"))
                         .and_then(|theme| theme.as_str())
@@ -94,17 +96,16 @@ impl SettingsOverlay {
         };
 
         // Determine the selected theme index from the saved theme, or use default
-        let selected_theme = available_themes.iter()
+        let selected_theme = available_themes
+            .iter()
             .position(|t| Some(t) == saved_theme.as_ref())
             .unwrap_or_else(|| {
                 // If not found, see if we can find the fallback theme
-                available_themes.iter()
-                    .position(|t| t == crate::theme::FALLBACK_THEME)
-                    .unwrap_or(0)
+                available_themes.iter().position(|t| t == crate::theme::FALLBACK_THEME).unwrap_or(0)
             });
 
-        Self { 
-            visible: false, 
+        Self {
+            visible: false,
             tab: SettingsTab::Configuration,
             theme_registry,
             available_themes,
@@ -137,22 +138,25 @@ impl SettingsOverlay {
     /// Hide the overlay and revert theme if un-saved.
     pub fn hide(&mut self) -> SettingsAction {
         self.visible = false;
-        
+
         // Revert to saved theme when closing, returning ThemeChanged if it differs
         // from what's currently active (previewed).
         let current_preview = self.available_themes.get(self.selected_theme).cloned();
-        
+
         // Reset selected index
-        self.selected_theme = self.available_themes.iter()
+        self.selected_theme = self
+            .available_themes
+            .iter()
             .position(|t| Some(t) == self.saved_theme.as_ref())
             .unwrap_or_else(|| {
-                self.available_themes.iter()
+                self.available_themes
+                    .iter()
                     .position(|t| t == crate::theme::FALLBACK_THEME)
                     .unwrap_or(0)
             });
-            
+
         let actual_saved = self.available_themes.get(self.selected_theme).cloned();
-        
+
         if current_preview != actual_saved {
             self.apply_preview_theme();
             return SettingsAction::ThemeChanged;
@@ -201,7 +205,11 @@ impl SettingsOverlay {
     }
 
     /// Handle a key while the overlay is open.
-    pub fn handle_key(&mut self, code: KeyCode, config: &[(&'static str, String, Option<String>)]) -> SettingsAction {
+    pub fn handle_key(
+        &mut self,
+        code: KeyCode,
+        config: &[(&'static str, String, Option<String>)],
+    ) -> SettingsAction {
         match code {
             KeyCode::Esc | KeyCode::Char(',') => {
                 return self.hide();
@@ -266,7 +274,12 @@ impl SettingsOverlay {
     }
 
     /// Render the overlay as a centered modal over `area`.
-    pub fn render(&self, area: Rect, buf: &mut Buffer, config: &[(&'static str, String, Option<String>)]) {
+    pub fn render(
+        &self,
+        area: Rect,
+        buf: &mut Buffer,
+        config: &[(&'static str, String, Option<String>)],
+    ) {
         let popup = centered_rect(area, 0.55, 0.7);
         Widget::render(Clear, popup, buf);
 
@@ -299,36 +312,36 @@ impl SettingsOverlay {
             .split(inner);
 
         match self.tab {
-            SettingsTab::Configuration => render_configuration(chunks[0], buf, config, self.selected_config_row),
-            SettingsTab::Theme => render_theme(chunks[0], buf, &self.available_themes, self.selected_theme),
+            SettingsTab::Configuration => {
+                render_configuration(chunks[0], buf, config, self.selected_config_row)
+            }
+            SettingsTab::Theme => {
+                render_theme(chunks[0], buf, &self.available_themes, self.selected_theme)
+            }
             SettingsTab::About => render_about(chunks[0], buf, self.selected_about_link),
         }
 
         let hint = match self.tab {
-            SettingsTab::Theme => {
-                Line::from(vec![
-                    Span::styled("j/k", Style::default().fg(palette.accent).bold()),
-                    Span::styled(" preview theme    ", Style::default().fg(palette.dim)),
-                    Span::styled("Enter", Style::default().fg(palette.accent).bold()),
-                    Span::styled(" save    ", Style::default().fg(palette.dim)),
-                    Span::styled("Esc", Style::default().fg(palette.accent).bold()),
-                    Span::styled(" close/revert", Style::default().fg(palette.dim)),
-                ])
-                .alignment(Alignment::Center)
-            }
-            SettingsTab::About | SettingsTab::Configuration => {
-                Line::from(vec![
-                    Span::styled("j/k", Style::default().fg(palette.accent).bold()),
-                    Span::styled(" select link    ", Style::default().fg(palette.dim)),
-                    Span::styled("Enter", Style::default().fg(palette.accent).bold()),
-                    Span::styled(" open link    ", Style::default().fg(palette.dim)),
-                    Span::styled("[ / ]", Style::default().fg(palette.accent).bold()),
-                    Span::styled(" switch tabs    ", Style::default().fg(palette.dim)),
-                    Span::styled("Esc", Style::default().fg(palette.accent).bold()),
-                    Span::styled(" close", Style::default().fg(palette.dim)),
-                ])
-                .alignment(Alignment::Center)
-            }
+            SettingsTab::Theme => Line::from(vec![
+                Span::styled("j/k", Style::default().fg(palette.accent).bold()),
+                Span::styled(" preview theme    ", Style::default().fg(palette.dim)),
+                Span::styled("Enter", Style::default().fg(palette.accent).bold()),
+                Span::styled(" save    ", Style::default().fg(palette.dim)),
+                Span::styled("Esc", Style::default().fg(palette.accent).bold()),
+                Span::styled(" close/revert", Style::default().fg(palette.dim)),
+            ])
+            .alignment(Alignment::Center),
+            SettingsTab::About | SettingsTab::Configuration => Line::from(vec![
+                Span::styled("j/k", Style::default().fg(palette.accent).bold()),
+                Span::styled(" select link    ", Style::default().fg(palette.dim)),
+                Span::styled("Enter", Style::default().fg(palette.accent).bold()),
+                Span::styled(" open link    ", Style::default().fg(palette.dim)),
+                Span::styled("[ / ]", Style::default().fg(palette.accent).bold()),
+                Span::styled(" switch tabs    ", Style::default().fg(palette.dim)),
+                Span::styled("Esc", Style::default().fg(palette.accent).bold()),
+                Span::styled(" close", Style::default().fg(palette.dim)),
+            ])
+            .alignment(Alignment::Center),
         };
         Paragraph::new(hint).render(chunks[1], buf);
     }
@@ -357,13 +370,18 @@ fn render_theme(area: Rect, buf: &mut Buffer, themes: &[String], selected: usize
     let list = List::new(items);
     let mut state = ListState::default();
     state.select(Some(selected));
-    
+
     ratatui::widgets::StatefulWidget::render(list, area, buf, &mut state);
 }
 
 /// Render the Configuration tab: a `label : value` list of important paths and
 /// settings, with labels aligned to the widest one.
-fn render_configuration(area: Rect, buf: &mut Buffer, rows: &[(&'static str, String, Option<String>)], selected_row: usize) {
+fn render_configuration(
+    area: Rect,
+    buf: &mut Buffer,
+    rows: &[(&'static str, String, Option<String>)],
+    selected_row: usize,
+) {
     let palette = crate::theme::palette();
     let label_width = rows.iter().map(|(label, _, _)| label.len()).max().unwrap_or(0);
 
@@ -371,19 +389,19 @@ fn render_configuration(area: Rect, buf: &mut Buffer, rows: &[(&'static str, Str
     for (i, (label, value, has_path)) in rows.iter().enumerate() {
         let is_selected = i == selected_row;
         let is_link = has_path.is_some();
-        
+
         let marker = if is_selected {
             Span::styled("\u{276f} ", Style::default().fg(palette.marker).bold())
         } else {
             Span::raw("  ")
         };
-        
+
         let label_style = if is_selected {
             Style::default().fg(palette.accent).bold()
         } else {
             Style::default().fg(palette.accent).bold()
         };
-        
+
         let value_style = if is_selected {
             if is_link {
                 Style::default().fg(palette.inverse).bg(palette.accent).bold()
@@ -400,10 +418,7 @@ fn render_configuration(area: Rect, buf: &mut Buffer, rows: &[(&'static str, Str
 
         text.push_line(Line::from(vec![
             marker,
-            Span::styled(
-                format!("{label:<label_width$}  "),
-                label_style,
-            ),
+            Span::styled(format!("{label:<label_width$}  "), label_style),
             Span::styled(value.clone(), value_style),
         ]));
     }
@@ -424,7 +439,7 @@ fn render_about(area: Rect, buf: &mut Buffer, selected_link: usize) {
         ),
     ]));
     text.push_line(Line::raw(""));
-    
+
     // Version is not a link
     text.push_line(Line::from(vec![
         Span::raw("  "),
@@ -443,15 +458,16 @@ fn render_about(area: Rect, buf: &mut Buffer, selected_link: usize) {
         } else {
             Style::default().fg(palette.emphasis).underlined()
         };
-        
+
         let marker = if i == selected_link {
             Span::styled("\u{276f} ", Style::default().fg(palette.marker).bold())
         } else {
             Span::raw("  ")
         };
 
-        let link_label = Span::styled(format!("{name:<10}  "), Style::default().fg(palette.accent).bold());
-        
+        let link_label =
+            Span::styled(format!("{name:<10}  "), Style::default().fg(palette.accent).bold());
+
         text.push_line(Line::from(vec![
             marker,
             link_label,
