@@ -7,27 +7,74 @@
 </div>
 
 [![crates.io](https://img.shields.io/crates/v/codemark)](https://crates.io/crates/codemark)
+[![downloads](https://img.shields.io/crates/d/codemark)](https://crates.io/crates/codemark)
 [![CI](https://github.com/DanielCardonaRojas/codemark/actions/workflows/test.yml/badge.svg)](https://github.com/DanielCardonaRojas/codemark/actions/workflows/test.yml)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
-[![Rust](https://img.shields.io/badge/rust-1.75+-orange.svg)](https://www.rust-lang.org)
-[![agent-ready](https://img.shields.io/badge/agent-ready-blueviolet)](#claude-code)
+[![Rust](https://img.shields.io/badge/rust-1.85+-orange.svg)](https://www.rust-lang.org)
+[![agent-ready](https://img.shields.io/badge/agent-ready-blueviolet)](#-use-it-with-claude-code)
 
-**Codemark** is a structural bookmarking system for code. Unlike fragile `file:line` references that break when you insert a single newline, Codemark uses **[tree-sitter](https://tree-sitter.github.io/tree-sitter/)** to capture the semantic structure of your code.
+**Codemark** is a structural bookmarking system for code. Unlike fragile `file:line` references that break when you insert a single newline, Codemark uses **[tree-sitter](https://tree-sitter.github.io/tree-sitter/)** to capture the *semantic structure* of what you marked — so bookmarks **self-heal** across renames, refactors, and reformatting.
 
-Bookmarks **self-heal** across renames, refactors, and formatting changes, making them perfect for long-running AI agent sessions, code audits, and developer knowledge management.
+That makes them durable enough for long-running AI agent sessions, code audits, and personal knowledge management.
 
 🌐 **Website & docs:** [danielcardonarojas.github.io/codemark](https://danielcardonarojas.github.io/codemark/)
 
 ---
 
-## 🚀 Why Codemark?
+## 📑 Table of Contents
 
-Standard bookmarks are "dumb"—they point to a coordinate. When the code moves, the coordinate points to the wrong thing. Codemark is "smart"—it knows what you bookmarked (e.g., "the `validateToken` function in `auth.rs`").
+- [Use It With Claude Code](#-use-it-with-claude-code)
+- [How It Works](#-how-it-works)
+- [Native Dashboard (TUI)](#-native-dashboard-tui)
+- [Features](#-features)
+- [Installation](#-installation)
+- [Quick Start](#-quick-start)
+- [Supported Languages](#-supported-languages)
+- [Customizing Markdown Output](#-customizing-markdown-output)
+- [Documentation](#-documentation)
+- [Built With](#-built-with)
+- [License](#-license)
 
-- **Self-Healing Resolution**: Tiered matching (Exact → Relaxed → Hash Fallback) ensures your bookmarks stay alive even if the code drifts.
-- **Native TUI Dashboard**: A powerful, keyboard-centric command center for managing your code knowledge.
-- **Agent Ready**: Designed for AI coding agents (like Claude Code) to maintain context across sessions.
-- **Semantic Search**: Find bookmarks by meaning using local vector embeddings (no API key required).
+---
+
+## ⚡ Use It With Claude Code
+
+Codemark is built for AI coding agents. One command teaches your agent to create and recall structural bookmarks, so context **survives between sessions** instead of being re-derived from scratch every time you open a chat.
+
+```bash
+codemark install-skill --agent claude --scope user
+```
+
+Then just ask, in any session:
+
+> *"Trace how a request flows from the HTTP router to the database. Create a
+> collection called `request-lifecycle` and bookmark each key hop — the route
+> handler, the auth middleware, the service layer, and the query builder. Add a
+> short note to each explaining its role."*
+
+Later — even after the code has been refactored, in a brand-new session — you (or another agent) reload that context instantly:
+
+> *"Load the `request-lifecycle` collection and walk me through it."*
+
+Because the bookmarks are **structural**, they still resolve after the underlying code has moved or changed. Works with **Claude Code**, **GitHub Copilot**, **Gemini CLI**, and any agent that loads `.agents/skills`.
+
+📘 Walkthrough: [**Agent Workflow Guide**](./dev-docs/guides/agent-workflow-walkthrough.md) · [**Agent Skill source**](./extras/skills/codemark/SKILL.md)
+
+---
+
+## 🧠 How It Works
+
+A normal bookmark stores a coordinate (`auth.rs:42`). Insert one line above it and it now points at the wrong thing. Codemark stores **what** you marked, not **where** — a tree-sitter query like *"the function named `validateToken` inside `impl AuthService`"* — plus a content hash of the original snippet.
+
+To re-locate a bookmark, Codemark runs a tiered resolution and stops at the first tier that matches:
+
+| Tier | Strategy | When it wins |
+| --- | --- | --- |
+| **1 · Exact** | Re-run the original structural query | Code is untouched — an instant, unambiguous match. If the content hash also matches, the bookmark is **healthy**. |
+| **2 · Relaxed** | Progressively loosen the query (drop constraints, then fall back to the core identifier) | The signature changed, params were added, or the node moved into a different block. |
+| **3 · Hash Fallback** | Walk every node in the file looking for one whose content hash matches the original snapshot | The structure changed too much to query, but the code itself was moved wholesale. |
+
+If all three miss, the bookmark is flagged **broken** — so you *know* it needs attention, rather than it silently pointing at the wrong line.
 
 ---
 
@@ -87,10 +134,10 @@ variable; run `codemark-tui --list-schemes` to see what's available.
 
 ## 🛠️ Features
 
-- 🧠 **Smart Resolution**: Bookmarks survive renames and structural changes.
+- 🧠 **Smart Resolution**: Bookmarks survive renames and structural changes via [tiered matching](#-how-it-works).
 - 🖥️ **Interactive Dashboard**: Lazygit-style TUI for efficient, keyboard-first interaction.
 - 📑 **Rich Metadata**: Captures AST structure, git context, content hashes, and append-only notes/tags.
-- 🔍 **Semantic Search**: Find code by intent (e.g., *"where is authentication handled?"*).
+- 🔍 **Semantic Search**: Find code by intent (e.g., *"where is authentication handled?"*) with local embeddings — no API key.
 - 🗃️ **Collections**: Group bookmarks into logical sets for specific tasks.
 - 📦 **Git Integrated**: Track bookmarks across commits and branches.
 - 🧩 **Agent Skills**: An installable skill that teaches AI coding agents to bookmark for you — works with Claude Code, GitHub Copilot, Gemini CLI, and any agent that loads `.agents/skills`.
@@ -145,45 +192,40 @@ cargo install --git https://github.com/DanielCardonaRojas/codemark codemark-tui
 > by referencing it by identity with `--repo <owner/name>`, or point at a
 > specific database with `--db <path>` / the `CODEMARK_DB` env var.
 
-### 1. Install the agent skill
-Teach your AI agent how to use Codemark. This installs the Codemark skill into your agent's skills directory:
+Prefer to drive it yourself instead of through an agent? The CLI is all you need.
+
+### 1. Bookmark a range
 ```bash
-codemark install-skill --agent claude --scope user
+codemark add --file src/auth.rs --range 42-67 --tag auth --note "token validation entrypoint"
 ```
 
-Supported `--agent` values: `claude` (Claude Code), `copilot` (GitHub Copilot),
-`gemini` (Gemini CLI), and `agents` (the generic `.agents/skills` location for
-any other agent). Use `--scope project` instead of `user` to install into the
-current repository.
+### 2. Find it again — even after the code moves
+```bash
+codemark list                 # see everything you've marked
+codemark resolve <id>         # re-locate a single bookmark
+codemark search "auth"        # full-text + semantic search
+```
 
-### 2. Let your agent bookmark for you
-Ask your agent to capture the structure of your codebase as it explores. For example:
-
-> *"Trace how a request flows from the HTTP router to the database. Create a
-> collection called `request-lifecycle` and bookmark each key hop — the route
-> handler, the auth middleware, the service layer, and the query builder. Add a
-> short note to each explaining its role."*
-
-Your agent will create a collection and add structural bookmarks — complete with
-notes and tags — that survive refactors. Later, in a fresh session, you (or
-another agent) can reload that context instantly:
-
-> *"Load the `request-lifecycle` collection and walk me through it."*
-
-### 3. Browse with the Dashboard
-Launch the keyboard-driven TUI to review and manage what's been captured:
+### 3. Browse with the dashboard
 ```bash
 codemark tui
 ```
 
+See the [**Full Command Reference**](./dev-docs/CLI.md) for every subcommand and flag — including collections, tours, snippet matching, and multi-repo queries.
+
 ---
 
-## 📖 Documentation
+## 🌐 Supported Languages
 
-- [**Full Command Reference**](./dev-docs/CLI.md) — Detailed flag and subcommand guide.
-- [**Configuration**](./dev-docs/configuration.md) — Editor setup, themes, global/local config, and semantic search.
-- [**Templates**](./dev-docs/templates.md) — Customize markdown output and TUI previews.
-- [**Agent Skill**](./extras/skills/codemark/SKILL.md) — The skill installed by `codemark install-skill` (Claude Code, Copilot, Gemini, and more).
+Codemark speaks AST for:
+- 🦀 **Rust**
+- 🍎 **Swift**
+- 🔷 **TypeScript / TSX**
+- 🐍 **Python**
+- 🐹 **Go**
+- ☕ **Java**
+- 🎯 **Dart**
+- ♯ **C#**
 
 ---
 
@@ -203,17 +245,13 @@ conditionals, helpers, and the default templates — see the
 
 ---
 
-## 🎨 Supported Languages
+## 📖 Documentation
 
-Codemark speaks AST for:
-- 🦀 **Rust**
-- 🍎 **Swift**
-- 🔷 **TypeScript / TSX**
-- 🐍 **Python**
-- 🐹 **Go**
-- ☕ **Java**
-- 🎯 **Dart**
-- ♯ **C#**
+- [**Full Command Reference**](./dev-docs/CLI.md) — Detailed flag and subcommand guide.
+- [**Configuration**](./dev-docs/configuration.md) — Editor setup, themes, global/local config, and semantic search.
+- [**Templates**](./dev-docs/templates.md) — Customize markdown output and TUI previews.
+- [**Agent Workflow Guide**](./dev-docs/guides/agent-workflow-walkthrough.md) — End-to-end walkthrough of using Codemark with an AI agent.
+- [**Agent Skill**](./extras/skills/codemark/SKILL.md) — The skill installed by `codemark install-skill` (Claude Code, Copilot, Gemini, and more).
 
 ---
 
