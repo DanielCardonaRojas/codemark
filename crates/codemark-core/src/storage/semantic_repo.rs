@@ -68,7 +68,32 @@ impl SemanticRepo {
         let notes = bookmark.annotations.first().and_then(|a| a.notes.as_deref());
         let context = bookmark.annotations.first().and_then(|a| a.context.as_deref());
 
-        prepare_embedding_text(&bookmark.tags, notes, context)
+        let mut text = prepare_embedding_text(&bookmark.tags, notes, context);
+
+        // Enrich with the node type and target derived from the tree-sitter query so
+        // semantic search can match on structural intent (e.g. "function", "AuthService").
+        if let Some(summary) = self.summarize_bookmark_query(bookmark) {
+            if !text.is_empty() {
+                text.push('\n');
+            }
+            text.push_str(&format!("Node Type: {}", summary.label));
+            if let Some(identifier) = &summary.identifier {
+                text.push_str(&format!("\nNode Target: {identifier}"));
+            }
+        }
+
+        text
+    }
+
+    /// Summarize a bookmark's tree-sitter query, mapping its language string to the
+    /// `Language` enum. Returns `None` if the language is unknown or the query can't
+    /// be summarized.
+    fn summarize_bookmark_query(
+        &self,
+        bookmark: &Bookmark,
+    ) -> Option<crate::query::summarizer::QuerySummary> {
+        let language = bookmark.language.parse::<crate::parser::languages::Language>().ok()?;
+        crate::query::summarizer::summarize_query(&bookmark.query, Some(language)).ok()
     }
 
     /// Store embeddings for multiple bookmarks.
@@ -186,7 +211,7 @@ mod tests {
 
         let bookmark = Bookmark {
             id: "test".to_string(),
-            query: "function test() {}".to_string(),
+            query: r#"(function_item name: (identifier) @fn_name (#eq? @fn_name "cycle_mode")) @target"#.to_string(),
             language: "rust".to_string(),
             file_path: "/test.rs".to_string(),
             content_hash: Some("hash".to_string()),
@@ -216,5 +241,7 @@ mod tests {
         assert!(text.contains("Tags: tag1, tag2"));
         assert!(text.contains("Note: A test function"));
         assert!(text.contains("Context: Testing utilities"));
+        assert!(text.contains("Node Type: function"));
+        assert!(text.contains("Node Target: cycle_mode"));
     }
 }
