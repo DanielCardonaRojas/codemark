@@ -31,9 +31,9 @@ pub mod app;
 pub mod browser;
 pub mod component;
 pub mod event;
-pub mod help;
 pub mod layout;
 pub mod logging;
+pub mod settings;
 pub mod state;
 pub mod theme;
 pub mod ui;
@@ -45,7 +45,7 @@ pub use component::{
     Component, HealthStatus, Label, Panel, PanelItem, SizeConstraints, Spacer, SyncDirection,
 };
 pub use event::{Event, EventHandler, EventHandlerConfig, KeyBindings};
-pub use help::{HelpOverlay, HelpTab};
+pub use settings::{SettingsOverlay, SettingsTab};
 pub use layout::{LayoutChild, LayoutManager, SplitLayout, helpers};
 pub use state::{AppMode, AppState, FocusManager, StateData, Storeable};
 pub use ui::{NotificationType, render_confirmation, render_help_panel, render_notification};

@@ -122,16 +122,20 @@ async fn run_app() -> Result<Option<i32>> {
     let mut notification: Option<(String, NotificationType, Instant)> = None;
     let notification_duration = Duration::from_secs(2);
 
-    // Main loop
-    let mut help = codemark_tui::help::HelpOverlay::new();
+    // Main loop. Two independent modal overlays, both painted on top of the
+    // main UI: the contextual keybindings cheat sheet (`?`) and the global
+    // settings overlay (`,`). They are mutually exclusive — opening one closes
+    // the other.
+    let mut show_keys = false;
+    let mut settings = codemark_tui::settings::SettingsOverlay::new();
 
     while state.is_running() {
         // Draw the UI
         terminal.draw(|f| {
             let size = f.area();
 
-            // The main layout + status bar are always drawn; the help overlay
-            // (when visible) is painted on top as a modal popup.
+            // The main layout + status bar are always drawn; an overlay (when
+            // visible) is painted on top as a modal popup.
             let chunks = ratatui::layout::Layout::default()
                 .direction(ratatui::layout::Direction::Vertical)
                 .constraints([
@@ -151,10 +155,21 @@ async fn run_app() -> Result<Option<i32>> {
                 state.get_string("filter_buffer"),
             );
 
-            if help.is_visible() {
+            if show_keys {
+                // Contextual keybindings cheat sheet: a simple centered list.
                 let bindings = layout.get_help_bindings();
+                let help_width = 50.min(size.width.saturating_sub(4));
+                let help_height = (bindings.len() as u16 + 4).min(size.height.saturating_sub(4));
+                let help_area = ratatui::layout::Rect {
+                    x: (size.width.saturating_sub(help_width)) / 2,
+                    y: (size.height.saturating_sub(help_height)) / 2,
+                    width: help_width,
+                    height: help_height,
+                };
+                ui::render_help_panel(help_area, f.buffer_mut(), &bindings);
+            } else if settings.is_visible() {
                 let config = layout.config_info();
-                help.render(size, f.buffer_mut(), &bindings, &config);
+                settings.render(size, f.buffer_mut(), &config);
             }
 
             // Draw notification if present
@@ -185,10 +200,21 @@ async fn run_app() -> Result<Option<i32>> {
                 match &event {
                     Event::Key(key) => {
                         match state.mode() {
-                            AppMode::Normal if help.is_visible() => {
-                                // The help overlay is modal: it swallows every
-                                // key (tab switching, Esc/? to close).
-                                handled = help.handle_key(key.code);
+                            AppMode::Normal if show_keys => {
+                                // The keybindings cheat sheet is modal: it
+                                // swallows every key; Esc or `?` closes it.
+                                if matches!(
+                                    key.code,
+                                    event::KeyCode::Esc | event::KeyCode::Char('?')
+                                ) {
+                                    show_keys = false;
+                                }
+                                handled = true;
+                            }
+                            AppMode::Normal if settings.is_visible() => {
+                                // The settings overlay is modal: it swallows
+                                // every key (tab switching, Esc/`,` to close).
+                                handled = settings.handle_key(key.code);
                             }
                             AppMode::Normal => {
                                 // Handle global key bindings (disabled when Search is focused).
@@ -207,7 +233,17 @@ async fn run_app() -> Result<Option<i32>> {
                                     event::KeyCode::Char('?')
                                         if !search_focused && !dialog_active =>
                                     {
-                                        help.toggle();
+                                        // Open the contextual keybindings cheat
+                                        // sheet (closing settings if it was up).
+                                        show_keys = true;
+                                        settings.hide();
+                                        handled = true;
+                                    }
+                                    event::KeyCode::Char(',')
+                                        if !search_focused && !dialog_active =>
+                                    {
+                                        // Open the global settings overlay.
+                                        settings.toggle();
                                         handled = true;
                                     }
                                     event::KeyCode::Char('/') if !dialog_active => {
@@ -277,21 +313,25 @@ async fn run_app() -> Result<Option<i32>> {
                     _ => {}
                 }
 
+                // Either overlay is modal: while one is open, all input is
+                // routed to it (above) and withheld from the layout/state.
+                let overlay_open = show_keys || settings.is_visible();
+
                 // If not handled by global keys, pass to layout (includes mouse events)
-                // Skip when help is shown to keep the overlay modal
+                // Skip when an overlay is shown to keep it modal
                 // In input modes (Command/Search/Insert), only pass mouse events to layout
                 // so that Esc can be handled by state to exit the mode
                 let is_input_mode =
                     matches!(state.mode(), AppMode::Command | AppMode::Search | AppMode::Insert);
                 let is_mouse_event = matches!(event, Event::Mouse(_));
-                if !handled && !help.is_visible() && (!is_input_mode || is_mouse_event) {
+                if !handled && !overlay_open && (!is_input_mode || is_mouse_event) {
                     handled = layout.handle_event(&event);
                 }
 
                 // Let state handle the event too (captures keys for Search mode)
-                // Skip when help is shown to keep the overlay modal
+                // Skip when an overlay is shown to keep it modal
                 // Skip if layout already handled the event (prevents keybinding conflicts)
-                if !help.is_visible() && !handled {
+                if !overlay_open && !handled {
                     state.handle_event(&event);
                 }
 

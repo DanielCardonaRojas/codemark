@@ -20,7 +20,8 @@ impl BrowserLayout {
 
         let mut bindings = vec![
             ("q", "Quit"),
-            ("?", "Toggle help"),
+            ("?", "Keybindings"),
+            (",", "Settings"),
             ("Tab", "Cycle focus"),
             ("Esc", "Back/Cancel"),
             ("/", "Search"),

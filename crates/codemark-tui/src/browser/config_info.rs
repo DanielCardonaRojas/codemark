@@ -42,36 +42,30 @@ impl BrowserLayout {
             p.map(|p| abbreviate(&p)).unwrap_or_else(|| "<unavailable>".to_string())
         };
 
-        let mut rows: Vec<(&'static str, String)> = Vec::new();
-
-        rows.push(("Version", crate::VERSION.to_string()));
-        rows.push(("Database", abbreviate(db_path)));
-        rows.push((
-            "Registry",
-            codemark_core::storage::registry::registry_path()
-                .map(|p| abbreviate(&p))
-                .unwrap_or_else(|_| "<unavailable>".to_string()),
-        ));
-        rows.push((
-            "Global config",
-            path(config::global_config_dir().map(|d| d.join("config.toml"))),
-        ));
-        rows.push(("Data dir", path(config::global_data_dir())));
-        rows.push(("Templates", path(templates::templates_dir())));
+        let registry = codemark_core::storage::registry::registry_path()
+            .map(|p| abbreviate(&p))
+            .unwrap_or_else(|_| "<unavailable>".to_string());
         // The log writer rolls daily, so the live file is this prefix plus a
         // `.YYYY-MM-DD` suffix.
-        rows.push(("Logs", abbreviate(&std::env::temp_dir().join("codemark-tui.log.*"))));
-        rows.push(("Models dir", path(config.semantic.get_models_dir())));
-        rows.push((
-            "Embeddings model",
-            config
-                .semantic
-                .model
-                .clone()
-                .unwrap_or_else(|| "all-MiniLM-L6-v2 (default)".to_string()),
-        ));
-        rows.push(("TUI theme", config.tui.theme.clone().unwrap_or_else(|| "default".to_string())));
+        let logs = abbreviate(&std::env::temp_dir().join("codemark-tui.log.*"));
+        let model = config
+            .semantic
+            .model
+            .clone()
+            .unwrap_or_else(|| "all-MiniLM-L6-v2 (default)".to_string());
+        let theme = config.tui.theme.clone().unwrap_or_else(|| "default".to_string());
 
-        rows
+        vec![
+            ("Version", crate::VERSION.to_string()),
+            ("Database", abbreviate(db_path)),
+            ("Registry", registry),
+            ("Global config", path(config::global_config_dir().map(|d| d.join("config.toml")))),
+            ("Data dir", path(config::global_data_dir())),
+            ("Templates", path(templates::templates_dir())),
+            ("Logs", logs),
+            ("Models dir", path(config.semantic.get_models_dir())),
+            ("Embeddings model", model),
+            ("TUI theme", theme),
+        ]
     }
 }

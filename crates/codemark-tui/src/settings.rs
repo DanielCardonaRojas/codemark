@@ -1,14 +1,19 @@
-//! Tabbed help overlay for the TUI.
+//! Tabbed settings overlay for the TUI.
 //!
-//! The overlay is a modal popup reached with `?`. It groups app information into
-//! tabs that the user switches between with `[`/`]` (or ←/→). This module owns
-//! the overlay's visibility and selected-tab state plus its rendering; the data
-//! each tab shows (keybindings, configuration rows) is supplied by the caller so
+//! Reached with `,`, this modal popup groups the app's *global* state — the
+//! things that don't change with focus — into tabs the user switches with
+//! `[`/`]` (or ←/→). It is deliberately separate from the contextual
+//! keybindings cheat sheet (`?`, see [`crate::ui::render_help_panel`]): those
+//! are ephemeral "what can I do right now", these are static "how is the app
+//! set up".
+//!
+//! This module owns the overlay's visibility and selected-tab state plus its
+//! rendering; the data the Configuration tab shows is supplied by the caller so
 //! the overlay stays decoupled from the browser layout.
 //!
-//! Adding a pane is a matter of adding a [`HelpTab`] variant (and an entry in
-//! [`HelpTab::ALL`]) plus a render arm — the tab bar, navigation, and dispatch
-//! all derive from that list.
+//! Adding a pane is a matter of adding a [`SettingsTab`] variant (and an entry
+//! in [`SettingsTab::ALL`]) plus a render arm — the tab bar, navigation, and
+//! dispatch all derive from that list.
 
 use crossterm::event::KeyCode;
 use ratatui::{
@@ -19,55 +24,56 @@ use ratatui::{
     widgets::{Block, BorderType, Clear, Paragraph, Widget, Wrap},
 };
 
-/// The tabs available in the help overlay, in display order.
+/// The tabs available in the settings overlay, in display order.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum HelpTab {
-    /// Context-aware keybindings (the original help content).
-    Keybindings,
-    /// Important paths: database, config, data dir, templates, logs, model.
+pub enum SettingsTab {
+    /// Important paths: database, registry, config, data/templates/models dirs,
+    /// logs, plus the embeddings model and theme.
     Configuration,
+    /// Version and project links (repository, support).
+    About,
 }
 
-impl HelpTab {
+impl SettingsTab {
     /// Every tab, in the order they appear in the tab bar.
-    pub const ALL: &'static [HelpTab] = &[HelpTab::Keybindings, HelpTab::Configuration];
+    pub const ALL: &'static [SettingsTab] = &[SettingsTab::Configuration, SettingsTab::About];
 
     /// The label shown for this tab in the tab bar.
     fn title(self) -> &'static str {
         match self {
-            HelpTab::Keybindings => "Keybindings",
-            HelpTab::Configuration => "Configuration",
+            SettingsTab::Configuration => "Configuration",
+            SettingsTab::About => "About",
         }
     }
 
-    /// This tab's position in [`HelpTab::ALL`].
+    /// This tab's position in [`SettingsTab::ALL`].
     fn index(self) -> usize {
         Self::ALL.iter().position(|t| *t == self).unwrap_or(0)
     }
 
     /// The tab at `index`, wrapping around the ends.
-    fn at(index: usize) -> HelpTab {
+    fn at(index: usize) -> SettingsTab {
         Self::ALL[index % Self::ALL.len()]
     }
 }
 
-/// Modal, tabbed help overlay: owns its visibility and selected-tab state.
+/// Modal, tabbed settings overlay: owns its visibility and selected-tab state.
 #[derive(Debug)]
-pub struct HelpOverlay {
+pub struct SettingsOverlay {
     visible: bool,
-    tab: HelpTab,
+    tab: SettingsTab,
 }
 
-impl Default for HelpOverlay {
+impl Default for SettingsOverlay {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl HelpOverlay {
-    /// Create a hidden overlay defaulting to the Keybindings tab.
+impl SettingsOverlay {
+    /// Create a hidden overlay defaulting to the Configuration tab.
     pub fn new() -> Self {
-        Self { visible: false, tab: HelpTab::Keybindings }
+        Self { visible: false, tab: SettingsTab::Configuration }
     }
 
     /// Whether the overlay is currently shown.
@@ -76,11 +82,11 @@ impl HelpOverlay {
     }
 
     /// The currently selected tab.
-    pub fn tab(&self) -> HelpTab {
+    pub fn tab(&self) -> SettingsTab {
         self.tab
     }
 
-    /// Toggle visibility (the `?` entry point).
+    /// Toggle visibility (the `,` entry point).
     pub fn toggle(&mut self) {
         self.visible = !self.visible;
     }
@@ -91,22 +97,22 @@ impl HelpOverlay {
     }
 
     fn next_tab(&mut self) {
-        self.tab = HelpTab::at(self.tab.index() + 1);
+        self.tab = SettingsTab::at(self.tab.index() + 1);
     }
 
     fn prev_tab(&mut self) {
         // + len keeps the index non-negative before the modulo in `at`.
-        self.tab = HelpTab::at(self.tab.index() + HelpTab::ALL.len() - 1);
+        self.tab = SettingsTab::at(self.tab.index() + SettingsTab::ALL.len() - 1);
     }
 
     /// Handle a key while the overlay is open.
     ///
     /// The overlay is modal, so this returns `true` for every key (it swallows
-    /// all input while visible). `Esc`/`?` close it; `[`/`]` (and the arrow /
+    /// all input while visible). `Esc`/`,` close it; `[`/`]` (and the arrow /
     /// tab equivalents) switch tabs.
     pub fn handle_key(&mut self, code: KeyCode) -> bool {
         match code {
-            KeyCode::Esc | KeyCode::Char('?') => self.hide(),
+            KeyCode::Esc | KeyCode::Char(',') => self.hide(),
             KeyCode::Char(']') | KeyCode::Right | KeyCode::Tab => self.next_tab(),
             KeyCode::Char('[') | KeyCode::Left | KeyCode::BackTab => self.prev_tab(),
             _ => {}
@@ -116,15 +122,9 @@ impl HelpOverlay {
 
     /// Render the overlay as a centered modal over `area`.
     ///
-    /// `bindings` feeds the Keybindings tab; `config` feeds the Configuration
-    /// tab. Both are passed in so the overlay needn't know about the layout.
-    pub fn render(
-        &self,
-        area: Rect,
-        buf: &mut Buffer,
-        bindings: &[(&str, &str)],
-        config: &[(&'static str, String)],
-    ) {
+    /// `config` feeds the Configuration tab (a list of labeled paths/settings),
+    /// passed in so the overlay needn't know about the layout.
+    pub fn render(&self, area: Rect, buf: &mut Buffer, config: &[(&'static str, String)]) {
         let popup = centered_rect(area, 0.55, 0.7);
         Widget::render(Clear, popup, buf);
 
@@ -133,7 +133,7 @@ impl HelpOverlay {
         // The tab bar lives inline in the block's top border, matching the
         // panel chrome used elsewhere in the TUI.
         let mut title_spans: Vec<Span> = vec![Span::raw(" ")];
-        for (i, tab) in HelpTab::ALL.iter().enumerate() {
+        for (i, tab) in SettingsTab::ALL.iter().enumerate() {
             if i > 0 {
                 title_spans.push(Span::styled(" · ", Style::default().fg(palette.gray)));
             }
@@ -160,8 +160,8 @@ impl HelpOverlay {
             .split(inner);
 
         match self.tab {
-            HelpTab::Keybindings => render_keybindings(chunks[0], buf, bindings),
-            HelpTab::Configuration => render_configuration(chunks[0], buf, config),
+            SettingsTab::Configuration => render_configuration(chunks[0], buf, config),
+            SettingsTab::About => render_about(chunks[0], buf),
         }
 
         let hint = Line::from(vec![
@@ -173,19 +173,6 @@ impl HelpOverlay {
         .alignment(Alignment::Center);
         Paragraph::new(hint).render(chunks[1], buf);
     }
-}
-
-/// Render the Keybindings tab: a `key → action` table.
-fn render_keybindings(area: Rect, buf: &mut Buffer, bindings: &[(&str, &str)]) {
-    let palette = crate::theme::palette();
-    let mut text = Text::default();
-    for (key, action) in bindings {
-        text.push_line(Line::from(vec![
-            Span::styled(format!(" {:10} ", key), Style::default().fg(palette.accent).bold()),
-            Span::styled(*action, Style::default().fg(palette.emphasis)),
-        ]));
-    }
-    Paragraph::new(text).wrap(Wrap { trim: false }).render(area, buf);
 }
 
 /// Render the Configuration tab: a `label : value` list of important paths and
@@ -207,6 +194,33 @@ fn render_configuration(area: Rect, buf: &mut Buffer, rows: &[(&'static str, Str
     Paragraph::new(text).wrap(Wrap { trim: false }).render(area, buf);
 }
 
+/// Render the About tab: version and project links.
+fn render_about(area: Rect, buf: &mut Buffer) {
+    let palette = crate::theme::palette();
+
+    let label = |text: &str| Span::styled(format!(" {text:<12}  "), Style::default().fg(palette.accent).bold());
+    let value = |text: &str| Span::styled(text.to_string(), Style::default().fg(palette.emphasis));
+
+    let mut text = Text::default();
+    text.push_line(Line::from(vec![
+        Span::raw(" "),
+        Span::styled("Codemark", Style::default().fg(palette.emphasis).bold()),
+        Span::styled(
+            "  — structural code bookmarks that survive refactoring",
+            Style::default().fg(palette.dim),
+        ),
+    ]));
+    text.push_line(Line::raw(""));
+    text.push_line(Line::from(vec![label("Version"), value(crate::VERSION)]));
+    text.push_line(Line::from(vec![label("Repository"), value(env!("CARGO_PKG_REPOSITORY"))]));
+    text.push_line(Line::from(vec![
+        label("Support"),
+        value("https://github.com/sponsors/DanielCardonaRojas"),
+    ]));
+
+    Paragraph::new(text).wrap(Wrap { trim: false }).render(area, buf);
+}
+
 /// Compute a rectangle centered in `area`, sized to the given fraction of its
 /// width and height.
 fn centered_rect(area: Rect, width_pct: f32, height_pct: f32) -> Rect {
@@ -225,15 +239,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn starts_hidden_on_keybindings_tab() {
-        let overlay = HelpOverlay::new();
+    fn starts_hidden_on_configuration_tab() {
+        let overlay = SettingsOverlay::new();
         assert!(!overlay.is_visible());
-        assert_eq!(overlay.tab(), HelpTab::Keybindings);
+        assert_eq!(overlay.tab(), SettingsTab::Configuration);
     }
 
     #[test]
     fn toggle_flips_visibility() {
-        let mut overlay = HelpOverlay::new();
+        let mut overlay = SettingsOverlay::new();
         overlay.toggle();
         assert!(overlay.is_visible());
         overlay.toggle();
@@ -242,36 +256,36 @@ mod tests {
 
     #[test]
     fn navigation_keys_cycle_tabs_and_wrap() {
-        let mut overlay = HelpOverlay::new();
+        let mut overlay = SettingsOverlay::new();
         overlay.toggle();
 
         // Forward wraps from the last tab back to the first.
-        for _ in 0..HelpTab::ALL.len() {
+        for _ in 0..SettingsTab::ALL.len() {
             overlay.handle_key(KeyCode::Char(']'));
         }
-        assert_eq!(overlay.tab(), HelpTab::Keybindings);
+        assert_eq!(overlay.tab(), SettingsTab::Configuration);
 
         // Backward from the first tab wraps to the last.
         overlay.handle_key(KeyCode::Char('['));
-        assert_eq!(overlay.tab(), *HelpTab::ALL.last().unwrap());
+        assert_eq!(overlay.tab(), *SettingsTab::ALL.last().unwrap());
     }
 
     #[test]
-    fn esc_and_question_close_overlay() {
-        let mut overlay = HelpOverlay::new();
+    fn esc_and_comma_close_overlay() {
+        let mut overlay = SettingsOverlay::new();
 
         overlay.toggle();
         assert!(overlay.handle_key(KeyCode::Esc));
         assert!(!overlay.is_visible());
 
         overlay.toggle();
-        assert!(overlay.handle_key(KeyCode::Char('?')));
+        assert!(overlay.handle_key(KeyCode::Char(',')));
         assert!(!overlay.is_visible());
     }
 
     #[test]
     fn handle_key_is_modal_and_swallows_all_keys() {
-        let mut overlay = HelpOverlay::new();
+        let mut overlay = SettingsOverlay::new();
         overlay.toggle();
         // An unrelated key is still consumed while the overlay is open.
         assert!(overlay.handle_key(KeyCode::Char('q')));
