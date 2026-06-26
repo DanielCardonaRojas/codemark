@@ -37,6 +37,12 @@ use base16::Base16Scheme;
 /// resolution can never fail to produce a usable theme.
 pub const FALLBACK_THEME: &str = "OneHalfDark";
 
+/// Background color used to highlight the selected row across panes (the list
+/// [`Panel`](crate::component::Panel) and the [`CodePreview`](crate::component::CodePreview)
+/// selected line). A light gray-blue from the One Dark palette, kept the same
+/// whether or not the pane is focused.
+pub const SELECTION_BG: Color = Color::Rgb(62, 68, 81);
+
 /// Popular `.tmTheme` files not shipped by `syntect-assets`, embedded at compile
 /// time. Each entry is `(name, bytes)`, where `name` is the key users reference
 /// in config and `bytes` is the raw `.tmTheme` plist.

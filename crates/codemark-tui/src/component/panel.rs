@@ -965,8 +965,7 @@ impl Component for Panel {
                 if is_selected {
                     // Keep the same highlight background whether or not the pane is
                     // focused — the previous dimmed/blackish color looked poor.
-                    let bg_color = Color::Rgb(62, 68, 81); // Light gray-blue highlight (One Dark)
-                    list_item = list_item.style(Style::default().bg(bg_color));
+                    list_item = list_item.style(Style::default().bg(crate::theme::SELECTION_BG));
                 }
                 list_item
             })
