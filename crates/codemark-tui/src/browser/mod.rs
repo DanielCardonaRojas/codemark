@@ -1456,9 +1456,7 @@ impl BrowserLayout {
                     let summary = summary_info
                         .as_ref()
                         .and_then(|s| s.identifier.clone())
-                        .unwrap_or_else(|| {
-                            if summary_info.is_some() { String::new() } else { bm.query.clone() }
-                        });
+                        .unwrap_or_else(|| bm.query.clone());
                     let icon = summary_info
                         .as_ref()
                         .map(|s| codemark_core::query::classifier::get_node_icon(&s.label))

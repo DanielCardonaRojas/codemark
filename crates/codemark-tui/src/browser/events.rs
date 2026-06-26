@@ -229,10 +229,10 @@ impl BrowserLayout {
 
                 // Show only the identifier (not the node type) so search results
                 // match the formatting of the normal bookmark list.
-                let summary =
-                    summary_info.as_ref().and_then(|s| s.identifier.clone()).unwrap_or_else(|| {
-                        if summary_info.is_some() { String::new() } else { bm.query.clone() }
-                    });
+                let summary = summary_info
+                    .as_ref()
+                    .and_then(|s| s.identifier.clone())
+                    .unwrap_or_else(|| bm.query.clone());
 
                 let icon = summary_info.as_ref().map(|s| get_node_icon(&s.label)).unwrap_or("");
 
@@ -491,6 +491,8 @@ impl BrowserLayout {
             ratatui::crossterm::event::KeyCode::Esc => {
                 if self.focus == FocusArea::Search {
                     self.left_pane.search.clear();
+                    // Invalidate any in-flight search so it doesn't overwrite the refreshed panels
+                    self.active_search_request = self.active_search_request.wrapping_add(1);
                     self.refresh_all_panels();
                     self.set_focus(FocusArea::Panel3);
                     return Some(true);
