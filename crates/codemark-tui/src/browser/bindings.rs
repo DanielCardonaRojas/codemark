@@ -206,10 +206,12 @@ impl BrowserLayout {
             FocusArea::Filter => {}
         }
 
-        // Global bindings, always appended. `?` is pinned so it never drops.
+        // Global bindings, always appended. `?` Help and `,` Settings are
+        // pinned so the two overlays stay discoverable even on a narrow bar.
         bindings.push(KeyBinding::new("/", "Filter").with_priority(60));
         bindings.push(KeyBinding::new("q", "Quit").with_priority(55));
         bindings.push(KeyBinding::new("?", "Help").pinned());
+        bindings.push(KeyBinding::new(",", "Settings").pinned());
 
         bindings
     }
