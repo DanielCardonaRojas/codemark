@@ -6,10 +6,20 @@
   </picture>
 </div>
 
+<div align="center">
+
+[![Latest release](https://img.shields.io/github/v/release/DanielCardonaRojas/codemark?label=release&color=success&sort=semver)](https://github.com/DanielCardonaRojas/codemark/releases/latest)
 [![CI](https://github.com/DanielCardonaRojas/codemark/actions/workflows/test.yml/badge.svg)](https://github.com/DanielCardonaRojas/codemark/actions/workflows/test.yml)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.85+-orange.svg)](https://www.rust-lang.org)
 [![agent-ready](https://img.shields.io/badge/agent-ready-blueviolet)](#-use-it-with-claude-code)
+
+**Native on**
+&nbsp;[![macOS](https://img.shields.io/badge/macOS-000000?logo=apple&logoColor=white)](#-installation)
+&nbsp;[![Linux](https://img.shields.io/badge/Linux-FCC624?logo=linux&logoColor=black)](#-installation)
+&nbsp;[![Windows](https://img.shields.io/badge/Windows-0078D6?logo=windows&logoColor=white)](#-installation)
+
+</div>
 
 **Codemark** is a structural bookmarking system for code. Unlike fragile `file:line` references that break when you insert a single newline, Codemark uses **[tree-sitter](https://tree-sitter.github.io/tree-sitter/)** to capture the *semantic structure* of what you marked — so bookmarks **self-heal** across renames, refactors, and reformatting.
 
