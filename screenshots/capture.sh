@@ -135,5 +135,35 @@ else
   ( cd "$REPO_ROOT" && PATH="$BIN_DIR:$PATH" vhs "$rendered" )
 fi
 
+# Settings overlay demo GIF: open Settings and cycle its tabs. Same two-pass
+# ffmpeg downscale as the main demo so the committed GIF stays README-friendly.
+echo "    - settings.tape (gif)"
+SETTINGS_GIF_FINAL="$IMAGES_DIR/codemark_tui_settings.gif"
+if command -v ffmpeg >/dev/null; then
+  SETTINGS_GIF_RAW="$SANDBOX/settings_raw.gif"
+  rendered="$RENDER_DIR/settings.tape"
+  sed "s#__OUT__#$SANDBOX#g" "$SHOTS_DIR/settings.tape" > "$rendered"
+  # settings.tape writes codemark_tui_settings.gif into the __OUT__ dir (sandbox).
+  ( cd "$REPO_ROOT" && PATH="$BIN_DIR:$PATH" vhs "$rendered" )
+  mv "$SANDBOX/codemark_tui_settings.gif" "$SETTINGS_GIF_RAW"
+  PAL="$SANDBOX/settings_palette.png"
+  ffmpeg -y -loglevel error -i "$SETTINGS_GIF_RAW" \
+    -vf "scale=1280:-1:flags=lanczos,palettegen=stats_mode=diff" "$PAL"
+  ffmpeg -y -loglevel error -i "$SETTINGS_GIF_RAW" -i "$PAL" \
+    -lavfi "scale=1280:-1:flags=lanczos[x];[x][1:v]paletteuse=dither=bayer:bayer_scale=3" \
+    "$SETTINGS_GIF_FINAL"
+else
+  echo "      warning: ffmpeg not found; recording GIF at full size (large file)."
+  rendered="$RENDER_DIR/settings.tape"
+  sed "s#__OUT__#$IMAGES_DIR#g" "$SHOTS_DIR/settings.tape" > "$rendered"
+  ( cd "$REPO_ROOT" && PATH="$BIN_DIR:$PATH" vhs "$rendered" )
+fi
+
+# Settings thumbnail: a single still (Theme tab) used as the gallery poster.
+echo "    - settings-thumb.tape (png)"
+rendered="$RENDER_DIR/settings-thumb.tape"
+sed "s#__OUT__#$IMAGES_DIR#g" "$SHOTS_DIR/settings-thumb.tape" > "$rendered"
+( cd "$REPO_ROOT" && PATH="$BIN_DIR:$PATH" vhs "$rendered" )
+
 echo "==> Done. Updated:"
 ls -1 "$IMAGES_DIR"/codemark_tui_*.png "$IMAGES_DIR"/codemark_tui_*.gif 2>/dev/null

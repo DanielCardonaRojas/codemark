@@ -100,6 +100,21 @@ codemark tui
 
 ![Browsing bookmarks in the TUI](./screenshots/images/codemark_tui_demo.gif)
 
+#### 🎬 More demos
+
+<table>
+  <tr>
+    <td align="center" width="240">
+      <a href="./dev-docs/guides/demo-gallery.md#settings">
+        <img src="./screenshots/images/codemark_tui_settings_thumb.png" width="220" alt="Settings overlay demo">
+        <br><sub><b>Settings overlay</b></sub>
+      </a>
+    </td>
+  </tr>
+</table>
+
+See the [**Demo Gallery**](./dev-docs/guides/demo-gallery.md) for the full-size animated walkthroughs.
+
 ### Themes
 
 The TUI ships with built-in color schemes that re-theme the whole interface. Set
