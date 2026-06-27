@@ -15,9 +15,9 @@
 [![agent-ready](https://img.shields.io/badge/agent-ready-blueviolet)](#-use-it-with-claude-code)
 
 **Native on**
-&nbsp;[![macOS](https://img.shields.io/badge/macOS-000000?logo=apple&logoColor=white)](#-installation)
-&nbsp;[![Linux](https://img.shields.io/badge/Linux-FCC624?logo=linux&logoColor=black)](#-installation)
-&nbsp;[![Windows](https://img.shields.io/badge/Windows-0078D6?logo=windows&logoColor=white)](#-installation)
+&nbsp;<a href="#-installation"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/install/apple.svg"><img src="docs/install/apple-light.svg" width="28" alt="macOS"></picture></a>
+&nbsp;<a href="#-installation"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/install/linux.svg"><img src="docs/install/linux-light.svg" width="28" alt="Linux"></picture></a>
+&nbsp;<a href="#-installation"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/install/windows.svg"><img src="docs/install/windows-light.svg" width="28" alt="Windows"></picture></a>
 
 </div>
 
