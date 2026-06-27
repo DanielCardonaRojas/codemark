@@ -48,10 +48,24 @@ Sleep 500ms
 Down 1
 Sleep 650ms
 
+# --- 1b. Show the contextual keybinding cheat sheet for the bookmarks pane ---
+# `?` opens the cheat sheet scoped to the focused pane (here, Panel3/bookmarks);
+# press it again to close.
+Type "?"
+Sleep 1.5s
+Type "?"
+Sleep 400ms
+
 # --- 2. Inspect the preview tabs: Content -> Info -> Query -------------------
 # Focus the right preview pane.
 Type "5"
 Sleep 450ms
+
+# --- 2b. Show the cheat sheet again — now scoped to the preview pane ---------
+Type "?"
+Sleep 1.5s
+Type "?"
+Sleep 400ms
 # Content -> Info
 Type "]"
 Sleep 900ms

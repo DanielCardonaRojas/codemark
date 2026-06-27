@@ -110,6 +110,12 @@ codemark tui
         <br><sub><b>Settings overlay</b></sub>
       </a>
     </td>
+    <td align="center" width="240">
+      <a href="./dev-docs/guides/demo-gallery.md#search--full-text--semantic">
+        <img src="./screenshots/images/codemark_tui_search_thumb.png" width="220" alt="Full-text & semantic search demo">
+        <br><sub><b>FTS &amp; semantic search</b></sub>
+      </a>
+    </td>
   </tr>
 </table>
 

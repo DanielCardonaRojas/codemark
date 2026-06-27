@@ -165,5 +165,35 @@ rendered="$RENDER_DIR/settings-thumb.tape"
 sed "s#__OUT__#$IMAGES_DIR#g" "$SHOTS_DIR/settings-thumb.tape" > "$rendered"
 ( cd "$REPO_ROOT" && PATH="$BIN_DIR:$PATH" vhs "$rendered" )
 
+# Search demo GIF: full-text vs semantic search. Same two-pass ffmpeg downscale
+# as the other demo GIFs so the committed GIF stays README-friendly.
+echo "    - search.tape (gif)"
+SEARCH_GIF_FINAL="$IMAGES_DIR/codemark_tui_search.gif"
+if command -v ffmpeg >/dev/null; then
+  SEARCH_GIF_RAW="$SANDBOX/search_raw.gif"
+  rendered="$RENDER_DIR/search.tape"
+  sed "s#__OUT__#$SANDBOX#g" "$SHOTS_DIR/search.tape" > "$rendered"
+  # search.tape writes codemark_tui_search.gif into the __OUT__ dir (sandbox).
+  ( cd "$REPO_ROOT" && PATH="$BIN_DIR:$PATH" vhs "$rendered" )
+  mv "$SANDBOX/codemark_tui_search.gif" "$SEARCH_GIF_RAW"
+  PAL="$SANDBOX/search_palette.png"
+  ffmpeg -y -loglevel error -i "$SEARCH_GIF_RAW" \
+    -vf "scale=1280:-1:flags=lanczos,palettegen=stats_mode=diff" "$PAL"
+  ffmpeg -y -loglevel error -i "$SEARCH_GIF_RAW" -i "$PAL" \
+    -lavfi "scale=1280:-1:flags=lanczos[x];[x][1:v]paletteuse=dither=bayer:bayer_scale=3" \
+    "$SEARCH_GIF_FINAL"
+else
+  echo "      warning: ffmpeg not found; recording GIF at full size (large file)."
+  rendered="$RENDER_DIR/search.tape"
+  sed "s#__OUT__#$IMAGES_DIR#g" "$SHOTS_DIR/search.tape" > "$rendered"
+  ( cd "$REPO_ROOT" && PATH="$BIN_DIR:$PATH" vhs "$rendered" )
+fi
+
+# Search thumbnail: a single still (Semantic results) used as the gallery poster.
+echo "    - search-thumb.tape (png)"
+rendered="$RENDER_DIR/search-thumb.tape"
+sed "s#__OUT__#$IMAGES_DIR#g" "$SHOTS_DIR/search-thumb.tape" > "$rendered"
+( cd "$REPO_ROOT" && PATH="$BIN_DIR:$PATH" vhs "$rendered" )
+
 echo "==> Done. Updated:"
 ls -1 "$IMAGES_DIR"/codemark_tui_*.png "$IMAGES_DIR"/codemark_tui_*.gif 2>/dev/null

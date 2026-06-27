@@ -26,3 +26,14 @@ Open the Settings overlay with `,`, then cycle its tabs with `]` / `[`
 as you move through it with `j` / `k`.
 
 ![Codemark TUI settings overlay](../../screenshots/images/codemark_tui_settings.gif)
+
+---
+
+## Search — full-text & semantic
+
+Press `s` to focus the search bar and start typing — results filter live. Toggle
+between **FTS** (SQLite full-text, exact terms) and **Semantic** (local vector
+embeddings, by meaning — no API key) with `Ctrl+S`. Semantic mode answers
+intent-style queries like *"where do we resolve a bookmark after the code moves"*.
+
+![Codemark TUI full-text and semantic search](../../screenshots/images/codemark_tui_search.gif)
