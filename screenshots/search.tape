@@ -6,16 +6,18 @@
 # and runs from the repo root so the TUI uses the tracked .codemark/codemark.db.
 #
 # Flow:
-#   1. focus the search bar and type a query (FTS mode, the default) — results
-#      filter live as you type
-#   2. toggle to Semantic mode with Ctrl+S — the same query is re-run by meaning
-#   3. clear and try an intent-style query that semantic search resolves
+#   1. focus the search bar, type a query, and press Enter to run it (FTS, the
+#      default mode)
+#   2. toggle to Semantic mode with Ctrl+S and re-run by meaning
+#   3. clear with double Esc, then run an intent-style query in Semantic mode
 #
 # Key map used (see crates/codemark-tui/src/browser):
 #   s        focus the search bar (from any other pane)
-#   <typing> builds the query; search runs live
+#   <typing> build the query
+#   Enter    run the search (it does NOT run live as you type)
 #   Ctrl+S   cycle search mode: FTS <-> Semantic
-#   Esc      clear the query and leave the search bar
+#   Esc Esc  clear the query and leave the search bar (double Esc)
+# Semantic search is slower than FTS, so allow extra time after Enter for it.
 
 Output "__OUT__/codemark_tui_search.gif"
 
@@ -36,23 +38,30 @@ Show
 
 Sleep 500ms
 
-# --- 1. Focus search and type a query (FTS, the default) ---------------------
+# --- 1. Focus search, type a query, run it with Enter (FTS, the default) -----
 Type "s"
 Sleep 500ms
 Type "authentication"
+Sleep 600ms
+Enter
 Sleep 1.5s
 
-# --- 2. Toggle to Semantic mode (re-runs the same query by meaning) ----------
+# --- 2. Toggle to Semantic mode and re-run the same query by meaning ---------
 Ctrl+S
-Sleep 2s
+Sleep 500ms
+Enter
+Sleep 2.5s
 
-# --- 3. Clear, then run an intent-style query (still in Semantic mode) -------
-# Semantic mode persists from step 2, so this query is resolved by meaning.
+# --- 3. Clear with double Esc, then run an intent-style query (Semantic) -----
+# Semantic mode persists, so this query is resolved by meaning.
 Escape
-Sleep 600ms
+Escape
+Sleep 800ms
 Type "s"
 Sleep 400ms
 Type "where do we resolve a bookmark after the code moves"
-Sleep 2.5s
+Sleep 600ms
+Enter
+Sleep 3s
 
 Sleep 600ms

@@ -31,9 +31,22 @@ as you move through it with `j` / `k`.
 
 ## Search — full-text & semantic
 
-Press `s` to focus the search bar and start typing — results filter live. Toggle
-between **FTS** (SQLite full-text, exact terms) and **Semantic** (local vector
-embeddings, by meaning — no API key) with `Ctrl+S`. Semantic mode answers
-intent-style queries like *"where do we resolve a bookmark after the code moves"*.
+Press `s` to focus the search bar, type a query, and press `Enter` to run it.
+Toggle between **FTS** (SQLite full-text, exact terms) and **Semantic** (local
+vector embeddings, by meaning — no API key) with `Ctrl+S`. Semantic mode answers
+intent-style queries like *"where do we resolve a bookmark after the code moves"*
+(it's slower, so it shows a brief loading spinner). Clear a search with double
+`Esc`.
 
 ![Codemark TUI full-text and semantic search](../../screenshots/images/codemark_tui_search.gif)
+
+---
+
+## Filtering pane contents
+
+Distinct from search: press `/` to filter the **focused pane's** visible list,
+narrowing it live as you type (no `Enter` needed). Filters are pane-scoped — the
+Bookmarks pane and the Tags pane each keep their own — and `Esc` clears the
+active filter.
+
+![Codemark TUI pane filtering](../../screenshots/images/codemark_tui_filter.gif)

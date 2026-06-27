@@ -116,6 +116,12 @@ codemark tui
         <br><sub><b>FTS &amp; semantic search</b></sub>
       </a>
     </td>
+    <td align="center" width="240">
+      <a href="./dev-docs/guides/demo-gallery.md#filtering-pane-contents">
+        <img src="./screenshots/images/codemark_tui_filter_thumb.png" width="220" alt="Pane filtering demo">
+        <br><sub><b>Filter pane contents</b></sub>
+      </a>
+    </td>
   </tr>
 </table>
 

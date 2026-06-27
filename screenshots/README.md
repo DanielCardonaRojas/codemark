@@ -32,6 +32,8 @@ or via the workflow) whenever the knowledge base changes enough to matter.
 | `settings-thumb.tape` | `codemark_tui_settings_thumb.png` | Static thumbnail (Theme tab) — the poster for the Settings demo in the [demo gallery](../dev-docs/guides/demo-gallery.md) |
 | `search.tape` | `codemark_tui_search.gif` | Animated tour of search: focus with `s`, type a query, toggle FTS/Semantic with `Ctrl+S` |
 | `search-thumb.tape` | `codemark_tui_search_thumb.png` | Static thumbnail (Semantic results) — the poster for the search demo in the [demo gallery](../dev-docs/guides/demo-gallery.md) |
+| `filter.tape` | `codemark_tui_filter.gif` | Animated tour of pane filtering: `/` narrows the focused pane's list live (Bookmarks, then Tags) |
+| `filter-thumb.tape` | `codemark_tui_filter_thumb.png` | Static thumbnail (filtered Bookmarks pane) — the poster for the filter demo in the [demo gallery](../dev-docs/guides/demo-gallery.md) |
 | `theme.tape` | `codemark_tui_theme_<slug>.png` | Main view, once per color scheme |
 
 The demo GIF is the README's lead visual. It's recorded at full TUI resolution

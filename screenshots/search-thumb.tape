@@ -7,7 +7,8 @@
 # substitutes __OUT__ with the absolute output dir and runs from the repo root
 # so the TUI uses the tracked .codemark/codemark.db.
 #
-# Flow: focus search (s), toggle to Semantic mode (Ctrl+S), type a query, capture.
+# Flow: focus search (s), toggle to Semantic mode (Ctrl+S), type a query, run it
+# with Enter, wait for the (slower) semantic results, then capture.
 
 Set FontFamily "SFMono Nerd Font"
 Set FontSize 24
@@ -22,12 +23,15 @@ Enter
 Sleep 2.5s
 Show
 
-# Focus search, switch to Semantic mode, and run a query.
+# Focus search, switch to Semantic mode, type a query, and run it with Enter.
 Type "s"
 Sleep 400ms
 Ctrl+S
 Sleep 400ms
 Type "authentication"
-Sleep 2s
+Sleep 400ms
+Enter
+# Semantic search is slow — wait for results before capturing.
+Sleep 2.5s
 
 Screenshot "__OUT__/codemark_tui_search_thumb.png"
