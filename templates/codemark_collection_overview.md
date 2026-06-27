@@ -36,7 +36,7 @@
 ## Links
 
 {{#each links}}
-- **{{kind}}**: {{label}} ({{url}})
+- **{{kind}}**: {{label}} [{{url}}]({{url}})
 {{/each}}
 {{/if}}
 
