@@ -6,10 +6,20 @@
   </picture>
 </div>
 
+<div align="center">
+
+[![Latest release](https://img.shields.io/github/v/release/DanielCardonaRojas/codemark?label=release&color=success&sort=semver)](https://github.com/DanielCardonaRojas/codemark/releases/latest)
 [![CI](https://github.com/DanielCardonaRojas/codemark/actions/workflows/test.yml/badge.svg)](https://github.com/DanielCardonaRojas/codemark/actions/workflows/test.yml)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.85+-orange.svg)](https://www.rust-lang.org)
 [![agent-ready](https://img.shields.io/badge/agent-ready-blueviolet)](#-use-it-with-claude-code)
+
+**Native on**
+&nbsp;<a href="#-installation"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/install/apple.svg"><img src="docs/install/apple-light.svg" width="28" alt="macOS"></picture></a>
+&nbsp;<a href="#-installation"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/install/linux.svg"><img src="docs/install/linux-light.svg" width="28" alt="Linux"></picture></a>
+&nbsp;<a href="#-installation"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/install/windows.svg"><img src="docs/install/windows-light.svg" width="28" alt="Windows"></picture></a>
+
+</div>
 
 **Codemark** is a structural bookmarking system for code. Unlike fragile `file:line` references that break when you insert a single newline, Codemark uses **[tree-sitter](https://tree-sitter.github.io/tree-sitter/)** to capture the *semantic structure* of what you marked — so bookmarks **self-heal** across renames, refactors, and reformatting.
 
@@ -89,6 +99,21 @@ codemark tui
 > Font`) so they render correctly instead of showing as `□` placeholders.
 
 ![Browsing bookmarks in the TUI](./screenshots/images/codemark_tui_demo.gif)
+
+#### 🎬 More demos
+
+<table>
+  <tr>
+    <td align="center" width="240">
+      <a href="./dev-docs/guides/demo-gallery.md#settings">
+        <img src="./screenshots/images/codemark_tui_settings_thumb.png" width="220" alt="Settings overlay demo">
+        <br><sub><b>Settings overlay</b></sub>
+      </a>
+    </td>
+  </tr>
+</table>
+
+See the [**Demo Gallery**](./dev-docs/guides/demo-gallery.md) for the full-size animated walkthroughs.
 
 ### Themes
 

@@ -28,6 +28,8 @@ or via the workflow) whenever the knowledge base changes enough to matter.
 | Tape | Output (in `images/`) | View |
 |------|------------------------|------|
 | `demo.tape` | `codemark_tui_demo.gif` | Animated tour: browse bookmarks, Content/Info/Query tabs, open a collection, step through it |
+| `settings.tape` | `codemark_tui_settings.gif` | Animated tour of the Settings overlay: open with `,`, cycle the Configuration/Theme/About tabs with `]`/`[` |
+| `settings-thumb.tape` | `codemark_tui_settings_thumb.png` | Static thumbnail (Theme tab) — the poster for the Settings demo in the [demo gallery](../dev-docs/guides/demo-gallery.md) |
 | `theme.tape` | `codemark_tui_theme_<slug>.png` | Main view, once per color scheme |
 
 The demo GIF is the README's lead visual. It's recorded at full TUI resolution
