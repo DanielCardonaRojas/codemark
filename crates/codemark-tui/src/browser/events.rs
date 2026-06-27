@@ -84,6 +84,12 @@ impl BrowserLayout {
             dirty = true;
         }
 
+        // Animate the search bar spinner while a search is in progress.
+        if self.left_pane.search.is_loading() {
+            self.left_pane.search.advance_spinner();
+            dirty = true;
+        }
+
         if self.spinning_items.is_empty() {
             return dirty;
         }
@@ -133,12 +139,16 @@ impl BrowserLayout {
     /// Returns `Some(true)` if the event was handled, `None` if not matched.
     fn handle_app_event(&mut self, event: &Event) -> Option<bool> {
         match event {
-            Event::SearchResults(bookmarks) => {
-                self.apply_search_results(bookmarks);
+            Event::SearchResults { request_id, bookmarks } => {
+                if *request_id == self.active_search_request {
+                    self.apply_search_results(bookmarks);
+                }
                 Some(true)
             }
-            Event::SearchError(msg) => {
-                self.left_pane.search.set_error(msg.clone());
+            Event::SearchError { request_id, msg } => {
+                if *request_id == self.active_search_request {
+                    self.left_pane.search.set_error(msg.clone());
+                }
                 Some(true)
             }
             Event::HealComplete(msg, success) => {
@@ -205,6 +215,9 @@ impl BrowserLayout {
     /// a background task to resolve all bookmarks and send `LiveHealthBatch`
     /// events that progressively update the dots.
     fn apply_search_results(&mut self, bookmarks: &[codemark_core::engine::bookmark::Bookmark]) {
+        // The search finished, so stop the loading spinner.
+        self.left_pane.search.set_loading(false);
+
         let items: Vec<PanelItem> = bookmarks
             .iter()
             .map(|bm| {
@@ -214,9 +227,11 @@ impl BrowserLayout {
                     .ok()
                     .and_then(|lang| summarizer::summarize_query(&bm.query, Some(lang)).ok());
 
+                // Show only the identifier (not the node type) so search results
+                // match the formatting of the normal bookmark list.
                 let summary = summary_info
                     .as_ref()
-                    .and_then(|s| s.format())
+                    .and_then(|s| s.identifier.clone())
                     .unwrap_or_else(|| bm.query.clone());
 
                 let icon = summary_info.as_ref().map(|s| get_node_icon(&s.label)).unwrap_or("");
@@ -242,6 +257,9 @@ impl BrowserLayout {
         if let Some(TabContent::List(p)) = self.left_pane.panel3.panels.get_mut(0) {
             p.set_items(items);
             p.set_selected(0);
+            // Flag the panel as showing search results so its tab title gets a
+            // filter glyph, like any other narrowed list.
+            p.set_search_active(true);
             self.left_pane.panel3.tabs.set_selected(0);
         }
 
@@ -473,6 +491,8 @@ impl BrowserLayout {
             ratatui::crossterm::event::KeyCode::Esc => {
                 if self.focus == FocusArea::Search {
                     self.left_pane.search.clear();
+                    // Invalidate any in-flight search so it doesn't overwrite the refreshed panels
+                    self.active_search_request = self.active_search_request.wrapping_add(1);
                     self.refresh_all_panels();
                     self.set_focus(FocusArea::Panel3);
                     return Some(true);
@@ -560,6 +580,11 @@ impl BrowserLayout {
     /// Handle Enter key — activate/open the selected item in the focused panel.
     fn handle_enter_key(&mut self) -> Option<bool> {
         if self.focus == FocusArea::Search {
+            // Show the loading spinner while the search runs (semantic search in
+            // particular is slow). It is cleared when results or an error arrive.
+            if !self.left_pane.search.query().is_empty() {
+                self.left_pane.search.set_loading(true);
+            }
             self.execute_search();
             return Some(true);
         }

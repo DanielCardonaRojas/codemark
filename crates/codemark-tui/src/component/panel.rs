@@ -100,6 +100,10 @@ pub struct Panel {
     all_items: Vec<PanelItem>,
     /// Current filter query
     filter_query: String,
+    /// Whether this panel is displaying externally-supplied search results
+    /// (e.g. FTS/semantic search), which counts as a filtered view even though
+    /// no local `filter_query` is set. Reset by [`Self::set_items`].
+    search_active: bool,
     /// The state of the list (handles selection and scrolling)
     list_state: RefCell<ListState>,
     /// Whether the panel has a border
@@ -536,6 +540,7 @@ impl Panel {
             items: Vec::new(),
             all_items: Vec::new(),
             filter_query: String::new(),
+            search_active: false,
             list_state: RefCell::new(ListState::default()),
             bordered: true,
             focused: false,
@@ -585,9 +590,17 @@ impl Panel {
         self
     }
 
-    /// Whether a non-empty filter query is currently applied to this panel.
+    /// Whether this panel's list is currently narrowed — either by a non-empty
+    /// local filter query or by externally-supplied search results.
     pub fn is_filtered(&self) -> bool {
-        !self.filter_query.is_empty()
+        !self.filter_query.is_empty() || self.search_active
+    }
+
+    /// Mark (or unmark) this panel as displaying externally-supplied search
+    /// results, so its tab shows a filter glyph even with no local filter
+    /// query. Reset by [`Self::set_items`].
+    pub fn set_search_active(&mut self, active: bool) {
+        self.search_active = active;
     }
 
     /// Set the filter query and apply it.
@@ -849,6 +862,7 @@ impl Panel {
         self.all_items.clear();
         self.list_state.borrow_mut().select(None);
         self.filter_query.clear();
+        self.search_active = false;
     }
 
     /// Update the secondary text of an item identified by its user_data value.
@@ -923,6 +937,9 @@ impl Panel {
             .selected()
             .and_then(|idx| self.items.get(idx).map(|i| i.text.clone()));
         self.all_items = items;
+        // Rebuilding the list drops any previous search-results marking; callers
+        // that are applying search results re-assert it via `set_search_active`.
+        self.search_active = false;
         self.apply_filter();
 
         let mut state = self.list_state.borrow_mut();
@@ -1414,5 +1431,20 @@ mod tests {
         assert_eq!(panel.len(), 3);
         // Should preserve selection based on text match
         assert_eq!(panel.selected_index(), Some(1));
+    }
+
+    #[test]
+    fn test_search_active_counts_as_filtered_and_resets_on_rebuild() {
+        let mut panel = Panel::new("Bookmarks");
+        assert!(!panel.is_filtered());
+
+        // Applying search results: marked as filtered without a local query.
+        panel.set_items(vec![PanelItem::new("result1")]);
+        panel.set_search_active(true);
+        assert!(panel.is_filtered());
+
+        // A subsequent rebuild (e.g. clearing the search) drops the marking.
+        panel.set_items(vec![PanelItem::new("all1"), PanelItem::new("all2")]);
+        assert!(!panel.is_filtered());
     }
 }

@@ -11,6 +11,13 @@ use ratatui::{
 use crate::component::Component;
 use crate::event::Event;
 
+/// Braille frames for the in-progress loading spinner shown while a search
+/// (notably the slower semantic search) is running.
+const SPINNER_FRAMES: &[&str] = &[
+    "\u{28cb}", "\u{2819}", "\u{2839}", "\u{2838}", "\u{283c}", "\u{2834}", "\u{2826}", "\u{2827}",
+    "\u{2807}", "\u{280f}",
+];
+
 /// A search bar component for text input and filtering.
 #[derive(Debug, Clone)]
 pub struct SearchBar {
@@ -28,6 +35,10 @@ pub struct SearchBar {
     last_area: std::cell::Cell<Rect>,
     /// Error message to display
     error_message: Option<String>,
+    /// Whether a search is currently in progress (drives the loading spinner)
+    loading: bool,
+    /// Animation frame index for the loading spinner
+    spinner_frame: usize,
 }
 
 /// Search mode for filtering.
@@ -50,6 +61,8 @@ impl SearchBar {
             mode: SearchMode::Fts,
             last_area: std::cell::Cell::new(Rect::default()),
             error_message: None,
+            loading: false,
+            spinner_frame: 0,
         }
     }
 
@@ -73,6 +86,25 @@ impl SearchBar {
     pub fn clear(&mut self) {
         self.query.clear();
         self.cursor = 0;
+        self.set_loading(false);
+    }
+
+    /// Whether a search is currently in progress.
+    pub fn is_loading(&self) -> bool {
+        self.loading
+    }
+
+    /// Mark a search as in progress (or finished), showing/hiding the spinner.
+    pub fn set_loading(&mut self, loading: bool) {
+        self.loading = loading;
+        if !loading {
+            self.spinner_frame = 0;
+        }
+    }
+
+    /// Advance the loading spinner animation by one frame.
+    pub fn advance_spinner(&mut self) {
+        self.spinner_frame = self.spinner_frame.wrapping_add(1);
     }
 
     /// Get the search mode.
@@ -96,6 +128,8 @@ impl SearchBar {
     /// Set an error message to display.
     pub fn set_error(&mut self, msg: impl Into<String>) {
         self.error_message = Some(msg.into());
+        // An error ends the in-flight search, so stop the loading spinner.
+        self.set_loading(false);
     }
 
     /// Clear any error message.
@@ -135,12 +169,16 @@ impl SearchBar {
         ];
         let control_width = 13; // "[ FTS | Sem ]".len()
 
+        // While a search is running, a spinner glyph (plus a trailing space)
+        // sits just left of the control, so reserve those columns.
+        let spinner_width = if self.loading { 2 } else { 0 };
+
         // 2. Build the search query part
         let query =
             if self.query.is_empty() { self.placeholder.as_str() } else { self.query.as_str() };
 
-        // padding(1) + query + padding(1) + control
-        let available_width = width.saturating_sub(control_width + 2);
+        // padding(1) + query + padding(1) + spinner + control
+        let available_width = width.saturating_sub(control_width + 2 + spinner_width);
         // Use character-aware truncation for UTF-8 safety
         let truncated = if query.chars().count() > available_width {
             let char_count = query.chars().count();
@@ -166,6 +204,17 @@ impl SearchBar {
         let control_area = Rect { x: control_x, y: area.y, width: control_width as u16, height: 1 };
         Paragraph::new(control_line).render(control_area, buf);
 
+        // Render the loading spinner just left of the control while searching.
+        if self.loading {
+            let frame = SPINNER_FRAMES[self.spinner_frame % SPINNER_FRAMES.len()];
+            let spinner_x = control_x.saturating_sub(spinner_width as u16);
+            let spinner_area =
+                Rect { x: spinner_x, y: area.y, width: spinner_width as u16, height: 1 };
+            let spinner_style = Style::default().fg(crate::theme::palette().warning);
+            Paragraph::new(Line::from(Span::styled(format!("{frame} "), spinner_style)))
+                .render(spinner_area, buf);
+        }
+
         // 3. Draw cursor if focused
         if self.focused {
             // Calculate visible character count before cursor
@@ -176,7 +225,7 @@ impl SearchBar {
 
             let cursor_x = area.x + 1 + visible_cursor_pos as u16;
             let cursor_y = area.y;
-            let x = cursor_x.min(control_x.saturating_sub(1));
+            let x = cursor_x.min(control_x.saturating_sub(spinner_width as u16 + 1));
             if let Some(cell) = buf.cell_mut((x, cursor_y)) {
                 cell.set_style(
                     Style::default()
@@ -239,7 +288,7 @@ impl Component for SearchBar {
             return false;
         }
 
-        match event {
+        let handled = match event {
             Event::Key(key) => match key.code {
                 ratatui::crossterm::event::KeyCode::Char('s')
                 | ratatui::crossterm::event::KeyCode::Char('S')
@@ -338,7 +387,13 @@ impl Component for SearchBar {
                 false
             }
             _ => false,
+        };
+
+        if self.query.is_empty() {
+            self.set_loading(false);
         }
+
+        handled
     }
 
     fn focused(&self) -> bool {
@@ -377,6 +432,36 @@ mod tests {
         bar.clear();
         assert_eq!(bar.query(), "");
         assert_eq!(bar.cursor, 0);
+    }
+
+    #[test]
+    fn test_loading_state_toggles_and_resets_spinner() {
+        let mut bar = SearchBar::new();
+        assert!(!bar.is_loading());
+
+        bar.set_loading(true);
+        bar.advance_spinner();
+        bar.advance_spinner();
+        assert!(bar.is_loading());
+        assert_eq!(bar.spinner_frame, 2);
+
+        // Clearing loading also resets the animation frame.
+        bar.set_loading(false);
+        assert!(!bar.is_loading());
+        assert_eq!(bar.spinner_frame, 0);
+    }
+
+    #[test]
+    fn test_clear_and_error_stop_loading() {
+        let mut bar = SearchBar::new();
+
+        bar.set_loading(true);
+        bar.clear();
+        assert!(!bar.is_loading());
+
+        bar.set_loading(true);
+        bar.set_error("boom");
+        assert!(!bar.is_loading());
     }
 
     #[test]
