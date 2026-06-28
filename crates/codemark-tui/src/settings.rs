@@ -1,6 +1,6 @@
 use crate::theme::ThemeRegistry;
 use codemark_core::config::global_config_dir;
-use crossterm::event::KeyCode;
+use crossterm::event::{KeyCode, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::{
     buffer::Buffer,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
@@ -8,6 +8,7 @@ use ratatui::{
     text::{Line, Span, Text},
     widgets::{Block, BorderType, Clear, List, ListItem, ListState, Paragraph, Widget, Wrap},
 };
+use std::cell::RefCell;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum SettingsAction {
@@ -81,6 +82,10 @@ pub struct SettingsOverlay {
     saved_theme: Option<String>,
     selected_about_link: usize,
     selected_config_row: usize,
+    /// Screen rectangles of each tab label in the title bar, recorded on every
+    /// render so [`SettingsOverlay::handle_mouse`] can map a click back to a
+    /// tab. Interior mutability keeps `render` taking `&self`.
+    tab_hit_areas: RefCell<Vec<(SettingsTab, Rect)>>,
 }
 
 impl Default for SettingsOverlay {
@@ -123,6 +128,7 @@ impl SettingsOverlay {
             saved_theme,
             selected_about_link: 0,
             selected_config_row: 0,
+            tab_hit_areas: RefCell::new(Vec::new()),
         }
     }
 
@@ -181,6 +187,26 @@ impl SettingsOverlay {
     fn prev_tab(&mut self) {
         // + len keeps the index non-negative before the modulo in `at`.
         self.tab = SettingsTab::at(self.tab.index() + SettingsTab::ALL.len() - 1);
+    }
+
+    /// Handle a mouse event while the overlay is open.
+    ///
+    /// A left click on a tab label in the title bar selects that tab; the hit
+    /// rectangles are those recorded by the most recent [`render`](Self::render).
+    /// Every event is swallowed so the overlay stays modal.
+    pub fn handle_mouse(&mut self, mouse: MouseEvent) -> SettingsAction {
+        if let MouseEventKind::Down(MouseButton::Left) = mouse.kind {
+            let clicked = self.tab_hit_areas.borrow().iter().find_map(|(tab, rect)| {
+                let hit = mouse.row == rect.y
+                    && mouse.column >= rect.x
+                    && mouse.column < rect.x.saturating_add(rect.width);
+                hit.then_some(*tab)
+            });
+            if let Some(tab) = clicked {
+                self.tab = tab;
+            }
+        }
+        SettingsAction::Handled
     }
 
     fn apply_preview_theme(&self) {
@@ -316,18 +342,38 @@ impl SettingsOverlay {
 
         let palette = crate::theme::palette();
 
+        // A left-aligned bordered-block title starts at `popup.x + 1` (just
+        // inside the left border) on row `popup.y`; track the running column so
+        // each tab's screen rectangle can be recorded for click detection.
         let mut title_spans: Vec<Span> = vec![Span::raw(" ")];
+        let mut hit_areas: Vec<(SettingsTab, Rect)> = Vec::new();
+        let mut col = popup.x + 1 + 1; // left border + leading space span
         for (i, tab) in SettingsTab::ALL.iter().enumerate() {
             if i > 0 {
                 title_spans.push(Span::styled(" · ", Style::default().fg(palette.gray)));
+                col += 3;
             }
             let style = if *tab == self.tab {
                 Style::default().fg(palette.accent).bold()
             } else {
                 Style::default().fg(palette.dim)
             };
-            title_spans.push(Span::styled(tab.title(), style));
+            let title = tab.title();
+            let width = title.len() as u16;
+            // Clamp the recorded rectangle to the visible title region so a
+            // click on the top border can't select a tab whose label was
+            // clipped on a narrow terminal. The right border occupies
+            // `popup.x + popup.width - 1`, so that column is the exclusive bound.
+            let title_right = popup.x.saturating_add(popup.width).saturating_sub(1);
+            if col < title_right {
+                let visible_width = width.min(title_right - col);
+                hit_areas
+                    .push((*tab, Rect { x: col, y: popup.y, width: visible_width, height: 1 }));
+            }
+            col += width;
+            title_spans.push(Span::styled(title, style));
         }
+        *self.tab_hit_areas.borrow_mut() = hit_areas;
 
         let block = Block::bordered()
             .border_type(BorderType::Rounded)
@@ -564,6 +610,81 @@ mod tests {
         overlay.toggle();
         assert_eq!(overlay.handle_key(KeyCode::Char(','), &[]), SettingsAction::Handled);
         assert!(!overlay.is_visible());
+    }
+
+    #[test]
+    fn clicking_a_tab_label_selects_it() {
+        let mut overlay = SettingsOverlay::new(None);
+        overlay.toggle();
+
+        // Render once so the title-bar hit areas are populated.
+        let area = Rect::new(0, 0, 120, 40);
+        let mut buf = Buffer::empty(area);
+        overlay.render(area, &mut buf, &[]);
+
+        // Click the center of each tab's recorded rectangle and verify the
+        // overlay switches to it.
+        let targets: Vec<(SettingsTab, u16, u16)> = overlay
+            .tab_hit_areas
+            .borrow()
+            .iter()
+            .map(|(tab, rect)| (*tab, rect.x + rect.width / 2, rect.y))
+            .collect();
+        assert_eq!(targets.len(), SettingsTab::ALL.len());
+
+        for (tab, column, row) in targets {
+            let click = MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column,
+                row,
+                modifiers: crossterm::event::KeyModifiers::NONE,
+            };
+            assert_eq!(overlay.handle_mouse(click), SettingsAction::Handled);
+            assert_eq!(overlay.tab(), tab);
+        }
+    }
+
+    #[test]
+    fn clipped_tab_labels_are_not_clickable() {
+        let mut overlay = SettingsOverlay::new(None);
+        overlay.toggle();
+
+        // A narrow area clips the title bar; recorded hit areas must stay within
+        // the visible title region (left of the right border) so a click on the
+        // top border can't select a clipped tab.
+        let area = Rect::new(0, 0, 24, 20);
+        let mut buf = Buffer::empty(area);
+        overlay.render(area, &mut buf, &[]);
+
+        let popup = centered_rect(area, 0.55, 0.7);
+        let title_right = popup.x + popup.width - 1;
+        for (_, rect) in overlay.tab_hit_areas.borrow().iter() {
+            assert!(
+                rect.x + rect.width <= title_right,
+                "hit area {rect:?} extends past visible title bound {title_right}"
+            );
+        }
+    }
+
+    #[test]
+    fn clicking_outside_tabs_keeps_selection() {
+        let mut overlay = SettingsOverlay::new(None);
+        overlay.toggle();
+
+        let area = Rect::new(0, 0, 120, 40);
+        let mut buf = Buffer::empty(area);
+        overlay.render(area, &mut buf, &[]);
+
+        let before = overlay.tab();
+        // A click well inside the body (not on the title row) is ignored.
+        let click = MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: area.width / 2,
+            row: area.height / 2,
+            modifiers: crossterm::event::KeyModifiers::NONE,
+        };
+        assert_eq!(overlay.handle_mouse(click), SettingsAction::Handled);
+        assert_eq!(overlay.tab(), before);
     }
 
     #[test]
