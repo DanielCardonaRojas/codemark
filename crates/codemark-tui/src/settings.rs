@@ -360,7 +360,15 @@ impl SettingsOverlay {
             };
             let title = tab.title();
             let width = title.len() as u16;
-            hit_areas.push((*tab, Rect { x: col, y: popup.y, width, height: 1 }));
+            // Clamp the recorded rectangle to the visible title region so a
+            // click on the top border can't select a tab whose label was
+            // clipped on a narrow terminal. The right border occupies
+            // `popup.x + popup.width - 1`, so that column is the exclusive bound.
+            let title_right = popup.x.saturating_add(popup.width).saturating_sub(1);
+            if col < title_right {
+                let visible_width = width.min(title_right - col);
+                hit_areas.push((*tab, Rect { x: col, y: popup.y, width: visible_width, height: 1 }));
+            }
             col += width;
             title_spans.push(Span::styled(title, style));
         }
@@ -632,6 +640,28 @@ mod tests {
             };
             assert_eq!(overlay.handle_mouse(click), SettingsAction::Handled);
             assert_eq!(overlay.tab(), tab);
+        }
+    }
+
+    #[test]
+    fn clipped_tab_labels_are_not_clickable() {
+        let mut overlay = SettingsOverlay::new(None);
+        overlay.toggle();
+
+        // A narrow area clips the title bar; recorded hit areas must stay within
+        // the visible title region (left of the right border) so a click on the
+        // top border can't select a clipped tab.
+        let area = Rect::new(0, 0, 24, 20);
+        let mut buf = Buffer::empty(area);
+        overlay.render(area, &mut buf, &[]);
+
+        let popup = centered_rect(area, 0.55, 0.7);
+        let title_right = popup.x + popup.width - 1;
+        for (_, rect) in overlay.tab_hit_areas.borrow().iter() {
+            assert!(
+                rect.x + rect.width <= title_right,
+                "hit area {rect:?} extends past visible title bound {title_right}"
+            );
         }
     }
 
