@@ -34,6 +34,9 @@ pub struct TabbedPanel {
     /// owning layout drains this to clear the pane's stored filter on a tab
     /// switch instead of carrying it over to the newly active tab.
     pub tab_changed: std::cell::Cell<bool>,
+    /// Number-key shortcut that jumps focus to this pane, rendered as a `[N]`
+    /// badge on the top border. `None` hides the badge (e.g. in tests).
+    pub pane_number: Option<u8>,
 }
 
 /// Convert a bookmark to a PanelItem with consistent formatting.
@@ -496,6 +499,7 @@ impl TabbedPanel {
             last_area: std::cell::Cell::new(Rect::default()),
             pending_selection_change: std::cell::Cell::new(None),
             tab_changed: std::cell::Cell::new(false),
+            pane_number: Some(1),
         }
     }
 
@@ -519,6 +523,7 @@ impl TabbedPanel {
             last_area: std::cell::Cell::new(Rect::default()),
             pending_selection_change: std::cell::Cell::new(None),
             tab_changed: std::cell::Cell::new(false),
+            pane_number: Some(2),
         }
     }
 
@@ -565,6 +570,7 @@ impl TabbedPanel {
             last_area: std::cell::Cell::new(Rect::default()),
             pending_selection_change: std::cell::Cell::new(None),
             tab_changed: std::cell::Cell::new(false),
+            pane_number: Some(3),
         }
     }
 
@@ -592,6 +598,7 @@ impl TabbedPanel {
             last_area: std::cell::Cell::new(Rect::default()),
             pending_selection_change: std::cell::Cell::new(None),
             tab_changed: std::cell::Cell::new(false),
+            pane_number: Some(4),
         }
     }
 
@@ -609,6 +616,7 @@ impl TabbedPanel {
             last_area: std::cell::Cell::new(Rect::default()),
             pending_selection_change: std::cell::Cell::new(None),
             tab_changed: std::cell::Cell::new(false),
+            pane_number: Some(5),
         }
     }
 
@@ -671,6 +679,12 @@ impl TabbedPanel {
                 cell.set_char('─');
                 cell.set_style(border_style);
             }
+        }
+
+        // Draw the pane-number badge (e.g. `[3]`) on the top-right border as a
+        // visual cue for the number-key shortcut that jumps focus here.
+        if let Some(number) = self.pane_number {
+            crate::browser::tabs::render_pane_number_badge(area, buf, number, border_style);
         }
 
         // Render active panel content (full inner area, no separate tab row)
@@ -832,6 +846,7 @@ mod tests {
             last_area: std::cell::Cell::new(Rect::default()),
             pending_selection_change: std::cell::Cell::new(None),
             tab_changed: std::cell::Cell::new(false),
+            pane_number: None,
         }
     }
 

@@ -2,30 +2,30 @@
 source: crates/codemark-tui/tests/browser_e2e.rs
 expression: "render_to_string(&layout, 100, 30)"
 ---
-╭──────────────────────────────────────╮╭──Content  Info  Query ───────────────────────────────────╮
+╭──────────────────────────────────────╮╭──Content  Info  Query ───────────────────────────────[4]─╮
 │ Search...              [ FTS | Sem ] ││ src/main.rs                                              │
 ╰──────────────────────────────────────╯│   1 fn main() {                                          │
-╭──Repos  Owners  Auth ────────────────╮│   2     println!("hi");                                  │
+╭──Repos  Owners  Auth ────────────[1]─╮│   2     println!("hi");                                  │
 │                                      ││   3 }                                                    │
 │                                      ││                                                          │
 │                                      ││                                                          │
 │                                      ││                                                          │
 │                                      ││                                                          │
 ╰──────────────────────────────────────╯│                                                          │
-╭──Tags ───────────────────────────────╮│                                                          │
+╭──Tags ───────────────────────────[2]─╮│                                                          │
 │  No tags found                       ││                                                          │
 │                                      ││                                                          │
 │                                      ││                                                          │
 │                                      ││                                                          │
 │                                      ││                                                          │
 ╰────────────────────────────── 1 of 1 ╯│                                                          │
-╭──Bookmarks  Collections  Tours ──────╮│                                                          │
+╭──Bookmarks  Collections  Tours ──[3]─╮│                                                          │
 │  ● src/main.rs fn main               ││                                                          │
 │  ● src/config.rs struct Config       ││                                                          │
 │                                      ││                                                          │
 │                                      ││                                                          │
 │                                      │╰──────────────────────────────────────────────────────────╯
-│                                      │╭──Details  Comments ──────────────────────────────────────╮
+│                                      │╭──Details  Comments ──────────────────────────────────[5]─╮
 │                                      ││                                                          │
 │                                      ││                                                          │
 │                                      ││                                                          │

@@ -502,7 +502,7 @@ impl BrowserLayout {
                     return Some(true);
                 }
             }
-            ratatui::crossterm::event::KeyCode::Char(c @ '1'..='6')
+            ratatui::crossterm::event::KeyCode::Char(c @ '1'..='5')
                 if self.should_handle_keybindings() && self.focus != FocusArea::Search =>
             {
                 return Some(self.handle_number_key(c));
@@ -712,29 +712,28 @@ impl BrowserLayout {
 
     /// Handle number keys 1-6 for direct focus switching.
     fn handle_number_key(&mut self, c: char) -> bool {
+        // Numbers jump to the visible panes 1..=5, matching the `[N]` badge on
+        // each pane's border. The search bar is excluded — it has its own `s`
+        // shortcut — so the numbering starts at Panel 1.
         match c {
             '1' => {
-                self.focus = FocusArea::Search;
-                self.update_focus_state();
-            }
-            '2' => {
                 self.focus = FocusArea::Panel1;
                 self.update_focus_state();
             }
-            '3' => {
+            '2' => {
                 self.focus = FocusArea::Panel2;
                 self.update_focus_state();
             }
-            '4' => {
+            '3' => {
                 self.focus = FocusArea::Panel3;
                 self.update_focus_state();
             }
-            '5' => {
+            '4' => {
                 self.focus = FocusArea::Main;
                 self.right_pane.focus_steps();
                 self.update_focus_state();
             }
-            '6' => {
+            '5' => {
                 self.focus = FocusArea::Main;
                 self.right_pane.focus_details();
                 self.update_focus_state();

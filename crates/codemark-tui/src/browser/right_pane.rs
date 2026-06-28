@@ -966,6 +966,9 @@ impl RightPane {
             }
         }
 
+        // Match the steps panel's `[4]` badge while its preview is loading.
+        crate::browser::tabs::render_pane_number_badge(area, buf, 4, border_style);
+
         let message = match &self.loading_label {
             Some(label) => format!("{frame}  Loading {label}…"),
             None => format!("{frame}  Loading preview…"),
@@ -1018,6 +1021,9 @@ impl RightPane {
                 cell.set_style(border_style);
             }
         }
+
+        // Match the steps panel's `[4]` badge while browsing a collection.
+        crate::browser::tabs::render_pane_number_badge(area, buf, 4, border_style);
 
         self.overview.render(inner, buf);
     }

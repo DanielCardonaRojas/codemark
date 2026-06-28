@@ -25,6 +25,34 @@ pub const FILTER_ICON: &str = "\u{f0b0}";
 /// click detection stays aligned.
 pub const FILTER_ICON_WIDTH: u16 = 2;
 
+/// Draw a pane-number badge (e.g. `[3]`) on the top border of `area`, aligned to
+/// the right edge just inside the rounded corner.
+///
+/// The number mirrors the keybinding that jumps focus to this pane (`1`–`6`), so
+/// the badge doubles as a visual cue for that shortcut. Mirrors the placement of
+/// the bottom-border "n of m" indicator, but on the top border.
+pub fn render_pane_number_badge(area: Rect, buf: &mut Buffer, number: u8, style: Style) {
+    let badge = format!("[{number}]");
+    let badge_width = badge.width() as u16;
+
+    // Need room for the badge, a one-column border gap, and the corner glyph;
+    // skip on tiny areas.
+    if area.width <= badge_width + 2 {
+        return;
+    }
+
+    // Right-aligned, leaving one border character between the badge and the
+    // corner (╮) so the number isn't crammed against it.
+    let x = area.right().saturating_sub(badge_width + 2);
+    let y = area.top();
+    for (i, c) in badge.chars().enumerate() {
+        if let Some(cell) = buf.cell_mut((x + i as u16, y)) {
+            cell.set_char(c);
+            cell.set_style(style);
+        }
+    }
+}
+
 /// Panel 3 tabs (Bookmarks/Collections/Tours).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Panel3Tab {
