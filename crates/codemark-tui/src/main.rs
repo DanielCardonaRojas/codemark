@@ -324,6 +324,22 @@ async fn run_app() -> Result<Option<i32>> {
                             _ => {}
                         }
                     }
+                    Event::Mouse(mouse) if settings.is_visible() => {
+                        // The settings overlay is modal: route clicks to it (so
+                        // tabs are clickable) and swallow the event.
+                        match settings.handle_mouse(*mouse) {
+                            codemark_tui::settings::SettingsAction::ThemeChanged => {
+                                layout.reapply_preview_theme();
+                            }
+                            codemark_tui::settings::SettingsAction::Notify(msg) => {
+                                notification =
+                                    Some((msg, NotificationType::Error, Instant::now()));
+                            }
+                            codemark_tui::settings::SettingsAction::Handled
+                            | codemark_tui::settings::SettingsAction::Unhandled => {}
+                        }
+                        handled = true;
+                    }
                     Event::Resize(width, height) => {
                         state.set_size(*width, *height);
                     }
