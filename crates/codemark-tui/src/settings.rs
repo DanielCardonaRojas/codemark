@@ -1,7 +1,6 @@
 use crate::theme::ThemeRegistry;
 use codemark_core::config::global_config_dir;
 use crossterm::event::{KeyCode, MouseButton, MouseEvent, MouseEventKind};
-use std::cell::RefCell;
 use ratatui::{
     buffer::Buffer,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
@@ -9,6 +8,7 @@ use ratatui::{
     text::{Line, Span, Text},
     widgets::{Block, BorderType, Clear, List, ListItem, ListState, Paragraph, Widget, Wrap},
 };
+use std::cell::RefCell;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum SettingsAction {
@@ -367,7 +367,8 @@ impl SettingsOverlay {
             let title_right = popup.x.saturating_add(popup.width).saturating_sub(1);
             if col < title_right {
                 let visible_width = width.min(title_right - col);
-                hit_areas.push((*tab, Rect { x: col, y: popup.y, width: visible_width, height: 1 }));
+                hit_areas
+                    .push((*tab, Rect { x: col, y: popup.y, width: visible_width, height: 1 }));
             }
             col += width;
             title_spans.push(Span::styled(title, style));

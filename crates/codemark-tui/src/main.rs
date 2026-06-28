@@ -332,8 +332,7 @@ async fn run_app() -> Result<Option<i32>> {
                                 layout.reapply_preview_theme();
                             }
                             codemark_tui::settings::SettingsAction::Notify(msg) => {
-                                notification =
-                                    Some((msg, NotificationType::Error, Instant::now()));
+                                notification = Some((msg, NotificationType::Error, Instant::now()));
                             }
                             codemark_tui::settings::SettingsAction::Handled
                             | codemark_tui::settings::SettingsAction::Unhandled => {}
