@@ -650,7 +650,19 @@ impl TabbedPanel {
             .iter()
             .map(|panel| matches!(panel, TabContent::List(p) if p.is_filtered()))
             .collect();
-        let tab_titles = self.tabs.render_as_titles_with_counts_and_filters(&counts, &filtered);
+        let mut tab_titles = self.tabs.render_as_titles_with_counts_and_filters(&counts, &filtered);
+
+        // When a pane-number badge is drawn on the right of the top border,
+        // cap the (left-aligned) title width so a long tab row can't run into
+        // the badge — otherwise it visually attaches to the last tab label and
+        // corrupts the shortcut cue. Reserve the badge's columns plus the left
+        // corner. See `render_pane_number_badge`.
+        if let Some(number) = self.pane_number {
+            let reserved = crate::browser::tabs::pane_number_badge_reserved_width(number);
+            // `- 1` for the left corner the title sits after.
+            let max_title_width = (area.width as usize).saturating_sub(reserved as usize + 1);
+            tab_titles = crate::browser::tabs::truncate_line_to_width(tab_titles, max_title_width);
+        }
 
         // Render outer border for the entire panel area with inline tabs
         let border_style = if self.focused {

@@ -7,7 +7,7 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Widget, Wrap},
 };
-use unicode_width::UnicodeWidthStr;
+use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 
 /// Number of characters to extend the top border line for tab titles.
 /// This must be kept in sync with the rendering in `TabbedPanel`.
@@ -25,12 +25,27 @@ pub const FILTER_ICON: &str = "\u{f0b0}";
 /// click detection stays aligned.
 pub const FILTER_ICON_WIDTH: u16 = 2;
 
+/// Columns the `[N]` pane-number badge reserves on the right of the top border,
+/// measured from (and excluding) the left corner: a one-column separator from the
+/// title, the badge itself, a one-column gap, and the right corner. A
+/// left-aligned title may therefore occupy at most `area.width - 1 - reserved`
+/// columns without colliding with the badge.
+pub fn pane_number_badge_reserved_width(number: u8) -> u16 {
+    let badge_width = format!("[{number}]").width() as u16;
+    // separator(1) + badge + gap(1) + corner(1)
+    badge_width + 3
+}
+
 /// Draw a pane-number badge (e.g. `[3]`) on the top border of `area`, aligned to
 /// the right edge just inside the rounded corner.
 ///
-/// The number mirrors the keybinding that jumps focus to this pane (`1`–`6`), so
+/// The number mirrors the keybinding that jumps focus to this pane (`1`–`5`), so
 /// the badge doubles as a visual cue for that shortcut. Mirrors the placement of
 /// the bottom-border "n of m" indicator, but on the top border.
+///
+/// Callers that draw a left-aligned title on the same border must reserve
+/// [`pane_number_badge_reserved_width`] columns on the right so the title can't
+/// run into the badge.
 pub fn render_pane_number_badge(area: Rect, buf: &mut Buffer, number: u8, style: Style) {
     let badge = format!("[{number}]");
     let badge_width = badge.width() as u16;
@@ -51,6 +66,40 @@ pub fn render_pane_number_badge(area: Rect, buf: &mut Buffer, number: u8, style:
             cell.set_style(style);
         }
     }
+}
+
+/// Truncate a (left-aligned) title `Line` to at most `max_width` display columns,
+/// preserving each span's style. Trailing spans that don't fit are dropped, and a
+/// span straddling the boundary is cut on a character boundary.
+///
+/// Used to keep a tab-title row from extending into the pane-number badge drawn
+/// on the right of the same border.
+pub fn truncate_line_to_width(line: Line<'static>, max_width: usize) -> Line<'static> {
+    if line.width() <= max_width {
+        return line;
+    }
+
+    let mut spans: Vec<Span<'static>> = Vec::new();
+    let mut used = 0usize;
+    for span in line.spans {
+        if used >= max_width {
+            break;
+        }
+        let mut text = String::new();
+        for ch in span.content.chars() {
+            let w = ch.width().unwrap_or(0);
+            if used + w > max_width {
+                break;
+            }
+            text.push(ch);
+            used += w;
+        }
+        if !text.is_empty() {
+            spans.push(Span::styled(text, span.style));
+        }
+    }
+
+    Line::from(spans).alignment(Alignment::Left)
 }
 
 /// Panel 3 tabs (Bookmarks/Collections/Tours).
@@ -438,6 +487,35 @@ impl Default for TabSelection {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_truncate_line_to_width_caps_and_preserves_shorter() {
+        let line =
+            Line::from(vec![Span::raw("Bookmarks"), Span::raw(" "), Span::raw("Collections")]);
+        assert_eq!(line.width(), 21);
+
+        // A width >= the line's width returns it unchanged.
+        assert_eq!(truncate_line_to_width(line.clone(), 21).width(), 21);
+        assert_eq!(truncate_line_to_width(line.clone(), 50).width(), 21);
+
+        // A smaller width truncates on a char boundary, spanning span edges.
+        let cut = truncate_line_to_width(line, 12);
+        assert_eq!(cut.width(), 12);
+        assert_eq!(cut.to_string(), "Bookmarks Co");
+    }
+
+    #[test]
+    fn test_pane_number_badge_reserves_room_for_title() {
+        // A single-digit badge renders as "[N]" (3 cols) and reserves a
+        // separator + gap + corner around it (3 + 3 = 6 cols on the right).
+        assert_eq!(pane_number_badge_reserved_width(3), 6);
+
+        // In a 40-wide pane the title (which starts after the left corner) is
+        // capped so a border cell always separates it from the badge.
+        let area_width = 40usize;
+        let max_title = area_width - pane_number_badge_reserved_width(3) as usize - 1;
+        assert_eq!(max_title, 33);
+    }
 
     #[test]
     fn test_context_tab_index_roundtrip() {
