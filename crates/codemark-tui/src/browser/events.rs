@@ -169,6 +169,11 @@ impl BrowserLayout {
                 }
                 self.cached_remote_tours = tours.clone();
                 self.rebuild_tours_panel();
+                // The list now includes remote tours that weren't available when
+                // the tab was first shown (the fetch is async), so the initially
+                // selected item never got a preview. Render it now; otherwise it
+                // stays blank until the user moves the selection.
+                self.update_panel3_live_preview();
                 Some(true)
             }
             Event::RemoteToursFetchError(msg) => {
