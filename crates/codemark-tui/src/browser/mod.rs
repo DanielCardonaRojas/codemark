@@ -237,6 +237,7 @@ impl BrowserLayout {
         };
         layout.update_focus_state();
         layout.sync_steps_tab_label();
+        layout.update_tours_tab_visibility();
 
         // Spawn background live health resolution so bookmark dots update on startup
         if let Ok(all_bookmarks) =
@@ -275,6 +276,47 @@ impl BrowserLayout {
         }
     }
 
+    /// Whether the user has a resolvable sync server configured (i.e. is logged
+    /// in). Drives whether the Tours tab — which lists remote tours — is shown.
+    fn is_logged_in(&self) -> bool {
+        if let Some(dir) = self.db.path().parent() {
+            let config = codemark_core::config::Config::load_layered(dir);
+            codemark_core::sync::resolve_server_and_token(&config).is_ok()
+        } else {
+            false
+        }
+    }
+
+    /// Show or hide the Panel 3 Tours tab based on login state. The Tours tab is
+    /// the third tab (index 2); hiding it leaves Bookmarks + Collections. If the
+    /// Tours tab was selected when hidden, the selection clamps back to
+    /// Collections, so the right-pane preview is refreshed to match.
+    pub(super) fn update_tours_tab_visibility(&mut self) {
+        let visible_count = if self.is_logged_in() { 3 } else { 2 };
+        let previous = self.left_pane.panel3.tabs.selected_index();
+        self.left_pane.panel3.tabs.set_visible_count(visible_count);
+        let current = self.left_pane.panel3.tabs.selected_index();
+
+        if current == previous {
+            return;
+        }
+
+        // Selection was clamped off the now-hidden Tours tab; refresh the
+        // preview so the right pane drops the stale remote-tour overview.
+        let Some(tab) = Panel3Tab::from_index(current) else {
+            return;
+        };
+        let selected_id = self
+            .left_pane
+            .panel3
+            .active_panel()
+            .and_then(|panel| panel.selected())
+            .and_then(|selected| selected.user_data.clone());
+        if let Some(id) = selected_id {
+            self.on_panel3_selection_changed(tab, &id);
+        }
+    }
+
     /// Route a Panel 3 item (by user-data id) to the appropriate live preview.
     ///
     /// Synchronous: used for focus-enter / tab-change previews where an instant,
@@ -288,8 +330,23 @@ impl BrowserLayout {
             Panel3Tab::Collections => {
                 self.right_pane.load_collection_overview(&self.db, id);
             }
-            // Tours are activated explicitly (pull/open); no live preview.
-            Panel3Tab::Tours => {}
+            Panel3Tab::Tours => self.preview_tour_item(id),
+        }
+    }
+
+    /// Render an overview for a Panel 3 Tours item. The Tours tab mixes local
+    /// (pulled) tours, keyed by their collection ID, with remote tours keyed as
+    /// `remote:<tour_id>`. Remote items render server metadata so the user can
+    /// preview a tour before pulling; local items reuse the collection overview.
+    fn preview_tour_item(&mut self, id: &str) {
+        if let Some(tour_id) = id.strip_prefix("remote:") {
+            match self.cached_remote_tours.iter().find(|t| t.tour_id == tour_id) {
+                Some(tour) => self.right_pane.load_tour_overview(tour),
+                // No cached summary (e.g. stale selection) — clear stale preview.
+                None => self.right_pane.clear_preview_state(&self.db),
+            }
+        } else {
+            self.right_pane.load_collection_overview(&self.db, id);
         }
     }
 
@@ -304,7 +361,7 @@ impl BrowserLayout {
         match tab {
             Panel3Tab::Bookmarks => self.request_bookmark_preview(id),
             Panel3Tab::Collections => self.right_pane.load_collection_overview(&self.db, id),
-            Panel3Tab::Tours => {}
+            Panel3Tab::Tours => self.preview_tour_item(id),
         }
     }
 
@@ -1014,6 +1071,10 @@ impl BrowserLayout {
         if let Some(p) = self.left_pane.panel3.get_list_panel_mut(2) {
             p.set_items(tours);
         }
+
+        // 3a. Hide the Tours tab unless the user is logged in (it only holds
+        // remote tours, which are meaningless without a sync server).
+        self.update_tours_tab_visibility();
 
         // 3b. Spawn background live health resolution for all bookmarks
         if let Ok(all_bookmarks) = self.db.list_bookmarks(&BookmarkFilter::default()) {

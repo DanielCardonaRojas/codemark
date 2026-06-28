@@ -724,6 +724,29 @@ impl RightPane {
         self.active_bookmark_id = None;
     }
 
+    /// Load an overview for a remote (not-yet-pulled) tour into the overview
+    /// panel. Mirrors [`load_collection_overview`](Self::load_collection_overview)
+    /// but renders server-supplied metadata (title, author, repo, updated) so the
+    /// user can preview a tour before pulling it. There is no per-step code
+    /// preview because the tour's bookmarks aren't available locally yet.
+    pub fn load_tour_overview(&mut self, tour: &codemark_core::sync::RemoteTourSummary) {
+        let markdown = templates::render_remote_tour_overview(tour);
+
+        self.overview.set_markdown(markdown);
+        self.overview_active = true;
+
+        // Clear the Details pane so stale annotations from a previously viewed
+        // bookmark don't linger beneath the overview.
+        self.set_details_and_comments(String::new(), String::new());
+
+        // No per-step code preview while showing a remote tour overview.
+        self.steps_data.clear();
+        self.pager_total = 0;
+        self.pager_current = 0;
+        self.active_tour_name = None;
+        self.active_bookmark_id = None;
+    }
+
     /// Load a tour and its steps from the database.
     pub fn load_tour(&mut self, db: &Database, tour_name: &str) {
         let Some(collection) = db.get_collection_by_name(tour_name).ok().flatten() else {
