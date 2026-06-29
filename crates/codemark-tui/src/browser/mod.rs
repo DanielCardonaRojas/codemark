@@ -1152,17 +1152,16 @@ impl BrowserLayout {
                     None => self.right_pane.clear_preview_state(&self.db),
                 }
             }
-        } else if let Ok(collections) = self.db.list_collections() {
-            // Default to first tour only if nothing was active
-            if let Some((first_tour, _)) = collections.first() {
-                let name = first_tour.name.clone();
-                self.right_pane.load_tour_live(&self.db, &name, &mut self.session_cache);
-            }
+        } else if let Some((first_tour, _)) =
+            self.db.list_collections().ok().and_then(|c| c.into_iter().next())
+        {
+            // Default to the first tour only if nothing was active.
+            self.right_pane.load_tour_live(&self.db, &first_tour.name, &mut self.session_cache);
         } else {
-            // Clear steps if nothing found
-            self.right_pane.steps_data.clear();
-            self.right_pane.pager_total = 0;
-            self.right_pane.pager_current = 0;
+            // Nothing to show — clear the *whole* preview (steps and any overview)
+            // so a stale remote/collection overview doesn't linger, e.g. after
+            // switching to a repo with no collections.
+            self.right_pane.clear_preview_state(&self.db);
         }
     }
 
