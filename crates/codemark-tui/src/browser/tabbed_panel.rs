@@ -34,6 +34,9 @@ pub struct TabbedPanel {
     /// owning layout drains this to clear the pane's stored filter on a tab
     /// switch instead of carrying it over to the newly active tab.
     pub tab_changed: std::cell::Cell<bool>,
+    /// Number-key shortcut that jumps focus to this pane, rendered as a `[N]`
+    /// badge on the top border. `None` hides the badge (e.g. in tests).
+    pub pane_number: Option<u8>,
 }
 
 /// Convert a bookmark to a PanelItem with consistent formatting.
@@ -496,6 +499,7 @@ impl TabbedPanel {
             last_area: std::cell::Cell::new(Rect::default()),
             pending_selection_change: std::cell::Cell::new(None),
             tab_changed: std::cell::Cell::new(false),
+            pane_number: Some(1),
         }
     }
 
@@ -519,6 +523,7 @@ impl TabbedPanel {
             last_area: std::cell::Cell::new(Rect::default()),
             pending_selection_change: std::cell::Cell::new(None),
             tab_changed: std::cell::Cell::new(false),
+            pane_number: Some(2),
         }
     }
 
@@ -565,6 +570,7 @@ impl TabbedPanel {
             last_area: std::cell::Cell::new(Rect::default()),
             pending_selection_change: std::cell::Cell::new(None),
             tab_changed: std::cell::Cell::new(false),
+            pane_number: Some(3),
         }
     }
 
@@ -592,6 +598,7 @@ impl TabbedPanel {
             last_area: std::cell::Cell::new(Rect::default()),
             pending_selection_change: std::cell::Cell::new(None),
             tab_changed: std::cell::Cell::new(false),
+            pane_number: Some(4),
         }
     }
 
@@ -609,6 +616,7 @@ impl TabbedPanel {
             last_area: std::cell::Cell::new(Rect::default()),
             pending_selection_change: std::cell::Cell::new(None),
             tab_changed: std::cell::Cell::new(false),
+            pane_number: Some(5),
         }
     }
 
@@ -642,7 +650,19 @@ impl TabbedPanel {
             .iter()
             .map(|panel| matches!(panel, TabContent::List(p) if p.is_filtered()))
             .collect();
-        let tab_titles = self.tabs.render_as_titles_with_counts_and_filters(&counts, &filtered);
+        let mut tab_titles = self.tabs.render_as_titles_with_counts_and_filters(&counts, &filtered);
+
+        // When a pane-number badge is drawn on the right of the top border,
+        // cap the (left-aligned) title width so a long tab row can't run into
+        // the badge — otherwise it visually attaches to the last tab label and
+        // corrupts the shortcut cue. Reserve the badge's columns plus the left
+        // corner. See `render_pane_number_badge`.
+        if let Some(number) = self.pane_number {
+            let reserved = crate::browser::tabs::pane_number_badge_reserved_width(number);
+            // `- 1` for the left corner the title sits after.
+            let max_title_width = (area.width as usize).saturating_sub(reserved as usize + 1);
+            tab_titles = crate::browser::tabs::truncate_line_to_width(tab_titles, max_title_width);
+        }
 
         // Render outer border for the entire panel area with inline tabs
         let border_style = if self.focused {
@@ -671,6 +691,12 @@ impl TabbedPanel {
                 cell.set_char('─');
                 cell.set_style(border_style);
             }
+        }
+
+        // Draw the pane-number badge (e.g. `[3]`) on the top-right border as a
+        // visual cue for the number-key shortcut that jumps focus here.
+        if let Some(number) = self.pane_number {
+            crate::browser::tabs::render_pane_number_badge(area, buf, number, border_style);
         }
 
         // Render active panel content (full inner area, no separate tab row)
@@ -744,7 +770,20 @@ impl TabbedPanel {
                     {
                         // Calculate x position relative to the panel's left edge
                         let relative_x = mouse.column - area.left();
-                        if self.tabs.handle_click(relative_x, mouse.row) {
+                        // The tab click ranges are recorded before the title is
+                        // truncated to make room for the pane-number badge, so
+                        // ignore clicks past that same reserved boundary — they
+                        // land on hidden title cells or the badge, not a tab.
+                        let in_visible_title_region = match self.pane_number {
+                            Some(number) => {
+                                let reserved =
+                                    crate::browser::tabs::pane_number_badge_reserved_width(number);
+                                relative_x <= area.width.saturating_sub(reserved + 1)
+                            }
+                            None => true,
+                        };
+                        if in_visible_title_region && self.tabs.handle_click(relative_x, mouse.row)
+                        {
                             tab_changed = true;
                         }
                     }
@@ -832,6 +871,7 @@ mod tests {
             last_area: std::cell::Cell::new(Rect::default()),
             pending_selection_change: std::cell::Cell::new(None),
             tab_changed: std::cell::Cell::new(false),
+            pane_number: None,
         }
     }
 

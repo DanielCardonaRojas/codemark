@@ -981,10 +981,15 @@ impl RightPane {
         } else {
             Style::default().fg(crate::theme::palette().dim)
         };
-        let title = ratatui::text::Line::from(vec![
+        let mut title = ratatui::text::Line::from(vec![
             ratatui::text::Span::raw("  "),
             ratatui::text::Span::styled("Content", Style::default().bold()),
         ]);
+        // Reserve room on the right so the `[4]` badge can't overwrite the title
+        // on a narrow pane (mirrors `TabbedPanel::render`).
+        let reserved = crate::browser::tabs::pane_number_badge_reserved_width(4);
+        let max_title_width = (area.width as usize).saturating_sub(reserved as usize + 1);
+        title = crate::browser::tabs::truncate_line_to_width(title, max_title_width);
         let block = Block::bordered()
             .border_type(BorderType::Rounded)
             .title(title)
@@ -1003,6 +1008,9 @@ impl RightPane {
                 cell.set_style(border_style);
             }
         }
+
+        // Match the steps panel's `[4]` badge while its preview is loading.
+        crate::browser::tabs::render_pane_number_badge(area, buf, 4, border_style);
 
         let message = match &self.loading_label {
             Some(label) => format!("{frame}  Loading {label}…"),
@@ -1033,10 +1041,15 @@ impl RightPane {
             Style::default().fg(crate::theme::palette().dim)
         };
 
-        let title = ratatui::text::Line::from(vec![
+        let mut title = ratatui::text::Line::from(vec![
             ratatui::text::Span::raw("  "),
             ratatui::text::Span::styled("Overview", Style::default().bold()),
         ]);
+        // Reserve room on the right so the `[4]` badge can't overwrite the title
+        // on a narrow pane (mirrors `TabbedPanel::render`).
+        let reserved = crate::browser::tabs::pane_number_badge_reserved_width(4);
+        let max_title_width = (area.width as usize).saturating_sub(reserved as usize + 1);
+        title = crate::browser::tabs::truncate_line_to_width(title, max_title_width);
         let block = Block::bordered()
             .border_type(BorderType::Rounded)
             .title(title)
@@ -1056,6 +1069,9 @@ impl RightPane {
                 cell.set_style(border_style);
             }
         }
+
+        // Match the steps panel's `[4]` badge while browsing a collection.
+        crate::browser::tabs::render_pane_number_badge(area, buf, 4, border_style);
 
         self.overview.render(inner, buf);
     }
