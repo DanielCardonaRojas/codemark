@@ -893,11 +893,31 @@ mod tests {
         let output = render_remote_tour_overview(&tour);
         assert!(output.contains("# Onboarding Tour"), "title heading; got:\n{output}");
         assert!(output.contains("| **Author** | octocat |"), "author row; got:\n{output}");
+        // Remote metadata is markdown-escaped, so the `.` in the URL is escaped.
         assert!(
-            output.contains("| **Repo** | https://github.com/acme/widgets |"),
+            output.contains(r"| **Repo** | https://github\.com/acme/widgets |"),
             "repo row; got:\n{output}"
         );
         assert!(output.contains("2024-05-01"), "formatted updated date; got:\n{output}");
+    }
+
+    #[test]
+    fn test_render_remote_tour_overview_escapes_metadata() {
+        use crate::sync::RemoteTourSummary;
+
+        // Remote (untrusted) values containing markdown control characters must
+        // be escaped so they can't break the heading/table layout.
+        let tour = RemoteTourSummary {
+            tour_id: "tour-789".to_string(),
+            title: "Pipe | Tour".to_string(),
+            repo_url: None,
+            author: Some("a|b#c".to_string()),
+            updated_at: String::new(),
+        };
+
+        let output = render_remote_tour_overview(&tour);
+        assert!(output.contains(r"# Pipe \| Tour"), "escaped title; got:\n{output}");
+        assert!(output.contains(r"a\|b\#c"), "escaped author; got:\n{output}");
     }
 
     #[test]

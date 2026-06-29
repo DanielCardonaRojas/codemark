@@ -1072,11 +1072,16 @@ impl BrowserLayout {
             p.set_items(tours);
         }
 
-        // 3a. Hide the Tours tab unless the user is logged in (it only holds
+        // 3a. The Tours tab is a hybrid of local tours and cached remote tours;
+        // build_panel3_items only knows the DB-local rows, so re-merge the cached
+        // remote rows or they would vanish until the next fetch.
+        self.rebuild_tours_panel();
+
+        // 3b. Hide the Tours tab unless the user is logged in (it only holds
         // remote tours, which are meaningless without a sync server).
         self.update_tours_tab_visibility();
 
-        // 3b. Spawn background live health resolution for all bookmarks
+        // 3c. Spawn background live health resolution for all bookmarks
         if let Ok(all_bookmarks) = self.db.list_bookmarks(&BookmarkFilter::default()) {
             self.spawn_live_health_task(all_bookmarks);
         }
