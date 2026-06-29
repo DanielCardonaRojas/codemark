@@ -151,6 +151,16 @@ impl BrowserLayout {
                 }
                 Some(true)
             }
+            Event::FocusGained => {
+                // When the terminal regains focus, the user may have logged in or out
+                // via the CLI. Reload the registry and update Tours tab visibility.
+                if let Ok(registry) = codemark_core::storage::registry::open_registry() {
+                    self.registry = registry;
+                }
+                self.update_tours_tab_visibility();
+                self.refresh_all_panels();
+                Some(true)
+            }
             Event::HealComplete(msg, success) => {
                 self.pending_notification =
                     Some(HealNotification { message: msg.clone(), success: *success });

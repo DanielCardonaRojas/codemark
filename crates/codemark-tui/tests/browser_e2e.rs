@@ -104,6 +104,20 @@ impl Sandbox {
         }
         std::fs::write(full, contents).expect("write source file");
     }
+
+    /// Write a layered config that makes the layout consider itself "logged in"
+    /// (a direct-URL `default_server` resolves without any registry account), so
+    /// the login-gated Tours tab is visible. Config lives alongside the database
+    /// in `repo/.codemark/`, which is where `Config::load_layered` reads it from.
+    fn write_logged_in_config(&self) {
+        let codemark_dir = self.repo_root().join(".codemark");
+        std::fs::create_dir_all(&codemark_dir).expect("create .codemark dir");
+        std::fs::write(
+            codemark_dir.join("config.toml"),
+            "[codetours]\ndefault_server = \"http://example.com\"\n",
+        )
+        .expect("write config.toml");
+    }
 }
 
 /// A minimal valid bookmark for seeding. `id`/`query`/`file_path` are the
@@ -254,4 +268,46 @@ async fn filtering_narrows_the_bookmark_list() {
     layout.apply_filter("config");
 
     insta::assert_snapshot!(render_to_string(&layout, 100, 30));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn remote_tour_overview_survives_a_panel_refresh() {
+    use codemark_core::sync::RemoteTourSummary;
+
+    let sandbox = Sandbox::with_bookmarks([sample_bookmark("bm-1", "fn main", "src/main.rs")]);
+    sandbox.write_repo_file("src/main.rs", "fn main() {}\n");
+    // Logged-in so the Tours tab is visible/selectable.
+    sandbox.write_logged_in_config();
+    let (mut layout, _sandbox) = make_layout(sandbox);
+
+    // Seeded bookmark => focus starts on Panel 3. Cycle to the Tours tab.
+    assert_eq!(layout.focus(), FocusArea::Panel3);
+    key_char(&mut layout, ']'); // Bookmarks -> Collections
+    key_char(&mut layout, ']'); // Collections -> Tours
+
+    // Deliver a remote tour for the unscoped (no active repos) fetch. The default
+    // `pending_remote_repos` is `None`, so a `None` scope is accepted.
+    let tour = RemoteTourSummary {
+        tour_id: "tour-xyz".to_string(),
+        title: "RemoteOnboarding".to_string(),
+        repo_url: Some("https://github.com/acme/widgets".to_string()),
+        author: Some("octocat".to_string()),
+        updated_at: "2026-01-01T00:00:00Z".to_string(),
+    };
+    layout.handle_event(&Event::RemoteToursLoaded(vec![tour], None));
+
+    // The remote tour overview should render in the right pane.
+    let before = render_to_string(&layout, 140, 40);
+    assert!(
+        before.contains("RemoteOnboarding"),
+        "remote tour overview should render after load; got:\n{before}"
+    );
+
+    // A panel refresh (pull/sync/db-switch/etc.) must not drop the remote preview.
+    layout.refresh_all_panels();
+    let after = render_to_string(&layout, 140, 40);
+    assert!(
+        after.contains("RemoteOnboarding"),
+        "remote tour overview should survive refresh_all_panels; got:\n{after}"
+    );
 }

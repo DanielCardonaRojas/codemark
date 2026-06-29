@@ -532,6 +532,7 @@ impl BrowserLayout {
             self.right_pane.refresh_head_commit(&self.db);
             self.session_cache.clear();
             self.cached_remote_tours.clear();
+            self.pending_remote_repos = None;
             self.right_pane.active_remote_tour_id = None;
             self.refresh_all_panels();
         }
@@ -1099,15 +1100,17 @@ impl BrowserLayout {
             }
         } else if let Some(bm_id) = self.right_pane.active_bookmark_id.clone() {
             self.right_pane.load_bookmark_live(&self.db, &bm_id, &mut self.session_cache);
-        } else if let Some(remote_id) = self.right_pane.active_remote_tour_id.clone() {
+        } else if let Some(tour) = self
+            .right_pane
+            .active_remote_tour_id
+            .clone()
+            .and_then(|id| self.cached_remote_tours.iter().find(|t| t.tour_id == id).cloned())
+        {
             // A remote tour overview was showing; re-render it from the cached
             // summary so the right pane doesn't fall back to a local collection.
-            // If the summary is no longer cached, leave the preview untouched.
-            if let Some(tour) =
-                self.cached_remote_tours.iter().find(|t| t.tour_id == remote_id).cloned()
-            {
-                self.right_pane.load_tour_overview(&tour);
-            }
+            // (If the summary is no longer cached this branch is skipped and we
+            // fall through to the default below, so the preview is never blank.)
+            self.right_pane.load_tour_overview(&tour);
         } else if let Ok(collections) = self.db.list_collections() {
             // Default to first tour only if nothing was active
             if let Some((first_tour, _)) = collections.first() {
