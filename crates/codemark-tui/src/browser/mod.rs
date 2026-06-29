@@ -1113,26 +1113,44 @@ impl BrowserLayout {
         } else if let Some(bm_id) = self.right_pane.active_bookmark_id.clone() {
             self.right_pane.load_bookmark_live(&self.db, &bm_id, &mut self.session_cache);
         } else if let Some(remote_id) = self.right_pane.active_remote_tour_id.clone() {
-            // A remote tour overview was showing. Re-render it from the cached
-            // summary so the right pane doesn't fall back to a local collection.
-            // If the summary is gone (cache cleared, or a reload omitted this
-            // tour), clear the preview rather than leaving stale remote markdown
-            // or rendering unrelated local content under the same selection.
-            match self.cached_remote_tours.iter().find(|t| t.tour_id == remote_id).cloned() {
-                Some(tour) => {
-                    self.right_pane.load_tour_overview(&tour);
-                    // `rebuild_tours_panel` restores the list selection by item
-                    // text, which can drift from the right pane (e.g. a remote
-                    // tour sharing a title with a local one, or a reorder). Re-pin
-                    // the Tours selection to this remote id so the next keypress
-                    // doesn't jump the preview to a different item.
-                    if let Some(panel) =
-                        self.left_pane.panel3.get_list_panel_mut(Panel3Tab::Tours.index())
-                    {
-                        panel.select_by_user_data(&format!("remote:{remote_id}"));
+            // A remote tour overview was showing. If it has since been pulled
+            // (a local collection imported from this remote id now exists), the
+            // Tours list shows the local row, so translate the preview to that
+            // local tour instead of re-rendering stale server metadata.
+            let pulled_local = self.db.list_collections().ok().and_then(|cols| {
+                cols.into_iter()
+                    .find(|(c, _)| {
+                        c.imported_from_url
+                            .as_deref()
+                            .and_then(Self::extract_remote_tour_id)
+                            .is_some_and(|rid| rid == remote_id)
+                    })
+                    .map(|(c, _)| c.id)
+            });
+            if let Some(local_id) = pulled_local {
+                // load_collection_overview clears active_remote_tour_id.
+                self.right_pane.load_collection_overview(&self.db, &local_id);
+            } else {
+                // Otherwise re-render from the cached summary. If the summary is
+                // gone (cache cleared, or a reload omitted this tour), clear the
+                // preview rather than leaving stale remote markdown or rendering
+                // unrelated local content under the same selection.
+                match self.cached_remote_tours.iter().find(|t| t.tour_id == remote_id).cloned() {
+                    Some(tour) => {
+                        self.right_pane.load_tour_overview(&tour);
+                        // `rebuild_tours_panel` restores the list selection by item
+                        // text, which can drift from the right pane (e.g. a remote
+                        // tour sharing a title with a local one, or a reorder).
+                        // Re-pin the Tours selection to this remote id so the next
+                        // keypress doesn't jump the preview to a different item.
+                        if let Some(panel) =
+                            self.left_pane.panel3.get_list_panel_mut(Panel3Tab::Tours.index())
+                        {
+                            panel.select_by_user_data(&format!("remote:{remote_id}"));
+                        }
                     }
+                    None => self.right_pane.clear_preview_state(&self.db),
                 }
-                None => self.right_pane.clear_preview_state(&self.db),
             }
         } else if let Ok(collections) = self.db.list_collections() {
             // Default to first tour only if nothing was active
