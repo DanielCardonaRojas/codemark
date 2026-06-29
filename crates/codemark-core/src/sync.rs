@@ -144,6 +144,12 @@ pub fn resolve_server_and_token(config: &Config) -> Result<(String, Option<Strin
         return Err(Error::Input("No default_server configured".to_string()));
     };
 
+    // Normalize the server URL by dropping trailing slashes. `codemark auth
+    // login` stores the normalized URL, so the registry token lookup below must
+    // use the same form (a configured `http://host/` would otherwise miss the
+    // stored token); it also keeps callers from building `host//tours` URLs.
+    let server_url = server_url.trim_end_matches('/').to_string();
+
     // Try to get token from registry as fallback (if not in config)
     if token.is_none() {
         token = registry::open_registry()
@@ -623,5 +629,29 @@ mod tests {
         let headers = build_auth_headers(None).unwrap();
         assert!(headers.get("Authorization").is_none());
         assert!(headers.get("X-Tour-Token").is_none());
+    }
+
+    #[test]
+    fn resolve_server_and_token_strips_trailing_slash() {
+        use crate::config::{CodetoursConfig, CodetoursServerConfig, Config};
+
+        // A named server whose URL carries a trailing slash and an inline token.
+        // The returned URL must be normalized so registry lookups and request
+        // URLs match the form stored by `codemark auth login`.
+        let config = Config {
+            codetours: CodetoursConfig {
+                default_server: Some("remote".to_string()),
+                servers: vec![CodetoursServerConfig {
+                    name: "remote".to_string(),
+                    url: "http://example.com/".to_string(),
+                    token: Some("tok".to_string()),
+                }],
+            },
+            ..Default::default()
+        };
+
+        let (server_url, token) = resolve_server_and_token(&config).expect("resolve");
+        assert_eq!(server_url, "http://example.com");
+        assert_eq!(token.as_deref(), Some("tok"));
     }
 }
