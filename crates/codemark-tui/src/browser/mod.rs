@@ -276,12 +276,19 @@ impl BrowserLayout {
         }
     }
 
-    /// Whether the user has a resolvable sync server configured (i.e. is logged
-    /// in). Drives whether the Tours tab — which lists remote tours — is shown.
+    /// Whether the user has usable sync credentials (a resolvable server *and* a
+    /// token). Drives whether the Tours tab — which lists remote tours — is shown.
+    ///
+    /// Requires a token, not just a resolvable URL: a direct `default_server`
+    /// URL resolves successfully with no token, so checking only `is_ok()` would
+    /// keep the tab visible after `codemark auth logout` and let remote actions
+    /// run without credentials (they'd just fail).
     fn is_logged_in(&self) -> bool {
         if let Some(dir) = self.db.path().parent() {
             let config = codemark_core::config::Config::load_layered(dir);
-            codemark_core::sync::resolve_server_and_token(&config).is_ok()
+            codemark_core::sync::resolve_server_and_token(&config)
+                .map(|(_, token)| token.is_some())
+                .unwrap_or(false)
         } else {
             false
         }
@@ -963,6 +970,16 @@ impl BrowserLayout {
     }
 
     fn rebuild_tours_panel(&mut self) {
+        // Capture the selected item's stable id so it can be re-pinned after the
+        // rebuild. `set_items` only restores selection by display text, which can
+        // drift to a sibling that shares a title (e.g. a remote tour with the same
+        // name as a local one), so the preview would follow the wrong item.
+        let prev_selected = self
+            .left_pane
+            .panel3
+            .get_list_panel_mut(Panel3Tab::Tours.index())
+            .and_then(|p| p.selected().and_then(|i| i.user_data.clone()));
+
         let mut local_items = Vec::new();
         // Track which remote tour IDs have been pulled locally
         let mut matched_remote_ids = std::collections::HashSet::new();
@@ -1030,6 +1047,11 @@ impl BrowserLayout {
 
         if let Some(panel) = self.left_pane.panel3.get_list_panel_mut(2) {
             panel.set_items(all_items);
+            // Re-pin the selection by stable user_data so it survives the rebuild
+            // (no-op if that item is gone, e.g. a pulled remote tour was removed).
+            if let Some(ud) = prev_selected {
+                panel.select_by_user_data(&ud);
+            }
         }
     }
 

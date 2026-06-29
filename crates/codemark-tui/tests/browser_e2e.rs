@@ -106,15 +106,20 @@ impl Sandbox {
     }
 
     /// Write a layered config that makes the layout consider itself "logged in"
-    /// (a direct-URL `default_server` resolves without any registry account), so
-    /// the login-gated Tours tab is visible. Config lives alongside the database
-    /// in `repo/.codemark/`, which is where `Config::load_layered` reads it from.
+    /// (a named server carrying a token resolves to usable credentials), so the
+    /// login-gated Tours tab is visible. Config lives alongside the database in
+    /// `repo/.codemark/`, which is where `Config::load_layered` reads it from.
     fn write_logged_in_config(&self) {
         let codemark_dir = self.repo_root().join(".codemark");
         std::fs::create_dir_all(&codemark_dir).expect("create .codemark dir");
         std::fs::write(
             codemark_dir.join("config.toml"),
-            "[codetours]\ndefault_server = \"http://example.com\"\n",
+            "[codetours]\n\
+             default_server = \"remote\"\n\n\
+             [[codetours.servers]]\n\
+             name = \"remote\"\n\
+             url = \"http://example.com\"\n\
+             token = \"test-token\"\n",
         )
         .expect("write config.toml");
     }
