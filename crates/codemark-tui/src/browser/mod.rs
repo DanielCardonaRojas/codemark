@@ -1152,6 +1152,14 @@ impl BrowserLayout {
             if let Some(local_id) = pulled_local {
                 // load_collection_overview clears active_remote_tour_id.
                 self.right_pane.load_collection_overview(&self.db, &local_id);
+                // The remote:<id> row is gone, so move the Tours selection to the
+                // pulled local collection — otherwise the list could stay on a
+                // same-titled sibling while the right pane shows the pulled tour.
+                if let Some(panel) =
+                    self.left_pane.panel3.get_list_panel_mut(Panel3Tab::Tours.index())
+                {
+                    panel.select_by_user_data(&local_id);
+                }
             } else {
                 // Otherwise re-render from the cached summary. If the summary is
                 // gone (cache cleared, or a reload omitted this tour), clear the
