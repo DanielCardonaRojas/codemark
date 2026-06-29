@@ -4,7 +4,9 @@
 
 use anyhow::Result;
 use crossterm::{
-    event::{self, DisableMouseCapture, EnableMouseCapture},
+    event::{
+        self, DisableFocusChange, DisableMouseCapture, EnableFocusChange, EnableMouseCapture,
+    },
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
@@ -76,7 +78,10 @@ async fn run_app() -> Result<Option<i32>> {
     // Setup terminal
     enable_raw_mode()?;
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
+    // EnableFocusChange lets the terminal report FocusGained/FocusLost so the
+    // browser can re-check login state (Tours-tab visibility) when the user
+    // returns after an external `codemark auth login`/`logout`.
+    execute!(stdout, EnterAlternateScreen, EnableMouseCapture, EnableFocusChange)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
@@ -525,5 +530,5 @@ fn setup_panic_handler() {
 /// Restore terminal state.
 fn restore_terminal() {
     let _ = disable_raw_mode();
-    let _ = execute!(io::stdout(), LeaveAlternateScreen, DisableMouseCapture);
+    let _ = execute!(io::stdout(), LeaveAlternateScreen, DisableMouseCapture, DisableFocusChange);
 }

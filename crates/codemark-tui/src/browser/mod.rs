@@ -1100,17 +1100,16 @@ impl BrowserLayout {
             }
         } else if let Some(bm_id) = self.right_pane.active_bookmark_id.clone() {
             self.right_pane.load_bookmark_live(&self.db, &bm_id, &mut self.session_cache);
-        } else if let Some(tour) = self
-            .right_pane
-            .active_remote_tour_id
-            .clone()
-            .and_then(|id| self.cached_remote_tours.iter().find(|t| t.tour_id == id).cloned())
-        {
-            // A remote tour overview was showing; re-render it from the cached
+        } else if let Some(remote_id) = self.right_pane.active_remote_tour_id.clone() {
+            // A remote tour overview was showing. Re-render it from the cached
             // summary so the right pane doesn't fall back to a local collection.
-            // (If the summary is no longer cached this branch is skipped and we
-            // fall through to the default below, so the preview is never blank.)
-            self.right_pane.load_tour_overview(&tour);
+            // If the summary is gone (cache cleared, or a reload omitted this
+            // tour), clear the preview rather than leaving stale remote markdown
+            // or rendering unrelated local content under the same selection.
+            match self.cached_remote_tours.iter().find(|t| t.tour_id == remote_id).cloned() {
+                Some(tour) => self.right_pane.load_tour_overview(&tour),
+                None => self.right_pane.clear_preview_state(&self.db),
+            }
         } else if let Ok(collections) = self.db.list_collections() {
             // Default to first tour only if nothing was active
             if let Some((first_tour, _)) = collections.first() {
