@@ -368,7 +368,14 @@ async fn run_app() -> Result<Option<i32>> {
                 let is_input_mode =
                     matches!(state.mode(), AppMode::Command | AppMode::Search | AppMode::Insert);
                 let is_mouse_event = matches!(event, Event::Mouse(_));
-                if !handled && !overlay_open && (!is_input_mode || is_mouse_event) {
+                // Focus changes must always reach the layout (even in an input mode
+                // or behind an overlay): returning to the TUI after an external
+                // `codemark auth login`/`logout` triggers a registry/visibility
+                // refresh that would otherwise be dropped by the input-mode filter.
+                let is_focus_event = matches!(event, Event::FocusGained | Event::FocusLost);
+                if !handled
+                    && (is_focus_event || (!overlay_open && (!is_input_mode || is_mouse_event)))
+                {
                     handled = layout.handle_event(&event);
                 }
 
