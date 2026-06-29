@@ -965,8 +965,20 @@ impl BrowserLayout {
     /// Rebuild the Tours panel (index 2) from local DB + cached remote tours.
     /// Extract the original remote tour ID from an imported_from_url.
     /// e.g. "http://127.0.0.1:8080/tours/5efea669-..." -> "5efea669-..."
+    ///
+    /// Normalizes the URL first: strips any `?query`/`#fragment` and trailing
+    /// slashes before taking the last path segment, so a saved URL with those
+    /// extras still matches the bare tour id used by remote summaries. Returns
+    /// `None` when no non-empty segment remains.
     fn extract_remote_tour_id(imported_url: &str) -> Option<&str> {
-        imported_url.rsplit('/').next()
+        imported_url
+            .split(['?', '#'])
+            .next()
+            .unwrap_or(imported_url)
+            .trim_end_matches('/')
+            .rsplit('/')
+            .next()
+            .filter(|segment| !segment.is_empty())
     }
 
     fn rebuild_tours_panel(&mut self) {
@@ -1953,6 +1965,32 @@ mod tests {
         // the OS reclaims it when the test process exits.
         std::mem::forget(dir);
         BrowserLayout::new(db, handler)
+    }
+
+    #[test]
+    fn extract_remote_tour_id_normalizes_url() {
+        let id = "5efea669-1234";
+        // Bare path segment.
+        assert_eq!(
+            BrowserLayout::extract_remote_tour_id(&format!("http://h:8080/tours/{id}")),
+            Some(id)
+        );
+        // Trailing slash, query string, and fragment must not corrupt the id.
+        assert_eq!(
+            BrowserLayout::extract_remote_tour_id(&format!("http://h/tours/{id}/")),
+            Some(id)
+        );
+        assert_eq!(
+            BrowserLayout::extract_remote_tour_id(&format!("http://h/tours/{id}?foo=bar")),
+            Some(id)
+        );
+        assert_eq!(
+            BrowserLayout::extract_remote_tour_id(&format!("http://h/tours/{id}#frag")),
+            Some(id)
+        );
+        // No usable segment.
+        assert_eq!(BrowserLayout::extract_remote_tour_id("/"), None);
+        assert_eq!(BrowserLayout::extract_remote_tour_id(""), None);
     }
 
     #[test]
