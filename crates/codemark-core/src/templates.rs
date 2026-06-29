@@ -580,6 +580,7 @@ pub const SHOW_TEMPLATE: &str = "codemark_show.md";
 pub const DETAILS_TEMPLATE: &str = "details_panel.md";
 pub const COLLECTION_OVERVIEW_TEMPLATE: &str = "codemark_collection_overview.md";
 pub const COMMENTS_TEMPLATE: &str = "comments_panel.md";
+pub const REMOTE_TOUR_OVERVIEW_TEMPLATE: &str = "codemark_remote_tour_overview.md";
 
 /// Get the default markdown template for the `show` command.
 pub fn default_show_template() -> &'static str {
@@ -601,6 +602,11 @@ pub fn default_comments_template() -> &'static str {
     include_str!("../../../templates/comments_panel.md")
 }
 
+/// Get the default markdown template for the remote tour overview panel.
+pub fn default_remote_tour_overview_template() -> &'static str {
+    include_str!("../../../templates/codemark_remote_tour_overview.md")
+}
+
 /// Get the default content for a given template name.
 pub fn default_template_content(name: &str) -> Option<&'static str> {
     match name {
@@ -608,6 +614,7 @@ pub fn default_template_content(name: &str) -> Option<&'static str> {
         DETAILS_TEMPLATE => Some(default_details_template()),
         COLLECTION_OVERVIEW_TEMPLATE => Some(default_collection_overview_template()),
         COMMENTS_TEMPLATE => Some(default_comments_template()),
+        REMOTE_TOUR_OVERVIEW_TEMPLATE => Some(default_remote_tour_overview_template()),
         _ => None,
     }
 }
@@ -641,7 +648,13 @@ pub fn ensure_default_template_exists() {
         return;
     }
 
-    for name in [SHOW_TEMPLATE, DETAILS_TEMPLATE, COLLECTION_OVERVIEW_TEMPLATE, COMMENTS_TEMPLATE] {
+    for name in [
+        SHOW_TEMPLATE,
+        DETAILS_TEMPLATE,
+        COLLECTION_OVERVIEW_TEMPLATE,
+        COMMENTS_TEMPLATE,
+        REMOTE_TOUR_OVERVIEW_TEMPLATE,
+    ] {
         let template_path = templates_dir.join(name);
         if !template_path.exists()
             && let Some(content) = default_template_content(name)
@@ -715,6 +728,40 @@ pub fn render_collection_overview_with_template(
     let handlebars = create_handlebars_engine();
     let context = CollectionTemplateContext::from_collection(collection, bookmarks, tags, links);
     handlebars.render_template(template, &context)
+}
+
+/// Template context for rendering a remote tour overview (pre-pull preview).
+#[derive(Debug, Serialize)]
+struct RemoteTourTemplateContext {
+    title: String,
+    author: Option<String>,
+    repo_url: Option<String>,
+    updated_at: Option<String>,
+}
+
+impl RemoteTourTemplateContext {
+    fn from_summary(tour: &crate::sync::RemoteTourSummary) -> Self {
+        // Normalize empty strings to None so the template's `{{#if}}` guards hide
+        // the rows entirely rather than rendering blank cells.
+        let non_empty = |s: &str| (!s.is_empty()).then(|| s.to_string());
+        Self {
+            title: tour.title.clone(),
+            author: tour.author.as_deref().and_then(non_empty),
+            repo_url: tour.repo_url.as_deref().and_then(non_empty),
+            updated_at: non_empty(&tour.updated_at),
+        }
+    }
+}
+
+/// Render a remote tour overview, loading the template from disk (or the bundled
+/// default). Used to preview a server-hosted tour before it is pulled locally.
+pub fn render_remote_tour_overview(tour: &crate::sync::RemoteTourSummary) -> String {
+    let template = load_template(REMOTE_TOUR_OVERVIEW_TEMPLATE);
+    let handlebars = create_handlebars_engine();
+    let context = RemoteTourTemplateContext::from_summary(tour);
+    handlebars
+        .render_template(&template, &context)
+        .unwrap_or_else(|e| format!("# {}\n\nError rendering overview: {}", tour.title, e))
 }
 
 /// Render a bookmark with its resolutions using the show template (backward compatibility).
@@ -829,6 +876,68 @@ mod tests {
             output.contains("— identifier"),
             "step should show the query summary; got:\n{output}"
         );
+    }
+
+    #[test]
+    fn test_render_remote_tour_overview() {
+        use crate::sync::RemoteTourSummary;
+
+        let tour = RemoteTourSummary {
+            tour_id: "tour-123".to_string(),
+            title: "Onboarding Tour".to_string(),
+            repo_url: Some("https://github.com/acme/widgets".to_string()),
+            author: Some("octocat".to_string()),
+            updated_at: "2024-05-01T12:30:00Z".to_string(),
+        };
+
+        let output = render_remote_tour_overview(&tour);
+        assert!(output.contains("# Onboarding Tour"), "title heading; got:\n{output}");
+        assert!(output.contains("| **Author** | octocat |"), "author row; got:\n{output}");
+        // Remote metadata is markdown-escaped, so the `.` in the URL is escaped.
+        assert!(
+            output.contains(r"| **Repo** | https://github\.com/acme/widgets |"),
+            "repo row; got:\n{output}"
+        );
+        assert!(output.contains("2024-05-01"), "formatted updated date; got:\n{output}");
+    }
+
+    #[test]
+    fn test_render_remote_tour_overview_escapes_metadata() {
+        use crate::sync::RemoteTourSummary;
+
+        // Remote (untrusted) values containing markdown control characters must
+        // be escaped so they can't break the heading/table layout.
+        let tour = RemoteTourSummary {
+            tour_id: "tour-789".to_string(),
+            title: "Pipe | Tour".to_string(),
+            repo_url: None,
+            author: Some("a|b#c".to_string()),
+            updated_at: String::new(),
+        };
+
+        let output = render_remote_tour_overview(&tour);
+        assert!(output.contains(r"# Pipe \| Tour"), "escaped title; got:\n{output}");
+        assert!(output.contains(r"a\|b\#c"), "escaped author; got:\n{output}");
+    }
+
+    #[test]
+    fn test_render_remote_tour_overview_omits_empty_fields() {
+        use crate::sync::RemoteTourSummary;
+
+        let tour = RemoteTourSummary {
+            tour_id: "tour-456".to_string(),
+            title: "Bare Tour".to_string(),
+            repo_url: None,
+            author: Some(String::new()),
+            updated_at: String::new(),
+        };
+
+        let output = render_remote_tour_overview(&tour);
+        assert!(output.contains("# Bare Tour"));
+        // Empty/None metadata must not render blank table rows.
+        assert!(!output.contains("**Author**"), "empty author hidden; got:\n{output}");
+        assert!(!output.contains("**Repo**"), "missing repo hidden; got:\n{output}");
+        assert!(!output.contains("**Updated**"), "empty date hidden; got:\n{output}");
     }
 
     #[test]

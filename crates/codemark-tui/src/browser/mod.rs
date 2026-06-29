@@ -237,6 +237,7 @@ impl BrowserLayout {
         };
         layout.update_focus_state();
         layout.sync_steps_tab_label();
+        layout.update_tours_tab_visibility();
 
         // Spawn background live health resolution so bookmark dots update on startup
         if let Ok(all_bookmarks) =
@@ -275,6 +276,61 @@ impl BrowserLayout {
         }
     }
 
+    /// Whether the user has usable sync credentials (a resolvable server *and* a
+    /// token). Drives whether the Tours tab — which lists remote tours — is shown.
+    ///
+    /// Requires a token, not just a resolvable URL: a direct `default_server`
+    /// URL resolves successfully with no token, so checking only `is_ok()` would
+    /// keep the tab visible after `codemark auth logout` and let remote actions
+    /// run without credentials (they'd just fail).
+    fn is_logged_in(&self) -> bool {
+        if let Some(dir) = self.db.path().parent() {
+            let config = codemark_core::config::Config::load_layered(dir);
+            codemark_core::sync::resolve_server_and_token(&config)
+                .map(|(_, token)| token.is_some())
+                .unwrap_or(false)
+        } else {
+            false
+        }
+    }
+
+    /// Show or hide the Panel 3 Tours tab based on login state. The Tours tab is
+    /// the third tab (index 2); hiding it leaves Bookmarks + Collections. If the
+    /// Tours tab was selected when hidden, the selection clamps back to
+    /// Collections, so the right-pane preview is refreshed to match.
+    pub(super) fn update_tours_tab_visibility(&mut self) {
+        let visible_count = if self.is_logged_in() { 3 } else { 2 };
+        let previous = self.left_pane.panel3.tabs.selected_index();
+        self.left_pane.panel3.tabs.set_visible_count(visible_count);
+        let current = self.left_pane.panel3.tabs.selected_index();
+
+        if current == previous {
+            return;
+        }
+
+        // Selection was clamped off the now-hidden Tours tab. Drop any remote-tour
+        // overview first: the Tours tab is gone, so its preview must not linger.
+        // (Done unconditionally because the clamped-to tab may have no selection
+        // to load, in which case the branch below wouldn't refresh the pane.)
+        if self.right_pane.active_remote_tour_id.is_some() {
+            self.right_pane.clear_preview_state(&self.db);
+        }
+
+        // Then refresh the preview for the clamped-to tab's current selection.
+        let Some(tab) = Panel3Tab::from_index(current) else {
+            return;
+        };
+        let selected_id = self
+            .left_pane
+            .panel3
+            .active_panel()
+            .and_then(|panel| panel.selected())
+            .and_then(|selected| selected.user_data.clone());
+        if let Some(id) = selected_id {
+            self.on_panel3_selection_changed(tab, &id);
+        }
+    }
+
     /// Route a Panel 3 item (by user-data id) to the appropriate live preview.
     ///
     /// Synchronous: used for focus-enter / tab-change previews where an instant,
@@ -288,8 +344,23 @@ impl BrowserLayout {
             Panel3Tab::Collections => {
                 self.right_pane.load_collection_overview(&self.db, id);
             }
-            // Tours are activated explicitly (pull/open); no live preview.
-            Panel3Tab::Tours => {}
+            Panel3Tab::Tours => self.preview_tour_item(id),
+        }
+    }
+
+    /// Render an overview for a Panel 3 Tours item. The Tours tab mixes local
+    /// (pulled) tours, keyed by their collection ID, with remote tours keyed as
+    /// `remote:<tour_id>`. Remote items render server metadata so the user can
+    /// preview a tour before pulling; local items reuse the collection overview.
+    fn preview_tour_item(&mut self, id: &str) {
+        if let Some(tour_id) = id.strip_prefix("remote:") {
+            match self.cached_remote_tours.iter().find(|t| t.tour_id == tour_id) {
+                Some(tour) => self.right_pane.load_tour_overview(tour),
+                // No cached summary (e.g. stale selection) — clear stale preview.
+                None => self.right_pane.clear_preview_state(&self.db),
+            }
+        } else {
+            self.right_pane.load_collection_overview(&self.db, id);
         }
     }
 
@@ -304,7 +375,7 @@ impl BrowserLayout {
         match tab {
             Panel3Tab::Bookmarks => self.request_bookmark_preview(id),
             Panel3Tab::Collections => self.right_pane.load_collection_overview(&self.db, id),
-            Panel3Tab::Tours => {}
+            Panel3Tab::Tours => self.preview_tour_item(id),
         }
     }
 
@@ -474,6 +545,9 @@ impl BrowserLayout {
             self.db = Database::open(&db_path)?;
             self.right_pane.refresh_head_commit(&self.db);
             self.session_cache.clear();
+            self.cached_remote_tours.clear();
+            self.pending_remote_repos = None;
+            self.right_pane.active_remote_tour_id = None;
             self.refresh_all_panels();
         }
         Ok(())
@@ -791,6 +865,11 @@ impl BrowserLayout {
             // No repos to scope to — nothing to fetch (avoids a guaranteed 400).
             self.pending_remote_repos = None;
             self.cached_remote_tours.clear();
+            // A remote overview can no longer be backed by the now-empty cache, so
+            // clear it (mirrors switch_database) instead of leaving stale markdown.
+            if self.right_pane.active_remote_tour_id.is_some() {
+                self.right_pane.clear_preview_state(&self.db);
+            }
             self.rebuild_tours_panel();
             return;
         }
@@ -886,11 +965,33 @@ impl BrowserLayout {
     /// Rebuild the Tours panel (index 2) from local DB + cached remote tours.
     /// Extract the original remote tour ID from an imported_from_url.
     /// e.g. "http://127.0.0.1:8080/tours/5efea669-..." -> "5efea669-..."
+    ///
+    /// Normalizes the URL first: strips any `?query`/`#fragment` and trailing
+    /// slashes before taking the last path segment, so a saved URL with those
+    /// extras still matches the bare tour id used by remote summaries. Returns
+    /// `None` when no non-empty segment remains.
     fn extract_remote_tour_id(imported_url: &str) -> Option<&str> {
-        imported_url.rsplit('/').next()
+        imported_url
+            .split(['?', '#'])
+            .next()
+            .unwrap_or(imported_url)
+            .trim_end_matches('/')
+            .rsplit('/')
+            .next()
+            .filter(|segment| !segment.is_empty())
     }
 
     fn rebuild_tours_panel(&mut self) {
+        // Capture the selected item's stable id so it can be re-pinned after the
+        // rebuild. `set_items` only restores selection by display text, which can
+        // drift to a sibling that shares a title (e.g. a remote tour with the same
+        // name as a local one), so the preview would follow the wrong item.
+        let prev_selected = self
+            .left_pane
+            .panel3
+            .get_list_panel_mut(Panel3Tab::Tours.index())
+            .and_then(|p| p.selected().and_then(|i| i.user_data.clone()));
+
         let mut local_items = Vec::new();
         // Track which remote tour IDs have been pulled locally
         let mut matched_remote_ids = std::collections::HashSet::new();
@@ -958,6 +1059,11 @@ impl BrowserLayout {
 
         if let Some(panel) = self.left_pane.panel3.get_list_panel_mut(2) {
             panel.set_items(all_items);
+            // Re-pin the selection by stable user_data so it survives the rebuild
+            // (no-op if that item is gone, e.g. a pulled remote tour was removed).
+            if let Some(ud) = prev_selected {
+                panel.select_by_user_data(&ud);
+            }
         }
     }
 
@@ -1015,7 +1121,16 @@ impl BrowserLayout {
             p.set_items(tours);
         }
 
-        // 3b. Spawn background live health resolution for all bookmarks
+        // 3a. The Tours tab is a hybrid of local tours and cached remote tours;
+        // build_panel3_items only knows the DB-local rows, so re-merge the cached
+        // remote rows or they would vanish until the next fetch.
+        self.rebuild_tours_panel();
+
+        // 3b. Hide the Tours tab unless the user is logged in (it only holds
+        // remote tours, which are meaningless without a sync server).
+        self.update_tours_tab_visibility();
+
+        // 3c. Spawn background live health resolution for all bookmarks
         if let Ok(all_bookmarks) = self.db.list_bookmarks(&BookmarkFilter::default()) {
             self.spawn_live_health_task(all_bookmarks);
         }
@@ -1031,17 +1146,64 @@ impl BrowserLayout {
             }
         } else if let Some(bm_id) = self.right_pane.active_bookmark_id.clone() {
             self.right_pane.load_bookmark_live(&self.db, &bm_id, &mut self.session_cache);
-        } else if let Ok(collections) = self.db.list_collections() {
-            // Default to first tour only if nothing was active
-            if let Some((first_tour, _)) = collections.first() {
-                let name = first_tour.name.clone();
-                self.right_pane.load_tour_live(&self.db, &name, &mut self.session_cache);
+        } else if let Some(remote_id) = self.right_pane.active_remote_tour_id.clone() {
+            // A remote tour overview was showing. If it has since been pulled
+            // (a local collection imported from this remote id now exists), the
+            // Tours list shows the local row, so translate the preview to that
+            // local tour instead of re-rendering stale server metadata.
+            let pulled_local = self.db.list_collections().ok().and_then(|cols| {
+                cols.into_iter()
+                    .find(|(c, _)| {
+                        c.imported_from_url
+                            .as_deref()
+                            .and_then(Self::extract_remote_tour_id)
+                            .is_some_and(|rid| rid == remote_id)
+                    })
+                    .map(|(c, _)| c.id)
+            });
+            if let Some(local_id) = pulled_local {
+                // load_collection_overview clears active_remote_tour_id.
+                self.right_pane.load_collection_overview(&self.db, &local_id);
+                // The remote:<id> row is gone, so move the Tours selection to the
+                // pulled local collection — otherwise the list could stay on a
+                // same-titled sibling while the right pane shows the pulled tour.
+                if let Some(panel) =
+                    self.left_pane.panel3.get_list_panel_mut(Panel3Tab::Tours.index())
+                {
+                    panel.select_by_user_data(&local_id);
+                }
+            } else {
+                // Otherwise re-render from the cached summary. If the summary is
+                // gone (cache cleared, or a reload omitted this tour), clear the
+                // preview rather than leaving stale remote markdown or rendering
+                // unrelated local content under the same selection.
+                match self.cached_remote_tours.iter().find(|t| t.tour_id == remote_id).cloned() {
+                    Some(tour) => {
+                        self.right_pane.load_tour_overview(&tour);
+                        // `rebuild_tours_panel` restores the list selection by item
+                        // text, which can drift from the right pane (e.g. a remote
+                        // tour sharing a title with a local one, or a reorder).
+                        // Re-pin the Tours selection to this remote id so the next
+                        // keypress doesn't jump the preview to a different item.
+                        if let Some(panel) =
+                            self.left_pane.panel3.get_list_panel_mut(Panel3Tab::Tours.index())
+                        {
+                            panel.select_by_user_data(&format!("remote:{remote_id}"));
+                        }
+                    }
+                    None => self.right_pane.clear_preview_state(&self.db),
+                }
             }
+        } else if let Some((first_tour, _)) =
+            self.db.list_collections().ok().and_then(|c| c.into_iter().next())
+        {
+            // Default to the first tour only if nothing was active.
+            self.right_pane.load_tour_live(&self.db, &first_tour.name, &mut self.session_cache);
         } else {
-            // Clear steps if nothing found
-            self.right_pane.steps_data.clear();
-            self.right_pane.pager_total = 0;
-            self.right_pane.pager_current = 0;
+            // Nothing to show — clear the *whole* preview (steps and any overview)
+            // so a stale remote/collection overview doesn't linger, e.g. after
+            // switching to a repo with no collections.
+            self.right_pane.clear_preview_state(&self.db);
         }
     }
 
@@ -1803,6 +1965,32 @@ mod tests {
         // the OS reclaims it when the test process exits.
         std::mem::forget(dir);
         BrowserLayout::new(db, handler)
+    }
+
+    #[test]
+    fn extract_remote_tour_id_normalizes_url() {
+        let id = "5efea669-1234";
+        // Bare path segment.
+        assert_eq!(
+            BrowserLayout::extract_remote_tour_id(&format!("http://h:8080/tours/{id}")),
+            Some(id)
+        );
+        // Trailing slash, query string, and fragment must not corrupt the id.
+        assert_eq!(
+            BrowserLayout::extract_remote_tour_id(&format!("http://h/tours/{id}/")),
+            Some(id)
+        );
+        assert_eq!(
+            BrowserLayout::extract_remote_tour_id(&format!("http://h/tours/{id}?foo=bar")),
+            Some(id)
+        );
+        assert_eq!(
+            BrowserLayout::extract_remote_tour_id(&format!("http://h/tours/{id}#frag")),
+            Some(id)
+        );
+        // No usable segment.
+        assert_eq!(BrowserLayout::extract_remote_tour_id("/"), None);
+        assert_eq!(BrowserLayout::extract_remote_tour_id(""), None);
     }
 
     #[test]

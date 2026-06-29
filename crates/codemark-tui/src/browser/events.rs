@@ -151,6 +151,16 @@ impl BrowserLayout {
                 }
                 Some(true)
             }
+            Event::FocusGained => {
+                // When the terminal regains focus, the user may have logged in or out
+                // via the CLI. Reload the registry and update Tours tab visibility.
+                if let Ok(registry) = codemark_core::storage::registry::open_registry() {
+                    self.registry = registry;
+                }
+                self.update_tours_tab_visibility();
+                self.refresh_all_panels();
+                Some(true)
+            }
             Event::HealComplete(msg, success) => {
                 self.pending_notification =
                     Some(HealNotification { message: msg.clone(), success: *success });
@@ -161,6 +171,11 @@ impl BrowserLayout {
                 self.pending_notification =
                     Some(HealNotification { message: msg.clone(), success: *success });
                 self.schedule_clear_spinners();
+                // A sync round-trip exercises the server credentials, so the
+                // login state (and thus Tours-tab visibility) may have changed
+                // since this is the only runtime path that talks to the server
+                // without otherwise refreshing the panels.
+                self.update_tours_tab_visibility();
                 Some(true)
             }
             Event::RemoteToursLoaded(tours, scope) => {
@@ -169,6 +184,11 @@ impl BrowserLayout {
                 }
                 self.cached_remote_tours = tours.clone();
                 self.rebuild_tours_panel();
+                // The list now includes remote tours that weren't available when
+                // the tab was first shown (the fetch is async), so the initially
+                // selected item never got a preview. Render it now; otherwise it
+                // stays blank until the user moves the selection.
+                self.update_panel3_live_preview();
                 Some(true)
             }
             Event::RemoteToursFetchError(msg) => {

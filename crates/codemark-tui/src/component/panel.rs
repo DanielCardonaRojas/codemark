@@ -856,6 +856,21 @@ impl Panel {
         self.apply_filter();
     }
 
+    /// Move the cursor selection to the (currently visible) item whose
+    /// `user_data` matches `data`. Unlike [`set_items`], which restores selection
+    /// by text, this targets a stable identifier — used to keep a list selection
+    /// aligned with externally-restored state after a rebuild. Returns true if a
+    /// matching item was found and selected.
+    pub fn select_by_user_data(&mut self, data: &str) -> bool {
+        if let Some(idx) = self.items.iter().position(|i| i.user_data.as_deref() == Some(data)) {
+            self.list_state.borrow_mut().select(Some(idx));
+            self.scroll_to_view(idx);
+            true
+        } else {
+            false
+        }
+    }
+
     /// Clear all items from the panel.
     pub fn clear(&mut self) {
         self.items.clear();
