@@ -1092,6 +1092,15 @@ impl BrowserLayout {
             }
         } else if let Some(bm_id) = self.right_pane.active_bookmark_id.clone() {
             self.right_pane.load_bookmark_live(&self.db, &bm_id, &mut self.session_cache);
+        } else if let Some(remote_id) = self.right_pane.active_remote_tour_id.clone() {
+            // A remote tour overview was showing; re-render it from the cached
+            // summary so the right pane doesn't fall back to a local collection.
+            // If the summary is no longer cached, leave the preview untouched.
+            if let Some(tour) =
+                self.cached_remote_tours.iter().find(|t| t.tour_id == remote_id).cloned()
+            {
+                self.right_pane.load_tour_overview(&tour);
+            }
         } else if let Ok(collections) = self.db.list_collections() {
             // Default to first tour only if nothing was active
             if let Some((first_tour, _)) = collections.first() {

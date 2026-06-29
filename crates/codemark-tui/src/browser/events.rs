@@ -161,6 +161,11 @@ impl BrowserLayout {
                 self.pending_notification =
                     Some(HealNotification { message: msg.clone(), success: *success });
                 self.schedule_clear_spinners();
+                // A sync round-trip exercises the server credentials, so the
+                // login state (and thus Tours-tab visibility) may have changed
+                // since this is the only runtime path that talks to the server
+                // without otherwise refreshing the panels.
+                self.update_tours_tab_visibility();
                 Some(true)
             }
             Event::RemoteToursLoaded(tours, scope) => {
