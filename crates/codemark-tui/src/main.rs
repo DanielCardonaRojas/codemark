@@ -4,9 +4,7 @@
 
 use anyhow::Result;
 use crossterm::{
-    event::{
-        self, DisableFocusChange, DisableMouseCapture, EnableFocusChange, EnableMouseCapture,
-    },
+    event::{self, DisableFocusChange, DisableMouseCapture, EnableFocusChange, EnableMouseCapture},
     execute,
     terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
 };
