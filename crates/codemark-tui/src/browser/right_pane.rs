@@ -68,6 +68,11 @@ pub struct RightPane {
     pub active_tour_name: Option<String>,
     /// Active bookmark ID (if a single bookmark is loaded)
     pub active_bookmark_id: Option<String>,
+    /// Active remote tour id (if a remote tour *overview* is shown). Remote tours
+    /// aren't local collections, so they have no `active_tour_name`; tracking the
+    /// id here lets `refresh_all_panels` re-render the overview after a refresh
+    /// instead of falling back to the first local collection.
+    pub active_remote_tour_id: Option<String>,
     /// Cached show template content to avoid repeated disk reads
     cached_show_template: String,
     /// Cached details template content to avoid repeated disk reads
@@ -143,6 +148,7 @@ impl RightPane {
             info_config: SectionConfig::new(7, 13),
             active_tour_name: None,
             active_bookmark_id: None,
+            active_remote_tour_id: None,
             needs_preview_update: false,
             cached_show_template,
             cached_details_template,
@@ -325,6 +331,7 @@ impl RightPane {
                 self.pager_current = 0;
                 self.active_bookmark_id = Some(bookmark_id.to_string());
                 self.active_tour_name = None;
+                self.active_remote_tour_id = None;
                 self.overview_active = false;
                 self.update_preview(db);
             }
@@ -468,6 +475,7 @@ impl RightPane {
         self.pager_current = 0;
         self.active_bookmark_id = Some(bookmark_id);
         self.active_tour_name = None;
+        self.active_remote_tour_id = None;
         self.overview_active = false;
     }
 
@@ -556,6 +564,7 @@ impl RightPane {
             self.pager_current = 0;
             self.active_tour_name = Some(tour_name.to_string());
             self.active_bookmark_id = None;
+            self.active_remote_tour_id = None;
             self.overview_active = false;
             self.update_preview(db);
         } else {
@@ -658,6 +667,7 @@ impl RightPane {
         self.pager_current = 0;
         self.active_bookmark_id = None;
         self.active_tour_name = None;
+        self.active_remote_tour_id = None;
         self.overview_active = false;
         self.overview.set_markdown(String::new());
 
@@ -722,6 +732,33 @@ impl RightPane {
         self.pager_current = 0;
         self.active_tour_name = Some(collection.name.clone());
         self.active_bookmark_id = None;
+        self.active_remote_tour_id = None;
+    }
+
+    /// Load an overview for a remote (not-yet-pulled) tour into the overview
+    /// panel. Mirrors [`load_collection_overview`](Self::load_collection_overview)
+    /// but renders server-supplied metadata (title, author, repo, updated) so the
+    /// user can preview a tour before pulling it. There is no per-step code
+    /// preview because the tour's bookmarks aren't available locally yet.
+    pub fn load_tour_overview(&mut self, tour: &codemark_core::sync::RemoteTourSummary) {
+        let markdown = templates::render_remote_tour_overview(tour);
+
+        self.overview.set_markdown(markdown);
+        self.overview_active = true;
+
+        // Clear the Details pane so stale annotations from a previously viewed
+        // bookmark don't linger beneath the overview.
+        self.set_details_and_comments(String::new(), String::new());
+
+        // No per-step code preview while showing a remote tour overview.
+        self.steps_data.clear();
+        self.pager_total = 0;
+        self.pager_current = 0;
+        self.active_tour_name = None;
+        self.active_bookmark_id = None;
+        // Remember which remote tour is shown so a later refresh can restore this
+        // overview instead of falling back to the first local collection.
+        self.active_remote_tour_id = Some(tour.tour_id.clone());
     }
 
     /// Load a tour and its steps from the database.
@@ -793,6 +830,7 @@ impl RightPane {
                 self.pager_current = 0;
                 self.active_tour_name = Some(tour_name.to_string());
                 self.active_bookmark_id = None;
+                self.active_remote_tour_id = None;
                 self.overview_active = false;
                 self.update_preview(db);
             } else {

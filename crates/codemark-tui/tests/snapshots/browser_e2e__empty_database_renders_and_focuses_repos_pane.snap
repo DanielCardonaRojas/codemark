@@ -21,7 +21,7 @@ expression: "render_to_string(&layout, 100, 30)"
 │                                      ││                                                          │
 │                                      ││                                                          │
 ╰────────────────────────────── 1 of 1 ╯│                                                          │
-╭──Bookmarks  Collections  Tours ──[3]─╮│                                                          │
+╭──Bookmarks  Collections ─────────[3]─╮│                                                          │
 │                                      ││                                                          │
 │                                      ││                                                          │
 │                                      │╰──────────────────────────────────────────────────────────╯
