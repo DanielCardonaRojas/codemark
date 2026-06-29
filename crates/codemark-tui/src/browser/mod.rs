@@ -1107,7 +1107,19 @@ impl BrowserLayout {
             // tour), clear the preview rather than leaving stale remote markdown
             // or rendering unrelated local content under the same selection.
             match self.cached_remote_tours.iter().find(|t| t.tour_id == remote_id).cloned() {
-                Some(tour) => self.right_pane.load_tour_overview(&tour),
+                Some(tour) => {
+                    self.right_pane.load_tour_overview(&tour);
+                    // `rebuild_tours_panel` restores the list selection by item
+                    // text, which can drift from the right pane (e.g. a remote
+                    // tour sharing a title with a local one, or a reorder). Re-pin
+                    // the Tours selection to this remote id so the next keypress
+                    // doesn't jump the preview to a different item.
+                    if let Some(panel) =
+                        self.left_pane.panel3.get_list_panel_mut(Panel3Tab::Tours.index())
+                    {
+                        panel.select_by_user_data(&format!("remote:{remote_id}"));
+                    }
+                }
                 None => self.right_pane.clear_preview_state(&self.db),
             }
         } else if let Ok(collections) = self.db.list_collections() {
