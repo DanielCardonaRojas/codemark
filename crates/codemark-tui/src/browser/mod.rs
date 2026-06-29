@@ -301,8 +301,15 @@ impl BrowserLayout {
             return;
         }
 
-        // Selection was clamped off the now-hidden Tours tab; refresh the
-        // preview so the right pane drops the stale remote-tour overview.
+        // Selection was clamped off the now-hidden Tours tab. Drop any remote-tour
+        // overview first: the Tours tab is gone, so its preview must not linger.
+        // (Done unconditionally because the clamped-to tab may have no selection
+        // to load, in which case the branch below wouldn't refresh the pane.)
+        if self.right_pane.active_remote_tour_id.is_some() {
+            self.right_pane.clear_preview_state(&self.db);
+        }
+
+        // Then refresh the preview for the clamped-to tab's current selection.
         let Some(tab) = Panel3Tab::from_index(current) else {
             return;
         };
@@ -851,6 +858,11 @@ impl BrowserLayout {
             // No repos to scope to — nothing to fetch (avoids a guaranteed 400).
             self.pending_remote_repos = None;
             self.cached_remote_tours.clear();
+            // A remote overview can no longer be backed by the now-empty cache, so
+            // clear it (mirrors switch_database) instead of leaving stale markdown.
+            if self.right_pane.active_remote_tour_id.is_some() {
+                self.right_pane.clear_preview_state(&self.db);
+            }
             self.rebuild_tours_panel();
             return;
         }
