@@ -770,7 +770,20 @@ impl TabbedPanel {
                     {
                         // Calculate x position relative to the panel's left edge
                         let relative_x = mouse.column - area.left();
-                        if self.tabs.handle_click(relative_x, mouse.row) {
+                        // The tab click ranges are recorded before the title is
+                        // truncated to make room for the pane-number badge, so
+                        // ignore clicks past that same reserved boundary — they
+                        // land on hidden title cells or the badge, not a tab.
+                        let in_visible_title_region = match self.pane_number {
+                            Some(number) => {
+                                let reserved =
+                                    crate::browser::tabs::pane_number_badge_reserved_width(number);
+                                relative_x <= area.width.saturating_sub(reserved + 1)
+                            }
+                            None => true,
+                        };
+                        if in_visible_title_region && self.tabs.handle_click(relative_x, mouse.row)
+                        {
                             tab_changed = true;
                         }
                     }
