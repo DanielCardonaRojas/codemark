@@ -333,6 +333,25 @@ impl Component for CodePreview {
 
         paragraph.render(code_area, buf);
 
+        // Highlight the selected line's full-width background so it reads the
+        // same as the list panes' selected row (see `crate::theme::SELECTION_BG`).
+        // Painted after the paragraph and before the scrollbar so the scrollbar
+        // thumb keeps its own styling on the highlighted row.
+        if let Some(selected) = self.selected_line {
+            let offset = self.scroll_offset as usize;
+            if selected >= offset {
+                let row = (selected - offset) as u16;
+                if row < code_area.height {
+                    let y = code_area.y + row;
+                    for x in code_area.left()..code_area.right() {
+                        if let Some(cell) = buf.cell_mut((x, y)) {
+                            cell.set_bg(crate::theme::SELECTION_BG);
+                        }
+                    }
+                }
+            }
+        }
+
         // Render scrollbar
         if !self.code.is_empty() && list_len > height {
             let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
@@ -458,6 +477,58 @@ mod tests {
             .iter()
             .flat_map(|line| line.spans.iter().map(|span| span.style.fg))
             .collect()
+    }
+
+    /// Render the preview into a fresh buffer of the given size.
+    fn render_to_buffer(preview: &CodePreview, width: u16, height: u16) -> Buffer {
+        let area = Rect { x: 0, y: 0, width, height };
+        let mut buf = Buffer::empty(area);
+        preview.render(area, &mut buf);
+        buf
+    }
+
+    /// The background color of the first cell on a given row.
+    fn row_bg(buf: &Buffer, y: u16) -> Color {
+        buf.cell((0, y)).expect("cell within bounds").style().bg.unwrap_or(Color::Reset)
+    }
+
+    #[test]
+    fn jk_moves_selected_line_and_highlights_it() {
+        let code = "one\ntwo\nthree\nfour\n";
+        let mut preview = CodePreview::new(code, "txt");
+        preview.set_focus(true);
+
+        // No selection yet: nothing is highlighted.
+        let buf = render_to_buffer(&preview, 20, 4);
+        for y in 0..4 {
+            assert_ne!(row_bg(&buf, y), crate::theme::SELECTION_BG);
+        }
+
+        // `j` selects the first line; it is highlighted with the shared color.
+        let down = Event::Key(ratatui::crossterm::event::KeyEvent::from(
+            ratatui::crossterm::event::KeyCode::Char('j'),
+        ));
+        assert!(preview.handle_event(&down));
+        assert_eq!(preview.selected_line, Some(0));
+        let buf = render_to_buffer(&preview, 20, 4);
+        assert_eq!(row_bg(&buf, 0), crate::theme::SELECTION_BG);
+        assert_ne!(row_bg(&buf, 1), crate::theme::SELECTION_BG);
+
+        // `j` again moves the highlight down a row.
+        assert!(preview.handle_event(&down));
+        assert_eq!(preview.selected_line, Some(1));
+        let buf = render_to_buffer(&preview, 20, 4);
+        assert_ne!(row_bg(&buf, 0), crate::theme::SELECTION_BG);
+        assert_eq!(row_bg(&buf, 1), crate::theme::SELECTION_BG);
+
+        // `k` moves it back up.
+        let up = Event::Key(ratatui::crossterm::event::KeyEvent::from(
+            ratatui::crossterm::event::KeyCode::Char('k'),
+        ));
+        assert!(preview.handle_event(&up));
+        assert_eq!(preview.selected_line, Some(0));
+        let buf = render_to_buffer(&preview, 20, 4);
+        assert_eq!(row_bg(&buf, 0), crate::theme::SELECTION_BG);
     }
 
     #[test]
