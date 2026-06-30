@@ -31,6 +31,11 @@ fn load_syntax_set() -> SyntaxSet {
 
 static SYNTAX_SET: LazyLock<SyntaxSet> = LazyLock::new(load_syntax_set);
 
+/// Width of the gutter (sign column + line number) that precedes code content.
+/// 1-char sign column + `"{:>3} "` line number (4 chars) = 5 columns. The block
+/// cursor is offset by this when mapping a code column to a buffer x position.
+const GUTTER_WIDTH: u16 = 5;
+
 /// Process-wide default theme applied to previews created after startup. Set
 /// once from config via [`set_default_theme`]; otherwise resolves the registry
 /// fallback on first use. Shared via `Arc` so each preview clone is cheap.
@@ -79,8 +84,13 @@ pub struct CodePreview {
     extension: String,
     /// Vertical scroll offset
     scroll_offset: u16,
-    /// Currently highlighted line (0-indexed)
+    /// Currently highlighted line (0-indexed). Doubles as the cursor's row when
+    /// the preview is focused.
     selected_line: Option<usize>,
+    /// Cursor column within the current line (0-indexed char offset into the
+    /// code content, excluding the gutter). Only meaningful while
+    /// `selected_line` is `Some`.
+    cursor_col: usize,
     /// Currently highlighted range (start, end inclusive, 0-indexed)
     selected_range: Option<(usize, usize)>,
     /// Whether the component is focused
@@ -106,6 +116,7 @@ impl CodePreview {
             extension,
             scroll_offset: 0,
             selected_line: None,
+            cursor_col: 0,
             selected_range: None,
             focused: false,
             last_area: std::cell::Cell::new(Rect::default()),
@@ -122,6 +133,7 @@ impl CodePreview {
         self.code = code;
         self.scroll_offset = 0;
         self.selected_line = None;
+        self.cursor_col = 0;
         self.selected_range = None;
         self.refresh_cache();
     }
@@ -201,6 +213,7 @@ impl CodePreview {
             let end_value = end.map(|e| e.min(line_count - 1)).unwrap_or(start);
 
             self.selected_line = Some(start);
+            self.cursor_col = 0;
             // Use the clamped end_value and normalize the ordering.
             // Always set selected_range when end is Some, even for single-line ranges.
             self.selected_range = if end.is_some() {
@@ -258,6 +271,35 @@ impl CodePreview {
         let old_offset = self.scroll_offset;
         self.scroll_offset = (self.scroll_offset as i32 + delta).clamp(0, max_offset) as u16;
         old_offset != self.scroll_offset
+    }
+
+    /// Number of characters in the code content of `line_idx` (excluding the
+    /// gutter and trailing newline). Used to clamp the cursor column.
+    fn line_char_len(&self, line_idx: usize) -> usize {
+        self.code.lines().nth(line_idx).map_or(0, |l| l.chars().count())
+    }
+
+    /// Width available for code content within the last rendered area, i.e. the
+    /// pane width minus the gutter and the scrollbar (when one is shown).
+    fn content_width(&self) -> usize {
+        let area = self.last_area.get();
+        let height = area.height as usize;
+        let scrollbar = if self.line_count() > height { 1 } else { 0 };
+        (area.width as usize).saturating_sub(GUTTER_WIDTH as usize + scrollbar)
+    }
+
+    /// The furthest column the cursor may occupy on `line_idx`: clamped to both
+    /// the line length and the visible content width so the cursor stays on
+    /// screen (there is no horizontal scroll yet).
+    fn max_cursor_col(&self, line_idx: usize) -> usize {
+        self.line_char_len(line_idx).min(self.content_width().saturating_sub(1))
+    }
+
+    /// Clamp `cursor_col` to the current line after a vertical move.
+    fn clamp_cursor_col(&mut self) {
+        if let Some(line) = self.selected_line {
+            self.cursor_col = self.cursor_col.min(self.max_cursor_col(line));
+        }
     }
 }
 
@@ -352,6 +394,25 @@ impl Component for CodePreview {
             }
         }
 
+        // Draw the block cursor on the focused row/column. Painted on top of the
+        // selection background by reversing the cell under the cursor, so it
+        // keeps the underlying character and stays theme-independent.
+        if self.focused
+            && let Some(selected) = self.selected_line
+        {
+            let offset = self.scroll_offset as usize;
+            if selected >= offset {
+                let row = (selected - offset) as u16;
+                let x = code_area.x + GUTTER_WIDTH + self.cursor_col as u16;
+                if row < code_area.height && x < code_area.right() {
+                    let y = code_area.y + row;
+                    if let Some(cell) = buf.cell_mut((x, y)) {
+                        cell.set_style(Style::default().add_modifier(Modifier::REVERSED));
+                    }
+                }
+            }
+        }
+
         // Render scrollbar
         if !self.code.is_empty() && list_len > height {
             let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
@@ -406,6 +467,7 @@ impl Component for CodePreview {
                             } else if next < self.scroll_offset as usize {
                                 self.scroll_offset = next as u16;
                             }
+                            self.clamp_cursor_col();
                         }
                         true
                     }
@@ -418,7 +480,26 @@ impl Component for CodePreview {
                         if next < self.scroll_offset as usize {
                             self.scroll_offset = next as u16;
                         }
+                        self.clamp_cursor_col();
                         true
+                    }
+                    ratatui::crossterm::event::KeyCode::Left
+                    | ratatui::crossterm::event::KeyCode::Char('h') => {
+                        if self.selected_line.is_some() {
+                            self.cursor_col = self.cursor_col.saturating_sub(1);
+                            true
+                        } else {
+                            false
+                        }
+                    }
+                    ratatui::crossterm::event::KeyCode::Right
+                    | ratatui::crossterm::event::KeyCode::Char('l') => {
+                        if let Some(line) = self.selected_line {
+                            self.cursor_col = (self.cursor_col + 1).min(self.max_cursor_col(line));
+                            true
+                        } else {
+                            false
+                        }
                     }
                     _ => false,
                 }
@@ -490,6 +571,95 @@ mod tests {
     /// The background color of the first cell on a given row.
     fn row_bg(buf: &Buffer, y: u16) -> Color {
         buf.cell((0, y)).expect("cell within bounds").style().bg.unwrap_or(Color::Reset)
+    }
+
+    /// Whether the cell at (x, y) carries the reversed (cursor) modifier.
+    fn cell_reversed(buf: &Buffer, x: u16, y: u16) -> bool {
+        buf.cell((x, y))
+            .expect("cell within bounds")
+            .style()
+            .add_modifier
+            .contains(Modifier::REVERSED)
+    }
+
+    /// Send a single character key to the preview.
+    fn press(preview: &mut CodePreview, c: char) -> bool {
+        preview.handle_event(&Event::Key(ratatui::crossterm::event::KeyEvent::from(
+            ratatui::crossterm::event::KeyCode::Char(c),
+        )))
+    }
+
+    #[test]
+    fn hl_moves_cursor_column_and_renders_block_cursor() {
+        let code = "one\ntwo\nthree\nfour\n";
+        let mut preview = CodePreview::new(code, "txt");
+        preview.set_focus(true);
+        // Establish the rendered area so column clamping has a width to work with.
+        render_to_buffer(&preview, 30, 4);
+
+        // No cursor row until the user starts navigating: h/l are no-ops.
+        assert!(!press(&mut preview, 'h'));
+        assert!(!press(&mut preview, 'l'));
+        assert_eq!(preview.cursor_col, 0);
+
+        // Select the first line, then walk the cursor right with `l`.
+        assert!(press(&mut preview, 'j'));
+        assert_eq!(preview.selected_line, Some(0));
+        assert!(press(&mut preview, 'l'));
+        assert!(press(&mut preview, 'l'));
+        assert_eq!(preview.cursor_col, 2);
+
+        // The block cursor is rendered (reversed) at gutter + cursor_col.
+        let buf = render_to_buffer(&preview, 30, 4);
+        assert!(cell_reversed(&buf, GUTTER_WIDTH + 2, 0));
+
+        // `h` walks it back, saturating at column 0.
+        assert!(press(&mut preview, 'h'));
+        assert!(press(&mut preview, 'h'));
+        assert!(press(&mut preview, 'h'));
+        assert_eq!(preview.cursor_col, 0);
+    }
+
+    #[test]
+    fn cursor_col_clamps_to_shorter_line_on_vertical_move() {
+        // Line 2 ("three") is longer than line 1 ("two").
+        let code = "one\ntwo\nthree\nfour\n";
+        let mut preview = CodePreview::new(code, "txt");
+        preview.set_focus(true);
+        render_to_buffer(&preview, 30, 4);
+
+        // Move to "three" and push the cursor near its end.
+        press(&mut preview, 'j');
+        press(&mut preview, 'j');
+        press(&mut preview, 'j');
+        assert_eq!(preview.selected_line, Some(2));
+        for _ in 0..5 {
+            press(&mut preview, 'l');
+        }
+        assert_eq!(preview.cursor_col, 5); // end of "three"
+
+        // Moving up to "two" clamps the column to that line's length.
+        press(&mut preview, 'k');
+        assert_eq!(preview.selected_line, Some(1));
+        assert_eq!(preview.cursor_col, 3); // end of "two"
+    }
+
+    #[test]
+    fn cursor_only_renders_when_focused() {
+        let code = "one\ntwo\n";
+        let mut preview = CodePreview::new(code, "txt");
+        preview.set_focus(true);
+        render_to_buffer(&preview, 30, 2);
+        press(&mut preview, 'j');
+        press(&mut preview, 'l');
+
+        let buf = render_to_buffer(&preview, 30, 2);
+        assert!(cell_reversed(&buf, GUTTER_WIDTH + 1, 0));
+
+        // Blur the pane: the cursor disappears.
+        preview.set_focus(false);
+        let buf = render_to_buffer(&preview, 30, 2);
+        assert!(!cell_reversed(&buf, GUTTER_WIDTH + 1, 0));
     }
 
     #[test]
