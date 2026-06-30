@@ -69,6 +69,14 @@ fn default_theme() -> Arc<Theme> {
     theme
 }
 
+/// Width of the line-number field (right-aligned, minimum 3 digits) for a file
+/// with `total_lines` lines. Shared by gutter rendering ([`CodePreview::refresh_cache`])
+/// and cursor geometry ([`CodePreview::gutter_width`]) so the rendered gutter and
+/// the cursor's x offset always agree.
+fn line_number_width(total_lines: usize) -> usize {
+    total_lines.max(1).to_string().len().max(3)
+}
+
 // @lat: [[tui-line-range-selection#CodePreview component]]
 /// A component for displaying syntax-highlighted code with line numbers.
 #[derive(Debug, Clone)]
@@ -79,8 +87,13 @@ pub struct CodePreview {
     extension: String,
     /// Vertical scroll offset
     scroll_offset: u16,
-    /// Currently highlighted line (0-indexed)
+    /// Currently highlighted line (0-indexed). Doubles as the cursor's row when
+    /// the preview is focused.
     selected_line: Option<usize>,
+    /// Cursor column within the current line (0-indexed char offset into the
+    /// code content, excluding the gutter). Only meaningful while
+    /// `selected_line` is `Some`.
+    cursor_col: usize,
     /// Currently highlighted range (start, end inclusive, 0-indexed)
     selected_range: Option<(usize, usize)>,
     /// Whether the component is focused
@@ -106,6 +119,7 @@ impl CodePreview {
             extension,
             scroll_offset: 0,
             selected_line: None,
+            cursor_col: 0,
             selected_range: None,
             focused: false,
             last_area: std::cell::Cell::new(Rect::default()),
@@ -122,6 +136,7 @@ impl CodePreview {
         self.code = code;
         self.scroll_offset = 0;
         self.selected_line = None;
+        self.cursor_col = 0;
         self.selected_range = None;
         self.refresh_cache();
     }
@@ -159,18 +174,26 @@ impl CodePreview {
         let mut h = HighlightLines::new(syntax, theme);
         let mut highlighted = Vec::new();
 
+        // Pad every line number to the same width (the file's widest number, min
+        // 3 digits) so the gutter is uniform across all lines. `{:>3}` alone
+        // leaves lines 1-999 narrower than lines 1000+ in the same file, which
+        // would desync the rendered gutter from `gutter_width()` and misplace
+        // the cursor on the narrower lines.
+        let total_lines = LinesWithEndings::from(&self.code).count();
+        let num_width = line_number_width(total_lines);
+
         for (i, line) in LinesWithEndings::from(&self.code).enumerate() {
             let ranges: Vec<(SyntectStyle, &str)> =
                 h.highlight_line(line, syntax_set).unwrap_or_default();
             let mut spans = Vec::new();
 
-            // Add sign column indicator (1 char) + line number (4 chars) + space (1 char) = 6 chars total gutter
-            // Sign column shows: '┃' for lines in the bookmark range
+            // Gutter = 1-char sign column + line number padded to `num_width` + a
+            // trailing space. Sign column shows '┃' for lines in the bookmark range.
             let sign = " "; // Default: no mark
             spans.push(Span::styled(sign, Style::default().fg(crate::theme::palette().dim)));
 
             // Add line number (gutter)
-            let line_num = format!("{:>3} ", i + 1);
+            let line_num = format!("{:>num_width$} ", i + 1);
             spans.push(Span::styled(line_num, Style::default().fg(crate::theme::palette().dim)));
 
             // Convert syntect style to ratatui style
@@ -201,6 +224,7 @@ impl CodePreview {
             let end_value = end.map(|e| e.min(line_count - 1)).unwrap_or(start);
 
             self.selected_line = Some(start);
+            self.cursor_col = 0;
             // Use the clamped end_value and normalize the ordering.
             // Always set selected_range when end is Some, even for single-line ranges.
             self.selected_range = if end.is_some() {
@@ -258,6 +282,52 @@ impl CodePreview {
         let old_offset = self.scroll_offset;
         self.scroll_offset = (self.scroll_offset as i32 + delta).clamp(0, max_offset) as u16;
         old_offset != self.scroll_offset
+    }
+
+    /// Width of the gutter (sign column + line number + trailing space) that
+    /// precedes code content, used to map a code column to a buffer x position.
+    ///
+    /// Derived from the same [`line_number_width`] that `refresh_cache` pads with,
+    /// so the cursor's x offset matches the rendered gutter for every line.
+    fn gutter_width(&self) -> u16 {
+        (1 + line_number_width(self.line_count()) + 1) as u16
+    }
+
+    /// Number of characters in the code content of `line_idx` (excluding the
+    /// gutter and trailing newline). Used to clamp the cursor column.
+    fn line_char_len(&self, line_idx: usize) -> usize {
+        self.code.lines().nth(line_idx).map_or(0, |l| l.chars().count())
+    }
+
+    /// Width available for code content within the last rendered area, i.e. the
+    /// pane width minus the gutter and the scrollbar (when one is shown).
+    fn content_width(&self) -> usize {
+        let area = self.last_area.get();
+        let height = area.height as usize;
+        let scrollbar = if self.line_count() > height { 1 } else { 0 };
+        (area.width as usize).saturating_sub(self.gutter_width() as usize + scrollbar)
+    }
+
+    /// The furthest column the cursor may occupy on `line_idx`: clamped to both
+    /// the line length and the visible content width so the cursor stays on
+    /// screen (there is no horizontal scroll yet).
+    ///
+    /// Before the first render `last_area` is unset (0×0), so `content_width()`
+    /// is 0; in that case bound only by the line length rather than pinning the
+    /// cursor to column 0 until a frame establishes the viewport.
+    fn max_cursor_col(&self, line_idx: usize) -> usize {
+        let line_len = self.line_char_len(line_idx);
+        match self.content_width() {
+            0 => line_len,
+            width => line_len.min(width - 1),
+        }
+    }
+
+    /// Clamp `cursor_col` to the current line after a vertical move.
+    fn clamp_cursor_col(&mut self) {
+        if let Some(line) = self.selected_line {
+            self.cursor_col = self.cursor_col.min(self.max_cursor_col(line));
+        }
     }
 }
 
@@ -352,6 +422,25 @@ impl Component for CodePreview {
             }
         }
 
+        // Draw the block cursor on the focused row/column. Painted on top of the
+        // selection background by reversing the cell under the cursor, so it
+        // keeps the underlying character and stays theme-independent.
+        if self.focused
+            && let Some(selected) = self.selected_line
+        {
+            let offset = self.scroll_offset as usize;
+            if selected >= offset {
+                let row = (selected - offset) as u16;
+                let x = code_area.x + self.gutter_width() + self.cursor_col as u16;
+                if row < code_area.height && x < code_area.right() {
+                    let y = code_area.y + row;
+                    if let Some(cell) = buf.cell_mut((x, y)) {
+                        cell.set_style(Style::default().add_modifier(Modifier::REVERSED));
+                    }
+                }
+            }
+        }
+
         // Render scrollbar
         if !self.code.is_empty() && list_len > height {
             let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
@@ -406,6 +495,7 @@ impl Component for CodePreview {
                             } else if next < self.scroll_offset as usize {
                                 self.scroll_offset = next as u16;
                             }
+                            self.clamp_cursor_col();
                         }
                         true
                     }
@@ -418,7 +508,26 @@ impl Component for CodePreview {
                         if next < self.scroll_offset as usize {
                             self.scroll_offset = next as u16;
                         }
+                        self.clamp_cursor_col();
                         true
+                    }
+                    ratatui::crossterm::event::KeyCode::Left
+                    | ratatui::crossterm::event::KeyCode::Char('h') => {
+                        if self.selected_line.is_some() {
+                            self.cursor_col = self.cursor_col.saturating_sub(1);
+                            true
+                        } else {
+                            false
+                        }
+                    }
+                    ratatui::crossterm::event::KeyCode::Right
+                    | ratatui::crossterm::event::KeyCode::Char('l') => {
+                        if let Some(line) = self.selected_line {
+                            self.cursor_col = (self.cursor_col + 1).min(self.max_cursor_col(line));
+                            true
+                        } else {
+                            false
+                        }
                     }
                     _ => false,
                 }
@@ -490,6 +599,141 @@ mod tests {
     /// The background color of the first cell on a given row.
     fn row_bg(buf: &Buffer, y: u16) -> Color {
         buf.cell((0, y)).expect("cell within bounds").style().bg.unwrap_or(Color::Reset)
+    }
+
+    /// The rendered character at (x, y).
+    fn cell_symbol(buf: &Buffer, x: u16, y: u16) -> String {
+        buf.cell((x, y)).expect("cell within bounds").symbol().to_string()
+    }
+
+    /// Whether the cell at (x, y) carries the reversed (cursor) modifier.
+    fn cell_reversed(buf: &Buffer, x: u16, y: u16) -> bool {
+        buf.cell((x, y))
+            .expect("cell within bounds")
+            .style()
+            .add_modifier
+            .contains(Modifier::REVERSED)
+    }
+
+    /// Send a single character key to the preview.
+    fn press(preview: &mut CodePreview, c: char) -> bool {
+        preview.handle_event(&Event::Key(ratatui::crossterm::event::KeyEvent::from(
+            ratatui::crossterm::event::KeyCode::Char(c),
+        )))
+    }
+
+    #[test]
+    fn hl_moves_cursor_column_and_renders_block_cursor() {
+        let code = "one\ntwo\nthree\nfour\n";
+        let mut preview = CodePreview::new(code, "txt");
+        preview.set_focus(true);
+        // Establish the rendered area so column clamping has a width to work with.
+        render_to_buffer(&preview, 30, 4);
+
+        // No cursor row until the user starts navigating: h/l are no-ops.
+        assert!(!press(&mut preview, 'h'));
+        assert!(!press(&mut preview, 'l'));
+        assert_eq!(preview.cursor_col, 0);
+
+        // Select the first line, then walk the cursor right with `l`.
+        assert!(press(&mut preview, 'j'));
+        assert_eq!(preview.selected_line, Some(0));
+        assert!(press(&mut preview, 'l'));
+        assert!(press(&mut preview, 'l'));
+        assert_eq!(preview.cursor_col, 2);
+
+        // The block cursor is rendered (reversed) at gutter + cursor_col.
+        let buf = render_to_buffer(&preview, 30, 4);
+        assert!(cell_reversed(&buf, preview.gutter_width() + 2, 0));
+
+        // `h` walks it back, saturating at column 0.
+        assert!(press(&mut preview, 'h'));
+        assert!(press(&mut preview, 'h'));
+        assert!(press(&mut preview, 'h'));
+        assert_eq!(preview.cursor_col, 0);
+    }
+
+    #[test]
+    fn cursor_moves_before_first_render() {
+        // `last_area` is unset (0x0) until the first render. The cursor must
+        // still move on h/l rather than being pinned to column 0 by a zero
+        // content width.
+        let mut preview = CodePreview::new("one\ntwo\n", "txt");
+        preview.set_focus(true);
+        assert!(press(&mut preview, 'j'));
+        assert!(press(&mut preview, 'l'));
+        assert_eq!(preview.cursor_col, 1);
+    }
+
+    #[test]
+    fn cursor_col_clamps_to_shorter_line_on_vertical_move() {
+        // Line 2 ("three") is longer than line 1 ("two").
+        let code = "one\ntwo\nthree\nfour\n";
+        let mut preview = CodePreview::new(code, "txt");
+        preview.set_focus(true);
+        render_to_buffer(&preview, 30, 4);
+
+        // Move to "three" and push the cursor near its end.
+        press(&mut preview, 'j');
+        press(&mut preview, 'j');
+        press(&mut preview, 'j');
+        assert_eq!(preview.selected_line, Some(2));
+        for _ in 0..5 {
+            press(&mut preview, 'l');
+        }
+        assert_eq!(preview.cursor_col, 5); // end of "three"
+
+        // Moving up to "two" clamps the column to that line's length.
+        press(&mut preview, 'k');
+        assert_eq!(preview.selected_line, Some(1));
+        assert_eq!(preview.cursor_col, 3); // end of "two"
+    }
+
+    #[test]
+    fn gutter_width_grows_past_999_lines_and_cursor_tracks_it() {
+        // Up to 999 lines the line-number field is 3 digits: gutter = 1 + 3 + 1.
+        let small: String = (1..=10).map(|n| format!("line {n}\n")).collect();
+        let preview = CodePreview::new(small, "txt");
+        assert_eq!(preview.gutter_width(), 5);
+
+        // At 1000+ lines the field widens to 4 digits, so the gutter (and the
+        // cursor's x offset) must grow with it rather than stay pinned at 5.
+        let big: String = (1..=1000).map(|n| format!("line {n}\n")).collect();
+        let mut preview = CodePreview::new(big, "txt");
+        assert_eq!(preview.gutter_width(), 6);
+
+        preview.set_focus(true);
+        render_to_buffer(&preview, 40, 6);
+        press(&mut preview, 'j');
+        press(&mut preview, 'l');
+        let buf = render_to_buffer(&preview, 40, 6);
+        let gutter = preview.gutter_width();
+
+        // Verify against the *actual rendered characters*, not just the formula:
+        // line 1 ("line 1") must be padded so its content starts exactly at the
+        // gutter boundary even though it is a 1-3 digit number in a 4-digit file.
+        assert_eq!(cell_symbol(&buf, gutter, 0), "l"); // column 0
+        assert_eq!(cell_symbol(&buf, gutter + 1, 0), "i"); // column 1
+        // The cursor (column 1) lands on that character.
+        assert!(cell_reversed(&buf, gutter + 1, 0));
+    }
+
+    #[test]
+    fn cursor_only_renders_when_focused() {
+        let code = "one\ntwo\n";
+        let mut preview = CodePreview::new(code, "txt");
+        preview.set_focus(true);
+        render_to_buffer(&preview, 30, 2);
+        press(&mut preview, 'j');
+        press(&mut preview, 'l');
+
+        let buf = render_to_buffer(&preview, 30, 2);
+        assert!(cell_reversed(&buf, preview.gutter_width() + 1, 0));
+
+        // Blur the pane: the cursor disappears.
+        preview.set_focus(false);
+        let buf = render_to_buffer(&preview, 30, 2);
+        assert!(!cell_reversed(&buf, preview.gutter_width() + 1, 0));
     }
 
     #[test]
