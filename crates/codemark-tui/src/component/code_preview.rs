@@ -31,11 +31,6 @@ fn load_syntax_set() -> SyntaxSet {
 
 static SYNTAX_SET: LazyLock<SyntaxSet> = LazyLock::new(load_syntax_set);
 
-/// Width of the gutter (sign column + line number) that precedes code content.
-/// 1-char sign column + `"{:>3} "` line number (4 chars) = 5 columns. The block
-/// cursor is offset by this when mapping a code column to a buffer x position.
-const GUTTER_WIDTH: u16 = 5;
-
 /// Process-wide default theme applied to previews created after startup. Set
 /// once from config via [`set_default_theme`]; otherwise resolves the registry
 /// fallback on first use. Shared via `Arc` so each preview clone is cheap.
@@ -273,6 +268,17 @@ impl CodePreview {
         old_offset != self.scroll_offset
     }
 
+    /// Width of the gutter (sign column + line number + trailing space) that
+    /// precedes code content, used to map a code column to a buffer x position.
+    ///
+    /// The line-number field is right-aligned to at least 3 digits and grows
+    /// past line 999, matching the `format!("{:>3} ", ...)` in `refresh_cache`,
+    /// so this must be derived from the line count rather than hard-coded.
+    fn gutter_width(&self) -> u16 {
+        let digits = self.line_count().to_string().len().max(3) as u16;
+        1 + digits + 1
+    }
+
     /// Number of characters in the code content of `line_idx` (excluding the
     /// gutter and trailing newline). Used to clamp the cursor column.
     fn line_char_len(&self, line_idx: usize) -> usize {
@@ -285,7 +291,7 @@ impl CodePreview {
         let area = self.last_area.get();
         let height = area.height as usize;
         let scrollbar = if self.line_count() > height { 1 } else { 0 };
-        (area.width as usize).saturating_sub(GUTTER_WIDTH as usize + scrollbar)
+        (area.width as usize).saturating_sub(self.gutter_width() as usize + scrollbar)
     }
 
     /// The furthest column the cursor may occupy on `line_idx`: clamped to both
@@ -403,7 +409,7 @@ impl Component for CodePreview {
             let offset = self.scroll_offset as usize;
             if selected >= offset {
                 let row = (selected - offset) as u16;
-                let x = code_area.x + GUTTER_WIDTH + self.cursor_col as u16;
+                let x = code_area.x + self.gutter_width() + self.cursor_col as u16;
                 if row < code_area.height && x < code_area.right() {
                     let y = code_area.y + row;
                     if let Some(cell) = buf.cell_mut((x, y)) {
@@ -611,7 +617,7 @@ mod tests {
 
         // The block cursor is rendered (reversed) at gutter + cursor_col.
         let buf = render_to_buffer(&preview, 30, 4);
-        assert!(cell_reversed(&buf, GUTTER_WIDTH + 2, 0));
+        assert!(cell_reversed(&buf, preview.gutter_width() + 2, 0));
 
         // `h` walks it back, saturating at column 0.
         assert!(press(&mut preview, 'h'));
@@ -645,6 +651,27 @@ mod tests {
     }
 
     #[test]
+    fn gutter_width_grows_past_999_lines_and_cursor_tracks_it() {
+        // Up to 999 lines the line-number field is 3 digits: gutter = 1 + 3 + 1.
+        let small: String = (1..=10).map(|n| format!("line {n}\n")).collect();
+        let preview = CodePreview::new(small, "txt");
+        assert_eq!(preview.gutter_width(), 5);
+
+        // At 1000+ lines the field widens to 4 digits, so the gutter (and the
+        // cursor's x offset) must grow with it rather than stay pinned at 5.
+        let big: String = (1..=1000).map(|n| format!("line {n}\n")).collect();
+        let mut preview = CodePreview::new(big, "txt");
+        assert_eq!(preview.gutter_width(), 6);
+
+        preview.set_focus(true);
+        render_to_buffer(&preview, 40, 6);
+        press(&mut preview, 'j');
+        press(&mut preview, 'l');
+        let buf = render_to_buffer(&preview, 40, 6);
+        assert!(cell_reversed(&buf, preview.gutter_width() + 1, 0));
+    }
+
+    #[test]
     fn cursor_only_renders_when_focused() {
         let code = "one\ntwo\n";
         let mut preview = CodePreview::new(code, "txt");
@@ -654,12 +681,12 @@ mod tests {
         press(&mut preview, 'l');
 
         let buf = render_to_buffer(&preview, 30, 2);
-        assert!(cell_reversed(&buf, GUTTER_WIDTH + 1, 0));
+        assert!(cell_reversed(&buf, preview.gutter_width() + 1, 0));
 
         // Blur the pane: the cursor disappears.
         preview.set_focus(false);
         let buf = render_to_buffer(&preview, 30, 2);
-        assert!(!cell_reversed(&buf, GUTTER_WIDTH + 1, 0));
+        assert!(!cell_reversed(&buf, preview.gutter_width() + 1, 0));
     }
 
     #[test]
