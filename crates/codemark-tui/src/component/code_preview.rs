@@ -69,6 +69,14 @@ fn default_theme() -> Arc<Theme> {
     theme
 }
 
+/// Width of the line-number field (right-aligned, minimum 3 digits) for a file
+/// with `total_lines` lines. Shared by gutter rendering ([`CodePreview::refresh_cache`])
+/// and cursor geometry ([`CodePreview::gutter_width`]) so the rendered gutter and
+/// the cursor's x offset always agree.
+fn line_number_width(total_lines: usize) -> usize {
+    total_lines.max(1).to_string().len().max(3)
+}
+
 // @lat: [[tui-line-range-selection#CodePreview component]]
 /// A component for displaying syntax-highlighted code with line numbers.
 #[derive(Debug, Clone)]
@@ -166,18 +174,26 @@ impl CodePreview {
         let mut h = HighlightLines::new(syntax, theme);
         let mut highlighted = Vec::new();
 
+        // Pad every line number to the same width (the file's widest number, min
+        // 3 digits) so the gutter is uniform across all lines. `{:>3}` alone
+        // leaves lines 1-999 narrower than lines 1000+ in the same file, which
+        // would desync the rendered gutter from `gutter_width()` and misplace
+        // the cursor on the narrower lines.
+        let total_lines = LinesWithEndings::from(&self.code).count();
+        let num_width = line_number_width(total_lines);
+
         for (i, line) in LinesWithEndings::from(&self.code).enumerate() {
             let ranges: Vec<(SyntectStyle, &str)> =
                 h.highlight_line(line, syntax_set).unwrap_or_default();
             let mut spans = Vec::new();
 
-            // Add sign column indicator (1 char) + line number (4 chars) + space (1 char) = 6 chars total gutter
-            // Sign column shows: '┃' for lines in the bookmark range
+            // Gutter = 1-char sign column + line number padded to `num_width` + a
+            // trailing space. Sign column shows '┃' for lines in the bookmark range.
             let sign = " "; // Default: no mark
             spans.push(Span::styled(sign, Style::default().fg(crate::theme::palette().dim)));
 
             // Add line number (gutter)
-            let line_num = format!("{:>3} ", i + 1);
+            let line_num = format!("{:>num_width$} ", i + 1);
             spans.push(Span::styled(line_num, Style::default().fg(crate::theme::palette().dim)));
 
             // Convert syntect style to ratatui style
@@ -271,12 +287,10 @@ impl CodePreview {
     /// Width of the gutter (sign column + line number + trailing space) that
     /// precedes code content, used to map a code column to a buffer x position.
     ///
-    /// The line-number field is right-aligned to at least 3 digits and grows
-    /// past line 999, matching the `format!("{:>3} ", ...)` in `refresh_cache`,
-    /// so this must be derived from the line count rather than hard-coded.
+    /// Derived from the same [`line_number_width`] that `refresh_cache` pads with,
+    /// so the cursor's x offset matches the rendered gutter for every line.
     fn gutter_width(&self) -> u16 {
-        let digits = self.line_count().to_string().len().max(3) as u16;
-        1 + digits + 1
+        (1 + line_number_width(self.line_count()) + 1) as u16
     }
 
     /// Number of characters in the code content of `line_idx` (excluding the
@@ -297,8 +311,16 @@ impl CodePreview {
     /// The furthest column the cursor may occupy on `line_idx`: clamped to both
     /// the line length and the visible content width so the cursor stays on
     /// screen (there is no horizontal scroll yet).
+    ///
+    /// Before the first render `last_area` is unset (0×0), so `content_width()`
+    /// is 0; in that case bound only by the line length rather than pinning the
+    /// cursor to column 0 until a frame establishes the viewport.
     fn max_cursor_col(&self, line_idx: usize) -> usize {
-        self.line_char_len(line_idx).min(self.content_width().saturating_sub(1))
+        let line_len = self.line_char_len(line_idx);
+        match self.content_width() {
+            0 => line_len,
+            width => line_len.min(width - 1),
+        }
     }
 
     /// Clamp `cursor_col` to the current line after a vertical move.
@@ -579,6 +601,11 @@ mod tests {
         buf.cell((0, y)).expect("cell within bounds").style().bg.unwrap_or(Color::Reset)
     }
 
+    /// The rendered character at (x, y).
+    fn cell_symbol(buf: &Buffer, x: u16, y: u16) -> String {
+        buf.cell((x, y)).expect("cell within bounds").symbol().to_string()
+    }
+
     /// Whether the cell at (x, y) carries the reversed (cursor) modifier.
     fn cell_reversed(buf: &Buffer, x: u16, y: u16) -> bool {
         buf.cell((x, y))
@@ -627,6 +654,18 @@ mod tests {
     }
 
     #[test]
+    fn cursor_moves_before_first_render() {
+        // `last_area` is unset (0x0) until the first render. The cursor must
+        // still move on h/l rather than being pinned to column 0 by a zero
+        // content width.
+        let mut preview = CodePreview::new("one\ntwo\n", "txt");
+        preview.set_focus(true);
+        assert!(press(&mut preview, 'j'));
+        assert!(press(&mut preview, 'l'));
+        assert_eq!(preview.cursor_col, 1);
+    }
+
+    #[test]
     fn cursor_col_clamps_to_shorter_line_on_vertical_move() {
         // Line 2 ("three") is longer than line 1 ("two").
         let code = "one\ntwo\nthree\nfour\n";
@@ -668,7 +707,15 @@ mod tests {
         press(&mut preview, 'j');
         press(&mut preview, 'l');
         let buf = render_to_buffer(&preview, 40, 6);
-        assert!(cell_reversed(&buf, preview.gutter_width() + 1, 0));
+        let gutter = preview.gutter_width();
+
+        // Verify against the *actual rendered characters*, not just the formula:
+        // line 1 ("line 1") must be padded so its content starts exactly at the
+        // gutter boundary even though it is a 1-3 digit number in a 4-digit file.
+        assert_eq!(cell_symbol(&buf, gutter, 0), "l"); // column 0
+        assert_eq!(cell_symbol(&buf, gutter + 1, 0), "i"); // column 1
+        // The cursor (column 1) lands on that character.
+        assert!(cell_reversed(&buf, gutter + 1, 0));
     }
 
     #[test]
