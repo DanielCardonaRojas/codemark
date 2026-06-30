@@ -893,9 +893,12 @@ mod tests {
         let output = render_remote_tour_overview(&tour);
         assert!(output.contains("# Onboarding Tour"), "title heading; got:\n{output}");
         assert!(output.contains("| **Author** | octocat |"), "author row; got:\n{output}");
-        // Remote metadata is markdown-escaped, so the `.` in the URL is escaped.
+        // Repo URL renders as a markdown link; the visible label is markdown-escaped
+        // (so the `.` is escaped) while the link target stays raw.
         assert!(
-            output.contains(r"| **Repo** | https://github\.com/acme/widgets |"),
+            output.contains(
+                r"| **Repo** | [https://github\.com/acme/widgets](https://github.com/acme/widgets) |"
+            ),
             "repo row; got:\n{output}"
         );
         assert!(output.contains("2024-05-01"), "formatted updated date; got:\n{output}");

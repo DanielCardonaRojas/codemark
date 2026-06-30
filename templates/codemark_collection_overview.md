@@ -23,7 +23,7 @@
 | **Published** | {{#if published_at}}{{format_date published_at "%Y-%m-%d %H:%M:%S"}}{{else}}yes{{/if}} |
 {{/if}}
 {{#if repo_url}}
-| **Repo** | {{repo_url}} |
+| **Repo** | [{{repo_url}}]({{repo_url}}) |
 {{/if}}
 
 {{#if tags}}
@@ -36,7 +36,7 @@
 ## Links
 
 {{#each links}}
-- **{{kind}}**: {{label}} [{{url}}]({{url}})
+- **{{kind}}**: [{{label}}]({{url}})
 {{/each}}
 {{/if}}
 
