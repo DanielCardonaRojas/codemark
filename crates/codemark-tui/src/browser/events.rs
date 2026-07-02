@@ -53,7 +53,8 @@ impl BrowserLayout {
         }
 
         if let Event::Key(key) = event {
-            if key.code == ratatui::crossterm::event::KeyCode::Esc && self.focus == FocusArea::Main {
+            if key.code == ratatui::crossterm::event::KeyCode::Esc && self.focus == FocusArea::Main
+            {
                 self.set_focus(FocusArea::Panel3);
                 return true;
             }
