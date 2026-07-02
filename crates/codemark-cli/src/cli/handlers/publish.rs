@@ -102,14 +102,15 @@ async fn handle_publish_p2p(cli: &Cli, mode: &OutputMode, args: &PublishArgs) ->
 
     let (ticket, provider) = codemark_p2p::push_bytes(bytes)
         .await
-        .map_err(|e| Error::Operation(format!("p2p push failed: {e}")))?;
+        .map_err(|e| Error::Operation(format!("p2p push failed: {e:#}")))?;
 
     crate::cli::output::write_success(
         mode,
         &format!(
-            "Serving tour '{}' over peer-to-peer.\n\n  Ticket: {ticket}\n\n\
-             On the other machine run:\n  codemark tour pull --p2p {ticket}\n\n\
-             Keep this process running until the pull completes. Press Ctrl+C to stop.",
+            "Serving tour '{}' over peer-to-peer.\n\
+             Keep this process running until the pull completes; press Ctrl+C to stop.\n\n\
+             On the other machine, run this (copy the whole command, including the full ticket):\n\n\
+             \x20   codemark tour pull --p2p {ticket}",
             collection.name
         ),
     )?;
@@ -121,7 +122,7 @@ async fn handle_publish_p2p(cli: &Cli, mode: &OutputMode, args: &PublishArgs) ->
     provider
         .shutdown()
         .await
-        .map_err(|e| Error::Operation(format!("failed to shut down p2p provider: {e}")))?;
+        .map_err(|e| Error::Operation(format!("failed to shut down p2p provider: {e:#}")))?;
 
     Ok(())
 }
