@@ -105,7 +105,17 @@ async fn push_bytes_on(endpoint: Endpoint, bytes: Vec<u8>) -> Result<(Ticket, Pr
 
 /// Core of [`pull_bytes`], parameterized over the endpoint for offline tests.
 async fn pull_bytes_on(endpoint: &Endpoint, ticket: &str) -> Result<Vec<u8>> {
-    let ticket: BlobTicket = ticket.parse().context("invalid ticket")?;
+    let trimmed = ticket.trim();
+    let ticket: BlobTicket = trimmed.parse().map_err(|e| {
+        // A `blob…` string of the wrong base32 length means a character was
+        // dropped/added — almost always terminal copy truncation. Say so, since
+        // trimming can't recover a character lost mid-string.
+        anyhow::anyhow!(
+            "invalid ticket: {e} (received {} chars). If you copied it from a terminal it was \
+             likely truncated — transfer the ticket file instead (see the `push --p2p` output).",
+            trimmed.len(),
+        )
+    })?;
 
     // Dial the provider directly using the full address in the ticket (relay +
     // direct paths), then stream the single blob.
