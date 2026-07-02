@@ -46,33 +46,33 @@ echo "==> Creating collection '$COLLECTION' in the sender DB"
     tour create "$COLLECTION" --description "p2p smoke test" >/dev/null )
 
 echo "==> Starting provider (push --p2p) in the background"
-( cd "$REPO" && "$BIN" --format line --db "$SENDER_DB" \
+( cd "$REPO" && "$BIN" --format json --db "$SENDER_DB" \
     tour push --p2p "$COLLECTION" ) >"$PUSH_OUT" 2>&1 &
 PUSH_PID=$!
 
-echo "==> Waiting for the ticket file path in provider output"
-TICKET_FILE=""
+echo "==> Waiting for the ticket in provider output"
+TICKET=""
 for _ in $(seq 1 60); do
   if ! kill -0 "$PUSH_PID" 2>/dev/null; then
     echo "!! provider exited early; output was:" >&2
     cat "$PUSH_OUT" >&2
     exit 1
   fi
-  TICKET_FILE="$(grep -o '/[^ ]*codemark-ticket-[^ ]*\.txt' "$PUSH_OUT" | head -1 || true)"
-  [ -n "$TICKET_FILE" ] && [ -f "$TICKET_FILE" ] && break
+  TICKET="$(grep -o 'blob[0-9a-z]*' "$PUSH_OUT" | head -1 || true)"
+  [ -n "$TICKET" ] && break
   sleep 0.5
 done
 
-if [ -z "$TICKET_FILE" ] || [ ! -f "$TICKET_FILE" ]; then
-  echo "!! never saw a ticket file; provider output was:" >&2
+if [ -z "$TICKET" ]; then
+  echo "!! never saw a ticket; provider output was:" >&2
   cat "$PUSH_OUT" >&2
   exit 1
 fi
-echo "    ticket file: $TICKET_FILE ($(wc -c <"$TICKET_FILE" | tr -d ' ') bytes)"
+echo "    ticket: ${#TICKET} chars"
 
 echo "==> Pulling into the receiver DB (60s timeout)"
 timeout 60 "$BIN" --format line --db "$RECEIVER_DB" \
-  tour pull --p2p "$TICKET_FILE"
+  tour pull --p2p "$TICKET"
 
 echo "==> Asserting the collection landed in the receiver DB"
 if "$BIN" --format line --db "$RECEIVER_DB" tour show "$COLLECTION" >/dev/null 2>&1; then

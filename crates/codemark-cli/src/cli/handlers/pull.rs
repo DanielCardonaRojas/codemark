@@ -116,8 +116,7 @@ pub async fn handle_pull(cli: &Cli, mode: &OutputMode, args: &PullArgs) -> Resul
 /// the provided ticket, then import it exactly like an HTTP pull.
 #[cfg(feature = "p2p")]
 async fn handle_pull_p2p(cli: &Cli, mode: &OutputMode, args: &PullArgs) -> Result<()> {
-    let ticket = resolve_p2p_ticket(&args.tour)?;
-    let bytes = codemark_p2p::pull_bytes(&ticket)
+    let bytes = codemark_p2p::pull_bytes(&args.tour)
         .await
         .map_err(|e| Error::Operation(format!("p2p pull failed: {e:#}")))?;
 
@@ -127,23 +126,6 @@ async fn handle_pull_p2p(cli: &Cli, mode: &OutputMode, args: &PullArgs) -> Resul
 
     crate::cli::output::write_success(mode, "Collection imported successfully")?;
     Ok(())
-}
-
-/// Resolve the ticket argument. A real ticket is a single `blob…` token, but a
-/// long ticket is easily truncated when copied out of a terminal, so we also
-/// accept a path to a file containing the ticket — transfer the file instead of
-/// pasting. Anything that isn't a literal `blob…` ticket but names an existing
-/// file is read from disk; both forms are trimmed of surrounding whitespace.
-#[cfg(feature = "p2p")]
-fn resolve_p2p_ticket(arg: &str) -> Result<String> {
-    let trimmed = arg.trim();
-    if !trimmed.starts_with("blob") && std::path::Path::new(trimmed).is_file() {
-        let contents = std::fs::read_to_string(trimmed).map_err(|e| {
-            Error::Operation(format!("failed to read ticket file '{trimmed}': {e}"))
-        })?;
-        return Ok(contents.trim().to_string());
-    }
-    Ok(trimmed.to_string())
 }
 
 /// Detect the current Git repository as `owner/name`, for scoping a short-id

@@ -112,7 +112,8 @@ async fn pull_bytes_on(endpoint: &Endpoint, ticket: &str) -> Result<Vec<u8>> {
         // trimming can't recover a character lost mid-string.
         anyhow::anyhow!(
             "invalid ticket: {e} (received {} chars). If you copied it from a terminal it was \
-             likely truncated — transfer the ticket file instead (see the `push --p2p` output).",
+             likely truncated — re-copy the whole `blob…` string (widen the window so it isn't \
+             wrapped).",
             trimmed.len(),
         )
     })?;

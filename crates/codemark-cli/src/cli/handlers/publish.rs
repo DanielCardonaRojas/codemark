@@ -104,31 +104,19 @@ async fn handle_publish_p2p(cli: &Cli, mode: &OutputMode, args: &PublishArgs) ->
         .await
         .map_err(|e| Error::Operation(format!("p2p push failed: {e:#}")))?;
 
-    // Long tickets are easily truncated when copied out of a terminal (a single
-    // dropped character makes them unparseable), so also drop the ticket to a
-    // file the user can transfer verbatim (scp/AirDrop/shared drive).
-    let ticket_path = std::env::temp_dir()
-        .join(format!("codemark-ticket-{}.txt", &collection.id[..collection.id.len().min(8)]));
-    let file_hint = match std::fs::write(&ticket_path, &ticket) {
-        Ok(()) => format!(
-            "\n\nMost reliable — copy this file to the other machine and run\n\
-             `codemark tour pull --p2p <path-to-that-file>`:\n\n  {}",
-            ticket_path.display()
+    let pull_command = format!("codemark tour pull --p2p {ticket}");
+    match mode {
+        OutputMode::Json => crate::cli::output::write_json_success(&serde_json::json!({
+            "collection": collection.name,
+            "ticket": ticket,
+            "pull_command": pull_command,
+        }))?,
+        _ => println!(
+            "Serving '{}' over p2p — keep this running until the pull completes (Ctrl+C to stop).\n\n\
+             Run this on the receiving machine:\n\n    {pull_command}",
+            collection.name
         ),
-        Err(_) => String::new(),
-    };
-
-    crate::cli::output::write_success(
-        mode,
-        &format!(
-            "Serving tour '{}' over peer-to-peer ({} char ticket).\n\
-             Keep this process running until the pull completes; press Ctrl+C to stop.{file_hint}\n\n\
-             To paste manually instead, select the ENTIRE line below (no line breaks):\n\n  \
-             codemark tour pull --p2p {ticket}",
-            collection.name,
-            ticket.len(),
-        ),
-    )?;
+    }
 
     tokio::signal::ctrl_c()
         .await
@@ -139,6 +127,5 @@ async fn handle_publish_p2p(cli: &Cli, mode: &OutputMode, args: &PublishArgs) ->
         .await
         .map_err(|e| Error::Operation(format!("failed to shut down p2p provider: {e:#}")))?;
 
-    let _ = std::fs::remove_file(&ticket_path);
     Ok(())
 }
