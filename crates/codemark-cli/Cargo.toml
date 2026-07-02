@@ -21,6 +21,11 @@ required-features = ["man-pages"]
 
 [features]
 man-pages = ["clap_mangen"]
+# Experimental, off by default: serverless peer-to-peer tour sharing over iroh.
+# Keeping the dependency optional means iroh (and its QUIC/relay stack) stays out
+# of the default and server builds entirely — no feature unification, no size hit,
+# no risk to the openssl-free / ring-only invariant unless explicitly opted in.
+p2p = ["dep:codemark-p2p"]
 
 [dev-dependencies]
 tempfile = { workspace = true }
@@ -33,6 +38,7 @@ axum = { workspace = true }
 
 [dependencies]
 codemark-core = { path = "../codemark-core" }
+codemark-p2p = { path = "../codemark-p2p", optional = true }
 clap = { workspace = true }
 clap_complete = "4"
 clap_mangen = { version = "0.2", optional = true }

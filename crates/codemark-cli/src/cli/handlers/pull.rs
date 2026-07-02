@@ -7,6 +7,20 @@ use codemark_core::sync::{SyncDirection, SyncOptions, build_sync_http_client, sy
 use crate::cli::handlers::auth_resolve::{build_auth_headers, get_token_for_server};
 
 pub async fn handle_pull(cli: &Cli, mode: &OutputMode, args: &PullArgs) -> Result<()> {
+    if args.p2p {
+        #[cfg(feature = "p2p")]
+        {
+            return handle_pull_p2p(cli, mode, args).await;
+        }
+        #[cfg(not(feature = "p2p"))]
+        {
+            return Err(Error::Input(
+                "this build was compiled without p2p support; rebuild with `--features p2p`"
+                    .to_string(),
+            ));
+        }
+    }
+
     // 1. Resolve server and token
     let (server_url, token, mut collection_id) = resolve_pull_params(cli, args)?;
 
@@ -95,6 +109,22 @@ pub async fn handle_pull(cli: &Cli, mode: &OutputMode, args: &PullArgs) -> Resul
     // Show success message
     crate::cli::output::write_success(mode, "Collection imported successfully")?;
 
+    Ok(())
+}
+
+/// Serverless peer-to-peer pull: fetch the pack bytes directly from a peer using
+/// the provided ticket, then import it exactly like an HTTP pull.
+#[cfg(feature = "p2p")]
+async fn handle_pull_p2p(cli: &Cli, mode: &OutputMode, args: &PullArgs) -> Result<()> {
+    let bytes = codemark_p2p::pull_bytes(&args.tour)
+        .await
+        .map_err(|e| Error::Operation(format!("p2p pull failed: {e}")))?;
+
+    let db = super::open_db_for_write(cli)?;
+    let name = args.name.as_deref().filter(|n| !n.is_empty());
+    codemark_core::sync::import_pack_bytes(&db, bytes, name, "p2p").await?;
+
+    crate::cli::output::write_success(mode, "Collection imported successfully")?;
     Ok(())
 }
 

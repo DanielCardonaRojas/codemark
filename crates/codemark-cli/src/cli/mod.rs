@@ -1047,11 +1047,16 @@ pub struct PublishArgs {
     /// Build the pack and print its path, but do not upload
     #[arg(long)]
     pub dry_run: bool,
+
+    /// Share serverless over peer-to-peer: print a ticket and serve the tour
+    /// directly until Ctrl+C (requires building with `--features p2p`)
+    #[arg(long)]
+    pub p2p: bool,
 }
 
 #[derive(Debug, clap::Args)]
 pub struct PullArgs {
-    /// Tour URL or ID
+    /// Tour URL or ID (or a p2p ticket when --p2p is set)
     pub tour: String,
 
     /// Server URL or name (required if tour is a bare ID)
@@ -1065,6 +1070,11 @@ pub struct PullArgs {
     /// Save the tour locally as a collection with a custom name (defaults to tour's title)
     #[arg(long)]
     pub name: Option<String>,
+
+    /// Pull from a peer-to-peer ticket instead of a server (requires building
+    /// with `--features p2p`)
+    #[arg(long)]
+    pub p2p: bool,
 }
 
 #[derive(Debug, clap::Args)]

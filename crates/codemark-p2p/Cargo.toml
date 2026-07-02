@@ -1,0 +1,25 @@
+[package]
+name = "codemark-p2p"
+version = "0.7.19"
+edition = "2024"
+description = "Optional peer-to-peer transport for Codemark: moves opaque bytes over iroh, keyed by a shareable ticket. Tour-agnostic by design."
+license = "MIT"
+
+[lib]
+name = "codemark_p2p"
+path = "src/lib.rs"
+
+[dependencies]
+tokio = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+
+# iroh's default features already select the `ring` rustls backend
+# (`default = [.., tls-ring]`); `tls-aws-lc-rs` is opt-in and we never enable it.
+# This keeps the workspace off aws-lc-rs, preserving the openssl-free /
+# clean-cross-compile invariant. CI asserts `grep -c aws-lc Cargo.lock == 0`.
+iroh = "1.0"
+iroh-blobs = "0.103"
+
+[dev-dependencies]
+tokio = { workspace = true }

@@ -4,6 +4,7 @@ members = [
     "crates/codemark-cli",
     "crates/codetours-server",
     "crates/codemark-tui",
+    "crates/codemark-p2p",
 ]
 resolver = "2"
 

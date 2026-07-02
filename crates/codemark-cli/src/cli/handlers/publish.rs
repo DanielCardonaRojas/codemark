@@ -7,6 +7,20 @@ use codemark_core::sync::{SyncDirection, SyncOptions, sync};
 use crate::cli::handlers::auth_resolve::{detect_current_repo, resolve_server_and_token};
 
 pub async fn handle_publish(cli: &Cli, mode: &OutputMode, args: &PublishArgs) -> Result<()> {
+    if args.p2p {
+        #[cfg(feature = "p2p")]
+        {
+            return handle_publish_p2p(cli, mode, args).await;
+        }
+        #[cfg(not(feature = "p2p"))]
+        {
+            return Err(Error::Input(
+                "this build was compiled without p2p support; rebuild with `--features p2p`"
+                    .to_string(),
+            ));
+        }
+    }
+
     let db = super::open_db_for_write(cli)?;
 
     // 1. Find collection
@@ -54,6 +68,60 @@ pub async fn handle_publish(cli: &Cli, mode: &OutputMode, args: &PublishArgs) ->
 
     // Show success message
     crate::cli::output::write_success(mode, &format!("Published collection: {}", collection.name))?;
+
+    Ok(())
+}
+
+/// Serverless peer-to-peer publish: build the same portable pack used by the
+/// registry, then serve it directly to a peer over iroh. Blocks until Ctrl+C.
+#[cfg(feature = "p2p")]
+async fn handle_publish_p2p(cli: &Cli, mode: &OutputMode, args: &PublishArgs) -> Result<()> {
+    let db = super::open_db_for_write(cli)?;
+
+    let collection = if let Some(col) = db.get_collection_by_name(&args.collection)? {
+        col
+    } else if let Some(col) = db.get_collection_by_id_prefix(&args.collection)? {
+        col
+    } else {
+        return Err(Error::Input(format!("collection '{}' not found", args.collection)));
+    };
+
+    let project_root = super::get_project_root(&db);
+    let config = super::load_config(cli);
+
+    // Build the transport-agnostic pack bytes, then hand them to the p2p layer.
+    let bytes = codemark_core::sync::build_pack_bytes(
+        &db,
+        &collection.id,
+        &project_root,
+        &config,
+        args.title.as_deref(),
+        args.description.as_deref(),
+    )
+    .await?;
+
+    let (ticket, provider) = codemark_p2p::push_bytes(bytes)
+        .await
+        .map_err(|e| Error::Operation(format!("p2p push failed: {e}")))?;
+
+    crate::cli::output::write_success(
+        mode,
+        &format!(
+            "Serving tour '{}' over peer-to-peer.\n\n  Ticket: {ticket}\n\n\
+             On the other machine run:\n  codemark tour pull --p2p {ticket}\n\n\
+             Keep this process running until the pull completes. Press Ctrl+C to stop.",
+            collection.name
+        ),
+    )?;
+
+    tokio::signal::ctrl_c()
+        .await
+        .map_err(|e| Error::Operation(format!("failed waiting for Ctrl+C: {e}")))?;
+
+    provider
+        .shutdown()
+        .await
+        .map_err(|e| Error::Operation(format!("failed to shut down p2p provider: {e}")))?;
 
     Ok(())
 }

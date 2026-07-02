@@ -269,22 +269,113 @@ async fn download_pack(
         .await
         .map_err(|e| Error::Operation(format!("failed to read response: {e}")))?;
 
-    // Check if it is zstd compressed
-    let is_zstd = bytes.starts_with(&[0x28, 0xB5, 0x2F, 0xFD]);
-    if is_zstd {
+    decompress_if_zstd(bytes.to_vec()).await
+}
+
+/// Decompress `bytes` if they carry the zstd magic number, otherwise return them
+/// unchanged. Shared by the HTTP pull path and the p2p import path.
+async fn decompress_if_zstd(bytes: Vec<u8>) -> Result<Vec<u8>> {
+    if !bytes.starts_with(&[0x28, 0xB5, 0x2F, 0xFD]) {
+        return Ok(bytes);
+    }
+    tokio::task::spawn_blocking(move || {
+        let mut decoder = zstd::stream::read::Decoder::new(&bytes[..])
+            .map_err(|e| Error::Operation(format!("zstd decoder failed: {e}")))?;
+        let mut out = Vec::new();
+        std::io::copy(&mut decoder, &mut out)
+            .map_err(|e| Error::Operation(format!("decompression failed: {e}")))?;
+        Ok::<_, Error>(out)
+    })
+    .await
+    .map_err(|_| Error::Operation("Blocking task panicked during decompression".to_string()))?
+}
+
+/// Migrate an on-disk pack to the current schema version if needed, then validate
+/// it. Shared by the HTTP pull path and the p2p import path.
+async fn prepare_pack_file(pack_path: &Path) -> Result<()> {
+    let user_version = pre_inspect(pack_path)
+        .map_err(|e| Error::Operation(format!("pre-inspection failed: {e}")))?;
+
+    if user_version < Database::CURRENT_VERSION {
+        let pack_path_clone = pack_path.to_path_buf();
         tokio::task::spawn_blocking(move || {
-            let mut decoder = zstd::stream::read::Decoder::new(&bytes[..])
-                .map_err(|e| Error::Operation(format!("zstd decoder failed: {e}")))?;
-            let mut out = Vec::new();
-            std::io::copy(&mut decoder, &mut out)
-                .map_err(|e| Error::Operation(format!("decompression failed: {e}")))?;
-            Ok::<_, Error>(out)
+            let mut conn = rusqlite::Connection::open(&pack_path_clone)
+                .map_err(|e| Error::Database(e.to_string()))?;
+            Database::run_migrations_on(&mut conn).map_err(|e| Error::Database(e.to_string()))?;
+            Ok::<_, Error>(())
         })
         .await
-        .map_err(|_| Error::Operation("Blocking task panicked during decompression".to_string()))?
-    } else {
-        Ok(bytes.to_vec())
+        .map_err(|_| Error::Operation("Blocking task panicked during migration".to_string()))??;
     }
+
+    inspect(pack_path).map_err(|e| Error::Operation(format!("pack inspection failed: {e}")))?;
+    Ok(())
+}
+
+/// Build a single-collection pack and return its (compressed) bytes.
+///
+/// This is the same portable pack format used by HTTP push/pull, so the bytes
+/// are transport-agnostic: any channel (e.g. the p2p transport) can move them
+/// and reconstruct the tour with [`import_pack_bytes`].
+pub async fn build_pack_bytes(
+    db: &Database,
+    collection_id: &str,
+    project_root: &Path,
+    config: &Config,
+    title: Option<&str>,
+    description: Option<&str>,
+) -> Result<Vec<u8>> {
+    let mut payload = build_snapshot(db, collection_id, project_root, config).await?;
+
+    if let Some(title) = title {
+        payload.collection.name = title.to_string();
+    }
+    if let Some(description) = description {
+        payload.collection.description = Some(description.to_string());
+    }
+    // Stamp the origin repo so the receiver can scope/anchor the tour, matching
+    // the HTTP push path.
+    if payload.collection.repo_url.is_none()
+        && let Ok(origin_url) = crate::git::remote::get_origin_url(project_root)
+    {
+        payload.collection.repo_url = Some(origin_url);
+    }
+
+    let dest =
+        std::env::temp_dir().join(format!("codemark-p2p-push-{}.sqlite", uuid::Uuid::new_v4()));
+    let packer = Packer::new(db);
+    let pack_path = packer.create_pack_from_snapshot(&payload, &dest)?;
+
+    let read = tokio::fs::read(&pack_path)
+        .await
+        .map_err(|e| Error::Operation(format!("failed to read pack: {e}")));
+    let _ = tokio::fs::remove_file(&pack_path).await;
+    read
+}
+
+/// Import a pack produced by [`build_pack_bytes`] (or the HTTP pull path) into
+/// the local database. Accepts either compressed or raw pack bytes.
+pub async fn import_pack_bytes(
+    db: &Database,
+    bytes: Vec<u8>,
+    collection_name: Option<&str>,
+    source_url: &str,
+) -> Result<()> {
+    let bytes = decompress_if_zstd(bytes).await?;
+    let pack_path =
+        std::env::temp_dir().join(format!("codemark-p2p-pull-{}.sqlite", uuid::Uuid::new_v4()));
+
+    let res = async {
+        tokio::fs::write(&pack_path, &bytes)
+            .await
+            .map_err(|e| Error::Operation(format!("failed to write pack: {e}")))?;
+        prepare_pack_file(&pack_path).await?;
+        import_pack(db, &pack_path, collection_name, source_url).await
+    }
+    .await;
+
+    let _ = tokio::fs::remove_file(&pack_path).await;
+    res
 }
 
 /// Import a pack into the local database.
@@ -550,28 +641,8 @@ async fn sync_pull(opts: SyncOptions) -> Result<()> {
             .await
             .map_err(|e| Error::Operation(format!("failed to write pack: {e}")))?;
 
-        // Inspect and Migrate pack
-        let user_version = pre_inspect(&pack_path)
-            .map_err(|e| Error::Operation(format!("pre-inspection failed: {e}")))?;
-
-        if user_version < Database::CURRENT_VERSION {
-            let pack_path_clone = pack_path.clone();
-            tokio::task::spawn_blocking(move || {
-                let mut conn = rusqlite::Connection::open(&pack_path_clone)
-                    .map_err(|e| Error::Database(e.to_string()))?;
-                Database::run_migrations_on(&mut conn)
-                    .map_err(|e| Error::Database(e.to_string()))?;
-                Ok::<_, Error>(())
-            })
-            .await
-            .map_err(|_| {
-                Error::Operation("Blocking task panicked during migration".to_string())
-            })??;
-        }
-
-        // Full inspection after potential migration
-        inspect(&pack_path)
-            .map_err(|e| Error::Operation(format!("pack inspection failed: {e}")))?;
+        // Inspect and migrate pack to the current schema version.
+        prepare_pack_file(&pack_path).await?;
 
         // Pull is now persistent by default - always save locally
         let source_url = format!("{}/tours/{}", opts.server_url, opts.collection_id);

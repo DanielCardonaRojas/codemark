@@ -43,6 +43,19 @@ jobs:
             target
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
 
+      - name: Assert TLS backend stays ring-only (no aws-lc / openssl)
+        # Guards the openssl-free / clean-cross-compile invariant. iroh (behind
+        # the optional `p2p` feature) can pull aws-lc-rs if its `tls-aws-lc-rs`
+        # feature is ever enabled; that needs a C toolchain and breaks musl/
+        # Windows cross-compilation. Fail loudly if any of these appear.
+        run: |
+          for lib in aws-lc-sys aws-lc-rs native-tls openssl-sys; do
+            if grep -q "name = \"$lib\"" Cargo.lock; then
+              echo "::error::$lib leaked into Cargo.lock — the openssl-free/ring-only invariant is broken"
+              exit 1
+            fi
+          done
+
       - name: Run cargo check
         run: cargo check --verbose
 
@@ -51,6 +64,39 @@ jobs:
 
       - name: Run cargo clippy
         run: cargo clippy -- -D warnings
+
+  # Experimental p2p feature: exercised in its own job because the default
+  # test/clippy/check jobs above don't enable the `p2p` feature, so the
+  # feature-gated CLI handlers would otherwise never be compiled or linted.
+  p2p-experimental:
+    name: Experimental p2p feature
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9
+        with:
+          toolchain: stable
+          components: clippy
+
+      - name: Cache dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-p2p-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Test p2p transport (offline round-trip)
+        run: cargo test -p codemark-p2p
+
+      - name: Clippy p2p crate and feature-gated CLI code
+        run: cargo clippy -p codemark-p2p -p codemark-cli --features p2p -- -D warnings
 
   cross-platform:
     name: Build ${{ matrix.target }}
