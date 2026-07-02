@@ -122,9 +122,18 @@ async fn handle_pull_p2p(cli: &Cli, mode: &OutputMode, args: &PullArgs) -> Resul
 
     let db = super::open_db_for_write(cli)?;
     let name = args.name.as_deref().filter(|n| !n.is_empty());
-    codemark_core::sync::import_pack_bytes(&db, bytes, name, "p2p").await?;
+    let imported = codemark_core::sync::import_pack_bytes(&db, bytes, name, "p2p").await?;
 
-    crate::cli::output::write_success(mode, "Collection imported successfully")?;
+    match mode {
+        OutputMode::Json => crate::cli::output::write_json_success(&imported)?,
+        _ => println!(
+            "Imported '{}' ({} bookmark{}) into local collection {}",
+            imported.name,
+            imported.bookmark_count,
+            if imported.bookmark_count == 1 { "" } else { "s" },
+            crate::cli::output::short_id(&imported.collection_id),
+        ),
+    }
     Ok(())
 }
 

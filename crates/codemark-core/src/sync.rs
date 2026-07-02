@@ -360,7 +360,7 @@ pub async fn import_pack_bytes(
     bytes: Vec<u8>,
     collection_name: Option<&str>,
     source_url: &str,
-) -> Result<()> {
+) -> Result<ImportedTour> {
     let bytes = decompress_if_zstd(bytes).await?;
     let pack_path =
         std::env::temp_dir().join(format!("codemark-p2p-pull-{}.sqlite", uuid::Uuid::new_v4()));
@@ -378,13 +378,21 @@ pub async fn import_pack_bytes(
     res
 }
 
+/// Summary of what a pull/import created locally.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ImportedTour {
+    pub collection_id: String,
+    pub name: String,
+    pub bookmark_count: usize,
+}
+
 /// Import a pack into the local database.
 async fn import_pack(
     db: &Database,
     pack_path: &std::path::Path,
     collection_name: Option<&str>,
     source_url: &str,
-) -> Result<()> {
+) -> Result<ImportedTour> {
     let reader = PackReader::open(pack_path)?;
 
     let tours = reader.tours()?;
@@ -433,6 +441,7 @@ async fn import_pack(
 
     // Merge bookmarks for this specific collection
     let bookmarks = reader.bookmarks_for_collection(&tour.id)?;
+    let bookmark_count = bookmarks.len();
     for mut bm in bookmarks {
         let old_id = bm.id.clone();
         let generated_id = uuid::Uuid::new_v4().to_string();
@@ -552,7 +561,7 @@ async fn import_pack(
     }
 
     tx.commit()?;
-    Ok(())
+    Ok(ImportedTour { collection_id, name: collection.name, bookmark_count })
 }
 
 /// Upload a pack to the server.
