@@ -48,7 +48,18 @@ impl BrowserLayout {
             return handled;
         }
 
-        self.handle_delegation(event)
+        if self.handle_delegation(event) {
+            return true;
+        }
+
+        if let Event::Key(key) = event {
+            if key.code == ratatui::crossterm::event::KeyCode::Esc && self.focus == FocusArea::Main {
+                self.set_focus(FocusArea::Panel3);
+                return true;
+            }
+        }
+
+        false
     }
 
     // ── Tick events ──────────────────────────────────────────────────────
@@ -514,10 +525,6 @@ impl BrowserLayout {
                     // Invalidate any in-flight search so it doesn't overwrite the refreshed panels
                     self.active_search_request = self.active_search_request.wrapping_add(1);
                     self.refresh_all_panels();
-                    self.set_focus(FocusArea::Panel3);
-                    return Some(true);
-                }
-                if self.focus == FocusArea::Main {
                     self.set_focus(FocusArea::Panel3);
                     return Some(true);
                 }

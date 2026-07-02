@@ -589,6 +589,9 @@ impl Component for CodePreview {
 
     fn set_focus(&mut self, focused: bool) {
         self.focused = focused;
+        if !focused {
+            self.selection_mode = false;
+        }
     }
 }
 
