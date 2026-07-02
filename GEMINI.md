@@ -1,3 +1,9 @@
+# Development Workflow
+
+- Always run the linter and formatter before creating any PRs.
+
+---
+
 # Debugging with the TUI logging system
 
 The TUI writes structured logs to `$TMPDIR/codemark-tui.log` using `tracing`. Control verbosity via `RUST_LOG`:
