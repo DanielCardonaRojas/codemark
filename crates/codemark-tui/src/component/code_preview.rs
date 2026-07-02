@@ -98,6 +98,8 @@ pub struct CodePreview {
     selected_range: Option<(usize, usize)>,
     /// Whether the component is focused
     focused: bool,
+    /// Whether the component is in selection mode, allowing column-level cursor movement
+    selection_mode: bool,
     /// Last rendered area
     last_area: std::cell::Cell<Rect>,
     /// Cache for highlighted lines to avoid re-highlighting on every frame
@@ -122,6 +124,7 @@ impl CodePreview {
             cursor_col: 0,
             selected_range: None,
             focused: false,
+            selection_mode: false,
             last_area: std::cell::Cell::new(Rect::default()),
             cached_lines: RefCell::new(Vec::new()),
             file_header: None,
@@ -137,6 +140,7 @@ impl CodePreview {
         self.scroll_offset = 0;
         self.selected_line = None;
         self.cursor_col = 0;
+        self.selection_mode = false;
         self.selected_range = None;
         self.refresh_cache();
     }
@@ -426,6 +430,7 @@ impl Component for CodePreview {
         // selection background by reversing the cell under the cursor, so it
         // keeps the underlying character and stays theme-independent.
         if self.focused
+            && self.selection_mode
             && let Some(selected) = self.selected_line
         {
             let offset = self.scroll_offset as usize;
@@ -511,9 +516,21 @@ impl Component for CodePreview {
                         self.clamp_cursor_col();
                         true
                     }
+                    ratatui::crossterm::event::KeyCode::Char('v') => {
+                        self.selection_mode = !self.selection_mode;
+                        true
+                    }
+                    ratatui::crossterm::event::KeyCode::Esc => {
+                        if self.selection_mode {
+                            self.selection_mode = false;
+                            true
+                        } else {
+                            false
+                        }
+                    }
                     ratatui::crossterm::event::KeyCode::Left
                     | ratatui::crossterm::event::KeyCode::Char('h') => {
-                        if self.selected_line.is_some() {
+                        if self.selection_mode && self.selected_line.is_some() {
                             self.cursor_col = self.cursor_col.saturating_sub(1);
                             true
                         } else {
@@ -522,7 +539,9 @@ impl Component for CodePreview {
                     }
                     ratatui::crossterm::event::KeyCode::Right
                     | ratatui::crossterm::event::KeyCode::Char('l') => {
-                        if let Some(line) = self.selected_line {
+                        if self.selection_mode
+                            && let Some(line) = self.selected_line
+                        {
                             self.cursor_col = (self.cursor_col + 1).min(self.max_cursor_col(line));
                             true
                         } else {
@@ -623,6 +642,32 @@ mod tests {
     }
 
     #[test]
+    fn navigation_keys_unhandled_when_not_in_selection_mode() {
+        let mut preview = CodePreview::new("one\ntwo\n", "txt");
+        preview.set_focus(true);
+        // Select the first line
+        assert!(press(&mut preview, 'j'));
+
+        // h and l return false (unhandled) when selection mode is off
+        assert!(!press(&mut preview, 'h'));
+        assert!(!press(&mut preview, 'l'));
+
+        // Left and Right return false when selection mode is off
+        let press_key = |preview: &mut CodePreview, code: ratatui::crossterm::event::KeyCode| {
+            preview.handle_event(&Event::Key(ratatui::crossterm::event::KeyEvent::from(code)))
+        };
+        assert!(!press_key(&mut preview, ratatui::crossterm::event::KeyCode::Left));
+        assert!(!press_key(&mut preview, ratatui::crossterm::event::KeyCode::Right));
+
+        // Enter selection mode
+        assert!(press(&mut preview, 'v'));
+
+        // Now they return true (handled)
+        assert!(press_key(&mut preview, ratatui::crossterm::event::KeyCode::Right));
+        assert!(press_key(&mut preview, ratatui::crossterm::event::KeyCode::Left));
+    }
+
+    #[test]
     fn hl_moves_cursor_column_and_renders_block_cursor() {
         let code = "one\ntwo\nthree\nfour\n";
         let mut preview = CodePreview::new(code, "txt");
@@ -635,9 +680,10 @@ mod tests {
         assert!(!press(&mut preview, 'l'));
         assert_eq!(preview.cursor_col, 0);
 
-        // Select the first line, then walk the cursor right with `l`.
+        // Select the first line, then enter selection mode to walk the cursor right with `l`.
         assert!(press(&mut preview, 'j'));
         assert_eq!(preview.selected_line, Some(0));
+        assert!(press(&mut preview, 'v'));
         assert!(press(&mut preview, 'l'));
         assert!(press(&mut preview, 'l'));
         assert_eq!(preview.cursor_col, 2);
@@ -661,6 +707,7 @@ mod tests {
         let mut preview = CodePreview::new("one\ntwo\n", "txt");
         preview.set_focus(true);
         assert!(press(&mut preview, 'j'));
+        assert!(press(&mut preview, 'v'));
         assert!(press(&mut preview, 'l'));
         assert_eq!(preview.cursor_col, 1);
     }
@@ -678,6 +725,7 @@ mod tests {
         press(&mut preview, 'j');
         press(&mut preview, 'j');
         assert_eq!(preview.selected_line, Some(2));
+        press(&mut preview, 'v');
         for _ in 0..5 {
             press(&mut preview, 'l');
         }
@@ -705,6 +753,7 @@ mod tests {
         preview.set_focus(true);
         render_to_buffer(&preview, 40, 6);
         press(&mut preview, 'j');
+        press(&mut preview, 'v');
         press(&mut preview, 'l');
         let buf = render_to_buffer(&preview, 40, 6);
         let gutter = preview.gutter_width();
@@ -725,6 +774,7 @@ mod tests {
         preview.set_focus(true);
         render_to_buffer(&preview, 30, 2);
         press(&mut preview, 'j');
+        press(&mut preview, 'v');
         press(&mut preview, 'l');
 
         let buf = render_to_buffer(&preview, 30, 2);
