@@ -118,7 +118,7 @@ pub async fn handle_pull(cli: &Cli, mode: &OutputMode, args: &PullArgs) -> Resul
 async fn handle_pull_p2p(cli: &Cli, mode: &OutputMode, args: &PullArgs) -> Result<()> {
     let bytes = codemark_p2p::pull_bytes(&args.tour)
         .await
-        .map_err(|e| Error::Operation(format!("p2p pull failed: {e:#}")))?;
+        .map_err(|e| Error::Operation(format!("p2p pull failed: {e}")))?;
 
     let db = super::open_db_for_write(cli)?;
     let name = args.name.as_deref().filter(|n| !n.is_empty());

@@ -105,18 +105,7 @@ async fn push_bytes_on(endpoint: Endpoint, bytes: Vec<u8>) -> Result<(Ticket, Pr
 
 /// Core of [`pull_bytes`], parameterized over the endpoint for offline tests.
 async fn pull_bytes_on(endpoint: &Endpoint, ticket: &str) -> Result<Vec<u8>> {
-    // Tickets are `blob` + base32; surrounding whitespace/newlines from copy-paste
-    // or terminal wrapping would otherwise fail to decode. Trim before parsing and,
-    // on failure, surface the underlying reason plus what we actually received.
-    let trimmed = ticket.trim();
-    let ticket: BlobTicket = trimmed.parse().map_err(|e| {
-        anyhow::anyhow!(
-            "invalid ticket: {e} (received {} chars{}). \
-             Copy the whole `blob…` string with no surrounding text or line breaks.",
-            trimmed.len(),
-            if trimmed.starts_with("blob") { "" } else { ", and it did not start with `blob`" },
-        )
-    })?;
+    let ticket: BlobTicket = ticket.parse().context("invalid ticket")?;
 
     // Dial the provider directly using the full address in the ticket (relay +
     // direct paths), then stream the single blob.
@@ -163,11 +152,8 @@ mod tests {
         let provider_ep = Endpoint::bind(presets::Minimal).await?;
         let (ticket, provider) = push_bytes_on(provider_ep, payload.clone()).await?;
 
-        // Pull with surrounding whitespace/newlines to exercise trimming — this
-        // mirrors tickets mangled by copy-paste or terminal line wrapping.
-        let padded = format!("  \n\t{ticket}\n  ");
         let receiver_ep = Endpoint::bind(presets::Minimal).await?;
-        let received = pull_bytes_on(&receiver_ep, &padded).await?;
+        let received = pull_bytes_on(&receiver_ep, &ticket).await?;
         receiver_ep.close().await;
 
         assert_eq!(received, payload);
