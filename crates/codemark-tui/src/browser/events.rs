@@ -52,12 +52,12 @@ impl BrowserLayout {
             return true;
         }
 
-        if let Event::Key(key) = event {
-            if key.code == ratatui::crossterm::event::KeyCode::Esc && self.focus == FocusArea::Main
-            {
-                self.set_focus(FocusArea::Panel3);
-                return true;
-            }
+        if let Event::Key(key) = event
+            && key.code == ratatui::crossterm::event::KeyCode::Esc
+            && self.focus == FocusArea::Main
+        {
+            self.set_focus(FocusArea::Panel3);
+            return true;
         }
 
         false
