@@ -62,6 +62,19 @@ pub enum Event {
         /// Bookmark that failed to resolve.
         bookmark_id: String,
     },
+    /// A p2p push is now serving a tour and its ticket is available. Carries the
+    /// collection name and the shareable ticket (copied to the clipboard by the
+    /// UI on receipt).
+    #[cfg(feature = "p2p")]
+    P2pServing { name: String, ticket: String },
+    /// The active p2p serving task has stopped (user stopped it, the app is
+    /// quitting, or the push failed to start).
+    #[cfg(feature = "p2p")]
+    P2pServingStopped,
+    /// A p2p pull finished. Carries a user-facing message and whether it
+    /// succeeded; on success the browser also refreshes the Collections panel.
+    #[cfg(feature = "p2p")]
+    P2pPullComplete { message: String, success: bool },
 }
 
 impl Event {

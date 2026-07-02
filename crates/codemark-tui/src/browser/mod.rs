@@ -9,6 +9,8 @@ mod data;
 mod dialog;
 mod events;
 mod left_pane;
+#[cfg(feature = "p2p")]
+mod p2p;
 mod right_pane;
 mod search;
 mod tabbed_panel;
@@ -185,6 +187,12 @@ pub struct BrowserLayout {
     inflight_preview: Option<(Option<String>, usize)>,
     /// Active modal dialog, if any. Captures all input while displayed.
     dialog: Option<ConfirmDialog>,
+    /// Active p2p push serving state, if any (a tour is being served over iroh).
+    #[cfg(feature = "p2p")]
+    p2p_serving: Option<p2p::P2pServing>,
+    /// Active p2p modal (push-method / paste-ticket / serving menu), if any.
+    #[cfg(feature = "p2p")]
+    p2p_modal: Option<p2p::P2pModal>,
 }
 
 /// Maximum results returned by a search-bar query (bookmarks or collections,
@@ -238,6 +246,10 @@ impl BrowserLayout {
             pending_preview: None,
             inflight_preview: None,
             dialog: None,
+            #[cfg(feature = "p2p")]
+            p2p_serving: None,
+            #[cfg(feature = "p2p")]
+            p2p_modal: None,
         };
         layout.update_focus_state();
         layout.sync_steps_tab_label();
@@ -2078,6 +2090,11 @@ impl BrowserLayout {
 
         // Modal dialogs draw last so they overlay every pane.
         self.render_dialog(area, buf);
+
+        // The p2p modal (push method / paste ticket / serving menu) overlays
+        // even the confirm dialog, as it is the most recently opened surface.
+        #[cfg(feature = "p2p")]
+        self.render_p2p_modal(area, buf);
     }
 }
 

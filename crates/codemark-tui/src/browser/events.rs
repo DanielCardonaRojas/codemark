@@ -30,6 +30,19 @@ impl BrowserLayout {
             }
         }
 
+        // A p2p modal (push method / paste ticket / serving menu) captures input
+        // the same way, and additionally consumes bracketed-paste into the ticket
+        // field so long tickets arrive intact.
+        #[cfg(feature = "p2p")]
+        if self.p2p_modal_active() {
+            match event {
+                Event::Key(key) => return self.handle_p2p_modal_key(key),
+                Event::Paste(text) => return self.handle_p2p_paste(text),
+                Event::Mouse(_) => return true,
+                _ => {}
+            }
+        }
+
         if matches!(event, Event::Tick) {
             return self.handle_tick_event();
         }
@@ -205,6 +218,21 @@ impl BrowserLayout {
                 // partial pull reports failure yet still writes some), so refresh
                 // its pager dots unconditionally; no-ops when no collection is open.
                 self.right_pane.refresh_step_health(&self.db);
+                Some(true)
+            }
+            #[cfg(feature = "p2p")]
+            Event::P2pServing { name, ticket } => {
+                self.on_p2p_serving(name, ticket);
+                Some(true)
+            }
+            #[cfg(feature = "p2p")]
+            Event::P2pServingStopped => {
+                self.on_p2p_serving_stopped();
+                Some(true)
+            }
+            #[cfg(feature = "p2p")]
+            Event::P2pPullComplete { message, success } => {
+                self.on_p2p_pull_complete(message, *success);
                 Some(true)
             }
             Event::RemoteToursLoaded(tours, scope) => {
@@ -634,6 +662,15 @@ impl BrowserLayout {
             ratatui::crossterm::event::KeyCode::Char('o') => {
                 return self.handle_o_key(key);
             }
+            // Ctrl+E opens the serving menu while a p2p push is active.
+            #[cfg(feature = "p2p")]
+            ratatui::crossterm::event::KeyCode::Char('e')
+                if key.modifiers.contains(ratatui::crossterm::event::KeyModifiers::CONTROL) =>
+            {
+                if self.open_serving_menu() {
+                    return Some(true);
+                }
+            }
             ratatui::crossterm::event::KeyCode::Char('d')
                 if self.should_handle_keybindings() && self.focus == FocusArea::ContentPanel =>
             {
@@ -645,13 +682,26 @@ impl BrowserLayout {
                 if let Some(ContentTab::Collections) =
                     ContentTab::from_index(self.left_pane.content_panel.tabs.selected_index())
                 {
-                    self.start_push_collection();
-                    return Some(true);
+                    #[cfg(feature = "p2p")]
+                    return Some(self.handle_collection_push_key());
+                    #[cfg(not(feature = "p2p"))]
+                    {
+                        self.start_push_collection();
+                        return Some(true);
+                    }
                 }
             }
             ratatui::crossterm::event::KeyCode::Char('p')
                 if self.should_handle_keybindings() && self.focus == FocusArea::ContentPanel =>
             {
+                // On the Collections tab, `p` receives a tour over p2p (the Tours
+                // tab keeps `p` for server pull, handled inside handle_pull_key).
+                #[cfg(feature = "p2p")]
+                if let Some(ContentTab::Collections) =
+                    ContentTab::from_index(self.left_pane.content_panel.tabs.selected_index())
+                {
+                    return Some(self.handle_collection_pull_key());
+                }
                 return self.handle_pull_key();
             }
             ratatui::crossterm::event::KeyCode::Char('H')

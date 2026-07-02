@@ -866,6 +866,7 @@ version = "0.7.21"
 dependencies = [
  "anyhow",
  "codemark-core",
+ "codemark-p2p",
  "copypasta",
  "crossterm 0.28.1",
  "futures",

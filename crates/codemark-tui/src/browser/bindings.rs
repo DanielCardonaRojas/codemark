@@ -130,8 +130,25 @@ impl BrowserLayout {
             ];
         }
 
+        // A p2p modal only accepts button navigation/activation.
+        #[cfg(feature = "p2p")]
+        if self.p2p_modal_active() {
+            return vec![
+                KeyBinding::new("←/→", "Select"),
+                KeyBinding::new("Enter", "Activate"),
+                KeyBinding::new("Esc", "Cancel"),
+            ];
+        }
+
         // Context-specific bindings first (most relevant), then globals.
         let mut bindings: Vec<KeyBinding> = Vec::new();
+
+        // A persistent indicator while a tour is being served over p2p, plus the
+        // key that opens the serving menu.
+        #[cfg(feature = "p2p")]
+        if self.is_p2p_serving() {
+            bindings.push(KeyBinding::new("Ctrl+E", "\u{23f9} Serving").with_priority(95));
+        }
 
         match self.focus {
             FocusArea::Search => {
@@ -171,6 +188,8 @@ impl BrowserLayout {
                             KeyBinding::new("Enter", "Open").with_priority(HIDDEN_BINDING_PRIORITY),
                         );
                         bindings.push(KeyBinding::new("P", "Push").with_priority(85));
+                        #[cfg(feature = "p2p")]
+                        bindings.push(KeyBinding::new("p", "Receive").with_priority(83));
                         bindings.push(KeyBinding::new("d", "Delete").with_priority(75));
                         bindings.push(
                             KeyBinding::new("H", "Heal all").with_priority(HIDDEN_BINDING_PRIORITY),

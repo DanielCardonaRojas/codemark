@@ -95,8 +95,13 @@ jobs:
       - name: Test p2p transport (offline round-trip)
         run: cargo test -p codemark-p2p
 
-      - name: Clippy p2p crate and feature-gated CLI code
-        run: cargo clippy -p codemark-p2p -p codemark-cli --features p2p -- -D warnings
+      - name: Test feature-gated TUI code
+        run: cargo test -p codemark-tui --features p2p
+
+      - name: Clippy p2p crate and feature-gated CLI + TUI code
+        run: |
+          cargo clippy -p codemark-p2p -p codemark-cli --features p2p -- -D warnings
+          cargo clippy -p codemark-tui --features p2p -- -D warnings
 
   cross-platform:
     name: Build ${{ matrix.target }}
