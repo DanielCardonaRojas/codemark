@@ -516,7 +516,8 @@ impl Component for CodePreview {
                         self.clamp_cursor_col();
                         true
                     }
-                    ratatui::crossterm::event::KeyCode::Char('v') => {
+                    ratatui::crossterm::event::KeyCode::Enter
+                    | ratatui::crossterm::event::KeyCode::Char('v') => {
                         self.selection_mode = !self.selection_mode;
                         true
                     }
