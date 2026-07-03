@@ -289,7 +289,7 @@ async fn download_pack(
 
 /// Import a pack into the local database.
 async fn import_pack(
-    db: &mut Database,
+    db: &Database,
     pack_path: &std::path::Path,
     collection_name: Option<&str>,
     source_url: &str,
@@ -309,14 +309,16 @@ async fn import_pack(
     }
     let tour = &tours[0];
 
-    // Make pull idempotent: if this exact tour was already imported, refresh it
-    // by removing the previous copy (collection + its bookmarks) before
-    // re-importing. Without this, re-pulling would mint a second collection and
-    // — because `insert_bookmark` reuses an existing bookmark by (file_path,
-    // query) — re-append every annotation onto the shared bookmark, piling up
-    // duplicate notes on each pull.
+    // Make pull idempotent: if this exact tour was already imported, drop the
+    // previous collection before re-importing so we don't mint a second copy.
+    //
+    // We delete only the collection row (its membership rows cascade away), NOT
+    // its bookmarks: a recursive delete would unconditionally remove bookmarks
+    // the user may have added to their own collections, silently orphaning them.
+    // The bookmarks are left in place and reused on re-import — the per-bookmark
+    // metadata skip below keeps that reuse from duplicating notes.
     if let Some(existing) = db.get_collection_by_imported_url(source_url)? {
-        db.delete_collection_recursive(&existing.id)?;
+        db.delete_collection_by_id(&existing.id)?;
     }
 
     // Create local collection
@@ -516,8 +518,7 @@ pub async fn sync(opts: SyncOptions) -> Result<()> {
 /// Handle pulling a collection from the server.
 async fn sync_pull(opts: SyncOptions) -> Result<()> {
     tracing::info!(target: "codemark::http", direction = "pull", collection_id = %opts.collection_id, server = %opts.server_url, "starting sync");
-    let mut db =
-        opts.db.ok_or_else(|| Error::Operation("database required for pull".to_string()))?;
+    let db = opts.db.ok_or_else(|| Error::Operation("database required for pull".to_string()))?;
 
     let temp_dir = std::env::temp_dir();
     let pack_path = temp_dir.join(format!("codemark-pull-{}.sqlite", uuid::Uuid::new_v4()));
@@ -560,11 +561,11 @@ async fn sync_pull(opts: SyncOptions) -> Result<()> {
         match &opts.save_name {
             Some(name) if !name.is_empty() => {
                 // Save with custom name
-                import_pack(&mut db, &pack_path, Some(name), &source_url).await?;
+                import_pack(&db, &pack_path, Some(name), &source_url).await?;
             }
             _ => {
                 // Save with original name
-                import_pack(&mut db, &pack_path, None, &source_url).await?;
+                import_pack(&db, &pack_path, None, &source_url).await?;
             }
         }
 
@@ -737,10 +738,10 @@ mod tests {
     #[tokio::test]
     async fn import_pack_twice_is_idempotent() {
         let (pack_path, source_url) = write_test_pack();
-        let mut db = Database::open_in_memory().unwrap();
+        let db = Database::open_in_memory().unwrap();
 
-        import_pack(&mut db, &pack_path, None, &source_url).await.unwrap();
-        import_pack(&mut db, &pack_path, None, &source_url).await.unwrap();
+        import_pack(&db, &pack_path, None, &source_url).await.unwrap();
+        import_pack(&db, &pack_path, None, &source_url).await.unwrap();
 
         // Exactly one collection was imported (no duplicate on re-pull).
         let collections = db.list_collections().unwrap();
@@ -766,10 +767,10 @@ mod tests {
     #[tokio::test]
     async fn re_pull_after_deleting_collection_does_not_duplicate_notes() {
         let (pack_path, source_url) = write_test_pack();
-        let mut db = Database::open_in_memory().unwrap();
+        let db = Database::open_in_memory().unwrap();
 
         // First pull.
-        import_pack(&mut db, &pack_path, None, &source_url).await.unwrap();
+        import_pack(&db, &pack_path, None, &source_url).await.unwrap();
 
         // Delete the collection without removing its bookmarks (the default
         // `delete` behaviour), leaving the bookmark + its annotation orphaned.
@@ -778,7 +779,7 @@ mod tests {
         db.delete_collection_by_id(&first[0].0.id).unwrap();
 
         // Re-pull the same collection.
-        import_pack(&mut db, &pack_path, None, &source_url).await.unwrap();
+        import_pack(&db, &pack_path, None, &source_url).await.unwrap();
 
         let collections = db.list_collections().unwrap();
         assert_eq!(collections.len(), 1, "re-pull must not duplicate the collection");
@@ -790,6 +791,56 @@ mod tests {
             1,
             "re-pull must not duplicate the orphaned bookmark's annotations"
         );
+
+        let _ = std::fs::remove_file(&pack_path);
+    }
+
+    // Regression: re-pulling a collection must not delete a bookmark the user
+    // has added to one of their own collections. The refresh drops only the
+    // imported collection row, never its bookmarks, so shared bookmarks survive.
+    #[tokio::test]
+    async fn re_pull_preserves_bookmarks_shared_with_user_collection() {
+        use crate::engine::bookmark::{Collection, Visibility};
+
+        let (pack_path, source_url) = write_test_pack();
+        let db = Database::open_in_memory().unwrap();
+
+        // First pull, then grab the imported bookmark's id.
+        import_pack(&db, &pack_path, None, &source_url).await.unwrap();
+        let imported = db.list_collections().unwrap();
+        let imported_bm_id =
+            db.list_bookmarks_in_collection(&imported[0].0.id).unwrap()[0].id.clone();
+
+        // The user adds that bookmark to their own, separate collection.
+        let user_collection = Collection {
+            id: "user-collection".to_string(),
+            name: "My Collection".to_string(),
+            description: None,
+            visibility: Visibility::Private,
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+            created_by: None,
+            created_branch: None,
+            published_at: None,
+            published_commit_sha: None,
+            repo_url: None,
+            repo_id: None,
+            status: None,
+            health: None,
+            health_computed_at: None,
+            updated_at: None,
+            imported_from_url: None,
+        };
+        db.insert_collection(&user_collection).unwrap();
+        db.add_to_collection(&user_collection.id, std::slice::from_ref(&imported_bm_id)).unwrap();
+
+        // Re-pull the imported collection.
+        import_pack(&db, &pack_path, None, &source_url).await.unwrap();
+
+        // The user's collection still holds the shared bookmark — it was not
+        // deleted out from under them.
+        let still_there = db.list_bookmarks_in_collection(&user_collection.id).unwrap();
+        assert_eq!(still_there.len(), 1, "re-pull must not delete a user-shared bookmark");
+        assert_eq!(still_there[0].id, imported_bm_id);
 
         let _ = std::fs::remove_file(&pack_path);
     }
