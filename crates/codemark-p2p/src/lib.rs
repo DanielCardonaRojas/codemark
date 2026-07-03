@@ -37,6 +37,12 @@ pub type Ticket = String;
 /// (direct socket addresses and/or a home relay) before giving up.
 const ADDR_TIMEOUT: Duration = Duration::from_secs(15);
 
+/// How long to wait to reach the sender before reporting it as unreachable. Sits
+/// just above iroh's internal ~10s connect timeout so its error usually surfaces
+/// first; this is a backstop for cases (e.g. a stalled relay path) where connect
+/// would otherwise hang longer.
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(20);
+
 /// Keeps a pushed blob available to peers.
 ///
 /// Dropping (or [`shutdown`](Provider::shutdown)-ing) this guard tears down the
@@ -75,7 +81,7 @@ pub async fn push_bytes(bytes: Vec<u8>) -> Result<(Ticket, Provider)> {
 /// the hash embedded in the ticket, or this returns an error.
 pub async fn pull_bytes(ticket: &str) -> Result<Vec<u8>> {
     let endpoint = Endpoint::bind(presets::N0).await.context("failed to bind iroh endpoint")?;
-    let result = pull_bytes_on(&endpoint, ticket).await;
+    let result = pull_bytes_on(&endpoint, ticket, CONNECT_TIMEOUT).await;
     endpoint.close().await;
     result
 }
@@ -103,8 +109,13 @@ async fn push_bytes_on(endpoint: Endpoint, bytes: Vec<u8>) -> Result<(Ticket, Pr
     Ok((ticket.to_string(), Provider { router, _store: store, _tag: tag }))
 }
 
-/// Core of [`pull_bytes`], parameterized over the endpoint for offline tests.
-async fn pull_bytes_on(endpoint: &Endpoint, ticket: &str) -> Result<Vec<u8>> {
+/// Core of [`pull_bytes`], parameterized over the endpoint and connect timeout
+/// for offline tests.
+async fn pull_bytes_on(
+    endpoint: &Endpoint,
+    ticket: &str,
+    connect_timeout: Duration,
+) -> Result<Vec<u8>> {
     let trimmed = ticket.trim();
     let ticket: BlobTicket = trimmed.parse().map_err(|e| {
         // A `blob…` string of the wrong base32 length means a character was
@@ -119,16 +130,35 @@ async fn pull_bytes_on(endpoint: &Endpoint, ticket: &str) -> Result<Vec<u8>> {
     })?;
 
     // Dial the provider directly using the full address in the ticket (relay +
-    // direct paths), then stream the single blob.
-    let connection = endpoint
-        .connect(ticket.addr().clone(), iroh_blobs::ALPN)
-        .await
-        .context("failed to connect to provider")?;
+    // direct paths). A p2p pull needs the sender online at the same time, so an
+    // unreachable node is the common failure — bound the wait ourselves (iroh's
+    // internal ~10s timeout is a backstop) and explain the likely cause rather
+    // than surfacing a bare connection error.
+    let offline_hint = "make sure the sender is still running \
+        `codemark tour push --p2p` and is online — a peer-to-peer pull needs both \
+        machines online at the same time";
+    let connection = match tokio::time::timeout(
+        connect_timeout,
+        endpoint.connect(ticket.addr().clone(), iroh_blobs::ALPN),
+    )
+    .await
+    {
+        Ok(Ok(connection)) => connection,
+        Ok(Err(e)) => {
+            anyhow::bail!("couldn't reach the sender ({e}) — {offline_hint}");
+        }
+        Err(_) => {
+            anyhow::bail!(
+                "timed out after {}s trying to reach the sender — {offline_hint}",
+                connect_timeout.as_secs(),
+            );
+        }
+    };
 
     let (bytes, _stats) = iroh_blobs::get::request::get_blob(connection, ticket.hash())
         .bytes_and_stats()
         .await
-        .context("failed to download blob")?;
+        .context("failed to download the tour from the sender")?;
 
     Ok(bytes.to_vec())
 }
@@ -164,7 +194,7 @@ mod tests {
         let (ticket, provider) = push_bytes_on(provider_ep, payload.clone()).await?;
 
         let receiver_ep = Endpoint::bind(presets::Minimal).await?;
-        let received = pull_bytes_on(&receiver_ep, &ticket).await?;
+        let received = pull_bytes_on(&receiver_ep, &ticket, CONNECT_TIMEOUT).await?;
         receiver_ep.close().await;
 
         assert_eq!(received, payload);
@@ -176,8 +206,29 @@ mod tests {
     #[tokio::test]
     async fn rejects_malformed_ticket() {
         let endpoint = Endpoint::bind(presets::Minimal).await.unwrap();
-        let err = pull_bytes_on(&endpoint, "not-a-ticket").await.unwrap_err();
+        let err = pull_bytes_on(&endpoint, "not-a-ticket", CONNECT_TIMEOUT).await.unwrap_err();
         assert!(err.to_string().contains("invalid ticket"), "got: {err}");
         endpoint.close().await;
+    }
+
+    /// Pulling from a node that is offline (its endpoint was bound to mint a
+    /// valid ticket, then closed) reports the sender as unreachable rather than
+    /// hanging or surfacing a bare connection error.
+    #[tokio::test]
+    async fn reports_offline_sender() {
+        use iroh_blobs::{BlobFormat, Hash};
+
+        // Bind an endpoint to obtain a valid, dialable address, mint a ticket for
+        // it, then close it so nothing is listening.
+        let dead = Endpoint::bind(presets::Minimal).await.unwrap();
+        let addr = wait_for_addr(&dead).await.unwrap();
+        let ticket = BlobTicket::new(addr, Hash::new(b"absent-tour"), BlobFormat::Raw);
+        dead.close().await;
+
+        let puller = Endpoint::bind(presets::Minimal).await.unwrap();
+        let err =
+            pull_bytes_on(&puller, &ticket.to_string(), Duration::from_secs(1)).await.unwrap_err();
+        assert!(err.to_string().contains("reach the sender"), "got: {err}");
+        puller.close().await;
     }
 }
