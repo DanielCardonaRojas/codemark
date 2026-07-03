@@ -309,17 +309,12 @@ async fn import_pack(
     }
     let tour = &tours[0];
 
-    // Make pull idempotent: if this exact tour was already imported, drop the
-    // previous collection before re-importing so we don't mint a second copy.
-    //
-    // We delete only the collection row (its membership rows cascade away), NOT
-    // its bookmarks: a recursive delete would unconditionally remove bookmarks
-    // the user may have added to their own collections, silently orphaning them.
-    // The bookmarks are left in place and reused on re-import — the per-bookmark
-    // metadata skip below keeps that reuse from duplicating notes.
-    if let Some(existing) = db.get_collection_by_imported_url(source_url)? {
-        db.delete_collection_by_id(&existing.id)?;
-    }
+    // Make pull idempotent: if this exact tour was already imported, we drop the
+    // previous collection so re-pulling doesn't mint a second copy. The actual
+    // delete happens *after* the new copy is fully imported (see below) — doing
+    // it up front would leave a window where a mid-import failure destroys the
+    // old collection without a complete replacement.
+    let existing_collection = db.get_collection_by_imported_url(source_url)?;
 
     // Create local collection
     let collection_id = uuid::Uuid::new_v4().to_string();
@@ -441,6 +436,20 @@ async fn import_pack(
             res.bookmark_id = bookmark_id.clone();
             db.insert_resolution(&res)?;
         }
+    }
+
+    // Now that the fresh copy is fully imported, drop the previous collection.
+    // Deleting last keeps the old collection intact if any insert above fails,
+    // so a mid-import error never leaves the tour with no local copy at all.
+    //
+    // Only the collection row is removed (its membership rows cascade away), NOT
+    // its bookmarks: a recursive delete would unconditionally remove bookmarks
+    // the user may have added to their own collections, silently orphaning them.
+    // The bookmarks were reused above (see the per-bookmark metadata skip), so
+    // they now belong to the freshly imported collection without duplicated
+    // notes.
+    if let Some(existing) = existing_collection {
+        db.delete_collection_by_id(&existing.id)?;
     }
 
     Ok(())
