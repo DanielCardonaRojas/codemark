@@ -1,6 +1,6 @@
 [package]
 name = "codemark-cli"
-version = "0.7.19"
+version = "0.7.20"
 edition = "2024"
 description = "CLI for Codemark"
 license = "MIT"

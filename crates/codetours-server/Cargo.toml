@@ -1,6 +1,6 @@
 [package]
 name = "codetours-server"
-version = "0.7.19"
+version = "0.7.20"
 edition = "2024"
 description = "Server for Codetours"
 license = "MIT"
