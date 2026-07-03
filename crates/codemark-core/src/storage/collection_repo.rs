@@ -43,6 +43,23 @@ impl Database {
         }
     }
 
+    /// Get a collection previously imported from the given source URL, if any.
+    ///
+    /// Used to make `pull` idempotent: a collection imported from a remote tour
+    /// records that tour's URL in `imported_from_url`, so re-pulling the same
+    /// tour can find and refresh the existing copy instead of duplicating it.
+    pub fn get_collection_by_imported_url(&self, url: &str) -> Result<Option<Collection>> {
+        let mut stmt = self.conn().prepare(
+            "SELECT id, name, description, visibility, created_at, created_by, created_branch, published_at, published_commit_sha, repo_url, repo_id, status, health, health_computed_at, updated_at, imported_from_url
+             FROM collections WHERE imported_from_url = ?1",
+        )?;
+        let mut rows = stmt.query_map([url], row_to_collection)?;
+        match rows.next() {
+            Some(row) => Ok(Some(row?)),
+            None => Ok(None),
+        }
+    }
+
     /// Get a collection by its unique ID.
     pub fn get_collection_by_id(&self, id: &str) -> Result<Option<Collection>> {
         let mut stmt = self.conn().prepare(

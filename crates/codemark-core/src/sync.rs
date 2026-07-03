@@ -289,7 +289,7 @@ async fn download_pack(
 
 /// Import a pack into the local database.
 async fn import_pack(
-    db: &Database,
+    db: &mut Database,
     pack_path: &std::path::Path,
     collection_name: Option<&str>,
     source_url: &str,
@@ -309,6 +309,16 @@ async fn import_pack(
     }
     let tour = &tours[0];
 
+    // Make pull idempotent: if this exact tour was already imported, refresh it
+    // by removing the previous copy (collection + its bookmarks) before
+    // re-importing. Without this, re-pulling would mint a second collection and
+    // — because `insert_bookmark` reuses an existing bookmark by (file_path,
+    // query) — re-append every annotation onto the shared bookmark, piling up
+    // duplicate notes on each pull.
+    if let Some(existing) = db.get_collection_by_imported_url(source_url)? {
+        db.delete_collection_recursive(&existing.id)?;
+    }
+
     // Create local collection
     let collection_id = uuid::Uuid::new_v4().to_string();
     let mut collection = tour.clone();
@@ -327,12 +337,46 @@ async fn import_pack(
     let bookmarks = reader.bookmarks_for_collection(&tour.id)?;
     for mut bm in bookmarks {
         let old_id = bm.id.clone();
-        bm.id = uuid::Uuid::new_v4().to_string();
+        let generated_id = uuid::Uuid::new_v4().to_string();
+        bm.id = generated_id.clone();
         // Tag with source URL
         bm.tags.push(format!("imported:{}", source_url));
 
         let bookmark_id = db.insert_bookmark(&bm)?;
         db.add_to_collection(&collection_id, std::slice::from_ref(&bookmark_id))?;
+
+        // `insert_bookmark` dedupes by (file_path, query): it returns our freshly
+        // generated id only when it actually inserted a new row, otherwise it
+        // returns the id of a pre-existing bookmark. A reused bookmark already
+        // carries its annotations/comments/resolutions from a prior import — the
+        // per-bookmark metadata below mints fresh ids on every call, so
+        // re-importing it would pile up duplicate notes. This is the case hit
+        // when a collection is deleted (which orphans, but does not remove, its
+        // bookmarks) and then re-pulled. Skip metadata for reused bookmarks.
+        //
+        // Tags are exempt: `insert_tag` is `INSERT OR IGNORE` on (bookmark_id,
+        // tag), so re-importing them is already idempotent.
+        let bookmark_is_new = bookmark_id == generated_id;
+
+        // Import tags
+        let mut tag_stmt = reader.conn().prepare(
+            "SELECT bookmark_id, tag, added_at, added_by FROM bookmark_tags WHERE bookmark_id = ?1",
+        )?;
+        let tags = tag_stmt.query_map([&old_id], |row: &rusqlite::Row| {
+            Ok(crate::engine::bookmark::Tag {
+                bookmark_id: bookmark_id.clone(),
+                tag: row.get(1)?,
+                added_at: row.get(2)?,
+                added_by: row.get(3)?,
+            })
+        })?;
+        for tag in tags {
+            db.insert_tag(&tag?)?;
+        }
+
+        if !bookmark_is_new {
+            continue;
+        }
 
         // Import annotations
         let mut ann_stmt = reader.conn().prepare("SELECT id, bookmark_id, added_at, added_by, notes, context, source FROM bookmark_annotations WHERE bookmark_id = ?1")?;
@@ -349,22 +393,6 @@ async fn import_pack(
         })?;
         for ann in annotations {
             db.insert_annotation(&ann?)?;
-        }
-
-        // Import tags
-        let mut tag_stmt = reader.conn().prepare(
-            "SELECT bookmark_id, tag, added_at, added_by FROM bookmark_tags WHERE bookmark_id = ?1",
-        )?;
-        let tags = tag_stmt.query_map([&old_id], |row: &rusqlite::Row| {
-            Ok(crate::engine::bookmark::Tag {
-                bookmark_id: bookmark_id.clone(),
-                tag: row.get(1)?,
-                added_at: row.get(2)?,
-                added_by: row.get(3)?,
-            })
-        })?;
-        for tag in tags {
-            db.insert_tag(&tag?)?;
         }
 
         // Import comments with ID mapping to preserve threading
@@ -488,7 +516,8 @@ pub async fn sync(opts: SyncOptions) -> Result<()> {
 /// Handle pulling a collection from the server.
 async fn sync_pull(opts: SyncOptions) -> Result<()> {
     tracing::info!(target: "codemark::http", direction = "pull", collection_id = %opts.collection_id, server = %opts.server_url, "starting sync");
-    let db = opts.db.ok_or_else(|| Error::Operation("database required for pull".to_string()))?;
+    let mut db =
+        opts.db.ok_or_else(|| Error::Operation("database required for pull".to_string()))?;
 
     let temp_dir = std::env::temp_dir();
     let pack_path = temp_dir.join(format!("codemark-pull-{}.sqlite", uuid::Uuid::new_v4()));
@@ -531,11 +560,11 @@ async fn sync_pull(opts: SyncOptions) -> Result<()> {
         match &opts.save_name {
             Some(name) if !name.is_empty() => {
                 // Save with custom name
-                import_pack(&db, &pack_path, Some(name), &source_url).await?;
+                import_pack(&mut db, &pack_path, Some(name), &source_url).await?;
             }
             _ => {
                 // Save with original name
-                import_pack(&db, &pack_path, None, &source_url).await?;
+                import_pack(&mut db, &pack_path, None, &source_url).await?;
             }
         }
 
@@ -629,6 +658,140 @@ mod tests {
         let headers = build_auth_headers(None).unwrap();
         assert!(headers.get("Authorization").is_none());
         assert!(headers.get("X-Tour-Token").is_none());
+    }
+
+    /// Build a single-tour pack file on disk, returning its path and the source
+    /// URL to import it under. The pack carries one bookmark with one annotation.
+    fn write_test_pack() -> (std::path::PathBuf, String) {
+        use crate::engine::bookmark::{
+            Annotation, Bookmark, BookmarkHealth, Collection, ResolutionMethod, Visibility,
+        };
+
+        let pack_path =
+            std::env::temp_dir().join(format!("codemark-test-pack-{}.sqlite", uuid::Uuid::new_v4()));
+
+        {
+            let db = Database::create(&pack_path).unwrap();
+
+            let collection = Collection {
+                id: "pack-collection".to_string(),
+                name: "Shared Tour".to_string(),
+                description: None,
+                visibility: Visibility::Public,
+                created_at: "2026-01-01T00:00:00Z".to_string(),
+                created_by: None,
+                created_branch: None,
+                published_at: None,
+                published_commit_sha: None,
+                repo_url: None,
+                repo_id: None,
+                status: None,
+                health: None,
+                health_computed_at: None,
+                updated_at: None,
+                imported_from_url: None,
+            };
+            db.insert_collection(&collection).unwrap();
+
+            let bookmark = Bookmark {
+                id: "pack-bookmark".to_string(),
+                query: "(function_declaration) @target".to_string(),
+                language: "swift".to_string(),
+                file_path: "src/main.swift".to_string(),
+                content_hash: Some("sha256:abcd".to_string()),
+                commit_hash: Some("abc123".to_string()),
+                health: BookmarkHealth::Active,
+                resolution_method: Some(ResolutionMethod::Exact),
+                last_resolved_at: None,
+                stale_since: None,
+                created_at: "2026-01-01T00:00:00Z".to_string(),
+                created_by: None,
+                current_resolution_id: None,
+                repo_id: None,
+                tags: Vec::new(),
+                annotations: Vec::new(),
+                comments: Vec::new(),
+            };
+            let bookmark_id = db.insert_bookmark(&bookmark).unwrap();
+            db.add_to_collection(&collection.id, std::slice::from_ref(&bookmark_id)).unwrap();
+
+            db.insert_annotation(&Annotation {
+                id: "pack-annotation".to_string(),
+                bookmark_id: bookmark_id.clone(),
+                added_at: "2026-01-01T00:00:00Z".to_string(),
+                added_by: Some("author".to_string()),
+                notes: Some("the one and only note".to_string()),
+                context: None,
+                source: None,
+            })
+            .unwrap();
+        }
+
+        (pack_path, "http://example.com/tours/pack-collection".to_string())
+    }
+
+    // Regression: pulling the same collection twice must not create a duplicate
+    // local collection, nor duplicate the bookmark annotations. `import_pack` is
+    // idempotent per `imported_from_url`, so a re-pull refreshes the existing
+    // copy instead of piling up collections and notes.
+    #[tokio::test]
+    async fn import_pack_twice_is_idempotent() {
+        let (pack_path, source_url) = write_test_pack();
+        let mut db = Database::open_in_memory().unwrap();
+
+        import_pack(&mut db, &pack_path, None, &source_url).await.unwrap();
+        import_pack(&mut db, &pack_path, None, &source_url).await.unwrap();
+
+        // Exactly one collection was imported (no duplicate on re-pull).
+        let collections = db.list_collections().unwrap();
+        assert_eq!(collections.len(), 1, "re-pull must not duplicate the collection");
+
+        // Its single bookmark carries exactly one annotation (no duplicate note).
+        let collection_id = collections[0].0.id.clone();
+        let bookmarks = db.list_bookmarks_in_collection(&collection_id).unwrap();
+        assert_eq!(bookmarks.len(), 1, "re-pull must not duplicate bookmarks");
+        assert_eq!(
+            bookmarks[0].annotations.len(),
+            1,
+            "re-pull must not duplicate bookmark annotations"
+        );
+
+        let _ = std::fs::remove_file(&pack_path);
+    }
+
+    // Regression for the reported flow: pull a collection, delete it (a
+    // non-recursive delete that orphans but keeps its bookmarks), then re-pull.
+    // The orphaned bookmark is reused by (file_path, query), so its annotations
+    // must not be re-imported — otherwise every note is duplicated on re-pull.
+    #[tokio::test]
+    async fn re_pull_after_deleting_collection_does_not_duplicate_notes() {
+        let (pack_path, source_url) = write_test_pack();
+        let mut db = Database::open_in_memory().unwrap();
+
+        // First pull.
+        import_pack(&mut db, &pack_path, None, &source_url).await.unwrap();
+
+        // Delete the collection without removing its bookmarks (the default
+        // `delete` behaviour), leaving the bookmark + its annotation orphaned.
+        let first = db.list_collections().unwrap();
+        assert_eq!(first.len(), 1);
+        db.delete_collection_by_id(&first[0].0.id).unwrap();
+
+        // Re-pull the same collection.
+        import_pack(&mut db, &pack_path, None, &source_url).await.unwrap();
+
+        let collections = db.list_collections().unwrap();
+        assert_eq!(collections.len(), 1, "re-pull must not duplicate the collection");
+
+        let bookmarks = db.list_bookmarks_in_collection(&collections[0].0.id).unwrap();
+        assert_eq!(bookmarks.len(), 1, "re-pull must reuse the orphaned bookmark");
+        assert_eq!(
+            bookmarks[0].annotations.len(),
+            1,
+            "re-pull must not duplicate the orphaned bookmark's annotations"
+        );
+
+        let _ = std::fs::remove_file(&pack_path);
     }
 
     #[test]
