@@ -667,8 +667,8 @@ mod tests {
             Annotation, Bookmark, BookmarkHealth, Collection, ResolutionMethod, Visibility,
         };
 
-        let pack_path =
-            std::env::temp_dir().join(format!("codemark-test-pack-{}.sqlite", uuid::Uuid::new_v4()));
+        let pack_path = std::env::temp_dir()
+            .join(format!("codemark-test-pack-{}.sqlite", uuid::Uuid::new_v4()));
 
         {
             let db = Database::create(&pack_path).unwrap();
