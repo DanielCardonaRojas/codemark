@@ -319,11 +319,12 @@ async fn import_pack(
     let tx = db.conn().unchecked_transaction()?;
 
     // Make pull idempotent: if this exact tour was already imported, we drop the
-    // previous collection so re-pulling doesn't mint a second copy. The delete
-    // happens after the new copy is imported (see below); since it shares this
-    // transaction, either both the new import and the old-copy removal commit,
-    // or neither does.
-    let existing_collection = db.get_collection_by_imported_url(source_url)?;
+    // previous copies so re-pulling doesn't mint another. We capture *all* prior
+    // copies (a database may carry duplicates accumulated under the old pull
+    // behavior) and remove them after the new copy is imported (see below);
+    // since it shares this transaction, either both the new import and the
+    // old-copy removal commit, or neither does.
+    let existing_collections = db.get_collections_by_imported_url(source_url)?;
 
     // Create local collection
     let collection_id = uuid::Uuid::new_v4().to_string();
@@ -447,15 +448,15 @@ async fn import_pack(
         }
     }
 
-    // Now that the fresh copy is fully imported, drop the previous collection.
+    // Now that the fresh copy is fully imported, drop the previous copies.
     //
-    // Only the collection row is removed (its membership rows cascade away), NOT
-    // its bookmarks: a recursive delete would unconditionally remove bookmarks
-    // the user may have added to their own collections, silently orphaning them.
-    // The bookmarks were reused above (see the per-bookmark metadata skip), so
-    // they now belong to the freshly imported collection without duplicated
-    // notes.
-    if let Some(existing) = existing_collection {
+    // Only the collection rows are removed (their membership rows cascade away),
+    // NOT their bookmarks: a recursive delete would unconditionally remove
+    // bookmarks the user may have added to their own collections, silently
+    // orphaning them. The bookmarks were reused above (see the per-bookmark
+    // metadata skip), so they now belong to the freshly imported collection
+    // without duplicated notes.
+    for existing in existing_collections {
         db.delete_collection_by_id(&existing.id)?;
     }
 
@@ -772,6 +773,53 @@ mod tests {
             bookmarks[0].annotations.len(),
             1,
             "re-pull must not duplicate bookmark annotations"
+        );
+
+        let _ = std::fs::remove_file(&pack_path);
+    }
+
+    // Regression: a re-pull must repair a database that already carries multiple
+    // collections for the same source URL (duplicates accumulated under the old,
+    // non-idempotent pull behavior) — all prior copies are removed, not just one.
+    #[tokio::test]
+    async fn re_pull_repairs_preexisting_duplicate_collections() {
+        use crate::engine::bookmark::{Collection, Visibility};
+
+        let (pack_path, source_url) = write_test_pack();
+        let db = Database::open_in_memory().unwrap();
+
+        // First import creates one collection tagged with the source URL.
+        import_pack(&db, &pack_path, None, &source_url).await.unwrap();
+
+        // Simulate legacy state: a second collection sharing the same
+        // imported_from_url, as the old duplicating pull would have produced.
+        let legacy_dup = Collection {
+            id: "legacy-duplicate".to_string(),
+            name: "Shared Tour (dup)".to_string(),
+            description: None,
+            visibility: Visibility::Public,
+            created_at: "2020-01-01T00:00:00Z".to_string(),
+            created_by: None,
+            created_branch: None,
+            published_at: None,
+            published_commit_sha: None,
+            repo_url: None,
+            repo_id: None,
+            status: None,
+            health: None,
+            health_computed_at: None,
+            updated_at: None,
+            imported_from_url: Some(source_url.clone()),
+        };
+        db.insert_collection(&legacy_dup).unwrap();
+        assert_eq!(db.list_collections().unwrap().len(), 2);
+
+        // Re-pull: both prior copies are removed and replaced by a single fresh one.
+        import_pack(&db, &pack_path, None, &source_url).await.unwrap();
+        assert_eq!(
+            db.list_collections().unwrap().len(),
+            1,
+            "re-pull must remove every prior copy, not just one"
         );
 
         let _ = std::fs::remove_file(&pack_path);

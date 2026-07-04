@@ -43,27 +43,24 @@ impl Database {
         }
     }
 
-    /// Get a collection previously imported from the given source URL, if any.
+    /// Get every collection previously imported from the given source URL,
+    /// ordered oldest-first.
     ///
     /// Used to make `pull` idempotent: a collection imported from a remote tour
     /// records that tour's URL in `imported_from_url`, so re-pulling the same
-    /// tour can find and refresh the existing copy instead of duplicating it.
+    /// tour finds and removes the prior copies instead of duplicating them.
     ///
-    /// `ORDER BY created_at ASC LIMIT 1` makes the choice deterministic. New
-    /// duplicates can't arise (import runs in one transaction), but a database
-    /// that accumulated duplicates before this fix is cleaned up predictably —
-    /// the oldest copy is the one replaced on each re-pull.
-    pub fn get_collection_by_imported_url(&self, url: &str) -> Result<Option<Collection>> {
+    /// Returns *all* matches (not just one) so a database that accumulated
+    /// duplicates under the old pull behavior is fully repaired in a single
+    /// re-pull rather than one copy at a time.
+    pub fn get_collections_by_imported_url(&self, url: &str) -> Result<Vec<Collection>> {
         let mut stmt = self.conn().prepare(
             "SELECT id, name, description, visibility, created_at, created_by, created_branch, published_at, published_commit_sha, repo_url, repo_id, status, health, health_computed_at, updated_at, imported_from_url
              FROM collections WHERE imported_from_url = ?1
-             ORDER BY created_at ASC LIMIT 1",
+             ORDER BY created_at ASC",
         )?;
-        let mut rows = stmt.query_map([url], row_to_collection)?;
-        match rows.next() {
-            Some(row) => Ok(Some(row?)),
-            None => Ok(None),
-        }
+        let rows = stmt.query_map([url], row_to_collection)?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
     /// Get a collection by its unique ID.
@@ -452,13 +449,13 @@ mod tests {
     }
 
     #[test]
-    fn get_collection_by_imported_url_is_deterministic() {
+    fn get_collections_by_imported_url_returns_all_ordered() {
         init_test_env();
         let db = Database::open_in_memory().unwrap();
         let url = "http://example.com/tours/dup";
 
         // Simulate a database that accumulated two collections sharing the same
-        // imported URL (possible before the import became transactional).
+        // imported URL (possible under the old, non-idempotent pull behavior).
         let mut older = test_collection("older");
         older.imported_from_url = Some(url.to_string());
         older.created_at = "2026-01-01T00:00:00Z".to_string();
@@ -467,12 +464,18 @@ mod tests {
         newer.imported_from_url = Some(url.to_string());
         newer.created_at = "2026-02-01T00:00:00Z".to_string();
 
-        // Insert newest-first to prove the result doesn't depend on row order.
+        // Insert newest-first to prove the result is ordered by created_at, not
+        // by row/insertion order.
         db.insert_collection(&newer).unwrap();
         db.insert_collection(&older).unwrap();
 
-        let found = db.get_collection_by_imported_url(url).unwrap().unwrap();
-        assert_eq!(found.id, older.id, "must deterministically return the oldest match");
+        // Every match is returned (so re-pull can repair legacy duplicates in
+        // one pass), oldest-first.
+        let found = db.get_collections_by_imported_url(url).unwrap();
+        let ids: Vec<&str> = found.iter().map(|c| c.id.as_str()).collect();
+        assert_eq!(ids, vec![older.id.as_str(), newer.id.as_str()]);
+
+        assert!(db.get_collections_by_imported_url("http://example.com/none").unwrap().is_empty());
     }
 
     #[test]
