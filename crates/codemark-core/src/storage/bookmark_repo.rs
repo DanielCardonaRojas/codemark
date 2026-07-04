@@ -17,10 +17,42 @@ impl Database {
     /// If a bookmark with the same file_path and query exists, returns its ID instead.
     pub fn insert_bookmark(&self, bookmark: &Bookmark) -> Result<String> {
         tracing::debug!(target: "codemark::db", id = %bookmark.id, file = %bookmark.file_path, "inserting bookmark");
-        let tx = self.conn().unchecked_transaction()?;
+        let conn = self.conn();
 
+        // Insert the bookmark and its initial resolution atomically. When we're
+        // already inside a transaction (e.g. `import_pack` wraps an entire pull
+        // in one so a failure can't leave a half-imported collection), don't
+        // open a nested one — SQLite can't `BEGIN` within a `BEGIN`. Instead run
+        // on the caller's transaction and let it own the commit/rollback.
+        let owns_txn = conn.is_autocommit();
+        if owns_txn {
+            conn.execute_batch("BEGIN")?;
+        }
+
+        let result = self.insert_bookmark_in_txn(conn, bookmark);
+
+        if owns_txn {
+            match &result {
+                Ok(_) => conn.execute_batch("COMMIT")?,
+                Err(_) => {
+                    let _ = conn.execute_batch("ROLLBACK");
+                }
+            }
+        }
+
+        result
+    }
+
+    /// Body of [`insert_bookmark`], run inside whichever transaction is active.
+    /// A constraint violation on the insert is a statement-level error that
+    /// leaves the enclosing transaction usable, so callers can keep importing.
+    fn insert_bookmark_in_txn(
+        &self,
+        conn: &rusqlite::Connection,
+        bookmark: &Bookmark,
+    ) -> Result<String> {
         // Try to insert with OR FAIL to check for uniqueness constraint
-        let result = tx.execute(
+        let result = conn.execute(
             "INSERT INTO bookmarks (id, query, language, file_path, content_hash, commit_hash,
              created_at, created_by, repo_id)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
@@ -41,7 +73,7 @@ impl Database {
             Ok(_) => {
                 // Create initial resolution
                 let res_id = uuid::Uuid::new_v4().to_string();
-                tx.execute(
+                conn.execute(
                     "INSERT INTO resolutions (id, bookmark_id, resolved_at, health, commit_hash, method, match_count, file_path, content_hash, is_dirty)
                      VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
                     rusqlite::params![
@@ -59,12 +91,11 @@ impl Database {
                 )?;
 
                 // Link resolution to bookmark
-                tx.execute(
+                conn.execute(
                     "UPDATE bookmarks SET current_resolution_id = ?1 WHERE id = ?2",
                     rusqlite::params![res_id, bookmark.id],
                 )?;
 
-                tx.commit()?;
                 Ok(bookmark.id.clone())
             }
             Err(rusqlite::Error::SqliteFailure(err, _))
@@ -80,7 +111,7 @@ impl Database {
                 // local bookmark vs. a repo_id-less imported one) would leave us
                 // with no match and a spurious "Query returned no rows" error.
                 let existing_id: String = if bookmark.repo_id.is_some() {
-                    tx.query_row(
+                    conn.query_row(
                         "SELECT id FROM bookmarks WHERE repo_id = ?1 AND file_path = ?2 AND query = ?3",
                         rusqlite::params![bookmark.repo_id, bookmark.file_path, bookmark.query],
                         |row| row.get(0),
@@ -91,7 +122,7 @@ impl Database {
                 }
                 .map(Ok)
                 .unwrap_or_else(|| {
-                    tx.query_row(
+                    conn.query_row(
                         "SELECT id FROM bookmarks WHERE file_path = ?1 AND query = ?2",
                         rusqlite::params![bookmark.file_path, bookmark.query],
                         |row| row.get(0),
@@ -687,6 +718,39 @@ mod tests {
         assert!(fetched.current_resolution_id.is_some());
         assert!(fetched.tags.is_empty());
         assert!(fetched.annotations.is_empty());
+    }
+
+    // Regression: `insert_bookmark` must run inside an already-open transaction
+    // rather than opening a nested one (SQLite can't `BEGIN` within a `BEGIN`).
+    // `import_pack` relies on this to wrap a whole pull atomically. Verifies both
+    // that a rolled-back outer transaction discards the insert and that a
+    // committed one persists it.
+    #[test]
+    fn insert_bookmark_participates_in_outer_transaction() {
+        init_test_env();
+        let db = Database::open_in_memory().unwrap();
+        let bm = test_bookmark("outer-txn-0000");
+
+        // Insert inside an outer transaction, then let it roll back (drop
+        // without commit). The bookmark must not persist — proving the insert
+        // did not self-commit.
+        {
+            let tx = db.conn().unchecked_transaction().unwrap();
+            db.insert_bookmark(&bm).unwrap();
+            drop(tx);
+        }
+        assert!(
+            db.get_bookmark("outer-txn-0000").unwrap().is_none(),
+            "insert in a rolled-back transaction must not persist"
+        );
+
+        // Now insert inside an outer transaction and commit it.
+        {
+            let tx = db.conn().unchecked_transaction().unwrap();
+            db.insert_bookmark(&bm).unwrap();
+            tx.commit().unwrap();
+        }
+        assert!(db.get_bookmark("outer-txn-0000").unwrap().is_some());
     }
 
     #[test]

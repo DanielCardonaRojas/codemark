@@ -309,11 +309,20 @@ async fn import_pack(
     }
     let tour = &tours[0];
 
+    // Run the whole import in a single transaction so a failure part-way
+    // through can't leave a half-imported collection — or two collections
+    // sharing the same `imported_from_url` (the old one plus an incomplete new
+    // one). On any early return below, `tx` is dropped without committing and
+    // every write here rolls back atomically. `insert_bookmark` (and the other
+    // helpers) detect the active transaction and run inside it rather than
+    // opening a nested one.
+    let tx = db.conn().unchecked_transaction()?;
+
     // Make pull idempotent: if this exact tour was already imported, we drop the
-    // previous collection so re-pulling doesn't mint a second copy. The actual
-    // delete happens *after* the new copy is fully imported (see below) — doing
-    // it up front would leave a window where a mid-import failure destroys the
-    // old collection without a complete replacement.
+    // previous collection so re-pulling doesn't mint a second copy. The delete
+    // happens after the new copy is imported (see below); since it shares this
+    // transaction, either both the new import and the old-copy removal commit,
+    // or neither does.
     let existing_collection = db.get_collection_by_imported_url(source_url)?;
 
     // Create local collection
@@ -439,8 +448,6 @@ async fn import_pack(
     }
 
     // Now that the fresh copy is fully imported, drop the previous collection.
-    // Deleting last keeps the old collection intact if any insert above fails,
-    // so a mid-import error never leaves the tour with no local copy at all.
     //
     // Only the collection row is removed (its membership rows cascade away), NOT
     // its bookmarks: a recursive delete would unconditionally remove bookmarks
@@ -452,6 +459,7 @@ async fn import_pack(
         db.delete_collection_by_id(&existing.id)?;
     }
 
+    tx.commit()?;
     Ok(())
 }
 
