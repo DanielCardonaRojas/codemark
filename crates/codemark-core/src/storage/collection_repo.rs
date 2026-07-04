@@ -48,10 +48,16 @@ impl Database {
     /// Used to make `pull` idempotent: a collection imported from a remote tour
     /// records that tour's URL in `imported_from_url`, so re-pulling the same
     /// tour can find and refresh the existing copy instead of duplicating it.
+    ///
+    /// `ORDER BY created_at ASC LIMIT 1` makes the choice deterministic. New
+    /// duplicates can't arise (import runs in one transaction), but a database
+    /// that accumulated duplicates before this fix is cleaned up predictably —
+    /// the oldest copy is the one replaced on each re-pull.
     pub fn get_collection_by_imported_url(&self, url: &str) -> Result<Option<Collection>> {
         let mut stmt = self.conn().prepare(
             "SELECT id, name, description, visibility, created_at, created_by, created_branch, published_at, published_commit_sha, repo_url, repo_id, status, health, health_computed_at, updated_at, imported_from_url
-             FROM collections WHERE imported_from_url = ?1",
+             FROM collections WHERE imported_from_url = ?1
+             ORDER BY created_at ASC LIMIT 1",
         )?;
         let mut rows = stmt.query_map([url], row_to_collection)?;
         match rows.next() {
@@ -443,6 +449,30 @@ mod tests {
         let fetched = db.get_collection_by_name("bugfix-auth").unwrap().unwrap();
         assert_eq!(fetched.name, "bugfix-auth");
         assert_eq!(fetched.description, Some("Test collection bugfix-auth".to_string()));
+    }
+
+    #[test]
+    fn get_collection_by_imported_url_is_deterministic() {
+        init_test_env();
+        let db = Database::open_in_memory().unwrap();
+        let url = "http://example.com/tours/dup";
+
+        // Simulate a database that accumulated two collections sharing the same
+        // imported URL (possible before the import became transactional).
+        let mut older = test_collection("older");
+        older.imported_from_url = Some(url.to_string());
+        older.created_at = "2026-01-01T00:00:00Z".to_string();
+
+        let mut newer = test_collection("newer");
+        newer.imported_from_url = Some(url.to_string());
+        newer.created_at = "2026-02-01T00:00:00Z".to_string();
+
+        // Insert newest-first to prove the result doesn't depend on row order.
+        db.insert_collection(&newer).unwrap();
+        db.insert_collection(&older).unwrap();
+
+        let found = db.get_collection_by_imported_url(url).unwrap().unwrap();
+        assert_eq!(found.id, older.id, "must deterministically return the oldest match");
     }
 
     #[test]

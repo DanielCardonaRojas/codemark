@@ -14,7 +14,13 @@ use crate::storage::db::Database;
 
 impl Database {
     /// Insert a bookmark, returning the bookmark ID.
-    /// If a bookmark with the same file_path and query exists, returns its ID instead.
+    ///
+    /// Return-value contract (callers such as `import_pack` depend on this to
+    /// tell a fresh insert from a reused row): returns `bookmark.id` when a new
+    /// row was inserted, and the id of the *pre-existing* conflicting bookmark
+    /// when one with the same `file_path`/`query` already exists. Since the
+    /// caller supplies a freshly generated `bookmark.id`, an equal return value
+    /// means "newly created" and a differing one means "reused existing".
     pub fn insert_bookmark(&self, bookmark: &Bookmark) -> Result<String> {
         tracing::debug!(target: "codemark::db", id = %bookmark.id, file = %bookmark.file_path, "inserting bookmark");
         let conn = self.conn();
