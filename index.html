@@ -114,6 +114,46 @@
         .grid-glow {
             background: radial-gradient(60% 50% at 50% 0%, rgba(249,115,22,0.12) 0%, transparent 70%);
         }
+
+        /* Tabbed installer */
+        .install-tab {
+            flex: 1 1 auto;
+            min-width: 6.5rem;
+            font-size: 0.875rem;
+            font-weight: 500;
+            padding: 0.5rem 1rem;
+            border-radius: 0.5rem;
+            border: 1px solid transparent;
+            color: #a1a1aa;
+            cursor: pointer;
+            transition: color 0.15s, background 0.15s, border-color 0.15s;
+        }
+        .install-tab:hover { color: #fff; }
+        .install-tab.is-active {
+            background: rgba(249, 115, 22, 0.14);
+            color: #fdba74;
+            border-color: rgba(251, 146, 60, 0.32);
+        }
+
+        .copy-btn {
+            position: absolute;
+            top: 0.75rem;
+            right: 0.75rem;
+            z-index: 10;
+            font-family: 'Inter', sans-serif;
+            font-size: 0.7rem;
+            font-weight: 600;
+            letter-spacing: 0.02em;
+            padding: 0.3rem 0.7rem;
+            border-radius: 0.4rem;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            background: rgba(255, 255, 255, 0.04);
+            color: #a1a1aa;
+            cursor: pointer;
+            transition: color 0.15s, border-color 0.15s, background 0.15s;
+        }
+        .copy-btn:hover { color: #fff; border-color: rgba(251, 146, 60, 0.4); }
+        .copy-btn.copied { color: #4ade80; border-color: rgba(74, 222, 128, 0.4); }
     </style>
 </head>
 <body class="antialiased selection:bg-primary-500 selection:text-white">
@@ -560,31 +600,67 @@ $ codemark add --file src/auth.rs --range 42 --created-by agent --note "Observed
             <div class="text-center mb-14">
                 <p class="eyebrow mb-3">Installation</p>
                 <h2 class="text-3xl md:text-5xl font-bold tracking-tight mb-4">Up and running in <span class="em text-primary-400">one command.</span></h2>
-                <p class="text-zinc-400 text-lg">A self-contained Rust binary, SQLite bundled. Requires Rust 1.75+.</p>
+                <p class="text-zinc-400 text-lg">Prebuilt binaries for macOS, Linux &amp; Windows — SQLite bundled. Pick your method.</p>
             </div>
 
-            <div class="grid md:grid-cols-2 gap-6">
-                <div class="panel rounded-xl overflow-hidden">
-                    <div class="bg-white/[0.03] px-4 py-3 border-b hairline flex items-center gap-2">
-                        <svg class="w-4 h-4 text-zinc-400" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.373 0 0 5.373 0 12c0 5.302 3.438 9.8 8.207 11.387.6.11.793-.26.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576C20.566 21.797 24 17.3 24 12c0-6.627-5.373-12-12-12z"/></svg>
-                        <span class="font-semibold text-sm">macOS / Linux · Homebrew</span>
-                    </div>
-                    <div class="bg-[#0d0d10]">
-                        <pre class="!bg-transparent !m-0"><code class="language-bash">brew tap DanielCardonaRojas/codemark
-brew install codemark</code></pre>
-                    </div>
+            <!-- Tabbed installer -->
+            <div class="panel rounded-xl overflow-hidden max-w-2xl mx-auto" data-install>
+                <!-- Tab bar -->
+                <div class="flex flex-wrap gap-1 p-1.5 bg-white/[0.03] border-b hairline" role="tablist" aria-label="Installation methods">
+                    <button class="install-tab is-active" data-tab="brew" role="tab" aria-selected="true">Homebrew</button>
+                    <button class="install-tab" data-tab="script" role="tab" aria-selected="false">curl · sh</button>
+                    <button class="install-tab" data-tab="powershell" role="tab" aria-selected="false">PowerShell</button>
+                    <button class="install-tab" data-tab="mise" role="tab" aria-selected="false">mise</button>
+                    <button class="install-tab" data-tab="cargo" role="tab" aria-selected="false">Cargo</button>
                 </div>
 
-                <div class="panel rounded-xl overflow-hidden">
-                    <div class="bg-white/[0.03] px-4 py-3 border-b hairline flex items-center gap-2">
-                        <span class="font-bold text-xs text-zinc-300 px-1.5 py-0.5 border border-zinc-600 rounded">rs</span>
-                        <span class="font-semibold text-sm">Rust · Cargo</span>
+                <!-- Panels -->
+                <div class="install-panel" data-panel="brew" role="tabpanel">
+                    <div class="relative bg-[#0d0d10]">
+                        <button class="copy-btn" data-copy aria-label="Copy command">Copy</button>
+                        <pre class="!bg-transparent !m-0"><code class="language-bash">brew install DanielCardonaRojas/codemark/codemark</code></pre>
                     </div>
-                    <div class="bg-[#0d0d10]">
-                        <pre class="!bg-transparent !m-0"><code class="language-bash">cargo install codemark</code></pre>
+                    <p class="text-zinc-500 text-xs px-6 py-3.5 border-t hairline">macOS &amp; Linux. Installs the CLI <em>and</em> the <code class="text-zinc-400">codemark tui</code> dashboard.</p>
+                </div>
+
+                <div class="install-panel hidden" data-panel="script" role="tabpanel">
+                    <div class="relative bg-[#0d0d10]">
+                        <button class="copy-btn" data-copy aria-label="Copy command">Copy</button>
+                        <pre class="!bg-transparent !m-0"><code class="language-bash">curl --proto '=https' --tlsv1.2 -LsSf \
+  https://github.com/DanielCardonaRojas/codemark/releases/latest/download/codemark-cli-installer.sh | sh</code></pre>
                     </div>
+                    <p class="text-zinc-500 text-xs px-6 py-3.5 border-t hairline">macOS &amp; Linux. Installs the <code class="text-zinc-400">codemark</code> CLI from the latest GitHub release.</p>
+                </div>
+
+                <div class="install-panel hidden" data-panel="powershell" role="tabpanel">
+                    <div class="relative bg-[#0d0d10]">
+                        <button class="copy-btn" data-copy aria-label="Copy command">Copy</button>
+                        <pre class="!bg-transparent !m-0"><code class="language-bash">powershell -ExecutionPolicy Bypass -c "irm https://github.com/DanielCardonaRojas/codemark/releases/latest/download/codemark-cli-installer.ps1 | iex"</code></pre>
+                    </div>
+                    <p class="text-zinc-500 text-xs px-6 py-3.5 border-t hairline">Windows (x86_64). Installs the <code class="text-zinc-400">codemark</code> CLI.</p>
+                </div>
+
+                <div class="install-panel hidden" data-panel="mise" role="tabpanel">
+                    <div class="relative bg-[#0d0d10]">
+                        <button class="copy-btn" data-copy aria-label="Copy command">Copy</button>
+                        <pre class="!bg-transparent !m-0"><code class="language-bash">mise use -g github:DanielCardonaRojas/codemark</code></pre>
+                    </div>
+                    <p class="text-zinc-500 text-xs px-6 py-3.5 border-t hairline">Cross-platform via <a href="https://mise.jdx.dev" target="_blank" class="text-zinc-400 hover:text-primary-300 underline decoration-dotted">mise</a>. Installs the <code class="text-zinc-400">codemark</code> CLI.</p>
+                </div>
+
+                <div class="install-panel hidden" data-panel="cargo" role="tabpanel">
+                    <div class="relative bg-[#0d0d10]">
+                        <button class="copy-btn" data-copy aria-label="Copy command">Copy</button>
+                        <pre class="!bg-transparent !m-0"><code class="language-bash">cargo install --git https://github.com/DanielCardonaRojas/codemark codemark-cli</code></pre>
+                    </div>
+                    <p class="text-zinc-500 text-xs px-6 py-3.5 border-t hairline">Build from source. Requires Rust 1.85+ (edition 2024). Add the dashboard with <code class="text-zinc-400">codemark-tui</code>.</p>
                 </div>
             </div>
+
+            <p class="text-center text-zinc-500 text-sm mt-6">
+                The script, PowerShell &amp; <code class="text-zinc-400">mise</code> methods install the CLI only —
+                add the dashboard with <code class="text-zinc-400">cargo install --git … codemark-tui</code>.
+            </p>
         </div>
     </section>
 
@@ -667,5 +743,43 @@ brew install codemark</code></pre>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/prism.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-bash.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/components/prism-json.min.js"></script>
+
+    <!-- Tabbed installer + copy buttons -->
+    <script>
+        document.querySelectorAll('[data-install]').forEach(function (root) {
+            var tabs = root.querySelectorAll('.install-tab');
+            var panels = root.querySelectorAll('.install-panel');
+            function activate(name) {
+                tabs.forEach(function (t) {
+                    var on = t.dataset.tab === name;
+                    t.classList.toggle('is-active', on);
+                    t.setAttribute('aria-selected', on ? 'true' : 'false');
+                });
+                panels.forEach(function (p) {
+                    p.classList.toggle('hidden', p.dataset.panel !== name);
+                });
+            }
+            tabs.forEach(function (t) {
+                t.addEventListener('click', function () { activate(t.dataset.tab); });
+            });
+        });
+
+        document.querySelectorAll('[data-copy]').forEach(function (btn) {
+            btn.addEventListener('click', function () {
+                var code = btn.parentElement.querySelector('code');
+                if (!code) return;
+                var text = code.textContent.trim();
+                navigator.clipboard.writeText(text).then(function () {
+                    var original = btn.textContent;
+                    btn.textContent = 'Copied';
+                    btn.classList.add('copied');
+                    setTimeout(function () {
+                        btn.textContent = original;
+                        btn.classList.remove('copied');
+                    }, 1600);
+                });
+            });
+        });
+    </script>
 </body>
 </html>
