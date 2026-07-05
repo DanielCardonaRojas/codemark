@@ -136,10 +136,6 @@
         }
 
         .copy-btn {
-            position: absolute;
-            top: 0.75rem;
-            right: 0.75rem;
-            z-index: 10;
             font-family: 'Inter', sans-serif;
             font-size: 0.7rem;
             font-weight: 600;
@@ -154,6 +150,12 @@
         }
         .copy-btn:hover { color: #fff; border-color: rgba(251, 146, 60, 0.4); }
         .copy-btn.copied { color: #4ade80; border-color: rgba(74, 222, 128, 0.4); }
+        .copy-btn-float {
+            position: absolute;
+            top: 0.75rem;
+            right: 0.75rem;
+            z-index: 10;
+        }
     </style>
 </head>
 <body class="antialiased selection:bg-primary-500 selection:text-white">
@@ -205,7 +207,7 @@
                 know where the important code lives.
             </p>
 
-            <div class="flex flex-wrap justify-center gap-3 mb-14">
+            <div class="flex flex-wrap justify-center gap-3 mb-6">
                 <a href="#install" class="bg-primary-500 hover:bg-primary-400 text-black font-semibold px-7 py-3 rounded-lg transition-colors">
                     Get started
                 </a>
@@ -213,6 +215,15 @@
                     <svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path fill-rule="evenodd" d="M12 2C6.477 2 2 6.484 2 12.017c0 4.425 2.865 8.18 6.839 9.504.5.092.682-.217.682-.483 0-.237-.008-.868-.013-1.703-2.782.605-3.369-1.343-3.369-1.343-.454-1.158-1.11-1.466-1.11-1.466-.908-.62.069-.608.069-.608 1.003.07 1.531 1.032 1.531 1.032.892 1.53 2.341 1.088 2.91.832.092-.647.35-1.088.636-1.338-2.22-.253-4.555-1.113-4.555-4.951 0-1.093.39-1.988 1.029-2.688-.103-.253-.446-1.272.098-2.65 0 0 .84-.27 2.75 1.026A9.564 9.564 0 0112 6.844c.85.004 1.705.115 2.504.337 1.909-1.296 2.747-1.027 2.747-1.027.546 1.379.202 2.398.1 2.651.64.7 1.028 1.595 1.028 2.688 0 3.848-2.339 4.695-4.566 4.943.359.309.678.92.678 1.855 0 1.338-.012 2.419-.012 2.747 0 .268.18.58.688.482A10.019 10.019 0 0022 12.017C22 6.484 17.522 2 12 2z" clip-rule="evenodd" /></svg>
                     Star on GitHub
                 </a>
+            </div>
+
+            <!-- Install one-liner -->
+            <div class="flex justify-center mb-14">
+                <div class="inline-flex items-center gap-3 panel rounded-lg pl-4 pr-2 py-2 font-mono text-[0.8rem] sm:text-sm max-w-full overflow-x-auto">
+                    <span class="text-primary-400 select-none shrink-0">$</span>
+                    <code class="text-zinc-200 whitespace-nowrap">brew install DanielCardonaRojas/codemark/codemark</code>
+                    <button class="copy-btn shrink-0" data-copy aria-label="Copy install command">Copy</button>
+                </div>
             </div>
 
             <!-- Terminal Mockup -->
@@ -619,7 +630,7 @@ $ codemark add --file src/auth.rs --range 42 --created-by agent --note "Observed
                 <!-- Panels -->
                 <div class="install-panel" data-panel="brew" role="tabpanel">
                     <div class="relative bg-[#0d0d10]">
-                        <button class="copy-btn" data-copy aria-label="Copy command">Copy</button>
+                        <button class="copy-btn copy-btn-float" data-copy aria-label="Copy command">Copy</button>
                         <pre class="!bg-transparent !m-0"><code class="language-bash">brew install DanielCardonaRojas/codemark/codemark</code></pre>
                     </div>
                     <p class="text-zinc-500 text-xs px-6 py-3.5 border-t hairline">macOS &amp; Linux. Installs the CLI <em>and</em> the <code class="text-zinc-400">codemark tui</code> dashboard.</p>
@@ -627,7 +638,7 @@ $ codemark add --file src/auth.rs --range 42 --created-by agent --note "Observed
 
                 <div class="install-panel hidden" data-panel="script" role="tabpanel">
                     <div class="relative bg-[#0d0d10]">
-                        <button class="copy-btn" data-copy aria-label="Copy command">Copy</button>
+                        <button class="copy-btn copy-btn-float" data-copy aria-label="Copy command">Copy</button>
                         <pre class="!bg-transparent !m-0"><code class="language-bash">curl --proto '=https' --tlsv1.2 -LsSf \
   https://github.com/DanielCardonaRojas/codemark/releases/latest/download/codemark-cli-installer.sh | sh</code></pre>
                     </div>
@@ -636,7 +647,7 @@ $ codemark add --file src/auth.rs --range 42 --created-by agent --note "Observed
 
                 <div class="install-panel hidden" data-panel="powershell" role="tabpanel">
                     <div class="relative bg-[#0d0d10]">
-                        <button class="copy-btn" data-copy aria-label="Copy command">Copy</button>
+                        <button class="copy-btn copy-btn-float" data-copy aria-label="Copy command">Copy</button>
                         <pre class="!bg-transparent !m-0"><code class="language-bash">powershell -ExecutionPolicy Bypass -c "irm https://github.com/DanielCardonaRojas/codemark/releases/latest/download/codemark-cli-installer.ps1 | iex"</code></pre>
                     </div>
                     <p class="text-zinc-500 text-xs px-6 py-3.5 border-t hairline">Windows (x86_64). Installs the <code class="text-zinc-400">codemark</code> CLI.</p>
@@ -644,7 +655,7 @@ $ codemark add --file src/auth.rs --range 42 --created-by agent --note "Observed
 
                 <div class="install-panel hidden" data-panel="mise" role="tabpanel">
                     <div class="relative bg-[#0d0d10]">
-                        <button class="copy-btn" data-copy aria-label="Copy command">Copy</button>
+                        <button class="copy-btn copy-btn-float" data-copy aria-label="Copy command">Copy</button>
                         <pre class="!bg-transparent !m-0"><code class="language-bash">mise use -g github:DanielCardonaRojas/codemark</code></pre>
                     </div>
                     <p class="text-zinc-500 text-xs px-6 py-3.5 border-t hairline">Cross-platform via <a href="https://mise.jdx.dev" target="_blank" class="text-zinc-400 hover:text-primary-300 underline decoration-dotted">mise</a>. Installs the <code class="text-zinc-400">codemark</code> CLI.</p>
@@ -652,7 +663,7 @@ $ codemark add --file src/auth.rs --range 42 --created-by agent --note "Observed
 
                 <div class="install-panel hidden" data-panel="cargo" role="tabpanel">
                     <div class="relative bg-[#0d0d10]">
-                        <button class="copy-btn" data-copy aria-label="Copy command">Copy</button>
+                        <button class="copy-btn copy-btn-float" data-copy aria-label="Copy command">Copy</button>
                         <pre class="!bg-transparent !m-0"><code class="language-bash">cargo install --git https://github.com/DanielCardonaRojas/codemark codemark-cli</code></pre>
                     </div>
                     <p class="text-zinc-500 text-xs px-6 py-3.5 border-t hairline">Build from source. Requires Rust 1.85+ (edition 2024). Add the dashboard with <code class="text-zinc-400">codemark-tui</code>.</p>
