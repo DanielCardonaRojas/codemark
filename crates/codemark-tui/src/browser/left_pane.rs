@@ -1,4 +1,4 @@
-use crate::browser::{FocusArea, LeftPaneSize, Panel3Tab, SearchBar, SectionConfig, TabbedPanel};
+use crate::browser::{ContentTab, FocusArea, LeftPaneSize, SearchBar, SectionConfig, TabbedPanel};
 use crate::component::Component;
 use crate::event::Event;
 use codemark_core::storage::db::Database;
@@ -11,15 +11,15 @@ use ratatui::{
 pub struct LeftPane {
     /// Search bar component
     pub search: SearchBar,
-    /// First tabbed panel (Repos/Accounts)
-    pub panel1: TabbedPanel,
-    /// Second tabbed panel (Tags/Branches)
-    pub panel2: TabbedPanel,
-    /// Third tabbed panel (Tours/Collections/Bookmarks)
-    pub panel3: TabbedPanel,
+    /// Context panel (Repos/Owners/Auth)
+    pub context_panel: TabbedPanel,
+    /// Filters panel (Tags/Branches)
+    pub filters_panel: TabbedPanel,
+    /// Content panel (Bookmarks/Collections/Tours)
+    pub content_panel: TabbedPanel,
     /// Section height configurations
-    pub panel1_config: SectionConfig,
-    pub panel2_config: SectionConfig,
+    pub context_config: SectionConfig,
+    pub filters_config: SectionConfig,
     /// Current resize mode for the left pane
     resize_mode: LeftPaneSize,
     /// The last resizable panel that was focused (for rendering in Half/Full mode)
@@ -31,13 +31,13 @@ impl LeftPane {
     pub fn new(db: &Database, registry: &rusqlite::Connection) -> Self {
         Self {
             search: SearchBar::new(),
-            panel1: TabbedPanel::new_repos_accounts(db, registry),
-            panel2: TabbedPanel::new_tags_branches(db, Panel3Tab::Bookmarks),
-            panel3: TabbedPanel::new_tours_collections_bookmarks(db),
-            panel1_config: SectionConfig::new(7, 9),
-            panel2_config: SectionConfig::new(7, 9),
+            context_panel: TabbedPanel::new_repos_accounts(db, registry),
+            filters_panel: TabbedPanel::new_tags_branches(db, ContentTab::Bookmarks),
+            content_panel: TabbedPanel::new_tours_collections_bookmarks(db),
+            context_config: SectionConfig::new(7, 9),
+            filters_config: SectionConfig::new(7, 9),
             resize_mode: LeftPaneSize::Regular,
-            last_resizable_focus: FocusArea::Panel3,
+            last_resizable_focus: FocusArea::ContentPanel,
         }
     }
 
@@ -66,24 +66,24 @@ impl LeftPane {
         match self.resize_mode {
             LeftPaneSize::Half | LeftPaneSize::Full => {
                 match self.last_resizable_focus {
-                    FocusArea::Panel1 => {
+                    FocusArea::ContextPanel => {
                         // Repos/Owners/Auth are filtered, not searched, so the search
                         // bar is hidden and the panel takes the full height.
-                        self.panel1.render(area, buf);
+                        self.context_panel.render(area, buf);
                     }
-                    FocusArea::Panel2 => {
+                    FocusArea::FiltersPanel => {
                         // Tags/Branches are filtered, not searched, so the search bar
                         // is hidden and the panel takes the full height.
-                        self.panel2.render(area, buf);
+                        self.filters_panel.render(area, buf);
                     }
-                    FocusArea::Panel3 => {
-                        // Render search and panel3 only
+                    FocusArea::ContentPanel => {
+                        // Render search and content_panel only
                         let chunks = Layout::default()
                             .direction(Direction::Vertical)
                             .constraints([Constraint::Length(3), Constraint::Min(0)])
                             .split(area);
                         self.search.render(chunks[0], buf);
-                        self.panel3.render(chunks[1], buf);
+                        self.content_panel.render(chunks[1], buf);
                     }
                     _ => {
                         // Fallback: render everything normally
@@ -101,34 +101,40 @@ impl LeftPane {
     /// Render all panels in the left pane (regular mode).
     fn render_all(&self, area: Rect, buf: &mut Buffer) {
         // Calculate heights based on focus
-        let p1_height =
-            if self.panel1.focused { self.panel1_config.max } else { self.panel1_config.min };
+        let p1_height = if self.context_panel.focused {
+            self.context_config.max
+        } else {
+            self.context_config.min
+        };
 
-        let p2_height =
-            if self.panel2.focused { self.panel2_config.max } else { self.panel2_config.min };
+        let p2_height = if self.filters_panel.focused {
+            self.filters_config.max
+        } else {
+            self.filters_config.min
+        };
 
-        // Split vertically: search (3 rows), panel1, panel2, panel3 (takes the rest)
+        // Split vertically: search (3 rows), context_panel, filters_panel, content_panel (takes the rest)
         let chunks = Layout::default()
             .direction(Direction::Vertical)
             .constraints([
                 Constraint::Length(3),         // Search bar
-                Constraint::Length(p1_height), // Panel 1 (Repos/Accounts)
-                Constraint::Length(p2_height), // Panel 2 (Tags/Branches)
-                Constraint::Min(0),            // Panel 3 (Tours/Collections/Bookmarks)
+                Constraint::Length(p1_height), // Context panel (Repos/Accounts)
+                Constraint::Length(p2_height), // Filters panel (Tags/Branches)
+                Constraint::Min(0),            // Content panel (Tours/Collections/Bookmarks)
             ])
             .split(area);
 
         // Render search
         self.search.render(chunks[0], buf);
 
-        // Render panel 1
-        self.panel1.render(chunks[1], buf);
+        // Render the context panel
+        self.context_panel.render(chunks[1], buf);
 
-        // Render panel 2
-        self.panel2.render(chunks[2], buf);
+        // Render the filters panel
+        self.filters_panel.render(chunks[2], buf);
 
-        // Render panel 3
-        self.panel3.render(chunks[3], buf);
+        // Render the content panel
+        self.content_panel.render(chunks[3], buf);
     }
 
     /// Handle an event.
@@ -137,16 +143,16 @@ impl LeftPane {
             // For mouse events, check ALL panels to allow scrolling any hovered pane.
             // Use bitwise OR to avoid short-circuiting.
             let h1 = self.search.handle_event(event);
-            let h2 = self.panel1.handle_event(event);
-            let h3 = self.panel2.handle_event(event);
-            let h4 = self.panel3.handle_event(event);
+            let h2 = self.context_panel.handle_event(event);
+            let h3 = self.filters_panel.handle_event(event);
+            let h4 = self.content_panel.handle_event(event);
             h1 || h2 || h3 || h4
         } else {
             // Keyboard events can short-circuit for efficiency.
             self.search.handle_event(event)
-                || self.panel1.handle_event(event)
-                || self.panel2.handle_event(event)
-                || self.panel3.handle_event(event)
+                || self.context_panel.handle_event(event)
+                || self.filters_panel.handle_event(event)
+                || self.content_panel.handle_event(event)
         }
     }
 }

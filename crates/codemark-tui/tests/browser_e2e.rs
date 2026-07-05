@@ -228,7 +228,7 @@ async fn empty_database_renders_and_focuses_repos_pane() {
 
     // With no bookmarks, the layout starts focused on the repos pane so the
     // user can pick a repository (see `BrowserLayout::new`).
-    assert_eq!(layout.focus(), FocusArea::Panel1);
+    assert_eq!(layout.focus(), FocusArea::ContextPanel);
 
     insta::assert_snapshot!(render_to_string(&layout, 100, 30));
 }
@@ -246,7 +246,7 @@ async fn seeded_bookmarks_render_in_list() {
     let (layout, _sandbox) = make_layout(sandbox);
 
     // A non-empty database focuses the bookmarks pane on startup.
-    assert_eq!(layout.focus(), FocusArea::Panel3);
+    assert_eq!(layout.focus(), FocusArea::ContentPanel);
 
     insta::assert_snapshot!(render_to_string(&layout, 100, 30));
 }
@@ -285,8 +285,8 @@ async fn remote_tour_overview_survives_a_panel_refresh() {
     sandbox.write_logged_in_config();
     let (mut layout, _sandbox) = make_layout(sandbox);
 
-    // Seeded bookmark => focus starts on Panel 3. Cycle to the Tours tab.
-    assert_eq!(layout.focus(), FocusArea::Panel3);
+    // Seeded bookmark => focus starts on Content panel. Cycle to the Tours tab.
+    assert_eq!(layout.focus(), FocusArea::ContentPanel);
     key_char(&mut layout, ']'); // Bookmarks -> Collections
     key_char(&mut layout, ']'); // Collections -> Tours
 

@@ -1,5 +1,5 @@
 use crate::browser::{
-    ContextTab, Panel2Tab, Panel3Tab, Tab, TabContent, TabSelection, tabs::BORDER_EXTENSION,
+    ContentTab, ContextTab, FiltersTab, Tab, TabContent, TabSelection, tabs::BORDER_EXTENSION,
 };
 use crate::component::{CodePreview, HealthStatus, MarkdownPanel, Panel, PanelItem};
 use crate::event::Event;
@@ -363,11 +363,11 @@ impl TabbedPanel {
     /// Build tags and branches items.
     pub fn build_tags_branches_items(
         db: &Database,
-        active_tab: Panel3Tab,
+        active_tab: ContentTab,
     ) -> (Vec<PanelItem>, Vec<PanelItem>) {
         let tags_result = match active_tab {
-            Panel3Tab::Bookmarks => db.list_bookmark_tags(),
-            Panel3Tab::Collections | Panel3Tab::Tours => db.list_collection_tags(),
+            ContentTab::Bookmarks => db.list_bookmark_tags(),
+            ContentTab::Collections | ContentTab::Tours => db.list_collection_tags(),
         };
 
         let tags = match tags_result {
@@ -411,7 +411,7 @@ impl TabbedPanel {
     }
 
     /// Build tours, collections, and bookmarks items.
-    pub fn build_panel3_items(db: &Database) -> (Vec<PanelItem>, Vec<PanelItem>, Vec<PanelItem>) {
+    pub fn build_content_items(db: &Database) -> (Vec<PanelItem>, Vec<PanelItem>, Vec<PanelItem>) {
         let mut collections_items = Vec::new();
         let mut tours_items = Vec::new();
 
@@ -504,17 +504,17 @@ impl TabbedPanel {
     }
 
     /// Create panel 2 with Tags/Branches tabs.
-    pub fn new_tags_branches(db: &Database, active_tab: Panel3Tab) -> Self {
+    pub fn new_tags_branches(db: &Database, active_tab: ContentTab) -> Self {
         let (tags_items, branches_items) = TabbedPanel::build_tags_branches_items(db, active_tab);
         let tags_panel = Panel::new("").bordered(false).multi_select(true).items(tags_items);
         let branches_panel =
             Panel::new("").bordered(false).multi_select(true).items(branches_items);
 
         let mut tabs = TabSelection::new(vec![
-            Tab::new(Panel2Tab::Tags.label()),
-            Tab::new(Panel2Tab::Branches.label()),
+            Tab::new(FiltersTab::Tags.label()),
+            Tab::new(FiltersTab::Branches.label()),
         ]);
-        tabs.set_visible_count(Self::panel2_visible_tab_count(active_tab));
+        tabs.set_visible_count(Self::filters_visible_tab_count(active_tab));
 
         Self {
             tabs,
@@ -527,28 +527,29 @@ impl TabbedPanel {
         }
     }
 
-    /// Number of Panel 2 tabs to show for the given active Panel 3 tab.
+    /// Number of Filters panel tabs to show for the given active Content panel tab.
     ///
     /// Only Collections and Tours have an associated branch (by design), so the
     /// trailing Branches tab is hidden — leaving just Tags — whenever Bookmarks
-    /// are active in Panel 3.
-    fn panel2_visible_tab_count(active_tab: Panel3Tab) -> usize {
+    /// are active in Content panel.
+    fn filters_visible_tab_count(active_tab: ContentTab) -> usize {
         match active_tab {
-            Panel3Tab::Bookmarks => Panel2Tab::Branches.index(),
-            Panel3Tab::Collections | Panel3Tab::Tours => Panel2Tab::all().len(),
+            ContentTab::Bookmarks => FiltersTab::Branches.index(),
+            ContentTab::Collections | ContentTab::Tours => FiltersTab::all().len(),
         }
     }
 
-    /// Show or hide Panel 2's trailing Branches tab based on the active Panel 3
+    /// Show or hide Filters panel's trailing Branches tab based on the active Content panel
     /// tab. Bookmarks have no branch, so the Branches tab is hidden when they
-    /// are active. See [`Self::panel2_visible_tab_count`].
-    pub fn sync_branches_tab_visibility(&mut self, active_tab: Panel3Tab) {
-        self.tabs.set_visible_count(Self::panel2_visible_tab_count(active_tab));
+    /// are active. See [`Self::filters_visible_tab_count`].
+    pub fn sync_branches_tab_visibility(&mut self, active_tab: ContentTab) {
+        self.tabs.set_visible_count(Self::filters_visible_tab_count(active_tab));
     }
 
     /// Create panel 3 with Bookmarks/Collections/Tours tabs.
     pub fn new_tours_collections_bookmarks(db: &Database) -> Self {
-        let (tours_items, collections_items, bookmarks_items) = TabbedPanel::build_panel3_items(db);
+        let (tours_items, collections_items, bookmarks_items) =
+            TabbedPanel::build_content_items(db);
         let tours_panel = Panel::new("").bordered(false).items(tours_items);
         let collections_panel = Panel::new("").bordered(false).items(collections_items);
         let bookmarks_panel = Panel::new("").bordered(false).items(bookmarks_items);
