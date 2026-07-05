@@ -19,7 +19,7 @@ pub use left_pane::LeftPane;
 pub use right_pane::{RightPane, RightPaneFocus};
 pub use search::{SearchBar, SearchMode};
 pub use tabbed_panel::{TabbedPanel, bookmark_to_panel_item};
-pub use tabs::{ContextTab, Panel2Tab, Panel3Tab, Tab, TabSelection};
+pub use tabs::{ContentTab, ContextTab, FiltersTab, Tab, TabSelection};
 pub use types::{
     ConfirmDialog, DetailsPaneSize, DialogAction, DialogButton, ExternalCommand, FocusArea,
     HealNotification, HealTarget, LeftPaneSize, PreviewPayload, RightPaneSize, SectionConfig,
@@ -42,7 +42,7 @@ use ratatui::{
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-/// Number of ticks (tick rate ≈ 100ms) to wait after the last Panel 3 selection
+/// Number of ticks (tick rate ≈ 100ms) to wait after the last Content panel selection
 /// change before spawning the background preview resolve. Coalesces fast
 /// scrolling so only the item the user lands on is resolved.
 const PREVIEW_DEBOUNCE_TICKS: usize = 1;
@@ -166,7 +166,7 @@ pub struct BrowserLayout {
     /// scrolling among bookmarks in the same unchanged file is a cache hit on the
     /// hot async path — not just within a single resolve.
     preview_cache: Arc<Mutex<HashMap<CodemarkLanguage, ParseCache>>>,
-    /// Monotonic counter for bookmark preview requests. Bumped on every Panel 3
+    /// Monotonic counter for bookmark preview requests. Bumped on every Content panel
     /// selection change so background results can be matched/discarded.
     preview_seq: u64,
     /// The id of the preview request whose result we currently want to apply.
@@ -194,16 +194,16 @@ impl BrowserLayout {
         let registry = registry::open_registry().expect("Failed to open global registry");
 
         // Determine initial focus: if there are no bookmarks in the current database,
-        // focus the repos pane (Panel1) so the user can select a repository.
-        // Otherwise, focus the bookmarks pane (Panel3).
+        // focus the repos pane (ContextPanel) so the user can select a repository.
+        // Otherwise, focus the bookmarks pane (ContentPanel).
         let initial_focus = if db
             .list_bookmarks(&codemark_core::engine::bookmark::BookmarkFilter::default())
             .map(|b| !b.is_empty())
             .unwrap_or(false)
         {
-            FocusArea::Panel3
+            FocusArea::ContentPanel
         } else {
-            FocusArea::Panel1
+            FocusArea::ContextPanel
         };
 
         let mut layout = Self {
@@ -249,30 +249,31 @@ impl BrowserLayout {
         layout
     }
 
-    /// Update the right-pane live preview for the active Panel 3 tab + selection.
+    /// Update the right-pane live preview for the active Content panel tab + selection.
     ///
     /// Bookmarks show the bookmark's code content; Collections show a live
-    /// collection overview (metadata + steps). Used when focus enters Panel 3
-    /// and when the active Panel 3 tab changes, so the preview never lingers on
+    /// collection overview (metadata + steps). Used when focus enters Content panel
+    /// and when the active Content panel tab changes, so the preview never lingers on
     /// stale content from a different tab.
-    fn update_panel3_live_preview(&mut self) {
-        if self.focus != FocusArea::Panel3 {
+    fn update_content_live_preview(&mut self) {
+        if self.focus != FocusArea::ContentPanel {
             return;
         }
 
-        let Some(tab) = Panel3Tab::from_index(self.left_pane.panel3.tabs.selected_index()) else {
+        let Some(tab) = ContentTab::from_index(self.left_pane.content_panel.tabs.selected_index())
+        else {
             return;
         };
 
         let selected_id = self
             .left_pane
-            .panel3
+            .content_panel
             .active_panel()
             .and_then(|panel| panel.selected())
             .and_then(|selected| selected.user_data.clone());
 
         if let Some(id) = selected_id {
-            self.preview_panel3_item(tab, &id);
+            self.preview_content_item(tab, &id);
         }
     }
 
@@ -294,15 +295,15 @@ impl BrowserLayout {
         }
     }
 
-    /// Show or hide the Panel 3 Tours tab based on login state. The Tours tab is
+    /// Show or hide the Content panel Tours tab based on login state. The Tours tab is
     /// the third tab (index 2); hiding it leaves Bookmarks + Collections. If the
     /// Tours tab was selected when hidden, the selection clamps back to
     /// Collections, so the right-pane preview is refreshed to match.
     pub(super) fn update_tours_tab_visibility(&mut self) {
         let visible_count = if self.is_logged_in() { 3 } else { 2 };
-        let previous = self.left_pane.panel3.tabs.selected_index();
-        self.left_pane.panel3.tabs.set_visible_count(visible_count);
-        let current = self.left_pane.panel3.tabs.selected_index();
+        let previous = self.left_pane.content_panel.tabs.selected_index();
+        self.left_pane.content_panel.tabs.set_visible_count(visible_count);
+        let current = self.left_pane.content_panel.tabs.selected_index();
 
         if current == previous {
             return;
@@ -317,38 +318,38 @@ impl BrowserLayout {
         }
 
         // Then refresh the preview for the clamped-to tab's current selection.
-        let Some(tab) = Panel3Tab::from_index(current) else {
+        let Some(tab) = ContentTab::from_index(current) else {
             return;
         };
         let selected_id = self
             .left_pane
-            .panel3
+            .content_panel
             .active_panel()
             .and_then(|panel| panel.selected())
             .and_then(|selected| selected.user_data.clone());
         if let Some(id) = selected_id {
-            self.on_panel3_selection_changed(tab, &id);
+            self.on_content_selection_changed(tab, &id);
         }
     }
 
-    /// Route a Panel 3 item (by user-data id) to the appropriate live preview.
+    /// Route a Content panel item (by user-data id) to the appropriate live preview.
     ///
     /// Synchronous: used for focus-enter / tab-change previews where an instant,
     /// fully-rendered pane is expected (and exercised by the e2e snapshots). The
-    /// hot scrolling path uses [`on_panel3_selection_changed`] instead.
-    pub(super) fn preview_panel3_item(&mut self, tab: Panel3Tab, id: &str) {
+    /// hot scrolling path uses [`on_content_selection_changed`] instead.
+    pub(super) fn preview_content_item(&mut self, tab: ContentTab, id: &str) {
         match tab {
-            Panel3Tab::Bookmarks => {
+            ContentTab::Bookmarks => {
                 self.right_pane.load_bookmark_live(&self.db, id, &mut self.session_cache);
             }
-            Panel3Tab::Collections => {
+            ContentTab::Collections => {
                 self.right_pane.load_collection_overview(&self.db, id);
             }
-            Panel3Tab::Tours => self.preview_tour_item(id),
+            ContentTab::Tours => self.preview_tour_item(id),
         }
     }
 
-    /// Render an overview for a Panel 3 Tours item. The Tours tab mixes local
+    /// Render an overview for a Content panel Tours item. The Tours tab mixes local
     /// (pulled) tours, keyed by their collection ID, with remote tours keyed as
     /// `remote:<tour_id>`. Remote items render server metadata so the user can
     /// preview a tour before pulling; local items reuse the collection overview.
@@ -364,18 +365,18 @@ impl BrowserLayout {
         }
     }
 
-    /// Handle a Panel 3 selection change from keyboard/mouse navigation.
+    /// Handle a Content panel selection change from keyboard/mouse navigation.
     ///
     /// For Bookmarks this is the lag-prone path (every up/down used to block the
     /// event loop on a tree-sitter resolve + file read + markdown render), so it
     /// is now debounced and resolved on a background task — see
     /// [`request_bookmark_preview`](Self::request_bookmark_preview). Collections
     /// are cheap (no parse) and stay synchronous.
-    pub(super) fn on_panel3_selection_changed(&mut self, tab: Panel3Tab, id: &str) {
+    pub(super) fn on_content_selection_changed(&mut self, tab: ContentTab, id: &str) {
         match tab {
-            Panel3Tab::Bookmarks => self.request_bookmark_preview(id),
-            Panel3Tab::Collections => self.right_pane.load_collection_overview(&self.db, id),
-            Panel3Tab::Tours => self.preview_tour_item(id),
+            ContentTab::Bookmarks => self.request_bookmark_preview(id),
+            ContentTab::Collections => self.right_pane.load_collection_overview(&self.db, id),
+            ContentTab::Tours => self.preview_tour_item(id),
         }
     }
 
@@ -416,7 +417,7 @@ impl BrowserLayout {
         // cheap, read from the already-rendered list item.
         let label = self
             .left_pane
-            .panel3
+            .content_panel
             .active_panel()
             .and_then(|panel| panel.selected())
             .map(|selected| selected.text().to_string());
@@ -426,17 +427,18 @@ impl BrowserLayout {
             Some((id.to_string(), label, self.tick_count + PREVIEW_DEBOUNCE_TICKS));
     }
 
-    /// Sync the right pane's first tab label based on the active Panel3 tab.
+    /// Sync the right pane's first tab label based on the active Content panel tab.
     /// Shows "Content" when on Bookmarks (single items), "Steps" otherwise (collections/tours).
     fn sync_steps_tab_label(&mut self) {
-        let panel3_tab = Panel3Tab::from_index(self.left_pane.panel3.tabs.selected_index());
-        let label = match panel3_tab {
-            Some(Panel3Tab::Bookmarks) => "Content",
+        let content_tab =
+            ContentTab::from_index(self.left_pane.content_panel.tabs.selected_index());
+        let label = match content_tab {
+            Some(ContentTab::Bookmarks) => "Content",
             _ => "Steps",
         };
         tracing::debug!(
             target: "codemark::ui",
-            ?panel3_tab,
+            ?content_tab,
             new_label = %label,
             "syncing right pane tab label"
         );
@@ -558,7 +560,7 @@ impl BrowserLayout {
 
     /// Add a spinner to a panel item. The spinner animates on each tick.
     fn add_spinner(&mut self, user_data_key: &str, tab_index: usize) {
-        if let Some(panel) = self.left_pane.panel3.get_list_panel_mut(tab_index) {
+        if let Some(panel) = self.left_pane.content_panel.get_list_panel_mut(tab_index) {
             panel.update_item_spinner(user_data_key, Some("\u{28cb}"));
         }
         self.spinner_clear_at = None;
@@ -596,7 +598,7 @@ impl BrowserLayout {
     fn finish_clear_spinners(&mut self) {
         self.spinner_clear_at = None;
         for item in self.spinning_items.drain(..) {
-            if let Some(panel) = self.left_pane.panel3.get_list_panel_mut(item.tab_index) {
+            if let Some(panel) = self.left_pane.content_panel.get_list_panel_mut(item.tab_index) {
                 panel.update_item_spinner(&item.user_data_key, None);
             }
         }
@@ -620,22 +622,23 @@ impl BrowserLayout {
         // Determine the heal target and the item to show a spinner on.
         // heal_item is (user_data_key, panel_tab_index) for spinner animation.
         let (target, heal_item): (Option<HealTarget>, Option<(String, usize)>) = match self.focus {
-            FocusArea::Panel3 => {
-                if let Some(panel) = self.left_pane.panel3.active_panel() {
-                    let tab =
-                        tabs::Panel3Tab::from_index(self.left_pane.panel3.tabs.selected_index());
+            FocusArea::ContentPanel => {
+                if let Some(panel) = self.left_pane.content_panel.active_panel() {
+                    let tab = tabs::ContentTab::from_index(
+                        self.left_pane.content_panel.tabs.selected_index(),
+                    );
                     match tab {
-                        Some(tabs::Panel3Tab::Bookmarks) => {
+                        Some(tabs::ContentTab::Bookmarks) => {
                             // Heal selected bookmark
                             let selected = panel.selected();
                             let user_data = selected.and_then(|s| s.user_data.clone());
                             (
                                 user_data.clone().map(HealTarget::Bookmark),
-                                user_data.map(|ud| (ud, tabs::Panel3Tab::Bookmarks.index())),
+                                user_data.map(|ud| (ud, tabs::ContentTab::Bookmarks.index())),
                             )
                         }
-                        Some(tab @ tabs::Panel3Tab::Collections)
-                        | Some(tab @ tabs::Panel3Tab::Tours) => {
+                        Some(tab @ tabs::ContentTab::Collections)
+                        | Some(tab @ tabs::ContentTab::Tours) => {
                             // Heal all bookmarks in collection/tour
                             let selected = panel.selected();
                             let result = selected.and_then(|s| {
@@ -668,7 +671,10 @@ impl BrowserLayout {
                 let result =
                     self.right_pane.steps_data.get(self.right_pane.pager_current).map(|step| {
                         let id = step.bookmark.id.clone();
-                        (HealTarget::Bookmark(id.clone()), (id, tabs::Panel3Tab::Bookmarks.index()))
+                        (
+                            HealTarget::Bookmark(id.clone()),
+                            (id, tabs::ContentTab::Bookmarks.index()),
+                        )
                     });
                 match result {
                     Some((target, item)) => (Some(target), Some(item)),
@@ -711,10 +717,10 @@ impl BrowserLayout {
         let event_handler = self.event_handler.clone();
 
         // Get the selected collection
-        let target = if self.focus == FocusArea::Panel3 {
-            if let Some(panel) = self.left_pane.panel3.active_panel() {
-                if let Some(Panel3Tab::Collections) =
-                    Panel3Tab::from_index(self.left_pane.panel3.tabs.selected_index())
+        let target = if self.focus == FocusArea::ContentPanel {
+            if let Some(panel) = self.left_pane.content_panel.active_panel() {
+                if let Some(ContentTab::Collections) =
+                    ContentTab::from_index(self.left_pane.content_panel.tabs.selected_index())
                 {
                     panel.selected().and_then(|s| {
                         if let Some(id) = &s.user_data {
@@ -743,7 +749,7 @@ impl BrowserLayout {
 
         // Show a spinner on the collection item being pushed. The spinner is
         // cleared when the SyncComplete event triggers schedule_clear_spinners().
-        self.add_spinner(&collection_id, Panel3Tab::Collections.index());
+        self.add_spinner(&collection_id, ContentTab::Collections.index());
 
         // Get config for the push operation
         let codemark_dir = match self.db.path().parent() {
@@ -842,12 +848,12 @@ impl BrowserLayout {
         };
 
         // Build the repo scope from the repos *selected* (active) in the Repos
-        // panel (Panel1 tab 0) — not every repo in the registry. Each item carries
+        // panel (Context panel tab 0) — not every repo in the registry. Each item carries
         // the owner (secondary text) and name (primary text). `GET /tours` is an
         // authorization-scoped lookup, so we name the selected repos in one
         // `repos=a/b,c/d` request rather than one request per repo.
         let mut repos: Vec<String> = Vec::new();
-        if let Some(TabContent::List(panel)) = self.left_pane.panel1.panels.first() {
+        if let Some(TabContent::List(panel)) = self.left_pane.context_panel.panels.first() {
             for item in panel.all_items().iter().filter(|i| i.is_active()) {
                 if let Some(owner) = item.get_secondary_text() {
                     repos.push(format!("{}/{}", owner, item.text()));
@@ -898,7 +904,7 @@ impl BrowserLayout {
         // Mark the item as pulling (spinner will be shown on tick)
         self.is_pulling_tour = true;
         let user_data_key = format!("remote:{}", tour_id);
-        self.add_spinner(&user_data_key, tabs::Panel3Tab::Tours.index());
+        self.add_spinner(&user_data_key, tabs::ContentTab::Tours.index());
 
         let db_path = self.db.path().to_path_buf();
         let event_handler = self.event_handler.clone();
@@ -988,8 +994,8 @@ impl BrowserLayout {
         // name as a local one), so the preview would follow the wrong item.
         let prev_selected = self
             .left_pane
-            .panel3
-            .get_list_panel_mut(Panel3Tab::Tours.index())
+            .content_panel
+            .get_list_panel_mut(ContentTab::Tours.index())
             .and_then(|p| p.selected().and_then(|i| i.user_data.clone()));
 
         let mut local_items = Vec::new();
@@ -1057,7 +1063,7 @@ impl BrowserLayout {
         let mut all_items = local_items;
         all_items.extend(remote_items);
 
-        if let Some(panel) = self.left_pane.panel3.get_list_panel_mut(2) {
+        if let Some(panel) = self.left_pane.content_panel.get_list_panel_mut(2) {
             panel.set_items(all_items);
             // Re-pin the selection by stable user_data so it survives the rebuild
             // (no-op if that item is gone, e.g. a pulled remote tour was removed).
@@ -1069,10 +1075,10 @@ impl BrowserLayout {
 
     /// Refresh all panels from the current active database.
     pub fn refresh_all_panels(&mut self) {
-        // 1. Update Panel 1 Owners (preserving active owner selections)
+        // 1. Update Context panel Owners (preserving active owner selections)
         let active_owners: Vec<String> = self
             .left_pane
-            .panel1
+            .context_panel
             .panels
             .get(ContextTab::Owners.index())
             .and_then(|c| match c {
@@ -1082,7 +1088,8 @@ impl BrowserLayout {
             .unwrap_or_default();
 
         let owner_items = TabbedPanel::build_owner_items(&self.registry);
-        if let Some(p) = self.left_pane.panel1.get_list_panel_mut(ContextTab::Owners.index()) {
+        if let Some(p) = self.left_pane.context_panel.get_list_panel_mut(ContextTab::Owners.index())
+        {
             p.set_items(owner_items);
             // Re-activate previously selected owners
             for owner in &active_owners {
@@ -1090,16 +1097,18 @@ impl BrowserLayout {
             }
         }
 
-        // Update Panel 1 Auth accounts (read-only)
+        // Update Context panel Auth accounts (read-only)
         let auth_items = TabbedPanel::build_auth_account_items(&self.registry);
-        if let Some(p) = self.left_pane.panel1.get_list_panel_mut(ContextTab::Auth.index()) {
+        if let Some(p) = self.left_pane.context_panel.get_list_panel_mut(ContextTab::Auth.index()) {
             p.set_items(auth_items);
         }
 
-        // Update Panel 1 Repos (respecting active owner filter)
+        // Update Context panel Repos (respecting active owner filter)
         if active_owners.is_empty() {
             let repo_items = TabbedPanel::build_repo_items(&self.db, &self.registry);
-            if let Some(p) = self.left_pane.panel1.get_list_panel_mut(ContextTab::Repos.index()) {
+            if let Some(p) =
+                self.left_pane.context_panel.get_list_panel_mut(ContextTab::Repos.index())
+            {
                 p.set_items(repo_items);
             }
         } else {
@@ -1110,19 +1119,19 @@ impl BrowserLayout {
         self.refresh_tags();
 
         // 3. Update Bookmarks/Collections/Tours (in-place)
-        let (tours, collections, bookmarks) = TabbedPanel::build_panel3_items(&self.db);
-        if let Some(p) = self.left_pane.panel3.get_list_panel_mut(0) {
+        let (tours, collections, bookmarks) = TabbedPanel::build_content_items(&self.db);
+        if let Some(p) = self.left_pane.content_panel.get_list_panel_mut(0) {
             p.set_items(bookmarks);
         }
-        if let Some(p) = self.left_pane.panel3.get_list_panel_mut(1) {
+        if let Some(p) = self.left_pane.content_panel.get_list_panel_mut(1) {
             p.set_items(collections);
         }
-        if let Some(p) = self.left_pane.panel3.get_list_panel_mut(2) {
+        if let Some(p) = self.left_pane.content_panel.get_list_panel_mut(2) {
             p.set_items(tours);
         }
 
         // 3a. The Tours tab is a hybrid of local tours and cached remote tours;
-        // build_panel3_items only knows the DB-local rows, so re-merge the cached
+        // build_content_items only knows the DB-local rows, so re-merge the cached
         // remote rows or they would vanish until the next fetch.
         self.rebuild_tours_panel();
 
@@ -1168,7 +1177,7 @@ impl BrowserLayout {
                 // pulled local collection — otherwise the list could stay on a
                 // same-titled sibling while the right pane shows the pulled tour.
                 if let Some(panel) =
-                    self.left_pane.panel3.get_list_panel_mut(Panel3Tab::Tours.index())
+                    self.left_pane.content_panel.get_list_panel_mut(ContentTab::Tours.index())
                 {
                     panel.select_by_user_data(&local_id);
                 }
@@ -1185,8 +1194,10 @@ impl BrowserLayout {
                         // tour sharing a title with a local one, or a reorder).
                         // Re-pin the Tours selection to this remote id so the next
                         // keypress doesn't jump the preview to a different item.
-                        if let Some(panel) =
-                            self.left_pane.panel3.get_list_panel_mut(Panel3Tab::Tours.index())
+                        if let Some(panel) = self
+                            .left_pane
+                            .content_panel
+                            .get_list_panel_mut(ContentTab::Tours.index())
                         {
                             panel.select_by_user_data(&format!("remote:{remote_id}"));
                         }
@@ -1207,20 +1218,20 @@ impl BrowserLayout {
         }
     }
 
-    /// Refresh tags in Panel 2 based on the active tab in Panel 3.
+    /// Refresh tags in Filters panel based on the active tab in Content panel.
     pub fn refresh_tags(&mut self) {
-        let active_tab = Panel3Tab::from_index(self.left_pane.panel3.tabs.selected_index())
-            .unwrap_or(Panel3Tab::Bookmarks);
+        let active_tab = ContentTab::from_index(self.left_pane.content_panel.tabs.selected_index())
+            .unwrap_or(ContentTab::Bookmarks);
         let (tags, branches) = TabbedPanel::build_tags_branches_items(&self.db, active_tab);
-        if let Some(p) = self.left_pane.panel2.get_list_panel_mut(0) {
+        if let Some(p) = self.left_pane.filters_panel.get_list_panel_mut(0) {
             p.set_items(tags);
         }
-        if let Some(p) = self.left_pane.panel2.get_list_panel_mut(1) {
+        if let Some(p) = self.left_pane.filters_panel.get_list_panel_mut(1) {
             p.set_items(branches);
         }
-        // Bookmarks have no associated branch, so hide Panel 2's Branches tab
+        // Bookmarks have no associated branch, so hide Filters panel's Branches tab
         // when they are active; only Collections and Tours carry a branch.
-        self.left_pane.panel2.sync_branches_tab_visibility(active_tab);
+        self.left_pane.filters_panel.sync_branches_tab_visibility(active_tab);
     }
 
     /// Get the current focus area.
@@ -1237,13 +1248,13 @@ impl BrowserLayout {
     /// from carrying over to the newly active tab.
     pub fn take_filter_targets_to_clear(&self) -> Vec<&'static str> {
         let mut targets = Vec::new();
-        if self.left_pane.panel1.take_tab_changed() {
+        if self.left_pane.context_panel.take_tab_changed() {
             targets.push("panel1");
         }
-        if self.left_pane.panel2.take_tab_changed() {
+        if self.left_pane.filters_panel.take_tab_changed() {
             targets.push("panel2");
         }
-        if self.left_pane.panel3.take_tab_changed() {
+        if self.left_pane.content_panel.take_tab_changed() {
             targets.push("panel3");
         }
         if self.right_pane.steps.take_tab_changed() {
@@ -1271,7 +1282,7 @@ impl BrowserLayout {
 
         let active_branches = self
             .left_pane
-            .panel2
+            .filters_panel
             .panels
             .get(1)
             .and_then(|c| match c {
@@ -1305,11 +1316,11 @@ impl BrowserLayout {
 
     /// Open the currently selected bookmark or tour step in the editor.
     pub fn open_in_editor(&mut self) {
-        // Special handling for Panel3 bookmarks: open directly without StepData
-        if self.focus == FocusArea::Panel3
+        // Special handling for ContentPanel bookmarks: open directly without StepData
+        if self.focus == FocusArea::ContentPanel
             && let Some(bookmark) = self
                 .left_pane
-                .panel3
+                .content_panel
                 .active_panel_mut()
                 .and_then(|panel| panel.selected())
                 .and_then(|item| {
@@ -1373,7 +1384,7 @@ impl BrowserLayout {
         }
     }
 
-    /// Open a bookmark directly in the editor (used for Panel3 bookmarks).
+    /// Open a bookmark directly in the editor (used for ContentPanel bookmarks).
     fn open_bookmark_in_editor(&mut self, bookmark: Bookmark) {
         use codemark_core::git::context::resolve_bookmark_file_path;
 
@@ -1464,32 +1475,32 @@ impl BrowserLayout {
     pub fn apply_filter(&mut self, query: &str) {
         let target_focus = if self.focus == FocusArea::Filter {
             match self.previous_focus {
-                Some(FocusArea::Panel1) => FocusArea::Panel1,
-                Some(FocusArea::Panel2) => FocusArea::Panel2,
-                Some(FocusArea::Panel3) => FocusArea::Panel3,
+                Some(FocusArea::ContextPanel) => FocusArea::ContextPanel,
+                Some(FocusArea::FiltersPanel) => FocusArea::FiltersPanel,
+                Some(FocusArea::ContentPanel) => FocusArea::ContentPanel,
                 Some(FocusArea::Main) => FocusArea::Main,
-                // Search focus filters Panel1 (consistent with main.rs filter_target logic)
-                Some(FocusArea::Search) => FocusArea::Panel1,
-                // Filter focus with no previous focus defaults to Panel3
-                Some(FocusArea::Filter) | None => FocusArea::Panel3,
+                // Search focus filters ContextPanel (consistent with main.rs filter_target logic)
+                Some(FocusArea::Search) => FocusArea::ContextPanel,
+                // Filter focus with no previous focus defaults to ContentPanel
+                Some(FocusArea::Filter) | None => FocusArea::ContentPanel,
             }
         } else {
             self.focus
         };
 
         match target_focus {
-            FocusArea::Panel1 => {
-                if let Some(panel) = self.left_pane.panel1.active_panel_mut() {
+            FocusArea::ContextPanel => {
+                if let Some(panel) = self.left_pane.context_panel.active_panel_mut() {
                     panel.set_filter(query);
                 }
             }
-            FocusArea::Panel2 => {
-                if let Some(panel) = self.left_pane.panel2.active_panel_mut() {
+            FocusArea::FiltersPanel => {
+                if let Some(panel) = self.left_pane.filters_panel.active_panel_mut() {
                     panel.set_filter(query);
                 }
             }
-            FocusArea::Panel3 => {
-                if let Some(panel) = self.left_pane.panel3.active_panel_mut() {
+            FocusArea::ContentPanel => {
+                if let Some(panel) = self.left_pane.content_panel.active_panel_mut() {
                     panel.set_filter(query);
                 }
             }
@@ -1506,7 +1517,7 @@ impl BrowserLayout {
     fn update_tours_collections(&mut self) {
         let active_tags = self
             .left_pane
-            .panel2
+            .filters_panel
             .panels
             .first()
             .and_then(|c| match c {
@@ -1517,7 +1528,7 @@ impl BrowserLayout {
 
         let active_branches = self
             .left_pane
-            .panel2
+            .filters_panel
             .panels
             .get(1)
             .and_then(|c| match c {
@@ -1526,7 +1537,7 @@ impl BrowserLayout {
             })
             .unwrap_or_default();
 
-        // 1. Update Tours/Collections (Panel 3, tabs 0 and 1)
+        // 1. Update Tours/Collections (Content panel, tabs 0 and 1)
         if let Ok(collections) = self.db.list_collections() {
             let mut collection_items = Vec::new();
             let mut tour_items = Vec::new();
@@ -1584,15 +1595,15 @@ impl BrowserLayout {
                 }
             }
 
-            if let Some(TabContent::List(p)) = self.left_pane.panel3.panels.get_mut(2) {
+            if let Some(TabContent::List(p)) = self.left_pane.content_panel.panels.get_mut(2) {
                 p.set_items(tour_items);
             }
-            if let Some(TabContent::List(p)) = self.left_pane.panel3.panels.get_mut(1) {
+            if let Some(TabContent::List(p)) = self.left_pane.content_panel.panels.get_mut(1) {
                 p.set_items(collection_items);
             }
         }
 
-        // 2. Update Bookmarks (Panel 3, tab 0)
+        // 2. Update Bookmarks (Content panel, tab 0)
         if let Ok(bookmarks) = self.db.list_bookmarks(&BookmarkFilter::default()) {
             let filtered_bookmarks: Vec<_> = bookmarks
                 .into_iter()
@@ -1637,7 +1648,7 @@ impl BrowserLayout {
                 })
                 .collect();
 
-            if let Some(TabContent::List(p)) = self.left_pane.panel3.panels.get_mut(0) {
+            if let Some(TabContent::List(p)) = self.left_pane.content_panel.panels.get_mut(0) {
                 p.set_items(filtered_items);
             }
 
@@ -1646,7 +1657,7 @@ impl BrowserLayout {
         }
     }
 
-    /// Update the Repos panel (Panel 1, Repos tab) based on active owner filters.
+    /// Update the Repos panel (Context panel, Repos tab) based on active owner filters.
     ///
     /// Follows the same pattern as `update_tours_collections()`:
     /// reads active owners from the Owners panel, re-queries repos from the registry,
@@ -1654,7 +1665,7 @@ impl BrowserLayout {
     fn update_repos_by_owner(&mut self) {
         let active_owners = self
             .left_pane
-            .panel1
+            .context_panel
             .panels
             .get(ContextTab::Owners.index())
             .and_then(|c| match c {
@@ -1677,7 +1688,8 @@ impl BrowserLayout {
                 .collect()
         };
 
-        if let Some(p) = self.left_pane.panel1.get_list_panel_mut(ContextTab::Repos.index()) {
+        if let Some(p) = self.left_pane.context_panel.get_list_panel_mut(ContextTab::Repos.index())
+        {
             p.set_items(repo_items);
         }
     }
@@ -1732,8 +1744,8 @@ impl BrowserLayout {
         let prev = self.previous_focus.take();
         match prev {
             Some(FocusArea::Filter) | None => {
-                // Filter focus with no previous focus defaults to Panel3
-                self.focus = FocusArea::Panel3;
+                // Filter focus with no previous focus defaults to ContentPanel
+                self.focus = FocusArea::ContentPanel;
             }
             Some(f) => {
                 // Restore the previous focus (including Search, which is a valid focus area)
@@ -1759,11 +1771,11 @@ impl BrowserLayout {
             }
             _ => {
                 self.focus = match self.focus {
-                    FocusArea::Search => FocusArea::Panel1,
-                    FocusArea::Panel1 => FocusArea::Panel2,
-                    FocusArea::Panel2 => FocusArea::Panel3,
-                    FocusArea::Panel3 => FocusArea::Search,
-                    _ => FocusArea::Panel3,
+                    FocusArea::Search => FocusArea::ContextPanel,
+                    FocusArea::ContextPanel => FocusArea::FiltersPanel,
+                    FocusArea::FiltersPanel => FocusArea::ContentPanel,
+                    FocusArea::ContentPanel => FocusArea::Search,
+                    _ => FocusArea::ContentPanel,
                 };
             }
         }
@@ -1778,11 +1790,11 @@ impl BrowserLayout {
             }
             _ => {
                 self.focus = match self.focus {
-                    FocusArea::Search => FocusArea::Panel3,
-                    FocusArea::Panel3 => FocusArea::Panel2,
-                    FocusArea::Panel2 => FocusArea::Panel1,
-                    FocusArea::Panel1 => FocusArea::Search,
-                    _ => FocusArea::Panel3,
+                    FocusArea::Search => FocusArea::ContentPanel,
+                    FocusArea::ContentPanel => FocusArea::FiltersPanel,
+                    FocusArea::FiltersPanel => FocusArea::ContextPanel,
+                    FocusArea::ContextPanel => FocusArea::Search,
+                    _ => FocusArea::ContentPanel,
                 };
             }
         }
@@ -1793,9 +1805,9 @@ impl BrowserLayout {
     fn update_focus_state(&mut self) {
         // Reset all focus
         self.left_pane.search.set_focus(false);
-        self.left_pane.panel1.set_focus(false);
-        self.left_pane.panel2.set_focus(false);
-        self.left_pane.panel3.set_focus(false);
+        self.left_pane.context_panel.set_focus(false);
+        self.left_pane.filters_panel.set_focus(false);
+        self.left_pane.content_panel.set_focus(false);
         self.right_pane.set_focus(false);
 
         // If in filter mode, don't set visual focus on any panel
@@ -1829,15 +1841,15 @@ impl BrowserLayout {
             FocusArea::Search => {
                 self.left_pane.search.set_focus(true);
             }
-            FocusArea::Panel1 => {
-                self.left_pane.panel1.set_focus(true);
+            FocusArea::ContextPanel => {
+                self.left_pane.context_panel.set_focus(true);
             }
-            FocusArea::Panel2 => {
-                self.left_pane.panel2.set_focus(true);
+            FocusArea::FiltersPanel => {
+                self.left_pane.filters_panel.set_focus(true);
             }
-            FocusArea::Panel3 => {
-                self.left_pane.panel3.set_focus(true);
-                self.update_panel3_live_preview();
+            FocusArea::ContentPanel => {
+                self.left_pane.content_panel.set_focus(true);
+                self.update_content_live_preview();
             }
             FocusArea::Main => {
                 self.right_pane.set_focus(true);
@@ -1998,7 +2010,7 @@ mod tests {
         let mut layout = test_layout();
 
         // Simulate the user expanding the left pane while a left panel is focused.
-        layout.set_focus(FocusArea::Panel3);
+        layout.set_focus(FocusArea::ContentPanel);
         layout.set_left_pane_size(LeftPaneSize::Half);
         assert_eq!(layout.left_pane_size(), LeftPaneSize::Half);
 
@@ -2021,7 +2033,7 @@ mod tests {
         // Pressing Esc moves focus back to the bookmarks panel. The fullscreen
         // expansion must reset so the now-focused panel is actually visible
         // instead of staying hidden behind a full-width preview.
-        layout.set_focus(FocusArea::Panel3);
+        layout.set_focus(FocusArea::ContentPanel);
         assert_eq!(layout.right_pane_size, RightPaneSize::Regular);
         assert_eq!(layout.details_pane_size, DetailsPaneSize::Regular);
     }
@@ -2030,11 +2042,11 @@ mod tests {
     fn left_pane_size_preserved_across_left_panel_focus() {
         let mut layout = test_layout();
 
-        // Expanding while on Panel3, then moving between left panels must keep the
+        // Expanding while on ContentPanel, then moving between left panels must keep the
         // expanded size — only focusing the preview pane resets it.
-        layout.set_focus(FocusArea::Panel3);
+        layout.set_focus(FocusArea::ContentPanel);
         layout.set_left_pane_size(LeftPaneSize::Full);
-        layout.set_focus(FocusArea::Panel2);
+        layout.set_focus(FocusArea::FiltersPanel);
         assert_eq!(layout.left_pane_size(), LeftPaneSize::Full);
     }
 }

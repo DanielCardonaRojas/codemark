@@ -13,8 +13,8 @@ use codemark_core::query::classifier::get_node_icon;
 use codemark_core::query::summarizer;
 
 use super::{
-    BrowserLayout, ConfirmDialog, ContextTab, DetailsPaneSize, DialogAction, FocusArea,
-    HealNotification, Panel3Tab, RightPaneFocus, RightPaneSize, TabContent, shorten_path,
+    BrowserLayout, ConfirmDialog, ContentTab, ContextTab, DetailsPaneSize, DialogAction, FocusArea,
+    HealNotification, RightPaneFocus, RightPaneSize, TabContent, shorten_path,
 };
 
 impl BrowserLayout {
@@ -56,7 +56,7 @@ impl BrowserLayout {
             && key.code == ratatui::crossterm::event::KeyCode::Esc
             && self.focus == FocusArea::Main
         {
-            self.set_focus(FocusArea::Panel3);
+            self.set_focus(FocusArea::ContentPanel);
             return true;
         }
 
@@ -120,7 +120,7 @@ impl BrowserLayout {
         ];
         let frame = SPINNER_FRAMES[self.tick_count % SPINNER_FRAMES.len()];
         for item in &self.spinning_items {
-            if let Some(panel) = self.left_pane.panel3.get_list_panel_mut(item.tab_index) {
+            if let Some(panel) = self.left_pane.content_panel.get_list_panel_mut(item.tab_index) {
                 panel.update_item_spinner(&item.user_data_key, Some(frame));
             }
         }
@@ -200,7 +200,7 @@ impl BrowserLayout {
                 // the tab was first shown (the fetch is async), so the initially
                 // selected item never got a preview. Render it now; otherwise it
                 // stays blank until the user moves the selection.
-                self.update_panel3_live_preview();
+                self.update_content_live_preview();
                 Some(true)
             }
             Event::RemoteToursFetchError(msg) => {
@@ -211,7 +211,7 @@ impl BrowserLayout {
                 Some(true)
             }
             Event::LiveHealthBatch(batch) => {
-                if let Some(panel) = self.left_pane.panel3.get_list_panel_mut(0) {
+                if let Some(panel) = self.left_pane.content_panel.get_list_panel_mut(0) {
                     for (bookmark_id, status) in batch {
                         panel.update_item_health(bookmark_id, HealthStatus::from(*status));
                     }
@@ -286,13 +286,13 @@ impl BrowserLayout {
             })
             .collect();
 
-        if let Some(TabContent::List(p)) = self.left_pane.panel3.panels.get_mut(0) {
+        if let Some(TabContent::List(p)) = self.left_pane.content_panel.panels.get_mut(0) {
             p.set_items(items);
             p.set_selected(0);
             // Flag the panel as showing search results so its tab title gets a
             // filter glyph, like any other narrowed list.
             p.set_search_active(true);
-            self.left_pane.panel3.tabs.set_selected(0);
+            self.left_pane.content_panel.tabs.set_selected(0);
         }
 
         // Spawn background task to resolve health for all bookmarks
@@ -454,29 +454,29 @@ impl BrowserLayout {
             {
                 self.set_focus(FocusArea::Search);
             } else {
-                let p1_area = self.left_pane.panel1.last_area();
+                let p1_area = self.left_pane.context_panel.last_area();
                 if col >= p1_area.x
                     && col < p1_area.x + p1_area.width
                     && row >= p1_area.y
                     && row < p1_area.y + p1_area.height
                 {
-                    self.set_focus(FocusArea::Panel1);
+                    self.set_focus(FocusArea::ContextPanel);
                 } else {
-                    let p2_area = self.left_pane.panel2.last_area();
+                    let p2_area = self.left_pane.filters_panel.last_area();
                     if col >= p2_area.x
                         && col < p2_area.x + p2_area.width
                         && row >= p2_area.y
                         && row < p2_area.y + p2_area.height
                     {
-                        self.set_focus(FocusArea::Panel2);
+                        self.set_focus(FocusArea::FiltersPanel);
                     } else {
-                        let p3_area = self.left_pane.panel3.last_area();
+                        let p3_area = self.left_pane.content_panel.last_area();
                         if col >= p3_area.x
                             && col < p3_area.x + p3_area.width
                             && row >= p3_area.y
                             && row < p3_area.y + p3_area.height
                         {
-                            self.set_focus(FocusArea::Panel3);
+                            self.set_focus(FocusArea::ContentPanel);
                         } else {
                             let right_area = self.right_pane.last_area();
                             if col >= right_area.x
@@ -526,7 +526,7 @@ impl BrowserLayout {
                     // Invalidate any in-flight search so it doesn't overwrite the refreshed panels
                     self.active_search_request = self.active_search_request.wrapping_add(1);
                     self.refresh_all_panels();
-                    self.set_focus(FocusArea::Panel3);
+                    self.set_focus(FocusArea::ContentPanel);
                     return Some(true);
                 }
             }
@@ -549,28 +549,28 @@ impl BrowserLayout {
                 return self.handle_o_key(key);
             }
             ratatui::crossterm::event::KeyCode::Char('d')
-                if self.should_handle_keybindings() && self.focus == FocusArea::Panel3 =>
+                if self.should_handle_keybindings() && self.focus == FocusArea::ContentPanel =>
             {
                 return self.handle_delete_key();
             }
             ratatui::crossterm::event::KeyCode::Char('P')
-                if self.should_handle_keybindings() && self.focus == FocusArea::Panel3 =>
+                if self.should_handle_keybindings() && self.focus == FocusArea::ContentPanel =>
             {
-                if let Some(Panel3Tab::Collections) =
-                    Panel3Tab::from_index(self.left_pane.panel3.tabs.selected_index())
+                if let Some(ContentTab::Collections) =
+                    ContentTab::from_index(self.left_pane.content_panel.tabs.selected_index())
                 {
                     self.start_push_collection();
                     return Some(true);
                 }
             }
             ratatui::crossterm::event::KeyCode::Char('p')
-                if self.should_handle_keybindings() && self.focus == FocusArea::Panel3 =>
+                if self.should_handle_keybindings() && self.focus == FocusArea::ContentPanel =>
             {
                 return self.handle_pull_key();
             }
             ratatui::crossterm::event::KeyCode::Char('H')
                 if self.should_handle_keybindings()
-                    && (self.focus == FocusArea::Panel3 || self.focus == FocusArea::Main) =>
+                    && (self.focus == FocusArea::ContentPanel || self.focus == FocusArea::Main) =>
             {
                 self.start_heal_selection();
                 return Some(true);
@@ -616,50 +616,50 @@ impl BrowserLayout {
             self.execute_search();
             return Some(true);
         }
-        if self.focus == FocusArea::Panel1 {
-            return Some(self.activate_panel1_selection(true));
+        if self.focus == FocusArea::ContextPanel {
+            return Some(self.activate_context_selection(true));
         }
-        if self.focus == FocusArea::Panel2
-            && let Some(panel) = self.left_pane.panel2.active_panel_mut()
+        if self.focus == FocusArea::FiltersPanel
+            && let Some(panel) = self.left_pane.filters_panel.active_panel_mut()
         {
             panel.activate_selected();
             self.update_tours_collections();
             return Some(true);
         }
-        if self.focus == FocusArea::Panel3 {
-            return self.activate_panel3_selection();
+        if self.focus == FocusArea::ContentPanel {
+            return self.activate_content_selection();
         }
         None
     }
 
     /// Handle Space key — activate/toggle without moving focus away.
     fn handle_space_key(&mut self) -> Option<bool> {
-        if self.focus == FocusArea::Panel1 {
-            return Some(self.activate_panel1_selection(false));
+        if self.focus == FocusArea::ContextPanel {
+            return Some(self.activate_context_selection(false));
         }
-        if self.focus == FocusArea::Panel2
-            && let Some(panel) = self.left_pane.panel2.active_panel_mut()
+        if self.focus == FocusArea::FiltersPanel
+            && let Some(panel) = self.left_pane.filters_panel.active_panel_mut()
         {
             panel.activate_selected();
             self.update_tours_collections();
             return Some(true);
         }
-        if self.focus == FocusArea::Panel3 {
-            return self.activate_panel3_selection();
+        if self.focus == FocusArea::ContentPanel {
+            return self.activate_content_selection();
         }
         None
     }
 
-    /// Activate the currently selected item in Panel 1 (Repos, Owners, or Auth).
+    /// Activate the currently selected item in Context panel (Repos, Owners, or Auth).
     ///
-    /// When `move_focus` is true (Enter), a successful repo switch moves focus to Panel 3.
-    /// When false (Space), focus stays on Panel 1.
-    fn activate_panel1_selection(&mut self, move_focus: bool) -> bool {
-        let active_tab = ContextTab::from_index(self.left_pane.panel1.tabs.selected_index());
+    /// When `move_focus` is true (Enter), a successful repo switch moves focus to Content panel.
+    /// When false (Space), focus stays on Context panel.
+    fn activate_context_selection(&mut self, move_focus: bool) -> bool {
+        let active_tab = ContextTab::from_index(self.left_pane.context_panel.tabs.selected_index());
         match active_tab {
             Some(ContextTab::Owners) => {
                 // Owners tab: toggle owner selection and filter repos
-                if let Some(panel) = self.left_pane.panel1.active_panel_mut() {
+                if let Some(panel) = self.left_pane.context_panel.active_panel_mut() {
                     panel.activate_selected();
                 }
                 self.update_repos_by_owner();
@@ -671,7 +671,7 @@ impl BrowserLayout {
             }
             _ => {}
         }
-        if let Some(panel) = self.left_pane.panel1.active_panel_mut()
+        if let Some(panel) = self.left_pane.context_panel.active_panel_mut()
             && let Some(selected) = panel.selected()
             && let Some(root) = selected.user_data.as_ref()
         {
@@ -680,7 +680,7 @@ impl BrowserLayout {
             panel.activate_selected();
             if move_focus {
                 if self.switch_database(&root).is_ok() {
-                    self.set_focus(FocusArea::Panel3);
+                    self.set_focus(FocusArea::ContentPanel);
                 }
             } else {
                 let _ = self.switch_database(&root);
@@ -690,11 +690,11 @@ impl BrowserLayout {
         false
     }
 
-    /// Activate the currently selected item in Panel 3 (Bookmarks, Tours, Collections).
-    fn activate_panel3_selection(&mut self) -> Option<bool> {
-        match Panel3Tab::from_index(self.left_pane.panel3.tabs.selected_index()) {
-            Some(Panel3Tab::Tours) => {
-                if let Some(panel) = self.left_pane.panel3.active_panel_mut()
+    /// Activate the currently selected item in Content panel (Bookmarks, Tours, Collections).
+    fn activate_content_selection(&mut self) -> Option<bool> {
+        match ContentTab::from_index(self.left_pane.content_panel.tabs.selected_index()) {
+            Some(ContentTab::Tours) => {
+                if let Some(panel) = self.left_pane.content_panel.active_panel_mut()
                     && let Some(selected) = panel.selected()
                 {
                     if let Some(ref ud) = selected.user_data
@@ -711,8 +711,8 @@ impl BrowserLayout {
                     return Some(true);
                 }
             }
-            Some(Panel3Tab::Collections) => {
-                if let Some(panel) = self.left_pane.panel3.active_panel_mut()
+            Some(ContentTab::Collections) => {
+                if let Some(panel) = self.left_pane.content_panel.active_panel_mut()
                     && let Some(selected) = panel.selected()
                 {
                     let tour_name = selected.text().to_string();
@@ -722,8 +722,8 @@ impl BrowserLayout {
                     return Some(true);
                 }
             }
-            Some(Panel3Tab::Bookmarks) => {
-                if let Some(panel) = self.left_pane.panel3.active_panel_mut()
+            Some(ContentTab::Bookmarks) => {
+                if let Some(panel) = self.left_pane.content_panel.active_panel_mut()
                     && let Some(selected) = panel.selected()
                     && let Some(id) = selected.user_data.clone()
                 {
@@ -742,18 +742,18 @@ impl BrowserLayout {
     fn handle_number_key(&mut self, c: char) -> bool {
         // Numbers jump to the visible panes 1..=5, matching the `[N]` badge on
         // each pane's border. The search bar is excluded — it has its own `s`
-        // shortcut — so the numbering starts at Panel 1.
+        // shortcut — so the numbering starts at Context panel.
         match c {
             '1' => {
-                self.focus = FocusArea::Panel1;
+                self.focus = FocusArea::ContextPanel;
                 self.update_focus_state();
             }
             '2' => {
-                self.focus = FocusArea::Panel2;
+                self.focus = FocusArea::FiltersPanel;
                 self.update_focus_state();
             }
             '3' => {
-                self.focus = FocusArea::Panel3;
+                self.focus = FocusArea::ContentPanel;
                 self.update_focus_state();
             }
             '4' => {
@@ -788,10 +788,10 @@ impl BrowserLayout {
             return None;
         }
 
-        if self.focus == FocusArea::Panel3 {
-            match Panel3Tab::from_index(self.left_pane.panel3.tabs.selected_index()) {
-                Some(Panel3Tab::Bookmarks) | Some(Panel3Tab::Collections) => {
-                    if let Some(panel) = self.left_pane.panel3.active_panel_mut()
+        if self.focus == FocusArea::ContentPanel {
+            match ContentTab::from_index(self.left_pane.content_panel.tabs.selected_index()) {
+                Some(ContentTab::Bookmarks) | Some(ContentTab::Collections) => {
+                    if let Some(panel) = self.left_pane.content_panel.active_panel_mut()
                         && let Some(selected) = panel.selected()
                         && let Some(id) = selected.user_data.clone()
                     {
@@ -855,9 +855,9 @@ impl BrowserLayout {
     /// This opens a modal confirmation dialog; the actual deletion happens only
     /// once the user confirms (see [`BrowserLayout::handle_dialog_key`]).
     fn handle_delete_key(&mut self) -> Option<bool> {
-        match Panel3Tab::from_index(self.left_pane.panel3.tabs.selected_index()) {
-            Some(Panel3Tab::Collections) => {
-                if let Some(panel) = self.left_pane.panel3.active_panel_mut()
+        match ContentTab::from_index(self.left_pane.content_panel.tabs.selected_index()) {
+            Some(ContentTab::Collections) => {
+                if let Some(panel) = self.left_pane.content_panel.active_panel_mut()
                     && let Some(selected) = panel.selected()
                 {
                     let collection_name = selected.text().to_string();
@@ -872,8 +872,8 @@ impl BrowserLayout {
                     }
                 }
             }
-            Some(Panel3Tab::Bookmarks) => {
-                if let Some(panel) = self.left_pane.panel3.active_panel_mut()
+            Some(ContentTab::Bookmarks) => {
+                if let Some(panel) = self.left_pane.content_panel.active_panel_mut()
                     && let Some(selected) = panel.selected()
                     && let Some(id) = selected.user_data.clone()
                 {
@@ -893,12 +893,12 @@ impl BrowserLayout {
 
     /// Handle 'p' key — pull a remote tour or refresh the remote listing.
     fn handle_pull_key(&mut self) -> Option<bool> {
-        if let Some(Panel3Tab::Tours) =
-            Panel3Tab::from_index(self.left_pane.panel3.tabs.selected_index())
+        if let Some(ContentTab::Tours) =
+            ContentTab::from_index(self.left_pane.content_panel.tabs.selected_index())
         {
             let should_pull = self
                 .left_pane
-                .panel3
+                .content_panel
                 .active_panel_mut()
                 .and_then(|panel| panel.selected())
                 .and_then(|selected| {
@@ -976,7 +976,7 @@ impl BrowserLayout {
     fn handle_delegation(&mut self, event: &Event) -> bool {
         match event {
             Event::Mouse(_) => {
-                let old_tab = self.left_pane.panel3.tabs.selected_index();
+                let old_tab = self.left_pane.content_panel.tabs.selected_index();
 
                 let left_handled = self.left_pane.handle_event(event);
                 let right_handled = self.right_pane.handle_event(event);
@@ -986,23 +986,23 @@ impl BrowserLayout {
                 }
                 let handled = left_handled || right_handled;
 
-                let new_tab = self.left_pane.panel3.tabs.selected_index();
+                let new_tab = self.left_pane.content_panel.tabs.selected_index();
                 if new_tab != old_tab {
                     self.refresh_tags();
                     self.sync_steps_tab_label();
-                    if Panel3Tab::from_index(new_tab) == Some(Panel3Tab::Tours) {
+                    if ContentTab::from_index(new_tab) == Some(ContentTab::Tours) {
                         self.fetch_remote_tours();
                     }
                     // Refresh the preview for the newly active tab so it doesn't
                     // linger on content from the previous tab.
-                    self.update_panel3_live_preview();
+                    self.update_content_live_preview();
                 }
 
-                if self.focus == FocusArea::Panel3
-                    && let Some(id) = self.left_pane.panel3.take_selection_change()
-                    && let Some(tab) = Panel3Tab::from_index(new_tab)
+                if self.focus == FocusArea::ContentPanel
+                    && let Some(id) = self.left_pane.content_panel.take_selection_change()
+                    && let Some(tab) = ContentTab::from_index(new_tab)
                 {
-                    self.on_panel3_selection_changed(tab, &id);
+                    self.on_content_selection_changed(tab, &id);
                 }
                 handled
             }
@@ -1011,18 +1011,19 @@ impl BrowserLayout {
                     return false;
                 }
 
-                let old_tab = self.left_pane.panel3.tabs.selected_index();
+                let old_tab = self.left_pane.content_panel.tabs.selected_index();
                 let handled = match self.focus {
                     FocusArea::Search => self.left_pane.search.handle_event(event),
-                    FocusArea::Panel1 => self.left_pane.panel1.handle_event(event),
-                    FocusArea::Panel2 => self.left_pane.panel2.handle_event(event),
-                    FocusArea::Panel3 => {
-                        let handled = self.left_pane.panel3.handle_event(event);
-                        if let Some(id) = self.left_pane.panel3.take_selection_change()
-                            && let Some(tab) =
-                                Panel3Tab::from_index(self.left_pane.panel3.tabs.selected_index())
+                    FocusArea::ContextPanel => self.left_pane.context_panel.handle_event(event),
+                    FocusArea::FiltersPanel => self.left_pane.filters_panel.handle_event(event),
+                    FocusArea::ContentPanel => {
+                        let handled = self.left_pane.content_panel.handle_event(event);
+                        if let Some(id) = self.left_pane.content_panel.take_selection_change()
+                            && let Some(tab) = ContentTab::from_index(
+                                self.left_pane.content_panel.tabs.selected_index(),
+                            )
                         {
-                            self.on_panel3_selection_changed(tab, &id);
+                            self.on_content_selection_changed(tab, &id);
                         }
                         handled
                     }
@@ -1039,16 +1040,16 @@ impl BrowserLayout {
                     FocusArea::Filter => unreachable!(),
                 };
 
-                let new_tab = self.left_pane.panel3.tabs.selected_index();
+                let new_tab = self.left_pane.content_panel.tabs.selected_index();
                 if new_tab != old_tab {
                     self.refresh_tags();
                     self.sync_steps_tab_label();
-                    if Panel3Tab::from_index(new_tab) == Some(Panel3Tab::Tours) {
+                    if ContentTab::from_index(new_tab) == Some(ContentTab::Tours) {
                         self.fetch_remote_tours();
                     }
                     // Refresh the preview for the newly active tab so it doesn't
                     // linger on content from the previous tab.
-                    self.update_panel3_live_preview();
+                    self.update_content_live_preview();
                 }
 
                 handled

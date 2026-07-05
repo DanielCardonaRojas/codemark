@@ -276,11 +276,17 @@ async fn run_app() -> Result<Option<i32>> {
                                     event::KeyCode::Char('/') if !dialog_active => {
                                         // Set the filter target based on current focus before entering filter mode
                                         let filter_target = match layout.focus() {
-                                            codemark_tui::browser::FocusArea::Panel1 => "panel1",
-                                            codemark_tui::browser::FocusArea::Panel2 => "panel2",
-                                            codemark_tui::browser::FocusArea::Panel3 => "panel3",
+                                            codemark_tui::browser::FocusArea::ContextPanel => {
+                                                "panel1"
+                                            }
+                                            codemark_tui::browser::FocusArea::FiltersPanel => {
+                                                "panel2"
+                                            }
+                                            codemark_tui::browser::FocusArea::ContentPanel => {
+                                                "panel3"
+                                            }
                                             codemark_tui::browser::FocusArea::Main => "main",
-                                            codemark_tui::browser::FocusArea::Search => "panel1", // Search filters Panel1
+                                            codemark_tui::browser::FocusArea::Search => "panel1", // Search filters ContextPanel
                                             codemark_tui::browser::FocusArea::Filter => "panel3",
                                         };
                                         state.set_string("filter_target", filter_target);
@@ -292,13 +298,13 @@ async fn run_app() -> Result<Option<i32>> {
                                         } else {
                                             // Clear the active filter for the focused panel
                                             let filter_key = match layout.focus() {
-                                                codemark_tui::browser::FocusArea::Panel1 => {
+                                                codemark_tui::browser::FocusArea::ContextPanel => {
                                                     "active_filter_panel1"
                                                 }
-                                                codemark_tui::browser::FocusArea::Panel2 => {
+                                                codemark_tui::browser::FocusArea::FiltersPanel => {
                                                     "active_filter_panel2"
                                                 }
-                                                codemark_tui::browser::FocusArea::Panel3 => {
+                                                codemark_tui::browser::FocusArea::ContentPanel => {
                                                     "active_filter_panel3"
                                                 }
                                                 codemark_tui::browser::FocusArea::Main => {
@@ -421,13 +427,13 @@ async fn run_app() -> Result<Option<i32>> {
                 } else {
                     // In Normal mode, use the current layout focus
                     match layout.focus() {
-                        codemark_tui::browser::FocusArea::Panel1 => {
+                        codemark_tui::browser::FocusArea::ContextPanel => {
                             "active_filter_panel1".to_string()
                         }
-                        codemark_tui::browser::FocusArea::Panel2 => {
+                        codemark_tui::browser::FocusArea::FiltersPanel => {
                             "active_filter_panel2".to_string()
                         }
-                        codemark_tui::browser::FocusArea::Panel3 => {
+                        codemark_tui::browser::FocusArea::ContentPanel => {
                             "active_filter_panel3".to_string()
                         }
                         codemark_tui::browser::FocusArea::Main => "active_filter_main".to_string(),

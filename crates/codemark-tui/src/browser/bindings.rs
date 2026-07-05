@@ -1,5 +1,5 @@
 use crate::browser::right_pane::INFO_TAB_INDEX;
-use crate::browser::{BrowserLayout, FocusArea, Panel3Tab};
+use crate::browser::{BrowserLayout, ContentTab, FocusArea};
 use crate::ui::{HIDDEN_BINDING_PRIORITY, KeyBinding};
 
 impl BrowserLayout {
@@ -35,35 +35,35 @@ impl BrowserLayout {
                 bindings.push(("Enter", "Search"));
                 bindings.push(("Ctrl+S", "FTS / Sem"));
             }
-            FocusArea::Panel1 => {
+            FocusArea::ContextPanel => {
                 bindings.push(("Enter", "Select repo"));
                 bindings.push(("+", "Increase pane"));
                 bindings.push(("_", "Decrease pane"));
             }
-            FocusArea::Panel2 => {
+            FocusArea::FiltersPanel => {
                 bindings.push(("Enter", "Toggle filter"));
                 bindings.push(("Space", "Toggle filter"));
                 bindings.push(("+", "Increase pane"));
                 bindings.push(("_", "Decrease pane"));
             }
-            FocusArea::Panel3 => {
+            FocusArea::ContentPanel => {
                 bindings.push(("+", "Increase pane"));
                 bindings.push(("_", "Decrease pane"));
-                match Panel3Tab::from_index(self.left_pane.panel3.tabs.selected_index()) {
-                    Some(Panel3Tab::Tours) => {
+                match ContentTab::from_index(self.left_pane.content_panel.tabs.selected_index()) {
+                    Some(ContentTab::Tours) => {
                         bindings.push(("Enter", "Open tour"));
                         bindings.push(("p", "Pull tour"));
                         bindings.push(("P", "Push tour"));
                         bindings.push(("H", "Heal all"));
                     }
-                    Some(Panel3Tab::Collections) => {
+                    Some(ContentTab::Collections) => {
                         bindings.push(("Enter", "Open collection"));
                         bindings.push(("P", "Push collection"));
                         bindings.push(("d", "Delete collection"));
                         bindings.push(("H", "Heal all"));
                         bindings.push(("Ctrl+O", "Copy ID"));
                     }
-                    Some(Panel3Tab::Bookmarks) => {
+                    Some(ContentTab::Bookmarks) => {
                         bindings.push(("Enter", "Preview bookmark"));
                         bindings.push(("o", "Open in editor"));
                         bindings.push(("d", "Delete bookmark"));
@@ -141,24 +141,24 @@ impl BrowserLayout {
                 );
                 bindings.push(KeyBinding::new("Ctrl+S", "FTS / Sem").with_priority(90));
             }
-            FocusArea::Panel1 => {
+            FocusArea::ContextPanel => {
                 // Repos / Accounts
                 bindings.push(
                     KeyBinding::new("Enter", "Select").with_priority(HIDDEN_BINDING_PRIORITY),
                 );
                 bindings.push(KeyBinding::new("+/-", "Resize").with_priority(20));
             }
-            FocusArea::Panel2 => {
+            FocusArea::FiltersPanel => {
                 // Tags / Branches
                 bindings.push(
                     KeyBinding::new("Enter", "Filter").with_priority(HIDDEN_BINDING_PRIORITY),
                 );
                 bindings.push(KeyBinding::new("+/-", "Resize").with_priority(20));
             }
-            FocusArea::Panel3 => {
+            FocusArea::ContentPanel => {
                 // Tours / Collections / Bookmarks
-                match Panel3Tab::from_index(self.left_pane.panel3.tabs.selected_index()) {
-                    Some(Panel3Tab::Tours) => {
+                match ContentTab::from_index(self.left_pane.content_panel.tabs.selected_index()) {
+                    Some(ContentTab::Tours) => {
                         bindings.push(KeyBinding::new("p", "Pull").with_priority(90));
                         bindings.push(KeyBinding::new("P", "Push").with_priority(85));
                         bindings.push(
@@ -166,7 +166,7 @@ impl BrowserLayout {
                         );
                         bindings.push(KeyBinding::new("+/-", "Resize").with_priority(20));
                     }
-                    Some(Panel3Tab::Collections) => {
+                    Some(ContentTab::Collections) => {
                         bindings.push(
                             KeyBinding::new("Enter", "Open").with_priority(HIDDEN_BINDING_PRIORITY),
                         );
@@ -178,7 +178,7 @@ impl BrowserLayout {
                         bindings.push(KeyBinding::new("Ctrl+O", "Copy ID").with_priority(30));
                         bindings.push(KeyBinding::new("+/-", "Resize").with_priority(20));
                     }
-                    Some(Panel3Tab::Bookmarks) => {
+                    Some(ContentTab::Bookmarks) => {
                         bindings.push(
                             KeyBinding::new("Enter", "Preview")
                                 .with_priority(HIDDEN_BINDING_PRIORITY),

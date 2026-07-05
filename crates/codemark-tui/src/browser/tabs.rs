@@ -102,46 +102,46 @@ pub fn truncate_line_to_width(line: Line<'static>, max_width: usize) -> Line<'st
     Line::from(spans).alignment(Alignment::Left)
 }
 
-/// Panel 3 tabs (Bookmarks/Collections/Tours).
+/// Content panel tabs (Bookmarks/Collections/Tours).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Panel3Tab {
+pub enum ContentTab {
     Bookmarks = 0,
     Collections = 1,
     Tours = 2,
 }
 
-impl Panel3Tab {
+impl ContentTab {
     /// Get the index of this tab.
     pub fn index(self) -> usize {
         self as usize
     }
 
     /// Get all tabs in order.
-    pub fn all() -> &'static [Panel3Tab] {
-        &[Panel3Tab::Bookmarks, Panel3Tab::Collections, Panel3Tab::Tours]
+    pub fn all() -> &'static [ContentTab] {
+        &[ContentTab::Bookmarks, ContentTab::Collections, ContentTab::Tours]
     }
 
     /// Get the tab label.
     pub fn label(self) -> &'static str {
         match self {
-            Panel3Tab::Bookmarks => "Bookmarks",
-            Panel3Tab::Collections => "Collections",
-            Panel3Tab::Tours => "Tours",
+            ContentTab::Bookmarks => "Bookmarks",
+            ContentTab::Collections => "Collections",
+            ContentTab::Tours => "Tours",
         }
     }
 
-    /// Try to convert an index to a Panel3Tab.
+    /// Try to convert an index to a ContentTab.
     pub fn from_index(index: usize) -> Option<Self> {
         match index {
-            0 => Some(Panel3Tab::Bookmarks),
-            1 => Some(Panel3Tab::Collections),
-            2 => Some(Panel3Tab::Tours),
+            0 => Some(ContentTab::Bookmarks),
+            1 => Some(ContentTab::Collections),
+            2 => Some(ContentTab::Tours),
             _ => None,
         }
     }
 }
 
-/// Tabs for the context panel (Panel 1): Repos/Owners/Auth.
+/// Tabs for the context panel (Context panel): Repos/Owners/Auth.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ContextTab {
     /// Known repositories; selecting one switches the active database.
@@ -183,37 +183,37 @@ impl ContextTab {
     }
 }
 
-/// Panel 2 tabs (Tags/Branches).
+/// Filters panel tabs (Tags/Branches).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Panel2Tab {
+pub enum FiltersTab {
     Tags = 0,
     Branches = 1,
 }
 
-impl Panel2Tab {
+impl FiltersTab {
     /// Get the index of this tab.
     pub fn index(self) -> usize {
         self as usize
     }
 
     /// Get all tabs in order.
-    pub fn all() -> &'static [Panel2Tab] {
-        &[Panel2Tab::Tags, Panel2Tab::Branches]
+    pub fn all() -> &'static [FiltersTab] {
+        &[FiltersTab::Tags, FiltersTab::Branches]
     }
 
     /// Get the tab label.
     pub fn label(self) -> &'static str {
         match self {
-            Panel2Tab::Tags => "Tags",
-            Panel2Tab::Branches => "Branches",
+            FiltersTab::Tags => "Tags",
+            FiltersTab::Branches => "Branches",
         }
     }
 
-    /// Try to convert an index to a Panel2Tab.
+    /// Try to convert an index to a FiltersTab.
     pub fn from_index(index: usize) -> Option<Self> {
         match index {
-            0 => Some(Panel2Tab::Tags),
-            1 => Some(Panel2Tab::Branches),
+            0 => Some(FiltersTab::Tags),
+            1 => Some(FiltersTab::Branches),
             _ => None,
         }
     }
@@ -271,8 +271,8 @@ pub struct TabSelection {
     selected: usize,
     /// Number of leading tabs that are currently visible/selectable. `None`
     /// means every tab is visible. Used to hide trailing tabs (e.g. the
-    /// Branches tab in Panel 2 when Bookmarks — which have no branch — are the
-    /// active Panel 3 tab). Hidden tabs are neither rendered nor selectable.
+    /// Branches tab in Filters panel when Bookmarks — which have no branch — are the
+    /// active Content panel tab). Hidden tabs are neither rendered nor selectable.
     visible_count: Option<usize>,
     /// Whether the tabs are focused
     focused: bool,

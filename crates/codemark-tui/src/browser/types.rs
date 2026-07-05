@@ -110,12 +110,12 @@ pub struct SpinningItem {
 pub enum FocusArea {
     /// Search bar is focused
     Search,
-    /// Tabbed panel 1 (Repos/Accounts) is focused
-    Panel1,
-    /// Tabbed panel 2 (Tags/Branches) is focused
-    Panel2,
-    /// Tabbed panel 3 (Tours/Collections/Bookmarks) is focused
-    Panel3,
+    /// Context panel (Repos/Owners/Auth) is focused
+    ContextPanel,
+    /// Filters panel (Tags/Branches) is focused
+    FiltersPanel,
+    /// Content panel (Bookmarks/Collections/Tours) is focused
+    ContentPanel,
     /// Right main panel is focused
     Main,
     /// Bottom filter bar is focused
@@ -126,7 +126,13 @@ impl FocusArea {
     /// Check if this focus area can be resized with +/- keys.
     /// Left side panels and the main preview pane support resizing.
     pub fn is_resizable(self) -> bool {
-        matches!(self, FocusArea::Panel1 | FocusArea::Panel2 | FocusArea::Panel3 | FocusArea::Main)
+        matches!(
+            self,
+            FocusArea::ContextPanel
+                | FocusArea::FiltersPanel
+                | FocusArea::ContentPanel
+                | FocusArea::Main
+        )
     }
 }
 
@@ -304,9 +310,9 @@ mod tests {
     #[test]
     fn test_focus_area_is_resizable() {
         assert!(!FocusArea::Search.is_resizable());
-        assert!(FocusArea::Panel1.is_resizable());
-        assert!(FocusArea::Panel2.is_resizable());
-        assert!(FocusArea::Panel3.is_resizable());
+        assert!(FocusArea::ContextPanel.is_resizable());
+        assert!(FocusArea::FiltersPanel.is_resizable());
+        assert!(FocusArea::ContentPanel.is_resizable());
         assert!(FocusArea::Main.is_resizable());
         assert!(!FocusArea::Filter.is_resizable());
     }
