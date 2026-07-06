@@ -44,10 +44,11 @@ today (no dialogs, no bottom-bar changes).
   → a small **serving menu**: `[ Re-copy ticket ] [ Stop serving ] [ Close ]`.
   The menu also shows the raw ticket text, so a failed clipboard copy is
   recoverable.
-- Stretch (verify during impl): iroh-blobs exposes a provider event channel
-  (`BlobsProtocol::new(store, Some(events))`); if wiring is clean, auto-stop on
-  first successful delivery with a "Delivered to peer ✓" toast. Otherwise ship
-  manual-stop only.
+- Delivery detection (implemented): the provider observes iroh-blobs events in
+  non-gating `Notify` mode — a get request followed by that connection closing
+  means a peer finished pulling. `codemark-p2p::Provider::recv_delivery()` exposes
+  this; the TUI serve task auto-stops on it (a "Downloaded by peer" toast), and
+  the CLI `push --p2p` exits cleanly once the peer has pulled.
 
 ## Pull flow (Collections tab, `p`)
 1. p2p off → no-op (as today). p2p on → open the **paste-ticket modal**.
@@ -64,7 +65,7 @@ New `Event` variants, handled in `handle_app_event` like `SyncComplete`:
 - `P2pServing { name, ticket }` — serving started, update indicator + toast.
 - `P2pServingStopped` — clear indicator.
 - `P2pPullComplete(Result<ImportedTour, String>)` — toast + refresh.
-- `P2pDelivered` — stretch; auto-stop + toast.
+- `P2pDelivered` — a peer finished downloading; toast + auto-stop.
 
 ## Error handling
 Build / bind / clipboard / pull errors surface as toasts. Serving never starts if

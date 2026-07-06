@@ -226,6 +226,11 @@ impl BrowserLayout {
                 Some(true)
             }
             #[cfg(feature = "p2p")]
+            Event::P2pDelivered => {
+                self.on_p2p_delivered();
+                Some(true)
+            }
+            #[cfg(feature = "p2p")]
             Event::P2pServingStopped => {
                 self.on_p2p_serving_stopped();
                 Some(true)

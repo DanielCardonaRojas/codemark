@@ -100,7 +100,7 @@ async fn handle_publish_p2p(cli: &Cli, mode: &OutputMode, args: &PublishArgs) ->
     )
     .await?;
 
-    let (ticket, provider) = codemark_p2p::push_bytes(bytes)
+    let (ticket, mut provider) = codemark_p2p::push_bytes(bytes)
         .await
         .map_err(|e| Error::Operation(format!("p2p push failed: {e:#}")))?;
 
@@ -118,9 +118,15 @@ async fn handle_publish_p2p(cli: &Cli, mode: &OutputMode, args: &PublishArgs) ->
         ),
     }
 
-    tokio::signal::ctrl_c()
-        .await
-        .map_err(|e| Error::Operation(format!("failed waiting for Ctrl+C: {e}")))?;
+    // Serve until the peer has pulled (then exit cleanly) or the user cancels.
+    tokio::select! {
+        _ = provider.recv_delivery() => {
+            crate::cli::output::write_success(mode, "Downloaded by peer — done.")?;
+        }
+        res = tokio::signal::ctrl_c() => {
+            res.map_err(|e| Error::Operation(format!("failed waiting for Ctrl+C: {e}")))?;
+        }
+    }
 
     provider
         .shutdown()

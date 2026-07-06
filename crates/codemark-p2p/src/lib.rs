@@ -27,6 +27,9 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use iroh::{Endpoint, EndpointAddr, endpoint::presets, protocol::Router};
+use iroh_blobs::provider::events::{
+    ConnectMode, EventMask, EventSender, ProviderMessage, RequestMode,
+};
 use iroh_blobs::{BlobsProtocol, api::TempTag, store::mem::MemStore, ticket::BlobTicket};
 
 /// A self-contained, shareable string (`blob…`) that names a blob and the peer
@@ -54,9 +57,19 @@ pub struct Provider {
     // lifetime of the provider; the router serves reads from this store.
     _store: MemStore,
     _tag: TempTag,
+    // Fires each time a peer finishes downloading the blob (see `recv_delivery`).
+    delivery_rx: tokio::sync::mpsc::Receiver<()>,
 }
 
 impl Provider {
+    /// Resolves once a peer has downloaded the tour — detected as a get request
+    /// followed by that connection closing. Callers can use this to report
+    /// "delivered" and/or stop serving. May resolve more than once if the tour is
+    /// pulled repeatedly; returns `None` when serving has ended.
+    pub async fn recv_delivery(&mut self) -> Option<()> {
+        self.delivery_rx.recv().await
+    }
+
     /// Gracefully shut down the provider node.
     pub async fn shutdown(self) -> Result<()> {
         self.router.shutdown().await.context("failed to shut down iroh router")
@@ -102,11 +115,38 @@ async fn push_bytes_on(endpoint: Endpoint, bytes: Vec<u8>) -> Result<(Ticket, Pr
     let addr = wait_for_addr(&endpoint).await?;
     let ticket = BlobTicket::new(addr, tag.hash(), tag.format());
 
+    // Observe provider events to detect delivery. `Notify` modes are
+    // fire-and-forget (unlike `Intercept`), so this can never gate or stall a
+    // transfer. A get request followed by that connection closing means a peer
+    // finished pulling — safe to report and to stop serving on.
+    let mask = EventMask {
+        connected: ConnectMode::Notify,
+        get: RequestMode::Notify,
+        ..EventMask::DEFAULT
+    };
+    let (events, mut event_rx) = EventSender::channel(32, mask);
+    let (delivery_tx, delivery_rx) = tokio::sync::mpsc::channel::<()>(4);
+    tokio::spawn(async move {
+        let mut saw_get = false;
+        while let Some(msg) = event_rx.recv().await {
+            match msg {
+                ProviderMessage::GetRequestReceivedNotify(_) => saw_get = true,
+                ProviderMessage::ConnectionClosed(_) if saw_get => {
+                    saw_get = false;
+                    if delivery_tx.send(()).await.is_err() {
+                        break; // provider dropped; stop observing
+                    }
+                }
+                _ => {}
+            }
+        }
+    });
+
     // Route incoming blobs requests to the store.
-    let blobs = BlobsProtocol::new(&store, None);
+    let blobs = BlobsProtocol::new(&store, Some(events));
     let router = Router::builder(endpoint).accept(iroh_blobs::ALPN, blobs).spawn();
 
-    Ok((ticket.to_string(), Provider { router, _store: store, _tag: tag }))
+    Ok((ticket.to_string(), Provider { router, _store: store, _tag: tag, delivery_rx }))
 }
 
 /// Core of [`pull_bytes`], parameterized over the endpoint and connect timeout
@@ -191,13 +231,18 @@ mod tests {
         let payload = b"codemark tour pack bytes \x00\x01\x02 \xff".to_vec();
 
         let provider_ep = Endpoint::bind(presets::Minimal).await?;
-        let (ticket, provider) = push_bytes_on(provider_ep, payload.clone()).await?;
+        let (ticket, mut provider) = push_bytes_on(provider_ep, payload.clone()).await?;
 
         let receiver_ep = Endpoint::bind(presets::Minimal).await?;
         let received = pull_bytes_on(&receiver_ep, &ticket, CONNECT_TIMEOUT).await?;
         receiver_ep.close().await;
 
         assert_eq!(received, payload);
+
+        // The provider should observe the completed pull as a delivery.
+        let delivered =
+            tokio::time::timeout(Duration::from_secs(5), provider.recv_delivery()).await;
+        assert!(matches!(delivered, Ok(Some(()))), "expected a delivery signal, got {delivered:?}");
 
         provider.shutdown().await?;
         Ok(())

@@ -67,6 +67,9 @@ pub enum Event {
     /// UI on receipt).
     #[cfg(feature = "p2p")]
     P2pServing { name: String, ticket: String },
+    /// A peer finished downloading the served tour.
+    #[cfg(feature = "p2p")]
+    P2pDelivered,
     /// The active p2p serving task has stopped (user stopped it, the app is
     /// quitting, or the push failed to start).
     #[cfg(feature = "p2p")]

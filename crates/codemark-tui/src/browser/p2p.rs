@@ -232,9 +232,16 @@ impl BrowserLayout {
                     // don't pin a blocking worker for the whole serving duration.
                     handle.spawn(async move {
                         match codemark_p2p::push_bytes(bytes).await {
-                            Ok((ticket, provider)) => {
+                            Ok((ticket, mut provider)) => {
                                 let _ = eh.send(Event::P2pServing { name: name_for_task, ticket });
-                                let _ = stop_rx.await; // wait until asked to stop
+                                // Stop when the user asks, or automatically once a
+                                // peer has downloaded the tour.
+                                tokio::select! {
+                                    _ = stop_rx => {}
+                                    Some(()) = provider.recv_delivery() => {
+                                        let _ = eh.send(Event::P2pDelivered);
+                                    }
+                                }
                                 let _ = provider.shutdown().await;
                                 let _ = eh.send(Event::P2pServingStopped);
                             }
@@ -330,8 +337,15 @@ impl BrowserLayout {
         }
     }
 
-    /// The serving task ended; clear state without a toast (a failure path has
-    /// already surfaced its own message via SyncComplete).
+    /// A peer downloaded the served tour. Confirm it; the serving task then
+    /// auto-stops and clears the indicator via `on_p2p_serving_stopped`.
+    pub(super) fn on_p2p_delivered(&mut self) {
+        let name = self.p2p_serving.as_ref().map(|s| s.name.clone()).unwrap_or_default();
+        self.notify(format!("Downloaded by peer — '{name}' delivered"), true);
+    }
+
+    /// The serving task ended; clear state without a toast (the delivery or a
+    /// failure path has already surfaced its own message).
     pub(super) fn on_p2p_serving_stopped(&mut self) {
         self.p2p_serving = None;
     }
