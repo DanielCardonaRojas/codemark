@@ -217,13 +217,63 @@
                 </a>
             </div>
 
-            <!-- Install one-liner -->
-            <div class="flex justify-center mb-14">
-                <div class="inline-flex items-center gap-3 panel rounded-lg pl-4 pr-2 py-2 font-mono text-[0.8rem] sm:text-sm max-w-full overflow-x-auto">
-                    <span class="text-primary-400 select-none shrink-0">$</span>
-                    <code class="text-zinc-200 whitespace-nowrap">brew install DanielCardonaRojas/codemark/codemark</code>
-                    <button class="copy-btn shrink-0" data-copy aria-label="Copy install command">Copy</button>
+            <!-- Tabbed installer -->
+            <div id="install" class="max-w-2xl mx-auto mb-14 scroll-mt-24">
+                <div class="panel rounded-xl overflow-hidden text-left" data-install>
+                    <!-- Tab bar -->
+                    <div class="flex flex-wrap gap-1 p-1.5 bg-white/[0.03] border-b hairline" role="tablist" aria-label="Installation methods">
+                        <button class="install-tab is-active" data-tab="brew" role="tab" aria-selected="true">Homebrew</button>
+                        <button class="install-tab" data-tab="script" role="tab" aria-selected="false">curl · sh</button>
+                        <button class="install-tab" data-tab="powershell" role="tab" aria-selected="false">PowerShell</button>
+                        <button class="install-tab" data-tab="mise" role="tab" aria-selected="false">mise</button>
+                        <button class="install-tab" data-tab="cargo" role="tab" aria-selected="false">Cargo</button>
+                    </div>
+
+                    <!-- Panels -->
+                    <div class="install-panel" data-panel="brew" role="tabpanel">
+                        <div class="relative bg-[#0d0d10]">
+                            <button class="copy-btn copy-btn-float" data-copy aria-label="Copy command">Copy</button>
+                            <pre class="!bg-transparent !m-0"><code class="language-bash">brew install DanielCardonaRojas/codemark/codemark</code></pre>
+                        </div>
+                        <p class="text-zinc-500 text-xs px-6 py-3.5 border-t hairline">macOS &amp; Linux. Installs the CLI <em>and</em> the <code class="text-zinc-400">codemark tui</code> dashboard.</p>
+                    </div>
+
+                    <div class="install-panel hidden" data-panel="script" role="tabpanel">
+                        <div class="relative bg-[#0d0d10]">
+                            <button class="copy-btn copy-btn-float" data-copy aria-label="Copy command">Copy</button>
+                            <pre class="!bg-transparent !m-0"><code class="language-bash">curl --proto '=https' --tlsv1.2 -LsSf \
+  https://github.com/DanielCardonaRojas/codemark/releases/latest/download/codemark-cli-installer.sh | sh</code></pre>
+                        </div>
+                        <p class="text-zinc-500 text-xs px-6 py-3.5 border-t hairline">macOS &amp; Linux. Installs the <code class="text-zinc-400">codemark</code> CLI from the latest GitHub release.</p>
+                    </div>
+
+                    <div class="install-panel hidden" data-panel="powershell" role="tabpanel">
+                        <div class="relative bg-[#0d0d10]">
+                            <button class="copy-btn copy-btn-float" data-copy aria-label="Copy command">Copy</button>
+                            <pre class="!bg-transparent !m-0"><code class="language-bash">powershell -ExecutionPolicy Bypass -c "irm https://github.com/DanielCardonaRojas/codemark/releases/latest/download/codemark-cli-installer.ps1 | iex"</code></pre>
+                        </div>
+                        <p class="text-zinc-500 text-xs px-6 py-3.5 border-t hairline">Windows (x86_64). Installs the <code class="text-zinc-400">codemark</code> CLI.</p>
+                    </div>
+
+                    <div class="install-panel hidden" data-panel="mise" role="tabpanel">
+                        <div class="relative bg-[#0d0d10]">
+                            <button class="copy-btn copy-btn-float" data-copy aria-label="Copy command">Copy</button>
+                            <pre class="!bg-transparent !m-0"><code class="language-bash">mise use -g github:DanielCardonaRojas/codemark</code></pre>
+                        </div>
+                        <p class="text-zinc-500 text-xs px-6 py-3.5 border-t hairline">Cross-platform via <a href="https://mise.jdx.dev" target="_blank" class="text-zinc-400 hover:text-primary-300 underline decoration-dotted">mise</a>. Installs the <code class="text-zinc-400">codemark</code> CLI.</p>
+                    </div>
+
+                    <div class="install-panel hidden" data-panel="cargo" role="tabpanel">
+                        <div class="relative bg-[#0d0d10]">
+                            <button class="copy-btn copy-btn-float" data-copy aria-label="Copy command">Copy</button>
+                            <pre class="!bg-transparent !m-0"><code class="language-bash">cargo install --git https://github.com/DanielCardonaRojas/codemark codemark-cli</code></pre>
+                        </div>
+                        <p class="text-zinc-500 text-xs px-6 py-3.5 border-t hairline">Build from source. Requires Rust 1.85+ (edition 2024). Add the dashboard with <code class="text-zinc-400">codemark-tui</code>.</p>
+                    </div>
                 </div>
+                <p class="text-zinc-500 text-xs mt-3">
+                    Prebuilt binaries for <span class="text-zinc-300">macOS</span>, <span class="text-zinc-300">Linux</span> &amp; <span class="text-zinc-300">Windows</span> — SQLite bundled.
+                </p>
             </div>
 
             <!-- Terminal Mockup -->
@@ -604,76 +654,6 @@ $ codemark add --file src/auth.rs --range 42 --created-by agent --note "Observed
                     </div>
                 </div>
             </div>
-        </div>
-    </section>
-
-    <!-- Installation -->
-    <section id="install" class="py-24 sm:py-32 border-t hairline">
-        <div class="max-w-4xl mx-auto px-5 sm:px-8">
-            <div class="text-center mb-14">
-                <p class="eyebrow mb-3">Installation</p>
-                <h2 class="text-3xl md:text-5xl font-bold tracking-tight mb-4">Up and running in <span class="em text-primary-400">one command.</span></h2>
-                <p class="text-zinc-400 text-lg">Prebuilt binaries for macOS, Linux &amp; Windows — SQLite bundled. Pick your method.</p>
-            </div>
-
-            <!-- Tabbed installer -->
-            <div class="panel rounded-xl overflow-hidden max-w-2xl mx-auto" data-install>
-                <!-- Tab bar -->
-                <div class="flex flex-wrap gap-1 p-1.5 bg-white/[0.03] border-b hairline" role="tablist" aria-label="Installation methods">
-                    <button class="install-tab is-active" data-tab="brew" role="tab" aria-selected="true">Homebrew</button>
-                    <button class="install-tab" data-tab="script" role="tab" aria-selected="false">curl · sh</button>
-                    <button class="install-tab" data-tab="powershell" role="tab" aria-selected="false">PowerShell</button>
-                    <button class="install-tab" data-tab="mise" role="tab" aria-selected="false">mise</button>
-                    <button class="install-tab" data-tab="cargo" role="tab" aria-selected="false">Cargo</button>
-                </div>
-
-                <!-- Panels -->
-                <div class="install-panel" data-panel="brew" role="tabpanel">
-                    <div class="relative bg-[#0d0d10]">
-                        <button class="copy-btn copy-btn-float" data-copy aria-label="Copy command">Copy</button>
-                        <pre class="!bg-transparent !m-0"><code class="language-bash">brew install DanielCardonaRojas/codemark/codemark</code></pre>
-                    </div>
-                    <p class="text-zinc-500 text-xs px-6 py-3.5 border-t hairline">macOS &amp; Linux. Installs the CLI <em>and</em> the <code class="text-zinc-400">codemark tui</code> dashboard.</p>
-                </div>
-
-                <div class="install-panel hidden" data-panel="script" role="tabpanel">
-                    <div class="relative bg-[#0d0d10]">
-                        <button class="copy-btn copy-btn-float" data-copy aria-label="Copy command">Copy</button>
-                        <pre class="!bg-transparent !m-0"><code class="language-bash">curl --proto '=https' --tlsv1.2 -LsSf \
-  https://github.com/DanielCardonaRojas/codemark/releases/latest/download/codemark-cli-installer.sh | sh</code></pre>
-                    </div>
-                    <p class="text-zinc-500 text-xs px-6 py-3.5 border-t hairline">macOS &amp; Linux. Installs the <code class="text-zinc-400">codemark</code> CLI from the latest GitHub release.</p>
-                </div>
-
-                <div class="install-panel hidden" data-panel="powershell" role="tabpanel">
-                    <div class="relative bg-[#0d0d10]">
-                        <button class="copy-btn copy-btn-float" data-copy aria-label="Copy command">Copy</button>
-                        <pre class="!bg-transparent !m-0"><code class="language-bash">powershell -ExecutionPolicy Bypass -c "irm https://github.com/DanielCardonaRojas/codemark/releases/latest/download/codemark-cli-installer.ps1 | iex"</code></pre>
-                    </div>
-                    <p class="text-zinc-500 text-xs px-6 py-3.5 border-t hairline">Windows (x86_64). Installs the <code class="text-zinc-400">codemark</code> CLI.</p>
-                </div>
-
-                <div class="install-panel hidden" data-panel="mise" role="tabpanel">
-                    <div class="relative bg-[#0d0d10]">
-                        <button class="copy-btn copy-btn-float" data-copy aria-label="Copy command">Copy</button>
-                        <pre class="!bg-transparent !m-0"><code class="language-bash">mise use -g github:DanielCardonaRojas/codemark</code></pre>
-                    </div>
-                    <p class="text-zinc-500 text-xs px-6 py-3.5 border-t hairline">Cross-platform via <a href="https://mise.jdx.dev" target="_blank" class="text-zinc-400 hover:text-primary-300 underline decoration-dotted">mise</a>. Installs the <code class="text-zinc-400">codemark</code> CLI.</p>
-                </div>
-
-                <div class="install-panel hidden" data-panel="cargo" role="tabpanel">
-                    <div class="relative bg-[#0d0d10]">
-                        <button class="copy-btn copy-btn-float" data-copy aria-label="Copy command">Copy</button>
-                        <pre class="!bg-transparent !m-0"><code class="language-bash">cargo install --git https://github.com/DanielCardonaRojas/codemark codemark-cli</code></pre>
-                    </div>
-                    <p class="text-zinc-500 text-xs px-6 py-3.5 border-t hairline">Build from source. Requires Rust 1.85+ (edition 2024). Add the dashboard with <code class="text-zinc-400">codemark-tui</code>.</p>
-                </div>
-            </div>
-
-            <p class="text-center text-zinc-500 text-sm mt-6">
-                The script, PowerShell &amp; <code class="text-zinc-400">mise</code> methods install the CLI only —
-                add the dashboard with <code class="text-zinc-400">cargo install --git … codemark-tui</code>.
-            </p>
         </div>
     </section>
 
