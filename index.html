@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Codemark | The navigation layer for your knowledge base</title>
-    <meta name="description" content="Codemark is the missing navigation layer for your knowledge base — structural, self-healing bookmarks that survive refactors. Built on tree-sitter for AI agents, code audits, and developer knowledge management.">
+    <meta name="description" content="Codemark is the missing navigation layer for your knowledge base. Structural, self-healing bookmarks that survive refactors. Built on tree-sitter for AI agents, code audits, and developer knowledge management.">
 
     <!-- Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -202,7 +202,7 @@
 
             <p class="max-w-2xl mx-auto text-lg md:text-xl text-zinc-400 leading-relaxed mb-10">
                 Codemark turns the critical parts of your codebase into a searchable, shareable
-                <span class="text-zinc-200">map</span> — structural bookmarks that
+                <span class="text-zinc-200">map</span> of structural bookmarks that
                 <span class="text-zinc-200">survive refactors</span>, so you (and your agents) always
                 know where the important code lives.
             </p>
@@ -272,7 +272,7 @@
                     </div>
                 </div>
                 <p class="text-zinc-500 text-xs mt-3">
-                    Prebuilt binaries for <span class="text-zinc-300">macOS</span>, <span class="text-zinc-300">Linux</span> &amp; <span class="text-zinc-300">Windows</span> — SQLite bundled.
+                    Prebuilt binaries for <span class="text-zinc-300">macOS</span>, <span class="text-zinc-300">Linux</span> &amp; <span class="text-zinc-300">Windows</span>. SQLite bundled.
                 </p>
             </div>
 
@@ -285,17 +285,17 @@
                     <div class="ml-3 text-xs font-mono text-zinc-500">~/project · codemark</div>
                 </div>
                 <div class="p-1 overflow-x-auto">
-<pre class="!bg-transparent !m-0"><code class="language-bash"># Bookmark a function — captures its AST, not a line number
+<pre class="!bg-transparent !m-0"><code class="language-bash"># Bookmark a function: captures its AST, not a line number
 $ codemark add --file src/auth.rs --range 42 --tag auth --note "Token validation"
 <span class="text-green-400">✔ Added bookmark 'a1b2c3d' for validate_token in src/auth.rs</span>
 
 # Refactor happens... lines shift... the function is renamed...
 
-# Resolve — finds where the code lives *now*
+# Resolve: finds where the code lives *now*
 $ codemark show a1b2 --location
 <span class="text-sky-400">src/auth.rs:89:15</span> (Match: Relaxed)
 
-# Search by meaning, with local embeddings — no API key
+# Search by meaning, with local embeddings. No API key
 $ codemark search --semantic "database connection initialization"
 <span class="text-zinc-300">b8x9z2 | src/db.rs:12 | init_pool | score: 0.89</span></code></pre>
                 </div>
@@ -318,7 +318,7 @@ $ codemark search --semantic "database connection initialization"
                 </h2>
                 <p class="text-zinc-400 text-lg leading-relaxed">
                     Codemark ships with a built-in, keyboard-driven TUI inspired by <code class="text-zinc-300">lazygit</code>.
-                    Browse bookmarks, preview resolved code, run queries, and switch collections — without leaving the terminal.
+                    Browse bookmarks, preview resolved code, run queries, and switch collections, all without leaving the terminal.
                 </p>
             </div>
 
@@ -330,7 +330,7 @@ $ codemark search --semantic "database connection initialization"
                     <div class="w-2.5 h-2.5 rounded-full bg-[#28c840]"></div>
                     <div class="ml-3 text-xs font-mono text-zinc-500">codemark tui</div>
                 </div>
-                <img src="./codemark_tui_demo.gif" alt="Browsing bookmarks in the Codemark TUI — navigating panes, previewing resolved code, and switching collections" class="w-full block">
+                <img src="./codemark_tui_demo.gif" alt="Browsing bookmarks in the Codemark TUI: navigating panes, previewing resolved code, and switching collections" class="w-full block">
             </div>
 
             <!-- Two secondary screenshots: built-in themes -->
@@ -339,7 +339,7 @@ $ codemark search --semantic "database connection initialization"
                     <img src="./codemark_tui_theme_catppuccin-mocha.png" alt="Codemark TUI with the Catppuccin Mocha theme" class="w-full block">
                     <figcaption class="px-5 py-4 border-t hairline">
                         <span class="font-semibold text-zinc-200">Catppuccin Mocha</span>
-                        <span class="text-zinc-500 text-sm block mt-1">Built-in color schemes re-theme the whole interface — code preview and UI chrome alike.</span>
+                        <span class="text-zinc-500 text-sm block mt-1">Built-in color schemes re-theme the whole interface, code preview and UI chrome alike.</span>
                     </figcaption>
                 </figure>
                 <figure class="panel rounded-xl overflow-hidden shadow-xl shadow-black/40">
@@ -363,7 +363,7 @@ $ codemark search --semantic "database connection initialization"
                 </h2>
                 <p class="text-zinc-400 text-lg leading-relaxed">
                     Traditional bookmarks point at a coordinate. Codemark understands your code the way a
-                    compiler does — so a reference knows <em>what</em> it points to, not just <em>where</em>.
+                    compiler does, so a reference knows <em>what</em> it points to, not just <em>where</em>.
                 </p>
             </div>
 
@@ -382,7 +382,7 @@ $ codemark search --semantic "database connection initialization"
                         <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z" /></svg>
                     </div>
                     <h3 class="text-lg font-bold mb-2">Self-healing</h3>
-                    <p class="text-zinc-400 leading-relaxed text-[0.95rem]">Tiered resolution — exact match → relaxed query → content-hash fallback — degrades gracefully instead of breaking silently.</p>
+                    <p class="text-zinc-400 leading-relaxed text-[0.95rem]">Tiered resolution (exact match, then relaxed query, then content-hash fallback) degrades gracefully instead of breaking silently.</p>
                 </div>
                 <!-- Feature 3 -->
                 <div class="bg-ink p-8 panel-hover transition-colors">
@@ -521,7 +521,7 @@ $ codemark search --semantic "database connection initialization"
                     Works everywhere <span class="em text-primary-400">you do.</span>
                 </h2>
                 <p class="text-zinc-400 text-lg leading-relaxed">
-                    Codemark is built for real-world git workflows — across worktrees, forges, and accounts.
+                    Codemark is built for real-world git workflows across worktrees, forges, and accounts.
                 </p>
             </div>
 
@@ -538,7 +538,7 @@ $ codemark search --semantic "database connection initialization"
                         <svg class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h7" /></svg>
                     </div>
                     <h3 class="text-lg font-bold mb-2">Multiple forges</h3>
-                    <p class="text-zinc-400 leading-relaxed text-[0.95rem]">GitHub, GitLab, Bitbucket, or a generic host — authenticate against whichever forge each repository lives on.</p>
+                    <p class="text-zinc-400 leading-relaxed text-[0.95rem]">GitHub, GitLab, Bitbucket, or a generic host: authenticate against whichever forge each repository lives on.</p>
                 </div>
                 <div class="panel panel-hover rounded-2xl p-8 transition-colors">
                     <div class="w-10 h-10 bg-primary-500/15 text-primary-400 rounded-lg flex items-center justify-center mb-5">
@@ -598,7 +598,7 @@ $ codemark tour pull security-audit
                     <p class="text-zinc-400 text-lg mb-8 leading-relaxed">
                         Bookmarks shouldn't be stuck on one machine. Push a collection to a
                         <span class="text-zinc-200">Codetours server</span> as a tour, and your team pulls it into
-                        their own checkout — where each bookmark re-resolves against their local code.
+                        their own checkout, where each bookmark re-resolves against their local code.
                     </p>
                     <ul class="space-y-5">
                         <li class="flex items-start gap-3">
@@ -630,7 +630,7 @@ $ codemark tour pull security-audit
                     </h2>
                     <p class="text-zinc-400 text-lg mb-6 leading-relaxed">
                         Codemark isn't only for humans. Install the skill and agents like Claude Code can bookmark
-                        critical discoveries as they explore — keeping context alive across long-running sessions.
+                        critical discoveries as they explore, keeping context alive across long-running sessions.
                     </p>
                     <p class="text-zinc-400 leading-relaxed">
                         Instead of re-deriving the same map every session, your agent records what it learned and
