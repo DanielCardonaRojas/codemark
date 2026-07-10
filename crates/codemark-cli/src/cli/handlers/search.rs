@@ -25,6 +25,12 @@ pub async fn handle_search(cli: &Cli, mode: &OutputMode, args: &SearchArgs) -> R
         return handle_collection_search(cli, mode, args, &config).await;
     }
 
+    // `--tag` only filters collection search; reject it on the bookmark path
+    // rather than silently ignoring it, so a forgotten `--collections` surfaces.
+    if args.tag.is_some() {
+        return Err(Error::Input("--tag requires --collections".to_string()));
+    }
+
     // Semantic search requires a query
     if args.semantic {
         if !config.semantic.is_enabled() {

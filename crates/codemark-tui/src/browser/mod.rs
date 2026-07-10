@@ -187,6 +187,10 @@ pub struct BrowserLayout {
     dialog: Option<ConfirmDialog>,
 }
 
+/// Maximum results returned by a search-bar query (bookmarks or collections,
+/// FTS or semantic). Shared so every search path caps consistently.
+const SEARCH_RESULT_LIMIT: usize = 20;
+
 impl BrowserLayout {
     /// Create a new browser layout.
     pub fn new(db: Database, event_handler: crate::event::EventHandler) -> Self {
@@ -529,7 +533,11 @@ impl BrowserLayout {
 
                     let handle = tokio::runtime::Handle::current();
                     match tokio::task::block_in_place(|| {
-                        handle.block_on(semantic_repo.search(db.conn(), &query, 20))
+                        handle.block_on(semantic_repo.search(
+                            db.conn(),
+                            &query,
+                            SEARCH_RESULT_LIMIT,
+                        ))
                     }) {
                         Ok(results) => {
                             let mut bookmarks = Vec::new();
@@ -562,7 +570,7 @@ impl BrowserLayout {
         match mode {
             SearchMode::Fts => match self.db.search_collections(Some(&query), None) {
                 Ok(mut collections) => {
-                    collections.truncate(20);
+                    collections.truncate(SEARCH_RESULT_LIMIT);
                     let _ = event_handler
                         .send(Event::CollectionSearchResults { request_id, collections });
                 }
@@ -603,7 +611,11 @@ impl BrowserLayout {
 
                     let handle = tokio::runtime::Handle::current();
                     match tokio::task::block_in_place(|| {
-                        handle.block_on(semantic_repo.search_collections(db.conn(), &query, 20))
+                        handle.block_on(semantic_repo.search_collections(
+                            db.conn(),
+                            &query,
+                            SEARCH_RESULT_LIMIT,
+                        ))
                     }) {
                         Ok(results) => {
                             let mut collections = Vec::new();

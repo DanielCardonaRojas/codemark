@@ -169,8 +169,15 @@ impl Database {
         let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
 
         if let Some(q) = query {
-            let like = format!("%{q}%");
-            conditions.push("(c.name LIKE ? OR c.description LIKE ? OR ct.tag LIKE ?)".to_string());
+            // Escape LIKE metacharacters so a query like `my_service` or `100%`
+            // is matched literally instead of as a wildcard pattern. The matching
+            // `ESCAPE '\'` clause below tells SQLite `\` is the escape character.
+            let escaped = q.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_");
+            let like = format!("%{escaped}%");
+            conditions.push(
+                "(c.name LIKE ? ESCAPE '\\' OR c.description LIKE ? ESCAPE '\\' OR ct.tag LIKE ? ESCAPE '\\')"
+                    .to_string(),
+            );
             params.push(Box::new(like.clone()));
             params.push(Box::new(like.clone()));
             params.push(Box::new(like));
@@ -616,6 +623,24 @@ mod tests {
         // No filters lists everything.
         let all = db.search_collections(None, None).unwrap();
         assert_eq!(all.len(), 2);
+    }
+
+    #[test]
+    fn search_collections_treats_like_wildcards_literally() {
+        init_test_env();
+        let db = Database::open_in_memory().unwrap();
+        db.insert_collection(&test_collection("my_service")).unwrap();
+        db.insert_collection(&test_collection("myXservice")).unwrap();
+
+        // `_` is a LIKE wildcard; without escaping, "my_service" would also match
+        // "myXservice". Escaping means the underscore is matched literally.
+        let hits = db.search_collections(Some("my_service"), None).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].0.name, "my_service");
+
+        // `%` in the query must not turn into a match-anything wildcard.
+        let none = db.search_collections(Some("100%"), None).unwrap();
+        assert!(none.is_empty());
     }
 
     #[test]

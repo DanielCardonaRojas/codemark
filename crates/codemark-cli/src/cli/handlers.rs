@@ -385,11 +385,14 @@ pub async fn generate_embedding_for_bookmark(
 /// enabled. Returns `Ok(())` even if semantic search is disabled or fails, so
 /// embedding problems never block the collection operation that triggered it.
 ///
-/// The embedded text (name, description, tags) is read from the database, so the
-/// caller must persist any tag/description changes *before* invoking this.
+/// Writes through the caller's existing connection rather than opening a second
+/// one — the mutating collection handlers already hold a write connection, and a
+/// second one would only add contention. The embedded text (name, description,
+/// tags) is read from the database, so the caller must persist any
+/// tag/description changes *before* invoking this.
 pub async fn generate_embedding_for_collection(
-    cli: &Cli,
     config: &Config,
+    db: &mut Database,
     collection: &Collection,
 ) -> Result<()> {
     if !config.semantic.is_enabled() {
@@ -413,10 +416,7 @@ pub async fn generate_embedding_for_collection(
 
     let semantic_repo = SemanticRepo::with_config(models_dir, model, distance_metric, threshold);
 
-    // Open database for writing embedding
-    let mut db = open_db_for_write(cli)?;
-
-    // Generate and store the embedding
+    // Generate and store the embedding through the caller's connection.
     let conn = db.conn_mut();
     // Ignore errors - embedding generation failure shouldn't block collection creation
     let _ = semantic_repo.store_collection_embeddings(conn, std::slice::from_ref(collection)).await;

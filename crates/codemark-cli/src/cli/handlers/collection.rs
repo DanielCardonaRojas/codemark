@@ -24,7 +24,7 @@ pub async fn handle_collection_create(
     mode: &OutputMode,
     args: &CollectionCreateArgs,
 ) -> Result<()> {
-    let db = open_db_for_write(cli)?;
+    let mut db = open_db_for_write(cli)?;
 
     let cwd = std::env::current_dir()?;
     let git_ctx = codemark_core::git::context::detect_context(&cwd);
@@ -121,7 +121,7 @@ pub async fn handle_collection_create(
     // Generate the semantic-search embedding now that name/description/tags are
     // persisted (tags are read from the DB when building the embedded text).
     // Ignore errors — embedding failure shouldn't block collection creation.
-    let _ = generate_embedding_for_collection(cli, &config, &collection).await;
+    let _ = generate_embedding_for_collection(&config, &mut db, &collection).await;
 
     write_success(mode, &format!("Collection '{}' created", args.name))?;
     Ok(())
@@ -165,7 +165,7 @@ pub async fn handle_collection_add(
     mode: &OutputMode,
     args: &CollectionAddArgs,
 ) -> Result<()> {
-    let db = open_db_for_write(cli)?;
+    let mut db = open_db_for_write(cli)?;
     // Auto-create collection if it doesn't exist
     let (collection, created) = match db.get_collection_by_name(&args.name)? {
         Some(c) => (c, false),
@@ -260,7 +260,7 @@ pub async fn handle_collection_add(
     // bookmarks alone doesn't, so we skip the (model-loading) embed in that case.
     if created || !args.tag.is_empty() {
         let config = super::load_config(cli);
-        let _ = generate_embedding_for_collection(cli, &config, &collection).await;
+        let _ = generate_embedding_for_collection(&config, &mut db, &collection).await;
     }
 
     write_success(mode, &format!("Added {added} bookmarks to '{}'", args.name))?;
@@ -605,7 +605,7 @@ pub async fn handle_collection_tag(
 ) -> Result<()> {
     match &args.command {
         CollectionTagCommand::Add(add_args) => {
-            let db = open_db_for_write(cli)?;
+            let mut db = open_db_for_write(cli)?;
             let collection = db
                 .get_collection_by_name(&add_args.name)?
                 .ok_or_else(|| Error::Input(format!("collection '{}' not found", add_args.name)))?;
@@ -626,7 +626,7 @@ pub async fn handle_collection_tag(
 
             // Tags are part of the embedded text, so refresh the embedding.
             let config = super::load_config(cli);
-            let _ = generate_embedding_for_collection(cli, &config, &collection).await;
+            let _ = generate_embedding_for_collection(&config, &mut db, &collection).await;
 
             write_success(
                 mode,
@@ -634,7 +634,7 @@ pub async fn handle_collection_tag(
             )?;
         }
         CollectionTagCommand::Rm(rm_args) => {
-            let db = open_db_for_write(cli)?;
+            let mut db = open_db_for_write(cli)?;
             let collection = db
                 .get_collection_by_name(&rm_args.name)?
                 .ok_or_else(|| Error::Input(format!("collection '{}' not found", rm_args.name)))?;
@@ -645,7 +645,7 @@ pub async fn handle_collection_tag(
 
             // Tags are part of the embedded text, so refresh the embedding.
             let config = super::load_config(cli);
-            let _ = generate_embedding_for_collection(cli, &config, &collection).await;
+            let _ = generate_embedding_for_collection(&config, &mut db, &collection).await;
 
             write_success(
                 mode,
@@ -819,7 +819,7 @@ pub async fn handle_collection_annotate(
     mode: &OutputMode,
     args: &CollectionAnnotateArgs,
 ) -> Result<()> {
-    let db = open_db_for_write(cli)?;
+    let mut db = open_db_for_write(cli)?;
     let collection = db
         .get_collection_by_name(&args.name)?
         .ok_or_else(|| Error::Input(format!("collection '{}' not found", args.name)))?;
@@ -877,7 +877,7 @@ pub async fn handle_collection_annotate(
     // Tags are part of the embedded text, so refresh the embedding when they change.
     if !args.tag.is_empty() {
         let config = super::load_config(cli);
-        let _ = generate_embedding_for_collection(cli, &config, &collection).await;
+        let _ = generate_embedding_for_collection(&config, &mut db, &collection).await;
     }
 
     write_success(mode, &format!("Added {added_count} annotations to collection '{}'", args.name))?;
