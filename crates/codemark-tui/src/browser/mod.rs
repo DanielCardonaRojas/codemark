@@ -566,15 +566,40 @@ impl BrowserLayout {
     /// blocking task like the bookmark path, since it loads an embedding model.
     fn execute_collection_search(&mut self, request_id: u64, mode: SearchMode, query: String) {
         let event_handler = self.event_handler.clone();
+        // Log the mode, not the query text (queries may be sensitive).
+        let mode_label = match mode {
+            SearchMode::Fts => "fts",
+            SearchMode::Semantic => "semantic",
+        };
+        tracing::debug!(
+            target: "codemark::ui",
+            request_id,
+            mode = mode_label,
+            "collection search dispatched"
+        );
 
         match mode {
             SearchMode::Fts => match self.db.search_collections(Some(&query), None) {
                 Ok(mut collections) => {
                     collections.truncate(SEARCH_RESULT_LIMIT);
+                    tracing::debug!(
+                        target: "codemark::ui",
+                        request_id,
+                        mode = mode_label,
+                        result_count = collections.len(),
+                        "collection search completed"
+                    );
                     let _ = event_handler
                         .send(Event::CollectionSearchResults { request_id, collections });
                 }
                 Err(e) => {
+                    tracing::debug!(
+                        target: "codemark::ui",
+                        request_id,
+                        mode = mode_label,
+                        error = %e,
+                        "collection search failed"
+                    );
                     let _ =
                         event_handler.send(Event::SearchError { request_id, msg: e.to_string() });
                 }
@@ -628,10 +653,24 @@ impl BrowserLayout {
                                     collections.push((c, count));
                                 }
                             }
+                            tracing::debug!(
+                                target: "codemark::ui",
+                                request_id,
+                                mode = mode_label,
+                                result_count = collections.len(),
+                                "collection search completed"
+                            );
                             let _ = event_handler
                                 .send(Event::CollectionSearchResults { request_id, collections });
                         }
                         Err(e) => {
+                            tracing::debug!(
+                                target: "codemark::ui",
+                                request_id,
+                                mode = mode_label,
+                                error = %e,
+                                "collection search failed"
+                            );
                             let _ = event_handler
                                 .send(Event::SearchError { request_id, msg: e.to_string() });
                         }

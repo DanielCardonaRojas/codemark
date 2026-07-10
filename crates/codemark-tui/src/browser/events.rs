@@ -319,6 +319,16 @@ impl BrowserLayout {
         // The search finished, so stop the loading spinner.
         self.left_pane.search.set_loading(false);
 
+        // A semantic collection search runs async; by the time it returns the
+        // user may have switched away from the Collections tab. Applying now
+        // would yank them back, so discard results unless Collections is still
+        // the active Content tab. (request_id only guards superseded searches.)
+        if ContentTab::from_index(self.left_pane.content_panel.tabs.selected_index())
+            != Some(ContentTab::Collections)
+        {
+            return;
+        }
+
         let items: Vec<PanelItem> = collections
             .iter()
             .map(|(c, count)| {

@@ -221,6 +221,9 @@ impl Database {
             .unwrap_or(0);
 
         self.conn().execute("DELETE FROM collections WHERE id = ?1", [id])?;
+        // Drop the collection's semantic embedding so collection_embeddings
+        // doesn't retain an orphan row (the vec0 table has no FK cascade).
+        self.conn().execute("DELETE FROM collection_embeddings WHERE collection_id = ?1", [id])?;
         Ok(count)
     }
 
@@ -246,6 +249,9 @@ impl Database {
 
         // Delete the collection itself (association records are deleted via ON DELETE CASCADE)
         tx.execute("DELETE FROM collections WHERE id = ?1", [id])?;
+
+        // Drop the collection's semantic embedding (vec0 has no FK cascade).
+        tx.execute("DELETE FROM collection_embeddings WHERE collection_id = ?1", [id])?;
 
         tx.commit()?;
         Ok(count)
@@ -631,6 +637,7 @@ mod tests {
         let db = Database::open_in_memory().unwrap();
         db.insert_collection(&test_collection("my_service")).unwrap();
         db.insert_collection(&test_collection("myXservice")).unwrap();
+        db.insert_collection(&test_collection("100percent")).unwrap();
 
         // `_` is a LIKE wildcard; without escaping, "my_service" would also match
         // "myXservice". Escaping means the underscore is matched literally.
@@ -638,9 +645,43 @@ mod tests {
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].0.name, "my_service");
 
-        // `%` in the query must not turn into a match-anything wildcard.
-        let none = db.search_collections(Some("100%"), None).unwrap();
-        assert!(none.is_empty());
+        // `%` must not become a match-anything wildcard: without escaping, "100%"
+        // would match "100percent"; escaped, it only matches a literal "100%".
+        let hits = db.search_collections(Some("100%"), None).unwrap();
+        assert!(hits.is_empty(), "escaped % should not match 100percent");
+
+        // Sanity: the plain substring "100" still matches "100percent".
+        let hits = db.search_collections(Some("100"), None).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].0.name, "100percent");
+    }
+
+    #[test]
+    fn deleting_collection_removes_its_embedding() {
+        use crate::embeddings::vec_store::{EmbeddingTarget, VecStore, VecStoreEntry};
+
+        init_test_env();
+        let db = Database::open_in_memory().unwrap();
+        let store = VecStore::for_target(384, Default::default(), EmbeddingTarget::Collection);
+
+        // Seed a collection with a raw embedding, then delete it by id.
+        db.insert_collection(&test_collection("temp")).unwrap();
+        store
+            .insert(db.conn(), &VecStoreEntry { id: "col-temp".into(), embedding: vec![0.0; 384] })
+            .unwrap();
+        assert_eq!(store.count(db.conn()).unwrap(), 1);
+
+        db.delete_collection_by_id("col-temp").unwrap();
+        assert_eq!(store.count(db.conn()).unwrap(), 0, "by_id delete must drop the embedding");
+
+        // The recursive delete path must clean up the embedding too.
+        let mut db = db;
+        db.insert_collection(&test_collection("temp2")).unwrap();
+        store
+            .insert(db.conn(), &VecStoreEntry { id: "col-temp2".into(), embedding: vec![0.0; 384] })
+            .unwrap();
+        db.delete_collection_recursive("col-temp2").unwrap();
+        assert_eq!(store.count(db.conn()).unwrap(), 0, "recursive delete must drop the embedding");
     }
 
     #[test]
