@@ -570,6 +570,14 @@ pub struct SearchArgs {
     #[arg(long)]
     pub semantic: bool,
 
+    /// Search collections instead of bookmarks (matches name, description, tags)
+    #[arg(long)]
+    pub collections: bool,
+
+    /// Filter collection results by tag (only with --collections)
+    #[arg(long)]
+    pub tag: Option<String>,
+
     /// Maximum results to return (default: 20)
     #[arg(long, default_value = "20")]
     pub limit: usize,
@@ -625,6 +633,10 @@ pub struct ReindexArgs {
     /// Only reindex this collection
     #[arg(long, env = "CODEMARK_COLLECTION_FILTER")]
     pub collection: Option<String>,
+
+    /// Reindex collection embeddings only (name, description, tags)
+    #[arg(long)]
+    pub collections: bool,
 
     /// Show progress while reindexing
     #[arg(long, short = 'v')]

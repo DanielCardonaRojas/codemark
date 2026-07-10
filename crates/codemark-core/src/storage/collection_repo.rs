@@ -145,6 +145,63 @@ impl Database {
         Ok(results)
     }
 
+    /// Search collections by text, returning matches with their bookmark counts.
+    ///
+    /// `query` matches (case-insensitively) against the collection name,
+    /// description, and any of its tags. `tag` additionally restricts results to
+    /// collections carrying that exact tag. With no filters this behaves like
+    /// [`list_collections`].
+    pub fn search_collections(
+        &self,
+        query: Option<&str>,
+        tag: Option<&str>,
+    ) -> Result<Vec<(Collection, usize)>> {
+        let mut sql = String::from(
+            "SELECT c.id, c.name, c.description, c.visibility, c.created_at, c.created_by, c.created_branch,
+             c.published_at, c.published_commit_sha, c.repo_url, c.repo_id, c.status, c.health, c.health_computed_at, c.updated_at, c.imported_from_url,
+             COUNT(DISTINCT cb.bookmark_id) AS bookmark_count
+             FROM collections c
+             LEFT JOIN collection_bookmarks cb ON c.id = cb.collection_id
+             LEFT JOIN collection_tags ct ON c.id = ct.collection_id",
+        );
+
+        let mut conditions = Vec::new();
+        let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+
+        if let Some(q) = query {
+            let like = format!("%{q}%");
+            conditions.push("(c.name LIKE ? OR c.description LIKE ? OR ct.tag LIKE ?)".to_string());
+            params.push(Box::new(like.clone()));
+            params.push(Box::new(like.clone()));
+            params.push(Box::new(like));
+        }
+        if let Some(t) = tag {
+            conditions.push(
+                "c.id IN (SELECT collection_id FROM collection_tags WHERE tag = ?)".to_string(),
+            );
+            params.push(Box::new(t.to_string()));
+        }
+
+        if !conditions.is_empty() {
+            sql.push_str(" WHERE ");
+            sql.push_str(&conditions.join(" AND "));
+        }
+
+        sql.push_str(" GROUP BY c.id ORDER BY c.name");
+
+        let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+            params.iter().map(|p| p.as_ref()).collect();
+        let mut stmt = self.conn().prepare(&sql)?;
+        let rows = stmt.query_map(param_refs.as_slice(), |row| {
+            let collection = row_to_collection(row)?;
+            let count: usize = row.get(16)?;
+            Ok((collection, count))
+        })?;
+
+        let results: Vec<(Collection, usize)> = rows.filter_map(|r| r.ok()).collect();
+        Ok(results)
+    }
+
     /// Delete a collection by ID, returning the number of bookmarks that were in it.
     pub fn delete_collection_by_id(&self, id: &str) -> Result<usize> {
         let count: usize = self
@@ -386,7 +443,9 @@ fn row_to_collection(row: &rusqlite::Row) -> rusqlite::Result<Collection> {
 
 #[cfg(test)]
 mod tests {
-    use crate::engine::bookmark::{Bookmark, BookmarkHealth, Collection, CollectionHealth};
+    use crate::engine::bookmark::{
+        Bookmark, BookmarkHealth, Collection, CollectionHealth, CollectionTag,
+    };
     use crate::storage::db::Database;
 
     fn test_bookmark(id: &str) -> Bookmark {
@@ -513,6 +572,50 @@ mod tests {
         assert_eq!(col_a.name, "col-a");
         let (_, count_b) = collections.iter().find(|(c, _)| c.name == "col-b").unwrap();
         assert_eq!(*count_b, 0);
+    }
+
+    #[test]
+    fn search_collections_matches_name_description_and_tag() {
+        init_test_env();
+        let db = Database::open_in_memory().unwrap();
+        db.insert_bookmark(&test_bookmark("bm-0001")).unwrap();
+        db.insert_collection(&test_collection("auth-refactor")).unwrap();
+        db.insert_collection(&test_collection("payments")).unwrap();
+        db.add_to_collection("col-auth-refactor", &["bm-0001".into()]).unwrap();
+
+        // Tag one collection so we can exercise the tag path too.
+        db.insert_collection_tag(&CollectionTag {
+            collection_id: "col-payments".to_string(),
+            tag: "billing".to_string(),
+            added_at: "2026-04-01T00:00:00Z".to_string(),
+            added_by: None,
+        })
+        .unwrap();
+
+        // Name match, with the bookmark count carried through.
+        let by_name = db.search_collections(Some("auth"), None).unwrap();
+        assert_eq!(by_name.len(), 1);
+        assert_eq!(by_name[0].0.name, "auth-refactor");
+        assert_eq!(by_name[0].1, 1);
+
+        // Description match ("Test collection payments" contains "payments").
+        let by_desc = db.search_collections(Some("payments"), None).unwrap();
+        assert_eq!(by_desc.len(), 1);
+        assert_eq!(by_desc[0].0.name, "payments");
+
+        // Query matches a tag value.
+        let by_tag_query = db.search_collections(Some("billing"), None).unwrap();
+        assert_eq!(by_tag_query.len(), 1);
+        assert_eq!(by_tag_query[0].0.name, "payments");
+
+        // Exact tag filter.
+        let by_tag = db.search_collections(None, Some("billing")).unwrap();
+        assert_eq!(by_tag.len(), 1);
+        assert_eq!(by_tag[0].0.name, "payments");
+
+        // No filters lists everything.
+        let all = db.search_collections(None, None).unwrap();
+        assert_eq!(all.len(), 2);
     }
 
     #[test]

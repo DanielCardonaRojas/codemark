@@ -14,8 +14,8 @@ use codemark_core::error::{Error, Result};
 use codemark_core::git::context as git_context;
 
 use super::{
-    find_bookmark, now_iso, open_all_dbs_with_extra_and_repos, open_db, open_db_for_write,
-    resolve_batch,
+    find_bookmark, generate_embedding_for_collection, now_iso, open_all_dbs_with_extra_and_repos,
+    open_db, open_db_for_write, resolve_batch,
 };
 
 /// Create a new bookmark collection.
@@ -118,6 +118,11 @@ pub async fn handle_collection_create(
         );
     }
 
+    // Generate the semantic-search embedding now that name/description/tags are
+    // persisted (tags are read from the DB when building the embedded text).
+    // Ignore errors — embedding failure shouldn't block collection creation.
+    let _ = generate_embedding_for_collection(cli, &config, &collection).await;
+
     write_success(mode, &format!("Collection '{}' created", args.name))?;
     Ok(())
 }
@@ -162,8 +167,8 @@ pub async fn handle_collection_add(
 ) -> Result<()> {
     let db = open_db_for_write(cli)?;
     // Auto-create collection if it doesn't exist
-    let collection = match db.get_collection_by_name(&args.name)? {
-        Some(c) => c,
+    let (collection, created) = match db.get_collection_by_name(&args.name)? {
+        Some(c) => (c, false),
         None => {
             let cwd = std::env::current_dir()?;
             let git_ctx = codemark_core::git::context::detect_context(&cwd);
@@ -188,7 +193,7 @@ pub async fn handle_collection_add(
                 imported_from_url: None,
             };
             db.insert_collection(&c)?;
-            c
+            (c, true)
         }
     };
     let added = db.add_to_collection_at(&collection.id, &args.bookmark_ids, args.at)?;
@@ -249,6 +254,15 @@ pub async fn handle_collection_add(
             collection.id, e
         );
     }
+
+    // Refresh the semantic embedding when the collection was just created or its
+    // tags changed — both alter the embedded name/description/tags text. Adding
+    // bookmarks alone doesn't, so we skip the (model-loading) embed in that case.
+    if created || !args.tag.is_empty() {
+        let config = super::load_config(cli);
+        let _ = generate_embedding_for_collection(cli, &config, &collection).await;
+    }
+
     write_success(mode, &format!("Added {added} bookmarks to '{}'", args.name))?;
     Ok(())
 }
@@ -609,6 +623,11 @@ pub async fn handle_collection_tag(
                 .collect();
 
             db.insert_collection_tags(&tags)?;
+
+            // Tags are part of the embedded text, so refresh the embedding.
+            let config = super::load_config(cli);
+            let _ = generate_embedding_for_collection(cli, &config, &collection).await;
+
             write_success(
                 mode,
                 &format!("Added {} tags to collection '{}'", add_args.tags.len(), add_args.name),
@@ -623,6 +642,11 @@ pub async fn handle_collection_tag(
             for tag in &rm_args.tags {
                 db.delete_collection_tag(&collection.id, tag)?;
             }
+
+            // Tags are part of the embedded text, so refresh the embedding.
+            let config = super::load_config(cli);
+            let _ = generate_embedding_for_collection(cli, &config, &collection).await;
+
             write_success(
                 mode,
                 &format!("Removed {} tags from collection '{}'", rm_args.tags.len(), rm_args.name),
@@ -848,6 +872,12 @@ pub async fn handle_collection_annotate(
             "codemark: warning: --note is not yet persisted on collections; {} note(s) ignored",
             args.note.len()
         );
+    }
+
+    // Tags are part of the embedded text, so refresh the embedding when they change.
+    if !args.tag.is_empty() {
+        let config = super::load_config(cli);
+        let _ = generate_embedding_for_collection(cli, &config, &collection).await;
     }
 
     write_success(mode, &format!("Added {added_count} annotations to collection '{}'", args.name))?;

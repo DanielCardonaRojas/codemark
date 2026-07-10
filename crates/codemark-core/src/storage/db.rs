@@ -185,9 +185,10 @@ impl Database {
             }
         }
 
-        // Ensure embeddings table exists if we're at or past version 5
+        // Ensure embeddings tables exist if we're at or past version 5
         if Self::get_schema_version(conn) >= 5 {
             Self::ensure_embeddings_table_on(conn)?;
+            Self::ensure_collection_embeddings_table_on(conn)?;
         }
 
         Ok(())
@@ -299,6 +300,35 @@ impl Database {
             let store = VecStore::new(384);
             store.create_table(conn).map_err(|e| {
                 crate::error::Error::Operation(format!("Failed to create embeddings table: {}", e))
+            })?;
+        }
+
+        Ok(())
+    }
+
+    /// Ensure the collection embeddings table exists, creating it if it doesn't.
+    ///
+    /// Collections get their own vec0 table (parallel to `bookmark_embeddings`)
+    /// so semantic search can rank collections independently of bookmarks.
+    fn ensure_collection_embeddings_table_on(conn: &mut Connection) -> Result<()> {
+        use crate::embeddings::VecStore;
+        use crate::embeddings::vec_store::EmbeddingTarget;
+
+        // vec0 virtual tables don't show up in sqlite_master, so probe with a query.
+        let exists = conn
+            .query_row("SELECT COUNT(*) FROM collection_embeddings LIMIT 1", [], |row| {
+                row.get::<_, i64>(0)
+            })
+            .is_ok();
+
+        if !exists {
+            // Create the vec0 virtual table with 384 dimensions (all-MiniLM-L6-v2)
+            let store = VecStore::for_target(384, Default::default(), EmbeddingTarget::Collection);
+            store.create_table(conn).map_err(|e| {
+                crate::error::Error::Operation(format!(
+                    "Failed to create collection embeddings table: {}",
+                    e
+                ))
             })?;
         }
 

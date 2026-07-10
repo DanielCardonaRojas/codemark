@@ -19,6 +19,12 @@ pub async fn handle_search(cli: &Cli, mode: &OutputMode, args: &SearchArgs) -> R
     super::check_deprecated_status(&args.health, &args.status);
     let config = load_config(cli);
 
+    // Collection search is a separate target (name/description/tags) rather than
+    // a bookmark filter, so it gets its own code path for both FTS and semantic.
+    if args.collections {
+        return handle_collection_search(cli, mode, args, &config).await;
+    }
+
     // Semantic search requires a query
     if args.semantic {
         if !config.semantic.is_enabled() {
@@ -182,7 +188,7 @@ async fn handle_semantic_search(
     // Fetch full bookmark details for results and apply health filter
     let mut bookmarks = Vec::new();
     for result in results {
-        if let Ok(Some(bm)) = db.get_bookmark(&result.bookmark_id) {
+        if let Ok(Some(bm)) = db.get_bookmark(&result.id) {
             // Apply health filter if specified
             if let Some(ref filter) = health_filter
                 && !filter.contains(&bm.health)
@@ -251,6 +257,115 @@ async fn handle_semantic_search(
     Ok(())
 }
 
+/// Search collections by text or semantic similarity (name, description, tags).
+async fn handle_collection_search(
+    cli: &Cli,
+    mode: &OutputMode,
+    args: &SearchArgs,
+    config: &codemark_core::config::Config,
+) -> Result<()> {
+    let db = open_db(cli)?;
+
+    let results: Vec<(codemark_core::engine::bookmark::Collection, usize)> = if args.semantic {
+        if !config.semantic.is_enabled() {
+            return Err(Error::Input("Semantic search is not enabled in config".to_string()));
+        }
+        let query = args
+            .query
+            .as_ref()
+            .ok_or_else(|| Error::Input("Semantic search requires a query".to_string()))?;
+
+        let model = config
+            .semantic
+            .model
+            .as_deref()
+            .and_then(|m| m.parse::<EmbeddingModel>().ok())
+            .unwrap_or(EmbeddingModel::AllMiniLmL6V2);
+        let distance_metric = config.semantic.get_distance_metric();
+        let threshold = config.semantic.threshold;
+        let models_dir = config.semantic.get_models_dir();
+
+        let semantic_repo =
+            SemanticRepo::with_config(models_dir, model, distance_metric, threshold);
+        let hits = semantic_repo.search_collections(db.conn(), query, args.limit).await?;
+
+        // Resolve each hit to its full collection with bookmark count.
+        let mut out = Vec::new();
+        for hit in hits {
+            if let Some(c) = db.get_collection_by_id(&hit.id)? {
+                let count = db.list_bookmarks_in_collection(&c.id).map(|b| b.len()).unwrap_or(0);
+                out.push((c, count));
+            }
+        }
+        out
+    } else {
+        let mut collections = db.search_collections(args.query.as_deref(), args.tag.as_deref())?;
+        collections.truncate(args.limit);
+        collections
+    };
+
+    write_collection_results(mode, &results)?;
+    Ok(())
+}
+
+/// Render collection search results in the requested output mode.
+fn write_collection_results(
+    mode: &OutputMode,
+    results: &[(codemark_core::engine::bookmark::Collection, usize)],
+) -> Result<()> {
+    use std::io::Write;
+
+    match mode {
+        OutputMode::Json => {
+            let data: Vec<serde_json::Value> = results
+                .iter()
+                .map(|(c, count)| {
+                    serde_json::json!({
+                        "id": c.id,
+                        "short_id": short_id(&c.id),
+                        "name": c.name,
+                        "description": c.description,
+                        "health": c.health.as_ref().map(|h| h.to_string()),
+                        "bookmark_count": count,
+                        "created_at": c.created_at,
+                        "created_by": c.created_by,
+                        "created_branch": c.created_branch,
+                    })
+                })
+                .collect();
+            write_json_success(&data)?;
+        }
+        OutputMode::Table => {
+            let mut table = comfy_table::Table::new();
+            table.set_header(vec!["Name", "Health", "Bookmarks", "Branch", "Description"]);
+            for (c, count) in results {
+                table.add_row(vec![
+                    c.name.clone(),
+                    c.health.as_ref().map(|h| h.to_string()).unwrap_or_else(|| "-".to_string()),
+                    count.to_string(),
+                    c.created_branch.clone().unwrap_or_default(),
+                    c.description.clone().unwrap_or_default(),
+                ]);
+            }
+            println!("{table}");
+        }
+        _ => {
+            let mut stdout = std::io::stdout().lock();
+            for (c, count) in results {
+                writeln!(
+                    stdout,
+                    "{}\t{}\t{}\t{}",
+                    c.name,
+                    count,
+                    c.created_branch.as_deref().unwrap_or(""),
+                    c.description.as_deref().unwrap_or("")
+                )?;
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Handle reindex command to rebuild embeddings.
 pub async fn handle_reindex(cli: &Cli, mode: &OutputMode, args: &ReindexArgs) -> Result<()> {
     let config = load_config(cli);
@@ -277,32 +392,55 @@ pub async fn handle_reindex(cli: &Cli, mode: &OutputMode, args: &ReindexArgs) ->
 
     let semantic_repo = SemanticRepo::with_config(models_dir, model, distance_metric, threshold);
 
-    // Get bookmarks to reindex
-    let filter = BookmarkFilter {
-        language: args.lang.as_deref().map(|l| l.to_string()),
-        collection: args.collection.as_deref().map(|c| c.to_string()),
-        ..Default::default()
-    };
+    // Decide what to reindex:
+    // - `--collections` restricts to collections only.
+    // - Otherwise bookmarks are reindexed; collections are also refreshed on a
+    //   full reindex (no bookmark-specific `--lang`/`--collection` filter set).
+    let bookmark_filtered = args.lang.is_some() || args.collection.is_some();
+    let do_bookmarks = !args.collections;
+    let do_collections = args.collections || !bookmark_filtered;
 
-    let bookmarks = db.list_bookmarks(&filter)?;
+    let mut messages = Vec::new();
 
-    if bookmarks.is_empty() {
-        write_success(mode, "No bookmarks to reindex")?;
-        return Ok(());
+    if do_bookmarks {
+        let filter = BookmarkFilter {
+            language: args.lang.as_deref().map(|l| l.to_string()),
+            collection: args.collection.as_deref().map(|c| c.to_string()),
+            ..Default::default()
+        };
+
+        let bookmarks = db.list_bookmarks(&filter)?;
+        if bookmarks.is_empty() {
+            messages.push("No bookmarks to reindex".to_string());
+        } else {
+            if args.verbose {
+                eprintln!("Reindexing {} bookmarks...", bookmarks.len());
+            }
+            let count = {
+                let conn = db.conn_mut();
+                semantic_repo.store_embeddings(conn, &bookmarks).await
+            }?;
+            messages.push(format!("Generated embeddings for {count} bookmarks"));
+        }
     }
 
-    if args.verbose {
-        eprintln!("Reindexing {} bookmarks...", bookmarks.len());
+    if do_collections {
+        let collections: Vec<_> = db.list_collections()?.into_iter().map(|(c, _count)| c).collect();
+        if collections.is_empty() {
+            messages.push("No collections to reindex".to_string());
+        } else {
+            if args.verbose {
+                eprintln!("Reindexing {} collections...", collections.len());
+            }
+            let count = {
+                let conn = db.conn_mut();
+                semantic_repo.store_collection_embeddings(conn, &collections).await
+            }?;
+            messages.push(format!("Generated embeddings for {count} collections"));
+        }
     }
 
-    // Store embeddings
-    let count = {
-        let conn = db.conn_mut();
-        semantic_repo.store_embeddings(conn, &bookmarks).await
-    }?;
-
-    let message = format!("Generated embeddings for {count} bookmarks");
-    write_success(mode, &message)?;
+    write_success(mode, &messages.join("; "))?;
 
     Ok(())
 }

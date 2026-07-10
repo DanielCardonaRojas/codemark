@@ -381,6 +381,49 @@ pub async fn generate_embedding_for_bookmark(
     Ok(())
 }
 
+/// Generate (or refresh) the embedding for a collection if semantic search is
+/// enabled. Returns `Ok(())` even if semantic search is disabled or fails, so
+/// embedding problems never block the collection operation that triggered it.
+///
+/// The embedded text (name, description, tags) is read from the database, so the
+/// caller must persist any tag/description changes *before* invoking this.
+pub async fn generate_embedding_for_collection(
+    cli: &Cli,
+    config: &Config,
+    collection: &Collection,
+) -> Result<()> {
+    if !config.semantic.is_enabled() {
+        return Ok(());
+    }
+
+    // Get models directory from config (defaults to global cache)
+    let models_dir = config.semantic.get_models_dir();
+
+    // Parse model from config
+    let model = config
+        .semantic
+        .model
+        .as_deref()
+        .and_then(|m| m.parse::<EmbeddingModel>().ok())
+        .unwrap_or(EmbeddingModel::AllMiniLmL6V2);
+
+    // Get distance metric and threshold from config
+    let distance_metric = config.semantic.get_distance_metric();
+    let threshold = config.semantic.threshold;
+
+    let semantic_repo = SemanticRepo::with_config(models_dir, model, distance_metric, threshold);
+
+    // Open database for writing embedding
+    let mut db = open_db_for_write(cli)?;
+
+    // Generate and store the embedding
+    let conn = db.conn_mut();
+    // Ignore errors - embedding generation failure shouldn't block collection creation
+    let _ = semantic_repo.store_collection_embeddings(conn, std::slice::from_ref(collection)).await;
+
+    Ok(())
+}
+
 /// Load the config from the .codemark directory (same location as the primary DB).
 /// Uses layered loading: global config merged with local (per-repo) override.
 pub fn load_config(cli: &Cli) -> Config {
