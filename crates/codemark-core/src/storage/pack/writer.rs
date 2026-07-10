@@ -47,7 +47,11 @@ impl Packer {
             self.add_pack_meta(&pack_db, "publish")?;
 
             // 5. Thinning and VACUUM
+            // Embeddings are local, regenerable, and their vec0 shadow tables are
+            // not in the pack schema allowlist — drop them (this cascades to the
+            // vec0 shadow tables) so packs stay lean and pass schema validation.
             let _ = conn.execute("DROP TABLE IF EXISTS bookmark_embeddings", []);
+            let _ = conn.execute("DROP TABLE IF EXISTS collection_embeddings", []);
             let _ = conn.execute("DROP TABLE IF EXISTS bookmarks_fts", []);
             let _ = conn.execute("DROP TABLE IF EXISTS published_tours", []);
             let _ = conn.execute("DROP TRIGGER IF EXISTS bookmarks_ai", []);
