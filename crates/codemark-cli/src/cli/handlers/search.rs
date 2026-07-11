@@ -295,10 +295,18 @@ async fn handle_collection_search(
             SemanticRepo::with_config(models_dir, model, distance_metric, threshold);
         let hits = semantic_repo.search_collections(db.conn(), query, args.limit).await?;
 
-        // Resolve each hit to its full collection with bookmark count.
+        // Resolve each hit to its full collection with bookmark count, applying
+        // the same `--tag` filter the FTS branch does (semantic search ranks on
+        // embeddings, so tag membership has to be enforced here).
         let mut out = Vec::new();
         for hit in hits {
             if let Some(c) = db.get_collection_by_id(&hit.id)? {
+                if let Some(tag) = args.tag.as_deref() {
+                    let has_tag = db.list_tags_for_collection(&c.id)?.iter().any(|t| t.tag == tag);
+                    if !has_tag {
+                        continue;
+                    }
+                }
                 let count = db.list_bookmarks_in_collection(&c.id).map(|b| b.len()).unwrap_or(0);
                 out.push((c, count));
             }
