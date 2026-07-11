@@ -211,24 +211,42 @@ impl Database {
 
     /// Delete a collection by ID, returning the number of bookmarks that were in it.
     pub fn delete_collection_by_id(&self, id: &str) -> Result<usize> {
+        let conn = self.conn();
+
         // Delete the collection and its semantic embedding atomically so a failure
         // can't leave an orphan row in collection_embeddings (the vec0 table has no
-        // FK cascade). Mirrors delete_collection_recursive.
-        let tx = self.conn().unchecked_transaction()?;
+        // FK cascade). When already inside a transaction (e.g. `import_pack` wraps a
+        // whole pull), reuse it rather than opening a nested one — SQLite can't
+        // `BEGIN` within a `BEGIN`; the caller then owns the commit/rollback.
+        let owns_txn = conn.is_autocommit();
+        if owns_txn {
+            conn.execute_batch("BEGIN")?;
+        }
 
-        let count: usize = tx
-            .query_row(
-                "SELECT COUNT(*) FROM collection_bookmarks WHERE collection_id = ?1",
-                [id],
-                |row| row.get(0),
-            )
-            .unwrap_or(0);
+        let result = (|| -> Result<usize> {
+            let count: usize = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM collection_bookmarks WHERE collection_id = ?1",
+                    [id],
+                    |row| row.get(0),
+                )
+                .unwrap_or(0);
 
-        tx.execute("DELETE FROM collections WHERE id = ?1", [id])?;
-        tx.execute("DELETE FROM collection_embeddings WHERE collection_id = ?1", [id])?;
+            conn.execute("DELETE FROM collections WHERE id = ?1", [id])?;
+            conn.execute("DELETE FROM collection_embeddings WHERE collection_id = ?1", [id])?;
+            Ok(count)
+        })();
 
-        tx.commit()?;
-        Ok(count)
+        if owns_txn {
+            match &result {
+                Ok(_) => conn.execute_batch("COMMIT")?,
+                Err(_) => {
+                    let _ = conn.execute_batch("ROLLBACK");
+                }
+            }
+        }
+
+        result
     }
 
     /// Delete a collection and all its bookmarks atomically.
