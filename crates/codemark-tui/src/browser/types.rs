@@ -1,4 +1,4 @@
-use crate::component::{CodePreview, Component, MarkdownPanel, Panel};
+use crate::component::{CodePreview, Component, HealthStatus, MarkdownPanel, Panel};
 use crate::event::Event;
 use codemark_core::engine::bookmark::{Bookmark, Resolution};
 use ratatui::buffer::Buffer;
@@ -448,6 +448,9 @@ pub struct StepData {
     pub resolution: Option<Resolution>,
     /// All resolutions for this bookmark (for showing full resolution history)
     pub resolutions: Vec<Resolution>,
+    /// Health status of this step's bookmark, shown as a colored pager dot so
+    /// the health of every step is visible while browsing a collection.
+    pub health: HealthStatus,
 }
 
 /// A fully-computed bookmark preview, produced off the UI thread.

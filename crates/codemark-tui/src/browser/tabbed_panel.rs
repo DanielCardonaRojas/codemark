@@ -52,67 +52,47 @@ pub struct TabbedPanel {
 ///
 /// # Returns
 /// A PanelItem with formatted display text, health status, icon, and metadata
+/// Compute the [`HealthStatus`] for a bookmark, using live projection against
+/// the current HEAD when a resolution is available and falling back to the
+/// bookmark's persisted health otherwise.
+///
+/// This is the single source of truth for the health dot shown across the TUI
+/// (bookmarks panel, collection pager), so those indicators stay consistent.
+pub fn bookmark_health(
+    bookmark: &Bookmark,
+    db: &Database,
+    current_head: Option<&str>,
+) -> HealthStatus {
+    // Map the persisted bookmark health when live projection is unavailable.
+    let persisted = |health: BookmarkHealth| match health {
+        BookmarkHealth::Active => HealthStatus::Healthy,
+        BookmarkHealth::Drifted => HealthStatus::Drifted,
+        BookmarkHealth::Stale | BookmarkHealth::Archived => HealthStatus::Broken,
+    };
+
+    let Some(ref resolution_id) = bookmark.current_resolution_id else {
+        return persisted(bookmark.health);
+    };
+
+    match db.get_resolution(resolution_id) {
+        Ok(Some(resolution)) => {
+            match projection::project_resolution_status(&resolution, bookmark, current_head, db.path())
+            {
+                Ok(ui_status) => HealthStatus::from(ui_status),
+                Err(_) => persisted(resolution.health),
+            }
+        }
+        _ => persisted(bookmark.health),
+    }
+}
+
 pub fn bookmark_to_panel_item(
     bookmark: &Bookmark,
     db: &Database,
     use_full_summary: bool,
     current_head: Option<&str>,
 ) -> PanelItem {
-    // Get the current resolution for projection
-    let health = if let Some(ref resolution_id) = bookmark.current_resolution_id {
-        match db.get_resolution(resolution_id) {
-            Ok(Some(resolution)) => {
-                match projection::project_resolution_status(
-                    &resolution,
-                    bookmark,
-                    current_head,
-                    db.path(),
-                ) {
-                    Ok(ui_status) => match ui_status {
-                        codemark_core::engine::projection::UIStatus::Healthy => {
-                            HealthStatus::Healthy
-                        }
-                        codemark_core::engine::projection::UIStatus::UnanchoredHealthy => {
-                            HealthStatus::UnanchoredHealthy
-                        }
-                        codemark_core::engine::projection::UIStatus::Drifted => {
-                            HealthStatus::Drifted
-                        }
-                        codemark_core::engine::projection::UIStatus::UnanchoredDrifting => {
-                            HealthStatus::UnanchoredDrifting
-                        }
-                        codemark_core::engine::projection::UIStatus::Broken => HealthStatus::Broken,
-                        codemark_core::engine::projection::UIStatus::BrokenUnanchored => {
-                            HealthStatus::BrokenUnanchored
-                        }
-                        codemark_core::engine::projection::UIStatus::Verified => {
-                            HealthStatus::Verified
-                        }
-                        codemark_core::engine::projection::UIStatus::Outdated => {
-                            HealthStatus::Outdated
-                        }
-                        codemark_core::engine::projection::UIStatus::Future => HealthStatus::Future,
-                    },
-                    Err(_) => match resolution.health {
-                        BookmarkHealth::Active => HealthStatus::Healthy,
-                        BookmarkHealth::Drifted => HealthStatus::Drifted,
-                        BookmarkHealth::Stale | BookmarkHealth::Archived => HealthStatus::Broken,
-                    },
-                }
-            }
-            _ => match bookmark.health {
-                BookmarkHealth::Active => HealthStatus::Healthy,
-                BookmarkHealth::Drifted => HealthStatus::Drifted,
-                BookmarkHealth::Stale | BookmarkHealth::Archived => HealthStatus::Broken,
-            },
-        }
-    } else {
-        match bookmark.health {
-            BookmarkHealth::Active => HealthStatus::Healthy,
-            BookmarkHealth::Drifted => HealthStatus::Drifted,
-            BookmarkHealth::Stale | BookmarkHealth::Archived => HealthStatus::Broken,
-        }
-    };
+    let health = bookmark_health(bookmark, db, current_head);
 
     // Try to get a summary from the query for better display
     let summary_info = bookmark

@@ -155,6 +155,9 @@ pub struct Pager {
     pub total: usize,
     /// Currently active page (0-indexed)
     pub current: usize,
+    /// Per-page health status, used to color each dot. When empty, dots fall
+    /// back to the accent (current) / dim (others) styling.
+    health: Vec<HealthStatus>,
     /// Last rendered area
     last_area: std::cell::Cell<Rect>,
 }
@@ -162,7 +165,19 @@ pub struct Pager {
 impl Pager {
     /// Create a new pager.
     pub fn new(total: usize, current: usize) -> Self {
-        Self { total, current, last_area: std::cell::Cell::new(Rect::default()) }
+        Self {
+            total,
+            current,
+            health: Vec::new(),
+            last_area: std::cell::Cell::new(Rect::default()),
+        }
+    }
+
+    /// Attach per-page health statuses so each dot is colored by the health of
+    /// the step it represents.
+    pub fn with_health(mut self, health: Vec<HealthStatus>) -> Self {
+        self.health = health;
+        self
     }
 }
 
@@ -182,11 +197,18 @@ impl Component for Pager {
             if i > 0 {
                 spans.push(Span::raw(" "));
             }
-            if i == self.current {
-                spans.push(Span::styled("●", Style::default().fg(crate::theme::palette().accent)));
-            } else {
-                spans.push(Span::styled("○", Style::default().fg(crate::theme::palette().dim)));
-            }
+            // Color each dot by its step's health when available; otherwise fall
+            // back to accent (current) / dim (others). The current page is always
+            // a filled dot so it stays distinguishable regardless of color.
+            let color = self.health.get(i).map(|h| h.color()).unwrap_or_else(|| {
+                if i == self.current {
+                    crate::theme::palette().accent
+                } else {
+                    crate::theme::palette().dim
+                }
+            });
+            let glyph = if i == self.current { "●" } else { "○" };
+            spans.push(Span::styled(glyph, Style::default().fg(color)));
         }
 
         let p = Paragraph::new(Line::from(spans)).alignment(Alignment::Center);

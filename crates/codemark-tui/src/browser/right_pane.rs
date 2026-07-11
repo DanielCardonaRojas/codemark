@@ -1,3 +1,4 @@
+use crate::browser::tabbed_panel::bookmark_health;
 use crate::browser::{DetailsPaneSize, PreviewPayload, SectionConfig, StepData, TabbedPanel};
 use crate::component::{Component, MarkdownPanel};
 use crate::event::Event;
@@ -319,6 +320,7 @@ impl RightPane {
             if let Ok(abs_path) =
                 codemark_core::git::context::resolve_bookmark_file_path(&file_path, db.path())
             {
+                let health = bookmark_health(&bm, db, self.cached_head_commit.as_deref());
                 self.steps_data = vec![StepData {
                     file_path: abs_path.to_string_lossy().to_string(),
                     line_number,
@@ -326,6 +328,7 @@ impl RightPane {
                     bookmark: bm,
                     resolution,
                     resolutions,
+                    health,
                 }];
                 self.pager_total = 1;
                 self.pager_current = 0;
@@ -415,6 +418,7 @@ impl RightPane {
         let comments_markdown =
             render_bookmark_markdown(db, &bm, &resolutions, templates.comments, head);
         let query = bm.query.clone();
+        let health = bookmark_health(&bm, db, head);
 
         let step = StepData {
             file_path: abs_path,
@@ -423,6 +427,7 @@ impl RightPane {
             bookmark: bm,
             resolution: None,
             resolutions,
+            health,
         };
 
         Some(Box::new(PreviewPayload {
@@ -503,6 +508,7 @@ impl RightPane {
         for bm in bookmarks {
             let resolutions = db.list_resolutions(&bm.id, 100).unwrap_or_default();
 
+            let health = bookmark_health(&bm, db, self.cached_head_commit.as_deref());
             match Self::resolve_bookmark_live(&bm, db, session_cache, true) {
                 Ok((abs_path, start_line, end_line, _source)) => {
                     new_steps.push(StepData {
@@ -512,6 +518,7 @@ impl RightPane {
                         bookmark: bm,
                         resolution: None,
                         resolutions,
+                        health,
                     });
                 }
                 Err(_) => {
@@ -552,6 +559,7 @@ impl RightPane {
                             bookmark: bm,
                             resolution,
                             resolutions,
+                            health,
                         });
                     }
                 }
@@ -813,6 +821,7 @@ impl RightPane {
                 if let Ok(abs_path) =
                     codemark_core::git::context::resolve_bookmark_file_path(&file_path, db.path())
                 {
+                    let health = bookmark_health(&bm, db, self.cached_head_commit.as_deref());
                     new_steps.push(StepData {
                         file_path: abs_path.to_string_lossy().to_string(),
                         line_number,
@@ -820,6 +829,7 @@ impl RightPane {
                         bookmark: bm,
                         resolution,
                         resolutions,
+                        health,
                     });
                 }
             }
@@ -921,7 +931,9 @@ impl RightPane {
         // Render pager if needed
         if self.pager_total > 1 {
             use crate::component::Pager;
-            let pager = Pager::new(self.pager_total, self.pager_current);
+            let health = self.steps_data.iter().map(|step| step.health).collect();
+            let pager =
+                Pager::new(self.pager_total, self.pager_current).with_health(health);
             pager.render(chunks[1], buf);
         }
 
