@@ -187,29 +187,35 @@ impl RightPane {
         self.cached_head_commit.as_deref()
     }
 
-    /// Recompute the cached health of any open collection steps for `bookmark_id`.
+    /// Recompute the cached health of every open collection step.
     ///
     /// `StepData.health` is captured when the collection loads, so without this
-    /// the pager dots would keep their load-time colors after a heal, sync, or
-    /// live-health refresh. This recomputes via [`bookmark_health`] — the same
-    /// HEAD-aware projection used to seed the value — so the pager keeps the full
-    /// status nuance instead of the transient live-resolution status, and stays
-    /// consistent with the bookmarks panel.
+    /// the pager dots would drift from the bookmarks panel once the underlying
+    /// state moves. This is the single refresh path, driven from both step
+    /// navigation and live-health updates, so every staleness vector is covered:
     ///
-    /// HEAD is refreshed first so a branch change while the collection stays open
-    /// projects against the current checkout rather than a stale cached commit.
-    /// The early return keeps that git I/O off the common path where no open step
-    /// matches the updated bookmark.
-    pub fn update_step_health(&mut self, db: &Database, bookmark_id: &str) {
-        if !self.steps_data.iter().any(|step| step.bookmark.id == bookmark_id) {
+    /// * **HEAD change** — [`refresh_head_commit`](Self::refresh_head_commit) is
+    ///   called first, so a branch switch while the collection stays open (then
+    ///   paging or a live-health batch) projects against the current checkout
+    ///   rather than a stale cached commit.
+    /// * **Bookmark change** — each bookmark is re-fetched from the database, so a
+    ///   heal or sync that updates `current_resolution_id` or persisted health is
+    ///   reflected instead of the load-time clone.
+    ///
+    /// Uses [`bookmark_health`] — the same HEAD-aware projection that seeds the
+    /// value — so the pager keeps the full status nuance and matches the panel.
+    /// Cheap enough for the small step count of a collection; the early return
+    /// keeps it off the path where no collection is open.
+    pub fn refresh_step_health(&mut self, db: &Database) {
+        if self.steps_data.is_empty() {
             return;
         }
         self.refresh_head_commit(db);
         let head = self.cached_head_commit.clone();
         for step in self.steps_data.iter_mut() {
-            if step.bookmark.id == bookmark_id {
-                step.health = bookmark_health(&step.bookmark, db, head.as_deref());
-            }
+            let fresh = db.get_bookmark(&step.bookmark.id).ok().flatten();
+            let bookmark = fresh.as_ref().unwrap_or(&step.bookmark);
+            step.health = bookmark_health(bookmark, db, head.as_deref());
         }
     }
 
@@ -245,6 +251,9 @@ impl RightPane {
 
     /// Update the code preview based on current step.
     pub fn update_preview(&mut self, db: &Database) {
+        // Refresh cached step health on navigation so paging after a branch
+        // change (with no intervening live-health batch) still recolors the dots.
+        self.refresh_step_health(db);
         if let Some(step) = self.steps_data.get(self.pager_current) {
             let code = std::fs::read_to_string(&step.file_path)
                 .unwrap_or_else(|_| format!("Error: Could not load file {}", step.file_path));
