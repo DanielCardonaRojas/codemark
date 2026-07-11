@@ -58,7 +58,7 @@ Sleep 400ms
 
 # --- 2. Inspect the preview tabs: Content -> Info -> Query -------------------
 # Focus the right preview pane.
-Type "5"
+Type "4"
 Sleep 450ms
 
 # --- 2b. Show the cheat sheet again — now scoped to the preview pane ---------
@@ -80,7 +80,7 @@ Sleep 450ms
 
 # --- 3. Switch to Collections and open one ----------------------------------
 # Focus the bookmarks pane, then cycle its tab to Collections.
-Type "4"
+Type "3"
 Sleep 350ms
 Type "]"
 Sleep 650ms
