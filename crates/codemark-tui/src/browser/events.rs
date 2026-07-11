@@ -177,6 +177,12 @@ impl BrowserLayout {
                 self.pending_notification =
                     Some(HealNotification { message: msg.clone(), success: *success });
                 self.schedule_clear_spinners();
+                if *success {
+                    // A heal rewrites bookmark resolutions/health in the database
+                    // without emitting a per-bookmark live-health batch, so refresh
+                    // any open collection's pager dots from the updated records.
+                    self.right_pane.refresh_step_health(&self.db);
+                }
                 Some(true)
             }
             Event::SyncComplete(msg, success) => {
@@ -188,6 +194,11 @@ impl BrowserLayout {
                 // since this is the only runtime path that talks to the server
                 // without otherwise refreshing the panels.
                 self.update_tours_tab_visibility();
+                if *success {
+                    // A pull can update bookmark records for an open collection;
+                    // refresh its pager dots so they match the synced state.
+                    self.right_pane.refresh_step_health(&self.db);
+                }
                 Some(true)
             }
             Event::RemoteToursLoaded(tours, scope) => {
