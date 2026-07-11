@@ -145,19 +145,108 @@ impl Database {
         Ok(results)
     }
 
+    /// Search collections by text, returning matches with their bookmark counts.
+    ///
+    /// `query` matches (case-insensitively) against the collection name,
+    /// description, and any of its tags. `tag` additionally restricts results to
+    /// collections carrying that exact tag. With no filters this behaves like
+    /// [`list_collections`].
+    pub fn search_collections(
+        &self,
+        query: Option<&str>,
+        tag: Option<&str>,
+    ) -> Result<Vec<(Collection, usize)>> {
+        let mut sql = String::from(
+            "SELECT c.id, c.name, c.description, c.visibility, c.created_at, c.created_by, c.created_branch,
+             c.published_at, c.published_commit_sha, c.repo_url, c.repo_id, c.status, c.health, c.health_computed_at, c.updated_at, c.imported_from_url,
+             COUNT(DISTINCT cb.bookmark_id) AS bookmark_count
+             FROM collections c
+             LEFT JOIN collection_bookmarks cb ON c.id = cb.collection_id
+             LEFT JOIN collection_tags ct ON c.id = ct.collection_id",
+        );
+
+        let mut conditions = Vec::new();
+        let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+
+        if let Some(q) = query {
+            // Escape LIKE metacharacters so a query like `my_service` or `100%`
+            // is matched literally instead of as a wildcard pattern. The matching
+            // `ESCAPE '\'` clause below tells SQLite `\` is the escape character.
+            let escaped = q.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_");
+            let like = format!("%{escaped}%");
+            conditions.push(
+                "(c.name LIKE ? ESCAPE '\\' OR c.description LIKE ? ESCAPE '\\' OR ct.tag LIKE ? ESCAPE '\\')"
+                    .to_string(),
+            );
+            params.push(Box::new(like.clone()));
+            params.push(Box::new(like.clone()));
+            params.push(Box::new(like));
+        }
+        if let Some(t) = tag {
+            conditions.push(
+                "c.id IN (SELECT collection_id FROM collection_tags WHERE tag = ?)".to_string(),
+            );
+            params.push(Box::new(t.to_string()));
+        }
+
+        if !conditions.is_empty() {
+            sql.push_str(" WHERE ");
+            sql.push_str(&conditions.join(" AND "));
+        }
+
+        sql.push_str(" GROUP BY c.id ORDER BY c.name");
+
+        let param_refs: Vec<&dyn rusqlite::types::ToSql> =
+            params.iter().map(|p| p.as_ref()).collect();
+        let mut stmt = self.conn().prepare(&sql)?;
+        let rows = stmt.query_map(param_refs.as_slice(), |row| {
+            let collection = row_to_collection(row)?;
+            let count: usize = row.get(16)?;
+            Ok((collection, count))
+        })?;
+
+        let results: Vec<(Collection, usize)> = rows.filter_map(|r| r.ok()).collect();
+        Ok(results)
+    }
+
     /// Delete a collection by ID, returning the number of bookmarks that were in it.
     pub fn delete_collection_by_id(&self, id: &str) -> Result<usize> {
-        let count: usize = self
-            .conn()
-            .query_row(
-                "SELECT COUNT(*) FROM collection_bookmarks WHERE collection_id = ?1",
-                [id],
-                |row| row.get(0),
-            )
-            .unwrap_or(0);
+        let conn = self.conn();
 
-        self.conn().execute("DELETE FROM collections WHERE id = ?1", [id])?;
-        Ok(count)
+        // Delete the collection and its semantic embedding atomically so a failure
+        // can't leave an orphan row in collection_embeddings (the vec0 table has no
+        // FK cascade). When already inside a transaction (e.g. `import_pack` wraps a
+        // whole pull), reuse it rather than opening a nested one — SQLite can't
+        // `BEGIN` within a `BEGIN`; the caller then owns the commit/rollback.
+        let owns_txn = conn.is_autocommit();
+        if owns_txn {
+            conn.execute_batch("BEGIN")?;
+        }
+
+        let result = (|| -> Result<usize> {
+            let count: usize = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM collection_bookmarks WHERE collection_id = ?1",
+                    [id],
+                    |row| row.get(0),
+                )
+                .unwrap_or(0);
+
+            conn.execute("DELETE FROM collections WHERE id = ?1", [id])?;
+            conn.execute("DELETE FROM collection_embeddings WHERE collection_id = ?1", [id])?;
+            Ok(count)
+        })();
+
+        if owns_txn {
+            match &result {
+                Ok(_) => conn.execute_batch("COMMIT")?,
+                Err(_) => {
+                    let _ = conn.execute_batch("ROLLBACK");
+                }
+            }
+        }
+
+        result
     }
 
     /// Delete a collection and all its bookmarks atomically.
@@ -182,6 +271,9 @@ impl Database {
 
         // Delete the collection itself (association records are deleted via ON DELETE CASCADE)
         tx.execute("DELETE FROM collections WHERE id = ?1", [id])?;
+
+        // Drop the collection's semantic embedding (vec0 has no FK cascade).
+        tx.execute("DELETE FROM collection_embeddings WHERE collection_id = ?1", [id])?;
 
         tx.commit()?;
         Ok(count)
@@ -386,7 +478,9 @@ fn row_to_collection(row: &rusqlite::Row) -> rusqlite::Result<Collection> {
 
 #[cfg(test)]
 mod tests {
-    use crate::engine::bookmark::{Bookmark, BookmarkHealth, Collection, CollectionHealth};
+    use crate::engine::bookmark::{
+        Bookmark, BookmarkHealth, Collection, CollectionHealth, CollectionTag,
+    };
     use crate::storage::db::Database;
 
     fn test_bookmark(id: &str) -> Bookmark {
@@ -513,6 +607,103 @@ mod tests {
         assert_eq!(col_a.name, "col-a");
         let (_, count_b) = collections.iter().find(|(c, _)| c.name == "col-b").unwrap();
         assert_eq!(*count_b, 0);
+    }
+
+    #[test]
+    fn search_collections_matches_name_description_and_tag() {
+        init_test_env();
+        let db = Database::open_in_memory().unwrap();
+        db.insert_bookmark(&test_bookmark("bm-0001")).unwrap();
+        db.insert_collection(&test_collection("auth-refactor")).unwrap();
+        db.insert_collection(&test_collection("payments")).unwrap();
+        db.add_to_collection("col-auth-refactor", &["bm-0001".into()]).unwrap();
+
+        // Tag one collection so we can exercise the tag path too.
+        db.insert_collection_tag(&CollectionTag {
+            collection_id: "col-payments".to_string(),
+            tag: "billing".to_string(),
+            added_at: "2026-04-01T00:00:00Z".to_string(),
+            added_by: None,
+        })
+        .unwrap();
+
+        // Name match, with the bookmark count carried through.
+        let by_name = db.search_collections(Some("auth"), None).unwrap();
+        assert_eq!(by_name.len(), 1);
+        assert_eq!(by_name[0].0.name, "auth-refactor");
+        assert_eq!(by_name[0].1, 1);
+
+        // Description match ("Test collection payments" contains "payments").
+        let by_desc = db.search_collections(Some("payments"), None).unwrap();
+        assert_eq!(by_desc.len(), 1);
+        assert_eq!(by_desc[0].0.name, "payments");
+
+        // Query matches a tag value.
+        let by_tag_query = db.search_collections(Some("billing"), None).unwrap();
+        assert_eq!(by_tag_query.len(), 1);
+        assert_eq!(by_tag_query[0].0.name, "payments");
+
+        // Exact tag filter.
+        let by_tag = db.search_collections(None, Some("billing")).unwrap();
+        assert_eq!(by_tag.len(), 1);
+        assert_eq!(by_tag[0].0.name, "payments");
+
+        // No filters lists everything.
+        let all = db.search_collections(None, None).unwrap();
+        assert_eq!(all.len(), 2);
+    }
+
+    #[test]
+    fn search_collections_treats_like_wildcards_literally() {
+        init_test_env();
+        let db = Database::open_in_memory().unwrap();
+        db.insert_collection(&test_collection("my_service")).unwrap();
+        db.insert_collection(&test_collection("myXservice")).unwrap();
+        db.insert_collection(&test_collection("100percent")).unwrap();
+
+        // `_` is a LIKE wildcard; without escaping, "my_service" would also match
+        // "myXservice". Escaping means the underscore is matched literally.
+        let hits = db.search_collections(Some("my_service"), None).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].0.name, "my_service");
+
+        // `%` must not become a match-anything wildcard: without escaping, "100%"
+        // would match "100percent"; escaped, it only matches a literal "100%".
+        let hits = db.search_collections(Some("100%"), None).unwrap();
+        assert!(hits.is_empty(), "escaped % should not match 100percent");
+
+        // Sanity: the plain substring "100" still matches "100percent".
+        let hits = db.search_collections(Some("100"), None).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].0.name, "100percent");
+    }
+
+    #[test]
+    fn deleting_collection_removes_its_embedding() {
+        use crate::embeddings::vec_store::{EmbeddingTarget, VecStore, VecStoreEntry};
+
+        init_test_env();
+        let db = Database::open_in_memory().unwrap();
+        let store = VecStore::for_target(384, Default::default(), EmbeddingTarget::Collection);
+
+        // Seed a collection with a raw embedding, then delete it by id.
+        db.insert_collection(&test_collection("temp")).unwrap();
+        store
+            .insert(db.conn(), &VecStoreEntry { id: "col-temp".into(), embedding: vec![0.0; 384] })
+            .unwrap();
+        assert_eq!(store.count(db.conn()).unwrap(), 1);
+
+        db.delete_collection_by_id("col-temp").unwrap();
+        assert_eq!(store.count(db.conn()).unwrap(), 0, "by_id delete must drop the embedding");
+
+        // The recursive delete path must clean up the embedding too.
+        let mut db = db;
+        db.insert_collection(&test_collection("temp2")).unwrap();
+        store
+            .insert(db.conn(), &VecStoreEntry { id: "col-temp2".into(), embedding: vec![0.0; 384] })
+            .unwrap();
+        db.delete_collection_recursive("col-temp2").unwrap();
+        assert_eq!(store.count(db.conn()).unwrap(), 0, "recursive delete must drop the embedding");
     }
 
     #[test]

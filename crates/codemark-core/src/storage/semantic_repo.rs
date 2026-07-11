@@ -7,10 +7,11 @@ use std::path::PathBuf;
 use rusqlite::Connection;
 
 use crate::embeddings::config::{DistanceMetric, EmbeddingModel};
+use crate::embeddings::vec_store::EmbeddingTarget;
 use crate::embeddings::{
     EmbeddingProvider, LocalEmbeddingProvider, SearchResult, VecStore, VecStoreEntry,
 };
-use crate::engine::bookmark::Bookmark;
+use crate::engine::bookmark::{Bookmark, Collection};
 use crate::error::Result;
 
 /// Semantic search repository.
@@ -124,10 +125,7 @@ impl SemanticRepo {
         let entries: Vec<VecStoreEntry> = bookmarks
             .iter()
             .zip(embeddings)
-            .map(|(bookmark, embedding)| VecStoreEntry {
-                bookmark_id: bookmark.id.clone(),
-                embedding,
-            })
+            .map(|(bookmark, embedding)| VecStoreEntry { id: bookmark.id.clone(), embedding })
             .collect();
 
         store.insert_batch(conn, &entries).map_err(|e| {
@@ -195,6 +193,170 @@ impl SemanticRepo {
     /// Count total embeddings in the store.
     pub fn count_embeddings(&self, conn: &Connection) -> Result<usize> {
         let store = VecStore::with_metric(self.model.dimensions(), self.distance_metric);
+        store.count(conn).map_err(|e| {
+            crate::error::Error::Operation(format!("Failed to count embeddings: {}", e))
+        })
+    }
+
+    // ── Collections ──────────────────────────────────────────────────────
+
+    /// Build a [`VecStore`] targeting the collection embeddings table.
+    fn collection_store(&self, dimensions: usize) -> VecStore {
+        VecStore::for_target(dimensions, self.distance_metric, EmbeddingTarget::Collection)
+    }
+
+    /// Prepare searchable text from a collection and its tags.
+    ///
+    /// Combines the human-facing fields (name, description) with tags so
+    /// semantic search can match on either the collection's purpose or its
+    /// labels.
+    fn prepare_collection_text(&self, collection: &Collection, tags: &[String]) -> String {
+        let mut parts = Vec::new();
+
+        parts.push(format!("Name: {}", collection.name));
+
+        if let Some(description) = &collection.description
+            && !description.is_empty()
+        {
+            parts.push(format!("Description: {description}"));
+        }
+
+        if !tags.is_empty() {
+            parts.push(format!("Tags: {}", tags.join(", ")));
+        }
+
+        parts.join("\n")
+    }
+
+    /// Load a collection's tags from the database.
+    fn collection_tags(conn: &Connection, collection_id: &str) -> Result<Vec<String>> {
+        let mut stmt = conn
+            .prepare("SELECT tag FROM collection_tags WHERE collection_id = ?1 ORDER BY tag ASC")?;
+        let tags = stmt
+            .query_map([collection_id], |row| row.get::<_, String>(0))?
+            .filter_map(|r| r.ok())
+            .collect();
+        Ok(tags)
+    }
+
+    /// Generate an embedding for a collection's searchable text.
+    pub async fn embed_collection(
+        &self,
+        conn: &Connection,
+        collection: &Collection,
+    ) -> Result<Vec<f32>> {
+        let tags = Self::collection_tags(conn, &collection.id)?;
+        let text = self.prepare_collection_text(collection, &tags);
+        let provider = self.provider()?;
+
+        provider.embed(&text).await.map_err(|e| {
+            crate::error::Error::Operation(format!("Failed to generate embedding: {}", e))
+        })
+    }
+
+    /// Store embeddings for multiple collections.
+    ///
+    /// Tags are loaded from the database for each collection so the embedded
+    /// text matches [`prepare_collection_text`].
+    pub async fn store_collection_embeddings(
+        &self,
+        conn: &mut Connection,
+        collections: &[Collection],
+    ) -> Result<usize> {
+        if collections.is_empty() {
+            return Ok(0);
+        }
+
+        crate::embeddings::VecStore::ensure_extension_loaded();
+
+        let provider = self.provider()?;
+
+        // Prepare texts for batch embedding, enriched with each collection's tags.
+        let mut texts = Vec::with_capacity(collections.len());
+        for collection in collections {
+            let tags = Self::collection_tags(conn, &collection.id)?;
+            texts.push(self.prepare_collection_text(collection, &tags));
+        }
+
+        let embeddings = provider.embed_batch(&texts).await.map_err(|e| {
+            crate::error::Error::Operation(format!("Failed to generate embeddings: {}", e))
+        })?;
+
+        let store = self.collection_store(provider.dimensions());
+        let entries: Vec<VecStoreEntry> = collections
+            .iter()
+            .zip(embeddings)
+            .map(|(collection, embedding)| VecStoreEntry { id: collection.id.clone(), embedding })
+            .collect();
+
+        store.insert_batch(conn, &entries).map_err(|e| {
+            crate::error::Error::Operation(format!("Failed to store embeddings: {}", e))
+        })?;
+
+        Ok(entries.len())
+    }
+
+    /// Search for similar collections by semantic similarity.
+    pub async fn search_collections(
+        &self,
+        conn: &Connection,
+        query: &str,
+        limit: usize,
+    ) -> Result<Vec<SearchResult>> {
+        self.search_collections_with_threshold(conn, query, limit, self.threshold).await
+    }
+
+    /// Search for similar collections with an optional threshold override.
+    pub async fn search_collections_with_threshold(
+        &self,
+        conn: &Connection,
+        query: &str,
+        limit: usize,
+        threshold: Option<f32>,
+    ) -> Result<Vec<SearchResult>> {
+        crate::embeddings::VecStore::ensure_extension_loaded();
+
+        let provider = self.provider()?;
+
+        let query_embedding = provider.embed(query).await.map_err(|e| {
+            crate::error::Error::Operation(format!("Failed to generate query embedding: {}", e))
+        })?;
+
+        let store = self.collection_store(provider.dimensions());
+        let results =
+            store.search_with_threshold(conn, &query_embedding, limit, threshold).map_err(|e| {
+                crate::error::Error::Operation(format!("Semantic search failed: {}", e))
+            })?;
+
+        Ok(results)
+    }
+
+    /// Find collections that don't have embeddings yet.
+    pub fn find_collections_without_embeddings(&self, conn: &Connection) -> Result<Vec<String>> {
+        let store = self.collection_store(self.model.dimensions());
+        store.find_without_embeddings(conn).map_err(|e| {
+            crate::error::Error::Operation(format!(
+                "Failed to find collections without embeddings: {}",
+                e
+            ))
+        })
+    }
+
+    /// Delete an embedding for a collection.
+    pub fn delete_collection_embedding(
+        &self,
+        conn: &mut Connection,
+        collection_id: &str,
+    ) -> Result<()> {
+        let store = self.collection_store(self.model.dimensions());
+        store.delete(conn, collection_id).map_err(|e| {
+            crate::error::Error::Operation(format!("Failed to delete embedding: {}", e))
+        })
+    }
+
+    /// Count total collection embeddings in the store.
+    pub fn count_collection_embeddings(&self, conn: &Connection) -> Result<usize> {
+        let store = self.collection_store(self.model.dimensions());
         store.count(conn).map_err(|e| {
             crate::error::Error::Operation(format!("Failed to count embeddings: {}", e))
         })

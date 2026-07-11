@@ -9,17 +9,63 @@ use crate::embeddings::config::DistanceMetric;
 use rusqlite::{Connection, Result as SqliteResult};
 use zerocopy::IntoBytes;
 
+/// Which entity a vector store operates over.
+///
+/// Bookmarks and collections each get their own vec0 table so semantic search
+/// can rank either kind independently. The variant drives the table name, the
+/// id column, and the source table used to find rows lacking embeddings.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum EmbeddingTarget {
+    /// Bookmark embeddings (`bookmark_embeddings`).
+    #[default]
+    Bookmark,
+    /// Collection embeddings (`collection_embeddings`).
+    Collection,
+}
+
+impl EmbeddingTarget {
+    /// Name of the vec0 virtual table holding the embeddings.
+    pub fn table(&self) -> &'static str {
+        match self {
+            EmbeddingTarget::Bookmark => "bookmark_embeddings",
+            EmbeddingTarget::Collection => "collection_embeddings",
+        }
+    }
+
+    /// Primary-key column of the embeddings table.
+    pub fn id_column(&self) -> &'static str {
+        match self {
+            EmbeddingTarget::Bookmark => "bookmark_id",
+            EmbeddingTarget::Collection => "collection_id",
+        }
+    }
+
+    /// Source table used to detect entities that don't have an embedding yet.
+    pub fn source_table(&self) -> &'static str {
+        match self {
+            EmbeddingTarget::Bookmark => "bookmarks",
+            EmbeddingTarget::Collection => "collections",
+        }
+    }
+}
+
 /// Entry in the vector store.
+///
+/// `id` holds the bookmark or collection id depending on the store's
+/// [`EmbeddingTarget`].
 #[derive(Debug, Clone)]
 pub struct VecStoreEntry {
-    pub bookmark_id: String,
+    pub id: String,
     pub embedding: Vec<f32>,
 }
 
 /// Result from a similarity search.
+///
+/// `id` holds the bookmark or collection id depending on the store's
+/// [`EmbeddingTarget`].
 #[derive(Debug, Clone)]
 pub struct SearchResult {
-    pub bookmark_id: String,
+    pub id: String,
     pub distance: f64,
 }
 
@@ -31,6 +77,8 @@ pub struct VecStore {
     dimensions: usize,
     /// Distance metric to use for similarity search.
     distance_metric: DistanceMetric,
+    /// Which entity (bookmarks or collections) this store operates over.
+    target: EmbeddingTarget,
 }
 
 impl VecStore {
@@ -57,27 +105,45 @@ impl VecStore {
         let _ = Self::load_extension();
     }
 
-    /// Create a new VecStore with the default distance metric (L2).
+    /// Create a new VecStore over bookmarks with the default distance metric (L2).
     ///
     /// Panics if init_extension() was not called first.
     pub fn new(dimensions: usize) -> Self {
-        VecStore { dimensions, distance_metric: DistanceMetric::default() }
+        VecStore {
+            dimensions,
+            distance_metric: DistanceMetric::default(),
+            target: EmbeddingTarget::Bookmark,
+        }
     }
 
-    /// Create a new VecStore with a specific distance metric.
+    /// Create a new VecStore over bookmarks with a specific distance metric.
     ///
     /// Panics if init_extension() was not called first.
     pub fn with_metric(dimensions: usize, distance_metric: DistanceMetric) -> Self {
-        VecStore { dimensions, distance_metric }
+        VecStore { dimensions, distance_metric, target: EmbeddingTarget::Bookmark }
     }
 
-    /// Create the bookmark_embeddings table as a vec0 virtual table.
+    /// Create a new VecStore over a specific [`EmbeddingTarget`] (bookmarks or
+    /// collections) with a specific distance metric.
+    ///
+    /// Panics if init_extension() was not called first.
+    pub fn for_target(
+        dimensions: usize,
+        distance_metric: DistanceMetric,
+        target: EmbeddingTarget,
+    ) -> Self {
+        VecStore { dimensions, distance_metric, target }
+    }
+
+    /// Create the embeddings table for this store's target as a vec0 virtual table.
     pub fn create_table(&self, conn: &mut Connection) -> SqliteResult<()> {
         let dim = self.dimensions;
+        let table = self.target.table();
+        let id_column = self.target.id_column();
         conn.execute(
             &format!(
-                "CREATE VIRTUAL TABLE IF NOT EXISTS bookmark_embeddings USING vec0(
-                    bookmark_id TEXT PRIMARY KEY,
+                "CREATE VIRTUAL TABLE IF NOT EXISTS {table} USING vec0(
+                    {id_column} TEXT PRIMARY KEY,
                     embedding float[{dim}]
                 )"
             ),
@@ -86,7 +152,7 @@ impl VecStore {
         Ok(())
     }
 
-    /// Insert an embedding for a bookmark.
+    /// Insert an embedding for an entity.
     pub fn insert(&self, conn: &Connection, entry: &VecStoreEntry) -> SqliteResult<()> {
         let expected_dim = self.dimensions;
         let actual_dim = entry.embedding.len();
@@ -97,10 +163,13 @@ impl VecStore {
             )));
         }
 
+        let (table, id_column) = (self.target.table(), self.target.id_column());
         conn.execute(
-            "INSERT OR IGNORE INTO bookmark_embeddings (bookmark_id, embedding)
-             VALUES (?1, ?2)",
-            (&entry.bookmark_id, entry.embedding.as_bytes()),
+            &format!(
+                "INSERT OR IGNORE INTO {table} ({id_column}, embedding)
+                 VALUES (?1, ?2)"
+            ),
+            (&entry.id, entry.embedding.as_bytes()),
         )?;
         Ok(())
     }
@@ -111,13 +180,11 @@ impl VecStore {
         conn: &mut Connection,
         entries: &[VecStoreEntry],
     ) -> SqliteResult<()> {
+        let (table, id_column) = (self.target.table(), self.target.id_column());
         let tx = conn.unchecked_transaction()?;
         for entry in entries {
             // Delete existing embedding if any
-            tx.execute(
-                "DELETE FROM bookmark_embeddings WHERE bookmark_id = ?1",
-                [&entry.bookmark_id],
-            )?;
+            tx.execute(&format!("DELETE FROM {table} WHERE {id_column} = ?1"), [&entry.id])?;
 
             // Inline insert logic for transaction
             let expected_dim = self.dimensions;
@@ -130,23 +197,26 @@ impl VecStore {
             }
 
             tx.execute(
-                "INSERT INTO bookmark_embeddings (bookmark_id, embedding)
-                  VALUES (?1, ?2)",
-                (&entry.bookmark_id, entry.embedding.as_bytes()),
+                &format!(
+                    "INSERT INTO {table} ({id_column}, embedding)
+                      VALUES (?1, ?2)"
+                ),
+                (&entry.id, entry.embedding.as_bytes()),
             )?;
         }
         tx.commit()?;
         Ok(())
     }
-    /// Get an embedding for a bookmark.
+    /// Get an embedding for an entity.
     ///
     /// Note: This retrieves the raw vector. For similarity search, use search().
-    pub fn get(&self, conn: &Connection, bookmark_id: &str) -> SqliteResult<Option<Vec<f32>>> {
+    pub fn get(&self, conn: &Connection, id: &str) -> SqliteResult<Option<Vec<f32>>> {
+        let (table, id_column) = (self.target.table(), self.target.id_column());
         let mut stmt =
-            conn.prepare("SELECT embedding FROM bookmark_embeddings WHERE bookmark_id = ?1")?;
+            conn.prepare(&format!("SELECT embedding FROM {table} WHERE {id_column} = ?1"))?;
 
         // Get the blob and convert to f32
-        let result = stmt.query_row([bookmark_id], |row| {
+        let result = stmt.query_row([id], |row| {
             let blob: Vec<u8> = row.get(0)?;
 
             // Parse as f32 array
@@ -166,8 +236,9 @@ impl VecStore {
     }
 
     /// Delete an embedding.
-    pub fn delete(&self, conn: &mut Connection, bookmark_id: &str) -> SqliteResult<()> {
-        conn.execute("DELETE FROM bookmark_embeddings WHERE bookmark_id = ?1", [bookmark_id])?;
+    pub fn delete(&self, conn: &mut Connection, id: &str) -> SqliteResult<()> {
+        let (table, id_column) = (self.target.table(), self.target.id_column());
+        conn.execute(&format!("DELETE FROM {table} WHERE {id_column} = ?1"), [id])?;
         Ok(())
     }
 
@@ -212,9 +283,10 @@ impl VecStore {
         // since we'll filter some out
         let fetch_limit = if threshold.is_some() { limit * 10 } else { limit };
 
+        let (table, id_column) = (self.target.table(), self.target.id_column());
         let sql = format!(
-            "SELECT bookmark_id, distance
-             FROM bookmark_embeddings
+            "SELECT {id_column}, distance
+             FROM {table}
              WHERE embedding MATCH ?1
              ORDER BY distance
              LIMIT {fetch_limit}"
@@ -224,7 +296,7 @@ impl VecStore {
 
         let mut results: Vec<SearchResult> = stmt
             .query_map([query_embedding.as_bytes()], |row| {
-                Ok(SearchResult { bookmark_id: row.get(0)?, distance: row.get(1)? })
+                Ok(SearchResult { id: row.get(0)?, distance: row.get(1)? })
             })?
             .collect::<Result<Vec<_>, _>>()?;
 
@@ -246,15 +318,18 @@ impl VecStore {
 
     /// Count embeddings in the store.
     pub fn count(&self, conn: &Connection) -> SqliteResult<usize> {
-        conn.query_row("SELECT COUNT(*) FROM bookmark_embeddings", [], |row| row.get(0))
+        let table = self.target.table();
+        conn.query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| row.get(0))
     }
 
-    /// Find bookmarks without embeddings.
+    /// Find entities without embeddings.
     pub fn find_without_embeddings(&self, conn: &Connection) -> SqliteResult<Vec<String>> {
-        let mut stmt = conn.prepare(
-            "SELECT id FROM bookmarks
-             WHERE id NOT IN (SELECT bookmark_id FROM bookmark_embeddings)",
-        )?;
+        let (table, id_column, source_table) =
+            (self.target.table(), self.target.id_column(), self.target.source_table());
+        let mut stmt = conn.prepare(&format!(
+            "SELECT id FROM {source_table}
+             WHERE id NOT IN (SELECT {id_column} FROM {table})"
+        ))?;
 
         let ids =
             stmt.query_map([], |row| row.get::<_, String>(0))?.collect::<Result<Vec<_>, _>>()?;
@@ -271,6 +346,11 @@ impl VecStore {
     pub fn distance_metric(&self) -> DistanceMetric {
         self.distance_metric
     }
+
+    /// Returns the entity target (bookmarks or collections) of this store.
+    pub fn target(&self) -> EmbeddingTarget {
+        self.target
+    }
 }
 
 #[cfg(test)]
@@ -281,6 +361,43 @@ mod tests {
     fn test_vec_store_creation() {
         let store = VecStore::new(384);
         assert_eq!(store.dimensions(), 384);
+        assert_eq!(store.target(), EmbeddingTarget::Bookmark);
+    }
+
+    #[test]
+    fn test_embedding_target_maps_tables_and_columns() {
+        assert_eq!(EmbeddingTarget::Bookmark.table(), "bookmark_embeddings");
+        assert_eq!(EmbeddingTarget::Bookmark.id_column(), "bookmark_id");
+        assert_eq!(EmbeddingTarget::Bookmark.source_table(), "bookmarks");
+        assert_eq!(EmbeddingTarget::Collection.table(), "collection_embeddings");
+        assert_eq!(EmbeddingTarget::Collection.id_column(), "collection_id");
+        assert_eq!(EmbeddingTarget::Collection.source_table(), "collections");
+    }
+
+    #[test]
+    fn test_collection_store_uses_separate_table() {
+        VecStore::load_extension().unwrap();
+
+        let mut conn = rusqlite::Connection::open_in_memory().unwrap();
+        let bookmarks = VecStore::new(4);
+        let collections =
+            VecStore::for_target(4, DistanceMetric::default(), EmbeddingTarget::Collection);
+
+        bookmarks.create_table(&mut conn).unwrap();
+        collections.create_table(&mut conn).unwrap();
+
+        collections
+            .insert(&conn, &VecStoreEntry { id: "col-1".to_string(), embedding: vec![0.1; 4] })
+            .unwrap();
+
+        // The collection embedding lands only in the collection store.
+        assert_eq!(collections.count(&conn).unwrap(), 1);
+        assert_eq!(bookmarks.count(&conn).unwrap(), 0);
+
+        let query = vec![0.1_f32; 4];
+        let hits = collections.search(&conn, &query, 5).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].id, "col-1");
     }
 
     mod integration_tests {
@@ -300,18 +417,9 @@ mod tests {
 
             // Insert embeddings
             let entries = vec![
-                VecStoreEntry {
-                    bookmark_id: "bookmark1".to_string(),
-                    embedding: vec![0.1, 0.1, 0.1, 0.1],
-                },
-                VecStoreEntry {
-                    bookmark_id: "bookmark2".to_string(),
-                    embedding: vec![0.2, 0.2, 0.2, 0.2],
-                },
-                VecStoreEntry {
-                    bookmark_id: "bookmark3".to_string(),
-                    embedding: vec![0.9, 0.9, 0.9, 0.9],
-                },
+                VecStoreEntry { id: "bookmark1".to_string(), embedding: vec![0.1, 0.1, 0.1, 0.1] },
+                VecStoreEntry { id: "bookmark2".to_string(), embedding: vec![0.2, 0.2, 0.2, 0.2] },
+                VecStoreEntry { id: "bookmark3".to_string(), embedding: vec![0.9, 0.9, 0.9, 0.9] },
             ];
 
             store.insert_batch(&mut conn, &entries).unwrap();
@@ -325,9 +433,9 @@ mod tests {
 
             assert_eq!(results.len(), 3);
             // bookmark2 should be closest (smallest distance)
-            assert_eq!(results[0].bookmark_id, "bookmark2");
+            assert_eq!(results[0].id, "bookmark2");
             // bookmark3 should be farthest
-            assert_eq!(results[2].bookmark_id, "bookmark3");
+            assert_eq!(results[2].id, "bookmark3");
 
             // Verify distances are in ascending order
             assert!(results[0].distance < results[1].distance);
@@ -343,8 +451,7 @@ mod tests {
 
             store.create_table(&mut conn).unwrap();
 
-            let entry =
-                VecStoreEntry { bookmark_id: "test".to_string(), embedding: vec![1.0, 2.0, 3.0] };
+            let entry = VecStoreEntry { id: "test".to_string(), embedding: vec![1.0, 2.0, 3.0] };
 
             store.insert(&conn, &entry).unwrap();
 
@@ -361,8 +468,7 @@ mod tests {
 
             store.create_table(&mut conn).unwrap();
 
-            let entry =
-                VecStoreEntry { bookmark_id: "to_delete".to_string(), embedding: vec![1.0, 2.0] };
+            let entry = VecStoreEntry { id: "to_delete".to_string(), embedding: vec![1.0, 2.0] };
 
             store.insert(&conn, &entry).unwrap();
             assert_eq!(store.count(&conn).unwrap(), 1);
@@ -382,9 +488,9 @@ mod tests {
 
             // Insert embeddings
             let entries = vec![
-                VecStoreEntry { bookmark_id: "close".to_string(), embedding: vec![0.1, 0.1, 0.1] },
-                VecStoreEntry { bookmark_id: "medium".to_string(), embedding: vec![0.5, 0.5, 0.5] },
-                VecStoreEntry { bookmark_id: "far".to_string(), embedding: vec![1.0, 1.0, 1.0] },
+                VecStoreEntry { id: "close".to_string(), embedding: vec![0.1, 0.1, 0.1] },
+                VecStoreEntry { id: "medium".to_string(), embedding: vec![0.5, 0.5, 0.5] },
+                VecStoreEntry { id: "far".to_string(), embedding: vec![1.0, 1.0, 1.0] },
             ];
 
             store.insert_batch(&mut conn, &entries).unwrap();
@@ -400,7 +506,7 @@ mod tests {
             let thresholded = store.search_with_threshold(&conn, &query, 10, Some(0.3)).unwrap();
             assert!(thresholded.len() < 3);
             // "close" should be included (distance ~0.086)
-            assert!(thresholded.iter().any(|r| r.bookmark_id == "close"));
+            assert!(thresholded.iter().any(|r| r.id == "close"));
         }
 
         #[test]

@@ -157,6 +157,12 @@ impl BrowserLayout {
                 }
                 Some(true)
             }
+            Event::CollectionSearchResults { request_id, collections } => {
+                if *request_id == self.active_search_request {
+                    self.apply_collection_search_results(collections);
+                }
+                Some(true)
+            }
             Event::SearchError { request_id, msg } => {
                 if *request_id == self.active_search_request {
                     self.left_pane.search.set_error(msg.clone());
@@ -297,6 +303,64 @@ impl BrowserLayout {
 
         // Spawn background task to resolve health for all bookmarks
         self.spawn_live_health_task(bookmarks.to_vec());
+    }
+
+    /// Populate the collections panel from collection search results.
+    ///
+    /// Mirrors [`apply_search_results`], but targets the Collections tab and
+    /// renders collection rows (name, branch, step count, health) consistent
+    /// with the normal collection list.
+    fn apply_collection_search_results(
+        &mut self,
+        collections: &[(codemark_core::engine::bookmark::Collection, usize)],
+    ) {
+        use codemark_core::engine::bookmark::CollectionHealth;
+
+        // The search finished, so stop the loading spinner.
+        self.left_pane.search.set_loading(false);
+
+        // A semantic collection search runs async; by the time it returns the
+        // user may have switched away from the Collections tab. Applying now
+        // would yank them back, so discard results unless Collections is still
+        // the active Content tab. (request_id only guards superseded searches.)
+        if ContentTab::from_index(self.left_pane.content_panel.tabs.selected_index())
+            != Some(ContentTab::Collections)
+        {
+            return;
+        }
+
+        let items: Vec<PanelItem> = collections
+            .iter()
+            .map(|(c, count)| {
+                let health = match c.health {
+                    Some(CollectionHealth::Active) => HealthStatus::Healthy,
+                    Some(CollectionHealth::Drifted) => HealthStatus::Drifted,
+                    Some(CollectionHealth::Stale) => HealthStatus::Broken,
+                    None => HealthStatus::Unknown,
+                };
+                let branch = c.created_branch.clone().unwrap_or_else(|| "main".to_string());
+
+                PanelItem::new(&c.name)
+                    .secondary_text(&branch)
+                    .metadata(format!("{count} steps"))
+                    .health(health)
+                    .published(c.published_at.is_some())
+                    .user_data(c.id.clone())
+            })
+            .collect();
+
+        let idx = ContentTab::Collections.index();
+        if let Some(TabContent::List(p)) = self.left_pane.content_panel.panels.get_mut(idx) {
+            p.set_items(items);
+            p.set_selected(0);
+            // Flag the panel as showing search results so its tab title gets a
+            // filter glyph, like any other narrowed list.
+            p.set_search_active(true);
+            self.left_pane.content_panel.tabs.set_selected(idx);
+        }
+
+        // Refresh the right-pane overview for the newly selected collection.
+        self.update_content_live_preview();
     }
 
     /// Spawn a background task that resolves all bookmarks and sends

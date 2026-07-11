@@ -187,6 +187,10 @@ pub struct BrowserLayout {
     dialog: Option<ConfirmDialog>,
 }
 
+/// Maximum results returned by a search-bar query (bookmarks or collections,
+/// FTS or semantic). Shared so every search path caps consistently.
+const SEARCH_RESULT_LIMIT: usize = 20;
+
 impl BrowserLayout {
     /// Create a new browser layout.
     pub fn new(db: Database, event_handler: crate::event::EventHandler) -> Self {
@@ -466,6 +470,17 @@ impl BrowserLayout {
         let request_id = self.active_search_request;
 
         let mode = self.left_pane.search.mode();
+
+        // The active Content panel tab decides what the query searches: the
+        // Collections tab searches collections (name/description/tags), every
+        // other tab searches bookmarks.
+        if let Some(ContentTab::Collections) =
+            ContentTab::from_index(self.left_pane.content_panel.tabs.selected_index())
+        {
+            self.execute_collection_search(request_id, mode, query);
+            return;
+        }
+
         let db_path = self.db.path().to_path_buf();
         let event_handler = self.event_handler.clone();
 
@@ -518,12 +533,16 @@ impl BrowserLayout {
 
                     let handle = tokio::runtime::Handle::current();
                     match tokio::task::block_in_place(|| {
-                        handle.block_on(semantic_repo.search(db.conn(), &query, 20))
+                        handle.block_on(semantic_repo.search(
+                            db.conn(),
+                            &query,
+                            SEARCH_RESULT_LIMIT,
+                        ))
                     }) {
                         Ok(results) => {
                             let mut bookmarks = Vec::new();
                             for result in results {
-                                if let Ok(Some(bm)) = db.get_bookmark(&result.bookmark_id) {
+                                if let Ok(Some(bm)) = db.get_bookmark(&result.id) {
                                     bookmarks.push(bm);
                                 }
                             }
@@ -531,6 +550,127 @@ impl BrowserLayout {
                                 event_handler.send(Event::SearchResults { request_id, bookmarks });
                         }
                         Err(e) => {
+                            let _ = event_handler
+                                .send(Event::SearchError { request_id, msg: e.to_string() });
+                        }
+                    }
+                });
+            }
+        }
+    }
+
+    /// Execute a search over collections (name/description/tags) for the current
+    /// query, emitting `CollectionSearchResults` (or `SearchError`).
+    ///
+    /// FTS runs synchronously (a fast `LIKE` scan); semantic search runs on a
+    /// blocking task like the bookmark path, since it loads an embedding model.
+    fn execute_collection_search(&mut self, request_id: u64, mode: SearchMode, query: String) {
+        let event_handler = self.event_handler.clone();
+        // Log the mode, not the query text (queries may be sensitive).
+        let mode_label = match mode {
+            SearchMode::Fts => "fts",
+            SearchMode::Semantic => "semantic",
+        };
+        tracing::debug!(
+            target: "codemark::ui",
+            request_id,
+            mode = mode_label,
+            "collection search dispatched"
+        );
+
+        match mode {
+            SearchMode::Fts => match self.db.search_collections(Some(&query), None) {
+                Ok(mut collections) => {
+                    collections.truncate(SEARCH_RESULT_LIMIT);
+                    tracing::debug!(
+                        target: "codemark::ui",
+                        request_id,
+                        mode = mode_label,
+                        result_count = collections.len(),
+                        "collection search completed"
+                    );
+                    let _ = event_handler
+                        .send(Event::CollectionSearchResults { request_id, collections });
+                }
+                Err(e) => {
+                    tracing::debug!(
+                        target: "codemark::ui",
+                        request_id,
+                        mode = mode_label,
+                        error = %e,
+                        "collection search failed"
+                    );
+                    let _ =
+                        event_handler.send(Event::SearchError { request_id, msg: e.to_string() });
+                }
+            },
+            SearchMode::Semantic => {
+                let Some(codemark_dir) = self.db.path().parent() else {
+                    return;
+                };
+                let config = Config::load_layered(codemark_dir);
+                let db_path = self.db.path().to_path_buf();
+
+                tokio::task::spawn_blocking(move || {
+                    let Ok(db) = Database::open(&db_path) else {
+                        let _ = event_handler.send(Event::SearchError {
+                            request_id,
+                            msg: "Failed to open database for search".to_string(),
+                        });
+                        return;
+                    };
+
+                    let model = config
+                        .semantic
+                        .model
+                        .as_deref()
+                        .and_then(|m| m.parse::<EmbeddingModel>().ok())
+                        .unwrap_or(EmbeddingModel::AllMiniLmL6V2);
+
+                    let distance_metric = config.semantic.get_distance_metric();
+                    let threshold = config.semantic.threshold;
+                    let models_dir = config.semantic.get_models_dir();
+
+                    let semantic_repo =
+                        SemanticRepo::with_config(models_dir, model, distance_metric, threshold);
+
+                    let handle = tokio::runtime::Handle::current();
+                    match tokio::task::block_in_place(|| {
+                        handle.block_on(semantic_repo.search_collections(
+                            db.conn(),
+                            &query,
+                            SEARCH_RESULT_LIMIT,
+                        ))
+                    }) {
+                        Ok(results) => {
+                            let mut collections = Vec::new();
+                            for result in results {
+                                if let Ok(Some(c)) = db.get_collection_by_id(&result.id) {
+                                    let count = db
+                                        .list_bookmarks_in_collection(&c.id)
+                                        .map(|b| b.len())
+                                        .unwrap_or(0);
+                                    collections.push((c, count));
+                                }
+                            }
+                            tracing::debug!(
+                                target: "codemark::ui",
+                                request_id,
+                                mode = mode_label,
+                                result_count = collections.len(),
+                                "collection search completed"
+                            );
+                            let _ = event_handler
+                                .send(Event::CollectionSearchResults { request_id, collections });
+                        }
+                        Err(e) => {
+                            tracing::debug!(
+                                target: "codemark::ui",
+                                request_id,
+                                mode = mode_label,
+                                error = %e,
+                                "collection search failed"
+                            );
                             let _ = event_handler
                                 .send(Event::SearchError { request_id, msg: e.to_string() });
                         }

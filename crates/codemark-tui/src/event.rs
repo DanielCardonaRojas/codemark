@@ -3,7 +3,7 @@
 //! This module provides types and utilities for handling terminal events
 //! including keyboard input, mouse events, and terminal resize events.
 
-use codemark_core::engine::bookmark::Bookmark;
+use codemark_core::engine::bookmark::{Bookmark, Collection};
 use codemark_core::engine::resolution::LiveUIStatus;
 use ratatui::crossterm::event::{Event as CrosstermEvent, KeyEvent, MouseEvent};
 use std::sync::Arc;
@@ -29,6 +29,9 @@ pub enum Event {
     Paste(String),
     /// Search results returned from background task.
     SearchResults { request_id: u64, bookmarks: Vec<Bookmark> },
+    /// Collection search results returned from background task, paired with each
+    /// collection's bookmark count.
+    CollectionSearchResults { request_id: u64, collections: Vec<(Collection, usize)> },
     /// Search failed with an error message.
     SearchError { request_id: u64, msg: String },
     /// Heal operation completed with a notification message.
