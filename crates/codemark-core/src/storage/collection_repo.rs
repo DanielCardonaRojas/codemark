@@ -211,8 +211,12 @@ impl Database {
 
     /// Delete a collection by ID, returning the number of bookmarks that were in it.
     pub fn delete_collection_by_id(&self, id: &str) -> Result<usize> {
-        let count: usize = self
-            .conn()
+        // Delete the collection and its semantic embedding atomically so a failure
+        // can't leave an orphan row in collection_embeddings (the vec0 table has no
+        // FK cascade). Mirrors delete_collection_recursive.
+        let tx = self.conn().unchecked_transaction()?;
+
+        let count: usize = tx
             .query_row(
                 "SELECT COUNT(*) FROM collection_bookmarks WHERE collection_id = ?1",
                 [id],
@@ -220,10 +224,10 @@ impl Database {
             )
             .unwrap_or(0);
 
-        self.conn().execute("DELETE FROM collections WHERE id = ?1", [id])?;
-        // Drop the collection's semantic embedding so collection_embeddings
-        // doesn't retain an orphan row (the vec0 table has no FK cascade).
-        self.conn().execute("DELETE FROM collection_embeddings WHERE collection_id = ?1", [id])?;
+        tx.execute("DELETE FROM collections WHERE id = ?1", [id])?;
+        tx.execute("DELETE FROM collection_embeddings WHERE collection_id = ?1", [id])?;
+
+        tx.commit()?;
         Ok(count)
     }
 
