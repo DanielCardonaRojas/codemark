@@ -212,12 +212,12 @@ impl BrowserLayout {
             }
             Event::LiveHealthBatch(batch) => {
                 for (bookmark_id, status) in batch {
-                    let health = HealthStatus::from(*status);
                     if let Some(panel) = self.left_pane.content_panel.get_list_panel_mut(0) {
-                        panel.update_item_health(bookmark_id, health);
+                        panel.update_item_health(bookmark_id, HealthStatus::from(*status));
                     }
-                    // Keep open collection pager dots in sync with the panel.
-                    self.right_pane.update_step_health(bookmark_id, health);
+                    // Keep open collection pager dots in sync when a step's
+                    // health may have changed (recomputes the HEAD-aware value).
+                    self.right_pane.update_step_health(&self.db, bookmark_id);
                 }
                 Some(true)
             }
