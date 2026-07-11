@@ -183,6 +183,13 @@ impl BrowserLayout {
                 self.pending_notification =
                     Some(HealNotification { message: msg.clone(), success: *success });
                 self.schedule_clear_spinners();
+                // A heal rewrites bookmark resolutions/health in the database
+                // without emitting a per-bookmark live-health batch, so refresh
+                // any open collection's pager dots from the updated records. This
+                // runs regardless of `success`: a partial heal reports failure yet
+                // still mutated the bookmarks that did resolve. It no-ops when no
+                // collection is open.
+                self.right_pane.refresh_step_health(&self.db);
                 Some(true)
             }
             Event::SyncComplete(msg, success) => {
@@ -194,6 +201,10 @@ impl BrowserLayout {
                 // since this is the only runtime path that talks to the server
                 // without otherwise refreshing the panels.
                 self.update_tours_tab_visibility();
+                // A pull can update bookmark records for an open collection (and a
+                // partial pull reports failure yet still writes some), so refresh
+                // its pager dots unconditionally; no-ops when no collection is open.
+                self.right_pane.refresh_step_health(&self.db);
                 Some(true)
             }
             Event::RemoteToursLoaded(tours, scope) => {
@@ -217,10 +228,21 @@ impl BrowserLayout {
                 Some(true)
             }
             Event::LiveHealthBatch(batch) => {
-                if let Some(panel) = self.left_pane.content_panel.get_list_panel_mut(0) {
-                    for (bookmark_id, status) in batch {
+                let mut touches_open_step = false;
+                for (bookmark_id, status) in batch {
+                    if let Some(panel) = self.left_pane.content_panel.get_list_panel_mut(0) {
                         panel.update_item_health(bookmark_id, HealthStatus::from(*status));
                     }
+                    touches_open_step |= self
+                        .right_pane
+                        .steps_data
+                        .iter()
+                        .any(|step| step.bookmark.id == *bookmark_id);
+                }
+                // Recompute open collection pager health once if this batch could
+                // have changed a visible step, keeping the dots in sync with the panel.
+                if touches_open_step {
+                    self.right_pane.refresh_step_health(&self.db);
                 }
                 Some(true)
             }

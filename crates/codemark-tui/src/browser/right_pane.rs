@@ -1,3 +1,4 @@
+use crate::browser::tabbed_panel::bookmark_health;
 use crate::browser::{DetailsPaneSize, PreviewPayload, SectionConfig, StepData, TabbedPanel};
 use crate::component::{Component, MarkdownPanel};
 use crate::event::Event;
@@ -186,6 +187,38 @@ impl RightPane {
         self.cached_head_commit.as_deref()
     }
 
+    /// Recompute the cached health of every open collection step.
+    ///
+    /// `StepData.health` is captured when the collection loads, so without this
+    /// the pager dots would drift from the bookmarks panel once the underlying
+    /// state moves. This is the single refresh path, driven from both step
+    /// navigation and live-health updates, so every staleness vector is covered:
+    ///
+    /// * **HEAD change** — [`refresh_head_commit`](Self::refresh_head_commit) is
+    ///   called first, so a branch switch while the collection stays open (then
+    ///   paging or a live-health batch) projects against the current checkout
+    ///   rather than a stale cached commit.
+    /// * **Bookmark change** — each bookmark is re-fetched from the database, so a
+    ///   heal or sync that updates `current_resolution_id` or persisted health is
+    ///   reflected instead of the load-time clone.
+    ///
+    /// Uses [`bookmark_health`] — the same HEAD-aware projection that seeds the
+    /// value — so the pager keeps the full status nuance and matches the panel.
+    /// Cheap enough for the small step count of a collection; the early return
+    /// keeps it off the path where no collection is open.
+    pub fn refresh_step_health(&mut self, db: &Database) {
+        if self.steps_data.is_empty() {
+            return;
+        }
+        self.refresh_head_commit(db);
+        let head = self.cached_head_commit.clone();
+        for step in self.steps_data.iter_mut() {
+            let fresh = db.get_bookmark(&step.bookmark.id).ok().flatten();
+            let bookmark = fresh.as_ref().unwrap_or(&step.bookmark);
+            step.health = bookmark_health(bookmark, db, head.as_deref());
+        }
+    }
+
     /// Whether a bookmark preview is currently being resolved.
     pub fn is_loading(&self) -> bool {
         self.loading
@@ -218,6 +251,9 @@ impl RightPane {
 
     /// Update the code preview based on current step.
     pub fn update_preview(&mut self, db: &Database) {
+        // Refresh cached step health on navigation so paging after a branch
+        // change (with no intervening live-health batch) still recolors the dots.
+        self.refresh_step_health(db);
         if let Some(step) = self.steps_data.get(self.pager_current) {
             let code = std::fs::read_to_string(&step.file_path)
                 .unwrap_or_else(|_| format!("Error: Could not load file {}", step.file_path));
@@ -319,6 +355,7 @@ impl RightPane {
             if let Ok(abs_path) =
                 codemark_core::git::context::resolve_bookmark_file_path(&file_path, db.path())
             {
+                let health = bookmark_health(&bm, db, self.cached_head_commit.as_deref());
                 self.steps_data = vec![StepData {
                     file_path: abs_path.to_string_lossy().to_string(),
                     line_number,
@@ -326,6 +363,7 @@ impl RightPane {
                     bookmark: bm,
                     resolution,
                     resolutions,
+                    health,
                 }];
                 self.pager_total = 1;
                 self.pager_current = 0;
@@ -415,6 +453,7 @@ impl RightPane {
         let comments_markdown =
             render_bookmark_markdown(db, &bm, &resolutions, templates.comments, head);
         let query = bm.query.clone();
+        let health = bookmark_health(&bm, db, head);
 
         let step = StepData {
             file_path: abs_path,
@@ -423,6 +462,7 @@ impl RightPane {
             bookmark: bm,
             resolution: None,
             resolutions,
+            health,
         };
 
         Some(Box::new(PreviewPayload {
@@ -503,6 +543,7 @@ impl RightPane {
         for bm in bookmarks {
             let resolutions = db.list_resolutions(&bm.id, 100).unwrap_or_default();
 
+            let health = bookmark_health(&bm, db, self.cached_head_commit.as_deref());
             match Self::resolve_bookmark_live(&bm, db, session_cache, true) {
                 Ok((abs_path, start_line, end_line, _source)) => {
                     new_steps.push(StepData {
@@ -512,6 +553,7 @@ impl RightPane {
                         bookmark: bm,
                         resolution: None,
                         resolutions,
+                        health,
                     });
                 }
                 Err(_) => {
@@ -552,6 +594,7 @@ impl RightPane {
                             bookmark: bm,
                             resolution,
                             resolutions,
+                            health,
                         });
                     }
                 }
@@ -813,6 +856,7 @@ impl RightPane {
                 if let Ok(abs_path) =
                     codemark_core::git::context::resolve_bookmark_file_path(&file_path, db.path())
                 {
+                    let health = bookmark_health(&bm, db, self.cached_head_commit.as_deref());
                     new_steps.push(StepData {
                         file_path: abs_path.to_string_lossy().to_string(),
                         line_number,
@@ -820,6 +864,7 @@ impl RightPane {
                         bookmark: bm,
                         resolution,
                         resolutions,
+                        health,
                     });
                 }
             }
@@ -921,7 +966,8 @@ impl RightPane {
         // Render pager if needed
         if self.pager_total > 1 {
             use crate::component::Pager;
-            let pager = Pager::new(self.pager_total, self.pager_current);
+            let health = self.steps_data.iter().map(|step| step.health).collect();
+            let pager = Pager::new(self.pager_total, self.pager_current).with_health(health);
             pager.render(chunks[1], buf);
         }
 

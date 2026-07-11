@@ -181,7 +181,7 @@ impl From<codemark_core::engine::projection::UIStatus> for HealthStatus {
 
 impl HealthStatus {
     /// Get the color for this health status.
-    fn color(&self) -> Color {
+    pub(crate) fn color(&self) -> Color {
         match self {
             HealthStatus::Healthy => crate::theme::palette().success,
             HealthStatus::UnanchoredHealthy => crate::theme::palette().warning,

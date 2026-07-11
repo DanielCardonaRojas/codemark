@@ -12,7 +12,13 @@ pub use code_preview::CodePreview;
 pub use markdown_panel::MarkdownPanel;
 pub use panel::{HealthStatus, Panel, PanelItem, SyncDirection};
 
-use ratatui::{buffer::Buffer, layout::Rect, style::Style, text::Line, widgets::Widget};
+use ratatui::{
+    buffer::Buffer,
+    layout::Rect,
+    style::{Modifier, Style},
+    text::Line,
+    widgets::Widget,
+};
 
 use crate::event::Event;
 
@@ -155,6 +161,9 @@ pub struct Pager {
     pub total: usize,
     /// Currently active page (0-indexed)
     pub current: usize,
+    /// Per-page health status, used to color each dot. When empty, dots fall
+    /// back to the accent (current) / dim (others) styling.
+    health: Vec<HealthStatus>,
     /// Last rendered area
     last_area: std::cell::Cell<Rect>,
 }
@@ -162,7 +171,19 @@ pub struct Pager {
 impl Pager {
     /// Create a new pager.
     pub fn new(total: usize, current: usize) -> Self {
-        Self { total, current, last_area: std::cell::Cell::new(Rect::default()) }
+        Self {
+            total,
+            current,
+            health: Vec::new(),
+            last_area: std::cell::Cell::new(Rect::default()),
+        }
+    }
+
+    /// Attach per-page health statuses so each dot is colored by the health of
+    /// the step it represents.
+    pub fn with_health(mut self, health: Vec<HealthStatus>) -> Self {
+        self.health = health;
+        self
     }
 }
 
@@ -182,11 +203,24 @@ impl Component for Pager {
             if i > 0 {
                 spans.push(Span::raw(" "));
             }
-            if i == self.current {
-                spans.push(Span::styled("●", Style::default().fg(crate::theme::palette().accent)));
-            } else {
-                spans.push(Span::styled("○", Style::default().fg(crate::theme::palette().dim)));
+            let is_current = i == self.current;
+            // Every dot — filled and unfilled — is colored by its step's health.
+            // Only when no health is supplied do we fall back to accent (current)
+            // / dim (others). The current page stays a filled, bold dot so it
+            // remains distinguishable even when a neighbor shares its color.
+            let color = self.health.get(i).map(|h| h.color()).unwrap_or_else(|| {
+                if is_current {
+                    crate::theme::palette().accent
+                } else {
+                    crate::theme::palette().dim
+                }
+            });
+            let glyph = if is_current { "●" } else { "○" };
+            let mut style = Style::default().fg(color);
+            if is_current {
+                style = style.add_modifier(Modifier::BOLD);
             }
+            spans.push(Span::styled(glyph, style));
         }
 
         let p = Paragraph::new(Line::from(spans)).alignment(Alignment::Center);
