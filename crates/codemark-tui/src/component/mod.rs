@@ -12,7 +12,13 @@ pub use code_preview::CodePreview;
 pub use markdown_panel::MarkdownPanel;
 pub use panel::{HealthStatus, Panel, PanelItem, SyncDirection};
 
-use ratatui::{buffer::Buffer, layout::Rect, style::Style, text::Line, widgets::Widget};
+use ratatui::{
+    buffer::Buffer,
+    layout::Rect,
+    style::{Modifier, Style},
+    text::Line,
+    widgets::Widget,
+};
 
 use crate::event::Event;
 
@@ -197,18 +203,24 @@ impl Component for Pager {
             if i > 0 {
                 spans.push(Span::raw(" "));
             }
-            // Color each dot by its step's health when available; otherwise fall
-            // back to accent (current) / dim (others). The current page is always
-            // a filled dot so it stays distinguishable regardless of color.
+            let is_current = i == self.current;
+            // Every dot — filled and unfilled — is colored by its step's health.
+            // Only when no health is supplied do we fall back to accent (current)
+            // / dim (others). The current page stays a filled, bold dot so it
+            // remains distinguishable even when a neighbor shares its color.
             let color = self.health.get(i).map(|h| h.color()).unwrap_or_else(|| {
-                if i == self.current {
+                if is_current {
                     crate::theme::palette().accent
                 } else {
                     crate::theme::palette().dim
                 }
             });
-            let glyph = if i == self.current { "●" } else { "○" };
-            spans.push(Span::styled(glyph, Style::default().fg(color)));
+            let glyph = if is_current { "●" } else { "○" };
+            let mut style = Style::default().fg(color);
+            if is_current {
+                style = style.add_modifier(Modifier::BOLD);
+            }
+            spans.push(Span::styled(glyph, style));
         }
 
         let p = Paragraph::new(Line::from(spans)).alignment(Alignment::Center);
