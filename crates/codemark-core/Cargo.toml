@@ -1,6 +1,6 @@
 [package]
 name = "codemark-core"
-version = "0.7.20"
+version = "0.7.21"
 edition = "2024"
 description = "Core logic for Codemark: AST queries, resolution engine, and storage"
 license = "MIT"

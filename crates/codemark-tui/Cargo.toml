@@ -1,6 +1,6 @@
 [package]
 name = "codemark-tui"
-version = "0.7.20"
+version = "0.7.21"
 edition = "2024"
 description = "Terminal UI for Codemark using ratatui"
 license = "MIT"
