@@ -191,11 +191,20 @@ impl RightPane {
     ///
     /// `StepData.health` is captured when the collection loads, so without this
     /// the pager dots would keep their load-time colors after a heal, sync, or
-    /// live-health refresh. This recomputes via [`bookmark_health`] against the
-    /// cached HEAD — the same HEAD-aware projection used to seed the value — so
-    /// the pager keeps the full status nuance instead of the transient
-    /// live-resolution status, and stays consistent with the bookmarks panel.
+    /// live-health refresh. This recomputes via [`bookmark_health`] — the same
+    /// HEAD-aware projection used to seed the value — so the pager keeps the full
+    /// status nuance instead of the transient live-resolution status, and stays
+    /// consistent with the bookmarks panel.
+    ///
+    /// HEAD is refreshed first so a branch change while the collection stays open
+    /// projects against the current checkout rather than a stale cached commit.
+    /// The early return keeps that git I/O off the common path where no open step
+    /// matches the updated bookmark.
     pub fn update_step_health(&mut self, db: &Database, bookmark_id: &str) {
+        if !self.steps_data.iter().any(|step| step.bookmark.id == bookmark_id) {
+            return;
+        }
+        self.refresh_head_commit(db);
         let head = self.cached_head_commit.clone();
         for step in self.steps_data.iter_mut() {
             if step.bookmark.id == bookmark_id {
