@@ -76,8 +76,12 @@ pub fn bookmark_health(
 
     match db.get_resolution(resolution_id) {
         Ok(Some(resolution)) => {
-            match projection::project_resolution_status(&resolution, bookmark, current_head, db.path())
-            {
+            match projection::project_resolution_status(
+                &resolution,
+                bookmark,
+                current_head,
+                db.path(),
+            ) {
                 Ok(ui_status) => HealthStatus::from(ui_status),
                 Err(_) => persisted(resolution.health),
             }

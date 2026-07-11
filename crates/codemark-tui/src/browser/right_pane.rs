@@ -967,8 +967,7 @@ impl RightPane {
         if self.pager_total > 1 {
             use crate::component::Pager;
             let health = self.steps_data.iter().map(|step| step.health).collect();
-            let pager =
-                Pager::new(self.pager_total, self.pager_current).with_health(health);
+            let pager = Pager::new(self.pager_total, self.pager_current).with_health(health);
             pager.render(chunks[1], buf);
         }
 
