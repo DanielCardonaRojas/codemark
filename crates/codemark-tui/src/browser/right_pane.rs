@@ -1,6 +1,6 @@
 use crate::browser::tabbed_panel::bookmark_health;
 use crate::browser::{DetailsPaneSize, PreviewPayload, SectionConfig, StepData, TabbedPanel};
-use crate::component::{Component, MarkdownPanel};
+use crate::component::{Component, HealthStatus, MarkdownPanel};
 use crate::event::Event;
 use codemark_core::engine::bookmark::{Bookmark, Resolution};
 use codemark_core::engine::resolution as live_resolution;
@@ -185,6 +185,20 @@ impl RightPane {
     /// The cached HEAD commit hash, if any (used by background preview tasks).
     pub fn head_commit(&self) -> Option<&str> {
         self.cached_head_commit.as_deref()
+    }
+
+    /// Update the cached health of any open collection steps for `bookmark_id`.
+    ///
+    /// `StepData.health` is captured when the collection loads, so without this
+    /// the pager dots would keep their load-time colors after a heal, sync, or
+    /// live-health refresh. Driving it from the same `LiveHealthBatch` events
+    /// that refresh the bookmarks panel keeps both indicators in sync.
+    pub fn update_step_health(&mut self, bookmark_id: &str, health: HealthStatus) {
+        for step in self.steps_data.iter_mut() {
+            if step.bookmark.id == bookmark_id {
+                step.health = health;
+            }
+        }
     }
 
     /// Whether a bookmark preview is currently being resolved.
