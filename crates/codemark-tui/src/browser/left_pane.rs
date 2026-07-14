@@ -59,6 +59,12 @@ impl LeftPane {
         }
     }
 
+    /// The panel that is shown when the left pane is expanded (Half/Full).
+    /// This is the last resizable panel that held focus.
+    pub fn expanded_focus(&self) -> FocusArea {
+        self.last_resizable_focus
+    }
+
     /// Render the left pane.
     pub fn render(&self, area: Rect, buf: &mut Buffer) {
         // In Half or Full mode, only render the focused panel and search bar
