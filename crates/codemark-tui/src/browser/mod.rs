@@ -1903,6 +1903,39 @@ impl BrowserLayout {
         self.previous_focus.is_none()
     }
 
+    /// The ordered list of focusable areas in the left pane.
+    ///
+    /// When the left pane is expanded (Half/Full), only the panes that are
+    /// actually rendered are included, so Tab can't move focus to a hidden
+    /// pane. The content panel is shown alongside the search bar, while the
+    /// context and filters panels are shown alone.
+    fn left_pane_focus_cycle(&self) -> Vec<FocusArea> {
+        // All left-pane areas, in tab order. Used in regular mode and as the
+        // fallback for expanded mode, mirroring LeftPane::render()'s fallback
+        // which draws every panel.
+        let all = vec![
+            FocusArea::Search,
+            FocusArea::ContextPanel,
+            FocusArea::FiltersPanel,
+            FocusArea::ContentPanel,
+        ];
+        match self.left_pane_size {
+            LeftPaneSize::Regular => all,
+            LeftPaneSize::Half | LeftPaneSize::Full => {
+                match self.left_pane.expanded_focus() {
+                    // Content panel is rendered together with the search bar.
+                    FocusArea::ContentPanel => {
+                        vec![FocusArea::Search, FocusArea::ContentPanel]
+                    }
+                    // Context/Filters panels are rendered alone.
+                    FocusArea::ContextPanel => vec![FocusArea::ContextPanel],
+                    FocusArea::FiltersPanel => vec![FocusArea::FiltersPanel],
+                    _ => all,
+                }
+            }
+        }
+    }
+
     /// Cycle to the next focusable area within the current pane.
     pub fn next_focus(&mut self) {
         match self.focus {
@@ -1910,15 +1943,14 @@ impl BrowserLayout {
                 self.right_pane.toggle_internal_focus();
             }
             _ => {
-                self.focus = match self.focus {
-                    FocusArea::Search => FocusArea::ContextPanel,
-                    FocusArea::ContextPanel => FocusArea::FiltersPanel,
-                    FocusArea::FiltersPanel => FocusArea::ContentPanel,
-                    FocusArea::ContentPanel => FocusArea::Search,
-                    _ => FocusArea::ContentPanel,
+                let cycle = self.left_pane_focus_cycle();
+                self.focus = match cycle.iter().position(|&f| f == self.focus) {
+                    Some(i) => cycle[(i + 1) % cycle.len()],
+                    None => cycle[0],
                 };
             }
         }
+        tracing::debug!(target: "codemark::ui", focus = ?self.focus, "next_focus");
         self.update_focus_state();
     }
 
@@ -1929,15 +1961,14 @@ impl BrowserLayout {
                 self.right_pane.toggle_internal_focus();
             }
             _ => {
-                self.focus = match self.focus {
-                    FocusArea::Search => FocusArea::ContentPanel,
-                    FocusArea::ContentPanel => FocusArea::FiltersPanel,
-                    FocusArea::FiltersPanel => FocusArea::ContextPanel,
-                    FocusArea::ContextPanel => FocusArea::Search,
-                    _ => FocusArea::ContentPanel,
+                let cycle = self.left_pane_focus_cycle();
+                self.focus = match cycle.iter().position(|&f| f == self.focus) {
+                    Some(i) => cycle[(i + cycle.len() - 1) % cycle.len()],
+                    None => cycle[0],
                 };
             }
         }
+        tracing::debug!(target: "codemark::ui", focus = ?self.focus, "previous_focus");
         self.update_focus_state();
     }
 
