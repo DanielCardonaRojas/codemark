@@ -1910,19 +1910,27 @@ impl BrowserLayout {
     /// pane. The content panel is shown alongside the search bar, while the
     /// context and filters panels are shown alone.
     fn left_pane_focus_cycle(&self) -> Vec<FocusArea> {
+        // All left-pane areas, in tab order. Used in regular mode and as the
+        // fallback for expanded mode, mirroring LeftPane::render()'s fallback
+        // which draws every panel.
+        let all = vec![
+            FocusArea::Search,
+            FocusArea::ContextPanel,
+            FocusArea::FiltersPanel,
+            FocusArea::ContentPanel,
+        ];
         match self.left_pane_size {
-            LeftPaneSize::Regular => vec![
-                FocusArea::Search,
-                FocusArea::ContextPanel,
-                FocusArea::FiltersPanel,
-                FocusArea::ContentPanel,
-            ],
+            LeftPaneSize::Regular => all,
             LeftPaneSize::Half | LeftPaneSize::Full => {
                 match self.left_pane.expanded_focus() {
+                    // Content panel is rendered together with the search bar.
                     FocusArea::ContentPanel => {
                         vec![FocusArea::Search, FocusArea::ContentPanel]
                     }
-                    other => vec![other],
+                    // Context/Filters panels are rendered alone.
+                    FocusArea::ContextPanel => vec![FocusArea::ContextPanel],
+                    FocusArea::FiltersPanel => vec![FocusArea::FiltersPanel],
+                    _ => all,
                 }
             }
         }
@@ -1942,6 +1950,7 @@ impl BrowserLayout {
                 };
             }
         }
+        tracing::debug!(target: "codemark::ui", focus = ?self.focus, "next_focus");
         self.update_focus_state();
     }
 
@@ -1959,6 +1968,7 @@ impl BrowserLayout {
                 };
             }
         }
+        tracing::debug!(target: "codemark::ui", focus = ?self.focus, "previous_focus");
         self.update_focus_state();
     }
 
