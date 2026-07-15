@@ -929,7 +929,12 @@ impl RightPane {
     ) {
         self.last_area.set(area);
 
-        if details_size.is_expanded() {
+        // Collections have no notes or comments, so the details pane (Details /
+        // Comments tabs) is meaningless while previewing a collection overview.
+        // Hide it until the collection is entered and per-bookmark previews load.
+        let hide_details = hide_details || self.overview_active;
+
+        if !hide_details && details_size.is_expanded() {
             // Details takes the full right-pane area (steps/pager hidden)
             self.render_details_block(area, buf);
             return;
@@ -1244,6 +1249,13 @@ impl RightPane {
 
     /// Focus the details section.
     pub fn focus_details(&mut self) {
+        // The details pane is hidden while previewing a collection overview
+        // (collections have no notes or comments), so keep focus on the
+        // overview instead of landing on an invisible pane.
+        if self.overview_active {
+            self.focus_steps();
+            return;
+        }
         self.focused = RightPaneFocus::Details;
         self.details.set_focus(true);
         self.steps.set_focus(false);
