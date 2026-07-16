@@ -124,6 +124,11 @@ pub struct Panel {
     last_area: Cell<Rect>,
     /// Track the last selected index to detect changes
     last_selected_index: Cell<Option<usize>>,
+    /// Selection that must be scrolled into view on the next render, deferred
+    /// because the panel's area (and thus height) was not yet known when the
+    /// selection was set — e.g. a selection applied at construction time,
+    /// before the first render. Consumed on the next render.
+    pending_scroll: Cell<Option<usize>>,
 }
 
 /// Health status indicator for an item based on the projected UI status.
@@ -551,6 +556,7 @@ impl Panel {
             border_type: BorderType::Rounded,
             last_area: Cell::new(Rect::default()),
             last_selected_index: Cell::new(None),
+            pending_scroll: Cell::new(None),
         }
     }
 
@@ -711,6 +717,9 @@ impl Panel {
         let area = self.last_area.get();
         let height = area.height.saturating_sub(if self.bordered { 2 } else { 0 }) as usize;
         if height == 0 {
+            // The area is not known yet (e.g. selection set before the first
+            // render). Defer the scroll until render supplies real dimensions.
+            self.pending_scroll.set(Some(idx));
             return;
         }
 
@@ -975,6 +984,14 @@ impl Panel {
 impl Component for Panel {
     fn render(&self, area: Rect, buf: &mut Buffer) {
         self.last_area.set(area);
+
+        // Apply any selection scroll that was deferred because the area was
+        // unknown when the selection was set (e.g. selecting the active repo at
+        // construction). Now that the height is known, reveal it in the viewport.
+        if let Some(idx) = self.pending_scroll.take() {
+            self.scroll_to_view(idx);
+        }
+
         // Calculate inner area (excluding borders)
         let inner = if self.bordered { area.inner(Margin::new(1, 1)) } else { area };
 
@@ -1427,6 +1444,32 @@ mod tests {
                 width
             );
         }
+    }
+
+    #[test]
+    fn test_set_selected_before_render_scrolls_into_view_on_first_render() {
+        // A selection set while the panel has no area (e.g. at construction)
+        // must scroll the selected item into view once the first render supplies
+        // real dimensions — mirroring selecting the active repo on startup.
+        let items: Vec<PanelItem> = (0..30).map(|i| PanelItem::new(format!("item{i}"))).collect();
+        let panel = Panel::new("").bordered(false).items(items);
+
+        // Select an item far down the list before any render has happened.
+        let mut panel = panel;
+        panel.set_selected(25);
+        assert_eq!(panel.selected_index(), Some(25));
+        // No area yet, so the offset can't move and the scroll is deferred.
+        assert_eq!(panel.list_state.borrow().offset(), 0);
+
+        // First render with a short viewport (10 rows) reveals the selection.
+        let area = Rect::new(0, 0, 40, 10);
+        let mut buf = Buffer::empty(area);
+        panel.render(area, &mut buf);
+
+        let offset = panel.list_state.borrow().offset();
+        assert!(offset > 0, "expected the deferred scroll to move the viewport");
+        // The selected index must fall within the visible window [offset, offset+height).
+        assert!(offset <= 25 && 25 < offset + 10, "selection {} not visible (offset {offset})", 25);
     }
 
     #[test]

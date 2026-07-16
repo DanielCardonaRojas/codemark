@@ -458,6 +458,15 @@ impl TabbedPanel {
         let mut repos_panel = Panel::new("").bordered(false);
         repos_panel = repos_panel.items(repos_items);
 
+        // Move the cursor to the active repo (the one with the checkmark) so the
+        // highlighted line matches it on startup instead of defaulting to the
+        // first item. `set_selected` defers the scroll-into-view until the first
+        // render (the panel has no area yet), keeping the active repo visible
+        // even when the list is long enough to overflow the viewport.
+        if let Some(active_idx) = repos_panel.all_items().iter().position(|item| item.is_active()) {
+            repos_panel.set_selected(active_idx);
+        }
+
         // Owners tab: repo owners (users/orgs); multi-select filters the Repos list.
         let owner_items = TabbedPanel::build_owner_items(registry);
         let owners = Panel::new("").items(owner_items).bordered(false).multi_select(true);
