@@ -276,7 +276,13 @@ impl RightPane {
                 tracing::debug!(target: "codemark::ui", %relative_path, "Setting preview file header");
                 preview.set_file_header(Some(relative_path));
 
-                preview.jump_to_range(step.line_number, step.line_end);
+                if step.resolved {
+                    preview.jump_to_range(step.line_number, step.line_end);
+                } else {
+                    // Query no longer resolves: show the file without a stale
+                    // range highlight/gutter.
+                    preview.clear_selection();
+                }
             }
 
             let head_ref = self.cached_head_commit.as_deref();
@@ -364,6 +370,9 @@ impl RightPane {
                     resolution,
                     resolutions,
                     health,
+                    // Persisted fallback: the query didn't resolve live, so the
+                    // range is stale and must not be highlighted.
+                    resolved: false,
                 }];
                 self.pager_total = 1;
                 self.pager_current = 0;
@@ -463,6 +472,9 @@ impl RightPane {
             resolution: None,
             resolutions,
             health,
+            // Live resolution succeeded, so the range reflects the current
+            // location and is safe to highlight.
+            resolved: true,
         };
 
         Some(Box::new(PreviewPayload {
@@ -499,7 +511,11 @@ impl RightPane {
             preview.set_code(code);
             preview.set_extension(extension);
             preview.set_file_header(Some(relative_path));
-            preview.jump_to_range(step.line_number, step.line_end);
+            if step.resolved {
+                preview.jump_to_range(step.line_number, step.line_end);
+            } else {
+                preview.clear_selection();
+            }
         }
         if let Some(md_panel) = self.steps.get_markdown_mut() {
             md_panel.set_markdown(info_markdown);
@@ -554,6 +570,8 @@ impl RightPane {
                         resolution: None,
                         resolutions,
                         health,
+                        // Live resolution succeeded for this step.
+                        resolved: true,
                     });
                 }
                 Err(_) => {
@@ -595,6 +613,9 @@ impl RightPane {
                             resolution,
                             resolutions,
                             health,
+                            // Live resolution failed; the persisted range is
+                            // stale, so don't highlight it.
+                            resolved: false,
                         });
                     }
                 }
@@ -865,6 +886,9 @@ impl RightPane {
                         resolution,
                         resolutions,
                         health,
+                        // Persisted (non-live) load: keep highlighting the stored
+                        // range as before.
+                        resolved: true,
                     });
                 }
             }
