@@ -323,6 +323,12 @@ impl BrowserLayout {
             self.left_pane.content_panel.tabs.set_selected(0);
         }
 
+        // Move focus off the search bar onto the results list and refresh the
+        // preview so it reflects the newly selected result instead of lingering
+        // on whatever was previewed before the search ran.
+        self.set_focus(FocusArea::ContentPanel);
+        self.update_content_live_preview();
+
         // Spawn background task to resolve health for all bookmarks
         self.spawn_live_health_task(bookmarks.to_vec());
     }
