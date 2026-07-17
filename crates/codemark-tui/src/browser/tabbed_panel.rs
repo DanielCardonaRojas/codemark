@@ -464,6 +464,7 @@ impl TabbedPanel {
         // render (the panel has no area yet), keeping the active repo visible
         // even when the list is long enough to overflow the viewport.
         if let Some(active_idx) = repos_panel.all_items().iter().position(|item| item.is_active()) {
+            tracing::debug!(target: "codemark::ui", active_idx, "selecting active repo on startup");
             repos_panel.set_selected(active_idx);
         }
 

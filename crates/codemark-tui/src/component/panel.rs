@@ -124,11 +124,13 @@ pub struct Panel {
     last_area: Cell<Rect>,
     /// Track the last selected index to detect changes
     last_selected_index: Cell<Option<usize>>,
-    /// Selection that must be scrolled into view on the next render, deferred
-    /// because the panel's area (and thus height) was not yet known when the
-    /// selection was set — e.g. a selection applied at construction time,
-    /// before the first render. Consumed on the next render.
-    pending_scroll: Cell<Option<usize>>,
+    /// Set when a scroll-into-view was requested but the panel's area (and thus
+    /// height) was not yet known — e.g. a selection applied at construction
+    /// time, before the first render. On the next render the *current* selection
+    /// is revealed; the flag deliberately stores no index so that item rebuilds
+    /// (`set_items`, `apply_filter`, `clear`) which move or clamp the selection
+    /// can't leave a stale target pointing past the new list.
+    pending_scroll: Cell<bool>,
 }
 
 /// Health status indicator for an item based on the projected UI status.
@@ -556,7 +558,7 @@ impl Panel {
             border_type: BorderType::Rounded,
             last_area: Cell::new(Rect::default()),
             last_selected_index: Cell::new(None),
-            pending_scroll: Cell::new(None),
+            pending_scroll: Cell::new(false),
         }
     }
 
@@ -718,8 +720,14 @@ impl Panel {
         let height = area.height.saturating_sub(if self.bordered { 2 } else { 0 }) as usize;
         if height == 0 {
             // The area is not known yet (e.g. selection set before the first
-            // render). Defer the scroll until render supplies real dimensions.
-            self.pending_scroll.set(Some(idx));
+            // render). Flag a deferred reveal; render re-derives the current
+            // selection then, so the index used here can't go stale.
+            tracing::debug!(
+                target: "codemark::ui",
+                idx,
+                "panel scroll deferred until first render (area unknown)"
+            );
+            self.pending_scroll.set(true);
             return;
         }
 
@@ -987,9 +995,16 @@ impl Component for Panel {
 
         // Apply any selection scroll that was deferred because the area was
         // unknown when the selection was set (e.g. selecting the active repo at
-        // construction). Now that the height is known, reveal it in the viewport.
-        if let Some(idx) = self.pending_scroll.take() {
-            self.scroll_to_view(idx);
+        // construction). Re-derive the *current* selection now that the height
+        // is known — reading it here (rather than a saved index) keeps it valid
+        // even if the item list was rebuilt in the meantime.
+        if self.pending_scroll.take() {
+            // Read (and drop the borrow) before `scroll_to_view` takes it mutably.
+            let selected = self.list_state.borrow().selected();
+            if let Some(idx) = selected {
+                tracing::debug!(target: "codemark::ui", idx, "applying deferred panel scroll on first render");
+                self.scroll_to_view(idx);
+            }
         }
 
         // Calculate inner area (excluding borders)
@@ -1470,6 +1485,32 @@ mod tests {
         assert!(offset > 0, "expected the deferred scroll to move the viewport");
         // The selected index must fall within the visible window [offset, offset+height).
         assert!(offset <= 25 && 25 < offset + 10, "selection {} not visible (offset {offset})", 25);
+    }
+
+    #[test]
+    fn test_deferred_scroll_survives_item_rebuild_before_first_render() {
+        // Regression: a deferred scroll must reveal whatever is selected at
+        // render time, not a numeric index captured earlier. If the list is
+        // rebuilt (via `set_items`) after the selection but before the first
+        // render, the render must still bring the *current* selection into view
+        // rather than scrolling to a now-stale index.
+        let items: Vec<PanelItem> = (0..30).map(|i| PanelItem::new(format!("item{i}"))).collect();
+        let mut panel = Panel::new("").bordered(false).items(items);
+
+        // Select far down the list before any render (defers the scroll).
+        panel.set_selected(25);
+
+        // Rebuild with a shorter list before rendering. Selection falls back to
+        // 0 because "item25" is gone; the old deferred index (25) is now stale.
+        panel.set_items((0..5).map(|i| PanelItem::new(format!("new{i}"))).collect());
+        assert_eq!(panel.selected_index(), Some(0));
+
+        // First render must not scroll to the stale index 25 (which would push
+        // the viewport past the 5-item list); the offset stays at 0.
+        let area = Rect::new(0, 0, 40, 10);
+        let mut buf = Buffer::empty(area);
+        panel.render(area, &mut buf);
+        assert_eq!(panel.list_state.borrow().offset(), 0);
     }
 
     #[test]
