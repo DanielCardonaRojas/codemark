@@ -177,6 +177,42 @@ fn make_layout(sandbox: Sandbox) -> (BrowserLayout, Sandbox) {
     (layout, Sandbox { db, _tmp, _guard })
 }
 
+/// Like [`make_layout`], but also returns the event handler's receiver so a test
+/// can pump events the layout sends to itself (e.g. the `SearchResults` that an
+/// FTS `execute_search` posts back through the channel). Mirrors `make_layout`
+/// exactly except it keeps `_rx` alive and hands it to the caller.
+fn make_layout_with_rx(
+    sandbox: Sandbox,
+) -> (BrowserLayout, Sandbox, tokio::sync::mpsc::Receiver<Event>) {
+    let (rx, handler) = EventHandler::with_receiver(
+        EventHandlerConfig::default()
+            .tick_rate(Duration::from_millis(100))
+            .enable_mouse(false)
+            .enable_paste(false),
+    )
+    .expect("event handler");
+
+    let Sandbox { db, _tmp, _guard } = sandbox;
+    let layout = BrowserLayout::new(db, handler);
+    let db_path = _tmp.path().join("repo").join(".codemark").join("codemark.db");
+    let db = Database::open(&db_path).expect("reopen sandbox database");
+    (layout, Sandbox { db, _tmp, _guard }, rx)
+}
+
+/// Drain any events the layout has posted to its own channel and feed them back
+/// through `handle_event`, mimicking one turn of the real event loop. The
+/// unbounded→bounded forwarding runs on a spawned task, so give it a moment to
+/// deliver before draining.
+async fn pump_pending_events(
+    layout: &mut BrowserLayout,
+    rx: &mut tokio::sync::mpsc::Receiver<Event>,
+) {
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    while let Ok(event) = rx.try_recv() {
+        layout.handle_event(&event);
+    }
+}
+
 /// Feed a single character key.
 fn key_char(layout: &mut BrowserLayout, c: char) -> bool {
     layout.handle_event(&Event::Key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE)))
@@ -273,6 +309,45 @@ async fn filtering_narrows_the_bookmark_list() {
     layout.apply_filter("config");
 
     insta::assert_snapshot!(render_to_string(&layout, 100, 30));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn search_filter_survives_focus_regained() {
+    let sandbox = Sandbox::with_bookmarks([
+        sample_bookmark("bm-1", "fn main", "src/main.rs"),
+        sample_bookmark("bm-2", "struct Config", "src/config.rs"),
+    ]);
+    sandbox.write_repo_file("src/main.rs", "fn main() {\n    println!(\"hi\");\n}\n");
+    sandbox.write_repo_file("src/config.rs", "struct Config {\n    name: String,\n}\n");
+    let (mut layout, _sandbox, mut rx) = make_layout_with_rx(sandbox);
+
+    // Focus the search bar ('s'), type a query, and run it (Enter). The default
+    // FTS mode searches synchronously and posts the results back through the
+    // event channel, which `pump_pending_events` then applies.
+    key_char(&mut layout, 's');
+    type_str(&mut layout, "config");
+    key_code(&mut layout, KeyCode::Enter);
+    pump_pending_events(&mut layout, &mut rx).await;
+
+    // The bookmark list is narrowed to the single match: only `src/config.rs`
+    // shows and the full-list footer ("… of 2") is gone.
+    let filtered = render_to_string(&layout, 100, 30);
+    assert!(
+        filtered.contains("config.rs") && !filtered.contains("of 2"),
+        "search should narrow the bookmark list to the match; got:\n{filtered}"
+    );
+
+    // Switching to another app and back emits FocusGained, which refreshes the
+    // panels from the DB. That used to silently drop the search while its text
+    // stayed in the search bar. The search-active list is now preserved in place
+    // (no full-list rebuild, so no flicker), so the filter must still hold.
+    layout.handle_event(&Event::FocusGained);
+
+    let after = render_to_string(&layout, 100, 30);
+    assert!(
+        after.contains("config.rs") && !after.contains("of 2"),
+        "search filter should survive FocusGained (the full list must not return); got:\n{after}"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

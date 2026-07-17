@@ -176,7 +176,13 @@ impl BrowserLayout {
                     self.registry = registry;
                 }
                 self.update_tours_tab_visibility();
-                self.refresh_all_panels();
+
+                // A plain `refresh_all_panels` rebuilds the Bookmarks/Collections
+                // lists from the full DB set, which would drop any active search
+                // narrowing (the query text lingers in the search bar but the list
+                // reverts to unfiltered). Preserve the search-active panel instead,
+                // so the filtered results stay put with no full-list flicker.
+                self.refresh_all_panels_preserving_search();
                 Some(true)
             }
             Event::HealComplete(msg, success) => {

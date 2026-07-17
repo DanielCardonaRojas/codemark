@@ -1214,7 +1214,26 @@ impl BrowserLayout {
     }
 
     /// Refresh all panels from the current active database.
+    ///
+    /// Rebuilds the content lists from the full DB set, discarding any active
+    /// search narrowing. Callers that must not drop the user's live search
+    /// (e.g. a terminal refocus) should use [`Self::refresh_all_panels_preserving_search`].
     pub fn refresh_all_panels(&mut self) {
+        self.refresh_all_panels_inner(false);
+    }
+
+    /// Like [`Self::refresh_all_panels`], but leaves a content panel that is
+    /// currently showing search results untouched, so an active search filter
+    /// survives the refresh instead of flashing back to the full list.
+    pub fn refresh_all_panels_preserving_search(&mut self) {
+        self.refresh_all_panels_inner(true);
+    }
+
+    /// Shared body for the two refresh entry points. When `preserve_search` is
+    /// set, a content panel that is displaying search results (non-empty query
+    /// and `search_active`) keeps its narrowed items rather than being rebuilt
+    /// from the full DB set.
+    fn refresh_all_panels_inner(&mut self, preserve_search: bool) {
         // 1. Update Context panel Owners (preserving active owner selections)
         let active_owners: Vec<String> = self
             .left_pane
@@ -1258,12 +1277,21 @@ impl BrowserLayout {
         // 2. Update Tags/Branches (in-place)
         self.refresh_tags();
 
-        // 3. Update Bookmarks/Collections/Tours (in-place)
+        // 3. Update Bookmarks/Collections/Tours (in-place). When preserving an
+        // active search, a panel currently showing search results is left as-is
+        // so the narrowed list doesn't flash back to the full set. The query is
+        // non-empty check keeps the Esc "clear search" path (query cleared first)
+        // rebuilding the full list as before.
+        let search_query_active = preserve_search && !self.left_pane.search.query().is_empty();
         let (tours, collections, bookmarks) = TabbedPanel::build_content_items(&self.db);
-        if let Some(p) = self.left_pane.content_panel.get_list_panel_mut(0) {
+        if let Some(p) = self.left_pane.content_panel.get_list_panel_mut(0)
+            && !(search_query_active && p.is_search_active())
+        {
             p.set_items(bookmarks);
         }
-        if let Some(p) = self.left_pane.content_panel.get_list_panel_mut(1) {
+        if let Some(p) = self.left_pane.content_panel.get_list_panel_mut(1)
+            && !(search_query_active && p.is_search_active())
+        {
             p.set_items(collections);
         }
         if let Some(p) = self.left_pane.content_panel.get_list_panel_mut(2) {

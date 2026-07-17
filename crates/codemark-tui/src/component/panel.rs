@@ -611,6 +611,12 @@ impl Panel {
         self.search_active = active;
     }
 
+    /// Whether this panel is currently displaying externally-supplied search
+    /// results (as opposed to a local filter query). See [`Self::set_search_active`].
+    pub fn is_search_active(&self) -> bool {
+        self.search_active
+    }
+
     /// Set the filter query and apply it.
     pub fn set_filter(&mut self, query: &str) {
         if self.filter_query != query {
