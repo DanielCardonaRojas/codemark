@@ -249,6 +249,19 @@ impl CodePreview {
         }
     }
 
+    /// Clear the line selection and range highlight, leaving the code and scroll
+    /// position untouched.
+    ///
+    /// Used when a bookmark's query no longer resolves: the preview still shows
+    /// the file, but without a range highlight (or gutter `┃`) that would point
+    /// at a stale, misleading location.
+    pub fn clear_selection(&mut self) {
+        self.selected_line = None;
+        self.selected_range = None;
+        self.selection_mode = false;
+        self.cursor_col = 0;
+    }
+
     /// Calculate the scroll offset for a given range.
     fn calculate_scroll_offset(&self, start: usize, end: usize, area_height: usize) -> u16 {
         let range_height = end.saturating_sub(start) + 1;
@@ -827,6 +840,30 @@ mod tests {
         assert_eq!(preview.selected_line, Some(0));
         let buf = render_to_buffer(&preview, 20, 4);
         assert_eq!(row_bg(&buf, 0), crate::theme::SELECTION_BG);
+    }
+
+    #[test]
+    fn clear_selection_removes_range_highlight_and_gutter() {
+        let code = "one\ntwo\nthree\nfour\n";
+        let mut preview = CodePreview::new(code, "txt");
+
+        // Selecting a range highlights it and draws the gutter bar.
+        preview.jump_to_range(1, Some(2));
+        assert_eq!(preview.selected_range, Some((1, 2)));
+        let buf = render_to_buffer(&preview, 20, 4);
+        assert_eq!(cell_symbol(&buf, 0, 1), "┃");
+        assert_eq!(row_bg(&buf, 1), crate::theme::SELECTION_BG);
+
+        // Clearing the selection drops both the gutter bar and the row highlight
+        // while leaving the code intact.
+        preview.clear_selection();
+        assert_eq!(preview.selected_line, None);
+        assert_eq!(preview.selected_range, None);
+        let buf = render_to_buffer(&preview, 20, 4);
+        for y in 0..4 {
+            assert_eq!(cell_symbol(&buf, 0, y), " ");
+            assert_ne!(row_bg(&buf, y), crate::theme::SELECTION_BG);
+        }
     }
 
     #[test]

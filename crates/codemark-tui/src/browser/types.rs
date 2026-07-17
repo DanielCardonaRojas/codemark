@@ -451,6 +451,12 @@ pub struct StepData {
     /// Health status of this step's bookmark, shown as a colored pager dot so
     /// the health of every step is visible while browsing a collection.
     pub health: HealthStatus,
+    /// Whether the step's line range came from a successful live resolution.
+    ///
+    /// When `false` the bookmark's query no longer resolves and the line range
+    /// is a stale persisted fallback, so the preview shows the file *without* a
+    /// range highlight/gutter rather than pointing at a misleading location.
+    pub resolved: bool,
 }
 
 /// A fully-computed bookmark preview, produced off the UI thread.
