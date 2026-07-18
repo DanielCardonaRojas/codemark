@@ -1296,9 +1296,7 @@ impl BrowserLayout {
                         .left_pane
                         .content_panel
                         .get_list_panel_mut(idx)
-                        .map(|p| {
-                            p.all_items().iter().filter_map(|i| i.user_data.clone()).collect()
-                        })
+                        .map(|p| p.all_items().iter().filter_map(|i| i.user_data.clone()).collect())
                         .unwrap_or_default();
 
                     let items = match tab {
