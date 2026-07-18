@@ -152,27 +152,36 @@ impl BrowserLayout {
     fn handle_app_event(&mut self, event: &Event) -> Option<bool> {
         match event {
             Event::SearchResults { request_id, bookmarks } => {
-                if *request_id == self.active_search_request {
-                    self.apply_search_results(bookmarks);
+                // Apply the latest user search, or any in-flight reconcile re-run
+                // (which may not be the newest request when two panels reconcile
+                // at once).
+                if *request_id == self.active_search_request
+                    || self.is_reconcile_request(*request_id)
+                {
+                    self.apply_search_results(*request_id, bookmarks);
                 }
                 Some(true)
             }
             Event::CollectionSearchResults { request_id, collections } => {
-                if *request_id == self.active_search_request {
-                    self.apply_collection_search_results(collections);
+                if *request_id == self.active_search_request
+                    || self.is_reconcile_request(*request_id)
+                {
+                    self.apply_collection_search_results(*request_id, collections);
                 }
                 Some(true)
             }
             Event::SearchError { request_id, msg } => {
-                if *request_id == self.active_search_request {
-                    if self.take_reconcile_search() {
-                        // A background refocus reconcile failed; keep the preserved
-                        // rows and just stop the spinner rather than surfacing an
-                        // error the user didn't trigger.
-                        self.left_pane.search.set_loading(false);
-                    } else {
-                        self.left_pane.search.set_error(msg.clone());
+                if let Some(idx) = self.take_reconcile_target(*request_id) {
+                    // A background refocus reconcile failed. Don't surface an error
+                    // the user didn't trigger; instead fall back to refreshing the
+                    // panel from current DB records so at least deleted/renamed rows
+                    // are reconciled rather than left silently stale.
+                    self.left_pane.search.set_loading(false);
+                    if self.refresh_search_panel_by_id(idx) {
+                        self.update_content_live_preview();
                     }
+                } else if *request_id == self.active_search_request {
+                    self.left_pane.search.set_error(msg.clone());
                 }
                 Some(true)
             }
@@ -333,25 +342,16 @@ impl BrowserLayout {
             .collect()
     }
 
-    /// Whether the results now arriving belong to a background reconcile re-run
-    /// (a refocus refreshing a search-active panel) rather than a user-initiated
-    /// search, clearing the marker so the next result set is treated normally.
-    /// Only the current `active_search_request` reaches the `apply_*` methods.
-    fn take_reconcile_search(&mut self) -> bool {
-        if self.reconcile_search_request == Some(self.active_search_request) {
-            self.reconcile_search_request = None;
-            true
-        } else {
-            false
-        }
-    }
-
     /// Populate the bookmarks panel from search results.
     ///
     /// Sets health to `Unknown` initially for instant rendering, then spawns
     /// a background task to resolve all bookmarks and send `LiveHealthBatch`
     /// events that progressively update the dots.
-    fn apply_search_results(&mut self, bookmarks: &[codemark_core::engine::bookmark::Bookmark]) {
+    fn apply_search_results(
+        &mut self,
+        request_id: u64,
+        bookmarks: &[codemark_core::engine::bookmark::Bookmark],
+    ) {
         // The search finished, so stop the loading spinner.
         self.left_pane.search.set_loading(false);
 
@@ -360,8 +360,8 @@ impl BrowserLayout {
         // A reconcile re-run refreshes an already-visible narrowed list in place,
         // keeping the user's focus and selection instead of jumping onto the
         // results list and switching tabs like a fresh search does.
-        if self.take_reconcile_search() {
-            self.apply_reconciled_search_items(0, items);
+        if let Some(idx) = self.take_reconcile_target(request_id) {
+            self.apply_reconciled_search_items(idx, items);
             self.update_content_live_preview();
             self.spawn_live_health_task(bookmarks.to_vec());
             return;
@@ -422,6 +422,7 @@ impl BrowserLayout {
     /// with the normal collection list.
     fn apply_collection_search_results(
         &mut self,
+        request_id: u64,
         collections: &[(codemark_core::engine::bookmark::Collection, usize)],
     ) {
         // The search finished, so stop the loading spinner.
@@ -433,8 +434,8 @@ impl BrowserLayout {
         // focus and selection. It applies even when Collections isn't the active
         // tab (the user may have switched away before the terminal refocused),
         // so it must run before the tab-active guard below.
-        if self.take_reconcile_search() {
-            self.apply_reconciled_search_items(ContentTab::Collections.index(), items);
+        if let Some(idx) = self.take_reconcile_target(request_id) {
+            self.apply_reconciled_search_items(idx, items);
             self.update_content_live_preview();
             return;
         }

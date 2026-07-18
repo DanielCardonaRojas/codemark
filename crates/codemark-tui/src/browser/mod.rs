@@ -182,11 +182,13 @@ pub struct BrowserLayout {
     /// changed while unfocused — not just dropping ones that were deleted. Only
     /// meaningful while the matching panel `is_search_active`.
     search_contexts: [Option<(String, SearchMode)>; 2],
-    /// When set, this search request id is a background *reconcile* re-run
-    /// (a refocus refreshing a semantic result set against the current DB) whose
-    /// results are applied in place, keeping focus and selection, rather than
-    /// jumping onto the results list like a user-initiated search.
-    reconcile_search_request: Option<u64>,
+    /// In-flight background *reconcile* re-runs (a refocus refreshing a semantic
+    /// result set against the current DB), mapping each request id to the content
+    /// panel index it targets. Their results are applied in place — keeping focus
+    /// and selection — rather than jumping onto the results list like a user
+    /// search. A map (not a single id) so a refocus can reconcile the Bookmarks
+    /// and Collections panels concurrently without one superseding the other.
+    reconcile_search_requests: std::collections::HashMap<u64, usize>,
     /// A debounced, not-yet-spawned preview request: (bookmark_id, label, due tick).
     /// Coalesces rapid scrolling into a single resolve once movement settles.
     pending_preview: Option<(String, Option<String>, usize)>,
@@ -248,7 +250,7 @@ impl BrowserLayout {
             active_preview_request: 0,
             active_search_request: 0,
             search_contexts: [None, None],
-            reconcile_search_request: None,
+            reconcile_search_requests: std::collections::HashMap::new(),
             pending_preview: None,
             inflight_preview: None,
             dialog: None,
@@ -480,9 +482,9 @@ impl BrowserLayout {
             return;
         }
 
-        // A user-initiated search is never a reconcile; drop any pending marker
-        // so its (superseded) results aren't mistaken for an in-place refresh.
-        self.reconcile_search_request = None;
+        // A user-initiated search supersedes any in-flight reconcile; drop their
+        // markers so late results aren't mistaken for an in-place refresh.
+        self.reconcile_search_requests.clear();
         self.active_search_request = self.active_search_request.wrapping_add(1);
         let request_id = self.active_search_request;
 
@@ -1314,7 +1316,7 @@ impl BrowserLayout {
                     let query = query.clone();
                     self.active_search_request = self.active_search_request.wrapping_add(1);
                     let request_id = self.active_search_request;
-                    self.reconcile_search_request = Some(request_id);
+                    self.reconcile_search_requests.insert(request_id, idx);
                     self.left_pane.search.set_loading(true);
                     match tab {
                         ContentTab::Collections => {
@@ -1327,39 +1329,7 @@ impl BrowserLayout {
                 // No recorded context (shouldn't happen while search-active):
                 // fall back to dropping rows whose record no longer exists.
                 None => {
-                    let row_ids: Vec<String> = self
-                        .left_pane
-                        .content_panel
-                        .get_list_panel_mut(idx)
-                        .map(|p| p.all_items().iter().filter_map(|i| i.user_data.clone()).collect())
-                        .unwrap_or_default();
-
-                    let items = match tab {
-                        ContentTab::Collections => {
-                            let cols: Vec<_> = row_ids
-                                .iter()
-                                .filter_map(|id| {
-                                    let c = self.db.get_collection_by_id(id).ok().flatten()?;
-                                    let count = self
-                                        .db
-                                        .list_bookmarks_in_collection(&c.id)
-                                        .map(|b| b.len())
-                                        .unwrap_or(0);
-                                    Some((c, count))
-                                })
-                                .collect();
-                            Self::build_collection_search_items(&cols)
-                        }
-                        _ => {
-                            let bms: Vec<_> = row_ids
-                                .iter()
-                                .filter_map(|id| self.db.get_bookmark(id).ok().flatten())
-                                .collect();
-                            Self::build_bookmark_search_items(&bms)
-                        }
-                    };
-
-                    changed |= self.apply_reconciled_search_items(idx, items);
+                    changed |= self.refresh_search_panel_by_id(idx);
                 }
             }
         }
@@ -1389,6 +1359,54 @@ impl BrowserLayout {
             p.select_by_user_data(&id);
         }
         true
+    }
+
+    /// Rebuild a search-active panel's rows from their current DB records,
+    /// dropping rows whose record no longer exists. Unlike a re-run this keeps
+    /// the matched set (it can't recompute membership), but it refreshes text and
+    /// removes deleted rows — the best available reconcile when a semantic re-run
+    /// isn't run or fails. Returns whether the panel existed.
+    fn refresh_search_panel_by_id(&mut self, idx: usize) -> bool {
+        let row_ids: Vec<String> = self
+            .left_pane
+            .content_panel
+            .get_list_panel_mut(idx)
+            .map(|p| p.all_items().iter().filter_map(|i| i.user_data.clone()).collect())
+            .unwrap_or_default();
+
+        let items = if idx == ContentTab::Collections.index() {
+            let cols: Vec<_> = row_ids
+                .iter()
+                .filter_map(|id| {
+                    let c = self.db.get_collection_by_id(id).ok().flatten()?;
+                    let count =
+                        self.db.list_bookmarks_in_collection(&c.id).map(|b| b.len()).unwrap_or(0);
+                    Some((c, count))
+                })
+                .collect();
+            Self::build_collection_search_items(&cols)
+        } else {
+            let bms: Vec<_> =
+                row_ids.iter().filter_map(|id| self.db.get_bookmark(id).ok().flatten()).collect();
+            Self::build_bookmark_search_items(&bms)
+        };
+
+        self.apply_reconciled_search_items(idx, items)
+    }
+
+    /// Whether `request_id` is an in-flight reconcile re-run (without consuming
+    /// it). Used by the event guard to accept a reconcile result even when a
+    /// newer request has advanced `active_search_request`.
+    fn is_reconcile_request(&self, request_id: u64) -> bool {
+        self.reconcile_search_requests.contains_key(&request_id)
+    }
+
+    /// If `request_id` belongs to an in-flight reconcile re-run, remove it and
+    /// return the content panel index it targets. Lets the search-result and
+    /// error handlers tell a background reconcile apart from a user search and
+    /// route it to the right panel.
+    fn take_reconcile_target(&mut self, request_id: u64) -> Option<usize> {
+        self.reconcile_search_requests.remove(&request_id)
     }
 
     /// Shared body for the two refresh entry points. When `preserve_search` is
