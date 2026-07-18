@@ -175,6 +175,12 @@ pub struct BrowserLayout {
     active_preview_request: u64,
     /// ID of the most recent search request, used to discard stale background results.
     pub active_search_request: u64,
+    /// When set, the search request with this id is a background *reconcile*
+    /// (re-run on terminal refocus to refresh a narrowed list against the
+    /// current DB) rather than a user-initiated search. Its results are applied
+    /// in place, keeping the existing focus and selection instead of jumping to
+    /// the results list.
+    search_reconcile_request: Option<u64>,
     /// A debounced, not-yet-spawned preview request: (bookmark_id, label, due tick).
     /// Coalesces rapid scrolling into a single resolve once movement settles.
     pending_preview: Option<(String, Option<String>, usize)>,
@@ -235,6 +241,7 @@ impl BrowserLayout {
             preview_seq: 0,
             active_preview_request: 0,
             active_search_request: 0,
+            search_reconcile_request: None,
             pending_preview: None,
             inflight_preview: None,
             dialog: None,
@@ -466,6 +473,10 @@ impl BrowserLayout {
             return;
         }
 
+        // Any pending reconcile marker belongs to an older request; a fresh
+        // search here supersedes it, so its results (if any still arrive) are
+        // treated as a normal user search rather than an in-place reconcile.
+        self.search_reconcile_request = None;
         self.active_search_request = self.active_search_request.wrapping_add(1);
         let request_id = self.active_search_request;
 
@@ -1229,6 +1240,30 @@ impl BrowserLayout {
         self.refresh_all_panels_inner(true);
     }
 
+    /// After a search-preserving refresh, re-run the active search so its
+    /// narrowed list reconciles with the current DB instead of showing the rows
+    /// captured before the terminal lost focus (which may reference bookmarks or
+    /// collections that were since deleted, renamed, or healed via the CLI).
+    ///
+    /// Only fast FTS searches are reconciled: re-running a semantic search on
+    /// every refocus would reload the embedding model and stall the UI, so a
+    /// semantic result set keeps its preserved rows until the next explicit
+    /// search. The results are applied in place (see [`Self::search_reconcile_request`]),
+    /// so focus and selection are left untouched.
+    pub fn maybe_reconcile_active_search(&mut self) {
+        let is_fts = self.left_pane.search.mode() == SearchMode::Fts;
+        let has_query = !self.left_pane.search.query().is_empty();
+        let panel_narrowed = self
+            .left_pane
+            .content_panel
+            .active_panel()
+            .is_some_and(|p| p.is_search_active());
+        if is_fts && has_query && panel_narrowed {
+            self.execute_search();
+            self.search_reconcile_request = Some(self.active_search_request);
+        }
+    }
+
     /// Shared body for the two refresh entry points. When `preserve_search` is
     /// set, a content panel that is displaying search results (non-empty query
     /// and `search_active`) keeps its narrowed items rather than being rebuilt
@@ -1279,18 +1314,18 @@ impl BrowserLayout {
 
         // 3. Update Bookmarks/Collections/Tours (in-place). When preserving an
         // active search, a panel currently showing search results is left as-is
-        // so the narrowed list doesn't flash back to the full set. The query is
-        // non-empty check keeps the Esc "clear search" path (query cleared first)
-        // rebuilding the full list as before.
-        let search_query_active = preserve_search && !self.left_pane.search.query().is_empty();
+        // so the narrowed list doesn't flash back to the full set before the
+        // refocus reconcile (see `maybe_reconcile_active_search`) refreshes it.
+        // The Esc "clear search" path uses the non-preserving refresh, so the
+        // full list is rebuilt there regardless of this flag.
         let (tours, collections, bookmarks) = TabbedPanel::build_content_items(&self.db);
         if let Some(p) = self.left_pane.content_panel.get_list_panel_mut(0)
-            && !(search_query_active && p.is_search_active())
+            && !(preserve_search && p.is_search_active())
         {
             p.set_items(bookmarks);
         }
         if let Some(p) = self.left_pane.content_panel.get_list_panel_mut(1)
-            && !(search_query_active && p.is_search_active())
+            && !(preserve_search && p.is_search_active())
         {
             p.set_items(collections);
         }

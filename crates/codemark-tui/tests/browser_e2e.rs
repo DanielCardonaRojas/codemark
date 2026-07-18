@@ -153,12 +153,23 @@ fn sample_bookmark(id: &str, query: &str, file_path: &str) -> Bookmark {
 /// runtime in scope because `BrowserLayout::new` spawns a background live-health
 /// task — annotate tests with `#[tokio::test(flavor = "multi_thread", worker_threads = 2)]`.
 fn make_layout(sandbox: Sandbox) -> (BrowserLayout, Sandbox) {
+    // Drop the receiver: tests that don't pump self-sent events don't need it.
+    let (layout, sandbox, _rx) = make_layout_with_rx(sandbox);
+    (layout, sandbox)
+}
+
+/// Like [`make_layout`], but also returns the event handler's receiver so a test
+/// can pump events the layout sends to itself (e.g. the `SearchResults` that an
+/// FTS `execute_search` posts back through the channel).
+fn make_layout_with_rx(
+    sandbox: Sandbox,
+) -> (BrowserLayout, Sandbox, tokio::sync::mpsc::Receiver<Event>) {
     // A real event handler; its background event loop polls a terminal we never
     // touch in tests, but `BrowserLayout` needs a handle to send custom events.
     // Disable mouse capture and bracketed paste: the default config writes their
     // enable escape sequences to stdout (with no matching cleanup), which would
     // leave an interactive shell in a broken state after the test process exits.
-    let (_rx, handler) = EventHandler::with_receiver(
+    let (rx, handler) = EventHandler::with_receiver(
         EventHandlerConfig::default()
             .tick_rate(Duration::from_millis(100))
             .enable_mouse(false)
@@ -172,28 +183,6 @@ fn make_layout(sandbox: Sandbox) -> (BrowserLayout, Sandbox) {
     let layout = BrowserLayout::new(db, handler);
     // Reopen a handle so callers can still query the DB if needed. Cheap: same
     // file, fresh connection.
-    let db_path = _tmp.path().join("repo").join(".codemark").join("codemark.db");
-    let db = Database::open(&db_path).expect("reopen sandbox database");
-    (layout, Sandbox { db, _tmp, _guard })
-}
-
-/// Like [`make_layout`], but also returns the event handler's receiver so a test
-/// can pump events the layout sends to itself (e.g. the `SearchResults` that an
-/// FTS `execute_search` posts back through the channel). Mirrors `make_layout`
-/// exactly except it keeps `_rx` alive and hands it to the caller.
-fn make_layout_with_rx(
-    sandbox: Sandbox,
-) -> (BrowserLayout, Sandbox, tokio::sync::mpsc::Receiver<Event>) {
-    let (rx, handler) = EventHandler::with_receiver(
-        EventHandlerConfig::default()
-            .tick_rate(Duration::from_millis(100))
-            .enable_mouse(false)
-            .enable_paste(false),
-    )
-    .expect("event handler");
-
-    let Sandbox { db, _tmp, _guard } = sandbox;
-    let layout = BrowserLayout::new(db, handler);
     let db_path = _tmp.path().join("repo").join(".codemark").join("codemark.db");
     let db = Database::open(&db_path).expect("reopen sandbox database");
     (layout, Sandbox { db, _tmp, _guard }, rx)
@@ -347,6 +336,47 @@ async fn search_filter_survives_focus_regained() {
     assert!(
         after.contains("config.rs") && !after.contains("of 2"),
         "search filter should survive FocusGained (the full list must not return); got:\n{after}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn search_results_reconcile_with_db_on_focus_regained() {
+    // Two bookmarks match a "config" path search; one of them will be deleted
+    // out from under the TUI (as the CLI might while the terminal is unfocused).
+    let sandbox = Sandbox::with_bookmarks([
+        sample_bookmark("bm-1", "fn main", "src/main.rs"),
+        sample_bookmark("bm-2", "struct Config", "src/config.rs"),
+        sample_bookmark("bm-3", "fn helper", "src/config_helper.rs"),
+    ]);
+    sandbox.write_repo_file("src/main.rs", "fn main() {\n    println!(\"hi\");\n}\n");
+    sandbox.write_repo_file("src/config.rs", "struct Config {\n    name: String,\n}\n");
+    sandbox.write_repo_file("src/config_helper.rs", "fn helper() {}\n");
+    let (mut layout, sandbox, mut rx) = make_layout_with_rx(sandbox);
+
+    // Run the search; both config paths match (FTS matches on file_path).
+    key_char(&mut layout, 's');
+    type_str(&mut layout, "config");
+    key_code(&mut layout, KeyCode::Enter);
+    pump_pending_events(&mut layout, &mut rx).await;
+
+    let filtered = render_to_string(&layout, 100, 30);
+    assert!(
+        filtered.contains("config.rs") && filtered.contains("config_helper.rs"),
+        "both config bookmarks should show before the deletion; got:\n{filtered}"
+    );
+
+    // Delete one match while the TUI is "unfocused", then regain focus. The
+    // preserved rows still list the deleted bookmark, but the refocus reconcile
+    // re-runs the search against the current DB, so the stale row disappears
+    // instead of lingering until the next full refresh.
+    assert!(sandbox.db.delete_bookmark("bm-3").expect("delete bookmark"));
+    layout.handle_event(&Event::FocusGained);
+    pump_pending_events(&mut layout, &mut rx).await;
+
+    let after = render_to_string(&layout, 100, 30);
+    assert!(
+        after.contains("config.rs") && !after.contains("config_helper.rs"),
+        "the deleted bookmark should be reconciled away after refocus; got:\n{after}"
     );
 }
 

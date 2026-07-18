@@ -183,6 +183,12 @@ impl BrowserLayout {
                 // reverts to unfiltered). Preserve the search-active panel instead,
                 // so the filtered results stay put with no full-list flicker.
                 self.refresh_all_panels_preserving_search();
+                // Preserving keeps the rows captured before we lost focus, which
+                // may now be stale (a bookmark/collection deleted or renamed via
+                // the CLI while unfocused). Re-run the search to reconcile them
+                // with the current DB; the preserved rows bridge the gap until the
+                // fresh results arrive, so nothing flickers.
+                self.maybe_reconcile_active_search();
                 Some(true)
             }
             Event::HealComplete(msg, success) => {
@@ -275,6 +281,20 @@ impl BrowserLayout {
         }
     }
 
+    /// Whether the results now being applied belong to a background reconcile
+    /// (a refocus re-run) rather than a user-initiated search, clearing the
+    /// marker so the next result set is treated normally. Only meaningful for
+    /// the current `active_search_request`, which is the only request whose
+    /// results reach the `apply_*` methods.
+    fn take_search_reconcile(&mut self) -> bool {
+        if self.search_reconcile_request == Some(self.active_search_request) {
+            self.search_reconcile_request = None;
+            true
+        } else {
+            false
+        }
+    }
+
     /// Populate the bookmarks panel from search results.
     ///
     /// Sets health to `Unknown` initially for instant rendering, then spawns
@@ -320,20 +340,34 @@ impl BrowserLayout {
             })
             .collect();
 
+        // A reconcile (refocus re-run) refreshes an already-visible narrowed
+        // list, so it keeps the user's current selection and focus instead of
+        // resetting to the top row and jumping onto the results list.
+        let reconcile = self.take_search_reconcile();
         if let Some(TabContent::List(p)) = self.left_pane.content_panel.panels.get_mut(0) {
             p.set_items(items);
-            p.set_selected(0);
+            if !reconcile {
+                p.set_selected(0);
+            }
             // Flag the panel as showing search results so its tab title gets a
             // filter glyph, like any other narrowed list.
             p.set_search_active(true);
-            self.left_pane.content_panel.tabs.set_selected(0);
+            if !reconcile {
+                self.left_pane.content_panel.tabs.set_selected(0);
+            }
         }
 
-        // Move focus off the search bar onto the results list and refresh the
-        // preview so it reflects the newly selected result instead of lingering
-        // on whatever was previewed before the search ran.
-        self.set_focus(FocusArea::ContentPanel);
-        self.update_content_live_preview();
+        if reconcile {
+            // Selection may have landed on a different row after the DB changed;
+            // refresh the preview to match, but leave focus where the user left it.
+            self.update_content_live_preview();
+        } else {
+            // Move focus off the search bar onto the results list and refresh the
+            // preview so it reflects the newly selected result instead of lingering
+            // on whatever was previewed before the search ran.
+            self.set_focus(FocusArea::ContentPanel);
+            self.update_content_live_preview();
+        }
 
         // Spawn background task to resolve health for all bookmarks
         self.spawn_live_health_task(bookmarks.to_vec());
@@ -383,14 +417,22 @@ impl BrowserLayout {
             })
             .collect();
 
+        // A reconcile (refocus re-run) refreshes an already-visible narrowed
+        // list, so it keeps the current selection and active tab rather than
+        // resetting to the top row.
+        let reconcile = self.take_search_reconcile();
         let idx = ContentTab::Collections.index();
         if let Some(TabContent::List(p)) = self.left_pane.content_panel.panels.get_mut(idx) {
             p.set_items(items);
-            p.set_selected(0);
+            if !reconcile {
+                p.set_selected(0);
+            }
             // Flag the panel as showing search results so its tab title gets a
             // filter glyph, like any other narrowed list.
             p.set_search_active(true);
-            self.left_pane.content_panel.tabs.set_selected(idx);
+            if !reconcile {
+                self.left_pane.content_panel.tabs.set_selected(idx);
+            }
         }
 
         // Refresh the right-pane overview for the newly selected collection.
