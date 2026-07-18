@@ -172,14 +172,15 @@ impl BrowserLayout {
             }
             Event::SearchError { request_id, msg } => {
                 if let Some(idx) = self.take_reconcile_target(*request_id) {
-                    // A background refocus reconcile failed. Don't surface an error
-                    // the user didn't trigger; instead fall back to refreshing the
-                    // panel from current DB records so at least deleted/renamed rows
-                    // are reconciled rather than left silently stale.
-                    self.left_pane.search.set_loading(false);
+                    // A background semantic reconcile failed. Refresh the panel from
+                    // current DB records so deleted/renamed rows still reconcile, but
+                    // the semantic membership can't be recomputed, so surface the
+                    // error rather than presenting the id-only refresh as a fresh
+                    // reconcile — the shown results may no longer match the query.
                     if self.refresh_search_panel_by_id(idx) {
                         self.update_content_live_preview();
                     }
+                    self.left_pane.search.set_error(format!("Search refresh failed: {msg}"));
                 } else if *request_id == self.active_search_request {
                     self.left_pane.search.set_error(msg.clone());
                 }
