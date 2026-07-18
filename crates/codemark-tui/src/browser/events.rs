@@ -165,7 +165,14 @@ impl BrowserLayout {
             }
             Event::SearchError { request_id, msg } => {
                 if *request_id == self.active_search_request {
-                    self.left_pane.search.set_error(msg.clone());
+                    if self.take_reconcile_search() {
+                        // A background refocus reconcile failed; keep the preserved
+                        // rows and just stop the spinner rather than surfacing an
+                        // error the user didn't trigger.
+                        self.left_pane.search.set_loading(false);
+                    } else {
+                        self.left_pane.search.set_error(msg.clone());
+                    }
                 }
                 Some(true)
             }
@@ -326,6 +333,19 @@ impl BrowserLayout {
             .collect()
     }
 
+    /// Whether the results now arriving belong to a background reconcile re-run
+    /// (a refocus refreshing a search-active panel) rather than a user-initiated
+    /// search, clearing the marker so the next result set is treated normally.
+    /// Only the current `active_search_request` reaches the `apply_*` methods.
+    fn take_reconcile_search(&mut self) -> bool {
+        if self.reconcile_search_request == Some(self.active_search_request) {
+            self.reconcile_search_request = None;
+            true
+        } else {
+            false
+        }
+    }
+
     /// Populate the bookmarks panel from search results.
     ///
     /// Sets health to `Unknown` initially for instant rendering, then spawns
@@ -336,6 +356,16 @@ impl BrowserLayout {
         self.left_pane.search.set_loading(false);
 
         let items = Self::build_bookmark_search_items(bookmarks);
+
+        // A reconcile re-run refreshes an already-visible narrowed list in place,
+        // keeping the user's focus and selection instead of jumping onto the
+        // results list and switching tabs like a fresh search does.
+        if self.take_reconcile_search() {
+            self.apply_reconciled_search_items(0, items);
+            self.update_content_live_preview();
+            self.spawn_live_health_task(bookmarks.to_vec());
+            return;
+        }
 
         if let Some(TabContent::List(p)) = self.left_pane.content_panel.panels.get_mut(0) {
             p.set_items(items);
@@ -356,11 +386,6 @@ impl BrowserLayout {
         self.spawn_live_health_task(bookmarks.to_vec());
     }
 
-    /// Populate the collections panel from collection search results.
-    ///
-    /// Mirrors [`apply_search_results`], but targets the Collections tab and
-    /// renders collection rows (name, branch, step count, health) consistent
-    /// with the normal collection list.
     /// Build the collection-search list rows (name, branch, step count, health)
     /// consistent with the normal collection list. Shared by the search-apply
     /// and refocus reconcile paths.
@@ -390,12 +415,29 @@ impl BrowserLayout {
             .collect()
     }
 
+    /// Populate the collections panel from collection search results.
+    ///
+    /// Mirrors [`Self::apply_search_results`], but targets the Collections tab
+    /// and renders collection rows (name, branch, step count, health) consistent
+    /// with the normal collection list.
     fn apply_collection_search_results(
         &mut self,
         collections: &[(codemark_core::engine::bookmark::Collection, usize)],
     ) {
         // The search finished, so stop the loading spinner.
         self.left_pane.search.set_loading(false);
+
+        let items = Self::build_collection_search_items(collections);
+
+        // A reconcile re-run refreshes the Collections panel in place, keeping
+        // focus and selection. It applies even when Collections isn't the active
+        // tab (the user may have switched away before the terminal refocused),
+        // so it must run before the tab-active guard below.
+        if self.take_reconcile_search() {
+            self.apply_reconciled_search_items(ContentTab::Collections.index(), items);
+            self.update_content_live_preview();
+            return;
+        }
 
         // A semantic collection search runs async; by the time it returns the
         // user may have switched away from the Collections tab. Applying now
@@ -406,8 +448,6 @@ impl BrowserLayout {
         {
             return;
         }
-
-        let items = Self::build_collection_search_items(collections);
 
         let idx = ContentTab::Collections.index();
         if let Some(TabContent::List(p)) = self.left_pane.content_panel.panels.get_mut(idx) {

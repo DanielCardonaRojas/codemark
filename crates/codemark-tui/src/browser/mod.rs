@@ -182,6 +182,11 @@ pub struct BrowserLayout {
     /// changed while unfocused — not just dropping ones that were deleted. Only
     /// meaningful while the matching panel `is_search_active`.
     search_contexts: [Option<(String, SearchMode)>; 2],
+    /// When set, this search request id is a background *reconcile* re-run
+    /// (a refocus refreshing a semantic result set against the current DB) whose
+    /// results are applied in place, keeping focus and selection, rather than
+    /// jumping onto the results list like a user-initiated search.
+    reconcile_search_request: Option<u64>,
     /// A debounced, not-yet-spawned preview request: (bookmark_id, label, due tick).
     /// Coalesces rapid scrolling into a single resolve once movement settles.
     pending_preview: Option<(String, Option<String>, usize)>,
@@ -243,6 +248,7 @@ impl BrowserLayout {
             active_preview_request: 0,
             active_search_request: 0,
             search_contexts: [None, None],
+            reconcile_search_request: None,
             pending_preview: None,
             inflight_preview: None,
             dialog: None,
@@ -474,6 +480,9 @@ impl BrowserLayout {
             return;
         }
 
+        // A user-initiated search is never a reconcile; drop any pending marker
+        // so its (superseded) results aren't mistaken for an in-place refresh.
+        self.reconcile_search_request = None;
         self.active_search_request = self.active_search_request.wrapping_add(1);
         let request_id = self.active_search_request;
 
@@ -491,7 +500,15 @@ impl BrowserLayout {
             return;
         }
         self.search_contexts[ContentTab::Bookmarks.index()] = Some((query.clone(), mode));
+        self.execute_bookmark_search(request_id, mode, query);
+    }
 
+    /// Execute a bookmark search for `query`, emitting `SearchResults` (or
+    /// `SearchError`). FTS runs synchronously (a fast `LIKE` scan); semantic
+    /// search runs on a blocking task since it loads an embedding model. Split
+    /// out of [`Self::execute_search`] so a refocus reconcile can re-run the
+    /// bookmark search directly, independent of the selected tab.
+    fn execute_bookmark_search(&mut self, request_id: u64, mode: SearchMode, query: String) {
         let db_path = self.db.path().to_path_buf();
         let event_handler = self.event_handler.clone();
 
@@ -1246,12 +1263,13 @@ impl BrowserLayout {
     /// switched to another before the terminal regained focus.
     ///
     /// A preserved row references a record captured before focus was lost. If
-    /// the CLI changed the DB while unfocused, an FTS result set is re-run so
-    /// rows that were renamed or edited pick up fresh text (and rows that no
-    /// longer match, or were deleted, drop out). A semantic result set is only
-    /// pruned of deleted rows, since re-running its embedding search on every
-    /// refocus would reload the model and stall the UI. Reconciling happens in
-    /// place (selection preserved, focus untouched), so the narrowed list stays.
+    /// the CLI changed the DB while unfocused, the originating search is re-run
+    /// so renamed/edited rows pick up fresh text and rows that no longer match
+    /// (or were deleted) drop out. FTS re-runs synchronously and applies in
+    /// place; semantic re-runs on a background task (its membership can't be
+    /// recomputed without re-embedding), keeping the preserved rows visible with
+    /// a spinner until the fresh set lands. Reconciling preserves selection and
+    /// leaves focus untouched, so the narrowed list stays put.
     pub fn reconcile_preserved_search_rows(&mut self) {
         let mut changed = false;
         for tab in [ContentTab::Bookmarks, ContentTab::Collections] {
@@ -1286,12 +1304,29 @@ impl BrowserLayout {
                         changed |= self.apply_reconciled_search_items(idx, items);
                     }
                 }
-                // Semantic (or an unexpectedly missing context): re-running the
-                // embedding search on every refocus would reload the model and
-                // stall the UI, so keep the matched set but rebuild each surviving
-                // row from its current DB record (dropping rows whose record was
-                // deleted). That refreshes renamed/edited rows without a re-search.
-                _ => {
+                // Semantic membership can't be recomputed without re-embedding
+                // the query, so re-run the search on a background task. Results
+                // arrive via `SearchResults`/`CollectionSearchResults` and, thanks
+                // to the reconcile marker, are applied in place (see
+                // `apply_search_results`). The preserved rows stay visible with a
+                // spinner until the fresh set lands, so nothing flickers.
+                Some((query, SearchMode::Semantic)) => {
+                    let query = query.clone();
+                    self.active_search_request = self.active_search_request.wrapping_add(1);
+                    let request_id = self.active_search_request;
+                    self.reconcile_search_request = Some(request_id);
+                    self.left_pane.search.set_loading(true);
+                    match tab {
+                        ContentTab::Collections => {
+                            self.execute_collection_search(request_id, SearchMode::Semantic, query)
+                        }
+                        _ => self.execute_bookmark_search(request_id, SearchMode::Semantic, query),
+                    }
+                    // Applied asynchronously; don't touch `changed`/preview here.
+                }
+                // No recorded context (shouldn't happen while search-active):
+                // fall back to dropping rows whose record no longer exists.
+                None => {
                     let row_ids: Vec<String> = self
                         .left_pane
                         .content_panel
