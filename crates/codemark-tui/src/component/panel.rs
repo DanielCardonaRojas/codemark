@@ -967,23 +967,6 @@ impl Panel {
         }
     }
 
-    /// Drop rows whose `user_data` fails `keep`, preserving the `search_active`
-    /// marking and adjusting the selection if it falls out of bounds. Used to
-    /// prune preserved search results whose underlying record was removed from
-    /// the DB (e.g. a bookmark deleted via the CLI while the TUI was unfocused)
-    /// without rebuilding the whole list. Returns whether any rows were dropped.
-    pub fn retain_search_items(&mut self, keep: impl Fn(Option<&str>) -> bool) -> bool {
-        let before = self.all_items.len();
-        self.all_items.retain(|item| keep(item.user_data.as_deref()));
-        if self.all_items.len() == before {
-            return false;
-        }
-        // Rebuild the visible list from the survivors; apply_filter also clamps
-        // the selection to the new bounds. `search_active` is left untouched.
-        self.apply_filter();
-        true
-    }
-
     /// Update the items in the panel, preserving selection if possible.
     pub fn set_items(&mut self, items: Vec<PanelItem>) {
         let selected_text = self

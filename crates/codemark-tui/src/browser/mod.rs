@@ -1282,38 +1282,51 @@ impl BrowserLayout {
                         }
                         ContentTab::Tours => continue,
                     };
-                    if let Ok(items) = items
-                        && let Some(p) = self.left_pane.content_panel.get_list_panel_mut(idx)
-                    {
-                        // `set_items` keeps the selection by row text and clears
-                        // the search flag, so re-assert it to keep the tab glyph.
-                        p.set_items(items);
-                        p.set_search_active(true);
-                        changed = true;
+                    if let Ok(items) = items {
+                        changed |= self.apply_reconciled_search_items(idx, items);
                     }
                 }
-                // Semantic (or an unexpectedly missing context): only drop rows
-                // whose record no longer exists, without re-running the search.
+                // Semantic (or an unexpectedly missing context): re-running the
+                // embedding search on every refocus would reload the model and
+                // stall the UI, so keep the matched set but rebuild each surviving
+                // row from its current DB record (dropping rows whose record was
+                // deleted). That refreshes renamed/edited rows without a re-search.
                 _ => {
-                    let ids: std::collections::HashSet<String> = match tab {
-                        ContentTab::Collections => self
-                            .db
-                            .list_collections()
-                            .unwrap_or_default()
-                            .into_iter()
-                            .map(|(c, _)| c.id)
-                            .collect(),
-                        _ => self
-                            .db
-                            .list_bookmarks(&BookmarkFilter::default())
-                            .unwrap_or_default()
-                            .into_iter()
-                            .map(|b| b.id)
-                            .collect(),
+                    let row_ids: Vec<String> = self
+                        .left_pane
+                        .content_panel
+                        .get_list_panel_mut(idx)
+                        .map(|p| {
+                            p.all_items().iter().filter_map(|i| i.user_data.clone()).collect()
+                        })
+                        .unwrap_or_default();
+
+                    let items = match tab {
+                        ContentTab::Collections => {
+                            let cols: Vec<_> = row_ids
+                                .iter()
+                                .filter_map(|id| {
+                                    let c = self.db.get_collection_by_id(id).ok().flatten()?;
+                                    let count = self
+                                        .db
+                                        .list_bookmarks_in_collection(&c.id)
+                                        .map(|b| b.len())
+                                        .unwrap_or(0);
+                                    Some((c, count))
+                                })
+                                .collect();
+                            Self::build_collection_search_items(&cols)
+                        }
+                        _ => {
+                            let bms: Vec<_> = row_ids
+                                .iter()
+                                .filter_map(|id| self.db.get_bookmark(id).ok().flatten())
+                                .collect();
+                            Self::build_bookmark_search_items(&bms)
+                        }
                     };
-                    if let Some(p) = self.left_pane.content_panel.get_list_panel_mut(idx) {
-                        changed |= p.retain_search_items(|id| id.is_some_and(|id| ids.contains(id)));
-                    }
+
+                    changed |= self.apply_reconciled_search_items(idx, items);
                 }
             }
         }
@@ -1323,6 +1336,26 @@ impl BrowserLayout {
         if changed {
             self.update_content_live_preview();
         }
+    }
+
+    /// Replace a content panel's rows with reconciled search results, keeping the
+    /// panel flagged as search-active and re-pinning the selection by the row's
+    /// `user_data` id. Pinning by id (rather than letting `set_items` restore by
+    /// display text) avoids drifting the selection onto a different row that
+    /// happens to share a label. Returns whether the panel existed.
+    fn apply_reconciled_search_items(&mut self, idx: usize, items: Vec<PanelItem>) -> bool {
+        let Some(p) = self.left_pane.content_panel.get_list_panel_mut(idx) else {
+            return false;
+        };
+        let selected_id = p.selected().and_then(|i| i.user_data.clone());
+        p.set_items(items);
+        // `set_items` clears the search-results flag, so re-assert it to keep the
+        // tab's filter glyph.
+        p.set_search_active(true);
+        if let Some(id) = selected_id {
+            p.select_by_user_data(&id);
+        }
+        true
     }
 
     /// Shared body for the two refresh entry points. When `preserve_search` is
