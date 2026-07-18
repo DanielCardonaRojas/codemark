@@ -421,6 +421,45 @@ async fn search_reconcile_prunes_results_on_an_inactive_tab() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn search_reconcile_drops_rows_that_no_longer_match() {
+    // A preserved row whose bookmark still exists (same id) but was edited to no
+    // longer match the query must drop out after refocus. This needs a real
+    // re-run of the search, not just an existence check on the row's id.
+    let sandbox = Sandbox::with_bookmarks([
+        sample_bookmark("bm-1", "fn main", "src/main.rs"),
+        sample_bookmark("bm-2", "struct Config", "src/config.rs"),
+    ]);
+    sandbox.write_repo_file("src/main.rs", "fn main() {\n    println!(\"hi\");\n}\n");
+    sandbox.write_repo_file("src/config.rs", "struct Config {\n    name: String,\n}\n");
+    let (mut layout, sandbox, mut rx) = make_layout_with_rx(sandbox);
+
+    key_char(&mut layout, 's');
+    type_str(&mut layout, "config");
+    key_code(&mut layout, KeyCode::Enter);
+    pump_pending_events(&mut layout, &mut rx).await;
+
+    let filtered = render_to_string(&layout, 100, 30);
+    assert!(filtered.contains("config.rs"), "search should show the match; got:\n{filtered}");
+
+    // "Rename" bm-2's path so it no longer matches "config" (same id, new path),
+    // as an edit through the CLI might, then regain focus. The row's id still
+    // exists, so a delete-only reconcile would keep it — but re-running the FTS
+    // search finds no match, so the stale row must disappear.
+    assert!(sandbox.db.delete_bookmark("bm-2").expect("delete bookmark"));
+    sandbox
+        .db
+        .insert_bookmark(&sample_bookmark("bm-2", "struct Config", "src/settings.rs"))
+        .expect("reinsert renamed bookmark");
+    layout.handle_event(&Event::FocusGained);
+
+    let after = render_to_string(&layout, 100, 30);
+    assert!(
+        !after.contains("config.rs"),
+        "a row that no longer matches the query should be reconciled away; got:\n{after}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn remote_tour_overview_survives_a_panel_refresh() {
     use codemark_core::sync::RemoteTourSummary;
 

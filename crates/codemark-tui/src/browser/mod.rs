@@ -175,6 +175,13 @@ pub struct BrowserLayout {
     active_preview_request: u64,
     /// ID of the most recent search request, used to discard stale background results.
     pub active_search_request: u64,
+    /// The query and mode that produced the search results currently shown in
+    /// each content panel, indexed by [`ContentTab`] (`Bookmarks`, `Collections`).
+    /// Recorded when a search is dispatched so a refocus reconcile can re-run the
+    /// originating search against the current DB, refreshing rows whose record
+    /// changed while unfocused — not just dropping ones that were deleted. Only
+    /// meaningful while the matching panel `is_search_active`.
+    search_contexts: [Option<(String, SearchMode)>; 2],
     /// A debounced, not-yet-spawned preview request: (bookmark_id, label, due tick).
     /// Coalesces rapid scrolling into a single resolve once movement settles.
     pending_preview: Option<(String, Option<String>, usize)>,
@@ -235,6 +242,7 @@ impl BrowserLayout {
             preview_seq: 0,
             active_preview_request: 0,
             active_search_request: 0,
+            search_contexts: [None, None],
             pending_preview: None,
             inflight_preview: None,
             dialog: None,
@@ -473,13 +481,16 @@ impl BrowserLayout {
 
         // The active Content panel tab decides what the query searches: the
         // Collections tab searches collections (name/description/tags), every
-        // other tab searches bookmarks.
+        // other tab searches bookmarks. Record the query+mode against the target
+        // panel so a later refocus reconcile can re-run this exact search.
         if let Some(ContentTab::Collections) =
             ContentTab::from_index(self.left_pane.content_panel.tabs.selected_index())
         {
+            self.search_contexts[ContentTab::Collections.index()] = Some((query.clone(), mode));
             self.execute_collection_search(request_id, mode, query);
             return;
         }
+        self.search_contexts[ContentTab::Bookmarks.index()] = Some((query.clone(), mode));
 
         let db_path = self.db.path().to_path_buf();
         let event_handler = self.event_handler.clone();
@@ -1229,67 +1240,87 @@ impl BrowserLayout {
         self.refresh_all_panels_inner(true);
     }
 
-    /// After a search-preserving refresh, drop any preserved search rows whose
-    /// underlying bookmark or collection no longer exists in the DB, across
-    /// *every* content panel showing search results — not just the selected tab,
-    /// since the user may have searched one tab and switched to another before
-    /// the terminal regained focus.
+    /// After a search-preserving refresh, reconcile each content panel showing
+    /// search results with the current DB — across *every* search-active panel,
+    /// not just the selected tab, since the user may have searched one tab and
+    /// switched to another before the terminal regained focus.
     ///
-    /// A preserved row references a record captured before focus was lost; if
-    /// the CLI deleted that record while unfocused, selecting the stale row
-    /// would open a missing item. Pruning it in place keeps the narrowed list
-    /// (no flicker) while removing rows that no longer resolve. Health changes
-    /// are already reconciled by the live-health task the refresh spawns.
+    /// A preserved row references a record captured before focus was lost. If
+    /// the CLI changed the DB while unfocused, an FTS result set is re-run so
+    /// rows that were renamed or edited pick up fresh text (and rows that no
+    /// longer match, or were deleted, drop out). A semantic result set is only
+    /// pruned of deleted rows, since re-running its embedding search on every
+    /// refocus would reload the model and stall the UI. Reconciling happens in
+    /// place (selection preserved, focus untouched), so the narrowed list stays.
     pub fn reconcile_preserved_search_rows(&mut self) {
-        use std::collections::HashSet;
+        let mut changed = false;
+        for tab in [ContentTab::Bookmarks, ContentTab::Collections] {
+            let idx = tab.index();
+            let search_active = self
+                .left_pane
+                .content_panel
+                .get_list_panel_mut(idx)
+                .is_some_and(|p| p.is_search_active());
+            if !search_active {
+                continue;
+            }
 
-        let bookmarks_narrowed = self
-            .left_pane
-            .content_panel
-            .get_list_panel_mut(ContentTab::Bookmarks.index())
-            .is_some_and(|p| p.is_search_active());
-        let collections_narrowed = self
-            .left_pane
-            .content_panel
-            .get_list_panel_mut(ContentTab::Collections.index())
-            .is_some_and(|p| p.is_search_active());
-        if !bookmarks_narrowed && !collections_narrowed {
-            return;
-        }
-
-        let mut pruned = false;
-        if bookmarks_narrowed {
-            let ids: HashSet<String> = self
-                .db
-                .list_bookmarks(&BookmarkFilter::default())
-                .unwrap_or_default()
-                .into_iter()
-                .map(|b| b.id)
-                .collect();
-            if let Some(p) =
-                self.left_pane.content_panel.get_list_panel_mut(ContentTab::Bookmarks.index())
-            {
-                pruned |= p.retain_search_items(|id| id.is_some_and(|id| ids.contains(id)));
+            match &self.search_contexts[idx] {
+                // FTS is cheap to re-run, so refresh the whole result set.
+                Some((query, SearchMode::Fts)) => {
+                    let query = query.clone();
+                    let items = match tab {
+                        ContentTab::Bookmarks => self
+                            .db
+                            .search_bookmarks(Some(&query), None, None, None, None, None, None)
+                            .map(|bms| Self::build_bookmark_search_items(&bms)),
+                        ContentTab::Collections => {
+                            self.db.search_collections(Some(&query), None).map(|mut cols| {
+                                cols.truncate(SEARCH_RESULT_LIMIT);
+                                Self::build_collection_search_items(&cols)
+                            })
+                        }
+                        ContentTab::Tours => continue,
+                    };
+                    if let Ok(items) = items
+                        && let Some(p) = self.left_pane.content_panel.get_list_panel_mut(idx)
+                    {
+                        // `set_items` keeps the selection by row text and clears
+                        // the search flag, so re-assert it to keep the tab glyph.
+                        p.set_items(items);
+                        p.set_search_active(true);
+                        changed = true;
+                    }
+                }
+                // Semantic (or an unexpectedly missing context): only drop rows
+                // whose record no longer exists, without re-running the search.
+                _ => {
+                    let ids: std::collections::HashSet<String> = match tab {
+                        ContentTab::Collections => self
+                            .db
+                            .list_collections()
+                            .unwrap_or_default()
+                            .into_iter()
+                            .map(|(c, _)| c.id)
+                            .collect(),
+                        _ => self
+                            .db
+                            .list_bookmarks(&BookmarkFilter::default())
+                            .unwrap_or_default()
+                            .into_iter()
+                            .map(|b| b.id)
+                            .collect(),
+                    };
+                    if let Some(p) = self.left_pane.content_panel.get_list_panel_mut(idx) {
+                        changed |= p.retain_search_items(|id| id.is_some_and(|id| ids.contains(id)));
+                    }
+                }
             }
         }
-        if collections_narrowed {
-            let ids: HashSet<String> = self
-                .db
-                .list_collections()
-                .unwrap_or_default()
-                .into_iter()
-                .map(|(c, _)| c.id)
-                .collect();
-            if let Some(p) =
-                self.left_pane.content_panel.get_list_panel_mut(ContentTab::Collections.index())
-            {
-                pruned |= p.retain_search_items(|id| id.is_some_and(|id| ids.contains(id)));
-            }
-        }
 
-        // Pruning may have moved the selection off the deleted row, so refresh
+        // Reconciling may have moved the selection off a removed row, so refresh
         // the preview to match what is now selected.
-        if pruned {
+        if changed {
             self.update_content_live_preview();
         }
     }

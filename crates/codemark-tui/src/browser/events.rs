@@ -281,16 +281,15 @@ impl BrowserLayout {
         }
     }
 
-    /// Populate the bookmarks panel from search results.
-    ///
-    /// Sets health to `Unknown` initially for instant rendering, then spawns
-    /// a background task to resolve all bookmarks and send `LiveHealthBatch`
-    /// events that progressively update the dots.
-    fn apply_search_results(&mut self, bookmarks: &[codemark_core::engine::bookmark::Bookmark]) {
-        // The search finished, so stop the loading spinner.
-        self.left_pane.search.set_loading(false);
-
-        let items: Vec<PanelItem> = bookmarks
+    /// Build the bookmark-search list rows for a set of bookmarks, formatted to
+    /// match the normal bookmark list (symbol summary as emphasis, shortened
+    /// path, node icon). Health starts as `Unknown`; callers resolve it via a
+    /// background live-health task. Shared by the search-apply and refocus
+    /// reconcile paths.
+    pub(super) fn build_bookmark_search_items(
+        bookmarks: &[codemark_core::engine::bookmark::Bookmark],
+    ) -> Vec<PanelItem> {
+        bookmarks
             .iter()
             .map(|bm| {
                 let summary_info = bm
@@ -324,7 +323,19 @@ impl BrowserLayout {
 
                 item
             })
-            .collect();
+            .collect()
+    }
+
+    /// Populate the bookmarks panel from search results.
+    ///
+    /// Sets health to `Unknown` initially for instant rendering, then spawns
+    /// a background task to resolve all bookmarks and send `LiveHealthBatch`
+    /// events that progressively update the dots.
+    fn apply_search_results(&mut self, bookmarks: &[codemark_core::engine::bookmark::Bookmark]) {
+        // The search finished, so stop the loading spinner.
+        self.left_pane.search.set_loading(false);
+
+        let items = Self::build_bookmark_search_items(bookmarks);
 
         if let Some(TabContent::List(p)) = self.left_pane.content_panel.panels.get_mut(0) {
             p.set_items(items);
@@ -350,26 +361,15 @@ impl BrowserLayout {
     /// Mirrors [`apply_search_results`], but targets the Collections tab and
     /// renders collection rows (name, branch, step count, health) consistent
     /// with the normal collection list.
-    fn apply_collection_search_results(
-        &mut self,
+    /// Build the collection-search list rows (name, branch, step count, health)
+    /// consistent with the normal collection list. Shared by the search-apply
+    /// and refocus reconcile paths.
+    pub(super) fn build_collection_search_items(
         collections: &[(codemark_core::engine::bookmark::Collection, usize)],
-    ) {
+    ) -> Vec<PanelItem> {
         use codemark_core::engine::bookmark::CollectionHealth;
 
-        // The search finished, so stop the loading spinner.
-        self.left_pane.search.set_loading(false);
-
-        // A semantic collection search runs async; by the time it returns the
-        // user may have switched away from the Collections tab. Applying now
-        // would yank them back, so discard results unless Collections is still
-        // the active Content tab. (request_id only guards superseded searches.)
-        if ContentTab::from_index(self.left_pane.content_panel.tabs.selected_index())
-            != Some(ContentTab::Collections)
-        {
-            return;
-        }
-
-        let items: Vec<PanelItem> = collections
+        collections
             .iter()
             .map(|(c, count)| {
                 let health = match c.health {
@@ -387,7 +387,27 @@ impl BrowserLayout {
                     .published(c.published_at.is_some())
                     .user_data(c.id.clone())
             })
-            .collect();
+            .collect()
+    }
+
+    fn apply_collection_search_results(
+        &mut self,
+        collections: &[(codemark_core::engine::bookmark::Collection, usize)],
+    ) {
+        // The search finished, so stop the loading spinner.
+        self.left_pane.search.set_loading(false);
+
+        // A semantic collection search runs async; by the time it returns the
+        // user may have switched away from the Collections tab. Applying now
+        // would yank them back, so discard results unless Collections is still
+        // the active Content tab. (request_id only guards superseded searches.)
+        if ContentTab::from_index(self.left_pane.content_panel.tabs.selected_index())
+            != Some(ContentTab::Collections)
+        {
+            return;
+        }
+
+        let items = Self::build_collection_search_items(collections);
 
         let idx = ContentTab::Collections.index();
         if let Some(TabContent::List(p)) = self.left_pane.content_panel.panels.get_mut(idx) {
