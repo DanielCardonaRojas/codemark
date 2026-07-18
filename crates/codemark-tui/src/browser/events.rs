@@ -152,19 +152,36 @@ impl BrowserLayout {
     fn handle_app_event(&mut self, event: &Event) -> Option<bool> {
         match event {
             Event::SearchResults { request_id, bookmarks } => {
-                if *request_id == self.active_search_request {
-                    self.apply_search_results(bookmarks);
+                // Apply the latest user search, or any in-flight reconcile re-run
+                // (which may not be the newest request when two panels reconcile
+                // at once).
+                if *request_id == self.active_search_request
+                    || self.is_reconcile_request(*request_id)
+                {
+                    self.apply_search_results(*request_id, bookmarks);
                 }
                 Some(true)
             }
             Event::CollectionSearchResults { request_id, collections } => {
-                if *request_id == self.active_search_request {
-                    self.apply_collection_search_results(collections);
+                if *request_id == self.active_search_request
+                    || self.is_reconcile_request(*request_id)
+                {
+                    self.apply_collection_search_results(*request_id, collections);
                 }
                 Some(true)
             }
             Event::SearchError { request_id, msg } => {
-                if *request_id == self.active_search_request {
+                if let Some(idx) = self.take_reconcile_target(*request_id) {
+                    // A background semantic reconcile failed. Refresh the panel from
+                    // current DB records so deleted/renamed rows still reconcile, but
+                    // the semantic membership can't be recomputed, so surface the
+                    // error rather than presenting the id-only refresh as a fresh
+                    // reconcile — the shown results may no longer match the query.
+                    if self.refresh_search_panel_by_id(idx) {
+                        self.update_content_live_preview();
+                    }
+                    self.left_pane.search.set_error(format!("Search refresh failed: {msg}"));
+                } else if *request_id == self.active_search_request {
                     self.left_pane.search.set_error(msg.clone());
                 }
                 Some(true)
@@ -176,7 +193,19 @@ impl BrowserLayout {
                     self.registry = registry;
                 }
                 self.update_tours_tab_visibility();
-                self.refresh_all_panels();
+
+                // A plain `refresh_all_panels` rebuilds the Bookmarks/Collections
+                // lists from the full DB set, which would drop any active search
+                // narrowing (the query text lingers in the search bar but the list
+                // reverts to unfiltered). Preserve the search-active panel instead,
+                // so the filtered results stay put with no full-list flicker.
+                self.refresh_all_panels_preserving_search();
+                // Preserving keeps the rows captured before we lost focus, which
+                // may reference bookmarks/collections the CLI deleted while
+                // unfocused. Prune those stale rows in place (across all
+                // search-active panels, not just the visible tab) so selecting
+                // one can't open a missing item; the narrowed list stays put.
+                self.reconcile_preserved_search_rows();
                 Some(true)
             }
             Event::HealComplete(msg, success) => {
@@ -269,16 +298,15 @@ impl BrowserLayout {
         }
     }
 
-    /// Populate the bookmarks panel from search results.
-    ///
-    /// Sets health to `Unknown` initially for instant rendering, then spawns
-    /// a background task to resolve all bookmarks and send `LiveHealthBatch`
-    /// events that progressively update the dots.
-    fn apply_search_results(&mut self, bookmarks: &[codemark_core::engine::bookmark::Bookmark]) {
-        // The search finished, so stop the loading spinner.
-        self.left_pane.search.set_loading(false);
-
-        let items: Vec<PanelItem> = bookmarks
+    /// Build the bookmark-search list rows for a set of bookmarks, formatted to
+    /// match the normal bookmark list (symbol summary as emphasis, shortened
+    /// path, node icon). Health starts as `Unknown`; callers resolve it via a
+    /// background live-health task. Shared by the search-apply and refocus
+    /// reconcile paths.
+    pub(super) fn build_bookmark_search_items(
+        bookmarks: &[codemark_core::engine::bookmark::Bookmark],
+    ) -> Vec<PanelItem> {
+        bookmarks
             .iter()
             .map(|bm| {
                 let summary_info = bm
@@ -312,7 +340,33 @@ impl BrowserLayout {
 
                 item
             })
-            .collect();
+            .collect()
+    }
+
+    /// Populate the bookmarks panel from search results.
+    ///
+    /// Sets health to `Unknown` initially for instant rendering, then spawns
+    /// a background task to resolve all bookmarks and send `LiveHealthBatch`
+    /// events that progressively update the dots.
+    fn apply_search_results(
+        &mut self,
+        request_id: u64,
+        bookmarks: &[codemark_core::engine::bookmark::Bookmark],
+    ) {
+        // The search finished, so stop the loading spinner.
+        self.left_pane.search.set_loading(false);
+
+        let items = Self::build_bookmark_search_items(bookmarks);
+
+        // A reconcile re-run refreshes an already-visible narrowed list in place,
+        // keeping the user's focus and selection instead of jumping onto the
+        // results list and switching tabs like a fresh search does.
+        if let Some(idx) = self.take_reconcile_target(request_id) {
+            self.apply_reconciled_search_items(idx, items);
+            self.update_content_live_preview();
+            self.spawn_live_health_task(bookmarks.to_vec());
+            return;
+        }
 
         if let Some(TabContent::List(p)) = self.left_pane.content_panel.panels.get_mut(0) {
             p.set_items(items);
@@ -333,31 +387,15 @@ impl BrowserLayout {
         self.spawn_live_health_task(bookmarks.to_vec());
     }
 
-    /// Populate the collections panel from collection search results.
-    ///
-    /// Mirrors [`apply_search_results`], but targets the Collections tab and
-    /// renders collection rows (name, branch, step count, health) consistent
-    /// with the normal collection list.
-    fn apply_collection_search_results(
-        &mut self,
+    /// Build the collection-search list rows (name, branch, step count, health)
+    /// consistent with the normal collection list. Shared by the search-apply
+    /// and refocus reconcile paths.
+    pub(super) fn build_collection_search_items(
         collections: &[(codemark_core::engine::bookmark::Collection, usize)],
-    ) {
+    ) -> Vec<PanelItem> {
         use codemark_core::engine::bookmark::CollectionHealth;
 
-        // The search finished, so stop the loading spinner.
-        self.left_pane.search.set_loading(false);
-
-        // A semantic collection search runs async; by the time it returns the
-        // user may have switched away from the Collections tab. Applying now
-        // would yank them back, so discard results unless Collections is still
-        // the active Content tab. (request_id only guards superseded searches.)
-        if ContentTab::from_index(self.left_pane.content_panel.tabs.selected_index())
-            != Some(ContentTab::Collections)
-        {
-            return;
-        }
-
-        let items: Vec<PanelItem> = collections
+        collections
             .iter()
             .map(|(c, count)| {
                 let health = match c.health {
@@ -375,7 +413,43 @@ impl BrowserLayout {
                     .published(c.published_at.is_some())
                     .user_data(c.id.clone())
             })
-            .collect();
+            .collect()
+    }
+
+    /// Populate the collections panel from collection search results.
+    ///
+    /// Mirrors [`Self::apply_search_results`], but targets the Collections tab
+    /// and renders collection rows (name, branch, step count, health) consistent
+    /// with the normal collection list.
+    fn apply_collection_search_results(
+        &mut self,
+        request_id: u64,
+        collections: &[(codemark_core::engine::bookmark::Collection, usize)],
+    ) {
+        // The search finished, so stop the loading spinner.
+        self.left_pane.search.set_loading(false);
+
+        let items = Self::build_collection_search_items(collections);
+
+        // A reconcile re-run refreshes the Collections panel in place, keeping
+        // focus and selection. It applies even when Collections isn't the active
+        // tab (the user may have switched away before the terminal refocused),
+        // so it must run before the tab-active guard below.
+        if let Some(idx) = self.take_reconcile_target(request_id) {
+            self.apply_reconciled_search_items(idx, items);
+            self.update_content_live_preview();
+            return;
+        }
+
+        // A semantic collection search runs async; by the time it returns the
+        // user may have switched away from the Collections tab. Applying now
+        // would yank them back, so discard results unless Collections is still
+        // the active Content tab. (request_id only guards superseded searches.)
+        if ContentTab::from_index(self.left_pane.content_panel.tabs.selected_index())
+            != Some(ContentTab::Collections)
+        {
+            return;
+        }
 
         let idx = ContentTab::Collections.index();
         if let Some(TabContent::List(p)) = self.left_pane.content_panel.panels.get_mut(idx) {

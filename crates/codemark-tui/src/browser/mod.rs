@@ -175,6 +175,20 @@ pub struct BrowserLayout {
     active_preview_request: u64,
     /// ID of the most recent search request, used to discard stale background results.
     pub active_search_request: u64,
+    /// The query and mode that produced the search results currently shown in
+    /// each content panel, indexed by [`ContentTab`] (`Bookmarks`, `Collections`).
+    /// Recorded when a search is dispatched so a refocus reconcile can re-run the
+    /// originating search against the current DB, refreshing rows whose record
+    /// changed while unfocused — not just dropping ones that were deleted. Only
+    /// meaningful while the matching panel `is_search_active`.
+    search_contexts: [Option<(String, SearchMode)>; 2],
+    /// In-flight background *reconcile* re-runs (a refocus refreshing a semantic
+    /// result set against the current DB), mapping each request id to the content
+    /// panel index it targets. Their results are applied in place — keeping focus
+    /// and selection — rather than jumping onto the results list like a user
+    /// search. A map (not a single id) so a refocus can reconcile the Bookmarks
+    /// and Collections panels concurrently without one superseding the other.
+    reconcile_search_requests: std::collections::HashMap<u64, usize>,
     /// A debounced, not-yet-spawned preview request: (bookmark_id, label, due tick).
     /// Coalesces rapid scrolling into a single resolve once movement settles.
     pending_preview: Option<(String, Option<String>, usize)>,
@@ -235,6 +249,8 @@ impl BrowserLayout {
             preview_seq: 0,
             active_preview_request: 0,
             active_search_request: 0,
+            search_contexts: [None, None],
+            reconcile_search_requests: std::collections::HashMap::new(),
             pending_preview: None,
             inflight_preview: None,
             dialog: None,
@@ -466,6 +482,9 @@ impl BrowserLayout {
             return;
         }
 
+        // A user-initiated search supersedes any in-flight reconcile; drop their
+        // markers so late results aren't mistaken for an in-place refresh.
+        self.reconcile_search_requests.clear();
         self.active_search_request = self.active_search_request.wrapping_add(1);
         let request_id = self.active_search_request;
 
@@ -473,14 +492,25 @@ impl BrowserLayout {
 
         // The active Content panel tab decides what the query searches: the
         // Collections tab searches collections (name/description/tags), every
-        // other tab searches bookmarks.
+        // other tab searches bookmarks. Record the query+mode against the target
+        // panel so a later refocus reconcile can re-run this exact search.
         if let Some(ContentTab::Collections) =
             ContentTab::from_index(self.left_pane.content_panel.tabs.selected_index())
         {
+            self.search_contexts[ContentTab::Collections.index()] = Some((query.clone(), mode));
             self.execute_collection_search(request_id, mode, query);
             return;
         }
+        self.search_contexts[ContentTab::Bookmarks.index()] = Some((query.clone(), mode));
+        self.execute_bookmark_search(request_id, mode, query);
+    }
 
+    /// Execute a bookmark search for `query`, emitting `SearchResults` (or
+    /// `SearchError`). FTS runs synchronously (a fast `LIKE` scan); semantic
+    /// search runs on a blocking task since it loads an embedding model. Split
+    /// out of [`Self::execute_search`] so a refocus reconcile can re-run the
+    /// bookmark search directly, independent of the selected tab.
+    fn execute_bookmark_search(&mut self, request_id: u64, mode: SearchMode, query: String) {
         let db_path = self.db.path().to_path_buf();
         let event_handler = self.event_handler.clone();
 
@@ -1214,7 +1244,176 @@ impl BrowserLayout {
     }
 
     /// Refresh all panels from the current active database.
+    ///
+    /// Rebuilds the content lists from the full DB set, discarding any active
+    /// search narrowing. Callers that must not drop the user's live search
+    /// (e.g. a terminal refocus) should use [`Self::refresh_all_panels_preserving_search`].
     pub fn refresh_all_panels(&mut self) {
+        self.refresh_all_panels_inner(false);
+    }
+
+    /// Like [`Self::refresh_all_panels`], but leaves a content panel that is
+    /// currently showing search results untouched, so an active search filter
+    /// survives the refresh instead of flashing back to the full list.
+    pub fn refresh_all_panels_preserving_search(&mut self) {
+        self.refresh_all_panels_inner(true);
+    }
+
+    /// After a search-preserving refresh, reconcile each content panel showing
+    /// search results with the current DB — across *every* search-active panel,
+    /// not just the selected tab, since the user may have searched one tab and
+    /// switched to another before the terminal regained focus.
+    ///
+    /// A preserved row references a record captured before focus was lost. If
+    /// the CLI changed the DB while unfocused, the originating search is re-run
+    /// so renamed/edited rows pick up fresh text and rows that no longer match
+    /// (or were deleted) drop out. FTS re-runs synchronously and applies in
+    /// place; semantic re-runs on a background task (its membership can't be
+    /// recomputed without re-embedding), keeping the preserved rows visible with
+    /// a spinner until the fresh set lands. Reconciling preserves selection and
+    /// leaves focus untouched, so the narrowed list stays put.
+    pub fn reconcile_preserved_search_rows(&mut self) {
+        let mut changed = false;
+        for tab in [ContentTab::Bookmarks, ContentTab::Collections] {
+            let idx = tab.index();
+            let search_active = self
+                .left_pane
+                .content_panel
+                .get_list_panel_mut(idx)
+                .is_some_and(|p| p.is_search_active());
+            if !search_active {
+                continue;
+            }
+
+            match &self.search_contexts[idx] {
+                // FTS is cheap to re-run, so refresh the whole result set.
+                Some((query, SearchMode::Fts)) => {
+                    let query = query.clone();
+                    let items = match tab {
+                        ContentTab::Bookmarks => self
+                            .db
+                            .search_bookmarks(Some(&query), None, None, None, None, None, None)
+                            .map(|bms| Self::build_bookmark_search_items(&bms)),
+                        ContentTab::Collections => {
+                            self.db.search_collections(Some(&query), None).map(|mut cols| {
+                                cols.truncate(SEARCH_RESULT_LIMIT);
+                                Self::build_collection_search_items(&cols)
+                            })
+                        }
+                        ContentTab::Tours => continue,
+                    };
+                    if let Ok(items) = items {
+                        changed |= self.apply_reconciled_search_items(idx, items);
+                    }
+                }
+                // Semantic membership can't be recomputed without re-embedding
+                // the query, so re-run the search on a background task. Results
+                // arrive via `SearchResults`/`CollectionSearchResults` and, thanks
+                // to the reconcile marker, are applied in place (see
+                // `apply_search_results`). The preserved rows stay visible with a
+                // spinner until the fresh set lands, so nothing flickers.
+                Some((query, SearchMode::Semantic)) => {
+                    let query = query.clone();
+                    self.active_search_request = self.active_search_request.wrapping_add(1);
+                    let request_id = self.active_search_request;
+                    self.reconcile_search_requests.insert(request_id, idx);
+                    self.left_pane.search.set_loading(true);
+                    match tab {
+                        ContentTab::Collections => {
+                            self.execute_collection_search(request_id, SearchMode::Semantic, query)
+                        }
+                        _ => self.execute_bookmark_search(request_id, SearchMode::Semantic, query),
+                    }
+                    // Applied asynchronously; don't touch `changed`/preview here.
+                }
+                // No recorded context (shouldn't happen while search-active):
+                // fall back to dropping rows whose record no longer exists.
+                None => {
+                    changed |= self.refresh_search_panel_by_id(idx);
+                }
+            }
+        }
+
+        // Reconciling may have moved the selection off a removed row, so refresh
+        // the preview to match what is now selected.
+        if changed {
+            self.update_content_live_preview();
+        }
+    }
+
+    /// Replace a content panel's rows with reconciled search results, keeping the
+    /// panel flagged as search-active and re-pinning the selection by the row's
+    /// `user_data` id. Pinning by id (rather than letting `set_items` restore by
+    /// display text) avoids drifting the selection onto a different row that
+    /// happens to share a label. Returns whether the panel existed.
+    fn apply_reconciled_search_items(&mut self, idx: usize, items: Vec<PanelItem>) -> bool {
+        let Some(p) = self.left_pane.content_panel.get_list_panel_mut(idx) else {
+            return false;
+        };
+        let selected_id = p.selected().and_then(|i| i.user_data.clone());
+        p.set_items(items);
+        // `set_items` clears the search-results flag, so re-assert it to keep the
+        // tab's filter glyph.
+        p.set_search_active(true);
+        if let Some(id) = selected_id {
+            p.select_by_user_data(&id);
+        }
+        true
+    }
+
+    /// Rebuild a search-active panel's rows from their current DB records,
+    /// dropping rows whose record no longer exists. Unlike a re-run this keeps
+    /// the matched set (it can't recompute membership), but it refreshes text and
+    /// removes deleted rows — the best available reconcile when a semantic re-run
+    /// isn't run or fails. Returns whether the panel existed.
+    fn refresh_search_panel_by_id(&mut self, idx: usize) -> bool {
+        let row_ids: Vec<String> = self
+            .left_pane
+            .content_panel
+            .get_list_panel_mut(idx)
+            .map(|p| p.all_items().iter().filter_map(|i| i.user_data.clone()).collect())
+            .unwrap_or_default();
+
+        let items = if idx == ContentTab::Collections.index() {
+            let cols: Vec<_> = row_ids
+                .iter()
+                .filter_map(|id| {
+                    let c = self.db.get_collection_by_id(id).ok().flatten()?;
+                    let count =
+                        self.db.list_bookmarks_in_collection(&c.id).map(|b| b.len()).unwrap_or(0);
+                    Some((c, count))
+                })
+                .collect();
+            Self::build_collection_search_items(&cols)
+        } else {
+            let bms: Vec<_> =
+                row_ids.iter().filter_map(|id| self.db.get_bookmark(id).ok().flatten()).collect();
+            Self::build_bookmark_search_items(&bms)
+        };
+
+        self.apply_reconciled_search_items(idx, items)
+    }
+
+    /// Whether `request_id` is an in-flight reconcile re-run (without consuming
+    /// it). Used by the event guard to accept a reconcile result even when a
+    /// newer request has advanced `active_search_request`.
+    fn is_reconcile_request(&self, request_id: u64) -> bool {
+        self.reconcile_search_requests.contains_key(&request_id)
+    }
+
+    /// If `request_id` belongs to an in-flight reconcile re-run, remove it and
+    /// return the content panel index it targets. Lets the search-result and
+    /// error handlers tell a background reconcile apart from a user search and
+    /// route it to the right panel.
+    fn take_reconcile_target(&mut self, request_id: u64) -> Option<usize> {
+        self.reconcile_search_requests.remove(&request_id)
+    }
+
+    /// Shared body for the two refresh entry points. When `preserve_search` is
+    /// set, a content panel that is displaying search results (non-empty query
+    /// and `search_active`) keeps its narrowed items rather than being rebuilt
+    /// from the full DB set.
+    fn refresh_all_panels_inner(&mut self, preserve_search: bool) {
         // 1. Update Context panel Owners (preserving active owner selections)
         let active_owners: Vec<String> = self
             .left_pane
@@ -1258,12 +1457,21 @@ impl BrowserLayout {
         // 2. Update Tags/Branches (in-place)
         self.refresh_tags();
 
-        // 3. Update Bookmarks/Collections/Tours (in-place)
+        // 3. Update Bookmarks/Collections/Tours (in-place). When preserving an
+        // active search, a panel currently showing search results is left as-is
+        // so the narrowed list doesn't flash back to the full set; stale rows are
+        // then pruned in place by `reconcile_preserved_search_rows`. The Esc
+        // "clear search" path uses the non-preserving refresh, so the full list
+        // is rebuilt there regardless of this flag.
         let (tours, collections, bookmarks) = TabbedPanel::build_content_items(&self.db);
-        if let Some(p) = self.left_pane.content_panel.get_list_panel_mut(0) {
+        if let Some(p) = self.left_pane.content_panel.get_list_panel_mut(0)
+            && !(preserve_search && p.is_search_active())
+        {
             p.set_items(bookmarks);
         }
-        if let Some(p) = self.left_pane.content_panel.get_list_panel_mut(1) {
+        if let Some(p) = self.left_pane.content_panel.get_list_panel_mut(1)
+            && !(preserve_search && p.is_search_active())
+        {
             p.set_items(collections);
         }
         if let Some(p) = self.left_pane.content_panel.get_list_panel_mut(2) {

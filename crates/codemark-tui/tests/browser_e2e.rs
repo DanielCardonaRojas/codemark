@@ -153,12 +153,23 @@ fn sample_bookmark(id: &str, query: &str, file_path: &str) -> Bookmark {
 /// runtime in scope because `BrowserLayout::new` spawns a background live-health
 /// task — annotate tests with `#[tokio::test(flavor = "multi_thread", worker_threads = 2)]`.
 fn make_layout(sandbox: Sandbox) -> (BrowserLayout, Sandbox) {
+    // Drop the receiver: tests that don't pump self-sent events don't need it.
+    let (layout, sandbox, _rx) = make_layout_with_rx(sandbox);
+    (layout, sandbox)
+}
+
+/// Like [`make_layout`], but also returns the event handler's receiver so a test
+/// can pump events the layout sends to itself (e.g. the `SearchResults` that an
+/// FTS `execute_search` posts back through the channel).
+fn make_layout_with_rx(
+    sandbox: Sandbox,
+) -> (BrowserLayout, Sandbox, tokio::sync::mpsc::Receiver<Event>) {
     // A real event handler; its background event loop polls a terminal we never
     // touch in tests, but `BrowserLayout` needs a handle to send custom events.
     // Disable mouse capture and bracketed paste: the default config writes their
     // enable escape sequences to stdout (with no matching cleanup), which would
     // leave an interactive shell in a broken state after the test process exits.
-    let (_rx, handler) = EventHandler::with_receiver(
+    let (rx, handler) = EventHandler::with_receiver(
         EventHandlerConfig::default()
             .tick_rate(Duration::from_millis(100))
             .enable_mouse(false)
@@ -174,7 +185,21 @@ fn make_layout(sandbox: Sandbox) -> (BrowserLayout, Sandbox) {
     // file, fresh connection.
     let db_path = _tmp.path().join("repo").join(".codemark").join("codemark.db");
     let db = Database::open(&db_path).expect("reopen sandbox database");
-    (layout, Sandbox { db, _tmp, _guard })
+    (layout, Sandbox { db, _tmp, _guard }, rx)
+}
+
+/// Drain any events the layout has posted to its own channel and feed them back
+/// through `handle_event`, mimicking one turn of the real event loop. The
+/// unbounded→bounded forwarding runs on a spawned task, so give it a moment to
+/// deliver before draining.
+async fn pump_pending_events(
+    layout: &mut BrowserLayout,
+    rx: &mut tokio::sync::mpsc::Receiver<Event>,
+) {
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    while let Ok(event) = rx.try_recv() {
+        layout.handle_event(&event);
+    }
 }
 
 /// Feed a single character key.
@@ -273,6 +298,165 @@ async fn filtering_narrows_the_bookmark_list() {
     layout.apply_filter("config");
 
     insta::assert_snapshot!(render_to_string(&layout, 100, 30));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn search_filter_survives_focus_regained() {
+    let sandbox = Sandbox::with_bookmarks([
+        sample_bookmark("bm-1", "fn main", "src/main.rs"),
+        sample_bookmark("bm-2", "struct Config", "src/config.rs"),
+    ]);
+    sandbox.write_repo_file("src/main.rs", "fn main() {\n    println!(\"hi\");\n}\n");
+    sandbox.write_repo_file("src/config.rs", "struct Config {\n    name: String,\n}\n");
+    let (mut layout, _sandbox, mut rx) = make_layout_with_rx(sandbox);
+
+    // Focus the search bar ('s'), type a query, and run it (Enter). The default
+    // FTS mode searches synchronously and posts the results back through the
+    // event channel, which `pump_pending_events` then applies.
+    key_char(&mut layout, 's');
+    type_str(&mut layout, "config");
+    key_code(&mut layout, KeyCode::Enter);
+    pump_pending_events(&mut layout, &mut rx).await;
+
+    // The bookmark list is narrowed to the single match: only `src/config.rs`
+    // shows and the full-list footer ("… of 2") is gone.
+    let filtered = render_to_string(&layout, 100, 30);
+    assert!(
+        filtered.contains("config.rs") && !filtered.contains("of 2"),
+        "search should narrow the bookmark list to the match; got:\n{filtered}"
+    );
+
+    // Switching to another app and back emits FocusGained, which refreshes the
+    // panels from the DB. That used to silently drop the search while its text
+    // stayed in the search bar. The search-active list is now preserved in place
+    // (no full-list rebuild, so no flicker), so the filter must still hold.
+    layout.handle_event(&Event::FocusGained);
+
+    let after = render_to_string(&layout, 100, 30);
+    assert!(
+        after.contains("config.rs") && !after.contains("of 2"),
+        "search filter should survive FocusGained (the full list must not return); got:\n{after}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn search_results_reconcile_with_db_on_focus_regained() {
+    // Two bookmarks match a "config" path search; one of them will be deleted
+    // out from under the TUI (as the CLI might while the terminal is unfocused).
+    let sandbox = Sandbox::with_bookmarks([
+        sample_bookmark("bm-1", "fn main", "src/main.rs"),
+        sample_bookmark("bm-2", "struct Config", "src/config.rs"),
+        sample_bookmark("bm-3", "fn helper", "src/config_helper.rs"),
+    ]);
+    sandbox.write_repo_file("src/main.rs", "fn main() {\n    println!(\"hi\");\n}\n");
+    sandbox.write_repo_file("src/config.rs", "struct Config {\n    name: String,\n}\n");
+    sandbox.write_repo_file("src/config_helper.rs", "fn helper() {}\n");
+    let (mut layout, sandbox, mut rx) = make_layout_with_rx(sandbox);
+
+    // Run the search; both config paths match (FTS matches on file_path).
+    key_char(&mut layout, 's');
+    type_str(&mut layout, "config");
+    key_code(&mut layout, KeyCode::Enter);
+    pump_pending_events(&mut layout, &mut rx).await;
+
+    let filtered = render_to_string(&layout, 100, 30);
+    assert!(
+        filtered.contains("config.rs") && filtered.contains("config_helper.rs"),
+        "both config bookmarks should show before the deletion; got:\n{filtered}"
+    );
+
+    // Delete one match while the TUI is "unfocused", then regain focus. The
+    // preserved rows still list the deleted bookmark, but the refocus reconcile
+    // prunes rows whose bookmark no longer exists in the DB, so the stale row
+    // disappears in place instead of lingering until the next full refresh.
+    assert!(sandbox.db.delete_bookmark("bm-3").expect("delete bookmark"));
+    layout.handle_event(&Event::FocusGained);
+
+    let after = render_to_string(&layout, 100, 30);
+    assert!(
+        after.contains("config.rs") && !after.contains("config_helper.rs"),
+        "the deleted bookmark should be reconciled away after refocus; got:\n{after}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn search_reconcile_prunes_results_on_an_inactive_tab() {
+    // Regression for the case where a search-active panel is not the tab shown
+    // at refocus: reconcile must target the panel that owns the search results,
+    // not only the selected tab.
+    let sandbox = Sandbox::with_bookmarks([
+        sample_bookmark("bm-1", "fn main", "src/main.rs"),
+        sample_bookmark("bm-2", "struct Config", "src/config.rs"),
+        sample_bookmark("bm-3", "fn helper", "src/config_helper.rs"),
+    ]);
+    sandbox.write_repo_file("src/main.rs", "fn main() {\n    println!(\"hi\");\n}\n");
+    sandbox.write_repo_file("src/config.rs", "struct Config {\n    name: String,\n}\n");
+    sandbox.write_repo_file("src/config_helper.rs", "fn helper() {}\n");
+    let (mut layout, sandbox, mut rx) = make_layout_with_rx(sandbox);
+
+    // Search bookmarks (both config paths match), which leaves focus on the
+    // Content panel with the Bookmarks tab narrowed.
+    key_char(&mut layout, 's');
+    type_str(&mut layout, "config");
+    key_code(&mut layout, KeyCode::Enter);
+    pump_pending_events(&mut layout, &mut rx).await;
+
+    // Switch to the Collections tab: the narrowed Bookmarks panel is now hidden
+    // but still search-active.
+    key_char(&mut layout, ']');
+
+    // Delete one bookmark match while unfocused, regain focus, then switch back
+    // to the (previously hidden) Bookmarks tab. The stale row must be gone: the
+    // reconcile prunes the search-active Bookmarks panel even though Collections
+    // was the selected tab when focus returned.
+    assert!(sandbox.db.delete_bookmark("bm-3").expect("delete bookmark"));
+    layout.handle_event(&Event::FocusGained);
+    key_char(&mut layout, '[');
+
+    let after = render_to_string(&layout, 100, 30);
+    assert!(
+        after.contains("config.rs") && !after.contains("config_helper.rs"),
+        "the deleted bookmark should be pruned even though its tab was hidden at refocus; got:\n{after}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn search_reconcile_drops_rows_that_no_longer_match() {
+    // A preserved row whose bookmark still exists (same id) but was edited to no
+    // longer match the query must drop out after refocus. This needs a real
+    // re-run of the search, not just an existence check on the row's id.
+    let sandbox = Sandbox::with_bookmarks([
+        sample_bookmark("bm-1", "fn main", "src/main.rs"),
+        sample_bookmark("bm-2", "struct Config", "src/config.rs"),
+    ]);
+    sandbox.write_repo_file("src/main.rs", "fn main() {\n    println!(\"hi\");\n}\n");
+    sandbox.write_repo_file("src/config.rs", "struct Config {\n    name: String,\n}\n");
+    let (mut layout, sandbox, mut rx) = make_layout_with_rx(sandbox);
+
+    key_char(&mut layout, 's');
+    type_str(&mut layout, "config");
+    key_code(&mut layout, KeyCode::Enter);
+    pump_pending_events(&mut layout, &mut rx).await;
+
+    let filtered = render_to_string(&layout, 100, 30);
+    assert!(filtered.contains("config.rs"), "search should show the match; got:\n{filtered}");
+
+    // "Rename" bm-2's path so it no longer matches "config" (same id, new path),
+    // as an edit through the CLI might, then regain focus. The row's id still
+    // exists, so a delete-only reconcile would keep it — but re-running the FTS
+    // search finds no match, so the stale row must disappear.
+    assert!(sandbox.db.delete_bookmark("bm-2").expect("delete bookmark"));
+    sandbox
+        .db
+        .insert_bookmark(&sample_bookmark("bm-2", "struct Config", "src/settings.rs"))
+        .expect("reinsert renamed bookmark");
+    layout.handle_event(&Event::FocusGained);
+
+    let after = render_to_string(&layout, 100, 30);
+    assert!(
+        !after.contains("config.rs"),
+        "a row that no longer matches the query should be reconciled away; got:\n{after}"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
