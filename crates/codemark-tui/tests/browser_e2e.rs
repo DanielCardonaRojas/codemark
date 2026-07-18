@@ -367,16 +367,56 @@ async fn search_results_reconcile_with_db_on_focus_regained() {
 
     // Delete one match while the TUI is "unfocused", then regain focus. The
     // preserved rows still list the deleted bookmark, but the refocus reconcile
-    // re-runs the search against the current DB, so the stale row disappears
-    // instead of lingering until the next full refresh.
+    // prunes rows whose bookmark no longer exists in the DB, so the stale row
+    // disappears in place instead of lingering until the next full refresh.
     assert!(sandbox.db.delete_bookmark("bm-3").expect("delete bookmark"));
     layout.handle_event(&Event::FocusGained);
-    pump_pending_events(&mut layout, &mut rx).await;
 
     let after = render_to_string(&layout, 100, 30);
     assert!(
         after.contains("config.rs") && !after.contains("config_helper.rs"),
         "the deleted bookmark should be reconciled away after refocus; got:\n{after}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn search_reconcile_prunes_results_on_an_inactive_tab() {
+    // Regression for the case where a search-active panel is not the tab shown
+    // at refocus: reconcile must target the panel that owns the search results,
+    // not only the selected tab.
+    let sandbox = Sandbox::with_bookmarks([
+        sample_bookmark("bm-1", "fn main", "src/main.rs"),
+        sample_bookmark("bm-2", "struct Config", "src/config.rs"),
+        sample_bookmark("bm-3", "fn helper", "src/config_helper.rs"),
+    ]);
+    sandbox.write_repo_file("src/main.rs", "fn main() {\n    println!(\"hi\");\n}\n");
+    sandbox.write_repo_file("src/config.rs", "struct Config {\n    name: String,\n}\n");
+    sandbox.write_repo_file("src/config_helper.rs", "fn helper() {}\n");
+    let (mut layout, sandbox, mut rx) = make_layout_with_rx(sandbox);
+
+    // Search bookmarks (both config paths match), which leaves focus on the
+    // Content panel with the Bookmarks tab narrowed.
+    key_char(&mut layout, 's');
+    type_str(&mut layout, "config");
+    key_code(&mut layout, KeyCode::Enter);
+    pump_pending_events(&mut layout, &mut rx).await;
+
+    // Switch to the Collections tab: the narrowed Bookmarks panel is now hidden
+    // but still search-active.
+    key_char(&mut layout, ']');
+
+    // Delete one bookmark match while unfocused, regain focus, then switch back
+    // to the (previously hidden) Bookmarks tab. The stale row must be gone: the
+    // reconcile prunes the search-active Bookmarks panel even though Collections
+    // was the selected tab when focus returned.
+    assert!(sandbox.db.delete_bookmark("bm-3").expect("delete bookmark"));
+    layout.handle_event(&Event::FocusGained);
+    key_char(&mut layout, '[');
+
+    let after = render_to_string(&layout, 100, 30);
+    assert!(
+        after.contains("config.rs") && !after.contains("config_helper.rs"),
+        "the deleted bookmark should be pruned even though its tab was hidden at refocus; got:\n{after}"
     );
 }
 
