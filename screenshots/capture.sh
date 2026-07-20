@@ -225,5 +225,35 @@ rendered="$RENDER_DIR/filter-thumb.tape"
 sed "s#__OUT__#$IMAGES_DIR#g" "$SHOTS_DIR/filter-thumb.tape" > "$rendered"
 ( cd "$REPO_ROOT" && PATH="$BIN_DIR:$PATH" vhs "$rendered" )
 
+# Layout demo GIF: resize/cycle panes with +/- (preview, details, left pane).
+# Same two-pass ffmpeg downscale as the other demo GIFs.
+echo "    - layout.tape (gif)"
+LAYOUT_GIF_FINAL="$IMAGES_DIR/codemark_tui_layout.gif"
+if command -v ffmpeg >/dev/null; then
+  LAYOUT_GIF_RAW="$SANDBOX/layout_raw.gif"
+  rendered="$RENDER_DIR/layout.tape"
+  sed "s#__OUT__#$SANDBOX#g" "$SHOTS_DIR/layout.tape" > "$rendered"
+  # layout.tape writes codemark_tui_layout.gif into the __OUT__ dir (sandbox).
+  ( cd "$REPO_ROOT" && PATH="$BIN_DIR:$PATH" vhs "$rendered" )
+  mv "$SANDBOX/codemark_tui_layout.gif" "$LAYOUT_GIF_RAW"
+  PAL="$SANDBOX/layout_palette.png"
+  ffmpeg -y -loglevel error -i "$LAYOUT_GIF_RAW" \
+    -vf "scale=1280:-1:flags=lanczos,palettegen=stats_mode=diff" "$PAL"
+  ffmpeg -y -loglevel error -i "$LAYOUT_GIF_RAW" -i "$PAL" \
+    -lavfi "scale=1280:-1:flags=lanczos[x];[x][1:v]paletteuse=dither=bayer:bayer_scale=3" \
+    "$LAYOUT_GIF_FINAL"
+else
+  echo "      warning: ffmpeg not found; recording GIF at full size (large file)."
+  rendered="$RENDER_DIR/layout.tape"
+  sed "s#__OUT__#$IMAGES_DIR#g" "$SHOTS_DIR/layout.tape" > "$rendered"
+  ( cd "$REPO_ROOT" && PATH="$BIN_DIR:$PATH" vhs "$rendered" )
+fi
+
+# Layout thumbnail: a single still (full-width preview) — gallery poster.
+echo "    - layout-thumb.tape (png)"
+rendered="$RENDER_DIR/layout-thumb.tape"
+sed "s#__OUT__#$IMAGES_DIR#g" "$SHOTS_DIR/layout-thumb.tape" > "$rendered"
+( cd "$REPO_ROOT" && PATH="$BIN_DIR:$PATH" vhs "$rendered" )
+
 echo "==> Done. Updated:"
 ls -1 "$IMAGES_DIR"/codemark_tui_*.png "$IMAGES_DIR"/codemark_tui_*.gif 2>/dev/null

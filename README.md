@@ -12,7 +12,7 @@
 [![CI](https://github.com/DanielCardonaRojas/codemark/actions/workflows/test.yml/badge.svg)](https://github.com/DanielCardonaRojas/codemark/actions/workflows/test.yml)
 [![license](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
 [![Rust](https://img.shields.io/badge/rust-1.85+-orange.svg)](https://www.rust-lang.org)
-[![agent-ready](https://img.shields.io/badge/agent-ready-blueviolet)](#-use-it-with-claude-code)
+[![agent-ready](https://img.shields.io/badge/agent-ready-blueviolet)](#-use-it-with-your-agent)
 
 **Native on**
 &nbsp;<a href="#-installation"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/install/apple.svg"><img src="docs/install/apple-light.svg" width="28" alt="macOS"></picture></a>
@@ -21,17 +21,20 @@
 
 </div>
 
-**Codemark** is a structural bookmarking system for code. Unlike fragile `file:line` references that break when you insert a single newline, Codemark uses **[tree-sitter](https://tree-sitter.github.io/tree-sitter/)** to capture the *semantic structure* of what you marked — so bookmarks **self-heal** across renames, refactors, and reformatting.
+**Codemark** bookmarks code by structure, not by line number. A `file:line`
+reference breaks the moment you add a newline above it; Codemark uses
+[tree-sitter](https://tree-sitter.github.io/tree-sitter/) to remember *what* you
+marked — a function, a block, a type — so the bookmark still points at the right
+place after you rename, refactor, or reformat around it.
 
-That makes them durable enough for long-running AI agent sessions, code audits, and personal knowledge management.
-
-🌐 **Website & docs:** [danielcardonarojas.github.io/codemark](https://danielcardonarojas.github.io/codemark/)
+That durability is what makes it useful for long agent sessions, code audits, and
+keeping track of things you want to find again.
 
 ---
 
 ## 📑 Table of Contents
 
-- [Use It With Claude Code](#-use-it-with-claude-code)
+- [Use It With Your Agent](#-use-it-with-your-agent)
 - [Native Dashboard (TUI)](#-native-dashboard-tui)
 - [Features](#-features)
 - [Installation](#-installation)
@@ -44,9 +47,12 @@ That makes them durable enough for long-running AI agent sessions, code audits, 
 
 ---
 
-## ⚡ Use It With Claude Code
+## ⚡ Use It With Your Agent
 
-Codemark is built for AI coding agents. One command teaches your agent to create and recall structural bookmarks, so context **survives between sessions** instead of being re-derived from scratch every time you open a chat.
+Codemark ships with a skill you can install into your coding agent. Once it's in,
+the agent knows how to create and recall structural bookmarks on its own — so the
+context it built up in one session is still there in the next, instead of being
+rebuilt from scratch every time.
 
 ```bash
 codemark install-skill --agent claude --scope user
@@ -59,26 +65,30 @@ Then just ask, in any session:
 > handler, the auth middleware, the service layer, and the query builder. Add a
 > short note to each explaining its role."*
 
-Later — even after the code has been refactored, in a brand-new session — you (or another agent) reload that context instantly:
+Later, in a fresh session and even after the code has moved around, you or another
+agent can pick the context back up:
 
 > *"Load the `request-lifecycle` collection and walk me through it."*
 
-Because the bookmarks are **structural**, they still resolve after the underlying code has moved or changed. Works with **Claude Code**, **GitHub Copilot**, **Gemini CLI**, and any agent that loads `.agents/skills`.
+The bookmarks are structural, so they still resolve once the underlying code has
+changed. Works with **Claude Code**, **GitHub Copilot**, **Gemini CLI**, and any
+agent that loads `.agents/skills`.
 
 ### What you can ask for
 
-Once a flow is captured as a collection, that knowledge becomes reusable — by you, your teammates, and future agent sessions:
+Once a flow lives in a collection, anyone can reuse it — you, a teammate, or the
+next agent session:
 
-- 🧭 **Onboard a new engineer** —
+- 🧭 **Onboard a new engineer**
   > *"Load the `request-lifecycle` collection and give me a guided tour of how
   > this service handles a request, in the order the code runs."*
-- 🔎 **Explain a code flow** —
+- 🔎 **Explain a code flow**
   > *"Bookmark the steps of the checkout flow into a `checkout` collection, then
   > summarize what each step is responsible for."*
-- 🐞 **Hunt a bug in a known flow** —
+- 🐞 **Hunt a bug in a known flow**
   > *"There's a bug where expired tokens are still accepted. Read the `auth-flow`
   > collection and tell me which hop is most likely responsible."*
-- 🔗 **Relate two flows** —
+- 🔗 **Relate two flows**
   > *"Compare the `request-lifecycle` and `background-jobs` collections — where do
   > they share code or state, and where could they conflict?"*
 
@@ -88,7 +98,8 @@ Once a flow is captured as a collection, that knowledge becomes reusable — by 
 
 ## 🖥️ Native Dashboard (TUI)
 
-Codemark features a built-in, keyboard-driven dashboard inspired by `lazygit`. It's the primary interface for managing structural bookmarks, collections, and tours.
+Codemark comes with a keyboard-driven dashboard in the style of `lazygit`. It's
+the main way to browse and manage bookmarks, collections, and tours by hand.
 
 ```bash
 codemark tui
@@ -122,6 +133,12 @@ codemark tui
         <br><sub><b>Filter pane contents</b></sub>
       </a>
     </td>
+    <td align="center" width="240">
+      <a href="./dev-docs/guides/demo-gallery.md#resizing--cycling-layouts">
+        <img src="./screenshots/images/codemark_tui_layout_thumb.png" width="220" alt="Layout resizing demo">
+        <br><sub><b>Resize &amp; cycle layouts</b></sub>
+      </a>
+    </td>
   </tr>
 </table>
 
@@ -139,28 +156,28 @@ variable; run `codemark-tui --list-schemes` to see what's available.
 
 ### Dashboard features
 
-- **⌨️ Keyboard-driven, vim-style navigation** — A `lazygit`-like, fully
+- **⌨️ Keyboard-driven, vim-style navigation** A `lazygit`-like, fully
   keyboard-first interface. Move with `j`/`k` (or arrows), cycle panes with
   `Tab`, switch tabs with `[` / `]`, and resize panes with `+` / `-`. Press `?`
   at any time for a context-aware help overlay.
-- **🔄 Push / pull syncing** — Publish collections and tours to a remote
+- **🔄 Push / pull syncing** Publish collections and tours to a remote
   [codetours](./crates/codetours-server) server with `P` (push), and pull shared
   tours back down with `p`. Share curated walkthroughs across a team.
-- **🔍 Semantic & full-text search** — Press `/` to search, then toggle between
+- **🔍 Semantic & full-text search** Press `/` to search, then toggle between
   **FTS** (SQLite full-text) and **Semantic** (local vector embeddings) modes.
   FTS finds exact terms; Semantic finds bookmarks by meaning — no API key
   required.
-- **📝 Customizable markdown previews** — The details and collection-overview
+- **📝 Customizable markdown previews** The details and collection-overview
   panes render through [Handlebars templates](./dev-docs/templates.md). Drop your
   own `details_panel.md` or `codemark_collection_overview.md` into the config
   directory to reshape what's shown.
-- **🎨 Colorschemes & themes** — Set `[tui].theme` in your config. Bundled
+- **🎨 Colorschemes & themes** Set `[tui].theme` in your config. Bundled
   options include `OneHalfDark` (default), `Dracula`, `Nord`, `gruvbox-dark`,
   `Solarized`, `Catppuccin Mocha`, and more. Base16/base24 schemes theme both the
   code preview *and* the surrounding UI chrome; drop your own `.tmTheme` or
   base16 `.yaml` files into the `themes/` config subdirectory to add custom ones.
   See [Configuration](./dev-docs/configuration.md).
-- **✏️ Open in any editor** — Press `o` on a bookmark to jump straight to the
+- **✏️ Open in any editor** Press `o` on a bookmark to jump straight to the
   code in your configured editor (terminal or GUI). Configure per–file-extension
   commands via the `[open]` config section — see
   [Configuration](./dev-docs/configuration.md).
