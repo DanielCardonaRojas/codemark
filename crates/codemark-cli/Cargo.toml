@@ -20,6 +20,10 @@ path = "examples/gen-man-pages.rs"
 required-features = ["man-pages"]
 
 [features]
+default = ["semantic"]
+# Semantic (vector embedding) search. Enabled by default; disable with
+# `--no-default-features` to build without the candle/hf-hub stack.
+semantic = ["codemark-core/semantic"]
 man-pages = ["clap_mangen"]
 
 [dev-dependencies]
@@ -32,7 +36,9 @@ codetours-server = { path = "../codetours-server" }
 axum = { workspace = true }
 
 [dependencies]
-codemark-core = { path = "../codemark-core" }
+# default-features = false so codemark-cli's own `semantic` feature (on by
+# default) is what pulls in core's semantic stack; a lean CLI build drops it.
+codemark-core = { path = "../codemark-core", default-features = false }
 clap = { workspace = true }
 clap_complete = "4"
 clap_mangen = { version = "0.2", optional = true }

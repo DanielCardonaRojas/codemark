@@ -120,6 +120,7 @@ pub enum Command {
     Data(DataArgs),
 
     /// Rebuild semantic search embeddings for all bookmarks
+    #[cfg(feature = "semantic")]
     #[command(name = "reindex", hide = true)]
     Reindex(ReindexArgs),
 
@@ -567,6 +568,7 @@ pub struct SearchArgs {
     pub context: Option<String>,
 
     /// Use semantic search (vector embeddings)
+    #[cfg(feature = "semantic")]
     #[arg(long)]
     pub semantic: bool,
 
@@ -624,6 +626,7 @@ pub struct SearchArgs {
     pub line_format: Option<String>,
 }
 
+#[cfg(feature = "semantic")]
 #[derive(Debug, clap::Args)]
 pub struct ReindexArgs {
     /// Only reindex bookmarks for this language
@@ -1200,6 +1203,7 @@ pub enum DataCommand {
     Import(ImportArgs),
 
     /// Rebuild semantic search embeddings
+    #[cfg(feature = "semantic")]
     Reindex(ReindexArgs),
 }
 

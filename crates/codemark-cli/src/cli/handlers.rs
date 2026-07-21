@@ -13,6 +13,7 @@ use std::io::Write;
 use crate::cli::output::{OutputMode, write_json_success, write_success};
 use crate::cli::*;
 use codemark_core::config::Config;
+#[cfg(feature = "semantic")]
 use codemark_core::embeddings::config::EmbeddingModel;
 use codemark_core::engine::bookmark::{
     Bookmark, BookmarkFilter, BookmarkHealth, Collection, Resolution, ResolutionMethod, Visibility,
@@ -22,7 +23,9 @@ use codemark_core::error::{Error, Result};
 use codemark_core::git::context as git_context;
 use codemark_core::git::remote;
 use codemark_core::parser::languages::Language;
-use codemark_core::storage::{OpenDbOptions, SemanticRepo, Workspace, db::Database};
+#[cfg(feature = "semantic")]
+use codemark_core::storage::SemanticRepo;
+use codemark_core::storage::{OpenDbOptions, Workspace, db::Database};
 
 // Handler submodules
 pub mod auth;
@@ -88,6 +91,7 @@ pub async fn dispatch(cli: &Cli) -> Result<()> {
         Command::Status => maintenance::handle_status(cli, &mode).await,
         Command::List(args) => handle_list(cli, &mode, args).await,
         Command::Search(args) => search::handle_search(cli, &mode, args).await,
+        #[cfg(feature = "semantic")]
         Command::Reindex(args) => search::handle_reindex(cli, &mode, args).await,
         Command::Collection(args) => dispatch_collection(cli, &mode, args).await,
         Command::Diff(args) => maintenance::handle_diff(cli, &mode, args).await,
@@ -188,6 +192,7 @@ async fn dispatch_data(cli: &Cli, mode: &OutputMode, args: &DataArgs) -> Result<
     match &args.command {
         DataCommand::Export(a) => maintenance::handle_export(cli, a).await,
         DataCommand::Import(a) => maintenance::handle_import(cli, mode, a).await,
+        #[cfg(feature = "semantic")]
         DataCommand::Reindex(a) => search::handle_reindex(cli, mode, a).await,
     }
 }
@@ -342,8 +347,20 @@ pub fn open_db(cli: &Cli) -> Result<Database> {
     Workspace::open_primary(cli.db.first().map(|p| p.as_path()))
 }
 
+/// No-op stand-in used when the crate is built without the `semantic` feature,
+/// so bookmark handlers can call it unconditionally.
+#[cfg(not(feature = "semantic"))]
+pub async fn generate_embedding_for_bookmark(
+    _cli: &Cli,
+    _config: &Config,
+    _bookmark: &Bookmark,
+) -> Result<()> {
+    Ok(())
+}
+
 /// Generate embedding for a bookmark if semantic search is enabled.
 /// Returns Ok(()) even if semantic search is disabled or fails.
+#[cfg(feature = "semantic")]
 pub async fn generate_embedding_for_bookmark(
     cli: &Cli,
     config: &Config,
@@ -381,6 +398,17 @@ pub async fn generate_embedding_for_bookmark(
     Ok(())
 }
 
+/// No-op stand-in used when the crate is built without the `semantic` feature,
+/// so collection handlers can call it unconditionally.
+#[cfg(not(feature = "semantic"))]
+pub async fn generate_embedding_for_collection(
+    _config: &Config,
+    _db: &mut Database,
+    _collection: &Collection,
+) -> Result<()> {
+    Ok(())
+}
+
 /// Generate (or refresh) the embedding for a collection if semantic search is
 /// enabled. Returns `Ok(())` even if semantic search is disabled or fails, so
 /// embedding problems never block the collection operation that triggered it.
@@ -390,6 +418,7 @@ pub async fn generate_embedding_for_bookmark(
 /// second one would only add contention. The embedded text (name, description,
 /// tags) is read from the database, so the caller must persist any
 /// tag/description changes *before* invoking this.
+#[cfg(feature = "semantic")]
 pub async fn generate_embedding_for_collection(
     config: &Config,
     db: &mut Database,

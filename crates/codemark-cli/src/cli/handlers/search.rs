@@ -1,13 +1,19 @@
 //! Search and indexing: FTS search, semantic search, reindex.
 
+#[cfg(feature = "semantic")]
+use crate::cli::output::write_success;
 use crate::cli::output::{
-    self, OutputMode, short_id, write_bookmarks_with_line, write_json_success, write_success,
+    self, OutputMode, short_id, write_bookmarks_with_line, write_json_success,
 };
 use crate::cli::*;
+#[cfg(feature = "semantic")]
 use codemark_core::embeddings::config::EmbeddingModel;
+#[cfg(feature = "semantic")]
 use codemark_core::engine::bookmark::{Bookmark, BookmarkFilter};
 use codemark_core::error::{Error, Result};
-use codemark_core::storage::{SemanticRepo, db::Database};
+#[cfg(feature = "semantic")]
+use codemark_core::storage::SemanticRepo;
+use codemark_core::storage::db::Database;
 
 use super::{
     filter_dbs_by_repo_owner, filter_dbs_by_user_email, get_bookmark_line, load_config,
@@ -32,6 +38,7 @@ pub async fn handle_search(cli: &Cli, mode: &OutputMode, args: &SearchArgs) -> R
     }
 
     // Semantic search requires a query
+    #[cfg(feature = "semantic")]
     if args.semantic {
         if !config.semantic.is_enabled() {
             return Err(Error::Input("Semantic search is not enabled in config".to_string()));
@@ -158,6 +165,7 @@ pub async fn handle_search(cli: &Cli, mode: &OutputMode, args: &SearchArgs) -> R
 }
 
 /// Handle semantic search using vector embeddings.
+#[cfg(feature = "semantic")]
 async fn handle_semantic_search(
     cli: &Cli,
     mode: &OutputMode,
@@ -272,47 +280,17 @@ async fn handle_collection_search(
 ) -> Result<()> {
     let db = open_db(cli)?;
 
+    #[cfg(feature = "semantic")]
     let results: Vec<(codemark_core::engine::bookmark::Collection, usize)> = if args.semantic {
-        if !config.semantic.is_enabled() {
-            return Err(Error::Input("Semantic search is not enabled in config".to_string()));
-        }
-        let query = args
-            .query
-            .as_ref()
-            .ok_or_else(|| Error::Input("Semantic search requires a query".to_string()))?;
-
-        let model = config
-            .semantic
-            .model
-            .as_deref()
-            .and_then(|m| m.parse::<EmbeddingModel>().ok())
-            .unwrap_or(EmbeddingModel::AllMiniLmL6V2);
-        let distance_metric = config.semantic.get_distance_metric();
-        let threshold = config.semantic.threshold;
-        let models_dir = config.semantic.get_models_dir();
-
-        let semantic_repo =
-            SemanticRepo::with_config(models_dir, model, distance_metric, threshold);
-        let hits = semantic_repo.search_collections(db.conn(), query, args.limit).await?;
-
-        // Resolve each hit to its full collection with bookmark count, applying
-        // the same `--tag` filter the FTS branch does (semantic search ranks on
-        // embeddings, so tag membership has to be enforced here).
-        let mut out = Vec::new();
-        for hit in hits {
-            if let Some(c) = db.get_collection_by_id(&hit.id)? {
-                if let Some(tag) = args.tag.as_deref() {
-                    let has_tag = db.list_tags_for_collection(&c.id)?.iter().any(|t| t.tag == tag);
-                    if !has_tag {
-                        continue;
-                    }
-                }
-                let count = db.list_bookmarks_in_collection(&c.id).map(|b| b.len()).unwrap_or(0);
-                out.push((c, count));
-            }
-        }
-        out
+        collection_semantic_search(&db, args, config).await?
     } else {
+        let mut collections = db.search_collections(args.query.as_deref(), args.tag.as_deref())?;
+        collections.truncate(args.limit);
+        collections
+    };
+    #[cfg(not(feature = "semantic"))]
+    let results: Vec<(codemark_core::engine::bookmark::Collection, usize)> = {
+        let _ = config; // only the semantic branch reads config
         let mut collections = db.search_collections(args.query.as_deref(), args.tag.as_deref())?;
         collections.truncate(args.limit);
         collections
@@ -320,6 +298,54 @@ async fn handle_collection_search(
 
     write_collection_results(mode, &results)?;
     Ok(())
+}
+
+/// Rank collections by semantic similarity, resolving each hit to its full
+/// collection with bookmark count and enforcing the `--tag` filter.
+#[cfg(feature = "semantic")]
+async fn collection_semantic_search(
+    db: &Database,
+    args: &SearchArgs,
+    config: &codemark_core::config::Config,
+) -> Result<Vec<(codemark_core::engine::bookmark::Collection, usize)>> {
+    if !config.semantic.is_enabled() {
+        return Err(Error::Input("Semantic search is not enabled in config".to_string()));
+    }
+    let query = args
+        .query
+        .as_ref()
+        .ok_or_else(|| Error::Input("Semantic search requires a query".to_string()))?;
+
+    let model = config
+        .semantic
+        .model
+        .as_deref()
+        .and_then(|m| m.parse::<EmbeddingModel>().ok())
+        .unwrap_or(EmbeddingModel::AllMiniLmL6V2);
+    let distance_metric = config.semantic.get_distance_metric();
+    let threshold = config.semantic.threshold;
+    let models_dir = config.semantic.get_models_dir();
+
+    let semantic_repo = SemanticRepo::with_config(models_dir, model, distance_metric, threshold);
+    let hits = semantic_repo.search_collections(db.conn(), query, args.limit).await?;
+
+    // Resolve each hit to its full collection with bookmark count, applying
+    // the same `--tag` filter the FTS branch does (semantic search ranks on
+    // embeddings, so tag membership has to be enforced here).
+    let mut out = Vec::new();
+    for hit in hits {
+        if let Some(c) = db.get_collection_by_id(&hit.id)? {
+            if let Some(tag) = args.tag.as_deref() {
+                let has_tag = db.list_tags_for_collection(&c.id)?.iter().any(|t| t.tag == tag);
+                if !has_tag {
+                    continue;
+                }
+            }
+            let count = db.list_bookmarks_in_collection(&c.id).map(|b| b.len()).unwrap_or(0);
+            out.push((c, count));
+        }
+    }
+    Ok(out)
 }
 
 /// Render collection search results in the requested output mode.
@@ -381,6 +407,7 @@ fn write_collection_results(
 }
 
 /// Handle reindex command to rebuild embeddings.
+#[cfg(feature = "semantic")]
 pub async fn handle_reindex(cli: &Cli, mode: &OutputMode, args: &ReindexArgs) -> Result<()> {
     let config = load_config(cli);
     if !config.semantic.is_enabled() {

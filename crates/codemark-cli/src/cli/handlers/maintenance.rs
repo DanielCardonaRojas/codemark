@@ -5,6 +5,7 @@ use crate::cli::output::{
     write_success,
 };
 use crate::cli::*;
+#[cfg(feature = "semantic")]
 use codemark_core::embeddings::config::EmbeddingModel;
 use codemark_core::engine::bookmark::{
     Bookmark, BookmarkFilter, BookmarkHealth, ResolutionMethod, Tag,
@@ -13,6 +14,7 @@ use codemark_core::engine::{heal, health, resolution};
 use codemark_core::error::{Error, Result};
 use codemark_core::git::context as git_context;
 use codemark_core::parser::languages::{Language, ParseCache};
+#[cfg(feature = "semantic")]
 use codemark_core::storage::SemanticRepo;
 
 use super::{load_config, now_iso, open_all_dbs, open_db, open_db_for_write};
@@ -355,6 +357,8 @@ pub async fn handle_export(cli: &Cli, args: &ExportArgs) -> Result<()> {
 
 /// Import bookmarks from a JSON file.
 pub async fn handle_import(cli: &Cli, mode: &OutputMode, args: &ImportArgs) -> Result<()> {
+    // `mut` is only needed for the semantic embedding pass below (conn_mut).
+    #[cfg_attr(not(feature = "semantic"), allow(unused_mut))]
     let mut db = open_db_for_write(cli)?;
     let content = std::fs::read_to_string(&args.file)
         .map_err(|e| Error::Input(format!("cannot read {}: {e}", args.file.display())))?;
@@ -406,6 +410,7 @@ pub async fn handle_import(cli: &Cli, mode: &OutputMode, args: &ImportArgs) -> R
     }
 
     // Generate embeddings for imported bookmarks (if semantic search is enabled)
+    #[cfg(feature = "semantic")]
     if !imported_bookmarks.is_empty() {
         let config = load_config(cli);
         if config.semantic.is_enabled() {
