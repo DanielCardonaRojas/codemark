@@ -34,7 +34,7 @@ rusqlite = { workspace = true }
 deadpool-sqlite = { workspace = true }
 futures-util = "0.3"
 zstd = "0.13"
-jsonwebtoken = "9"
+jsonwebtoken = "10"
 reqwest = { workspace = true }
 urlencoding = "2"
 dotenvy = "0.15.7"
