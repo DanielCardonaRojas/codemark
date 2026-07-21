@@ -33,6 +33,8 @@ impl BrowserLayout {
         match self.focus {
             FocusArea::Search => {
                 bindings.push(("Enter", "Search"));
+                // The FTS/semantic toggle only exists in semantic builds.
+                #[cfg(feature = "semantic")]
                 bindings.push(("Ctrl+S", "FTS / Sem"));
             }
             FocusArea::ContextPanel => {
@@ -139,6 +141,8 @@ impl BrowserLayout {
                 bindings.push(
                     KeyBinding::new("Enter", "Search").with_priority(HIDDEN_BINDING_PRIORITY),
                 );
+                // The FTS/semantic toggle only exists in semantic builds.
+                #[cfg(feature = "semantic")]
                 bindings.push(KeyBinding::new("Ctrl+S", "FTS / Sem").with_priority(90));
             }
             FocusArea::ContextPanel => {

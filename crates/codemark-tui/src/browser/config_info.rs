@@ -61,19 +61,13 @@ impl BrowserLayout {
         let logs_path = std::env::temp_dir().join("codemark-tui.log");
         let logs = abbreviate(&std::env::temp_dir().join("codemark-tui.log.*"));
 
-        let model = config
-            .semantic
-            .model
-            .clone()
-            .unwrap_or_else(|| "all-MiniLM-L6-v2 (default)".to_string());
         let theme = config.tui.theme.clone().unwrap_or_else(|| "default".to_string());
 
         let global_config = path_tuple(config::global_config_dir().map(|d| d.join("config.toml")));
         let data_dir = path_tuple(config::global_data_dir());
         let templates_dir = path_tuple(templates::templates_dir());
-        let models_dir = path_tuple(config.semantic.get_models_dir());
 
-        vec![
+        let mut rows = vec![
             ("Version", crate::VERSION.to_string(), None),
             ("Database", abbreviate(db_path), Some(db_path.to_string_lossy().to_string())),
             ("Registry", registry_tuple.0, registry_tuple.1),
@@ -81,9 +75,22 @@ impl BrowserLayout {
             ("Data dir", data_dir.0, data_dir.1),
             ("Templates", templates_dir.0, templates_dir.1),
             ("Logs", logs, Some(logs_path.to_string_lossy().to_string())),
-            ("Models dir", models_dir.0, models_dir.1),
-            ("Embeddings model", model, None),
-            ("TUI theme", theme, None),
-        ]
+        ];
+
+        // Semantic-search config only applies when the feature is compiled in.
+        #[cfg(feature = "semantic")]
+        {
+            let model = config
+                .semantic
+                .model
+                .clone()
+                .unwrap_or_else(|| "all-MiniLM-L6-v2 (default)".to_string());
+            let models_dir = path_tuple(config.semantic.get_models_dir());
+            rows.push(("Models dir", models_dir.0, models_dir.1));
+            rows.push(("Embeddings model", model, None));
+        }
+
+        rows.push(("TUI theme", theme, None));
+        rows
     }
 }
