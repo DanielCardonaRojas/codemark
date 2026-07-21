@@ -357,6 +357,8 @@ pub async fn handle_export(cli: &Cli, args: &ExportArgs) -> Result<()> {
 
 /// Import bookmarks from a JSON file.
 pub async fn handle_import(cli: &Cli, mode: &OutputMode, args: &ImportArgs) -> Result<()> {
+    // `mut` is only needed for the semantic embedding pass below (conn_mut).
+    #[cfg_attr(not(feature = "semantic"), allow(unused_mut))]
     let mut db = open_db_for_write(cli)?;
     let content = std::fs::read_to_string(&args.file)
         .map_err(|e| Error::Input(format!("cannot read {}: {e}", args.file.display())))?;

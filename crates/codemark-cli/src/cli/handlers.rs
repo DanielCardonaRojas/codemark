@@ -91,6 +91,7 @@ pub async fn dispatch(cli: &Cli) -> Result<()> {
         Command::Status => maintenance::handle_status(cli, &mode).await,
         Command::List(args) => handle_list(cli, &mode, args).await,
         Command::Search(args) => search::handle_search(cli, &mode, args).await,
+        #[cfg(feature = "semantic")]
         Command::Reindex(args) => search::handle_reindex(cli, &mode, args).await,
         Command::Collection(args) => dispatch_collection(cli, &mode, args).await,
         Command::Diff(args) => maintenance::handle_diff(cli, &mode, args).await,
@@ -191,6 +192,7 @@ async fn dispatch_data(cli: &Cli, mode: &OutputMode, args: &DataArgs) -> Result<
     match &args.command {
         DataCommand::Export(a) => maintenance::handle_export(cli, a).await,
         DataCommand::Import(a) => maintenance::handle_import(cli, mode, a).await,
+        #[cfg(feature = "semantic")]
         DataCommand::Reindex(a) => search::handle_reindex(cli, mode, a).await,
     }
 }

@@ -38,6 +38,7 @@ pub async fn handle_search(cli: &Cli, mode: &OutputMode, args: &SearchArgs) -> R
     }
 
     // Semantic search requires a query
+    #[cfg(feature = "semantic")]
     if args.semantic {
         if !config.semantic.is_enabled() {
             return Err(Error::Input("Semantic search is not enabled in config".to_string()));
@@ -163,18 +164,6 @@ pub async fn handle_search(cli: &Cli, mode: &OutputMode, args: &SearchArgs) -> R
     Ok(())
 }
 
-/// Stub used when the crate is built without the `semantic` feature: semantic
-/// search isn't available, so surface a clear error instead of a parse failure.
-#[cfg(not(feature = "semantic"))]
-async fn handle_semantic_search(
-    _cli: &Cli,
-    _mode: &OutputMode,
-    _query: &str,
-    _args: &SearchArgs,
-) -> Result<()> {
-    Err(Error::Input("This build was compiled without semantic search support".to_string()))
-}
-
 /// Handle semantic search using vector embeddings.
 #[cfg(feature = "semantic")]
 async fn handle_semantic_search(
@@ -291,6 +280,7 @@ async fn handle_collection_search(
 ) -> Result<()> {
     let db = open_db(cli)?;
 
+    #[cfg(feature = "semantic")]
     let results: Vec<(codemark_core::engine::bookmark::Collection, usize)> = if args.semantic {
         collection_semantic_search(&db, args, config).await?
     } else {
@@ -298,19 +288,16 @@ async fn handle_collection_search(
         collections.truncate(args.limit);
         collections
     };
+    #[cfg(not(feature = "semantic"))]
+    let results: Vec<(codemark_core::engine::bookmark::Collection, usize)> = {
+        let _ = config; // only the semantic branch reads config
+        let mut collections = db.search_collections(args.query.as_deref(), args.tag.as_deref())?;
+        collections.truncate(args.limit);
+        collections
+    };
 
     write_collection_results(mode, &results)?;
     Ok(())
-}
-
-/// Stub used when the crate is built without the `semantic` feature.
-#[cfg(not(feature = "semantic"))]
-async fn collection_semantic_search(
-    _db: &Database,
-    _args: &SearchArgs,
-    _config: &codemark_core::config::Config,
-) -> Result<Vec<(codemark_core::engine::bookmark::Collection, usize)>> {
-    Err(Error::Input("This build was compiled without semantic search support".to_string()))
 }
 
 /// Rank collections by semantic similarity, resolving each hit to its full
@@ -417,12 +404,6 @@ fn write_collection_results(
         }
     }
     Ok(())
-}
-
-/// Stub used when the crate is built without the `semantic` feature.
-#[cfg(not(feature = "semantic"))]
-pub async fn handle_reindex(_cli: &Cli, _mode: &OutputMode, _args: &ReindexArgs) -> Result<()> {
-    Err(Error::Input("This build was compiled without semantic search support".to_string()))
 }
 
 /// Handle reindex command to rebuild embeddings.
