@@ -7,11 +7,13 @@
 #![allow(unused_imports)]
 
 pub mod config;
+#[cfg(feature = "semantic")]
 pub mod local;
 pub mod provider;
 pub mod vec_store;
 
 pub use config::{DistanceMetric, EmbeddingConfig, EmbeddingModel};
+#[cfg(feature = "semantic")]
 pub use local::LocalEmbeddingProvider;
 pub use provider::EmbeddingProvider;
 pub use vec_store::{SearchResult, VecStore, VecStoreEntry};

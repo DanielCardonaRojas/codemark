@@ -29,10 +29,13 @@ pub use types::{
 use crate::component::{Component, HealthStatus, PanelItem};
 use crate::event::Event;
 use codemark_core::config::Config;
+#[cfg(feature = "semantic")]
 use codemark_core::embeddings::config::EmbeddingModel;
 use codemark_core::engine::bookmark::{Bookmark, BookmarkFilter};
 use codemark_core::parser::languages::{Language as CodemarkLanguage, ParseCache};
-use codemark_core::storage::{SemanticRepo, db::Database};
+#[cfg(feature = "semantic")]
+use codemark_core::storage::SemanticRepo;
+use codemark_core::storage::db::Database;
 use ratatui::{
     buffer::Buffer,
     layout::{Constraint, Direction, Layout, Rect},
@@ -530,6 +533,14 @@ impl BrowserLayout {
                     }
                 }
             }
+            // When built without the `semantic` feature the search bar can never
+            // enter Semantic mode (the toggle/Ctrl+s are gone), so this arm is
+            // unreachable; keep it as a no-op that drops the captured values.
+            #[cfg(not(feature = "semantic"))]
+            SearchMode::Semantic => {
+                let _ = (db_path, request_id, query);
+            }
+            #[cfg(feature = "semantic")]
             SearchMode::Semantic => {
                 // Load config to get semantic settings
                 let Some(codemark_dir) = self.db.path().parent() else {
@@ -634,6 +645,12 @@ impl BrowserLayout {
                         event_handler.send(Event::SearchError { request_id, msg: e.to_string() });
                 }
             },
+            // Unreachable without the `semantic` feature (see the bookmark path).
+            #[cfg(not(feature = "semantic"))]
+            SearchMode::Semantic => {
+                let _ = (request_id, query);
+            }
+            #[cfg(feature = "semantic")]
             SearchMode::Semantic => {
                 let Some(codemark_dir) = self.db.path().parent() else {
                     return;

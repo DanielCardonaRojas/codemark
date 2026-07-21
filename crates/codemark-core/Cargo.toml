@@ -9,6 +9,19 @@ license = "MIT"
 name = "codemark_core"
 path = "src/lib.rs"
 
+[features]
+default = ["semantic"]
+# Semantic search via local embeddings. Pulls in the heavy candle/hf-hub/
+# tokenizers stack; disable (`--no-default-features`) to build a lean binary
+# without vector search.
+semantic = [
+  "dep:candle-core",
+  "dep:candle-transformers",
+  "dep:candle-nn",
+  "dep:tokenizers",
+  "dep:hf-hub",
+]
+
 [dependencies]
 async-trait = "0.1"
 chrono = { workspace = true }
@@ -22,11 +35,11 @@ thiserror = { workspace = true }
 toml = { workspace = true }
 tree-sitter = { workspace = true }
 uuid = { workspace = true }
-candle-core = "0.8"
-candle-transformers = "0.8"
-candle-nn = "0.8"
+candle-core = { version = "0.8", optional = true }
+candle-transformers = { version = "0.8", optional = true }
+candle-nn = { version = "0.8", optional = true }
 sha2 = "0.10"
-tokenizers = "0.21"
+tokenizers = { version = "0.21", optional = true }
 tree-sitter-c-sharp = "0.23"
 tree-sitter-dart = "0.1"
 tree-sitter-go = "0.23"
@@ -39,7 +52,7 @@ tree-sitter-typescript = "0.23"
 # Sync (ureq) API only — see embeddings/local.rs. Drop the default native-tls
 # backend (and unused async `tokio` API) for rustls so we stay openssl-free;
 # otherwise Cargo feature unification flips reqwest's native-tls back on too.
-hf-hub = { version = "0.4", default-features = false, features = [
+hf-hub = { version = "0.4", default-features = false, optional = true, features = [
   "ureq",
   "rustls-tls",
 ] }

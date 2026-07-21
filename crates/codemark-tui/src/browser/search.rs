@@ -146,28 +146,13 @@ impl SearchBar {
     fn render_content(&self, area: Rect, buf: &mut Buffer) {
         let width = area.width as usize;
 
-        // 1. Build the segmented control for the right side
-        let normal_style = Style::default().fg(crate::theme::palette().dim);
-        let active_style = if self.focused {
-            Style::default().fg(crate::theme::palette().accent).add_modifier(Modifier::BOLD)
-        } else {
-            Style::default().fg(crate::theme::palette().emphasis).add_modifier(Modifier::BOLD)
-        };
-
-        let control_spans = vec![
-            Span::styled("[ ", normal_style),
-            Span::styled(
-                "FTS",
-                if self.mode == SearchMode::Fts { active_style } else { normal_style },
-            ),
-            Span::styled(" | ", normal_style),
-            Span::styled(
-                "Sem",
-                if self.mode == SearchMode::Semantic { active_style } else { normal_style },
-            ),
-            Span::styled(" ]", normal_style),
-        ];
-        let control_width = 13; // "[ FTS | Sem ]".len()
+        // 1. The FTS/semantic segmented control only exists when semantic search
+        // is compiled in. Without it there is nothing to switch between, so the
+        // control is not drawn and the query takes the full width.
+        #[cfg(feature = "semantic")]
+        let control_width = 13usize; // "[ FTS | Sem ]".len()
+        #[cfg(not(feature = "semantic"))]
+        let control_width = 0usize;
 
         // While a search is running, a spinner glyph (plus a trailing space)
         // sits just left of the control, so reserve those columns.
@@ -198,11 +183,33 @@ impl SearchBar {
         let query_line = Line::from(vec![Span::raw(" "), query_span]);
         Paragraph::new(query_line).render(area, buf);
 
-        // Render control right-aligned
+        // Render the segmented control right-aligned (semantic builds only).
         let control_x = area.right().saturating_sub(control_width as u16 + 1);
-        let control_line = Line::from(control_spans);
-        let control_area = Rect { x: control_x, y: area.y, width: control_width as u16, height: 1 };
-        Paragraph::new(control_line).render(control_area, buf);
+        #[cfg(feature = "semantic")]
+        {
+            let normal_style = Style::default().fg(crate::theme::palette().dim);
+            let active_style = if self.focused {
+                Style::default().fg(crate::theme::palette().accent).add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(crate::theme::palette().emphasis).add_modifier(Modifier::BOLD)
+            };
+            let control_spans = vec![
+                Span::styled("[ ", normal_style),
+                Span::styled(
+                    "FTS",
+                    if self.mode == SearchMode::Fts { active_style } else { normal_style },
+                ),
+                Span::styled(" | ", normal_style),
+                Span::styled(
+                    "Sem",
+                    if self.mode == SearchMode::Semantic { active_style } else { normal_style },
+                ),
+                Span::styled(" ]", normal_style),
+            ];
+            let control_area =
+                Rect { x: control_x, y: area.y, width: control_width as u16, height: 1 };
+            Paragraph::new(Line::from(control_spans)).render(control_area, buf);
+        }
 
         // Render the loading spinner just left of the control while searching.
         if self.loading {
@@ -290,6 +297,9 @@ impl Component for SearchBar {
 
         let handled = match event {
             Event::Key(key) => match key.code {
+                // Ctrl+s toggles FTS/semantic search — only meaningful when
+                // semantic search is compiled in.
+                #[cfg(feature = "semantic")]
                 ratatui::crossterm::event::KeyCode::Char('s')
                 | ratatui::crossterm::event::KeyCode::Char('S')
                     if key.modifiers.contains(ratatui::crossterm::event::KeyModifiers::CONTROL) =>
@@ -369,6 +379,9 @@ impl Component for SearchBar {
                 _ => false,
             },
             Event::Mouse(mouse) => {
+                // Clicking the FTS/semantic control toggles the mode — only
+                // present when semantic search is compiled in.
+                #[cfg(feature = "semantic")]
                 if let ratatui::crossterm::event::MouseEventKind::Down(button) = mouse.kind
                     && button == ratatui::crossterm::event::MouseButton::Left
                 {
@@ -384,6 +397,8 @@ impl Component for SearchBar {
                         return true;
                     }
                 }
+                #[cfg(not(feature = "semantic"))]
+                let _ = mouse;
                 false
             }
             _ => false,

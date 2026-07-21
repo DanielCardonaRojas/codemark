@@ -15,7 +15,9 @@ path = "src/main.rs"
 dist = false
 
 [dependencies]
-codemark-core = { path = "../codemark-core" }
+# The server never touches semantic search, so it doesn't need core's semantic
+# (candle) stack — keep it off so the server doesn't force it into a build.
+codemark-core = { path = "../codemark-core", default-features = false }
 axum = { workspace = true }
 tokio = { workspace = true }
 tower = { workspace = true }

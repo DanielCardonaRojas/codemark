@@ -8,10 +8,12 @@ pub mod pack;
 pub mod registry;
 pub mod repo_repo;
 pub mod resolution_repo;
+#[cfg(feature = "semantic")]
 pub mod semantic_repo;
 pub mod workspace;
 
 pub use pack::Packer;
 pub use registry::*;
+#[cfg(feature = "semantic")]
 pub use semantic_repo::SemanticRepo;
 pub use workspace::{OpenDbOptions, Workspace};

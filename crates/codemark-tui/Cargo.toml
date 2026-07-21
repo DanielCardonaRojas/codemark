@@ -23,6 +23,13 @@ dist = true
 name = "codemark-tui"
 path = "src/main.rs"
 
+[features]
+default = ["semantic"]
+# Semantic (vector embedding) search. Enabled by default; disable with
+# `--no-default-features` to build without the candle/hf-hub stack. When off the
+# TUI hides the FTS/semantic toggle and its Ctrl+s binding.
+semantic = ["codemark-core/semantic"]
+
 [dependencies]
 ratatui = "0.29"
 crossterm = { version = "0.28", features = ["event-stream"] }
@@ -31,7 +38,9 @@ syntect-assets = "0.23"
 pulldown-cmark = { version = "0.13", default-features = false }
 serde_yaml = "0.9"
 tokio = { workspace = true }
-codemark-core = { path = "../codemark-core" }
+# default-features = false so the TUI's own `semantic` feature (on by default)
+# is what pulls in core's semantic stack; a lean TUI build drops it.
+codemark-core = { path = "../codemark-core", default-features = false }
 rusqlite = { workspace = true }
 anyhow = { workspace = true }
 thiserror = { workspace = true }
