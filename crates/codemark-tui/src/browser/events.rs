@@ -149,34 +149,48 @@ impl BrowserLayout {
         false
     }
 
-    /// Note a pager move so its step preview is rendered once movement settles.
+    /// Render (or defer) the step preview after a pager move.
     ///
     /// The pager dots already moved instantly inside `right_pane.handle_event`;
     /// only the lag-prone re-render (file read + syntax highlight + markdown) is
-    /// deferred. Unlike the async bookmark preview, the step render is
-    /// synchronous, so it must not run while a hold repeats — it is held back
-    /// until a full quiet tick, then fired from [`maybe_update_pending_step_preview`].
+    /// handled here. A discrete press — one that follows a quiet gap — renders
+    /// immediately so a single step forward stays snappy. During a held key the
+    /// repeats land every tick, so the synchronous render is deferred to
+    /// [`maybe_update_pending_step_preview`] and runs once movement settles,
+    /// rather than blocking the UI on every intermediate step.
     fn debounce_step_preview(&mut self) {
-        if self.right_pane.needs_preview_update {
-            self.right_pane.needs_preview_update = false;
+        if !self.right_pane.needs_preview_update {
+            return;
+        }
+        self.right_pane.needs_preview_update = false;
+
+        let settled = self
+            .last_step_move_tick
+            .is_none_or(|t| self.tick_count.wrapping_sub(t) >= super::STEP_MOVE_SETTLE_TICKS);
+        self.last_step_move_tick = Some(self.tick_count);
+
+        if settled {
+            // Discrete press: render now for immediate feedback.
+            self.step_preview_dirty = false;
+            self.right_pane.update_preview(&self.db);
+        } else {
+            // Mid-hold: defer until the repeats stop.
             self.step_preview_dirty = true;
-            // Movement in this tick window keeps the render deferred.
-            self.step_moved_this_tick = true;
         }
     }
 
-    /// Render a pending step preview, but only after a tick with no pager
-    /// movement (so a held Left/Right never renders intermediate steps).
-    /// Returns true if a redraw is needed. `update_preview` reads the current
-    /// pager position, so it always renders the settled step.
+    /// Render a deferred step preview once pager movement has settled (a full
+    /// quiet window since the last move). Returns true if a redraw is needed.
+    /// `update_preview` reads the current pager position, so it renders the
+    /// step the user landed on.
     fn maybe_update_pending_step_preview(&mut self) -> bool {
-        // A move landed since the previous tick: the user is still paging, so
-        // consume the flag and wait for a genuinely quiet tick before rendering.
-        if self.step_moved_this_tick {
-            self.step_moved_this_tick = false;
+        if !self.step_preview_dirty {
             return false;
         }
-        if !self.step_preview_dirty {
+        let still_moving = self
+            .last_step_move_tick
+            .is_some_and(|t| self.tick_count.wrapping_sub(t) < super::STEP_MOVE_SETTLE_TICKS);
+        if still_moving {
             return false;
         }
         self.step_preview_dirty = false;

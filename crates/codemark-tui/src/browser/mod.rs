@@ -50,6 +50,14 @@ use std::sync::{Arc, Mutex};
 /// scrolling so only the item the user lands on is resolved.
 const PREVIEW_DEBOUNCE_TICKS: usize = 1;
 
+/// Ticks of no pager movement that mark a step move as "settled". A move after
+/// this much quiet is a discrete press and renders immediately; while a held
+/// key repeats, moves land within this window every tick, so the (synchronous)
+/// step render is deferred until a quiet window follows the last move. Must be
+/// ≥ 2: a hold produces a move every tick, i.e. a one-tick gap, which must not
+/// count as settled.
+const STEP_MOVE_SETTLE_TICKS: usize = 2;
+
 /// Number of ticks a preview may stay in flight before the loading indicator is
 /// shown. Fast/cached resolves complete (and the result event is applied) within
 /// this window, so the previous preview stays put and no spinner flashes; only a
@@ -200,16 +208,16 @@ pub struct BrowserLayout {
     /// only appears if the resolve outlives a short grace period, so fast/cached
     /// resolves never flash an intermediate loading state.
     inflight_preview: Option<(Option<String>, usize)>,
-    /// A collection/tour step-preview render is pending. The pager position
-    /// (dots) moves instantly, but re-rendering the step's code preview (file
+    /// A collection/tour step-preview render is owed but was deferred because a
+    /// held key was still repeating. Re-rendering the step's code preview (file
     /// read + syntax highlight + markdown) runs synchronously on the UI thread,
-    /// so it is deferred until movement settles — otherwise holding Left/Right
-    /// to scan a collection renders (and blocks on) every step in between.
+    /// so during a hold it is held back and fired from the tick handler once
+    /// movement settles. A single discrete press renders immediately instead and
+    /// never sets this.
     step_preview_dirty: bool,
-    /// Set on every pager move, cleared once per tick. While it stays set across
-    /// ticks the user is still paging, so the pending render is held back; the
-    /// first tick that finds it clear (a full quiet window) fires the render.
-    step_moved_this_tick: bool,
+    /// Tick of the most recent pager move, used to tell a discrete press (render
+    /// now) from a held-key repeat (defer). `None` until the first move.
+    last_step_move_tick: Option<usize>,
     /// Active modal dialog, if any. Captures all input while displayed.
     dialog: Option<ConfirmDialog>,
 }
@@ -267,7 +275,7 @@ impl BrowserLayout {
             pending_preview: None,
             inflight_preview: None,
             step_preview_dirty: false,
-            step_moved_this_tick: false,
+            last_step_move_tick: None,
             dialog: None,
         };
         layout.update_focus_state();
