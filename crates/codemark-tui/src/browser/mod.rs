@@ -200,6 +200,16 @@ pub struct BrowserLayout {
     /// only appears if the resolve outlives a short grace period, so fast/cached
     /// resolves never flash an intermediate loading state.
     inflight_preview: Option<(Option<String>, usize)>,
+    /// A collection/tour step-preview render is pending. The pager position
+    /// (dots) moves instantly, but re-rendering the step's code preview (file
+    /// read + syntax highlight + markdown) runs synchronously on the UI thread,
+    /// so it is deferred until movement settles — otherwise holding Left/Right
+    /// to scan a collection renders (and blocks on) every step in between.
+    step_preview_dirty: bool,
+    /// Set on every pager move, cleared once per tick. While it stays set across
+    /// ticks the user is still paging, so the pending render is held back; the
+    /// first tick that finds it clear (a full quiet window) fires the render.
+    step_moved_this_tick: bool,
     /// Active modal dialog, if any. Captures all input while displayed.
     dialog: Option<ConfirmDialog>,
 }
@@ -256,6 +266,8 @@ impl BrowserLayout {
             reconcile_search_requests: std::collections::HashMap::new(),
             pending_preview: None,
             inflight_preview: None,
+            step_preview_dirty: false,
+            step_moved_this_tick: false,
             dialog: None,
         };
         layout.update_focus_state();

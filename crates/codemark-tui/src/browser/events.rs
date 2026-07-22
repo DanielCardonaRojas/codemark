@@ -78,6 +78,11 @@ impl BrowserLayout {
             dirty = true;
         }
 
+        // Re-render a collection/tour step preview once pager movement settles.
+        if self.maybe_update_pending_step_preview() {
+            dirty = true;
+        }
+
         // Reveal the loading indicator only if a resolve outlives the grace
         // period — fast/cached resolves apply their result first, so the previous
         // preview stays on screen and nothing flashes.
@@ -142,6 +147,41 @@ impl BrowserLayout {
             return true;
         }
         false
+    }
+
+    /// Note a pager move so its step preview is rendered once movement settles.
+    ///
+    /// The pager dots already moved instantly inside `right_pane.handle_event`;
+    /// only the lag-prone re-render (file read + syntax highlight + markdown) is
+    /// deferred. Unlike the async bookmark preview, the step render is
+    /// synchronous, so it must not run while a hold repeats — it is held back
+    /// until a full quiet tick, then fired from [`maybe_update_pending_step_preview`].
+    fn debounce_step_preview(&mut self) {
+        if self.right_pane.needs_preview_update {
+            self.right_pane.needs_preview_update = false;
+            self.step_preview_dirty = true;
+            // Movement in this tick window keeps the render deferred.
+            self.step_moved_this_tick = true;
+        }
+    }
+
+    /// Render a pending step preview, but only after a tick with no pager
+    /// movement (so a held Left/Right never renders intermediate steps).
+    /// Returns true if a redraw is needed. `update_preview` reads the current
+    /// pager position, so it always renders the settled step.
+    fn maybe_update_pending_step_preview(&mut self) -> bool {
+        // A move landed since the previous tick: the user is still paging, so
+        // consume the flag and wait for a genuinely quiet tick before rendering.
+        if self.step_moved_this_tick {
+            self.step_moved_this_tick = false;
+            return false;
+        }
+        if !self.step_preview_dirty {
+            return false;
+        }
+        self.step_preview_dirty = false;
+        self.right_pane.update_preview(&self.db);
+        true
     }
 
     // ── App-level events (search results, heal complete, etc.) ───────────
@@ -1146,10 +1186,7 @@ impl BrowserLayout {
 
                 let left_handled = self.left_pane.handle_event(event);
                 let right_handled = self.right_pane.handle_event(event);
-                if self.right_pane.needs_preview_update {
-                    self.right_pane.needs_preview_update = false;
-                    self.right_pane.update_preview(&self.db);
-                }
+                self.debounce_step_preview();
                 let handled = left_handled || right_handled;
 
                 let new_tab = self.left_pane.content_panel.tabs.selected_index();
@@ -1195,10 +1232,7 @@ impl BrowserLayout {
                     }
                     FocusArea::Main => {
                         let handled = self.right_pane.handle_event(event);
-                        if self.right_pane.needs_preview_update {
-                            self.right_pane.needs_preview_update = false;
-                            self.right_pane.update_preview(&self.db);
-                        }
+                        self.debounce_step_preview();
                         handled
                     }
                     // Unreachable: should_handle_keybindings() returns false in
