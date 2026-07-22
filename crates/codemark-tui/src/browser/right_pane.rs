@@ -1,5 +1,7 @@
-use crate::browser::tabbed_panel::bookmark_health;
-use crate::browser::{DetailsPaneSize, PreviewPayload, SectionConfig, StepData, TabbedPanel};
+use crate::browser::tabbed_panel::{bookmark_health, persisted_bookmark_health};
+use crate::browser::{
+    DetailsPaneSize, PreviewPayload, SectionConfig, StepData, StepLiveUpdate, TabbedPanel,
+};
 use crate::component::{Component, MarkdownPanel};
 use crate::event::Event;
 use codemark_core::engine::bookmark::{Bookmark, Resolution};
@@ -101,6 +103,11 @@ pub struct RightPane {
     /// bookmark clobbering a newer one — e.g. an in-flight task completing after
     /// a `FocusGained` reload re-rendered the step, or after rapid A→B→A paging.
     step_preview_request: u64,
+    /// Monotonic id of the currently open collection load. Bumped every time a
+    /// collection/tour is (re)loaded via [`load_tour_live`]; the background live
+    /// step-resolution batch carries the generation it was spawned for, so a
+    /// batch from a previously-open collection is dropped on arrival.
+    collection_generation: u64,
 }
 
 /// Render a bookmark to markdown using the given handlebars template content.
@@ -184,6 +191,7 @@ impl RightPane {
             loading_label: None,
             loading_tick: 0,
             step_preview_request: 0,
+            collection_generation: 0,
         };
 
         // Try to load the first tour automatically
@@ -308,6 +316,27 @@ impl RightPane {
     /// The id of the step-preview render whose result should currently be applied.
     pub fn step_preview_request(&self) -> u64 {
         self.step_preview_request
+    }
+
+    /// The generation of the current `steps_data`. A background live
+    /// step-resolution batch is applied only if it still matches this, so a
+    /// batch spawned for content the user has since navigated away from is
+    /// dropped.
+    pub fn collection_generation(&self) -> u64 {
+        self.collection_generation
+    }
+
+    /// Invalidate any in-flight background collection step-resolution batch.
+    ///
+    /// The generation identifies the current contents of `steps_data`; bumping it
+    /// makes [`apply_step_live_updates`](Self::apply_step_live_updates) drop a
+    /// batch spawned for a previous load. Every path that replaces or clears
+    /// `steps_data` (loading a single bookmark, an overview, another collection,
+    /// or clearing the preview) must call this, or a stale batch could clobber
+    /// the unrelated content that replaced the steps — e.g. its index-zero update
+    /// overwriting a freshly selected single bookmark's path/range/health.
+    fn invalidate_pending_step_resolution(&mut self) {
+        self.collection_generation = self.collection_generation.wrapping_add(1);
     }
 
     /// Update only the code pane (and the cheap Query tab) for the current step.
@@ -491,6 +520,9 @@ impl RightPane {
                 self.active_tour_name = None;
                 self.active_remote_tour_id = None;
                 self.overview_active = false;
+                // A single bookmark now owns the steps; drop any in-flight
+                // collection resolve so its batch can't clobber this step.
+                self.invalidate_pending_step_resolution();
                 self.update_preview(db);
             }
         } else {
@@ -644,12 +676,26 @@ impl RightPane {
         self.active_tour_name = None;
         self.active_remote_tour_id = None;
         self.overview_active = false;
+        // A single bookmark now owns the steps; drop any in-flight collection
+        // resolve so its batch can't clobber this step.
+        self.invalidate_pending_step_resolution();
     }
 
-    /// Load a tour using live resolution for each step.
+    /// Load a tour/collection for browsing, rendering the first step as fast as
+    /// possible.
     ///
-    /// Same pattern as `load_tour()` but uses `resolve_transient()` for each
-    /// bookmark in the collection to get current-disk locations.
+    /// Live-resolving every step up front (tree-sitter parse + git health
+    /// projection per bookmark) is what made entering a collection lag before the
+    /// first step even appeared. Instead this builds every step cheaply from
+    /// persisted data (DB reads only — no parse, no git), live-resolves *only* the
+    /// current step so what the user sees first is accurate, and renders. The
+    /// caller then spawns [`BrowserLayout::spawn_collection_live_resolve`] to
+    /// resolve the remaining steps off the UI thread; each result is patched back
+    /// in via [`apply_step_live_updates`](Self::apply_step_live_updates), mirroring
+    /// the `LiveHealthBatch` flow that fills the bookmark list dots.
+    ///
+    /// [`BrowserLayout::spawn_collection_live_resolve`]:
+    ///   crate::browser::BrowserLayout::spawn_collection_live_resolve
     pub fn load_tour_live(
         &mut self,
         db: &Database,
@@ -666,84 +712,155 @@ impl RightPane {
             return;
         };
 
-        let mut new_steps = Vec::new();
-        for bm in bookmarks {
-            let resolutions = db.list_resolutions(&bm.id, 100).unwrap_or_default();
+        // Cheap build: persisted location + persisted health for every step, no
+        // tree-sitter parse and no git projection.
+        let mut new_steps: Vec<StepData> =
+            bookmarks.into_iter().map(|bm| Self::build_step_persisted(db, bm)).collect();
 
-            let health = bookmark_health(&bm, db, self.cached_head_commit.as_deref());
-            match Self::resolve_bookmark_live(&bm, db, session_cache, true) {
-                Ok((abs_path, start_line, end_line, _source)) => {
-                    new_steps.push(StepData {
-                        file_path: abs_path,
-                        line_number: start_line,
-                        line_end: Some(end_line),
-                        bookmark: bm,
-                        resolution: None,
-                        resolutions,
-                        health,
-                        // Live resolution succeeded for this step.
-                        resolved: true,
-                    });
-                }
-                Err(_) => {
-                    // Fallback to persisted resolution for this step
-                    let mut line_number = 0;
-                    let mut line_end = None;
-                    let mut file_path = bm.file_path.clone();
-                    let resolution = db.get_preview_resolution(&bm.id).ok().flatten();
+        if new_steps.is_empty() {
+            self.clear_preview_state(db);
+            return;
+        }
 
-                    if let Some(ref res) = resolution {
-                        if let Some(fp) = res.file_path.as_ref() {
-                            file_path = fp.clone();
-                        }
-                        if let Some(lr) = res.line_range.as_ref() {
-                            let parts: Vec<&str> = lr.split('-').collect();
-                            if let (Some(start), Some(end)) = (
-                                parts.first().and_then(|s| s.parse::<usize>().ok()),
-                                parts.get(1).and_then(|s| s.parse::<usize>().ok()),
-                            ) {
-                                line_number = start.saturating_sub(1);
-                                line_end = Some(end.saturating_sub(1));
-                            } else if let Some(start) =
-                                parts.first().and_then(|s| s.parse::<usize>().ok())
-                            {
-                                line_number = start.saturating_sub(1);
-                            }
-                        }
-                    }
+        // Resolve only the first step live so the initially-shown code + health
+        // are accurate immediately; the rest are corrected by the background
+        // resolve the caller spawns.
+        let head = self.cached_head_commit.clone();
+        if let Some(first) = new_steps.first_mut() {
+            Self::resolve_step_live_into(first, db, session_cache, head.as_deref());
+        }
 
-                    if let Ok(abs_path) = codemark_core::git::context::resolve_bookmark_file_path(
-                        &file_path,
-                        db.path(),
-                    ) {
-                        new_steps.push(StepData {
-                            file_path: abs_path.to_string_lossy().to_string(),
-                            line_number,
-                            line_end,
-                            bookmark: bm,
-                            resolution,
-                            resolutions,
-                            health,
-                            // Live resolution failed; the persisted range is
-                            // stale, so don't highlight it.
-                            resolved: false,
-                        });
-                    }
+        self.steps_data = new_steps;
+        self.pager_total = self.steps_data.len();
+        self.pager_current = 0;
+        self.active_tour_name = Some(tour_name.to_string());
+        self.active_bookmark_id = None;
+        self.active_remote_tour_id = None;
+        self.overview_active = false;
+        // Bump the generation so a background resolve batch from a previously
+        // open collection is dropped when it arrives.
+        self.invalidate_pending_step_resolution();
+        self.update_preview(db);
+    }
+
+    /// Build a step from persisted data only — the bookmark's stored resolutions
+    /// and last-known-good location, plus the cheap persisted health mapping.
+    ///
+    /// No tree-sitter parse and no git projection, so this is safe to call for
+    /// every step of a collection synchronously. `resolved` is `false` because
+    /// the location came from the persisted snapshot rather than a live resolve;
+    /// [`resolve_step_live_into`](Self::resolve_step_live_into) (current step) and
+    /// the background resolve (remaining steps) upgrade it.
+    fn build_step_persisted(db: &Database, bm: Bookmark) -> StepData {
+        let resolutions = db.list_resolutions(&bm.id, 100).unwrap_or_default();
+        let (file_path, line_number, line_end, resolution) = Self::persisted_step_location(db, &bm);
+        let health = persisted_bookmark_health(bm.health);
+        StepData {
+            file_path,
+            line_number,
+            line_end,
+            bookmark: bm,
+            resolution,
+            resolutions,
+            health,
+            resolved: false,
+        }
+    }
+
+    /// Compute a step's location from its persisted preview resolution, falling
+    /// back to the bookmark's stored file path when none is available. Returns
+    /// `(abs_file_path, line_number, line_end, resolution)` with 0-indexed lines.
+    ///
+    /// Shared by the cheap [`build_step_persisted`](Self::build_step_persisted)
+    /// and the background resolve's failure fallback so the two stay in sync.
+    pub(super) fn persisted_step_location(
+        db: &Database,
+        bm: &Bookmark,
+    ) -> (String, usize, Option<usize>, Option<Resolution>) {
+        let mut line_number = 0;
+        let mut line_end = None;
+        let mut file_path = bm.file_path.clone();
+        let resolution = db.get_preview_resolution(&bm.id).ok().flatten();
+
+        if let Some(ref res) = resolution {
+            if let Some(fp) = res.file_path.as_ref() {
+                file_path = fp.clone();
+            }
+            if let Some(lr) = res.line_range.as_ref() {
+                let parts: Vec<&str> = lr.split('-').collect();
+                if let (Some(start), Some(end)) = (
+                    parts.first().and_then(|s| s.parse::<usize>().ok()),
+                    parts.get(1).and_then(|s| s.parse::<usize>().ok()),
+                ) {
+                    line_number = start.saturating_sub(1);
+                    line_end = Some(end.saturating_sub(1));
+                } else if let Some(start) = parts.first().and_then(|s| s.parse::<usize>().ok()) {
+                    line_number = start.saturating_sub(1);
                 }
             }
         }
 
-        if !new_steps.is_empty() {
-            self.steps_data = new_steps;
-            self.pager_total = self.steps_data.len();
-            self.pager_current = 0;
-            self.active_tour_name = Some(tour_name.to_string());
-            self.active_bookmark_id = None;
-            self.active_remote_tour_id = None;
-            self.overview_active = false;
-            self.update_preview(db);
-        } else {
-            self.clear_preview_state(db);
+        let abs = codemark_core::git::context::resolve_bookmark_file_path(&file_path, db.path())
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or(file_path);
+        (abs, line_number, line_end, resolution)
+    }
+
+    /// Live-resolve a single step in place, upgrading its location + health from
+    /// the persisted snapshot to a current-disk resolution. On failure the
+    /// persisted location is left untouched (`resolved` stays `false`), but the
+    /// health is still projected so the pager dot is accurate. Runs on the UI
+    /// event loop (`on_runtime_worker = true`).
+    fn resolve_step_live_into(
+        step: &mut StepData,
+        db: &Database,
+        session_cache: &mut HashMap<CodemarkLanguage, ParseCache>,
+        head: Option<&str>,
+    ) {
+        if let Ok((abs_path, start_line, end_line, _source)) =
+            Self::resolve_bookmark_live(&step.bookmark, db, session_cache, true)
+        {
+            step.file_path = abs_path;
+            step.line_number = start_line;
+            step.line_end = Some(end_line);
+            step.resolved = true;
+        }
+        step.health = bookmark_health(&step.bookmark, db, head);
+    }
+
+    /// Snapshot the current steps' `(index, bookmark)` pairs for a background live
+    /// resolve. Paired with the current [`collection_generation`](Self::collection_generation)
+    /// so the resulting batch can be dropped if the user has since opened another
+    /// collection.
+    pub fn steps_resolve_input(&self) -> Vec<(usize, Bookmark)> {
+        self.steps_data.iter().enumerate().map(|(i, s)| (i, s.bookmark.clone())).collect()
+    }
+
+    /// Apply a batch of background-resolved step updates, patching each step's
+    /// location + health by index. If the update for the *current* step actually
+    /// changed its location, re-render the code pane inline so the correction is
+    /// visible; the markdown is unaffected (it renders from persisted resolutions,
+    /// not the live range) so it is left as-is.
+    pub fn apply_step_live_updates(&mut self, updates: Vec<StepLiveUpdate>) {
+        let mut current_changed = false;
+        for u in updates {
+            let is_current = u.index == self.pager_current;
+            let Some(step) = self.steps_data.get_mut(u.index) else { continue };
+            let location_changed = step.file_path != u.file_path
+                || step.line_number != u.line_number
+                || step.line_end != u.line_end
+                || step.resolved != u.resolved;
+            step.file_path = u.file_path;
+            step.line_number = u.line_number;
+            step.line_end = u.line_end;
+            step.resolved = u.resolved;
+            step.health = u.health;
+            if is_current && location_changed {
+                current_changed = true;
+            }
+        }
+        if current_changed {
+            self.update_step_code();
         }
     }
 
@@ -763,7 +880,7 @@ impl RightPane {
     /// called from a `spawn_blocking` thread (the background preview task)
     /// `block_in_place` would panic, so we drive the future with a plain
     /// `block_on` instead.
-    fn resolve_bookmark_live(
+    pub(super) fn resolve_bookmark_live(
         bm: &Bookmark,
         db: &Database,
         session_cache: &mut HashMap<CodemarkLanguage, ParseCache>,
@@ -844,6 +961,9 @@ impl RightPane {
         self.active_tour_name = None;
         self.active_remote_tour_id = None;
         self.overview_active = false;
+        // The steps are gone; drop any in-flight collection resolve so its batch
+        // can't repopulate stale steps.
+        self.invalidate_pending_step_resolution();
         self.overview.set_markdown(String::new());
 
         // Clear the rendered preview panels so old content doesn't linger
@@ -905,6 +1025,8 @@ impl RightPane {
         self.steps_data.clear();
         self.pager_total = 0;
         self.pager_current = 0;
+        // Dropping the steps invalidates any in-flight collection resolve.
+        self.invalidate_pending_step_resolution();
         self.active_tour_name = Some(collection.name.clone());
         self.active_bookmark_id = None;
         self.active_remote_tour_id = None;
@@ -929,6 +1051,8 @@ impl RightPane {
         self.steps_data.clear();
         self.pager_total = 0;
         self.pager_current = 0;
+        // Dropping the steps invalidates any in-flight collection resolve.
+        self.invalidate_pending_step_resolution();
         self.active_tour_name = None;
         self.active_bookmark_id = None;
         // Remember which remote tour is shown so a later refresh can restore this
@@ -1012,6 +1136,9 @@ impl RightPane {
                 self.active_bookmark_id = None;
                 self.active_remote_tour_id = None;
                 self.overview_active = false;
+                // Persisted (non-live) reload replaces the steps; drop any
+                // in-flight collection resolve so its batch can't clobber them.
+                self.invalidate_pending_step_resolution();
                 self.update_preview(db);
             } else {
                 // Clear the right-pane state when no steps are available
