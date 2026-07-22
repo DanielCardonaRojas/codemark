@@ -719,36 +719,34 @@ impl BrowserLayout {
             for (index, bm) in &steps {
                 // Health is projected regardless of whether live resolution
                 // succeeds, so the pager dot is accurate either way.
-                let health =
-                    crate::browser::tabbed_panel::bookmark_health(bm, &db, head_ref);
+                let health = crate::browser::tabbed_panel::bookmark_health(bm, &db, head_ref);
 
                 // This runs on a spawn_blocking thread, not a runtime worker.
-                let update = match super::RightPane::resolve_bookmark_live(
-                    bm, &db, &mut caches, false,
-                ) {
-                    Ok((file_path, start_line, end_line, _source)) => super::StepLiveUpdate {
-                        index: *index,
-                        file_path,
-                        line_number: start_line,
-                        line_end: Some(end_line),
-                        resolved: true,
-                        health,
-                    },
-                    Err(_) => {
-                        // Live resolution failed; fall back to the persisted
-                        // location (the same one the cheap build used).
-                        let (file_path, line_number, line_end, _res) =
-                            super::RightPane::persisted_step_location(&db, bm);
-                        super::StepLiveUpdate {
+                let update =
+                    match super::RightPane::resolve_bookmark_live(bm, &db, &mut caches, false) {
+                        Ok((file_path, start_line, end_line, _source)) => super::StepLiveUpdate {
                             index: *index,
                             file_path,
-                            line_number,
-                            line_end,
-                            resolved: false,
+                            line_number: start_line,
+                            line_end: Some(end_line),
+                            resolved: true,
                             health,
+                        },
+                        Err(_) => {
+                            // Live resolution failed; fall back to the persisted
+                            // location (the same one the cheap build used).
+                            let (file_path, line_number, line_end, _res) =
+                                super::RightPane::persisted_step_location(&db, bm);
+                            super::StepLiveUpdate {
+                                index: *index,
+                                file_path,
+                                line_number,
+                                line_end,
+                                resolved: false,
+                                health,
+                            }
                         }
-                    }
-                };
+                    };
                 batch.push(update);
 
                 // Post in small batches so the pager dots + current step correct

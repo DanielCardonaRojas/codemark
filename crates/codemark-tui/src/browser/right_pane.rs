@@ -318,11 +318,25 @@ impl RightPane {
         self.step_preview_request
     }
 
-    /// The generation of the currently open collection load. A background live
+    /// The generation of the current `steps_data`. A background live
     /// step-resolution batch is applied only if it still matches this, so a
-    /// batch for a collection the user has since navigated away from is dropped.
+    /// batch spawned for content the user has since navigated away from is
+    /// dropped.
     pub fn collection_generation(&self) -> u64 {
         self.collection_generation
+    }
+
+    /// Invalidate any in-flight background collection step-resolution batch.
+    ///
+    /// The generation identifies the current contents of `steps_data`; bumping it
+    /// makes [`apply_step_live_updates`](Self::apply_step_live_updates) drop a
+    /// batch spawned for a previous load. Every path that replaces or clears
+    /// `steps_data` (loading a single bookmark, an overview, another collection,
+    /// or clearing the preview) must call this, or a stale batch could clobber
+    /// the unrelated content that replaced the steps — e.g. its index-zero update
+    /// overwriting a freshly selected single bookmark's path/range/health.
+    fn invalidate_pending_step_resolution(&mut self) {
+        self.collection_generation = self.collection_generation.wrapping_add(1);
     }
 
     /// Update only the code pane (and the cheap Query tab) for the current step.
@@ -506,6 +520,9 @@ impl RightPane {
                 self.active_tour_name = None;
                 self.active_remote_tour_id = None;
                 self.overview_active = false;
+                // A single bookmark now owns the steps; drop any in-flight
+                // collection resolve so its batch can't clobber this step.
+                self.invalidate_pending_step_resolution();
                 self.update_preview(db);
             }
         } else {
@@ -659,6 +676,9 @@ impl RightPane {
         self.active_tour_name = None;
         self.active_remote_tour_id = None;
         self.overview_active = false;
+        // A single bookmark now owns the steps; drop any in-flight collection
+        // resolve so its batch can't clobber this step.
+        self.invalidate_pending_step_resolution();
     }
 
     /// Load a tour/collection for browsing, rendering the first step as fast as
@@ -719,7 +739,7 @@ impl RightPane {
         self.overview_active = false;
         // Bump the generation so a background resolve batch from a previously
         // open collection is dropped when it arrives.
-        self.collection_generation = self.collection_generation.wrapping_add(1);
+        self.invalidate_pending_step_resolution();
         self.update_preview(db);
     }
 
@@ -733,8 +753,7 @@ impl RightPane {
     /// the background resolve (remaining steps) upgrade it.
     fn build_step_persisted(db: &Database, bm: Bookmark) -> StepData {
         let resolutions = db.list_resolutions(&bm.id, 100).unwrap_or_default();
-        let (file_path, line_number, line_end, resolution) =
-            Self::persisted_step_location(db, &bm);
+        let (file_path, line_number, line_end, resolution) = Self::persisted_step_location(db, &bm);
         let health = persisted_bookmark_health(bm.health);
         StepData {
             file_path,
@@ -942,6 +961,9 @@ impl RightPane {
         self.active_tour_name = None;
         self.active_remote_tour_id = None;
         self.overview_active = false;
+        // The steps are gone; drop any in-flight collection resolve so its batch
+        // can't repopulate stale steps.
+        self.invalidate_pending_step_resolution();
         self.overview.set_markdown(String::new());
 
         // Clear the rendered preview panels so old content doesn't linger
@@ -1003,6 +1025,8 @@ impl RightPane {
         self.steps_data.clear();
         self.pager_total = 0;
         self.pager_current = 0;
+        // Dropping the steps invalidates any in-flight collection resolve.
+        self.invalidate_pending_step_resolution();
         self.active_tour_name = Some(collection.name.clone());
         self.active_bookmark_id = None;
         self.active_remote_tour_id = None;
@@ -1027,6 +1051,8 @@ impl RightPane {
         self.steps_data.clear();
         self.pager_total = 0;
         self.pager_current = 0;
+        // Dropping the steps invalidates any in-flight collection resolve.
+        self.invalidate_pending_step_resolution();
         self.active_tour_name = None;
         self.active_bookmark_id = None;
         // Remember which remote tour is shown so a later refresh can restore this
@@ -1110,6 +1136,9 @@ impl RightPane {
                 self.active_bookmark_id = None;
                 self.active_remote_tour_id = None;
                 self.overview_active = false;
+                // Persisted (non-live) reload replaces the steps; drop any
+                // in-flight collection resolve so its batch can't clobber them.
+                self.invalidate_pending_step_resolution();
                 self.update_preview(db);
             } else {
                 // Clear the right-pane state when no steps are available
