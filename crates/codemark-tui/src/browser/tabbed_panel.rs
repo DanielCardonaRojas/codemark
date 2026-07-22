@@ -58,20 +58,25 @@ pub struct TabbedPanel {
 ///
 /// This is the single source of truth for the health dot shown across the TUI
 /// (bookmarks panel, collection pager), so those indicators stay consistent.
+/// Map a persisted [`BookmarkHealth`] to a UI [`HealthStatus`] without any git
+/// projection or database read. Cheap enough to call per step during a
+/// synchronous list/collection build; live projection (which touches git) is
+/// layered on top asynchronously via [`bookmark_health`].
+pub fn persisted_bookmark_health(health: BookmarkHealth) -> HealthStatus {
+    match health {
+        BookmarkHealth::Active => HealthStatus::Healthy,
+        BookmarkHealth::Drifted => HealthStatus::Drifted,
+        BookmarkHealth::Stale | BookmarkHealth::Archived => HealthStatus::Broken,
+    }
+}
+
 pub fn bookmark_health(
     bookmark: &Bookmark,
     db: &Database,
     current_head: Option<&str>,
 ) -> HealthStatus {
-    // Map the persisted bookmark health when live projection is unavailable.
-    let persisted = |health: BookmarkHealth| match health {
-        BookmarkHealth::Active => HealthStatus::Healthy,
-        BookmarkHealth::Drifted => HealthStatus::Drifted,
-        BookmarkHealth::Stale | BookmarkHealth::Archived => HealthStatus::Broken,
-    };
-
     let Some(ref resolution_id) = bookmark.current_resolution_id else {
-        return persisted(bookmark.health);
+        return persisted_bookmark_health(bookmark.health);
     };
 
     match db.get_resolution(resolution_id) {
@@ -83,10 +88,10 @@ pub fn bookmark_health(
                 db.path(),
             ) {
                 Ok(ui_status) => HealthStatus::from(ui_status),
-                Err(_) => persisted(resolution.health),
+                Err(_) => persisted_bookmark_health(resolution.health),
             }
         }
-        _ => persisted(bookmark.health),
+        _ => persisted_bookmark_health(bookmark.health),
     }
 }
 

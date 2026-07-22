@@ -23,7 +23,7 @@ pub use tabs::{ContentTab, ContextTab, FiltersTab, Tab, TabSelection};
 pub use types::{
     ConfirmDialog, DetailsPaneSize, DialogAction, DialogButton, ExternalCommand, FocusArea,
     HealNotification, HealTarget, LeftPaneSize, PreviewPayload, RightPaneSize, SectionConfig,
-    SpinningItem, StepData, StepPreviewMarkdown, TabContent, escape_markdown,
+    SpinningItem, StepData, StepLiveUpdate, StepPreviewMarkdown, TabContent, escape_markdown,
 };
 
 use crate::component::{Component, HealthStatus, PanelItem};
@@ -1546,6 +1546,9 @@ impl BrowserLayout {
                 self.right_pane.pager_current = current_step;
                 self.right_pane.update_preview(&self.db);
             }
+            // load_tour_live resolves only the first step live; resolve the rest
+            // (including the restored current step) off the UI thread.
+            self.spawn_collection_live_resolve();
         } else if let Some(bm_id) = self.right_pane.active_bookmark_id.clone() {
             self.right_pane.load_bookmark_live(&self.db, &bm_id, &mut self.session_cache);
         } else if let Some(remote_id) = self.right_pane.active_remote_tour_id.clone() {
@@ -1603,6 +1606,7 @@ impl BrowserLayout {
         {
             // Default to the first tour only if nothing was active.
             self.right_pane.load_tour_live(&self.db, &first_tour.name, &mut self.session_cache);
+            self.spawn_collection_live_resolve();
         } else {
             // Nothing to show — clear the *whole* preview (steps and any overview)
             // so a stale remote/collection overview doesn't linger, e.g. after

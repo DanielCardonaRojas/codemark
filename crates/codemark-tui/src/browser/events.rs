@@ -425,6 +425,15 @@ impl BrowserLayout {
                 }
                 Some(true)
             }
+            Event::CollectionStepsResolved { generation, updates } => {
+                // Drop a batch for a collection the user has since navigated away
+                // from (or reloaded): only the current generation's steps are on
+                // screen.
+                if *generation == self.right_pane.collection_generation() {
+                    self.right_pane.apply_step_live_updates(updates.clone());
+                }
+                Some(true)
+            }
             _ => None,
         }
     }
@@ -668,6 +677,93 @@ impl BrowserLayout {
             // Send remaining items
             if !batch.is_empty() {
                 let _ = event_handler.send(Event::LiveHealthBatch(batch));
+            }
+        });
+    }
+
+    /// Spawn a background task that live-resolves the currently open collection's
+    /// steps and streams the results back as [`Event::CollectionStepsResolved`].
+    ///
+    /// Entering a collection renders every step immediately from cheap persisted
+    /// data (see [`RightPane::load_tour_live`]); only the current step is resolved
+    /// live on the UI thread. This task performs the expensive per-step work —
+    /// tree-sitter resolution + git health projection — off-thread and posts
+    /// batches that patch each step's location + health by index, mirroring
+    /// [`spawn_live_health_task`](Self::spawn_live_health_task). The captured
+    /// `generation` lets the UI drop the batch if the user has since opened a
+    /// different collection.
+    pub(super) fn spawn_collection_live_resolve(&self) {
+        use codemark_core::storage::db::Database;
+
+        let steps = self.right_pane.steps_resolve_input();
+        if steps.is_empty() {
+            return;
+        }
+        let generation = self.right_pane.collection_generation();
+        let db_path = self.db.path().to_path_buf();
+        let head = self.right_pane.head_commit().map(|s| s.to_string());
+        let event_handler = self.event_handler.clone();
+
+        tokio::task::spawn_blocking(move || {
+            let Ok(db) = Database::open(&db_path) else {
+                return;
+            };
+
+            use codemark_core::parser::languages::{Language as CL, ParseCache};
+            use std::collections::HashMap;
+
+            let mut caches: HashMap<CL, ParseCache> = HashMap::new();
+            let head_ref = head.as_deref();
+            let mut batch: Vec<super::StepLiveUpdate> = Vec::new();
+
+            for (index, bm) in &steps {
+                // Health is projected regardless of whether live resolution
+                // succeeds, so the pager dot is accurate either way.
+                let health =
+                    crate::browser::tabbed_panel::bookmark_health(bm, &db, head_ref);
+
+                // This runs on a spawn_blocking thread, not a runtime worker.
+                let update = match super::RightPane::resolve_bookmark_live(
+                    bm, &db, &mut caches, false,
+                ) {
+                    Ok((file_path, start_line, end_line, _source)) => super::StepLiveUpdate {
+                        index: *index,
+                        file_path,
+                        line_number: start_line,
+                        line_end: Some(end_line),
+                        resolved: true,
+                        health,
+                    },
+                    Err(_) => {
+                        // Live resolution failed; fall back to the persisted
+                        // location (the same one the cheap build used).
+                        let (file_path, line_number, line_end, _res) =
+                            super::RightPane::persisted_step_location(&db, bm);
+                        super::StepLiveUpdate {
+                            index: *index,
+                            file_path,
+                            line_number,
+                            line_end,
+                            resolved: false,
+                            health,
+                        }
+                    }
+                };
+                batch.push(update);
+
+                // Post in small batches so the pager dots + current step correct
+                // progressively rather than all at once at the end.
+                if batch.len() >= 5 {
+                    let _ = event_handler.send(Event::CollectionStepsResolved {
+                        generation,
+                        updates: std::mem::take(&mut batch),
+                    });
+                }
+            }
+
+            if !batch.is_empty() {
+                let _ = event_handler
+                    .send(Event::CollectionStepsResolved { generation, updates: batch });
             }
         });
     }
@@ -1011,6 +1107,9 @@ impl BrowserLayout {
                     let tour_name = selected.text().to_string();
                     panel.activate_selected();
                     self.right_pane.load_tour_live(&self.db, &tour_name, &mut self.session_cache);
+                    // Only the first step was resolved live; resolve the rest off
+                    // the UI thread so entering the tour stays snappy.
+                    self.spawn_collection_live_resolve();
                     self.set_focus(FocusArea::Main);
                     return Some(true);
                 }
@@ -1022,6 +1121,9 @@ impl BrowserLayout {
                     let tour_name = selected.text().to_string();
                     panel.activate_selected();
                     self.right_pane.load_tour_live(&self.db, &tour_name, &mut self.session_cache);
+                    // Only the first step was resolved live; resolve the rest off
+                    // the UI thread so entering the collection stays snappy.
+                    self.spawn_collection_live_resolve();
                     self.set_focus(FocusArea::Main);
                     return Some(true);
                 }

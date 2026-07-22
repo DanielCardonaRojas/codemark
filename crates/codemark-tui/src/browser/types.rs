@@ -506,6 +506,30 @@ pub struct StepPreviewMarkdown {
     pub comments_markdown: String,
 }
 
+/// A live-resolved update for one collection step, produced off the UI thread.
+///
+/// Entering a collection renders its steps immediately from cheap persisted data
+/// (no tree-sitter parse, no git health projection). The expensive live
+/// resolution then runs on a background task and streams back these updates,
+/// each patching one [`StepData`] by its index in `steps_data` so the pager
+/// corrects every step's location + health shortly after it appears. Mirrors the
+/// `LiveHealthBatch` pattern used for the bookmark list dots.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StepLiveUpdate {
+    /// Index into `steps_data` this update patches.
+    pub index: usize,
+    /// Live-resolved absolute file path (or the persisted fallback path).
+    pub file_path: String,
+    /// Live-resolved start line (0-indexed).
+    pub line_number: usize,
+    /// Live-resolved end line (0-indexed, inclusive), if any.
+    pub line_end: Option<usize>,
+    /// Whether live resolution succeeded; drives whether the range is highlighted.
+    pub resolved: bool,
+    /// Freshly projected health for this step's pager dot.
+    pub health: HealthStatus,
+}
+
 /// Escape special markdown characters.
 pub fn escape_markdown(text: &str) -> String {
     text.replace('_', "\\_")

@@ -78,6 +78,18 @@ pub enum Event {
         /// Rendered Info/Details/Comments markdown, boxed to keep the enum small.
         markdown: Box<crate::browser::StepPreviewMarkdown>,
     },
+    /// Live resolution for an open collection's steps finished (or partially
+    /// finished) on a background task. Entering a collection renders its steps
+    /// immediately from cheap persisted data; these updates then correct each
+    /// step's location + health by index. `generation` is matched against the
+    /// right pane's current collection generation so a batch from a
+    /// previously-open collection is dropped.
+    CollectionStepsResolved {
+        /// Generation of the collection load this batch answers.
+        generation: u64,
+        /// Per-step location + health updates, keyed by index into `steps_data`.
+        updates: Vec<crate::browser::StepLiveUpdate>,
+    },
 }
 
 impl Event {
