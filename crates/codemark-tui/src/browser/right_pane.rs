@@ -109,6 +109,20 @@ fn render_bookmark_markdown(
     current_head: Option<&str>,
 ) -> String {
     let repo_path = db.path().parent().unwrap_or_else(|| db.path());
+    render_bookmark_markdown_at(repo_path, bm, resolutions, template_content, current_head)
+}
+
+/// Render a bookmark to markdown given the repository path directly (rather than
+/// a [`Database`]). The database is only ever consulted for `db.path()` here, so
+/// taking the path lets this run on a background task with no DB handle — see
+/// [`BrowserLayout::spawn_step_markdown_task`](crate::browser::BrowserLayout).
+pub(crate) fn render_bookmark_markdown_at(
+    repo_path: &std::path::Path,
+    bm: &Bookmark,
+    resolutions: &[Resolution],
+    template_content: &str,
+    current_head: Option<&str>,
+) -> String {
     let context =
         templates::BookmarkTemplateContext::from_bookmark(bm, resolutions, repo_path, current_head);
     let handlebars = templates::create_handlebars_engine();
@@ -249,81 +263,148 @@ impl RightPane {
         self.steps.reapply_preview_theme();
     }
 
-    /// Update the code preview based on current step.
+    /// Fully re-render the preview for the current step: the code pane *and* the
+    /// Info/Details/Comments markdown, synchronously.
+    ///
+    /// Used by the load paths (entering a collection/tour, single-bookmark
+    /// preview), where one synchronous render is fine. The per-keypress paging
+    /// path does **not** use this — it splits into [`update_step_code`] (cheap,
+    /// inline) plus a background markdown render (see
+    /// [`BrowserLayout::spawn_step_markdown_task`](crate::browser::BrowserLayout))
+    /// so paging never blocks on the expensive markdown.
+    ///
+    /// This deliberately does **not** call [`refresh_step_health`], which spawns
+    /// a `git rev-parse` subprocess and runs per-step git ancestry queries; step
+    /// health is kept current by `LiveHealthBatch`/`HealComplete`/`SyncComplete`
+    /// and refreshed on `FocusGained` (the only time HEAD moves while a
+    /// collection stays open).
     pub fn update_preview(&mut self, db: &Database) {
-        // Refresh cached step health on navigation so paging after a branch
-        // change (with no intervening live-health batch) still recolors the dots.
-        self.refresh_step_health(db);
-        if let Some(step) = self.steps_data.get(self.pager_current) {
-            let code = std::fs::read_to_string(&step.file_path)
-                .unwrap_or_else(|_| format!("Error: Could not load file {}", step.file_path));
+        self.update_step_code();
+        self.update_step_markdown(db);
+    }
 
-            let ext = std::path::Path::new(&step.file_path)
-                .extension()
-                .and_then(|e| e.to_str())
-                .unwrap_or("txt");
+    /// Update only the code pane (and the cheap Query tab) for the current step.
+    ///
+    /// This is the visible part the user watches while paging, and it is cheap —
+    /// a file read plus a syntax highlight that is cached per step (see
+    /// [`CodePreview::set_code_keyed`](crate::component::CodePreview::set_code_keyed))
+    /// — so it runs inline on every pager move for instant feedback. The
+    /// expensive Info/Details/Comments markdown is rendered off-thread instead.
+    pub fn update_step_code(&mut self) {
+        let Some(step) = self.steps_data.get(self.pager_current) else { return };
 
-            if let Some(preview) = self.steps.get_step_preview_mut() {
-                // Keyed set reuses a cached highlight when this step was visited
-                // before, and sets code+extension together to avoid a double
-                // highlight when the language changes between steps.
-                preview.set_code_keyed(code, ext.to_string());
+        let code = std::fs::read_to_string(&step.file_path)
+            .unwrap_or_else(|_| format!("Error: Could not load file {}", step.file_path));
+        let ext = std::path::Path::new(&step.file_path)
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("txt")
+            .to_string();
+        // Use the bookmark's relative file path (or the resolution's override).
+        let relative_path = step
+            .resolution
+            .as_ref()
+            .and_then(|r| r.file_path.clone())
+            .unwrap_or_else(|| step.bookmark.file_path.clone());
+        let resolved = step.resolved;
+        let line_number = step.line_number;
+        let line_end = step.line_end;
+        let query = step.bookmark.query.clone();
 
-                // Use the bookmark's relative file path (or the resolution's override)
-                let relative_path = step
-                    .resolution
-                    .as_ref()
-                    .and_then(|r| r.file_path.clone())
-                    .unwrap_or_else(|| step.bookmark.file_path.clone());
-                tracing::debug!(target: "codemark::ui", %relative_path, "Setting preview file header");
-                preview.set_file_header(Some(relative_path));
-
-                if step.resolved {
-                    preview.jump_to_range(step.line_number, step.line_end);
-                } else {
-                    // Query no longer resolves: show the file without a stale
-                    // range highlight/gutter.
-                    preview.clear_selection();
-                }
+        if let Some(preview) = self.steps.get_step_preview_mut() {
+            // Keyed set reuses a cached highlight when this step was visited
+            // before, and sets code+extension together to avoid a double
+            // highlight when the language changes between steps.
+            preview.set_code_keyed(code, ext);
+            tracing::debug!(target: "codemark::ui", %relative_path, "Setting preview file header");
+            preview.set_file_header(Some(relative_path));
+            if resolved {
+                preview.jump_to_range(line_number, line_end);
+            } else {
+                // Query no longer resolves: show the file without a stale
+                // range highlight/gutter.
+                preview.clear_selection();
             }
-
-            let head_ref = self.cached_head_commit.as_deref();
-
-            // Update Info tab with markdown (Full bookmark details)
-            let info_markdown = self.generate_markdown(
-                db,
-                &step.bookmark,
-                &step.resolutions,
-                templates::SHOW_TEMPLATE,
-                head_ref,
-            );
-            if let Some(md_panel) = self.steps.get_markdown_mut() {
-                md_panel.set_markdown(info_markdown);
-            }
-
-            // Update Query tab
-            if let Some(query_preview) = self.steps.get_query_preview_mut() {
-                query_preview.set_code(step.bookmark.query.clone());
-                query_preview.set_extension("scm".to_string());
-            }
-
-            // Update bottom Details pane with markdown (Annotations/Notes only)
-            let details_markdown = self.generate_markdown(
-                db,
-                &step.bookmark,
-                &step.resolutions,
-                templates::DETAILS_TEMPLATE,
-                head_ref,
-            );
-            let comments_markdown = self.generate_markdown(
-                db,
-                &step.bookmark,
-                &step.resolutions,
-                templates::COMMENTS_TEMPLATE,
-                head_ref,
-            );
-            self.set_details_and_comments(details_markdown, comments_markdown);
         }
+
+        // The Query tab is just the raw query text (no rendering), so set it here.
+        if let Some(query_preview) = self.steps.get_query_preview_mut() {
+            query_preview.set_code(query);
+            query_preview.set_extension("scm".to_string());
+        }
+    }
+
+    /// Render and apply the Info/Details/Comments markdown for the current step
+    /// synchronously. Split out of [`update_preview`] so the paging path can run
+    /// the same work off-thread; the load paths call it inline via
+    /// [`update_preview`].
+    fn update_step_markdown(&mut self, db: &Database) {
+        let Some(step) = self.steps_data.get(self.pager_current) else { return };
+        let head_ref = self.cached_head_commit.as_deref();
+
+        let info_markdown = self.generate_markdown(
+            db,
+            &step.bookmark,
+            &step.resolutions,
+            templates::SHOW_TEMPLATE,
+            head_ref,
+        );
+        let details_markdown = self.generate_markdown(
+            db,
+            &step.bookmark,
+            &step.resolutions,
+            templates::DETAILS_TEMPLATE,
+            head_ref,
+        );
+        let comments_markdown = self.generate_markdown(
+            db,
+            &step.bookmark,
+            &step.resolutions,
+            templates::COMMENTS_TEMPLATE,
+            head_ref,
+        );
+        self.apply_step_markdown(crate::browser::StepPreviewMarkdown {
+            info_markdown,
+            details_markdown,
+            comments_markdown,
+        });
+    }
+
+    /// Apply pre-rendered step markdown to the Info tab and the bottom
+    /// Details/Comments panes. Pure UI-thread assignment (no rendering), so it
+    /// never blocks — this is the apply half of the background markdown render.
+    pub fn apply_step_markdown(&mut self, markdown: crate::browser::StepPreviewMarkdown) {
+        let crate::browser::StepPreviewMarkdown { info_markdown, details_markdown, comments_markdown } =
+            markdown;
+        if let Some(md_panel) = self.steps.get_markdown_mut() {
+            md_panel.set_markdown(info_markdown);
+        }
+        self.set_details_and_comments(details_markdown, comments_markdown);
+    }
+
+    /// The bookmark id of the step currently shown, if a collection/tour step is
+    /// loaded. Used to drop a background step-markdown result once the user has
+    /// paged on to a different step.
+    pub fn current_step_bookmark_id(&self) -> Option<&str> {
+        self.steps_data.get(self.pager_current).map(|s| s.bookmark.id.as_str())
+    }
+
+    /// Snapshot the current step's bookmark and resolutions for an off-thread
+    /// markdown render. Returns `None` when no step is loaded.
+    pub fn current_step_render_input(&self) -> Option<(Bookmark, Vec<Resolution>)> {
+        self.steps_data
+            .get(self.pager_current)
+            .map(|s| (s.bookmark.clone(), s.resolutions.clone()))
+    }
+
+    /// The cached Info/Details/Comments template strings, cloned so a background
+    /// task can render markdown without touching the (non-`Send`) `RightPane`.
+    pub fn markdown_templates(&self) -> (String, String, String) {
+        (
+            self.cached_show_template.clone(),
+            self.cached_details_template.clone(),
+            self.cached_comments_template.clone(),
+        )
     }
 
     // @lat: [[tui-line-range-selection#Load bookmark with range]]
@@ -1374,5 +1455,113 @@ impl RightPane {
 
         // Filter out empty or whitespace-only content
         content.filter(|m| !m.trim().is_empty())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use codemark_core::engine::bookmark::{BookmarkHealth, Visibility};
+    use tempfile::TempDir;
+
+    fn sample_bookmark(id: &str, query: &str, file_path: &str) -> Bookmark {
+        Bookmark {
+            id: id.to_string(),
+            query: query.to_string(),
+            language: "rust".to_string(),
+            file_path: file_path.to_string(),
+            content_hash: None,
+            commit_hash: None,
+            health: BookmarkHealth::Active,
+            resolution_method: None,
+            last_resolved_at: None,
+            stale_since: None,
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+            created_by: None,
+            current_resolution_id: None,
+            repo_id: None,
+            tags: Vec::new(),
+            annotations: Vec::new(),
+            comments: Vec::new(),
+        }
+    }
+
+    fn sample_collection(id: &str, name: &str) -> codemark_core::engine::bookmark::Collection {
+        codemark_core::engine::bookmark::Collection {
+            id: id.to_string(),
+            name: name.to_string(),
+            description: None,
+            visibility: Visibility::Private,
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+            created_by: None,
+            created_branch: None,
+            published_at: None,
+            published_commit_sha: None,
+            repo_url: None,
+            repo_id: None,
+            status: None,
+            health: None,
+            health_computed_at: None,
+            updated_at: None,
+            imported_from_url: None,
+        }
+    }
+
+    /// Build a `RightPane` over a temp database seeded with a two-step collection.
+    fn right_pane_with_collection() -> (RightPane, Database, TempDir) {
+        let tmp = TempDir::new().expect("tempdir");
+        let db_path = tmp.path().join("repo").join(".codemark").join("codemark.db");
+        let db = Database::create(&db_path).expect("create db");
+        db.insert_bookmark(&sample_bookmark("bm-1", "fn main", "src/main.rs")).unwrap();
+        db.insert_bookmark(&sample_bookmark("bm-2", "struct Config", "src/config.rs")).unwrap();
+        db.insert_collection(&sample_collection("col-1", "Tour")).unwrap();
+        db.add_to_collection("col-1", &["bm-1".to_string(), "bm-2".to_string()]).unwrap();
+        let pane = RightPane::new(&db);
+        (pane, db, tmp)
+    }
+
+    #[test]
+    fn paging_targets_the_new_step_for_inline_code_and_background_markdown() {
+        let (mut pane, db, _tmp) = right_pane_with_collection();
+        pane.load_tour(&db, "Tour");
+        assert_eq!(pane.pager_total, 2);
+        assert_eq!(pane.current_step_bookmark_id(), Some("bm-1"));
+        assert_eq!(
+            pane.current_step_render_input().map(|(bm, _)| bm.id),
+            Some("bm-1".to_string())
+        );
+
+        // Simulate a pager move to the second step (as `RightPane::handle_event`
+        // does) and refresh the inline code pane.
+        pane.pager_current = 1;
+        pane.update_step_code();
+
+        // Both the staleness key and the background-render snapshot now point at
+        // the second step: a late result for bm-1 is dropped, and the spawned
+        // task renders bm-2's markdown.
+        assert_eq!(pane.current_step_bookmark_id(), Some("bm-2"));
+        assert_eq!(
+            pane.current_step_render_input().map(|(bm, _)| bm.id),
+            Some("bm-2".to_string())
+        );
+    }
+
+    #[test]
+    fn apply_step_markdown_updates_the_info_tab() {
+        let (mut pane, db, _tmp) = right_pane_with_collection();
+        pane.load_tour(&db, "Tour");
+
+        pane.apply_step_markdown(crate::browser::StepPreviewMarkdown {
+            info_markdown: "# INFO-MARKER".to_string(),
+            details_markdown: "DETAILS-MARKER".to_string(),
+            comments_markdown: "COMMENTS-MARKER".to_string(),
+        });
+
+        // `get_markdown` only returns the Info panel when its tab is active
+        // (it defaults to the Steps/code tab), so select Info before reading.
+        pane.steps.tabs.set_selected(INFO_TAB_INDEX);
+        let info =
+            pane.steps.get_markdown().map(|m| m.markdown().to_string()).unwrap_or_default();
+        assert!(info.contains("INFO-MARKER"), "info tab should show applied markdown, got: {info}");
     }
 }

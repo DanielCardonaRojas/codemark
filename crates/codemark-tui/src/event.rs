@@ -62,6 +62,18 @@ pub enum Event {
         /// Bookmark that failed to resolve.
         bookmark_id: String,
     },
+    /// The Info/Details/Comments markdown for a collection step finished
+    /// rendering on a background task. The code pane is updated inline on
+    /// navigation; this carries only the expensive markdown so paging never
+    /// blocks on git-ancestry projection + handlebars rendering.
+    StepPreviewReady {
+        /// Bookmark the markdown was rendered for. Applied only if it still
+        /// matches the step on screen, so a result for a step the user has
+        /// already paged past is dropped.
+        bookmark_id: String,
+        /// Rendered Info/Details/Comments markdown, boxed to keep the enum small.
+        markdown: Box<crate::browser::StepPreviewMarkdown>,
+    },
 }
 
 impl Event {

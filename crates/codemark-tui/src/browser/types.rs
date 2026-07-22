@@ -487,6 +487,25 @@ pub struct PreviewPayload {
     pub query: String,
 }
 
+/// The Info/Details/Comments markdown for a single collection step, rendered
+/// off the UI thread.
+///
+/// Rendering this markdown is the expensive part of a step preview: it projects
+/// each resolution's status (git ancestry queries) and compiles + renders three
+/// handlebars templates. Doing it synchronously on every pager move is what made
+/// collection paging lag, so the code pane is updated inline (cheap) while this
+/// is computed on a background task and applied via
+/// [`Event::StepPreviewReady`](crate::event::Event::StepPreviewReady).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StepPreviewMarkdown {
+    /// Rendered markdown for the Info tab.
+    pub info_markdown: String,
+    /// Rendered markdown for the Details pane.
+    pub details_markdown: String,
+    /// Rendered markdown for the Comments pane.
+    pub comments_markdown: String,
+}
+
 /// Escape special markdown characters.
 pub fn escape_markdown(text: &str) -> String {
     text.replace('_', "\\_")
