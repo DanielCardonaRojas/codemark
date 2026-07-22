@@ -264,8 +264,10 @@ impl RightPane {
                 .unwrap_or("txt");
 
             if let Some(preview) = self.steps.get_step_preview_mut() {
-                preview.set_code(code);
-                preview.set_extension(ext.to_string());
+                // Keyed set reuses a cached highlight when this step was visited
+                // before, and sets code+extension together to avoid a double
+                // highlight when the language changes between steps.
+                preview.set_code_keyed(code, ext.to_string());
 
                 // Use the bookmark's relative file path (or the resolution's override)
                 let relative_path = step
