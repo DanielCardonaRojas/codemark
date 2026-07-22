@@ -166,16 +166,13 @@ pub fn render_status_bar(
     right_text: Option<Line>,
     search_query: Option<&str>,
 ) {
-    // Fill background
-    buf.set_style(area, Style::default().bg(crate::theme::palette().dim));
-
     if mode == AppMode::Search {
         let query = search_query.unwrap_or("");
         let text = Line::from(vec![
             Span::styled("Filter: ", Style::default().fg(crate::theme::palette().accent).bold()),
             Span::styled(query, Style::default().fg(crate::theme::palette().emphasis)),
         ]);
-        let para = Paragraph::new(text).style(Style::default().bg(crate::theme::palette().dim));
+        let para = Paragraph::new(text);
         para.render(area.inner(Margin { horizontal: 1, vertical: 0 }), buf);
         return;
     }
@@ -230,17 +227,13 @@ pub fn render_status_bar(
         left_spans.push(Span::styled(" …", Style::default().fg(crate::theme::palette().gray)));
     }
 
-    let left_text = Paragraph::new(Line::from(left_spans))
-        .alignment(Alignment::Left)
-        .style(Style::default().bg(crate::theme::palette().dim));
+    let left_text = Paragraph::new(Line::from(left_spans)).alignment(Alignment::Left);
 
     left_text.render(left_inner, buf);
 
     // 2. Metadata (Right side)
     if let Some(meta) = right_text {
-        let right_para = Paragraph::new(meta)
-            .alignment(Alignment::Right)
-            .style(Style::default().bg(crate::theme::palette().dim));
+        let right_para = Paragraph::new(meta).alignment(Alignment::Right);
 
         let right_area = chunks[1].inner(Margin { horizontal: 1, vertical: 0 });
         right_para.render(right_area, buf);
