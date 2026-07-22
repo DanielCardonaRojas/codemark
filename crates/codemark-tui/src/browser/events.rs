@@ -197,10 +197,13 @@ impl BrowserLayout {
     /// cached template strings — so no database handle crosses the thread
     /// boundary. Mirrors [`spawn_preview_task`](Self::spawn_preview_task) for the
     /// single-bookmark preview.
-    fn spawn_step_markdown_task(&self) {
+    fn spawn_step_markdown_task(&mut self) {
         let Some((bm, resolutions)) = self.right_pane.current_step_render_input() else {
             return;
         };
+        // Take a fresh render id so a result from an earlier task (same bookmark,
+        // older state) is superseded and dropped on arrival.
+        let request_id = self.right_pane.next_step_preview_request();
         let repo_path = self.db.path().parent().unwrap_or_else(|| self.db.path()).to_path_buf();
         let head = self.right_pane.head_commit().map(|s| s.to_string());
         let (show_tpl, details_tpl, comments_tpl) = self.right_pane.markdown_templates();
@@ -223,8 +226,11 @@ impl BrowserLayout {
                 details_markdown: render(&details_tpl),
                 comments_markdown: render(&comments_tpl),
             };
-            let _ = event_handler
-                .send(Event::StepPreviewReady { bookmark_id, markdown: Box::new(markdown) });
+            let _ = event_handler.send(Event::StepPreviewReady {
+                request_id,
+                bookmark_id,
+                markdown: Box::new(markdown),
+            });
         });
     }
 
@@ -406,11 +412,15 @@ impl BrowserLayout {
                 }
                 Some(true)
             }
-            Event::StepPreviewReady { bookmark_id, markdown } => {
-                // Apply only if the step we rendered for is still the one on
-                // screen; otherwise the user has paged on and this result is
-                // stale (the code pane already moved to the newer step).
-                if self.right_pane.current_step_bookmark_id() == Some(bookmark_id.as_str()) {
+            Event::StepPreviewReady { request_id, bookmark_id, markdown } => {
+                // Apply only if this is still the newest render for the step on
+                // screen. The request id rejects an older render of the *same*
+                // bookmark that a synchronous re-render (e.g. a `FocusGained`
+                // reload) or a newer navigation has since superseded; the
+                // bookmark-id check drops a result for a step already paged past.
+                if *request_id == self.right_pane.step_preview_request()
+                    && self.right_pane.current_step_bookmark_id() == Some(bookmark_id.as_str())
+                {
                     self.right_pane.apply_step_markdown((**markdown).clone());
                 }
                 Some(true)

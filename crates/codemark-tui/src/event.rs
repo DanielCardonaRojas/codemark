@@ -67,9 +67,13 @@ pub enum Event {
     /// navigation; this carries only the expensive markdown so paging never
     /// blocks on git-ancestry projection + handlebars rendering.
     StepPreviewReady {
-        /// Bookmark the markdown was rendered for. Applied only if it still
-        /// matches the step on screen, so a result for a step the user has
-        /// already paged past is dropped.
+        /// Monotonic id of the render this result answers. Applied only if it
+        /// still matches the right pane's current step-preview request, so an
+        /// older render for the same bookmark can't overwrite a newer one after
+        /// a reload or rapid re-navigation.
+        request_id: u64,
+        /// Bookmark the markdown was rendered for. A cheap secondary guard so a
+        /// result for a step the user has already paged past is dropped.
         bookmark_id: String,
         /// Rendered Info/Details/Comments markdown, boxed to keep the enum small.
         markdown: Box<crate::browser::StepPreviewMarkdown>,

@@ -94,6 +94,13 @@ pub struct RightPane {
     loading_label: Option<String>,
     /// Animation frame counter for the loading spinner.
     loading_tick: usize,
+    /// Monotonic id of the step-preview render whose markdown should currently
+    /// be applied. Bumped on every synchronous step render ([`update_preview`])
+    /// and every spawned background render; a background result is applied only
+    /// if it still carries this id. Guards against an *older* render of the same
+    /// bookmark clobbering a newer one — e.g. an in-flight task completing after
+    /// a `FocusGained` reload re-rendered the step, or after rapid A→B→A paging.
+    step_preview_request: u64,
 }
 
 /// Render a bookmark to markdown using the given handlebars template content.
@@ -176,6 +183,7 @@ impl RightPane {
             loading: false,
             loading_label: None,
             loading_tick: 0,
+            step_preview_request: 0,
         };
 
         // Try to load the first tour automatically
@@ -279,8 +287,27 @@ impl RightPane {
     /// and refreshed on `FocusGained` (the only time HEAD moves while a
     /// collection stays open).
     pub fn update_preview(&mut self, db: &Database) {
+        // Rendering synchronously here supersedes any in-flight background step
+        // render, so bump the request id: a task spawned before this call now
+        // carries a stale id and its result is dropped rather than overwriting
+        // the fresh markdown we're about to apply.
+        self.next_step_preview_request();
         self.update_step_code();
         self.update_step_markdown(db);
+    }
+
+    /// Bump and return the step-preview request id. Taken by every synchronous
+    /// step render and every spawned background render; a background result is
+    /// applied only if it still matches [`step_preview_request`], so an older
+    /// render can never clobber a newer one for the same bookmark.
+    pub fn next_step_preview_request(&mut self) -> u64 {
+        self.step_preview_request = self.step_preview_request.wrapping_add(1);
+        self.step_preview_request
+    }
+
+    /// The id of the step-preview render whose result should currently be applied.
+    pub fn step_preview_request(&self) -> u64 {
+        self.step_preview_request
     }
 
     /// Update only the code pane (and the cheap Query tab) for the current step.
@@ -1557,5 +1584,24 @@ mod tests {
         pane.steps.tabs.set_selected(INFO_TAB_INDEX);
         let info = pane.steps.get_markdown().map(|m| m.markdown().to_string()).unwrap_or_default();
         assert!(info.contains("INFO-MARKER"), "info tab should show applied markdown, got: {info}");
+    }
+
+    #[test]
+    fn synchronous_render_supersedes_an_in_flight_background_render() {
+        let (mut pane, db, _tmp) = right_pane_with_collection();
+        pane.load_tour(&db, "Tour");
+
+        // A background render captures the current request id.
+        let in_flight = pane.next_step_preview_request();
+
+        // A synchronous re-render of the same step — e.g. a `FocusGained` reload
+        // projecting against a fresh HEAD — must supersede that in-flight render
+        // so its (older) result is dropped instead of clobbering fresh markdown.
+        pane.update_preview(&db);
+
+        assert!(
+            pane.step_preview_request() > in_flight,
+            "a synchronous render must advance the request id past an in-flight background render"
+        );
     }
 }
