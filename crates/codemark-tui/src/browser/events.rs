@@ -201,8 +201,7 @@ impl BrowserLayout {
         let Some((bm, resolutions)) = self.right_pane.current_step_render_input() else {
             return;
         };
-        let repo_path =
-            self.db.path().parent().unwrap_or_else(|| self.db.path()).to_path_buf();
+        let repo_path = self.db.path().parent().unwrap_or_else(|| self.db.path()).to_path_buf();
         let head = self.right_pane.head_commit().map(|s| s.to_string());
         let (show_tpl, details_tpl, comments_tpl) = self.right_pane.markdown_templates();
         let event_handler = self.event_handler.clone();

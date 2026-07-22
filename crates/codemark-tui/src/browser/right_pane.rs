@@ -374,8 +374,11 @@ impl RightPane {
     /// Details/Comments panes. Pure UI-thread assignment (no rendering), so it
     /// never blocks — this is the apply half of the background markdown render.
     pub fn apply_step_markdown(&mut self, markdown: crate::browser::StepPreviewMarkdown) {
-        let crate::browser::StepPreviewMarkdown { info_markdown, details_markdown, comments_markdown } =
-            markdown;
+        let crate::browser::StepPreviewMarkdown {
+            info_markdown,
+            details_markdown,
+            comments_markdown,
+        } = markdown;
         if let Some(md_panel) = self.steps.get_markdown_mut() {
             md_panel.set_markdown(info_markdown);
         }
@@ -392,9 +395,7 @@ impl RightPane {
     /// Snapshot the current step's bookmark and resolutions for an off-thread
     /// markdown render. Returns `None` when no step is loaded.
     pub fn current_step_render_input(&self) -> Option<(Bookmark, Vec<Resolution>)> {
-        self.steps_data
-            .get(self.pager_current)
-            .map(|s| (s.bookmark.clone(), s.resolutions.clone()))
+        self.steps_data.get(self.pager_current).map(|s| (s.bookmark.clone(), s.resolutions.clone()))
     }
 
     /// The cached Info/Details/Comments template strings, cloned so a background
@@ -1526,10 +1527,7 @@ mod tests {
         pane.load_tour(&db, "Tour");
         assert_eq!(pane.pager_total, 2);
         assert_eq!(pane.current_step_bookmark_id(), Some("bm-1"));
-        assert_eq!(
-            pane.current_step_render_input().map(|(bm, _)| bm.id),
-            Some("bm-1".to_string())
-        );
+        assert_eq!(pane.current_step_render_input().map(|(bm, _)| bm.id), Some("bm-1".to_string()));
 
         // Simulate a pager move to the second step (as `RightPane::handle_event`
         // does) and refresh the inline code pane.
@@ -1540,10 +1538,7 @@ mod tests {
         // the second step: a late result for bm-1 is dropped, and the spawned
         // task renders bm-2's markdown.
         assert_eq!(pane.current_step_bookmark_id(), Some("bm-2"));
-        assert_eq!(
-            pane.current_step_render_input().map(|(bm, _)| bm.id),
-            Some("bm-2".to_string())
-        );
+        assert_eq!(pane.current_step_render_input().map(|(bm, _)| bm.id), Some("bm-2".to_string()));
     }
 
     #[test]
@@ -1560,8 +1555,7 @@ mod tests {
         // `get_markdown` only returns the Info panel when its tab is active
         // (it defaults to the Steps/code tab), so select Info before reading.
         pane.steps.tabs.set_selected(INFO_TAB_INDEX);
-        let info =
-            pane.steps.get_markdown().map(|m| m.markdown().to_string()).unwrap_or_default();
+        let info = pane.steps.get_markdown().map(|m| m.markdown().to_string()).unwrap_or_default();
         assert!(info.contains("INFO-MARKER"), "info tab should show applied markdown, got: {info}");
     }
 }
