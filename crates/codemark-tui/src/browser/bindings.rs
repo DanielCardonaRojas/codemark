@@ -60,7 +60,11 @@ impl BrowserLayout {
                     }
                     Some(ContentTab::Collections) => {
                         bindings.push(("Enter", "Open collection"));
-                        bindings.push(("P", "Push collection"));
+                        // Pushing requires sync credentials, so only advertise it
+                        // when authenticated.
+                        if self.logged_in {
+                            bindings.push(("P", "Push collection"));
+                        }
                         bindings.push(("d", "Delete collection"));
                         bindings.push(("H", "Heal all"));
                         bindings.push(("Ctrl+O", "Copy ID"));
@@ -174,7 +178,11 @@ impl BrowserLayout {
                         bindings.push(
                             KeyBinding::new("Enter", "Open").with_priority(HIDDEN_BINDING_PRIORITY),
                         );
-                        bindings.push(KeyBinding::new("P", "Push").with_priority(85));
+                        // Pushing requires sync credentials, so only advertise it
+                        // when authenticated.
+                        if self.logged_in {
+                            bindings.push(KeyBinding::new("P", "Push").with_priority(85));
+                        }
                         bindings.push(KeyBinding::new("d", "Delete").with_priority(75));
                         bindings.push(
                             KeyBinding::new("H", "Heal all").with_priority(HIDDEN_BINDING_PRIORITY),

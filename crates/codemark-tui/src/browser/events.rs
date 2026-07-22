@@ -777,7 +777,11 @@ impl BrowserLayout {
                 return self.handle_delete_key();
             }
             ratatui::crossterm::event::KeyCode::Char('P')
-                if self.should_handle_keybindings() && self.focus == FocusArea::ContentPanel =>
+                if self.should_handle_keybindings()
+                    && self.focus == FocusArea::ContentPanel
+                    // Pushing needs sync credentials; the binding is hidden when
+                    // logged out, so treat the key as a no-op to match.
+                    && self.logged_in =>
             {
                 if let Some(ContentTab::Collections) =
                     ContentTab::from_index(self.left_pane.content_panel.tabs.selected_index())

@@ -220,6 +220,11 @@ pub struct BrowserLayout {
     last_step_move_tick: Option<usize>,
     /// Active modal dialog, if any. Captures all input while displayed.
     dialog: Option<ConfirmDialog>,
+    /// Cached sync-login state, refreshed by [`Self::update_tours_tab_visibility`].
+    /// Read every frame by the status-bar/help binding builders to decide whether
+    /// to advertise remote actions (e.g. collection Push), so it must not do disk
+    /// IO — hence the cache rather than calling [`Self::is_logged_in`] per render.
+    logged_in: bool,
 }
 
 /// Maximum results returned by a search-bar query (bookmarks or collections,
@@ -277,6 +282,8 @@ impl BrowserLayout {
             step_preview_dirty: false,
             last_step_move_tick: None,
             dialog: None,
+            // Corrected immediately by update_tours_tab_visibility below.
+            logged_in: false,
         };
         layout.update_focus_state();
         layout.sync_steps_tab_label();
@@ -343,7 +350,8 @@ impl BrowserLayout {
     /// Tours tab was selected when hidden, the selection clamps back to
     /// Collections, so the right-pane preview is refreshed to match.
     pub(super) fn update_tours_tab_visibility(&mut self) {
-        let visible_count = if self.is_logged_in() { 3 } else { 2 };
+        self.logged_in = self.is_logged_in();
+        let visible_count = if self.logged_in { 3 } else { 2 };
         let previous = self.left_pane.content_panel.tabs.selected_index();
         self.left_pane.content_panel.tabs.set_visible_count(visible_count);
         let current = self.left_pane.content_panel.tabs.selected_index();
