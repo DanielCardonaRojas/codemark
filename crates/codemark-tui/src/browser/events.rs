@@ -172,11 +172,66 @@ impl BrowserLayout {
         if settled {
             // Discrete press: render now for immediate feedback.
             self.step_preview_dirty = false;
-            self.right_pane.update_preview(&self.db);
+            self.render_step_preview();
         } else {
             // Mid-hold: defer until the repeats stop.
             self.step_preview_dirty = true;
         }
+    }
+
+    /// Render the current step: update the code pane inline (cheap — file read +
+    /// cached highlight) and kick off the expensive Info/Details/Comments
+    /// markdown render on a background task. Splitting the work this way is what
+    /// keeps paging snappy: the pane the user watches updates instantly while the
+    /// git-projection + handlebars markdown never blocks the event loop.
+    fn render_step_preview(&mut self) {
+        self.right_pane.update_step_code();
+        self.spawn_step_markdown_task();
+    }
+
+    /// Spawn a background task that renders the current step's Info/Details/
+    /// Comments markdown and posts it back as [`Event::StepPreviewReady`].
+    ///
+    /// The render is pure computation — it needs only the repo path (for git
+    /// ancestry projection), the step's bookmark + resolutions, HEAD, and the
+    /// cached template strings — so no database handle crosses the thread
+    /// boundary. Mirrors [`spawn_preview_task`](Self::spawn_preview_task) for the
+    /// single-bookmark preview.
+    fn spawn_step_markdown_task(&mut self) {
+        let Some((bm, resolutions)) = self.right_pane.current_step_render_input() else {
+            return;
+        };
+        // Take a fresh render id so a result from an earlier task (same bookmark,
+        // older state) is superseded and dropped on arrival.
+        let request_id = self.right_pane.next_step_preview_request();
+        let repo_path = self.db.path().parent().unwrap_or_else(|| self.db.path()).to_path_buf();
+        let head = self.right_pane.head_commit().map(|s| s.to_string());
+        let (show_tpl, details_tpl, comments_tpl) = self.right_pane.markdown_templates();
+        let event_handler = self.event_handler.clone();
+        let bookmark_id = bm.id.clone();
+
+        tokio::task::spawn_blocking(move || {
+            let head_ref = head.as_deref();
+            let render = |tpl: &str| {
+                super::right_pane::render_bookmark_markdown_at(
+                    &repo_path,
+                    &bm,
+                    &resolutions,
+                    tpl,
+                    head_ref,
+                )
+            };
+            let markdown = super::StepPreviewMarkdown {
+                info_markdown: render(&show_tpl),
+                details_markdown: render(&details_tpl),
+                comments_markdown: render(&comments_tpl),
+            };
+            let _ = event_handler.send(Event::StepPreviewReady {
+                request_id,
+                bookmark_id,
+                markdown: Box::new(markdown),
+            });
+        });
     }
 
     /// Render a deferred step preview once pager movement has settled (a full
@@ -194,7 +249,7 @@ impl BrowserLayout {
             return false;
         }
         self.step_preview_dirty = false;
-        self.right_pane.update_preview(&self.db);
+        self.render_step_preview();
         true
     }
 
@@ -247,6 +302,15 @@ impl BrowserLayout {
                     self.registry = registry;
                 }
                 self.update_tours_tab_visibility();
+
+                // Leaving the terminal is the only way the git HEAD moves while a
+                // collection stays open (an external branch switch). Refresh the
+                // cached HEAD now — before the panel rebuild below re-resolves the
+                // open collection's steps — so their health projects against the
+                // current checkout. Paging itself no longer refreshes HEAD (that
+                // subprocess was the source of the navigation lag), so this is
+                // where a branch change gets reflected in the pager dots.
+                self.right_pane.refresh_head_commit(&self.db);
 
                 // A plain `refresh_all_panels` rebuilds the Bookmarks/Collections
                 // lists from the full DB set, which would drop any active search
@@ -345,6 +409,19 @@ impl BrowserLayout {
                     // synchronously (no tree-sitter parse, so it's cheap).
                     self.right_pane.load_bookmark(&self.db, bookmark_id);
                     self.right_pane.finish_loading();
+                }
+                Some(true)
+            }
+            Event::StepPreviewReady { request_id, bookmark_id, markdown } => {
+                // Apply only if this is still the newest render for the step on
+                // screen. The request id rejects an older render of the *same*
+                // bookmark that a synchronous re-render (e.g. a `FocusGained`
+                // reload) or a newer navigation has since superseded; the
+                // bookmark-id check drops a result for a step already paged past.
+                if *request_id == self.right_pane.step_preview_request()
+                    && self.right_pane.current_step_bookmark_id() == Some(bookmark_id.as_str())
+                {
+                    self.right_pane.apply_step_markdown((**markdown).clone());
                 }
                 Some(true)
             }

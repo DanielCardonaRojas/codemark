@@ -23,7 +23,7 @@ pub use tabs::{ContentTab, ContextTab, FiltersTab, Tab, TabSelection};
 pub use types::{
     ConfirmDialog, DetailsPaneSize, DialogAction, DialogButton, ExternalCommand, FocusArea,
     HealNotification, HealTarget, LeftPaneSize, PreviewPayload, RightPaneSize, SectionConfig,
-    SpinningItem, StepData, TabContent, escape_markdown,
+    SpinningItem, StepData, StepPreviewMarkdown, TabContent, escape_markdown,
 };
 
 use crate::component::{Component, HealthStatus, PanelItem};
