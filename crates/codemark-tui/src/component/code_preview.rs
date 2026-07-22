@@ -8,6 +8,9 @@ use ratatui::{
     widgets::{Scrollbar, ScrollbarOrientation, ScrollbarState, StatefulWidget, Widget},
 };
 use std::cell::RefCell;
+use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
+use std::rc::Rc;
 use std::sync::{Arc, LazyLock, RwLock};
 use syntect::easy::HighlightLines;
 use syntect::highlighting::{Style as SyntectStyle, Theme};
@@ -77,6 +80,11 @@ fn line_number_width(total_lines: usize) -> usize {
     total_lines.max(1).to_string().len().max(3)
 }
 
+/// Upper bound on distinct highlighted files retained by a single preview's
+/// [`highlight_cache`](CodePreview::highlight_cache). Comfortably exceeds a
+/// typical collection's step count; on overflow the cache is cleared wholesale.
+const HIGHLIGHT_CACHE_CAP: usize = 64;
+
 // @lat: [[tui-line-range-selection#CodePreview component]]
 /// A component for displaying syntax-highlighted code with line numbers.
 #[derive(Debug, Clone)]
@@ -102,8 +110,15 @@ pub struct CodePreview {
     selection_mode: bool,
     /// Last rendered area
     last_area: std::cell::Cell<Rect>,
-    /// Cache for highlighted lines to avoid re-highlighting on every frame
-    cached_lines: RefCell<Vec<Line<'static>>>,
+    /// Highlighted lines for the code currently displayed, shared via `Rc` so
+    /// swapping to a cached result (see [`highlight_cache`](Self::highlight_cache))
+    /// is O(1) rather than a deep clone.
+    cached_lines: RefCell<Rc<Vec<Line<'static>>>>,
+    /// Highlighted output keyed by a hash of (extension + code), so revisiting a
+    /// step reuses its highlight instead of re-running syntect over the whole
+    /// file. Keyed by content (not path) so an on-disk edit naturally misses.
+    /// Cleared on theme change; capped to bound memory.
+    highlight_cache: RefCell<HashMap<u64, Rc<Vec<Line<'static>>>>>,
     /// Optional file name header displayed above the code
     file_header: Option<String>,
     /// Theme used for syntax highlighting. Shared via `Arc` so cloning a
@@ -126,7 +141,8 @@ impl CodePreview {
             focused: false,
             selection_mode: false,
             last_area: std::cell::Cell::new(Rect::default()),
-            cached_lines: RefCell::new(Vec::new()),
+            cached_lines: RefCell::new(Rc::new(Vec::new())),
+            highlight_cache: RefCell::new(HashMap::new()),
             file_header: None,
             theme: default_theme(),
         };
@@ -137,12 +153,37 @@ impl CodePreview {
     /// Set the code to display.
     pub fn set_code(&mut self, code: String) {
         self.code = code;
-        self.scroll_offset = 0;
-        self.selected_line = None;
-        self.cursor_col = 0;
-        self.selection_mode = false;
-        self.selected_range = None;
+        self.reset_view();
         self.refresh_cache();
+    }
+
+    /// Set the code and extension together, reusing a cached highlight when the
+    /// same content was rendered before.
+    ///
+    /// This is the hot path for stepping through a collection: re-tokenizing a
+    /// whole file with syntect is the dominant per-step cost, so a repeat visit
+    /// swaps in the cached result in O(1). Setting both fields up front also
+    /// avoids the double highlight that `set_code` + `set_extension` would incur
+    /// when the language changes between steps.
+    pub fn set_code_keyed(&mut self, code: String, extension: String) {
+        self.code = code;
+        self.extension = extension;
+        self.reset_view();
+
+        let key = self.highlight_key();
+        if let Some(lines) = self.highlight_cache.borrow().get(&key) {
+            *self.cached_lines.borrow_mut() = Rc::clone(lines);
+            return;
+        }
+        let lines = Rc::new(self.build_highlighted_lines());
+        let mut cache = self.highlight_cache.borrow_mut();
+        // Crude cap: distinct files in a collection are few, so clearing on
+        // overflow effectively never fires, yet bounds a pathological session.
+        if cache.len() >= HIGHLIGHT_CACHE_CAP {
+            cache.clear();
+        }
+        cache.insert(key, Rc::clone(&lines));
+        *self.cached_lines.borrow_mut() = lines;
     }
 
     /// Set the file extension.
@@ -151,6 +192,25 @@ impl CodePreview {
             self.extension = extension;
             self.refresh_cache();
         }
+    }
+
+    /// Reset scroll/selection view state to defaults (shared by the `set_code*`
+    /// entry points).
+    fn reset_view(&mut self) {
+        self.scroll_offset = 0;
+        self.selected_line = None;
+        self.cursor_col = 0;
+        self.selection_mode = false;
+        self.selected_range = None;
+    }
+
+    /// Cache key for the current highlight: a hash of extension + code. The
+    /// theme is not folded in because a theme change clears the whole cache.
+    fn highlight_key(&self) -> u64 {
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        self.extension.hash(&mut hasher);
+        self.code.hash(&mut hasher);
+        hasher.finish()
     }
 
     /// Set the file header displayed above the code preview.
@@ -164,11 +224,20 @@ impl CodePreview {
     /// [`crate::theme::ThemeRegistry`]) and hand the same `Arc` to every preview.
     pub fn set_theme(&mut self, theme: Arc<Theme>) {
         self.theme = theme;
+        // Cached highlights carry the old theme's colors; drop them.
+        self.highlight_cache.borrow_mut().clear();
         self.refresh_cache();
     }
 
-    /// Refresh the syntax highlighting cache.
+    /// Rebuild the highlight for the current code and store it as the displayed
+    /// lines. Does not touch the keyed [`highlight_cache`](Self::highlight_cache)
+    /// — that is populated only via [`set_code_keyed`](Self::set_code_keyed).
     fn refresh_cache(&self) {
+        *self.cached_lines.borrow_mut() = Rc::new(self.build_highlighted_lines());
+    }
+
+    /// Syntax-highlight the current code into gutter-prefixed lines.
+    fn build_highlighted_lines(&self) -> Vec<Line<'static>> {
         let syntax_set = &*SYNTAX_SET;
         let theme = &*self.theme;
         let syntax = syntax_set
@@ -210,7 +279,7 @@ impl CodePreview {
             }
             highlighted.push(Line::from(spans));
         }
-        *self.cached_lines.borrow_mut() = highlighted;
+        highlighted
     }
 
     // @lat: [[tui-line-range-selection#CodePreview Component#Jump to Range]]
@@ -879,5 +948,36 @@ mod tests {
         let after = span_colors(&preview);
 
         assert_ne!(before, after, "switching theme should change highlight colors");
+    }
+
+    #[test]
+    fn set_code_keyed_reuses_highlight_on_revisit() {
+        let mut preview = CodePreview::new("", "rs");
+
+        preview.set_code_keyed("fn a() {}\n".to_string(), "rs".to_string());
+        let first = Rc::clone(&preview.cached_lines.borrow());
+
+        // Moving to a different step produces a distinct highlight.
+        preview.set_code_keyed("fn b() {}\n".to_string(), "rs".to_string());
+        assert!(!Rc::ptr_eq(&first, &preview.cached_lines.borrow()));
+
+        // Returning to the first step swaps in the *same* cached Rc — no
+        // re-highlight — which is the whole point of the cache.
+        preview.set_code_keyed("fn a() {}\n".to_string(), "rs".to_string());
+        assert!(Rc::ptr_eq(&first, &preview.cached_lines.borrow()));
+    }
+
+    #[test]
+    fn set_theme_invalidates_keyed_cache() {
+        let mut preview = CodePreview::new("", "rs");
+        preview.set_code_keyed("fn a() {}\n".to_string(), "rs".to_string());
+        let before = Rc::clone(&preview.cached_lines.borrow());
+
+        preview.set_theme(Arc::new(ThemeRegistry::new().resolve("Dracula")));
+
+        // A revisit after the theme change must re-highlight (fresh Rc), not
+        // serve the stale pre-theme colors from the cache.
+        preview.set_code_keyed("fn a() {}\n".to_string(), "rs".to_string());
+        assert!(!Rc::ptr_eq(&before, &preview.cached_lines.borrow()));
     }
 }

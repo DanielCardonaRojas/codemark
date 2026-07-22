@@ -50,6 +50,14 @@ use std::sync::{Arc, Mutex};
 /// scrolling so only the item the user lands on is resolved.
 const PREVIEW_DEBOUNCE_TICKS: usize = 1;
 
+/// Ticks of no pager movement that mark a step move as "settled". A move after
+/// this much quiet is a discrete press and renders immediately; while a held
+/// key repeats, moves land within this window every tick, so the (synchronous)
+/// step render is deferred until a quiet window follows the last move. Must be
+/// ≥ 2: a hold produces a move every tick, i.e. a one-tick gap, which must not
+/// count as settled.
+const STEP_MOVE_SETTLE_TICKS: usize = 2;
+
 /// Number of ticks a preview may stay in flight before the loading indicator is
 /// shown. Fast/cached resolves complete (and the result event is applied) within
 /// this window, so the previous preview stays put and no spinner flashes; only a
@@ -200,6 +208,16 @@ pub struct BrowserLayout {
     /// only appears if the resolve outlives a short grace period, so fast/cached
     /// resolves never flash an intermediate loading state.
     inflight_preview: Option<(Option<String>, usize)>,
+    /// A collection/tour step-preview render is owed but was deferred because a
+    /// held key was still repeating. Re-rendering the step's code preview (file
+    /// read + syntax highlight + markdown) runs synchronously on the UI thread,
+    /// so during a hold it is held back and fired from the tick handler once
+    /// movement settles. A single discrete press renders immediately instead and
+    /// never sets this.
+    step_preview_dirty: bool,
+    /// Tick of the most recent pager move, used to tell a discrete press (render
+    /// now) from a held-key repeat (defer). `None` until the first move.
+    last_step_move_tick: Option<usize>,
     /// Active modal dialog, if any. Captures all input while displayed.
     dialog: Option<ConfirmDialog>,
 }
@@ -256,6 +274,8 @@ impl BrowserLayout {
             reconcile_search_requests: std::collections::HashMap::new(),
             pending_preview: None,
             inflight_preview: None,
+            step_preview_dirty: false,
+            last_step_move_tick: None,
             dialog: None,
         };
         layout.update_focus_state();
