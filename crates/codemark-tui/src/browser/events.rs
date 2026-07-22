@@ -461,6 +461,9 @@ impl BrowserLayout {
             self.left_pane.content_panel.tabs.set_selected(idx);
         }
 
+        // Move focus off the search bar onto the results list, mirroring the
+        // bookmark search path, so arrow keys navigate the collections directly.
+        self.set_focus(FocusArea::ContentPanel);
         // Refresh the right-pane overview for the newly selected collection.
         self.update_content_live_preview();
     }
