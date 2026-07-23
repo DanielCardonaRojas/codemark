@@ -157,6 +157,11 @@ pub struct BrowserLayout {
     details_pane_size: DetailsPaneSize,
     /// Whether a tour pull is in progress (for post-pull panel rebuild)
     is_pulling_tour: bool,
+    /// Remote tour ids with a pull task currently in flight. The dedup guard for
+    /// [`start_pull_tour`](Self::start_pull_tour) reads this instead of the
+    /// spinner list, which the global cleanup can drain while an overlapping
+    /// pull is still running. An id is released by [`Event::TourPullFinished`].
+    pulling_tour_ids: std::collections::HashSet<String>,
     /// Panel items currently showing an animated spinner
     spinning_items: Vec<SpinningItem>,
     /// Tick at which spinners should be cleared (deferred to complete at least one full cycle)
@@ -265,6 +270,7 @@ impl BrowserLayout {
             right_pane_size: RightPaneSize::Regular,
             details_pane_size: DetailsPaneSize::Regular,
             is_pulling_tour: false,
+            pulling_tour_ids: std::collections::HashSet::new(),
             spinning_items: Vec::new(),
             spinner_clear_at: None,
             tick_count: 0,
@@ -1119,10 +1125,12 @@ impl BrowserLayout {
         let user_data_key = format!("remote:{}", tour_id);
         // This exact tour is already being pulled (e.g. a held Enter on its
         // focused overview, or a repeated `p`); ignore the repeat so we don't
-        // spawn concurrent network + database sync tasks for the same tour. Its
-        // in-flight spinner is keyed by `remote:<tour_id>`, so a pull of a
-        // *different* tour is still allowed to proceed.
-        if self.spinning_items.iter().any(|s| s.user_data_key == user_data_key) {
+        // spawn concurrent network + database sync tasks for the same tour. A
+        // pull of a *different* tour is still allowed to proceed. The set (not
+        // the spinner list) is the source of truth: the global spinner cleanup
+        // can drain a still-running pull's spinner when an overlapping pull
+        // finishes, whereas this id is released only by `TourPullFinished`.
+        if self.pulling_tour_ids.contains(&tour_id) {
             return;
         }
         // Mark the item as pulling (spinner will be shown on tick)
@@ -1152,6 +1160,12 @@ impl BrowserLayout {
             }
         };
 
+        // Committed to spawning: mark the tour in-flight. Released on completion
+        // (success or failure) via `TourPullFinished`. The pre-spawn early
+        // returns above never reach here, so they need no release.
+        self.pulling_tour_ids.insert(tour_id.clone());
+        let finished_tour_id = tour_id.clone();
+
         tokio::task::spawn_blocking(move || {
             let handle = tokio::runtime::Handle::current();
 
@@ -1175,6 +1189,11 @@ impl BrowserLayout {
 
                 codemark_core::sync::sync(sync_opts).await
             });
+
+            // Release the in-flight guard first, so a follow-up activation of
+            // this tour is accepted the moment the pull settles regardless of
+            // outcome.
+            let _ = event_handler.send(Event::TourPullFinished(finished_tour_id));
 
             match result {
                 Ok(()) => {

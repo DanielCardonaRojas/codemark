@@ -401,6 +401,14 @@ impl BrowserLayout {
                 self.right_pane.refresh_step_health(&self.db);
                 Some(true)
             }
+            Event::TourPullFinished(tour_id) => {
+                // The pull task settled; release the in-flight guard so a
+                // follow-up activation of this tour is accepted again. Keyed by
+                // tour id, so an overlapping pull of a different tour keeps its
+                // own guard until its own task finishes.
+                self.pulling_tour_ids.remove(tour_id);
+                Some(true)
+            }
             Event::RemoteToursLoaded(tours, scope) => {
                 if *scope != self.pending_remote_repos {
                     return Some(true);
