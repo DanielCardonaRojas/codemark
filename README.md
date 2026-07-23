@@ -24,8 +24,9 @@
 **Codemark** bookmarks code by structure, not by line number. A `file:line`
 reference breaks the moment you add a newline above it; Codemark uses
 [tree-sitter](https://tree-sitter.github.io/tree-sitter/) to remember *what* you
-marked — a function, a block, a type — so the bookmark still points at the right
-place after you rename, refactor, or reformat around it.
+marked (a function, a block, a type) and anchors the bookmark to that named
+structure, so it still points at the right place after you refactor or reformat
+around it.
 
 That durability is what makes it useful for long agent sessions, code audits, and
 keeping track of things you want to find again.
@@ -50,7 +51,7 @@ keeping track of things you want to find again.
 ## ⚡ Use It With Your Agent
 
 Codemark ships with a skill you can install into your coding agent. Once it's in,
-the agent knows how to create and recall structural bookmarks on its own — so the
+the agent knows how to create and recall structural bookmarks on its own, so the
 context it built up in one session is still there in the next, instead of being
 rebuilt from scratch every time.
 
@@ -61,7 +62,7 @@ codemark install-skill --agent claude --scope user
 Then just ask, in any session:
 
 > *"Trace how a request flows from the HTTP router to the database. Create a
-> collection called `request-lifecycle` and bookmark each key hop — the route
+> collection called `request-lifecycle` and bookmark each key hop: the route
 > handler, the auth middleware, the service layer, and the query builder. Add a
 > short note to each explaining its role."*
 
@@ -76,7 +77,7 @@ agent that loads `.agents/skills`.
 
 ### What you can ask for
 
-Once a flow lives in a collection, anyone can reuse it — you, a teammate, or the
+Once a flow lives in a collection, anyone can reuse it: you, a teammate, or the
 next agent session:
 
 - 🧭 **Onboard a new engineer**
@@ -89,7 +90,7 @@ next agent session:
   > *"There's a bug where expired tokens are still accepted. Read the `auth-flow`
   > collection and tell me which hop is most likely responsible."*
 - 🔗 **Relate two flows**
-  > *"Compare the `request-lifecycle` and `background-jobs` collections — where do
+  > *"Compare the `request-lifecycle` and `background-jobs` collections. Where do
   > they share code or state, and where could they conflict?"*
 
 📘 Walkthrough: [**Agent Workflow Guide**](./dev-docs/guides/agent-workflow-walkthrough.md) · [**Agent Skill source**](./extras/skills/codemark/SKILL.md)
@@ -106,7 +107,7 @@ codemark tui
 ```
 
 > **Requires a [Nerd Font](https://www.nerdfonts.com/).** The dashboard uses glyph
-> icons throughout — set your terminal to a Nerd Font (e.g. `JetBrainsMono Nerd
+> icons throughout, so set your terminal to a Nerd Font (e.g. `JetBrainsMono Nerd
 > Font`) so they render correctly instead of showing as `□` placeholders.
 
 ![Browsing bookmarks in the TUI](./screenshots/images/codemark_tui_demo.gif)
@@ -165,7 +166,7 @@ variable; run `codemark-tui --list-schemes` to see what's available.
   tours back down with `p`. Share curated walkthroughs across a team.
 - **🔍 Semantic & full-text search** Press `/` to search, then toggle between
   **FTS** (SQLite full-text) and **Semantic** (local vector embeddings) modes.
-  FTS finds exact terms; Semantic finds bookmarks by meaning — no API key
+  FTS finds exact terms; Semantic finds bookmarks by meaning, with no API key
   required.
 - **📝 Customizable markdown previews** The details and collection-overview
   panes render through [Handlebars templates](./dev-docs/templates.md). Drop your
@@ -179,20 +180,20 @@ variable; run `codemark-tui --list-schemes` to see what's available.
   See [Configuration](./dev-docs/configuration.md).
 - **✏️ Open in any editor** Press `o` on a bookmark to jump straight to the
   code in your configured editor (terminal or GUI). Configure per–file-extension
-  commands via the `[open]` config section — see
+  commands via the `[open]` config section; see
   [Configuration](./dev-docs/configuration.md).
 
 ---
 
 ## 🛠️ Features
 
-- 🧠 **Smart Resolution**: Bookmarks survive renames and structural changes via tiered matching (Exact → Relaxed → Hash Fallback).
+- 🧠 **Smart Resolution**: Queries are anchored to named structures and survive refactoring and reformatting via tiered matching (Exact → Relaxed → Hash Fallback).
 - 🖥️ **Interactive Dashboard**: Lazygit-style TUI for efficient, keyboard-first interaction.
 - 📑 **Rich Metadata**: Captures AST structure, git context, content hashes, and append-only notes/tags.
-- 🔍 **Semantic Search**: Find code by intent (e.g., *"where is authentication handled?"*) with local embeddings — no API key.
+- 🔍 **Semantic Search**: Find code by intent (e.g., *"where is authentication handled?"*) with local embeddings, no API key.
 - 🗃️ **Collections**: Group bookmarks into logical sets for specific tasks.
 - 📦 **Git Integrated**: Track bookmarks across commits and branches.
-- 🧩 **Agent Skills**: An installable skill that teaches AI coding agents to bookmark for you — works with Claude Code, GitHub Copilot, Gemini CLI, and any agent that loads `.agents/skills`.
+- 🧩 **Agent Skills**: An installable skill that teaches AI coding agents to bookmark for you. Works with Claude Code, GitHub Copilot, Gemini CLI, and any agent that loads `.agents/skills`.
 
 ---
 
@@ -240,7 +241,7 @@ cargo install --git https://github.com/DanielCardonaRojas/codemark codemark-tui
 
 > **Repo-aware by default.** Codemark automatically detects the current Git
 > repository (walking up from your working directory) and stores bookmarks
-> alongside it — no setup required. You can also operate on a repo from any path
+> alongside it, with no setup required. You can also operate on a repo from any path
 > by referencing it by identity with `--repo <owner/name>`, or point at a
 > specific database with `--db <path>` / the `CODEMARK_DB` env var.
 
@@ -251,7 +252,7 @@ Prefer to drive it yourself instead of through an agent? The CLI is all you need
 codemark add --file src/auth.rs --range 42-67 --tag auth --note "token validation entrypoint"
 ```
 
-### 2. Find it again — even after the code moves
+### 2. Find it again, even after the code moves
 ```bash
 codemark list                 # see everything you've marked
 codemark resolve <id>         # re-locate a single bookmark
@@ -263,7 +264,7 @@ codemark search "auth"        # full-text + semantic search
 codemark tui
 ```
 
-See the [**Full Command Reference**](./dev-docs/CLI.md) for every subcommand and flag — including collections, tours, snippet matching, and multi-repo queries.
+See the [**Full Command Reference**](./dev-docs/CLI.md) for every subcommand and flag, including collections, tours, snippet matching, and multi-repo queries.
 
 ---
 
@@ -291,25 +292,25 @@ cp ./templates/codemark_show.md ~/.config/codemark/templates/
 $EDITOR ~/.config/codemark/templates/codemark_show.md
 ```
 
-For the full template specification — every available variable, loops,
-conditionals, helpers, and the default templates — see the
+For the full template specification, covering every available variable, loops,
+conditionals, helpers, and the default templates, see the
 **[Templates reference](./dev-docs/templates.md)**.
 
 ---
 
 ## 📖 Documentation
 
-- [**Full Command Reference**](./dev-docs/CLI.md) — Detailed flag and subcommand guide.
-- [**Configuration**](./dev-docs/configuration.md) — Editor setup, themes, global/local config, and semantic search.
-- [**Templates**](./dev-docs/templates.md) — Customize markdown output and TUI previews.
-- [**Agent Workflow Guide**](./dev-docs/guides/agent-workflow-walkthrough.md) — End-to-end walkthrough of using Codemark with an AI agent.
-- [**Agent Skill**](./extras/skills/codemark/SKILL.md) — The skill installed by `codemark install-skill` (Claude Code, Copilot, Gemini, and more).
+- [**Full Command Reference**](./dev-docs/CLI.md): Detailed flag and subcommand guide.
+- [**Configuration**](./dev-docs/configuration.md): Editor setup, themes, global/local config, and semantic search.
+- [**Templates**](./dev-docs/templates.md): Customize markdown output and TUI previews.
+- [**Agent Workflow Guide**](./dev-docs/guides/agent-workflow-walkthrough.md): End-to-end walkthrough of using Codemark with an AI agent.
+- [**Agent Skill**](./extras/skills/codemark/SKILL.md): The skill installed by `codemark install-skill` (Claude Code, Copilot, Gemini, and more).
 
 ---
 
 ## 🏗️ Built With
 
-Codemark is a **local-first** Rust workspace — no cloud service, account, or API
+Codemark is a **local-first** Rust workspace. No cloud service, account, or API
 key is required for any core feature.
 
 | Layer | Technology |
@@ -317,8 +318,9 @@ key is required for any core feature.
 | **Language** | [Rust](https://www.rust-lang.org) (workspace: `codemark-core`, `codemark-cli`, `codemark-tui`, `codetours-server`) |
 | **Structural parsing** | [tree-sitter](https://tree-sitter.github.io/tree-sitter/) |
 | **Storage** | [SQLite](https://www.sqlite.org) via `rusqlite` (bundled), with [`sqlite-vec`](https://github.com/asg017/sqlite-vec) for vector search and FTS5 for full-text search |
-| **Embeddings** | Local models run on [`candle`](https://github.com/huggingface/candle) — semantic search with no API key |
+| **Embeddings** | Local models run on [`candle`](https://github.com/huggingface/candle) for semantic search with no API key |
 | **TUI** | [`ratatui`](https://ratatui.rs) + `crossterm`, with [`syntect`](https://github.com/trishume/syntect) syntax highlighting |
+| **Markdown** | [`pulldown-cmark`](https://github.com/pulldown-cmark/pulldown-cmark) renders the details and collection-overview previews |
 | **Templating** | [Handlebars](https://handlebarsjs.com/) |
 | **Sync server** | [`axum`](https://github.com/tokio-rs/axum) + `tokio`, JWT auth (the `codetours` server) |
 | **Git integration** | [`git2`](https://github.com/rust-lang/git2-rs) (libgit2) |
