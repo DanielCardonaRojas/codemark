@@ -41,7 +41,7 @@ regex = "1"
 # all network git access goes through the `git` CLI in git/remote.rs. We disable
 # the default `https`/`ssh` features (which pull in openssl-sys) and vendor
 # libgit2 so cross-compiling to musl/Windows needs no system C libraries.
-git2 = { version = "0.19", default-features = false, features = ["vendored-libgit2"] }
+git2 = { version = "0.20", default-features = false, features = ["vendored-libgit2"] }
 rusqlite = { version = "0.37", features = ["bundled"] }
 tree-sitter = "0.25"
 tempfile = "3"
