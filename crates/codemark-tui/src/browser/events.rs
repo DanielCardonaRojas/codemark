@@ -86,6 +86,11 @@ impl BrowserLayout {
     /// overview preview is actionable once the right pane is focused.
     fn enter_active_overview(&mut self) -> bool {
         if let Some(tour_name) = self.right_pane.active_tour_name.clone() {
+            tracing::debug!(
+                target: "codemark::ui",
+                %tour_name,
+                "entering collection overview -> bookmarks flow"
+            );
             self.right_pane.load_tour_live(&self.db, &tour_name, &mut self.session_cache);
             // Only the first step was resolved live; resolve the rest off the UI
             // thread so entering the collection stays snappy.
@@ -94,6 +99,11 @@ impl BrowserLayout {
             return true;
         }
         if let Some(remote_id) = self.right_pane.active_remote_tour_id.clone() {
+            tracing::debug!(
+                target: "codemark::ui",
+                %remote_id,
+                "entering remote tour overview -> pull"
+            );
             self.start_pull_tour(remote_id);
             return true;
         }

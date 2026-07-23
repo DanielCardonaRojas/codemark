@@ -1116,6 +1116,14 @@ impl BrowserLayout {
 
     /// Start pulling a specific tour from the server by tour_id.
     pub fn start_pull_tour(&mut self, tour_id: String) {
+        // A pull is already in flight; ignore repeat activations (e.g. a held
+        // Enter on a focused remote-tour overview, or a repeated `p`) so we
+        // don't spawn concurrent network + database sync tasks for the same
+        // tour. The flag is cleared once the pull completes (SyncComplete →
+        // schedule_clear_spinners), including the error early-returns below.
+        if self.is_pulling_tour {
+            return;
+        }
         // Mark the item as pulling (spinner will be shown on tick)
         self.is_pulling_tour = true;
         let user_data_key = format!("remote:{}", tour_id);
