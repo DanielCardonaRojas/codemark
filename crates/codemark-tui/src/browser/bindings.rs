@@ -80,7 +80,13 @@ impl BrowserLayout {
                 }
             }
             FocusArea::Main => {
-                bindings.push(("Enter", "Go to step / Open link"));
+                // On a collection/tour overview Enter enters the bookmarks flow;
+                // otherwise it goes to the step or opens a focused link.
+                if self.right_pane.overview_active {
+                    bindings.push(("Enter", "Open collection / Open link"));
+                } else {
+                    bindings.push(("Enter", "Go to step / Open link"));
+                }
                 bindings.push(("o", "Open in editor"));
                 // Links only exist in markdown panels, not the code preview.
                 if self.right_pane.link_navigation_available() {

@@ -52,6 +52,19 @@ impl BrowserLayout {
             return true;
         }
 
+        // Enter on a collection/tour overview enters the bookmarks flow (or pulls
+        // a remote tour), mirroring Enter on the Content list. It runs only after
+        // delegation so a focused overview link still opens on Enter; otherwise
+        // the overview markdown panel swallows the key and Enter does nothing.
+        if let Event::Key(key) = event
+            && key.code == ratatui::crossterm::event::KeyCode::Enter
+            && self.focus == FocusArea::Main
+            && self.right_pane.overview_active
+            && self.enter_active_overview()
+        {
+            return true;
+        }
+
         if let Event::Key(key) = event
             && key.code == ratatui::crossterm::event::KeyCode::Esc
             && self.focus == FocusArea::Main
@@ -60,6 +73,30 @@ impl BrowserLayout {
             return true;
         }
 
+        false
+    }
+
+    /// Enter the collection/tour currently shown as a right-pane overview,
+    /// switching from the overview to the per-step bookmarks flow. For a remote
+    /// (not-yet-pulled) tour overview, this pulls the tour instead. Returns
+    /// whether anything was activated.
+    ///
+    /// Mirrors Enter on the Collections / Tours content list (see
+    /// [`activate_content_selection`](Self::activate_content_selection)) so the
+    /// overview preview is actionable once the right pane is focused.
+    fn enter_active_overview(&mut self) -> bool {
+        if let Some(tour_name) = self.right_pane.active_tour_name.clone() {
+            self.right_pane.load_tour_live(&self.db, &tour_name, &mut self.session_cache);
+            // Only the first step was resolved live; resolve the rest off the UI
+            // thread so entering the collection stays snappy.
+            self.spawn_collection_live_resolve();
+            self.right_pane.focus_steps();
+            return true;
+        }
+        if let Some(remote_id) = self.right_pane.active_remote_tour_id.clone() {
+            self.start_pull_tour(remote_id);
+            return true;
+        }
         false
     }
 

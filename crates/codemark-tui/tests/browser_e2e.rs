@@ -459,6 +459,74 @@ async fn search_reconcile_drops_rows_that_no_longer_match() {
     );
 }
 
+/// Build a minimal private collection with the given id/name for seeding.
+fn sample_collection(id: &str, name: &str) -> codemark_core::engine::bookmark::Collection {
+    use codemark_core::engine::bookmark::{Collection, Visibility};
+    Collection {
+        id: id.to_string(),
+        name: name.to_string(),
+        description: None,
+        visibility: Visibility::Private,
+        created_at: "2026-01-01T00:00:00Z".to_string(),
+        created_by: None,
+        created_branch: None,
+        published_at: None,
+        published_commit_sha: None,
+        repo_url: None,
+        repo_id: None,
+        status: None,
+        health: None,
+        health_computed_at: None,
+        updated_at: None,
+        imported_from_url: None,
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn enter_on_focused_collection_overview_opens_the_bookmarks_flow() {
+    let sandbox = Sandbox::with_bookmarks([
+        sample_bookmark("bm-1", "fn main", "src/main.rs"),
+        sample_bookmark("bm-2", "struct Config", "src/config.rs"),
+    ]);
+    sandbox.write_repo_file("src/main.rs", "fn main() {\n    println!(\"hi\");\n}\n");
+    sandbox.write_repo_file("src/config.rs", "struct Config {\n    name: String,\n}\n");
+    sandbox.db.insert_collection(&sample_collection("col-1", "MyTour")).expect("seed collection");
+    sandbox
+        .db
+        .add_to_collection("col-1", &["bm-1".to_string(), "bm-2".to_string()])
+        .expect("populate collection");
+    let (mut layout, _sandbox) = make_layout(sandbox);
+
+    // Seeded content => focus starts on Content panel (Bookmarks). Move to the
+    // Collections tab, which renders the collection overview in the right pane.
+    assert_eq!(layout.focus(), FocusArea::ContentPanel);
+    key_char(&mut layout, ']'); // Bookmarks -> Collections
+
+    // Focus the right pane (pane 4) so keys route to the overview markdown panel,
+    // matching the reported scenario. The overview is shown before Enter.
+    key_char(&mut layout, '4');
+    assert_eq!(layout.focus(), FocusArea::Main);
+    let before = render_to_string(&layout, 140, 40);
+    assert!(
+        before.contains("Overview"),
+        "the collection overview should be shown before Enter; got:\n{before}"
+    );
+
+    // Enter on the focused overview must open the per-step bookmarks flow, the
+    // same as Enter on the Collections list. The overview title is replaced by
+    // the step preview (file header + code), and the pager appears for 2 steps.
+    key_code(&mut layout, KeyCode::Enter);
+    let after = render_to_string(&layout, 140, 40);
+    assert!(
+        !after.contains("Overview"),
+        "Enter should leave the overview and enter the bookmarks flow; got:\n{after}"
+    );
+    assert!(
+        after.contains("fn main"),
+        "the first step's code should render after entering; got:\n{after}"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn remote_tour_overview_survives_a_panel_refresh() {
     use codemark_core::sync::RemoteTourSummary;
