@@ -52,6 +52,19 @@ impl BrowserLayout {
             return true;
         }
 
+        // Enter on a collection/tour overview enters the bookmarks flow (or pulls
+        // a remote tour), mirroring Enter on the Content list. It runs only after
+        // delegation so a focused overview link still opens on Enter; otherwise
+        // the overview markdown panel swallows the key and Enter does nothing.
+        if let Event::Key(key) = event
+            && key.code == ratatui::crossterm::event::KeyCode::Enter
+            && self.focus == FocusArea::Main
+            && self.right_pane.overview_active
+            && self.enter_active_overview()
+        {
+            return true;
+        }
+
         if let Event::Key(key) = event
             && key.code == ratatui::crossterm::event::KeyCode::Esc
             && self.focus == FocusArea::Main
@@ -60,6 +73,40 @@ impl BrowserLayout {
             return true;
         }
 
+        false
+    }
+
+    /// Enter the collection/tour currently shown as a right-pane overview,
+    /// switching from the overview to the per-step bookmarks flow. For a remote
+    /// (not-yet-pulled) tour overview, this pulls the tour instead. Returns
+    /// whether anything was activated.
+    ///
+    /// Mirrors Enter on the Collections / Tours content list (see
+    /// [`activate_content_selection`](Self::activate_content_selection)) so the
+    /// overview preview is actionable once the right pane is focused.
+    fn enter_active_overview(&mut self) -> bool {
+        if let Some(tour_name) = self.right_pane.active_tour_name.clone() {
+            tracing::debug!(
+                target: "codemark::ui",
+                %tour_name,
+                "entering collection overview -> bookmarks flow"
+            );
+            self.right_pane.load_tour_live(&self.db, &tour_name, &mut self.session_cache);
+            // Only the first step was resolved live; resolve the rest off the UI
+            // thread so entering the collection stays snappy.
+            self.spawn_collection_live_resolve();
+            self.right_pane.focus_steps();
+            return true;
+        }
+        if let Some(remote_id) = self.right_pane.active_remote_tour_id.clone() {
+            tracing::debug!(
+                target: "codemark::ui",
+                %remote_id,
+                "entering remote tour overview -> pull"
+            );
+            self.start_pull_tour(remote_id);
+            return true;
+        }
         false
     }
 
@@ -352,6 +399,14 @@ impl BrowserLayout {
                 // partial pull reports failure yet still writes some), so refresh
                 // its pager dots unconditionally; no-ops when no collection is open.
                 self.right_pane.refresh_step_health(&self.db);
+                Some(true)
+            }
+            Event::TourPullFinished(tour_id) => {
+                // The pull task settled; release the in-flight guard so a
+                // follow-up activation of this tour is accepted again. Keyed by
+                // tour id, so an overlapping pull of a different tour keeps its
+                // own guard until its own task finishes.
+                self.pulling_tour_ids.remove(tour_id);
                 Some(true)
             }
             Event::RemoteToursLoaded(tours, scope) => {

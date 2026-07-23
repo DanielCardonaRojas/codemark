@@ -38,6 +38,11 @@ pub enum Event {
     HealComplete(String, bool), // (message, success)
     /// Sync operation (push/pull) completed with a notification message.
     SyncComplete(String, bool), // (message, success)
+    /// A remote tour pull task finished (success or failure), carrying the tour
+    /// id so the in-flight guard can release it. Decoupled from the global
+    /// spinner sweep so overlapping pulls of *different* tours each release
+    /// independently.
+    TourPullFinished(String),
     /// Remote tours listing completed (tours, repos scope used for the request —
     /// the comma-joined `owner/name` set, for discarding stale responses).
     RemoteToursLoaded(Vec<codemark_core::sync::RemoteTourSummary>, Option<String>),
