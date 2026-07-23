@@ -71,6 +71,13 @@ impl SearchBar {
         self.last_area.get()
     }
 
+    /// Clear the cached render area so the search bar is excluded from mouse
+    /// hit-testing until it is rendered again. Used by the left pane when an
+    /// expanded panel hides the search bar, so a stale area can't capture clicks.
+    pub fn invalidate_area(&self) {
+        self.last_area.set(Rect::default());
+    }
+
     /// Get the current search query.
     pub fn query(&self) -> &str {
         &self.query
