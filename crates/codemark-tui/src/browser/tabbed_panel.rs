@@ -625,6 +625,19 @@ impl TabbedPanel {
         self.last_area.get()
     }
 
+    /// Clear the cached render area so this panel is excluded from mouse
+    /// hit-testing until it is rendered again.
+    ///
+    /// The left pane only draws the focused panel when expanded (Half/Full),
+    /// leaving the others with a stale `last_area` from an earlier layout. Mouse
+    /// routing still consults every panel's cached area, so without this a click
+    /// on the expanded panel can land on a hidden panel's old tab row. The layout
+    /// invalidates the non-rendered panels each frame to keep hit-testing in sync
+    /// with what is actually on screen.
+    pub fn invalidate_area(&self) {
+        self.last_area.set(Rect::default());
+    }
+
     /// Render the tabbed panel.
     pub fn render(&self, area: Rect, buf: &mut Buffer) {
         self.last_area.set(area);
@@ -859,7 +872,9 @@ impl TabbedPanel {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use ratatui::crossterm::event::{
+        KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+    };
 
     fn two_tab_panel() -> TabbedPanel {
         let p1 = Panel::new("").items(vec![PanelItem::new("alpha"), PanelItem::new("beta")]);
@@ -894,6 +909,47 @@ mod tests {
                 assert!(!p.is_filtered());
             }
         }
+    }
+
+    /// A tab click on the top border switches the active tab only while the
+    /// panel's cached render area is live. After `invalidate_area` (which the
+    /// left pane calls each frame for panels it doesn't draw when expanded), the
+    /// same click must be ignored so it can't switch a hidden panel's tab —
+    /// otherwise a bookmark click in an expanded pane lands on a stale tab row.
+    #[test]
+    fn test_invalidated_area_ignores_tab_click() {
+        let mut panel = two_tab_panel();
+        let area = Rect::new(0, 0, 20, 6);
+        let mut buf = Buffer::empty(area);
+
+        // First render records the tab click boundaries on the top border.
+        panel.render(area, &mut buf);
+        assert_eq!(panel.tabs.selected_index(), 0);
+
+        // Column landing on the second tab's title. With BORDER_EXTENSION (2),
+        // tab "A" occupies cols 2..4 (" A " minus its leading offset), a
+        // separator sits at 4, and tab "B" starts at col 5.
+        let tab_b_col = 5u16;
+        let click = |col: u16| {
+            Event::Mouse(MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: col,
+                row: area.top(),
+                modifiers: KeyModifiers::NONE,
+            })
+        };
+
+        // A click on the second tab switches to it, proving the coordinates are live.
+        assert!(panel.handle_event(&click(tab_b_col)));
+        assert_eq!(panel.tabs.selected_index(), 1);
+
+        // Reset selection, then invalidate the cached area as the left pane does
+        // for a panel it stops rendering. The identical click must now be a
+        // no-op: the panel is off-screen, so it owns no hit-test region.
+        panel.tabs.set_selected(0);
+        panel.invalidate_area();
+        assert!(!panel.handle_event(&click(tab_b_col)));
+        assert_eq!(panel.tabs.selected_index(), 0);
     }
 
     #[test]
