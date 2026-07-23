@@ -625,15 +625,16 @@ impl TabbedPanel {
         self.last_area.get()
     }
 
-    /// Clear the cached render area so this panel is excluded from mouse
-    /// hit-testing until it is rendered again.
+    /// Clear the cached render area so this panel is excluded from all mouse
+    /// hit-testing (tab switching and nested forwarding) until it is rendered
+    /// again. See the empty-area guard in [`Self::handle_event`].
     ///
     /// The left pane only draws the focused panel when expanded (Half/Full),
     /// leaving the others with a stale `last_area` from an earlier layout. Mouse
-    /// routing still consults every panel's cached area, so without this a click
-    /// on the expanded panel can land on a hidden panel's old tab row. The layout
-    /// invalidates the non-rendered panels each frame to keep hit-testing in sync
-    /// with what is actually on screen.
+    /// routing still consults every panel, so without this a click on the
+    /// expanded panel can land on a hidden panel's old tab row or nested list.
+    /// The layout invalidates the non-rendered panels each frame to keep
+    /// hit-testing in sync with what is actually on screen.
     pub fn invalidate_area(&self) {
         self.last_area.set(Rect::default());
     }
@@ -753,6 +754,18 @@ impl TabbedPanel {
     /// Handle an event.
     /// Returns true if event was handled.
     pub fn handle_event(&mut self, event: &Event) -> bool {
+        // A panel that wasn't drawn this frame has an invalidated (empty) area,
+        // so it is off-screen. Ignore mouse events entirely rather than routing
+        // them by position: neither this panel's tab row nor its nested panel
+        // owns live coordinates, and the caller (`LeftPane::handle_event`)
+        // dispatches every mouse event to every panel. Without this guard a
+        // hidden panel would still forward clicks/scrolls to its active nested
+        // panel against stale cached coordinates, stealing input from the
+        // visible, expanded panel.
+        if matches!(event, Event::Mouse(_)) && self.last_area.get().is_empty() {
+            return false;
+        }
+
         // Check for tab switching with [ and ] or mouse click
         let old_index = self.tabs.selected_index();
         let mut tab_changed = false;
@@ -911,14 +924,16 @@ mod tests {
         }
     }
 
-    /// A tab click on the top border switches the active tab only while the
-    /// panel's cached render area is live. After `invalidate_area` (which the
-    /// left pane calls each frame for panels it doesn't draw when expanded), the
-    /// same click must be ignored so it can't switch a hidden panel's tab —
-    /// otherwise a bookmark click in an expanded pane lands on a stale tab row.
+    /// Mouse input is honored only while the panel's cached render area is live.
+    /// After `invalidate_area` (which the left pane calls each frame for panels
+    /// it doesn't draw when expanded), both a tab-row click *and* a body click
+    /// forwarded to the nested list must be ignored — otherwise a click in an
+    /// expanded pane lands on a hidden panel's stale tab row or list row.
     #[test]
-    fn test_invalidated_area_ignores_tab_click() {
+    fn test_invalidated_area_ignores_mouse_events() {
         let mut panel = two_tab_panel();
+        // The nested list only acts on a Down while focused (see `Panel::handle_event`).
+        panel.set_focus(true);
         let area = Rect::new(0, 0, 20, 6);
         let mut buf = Buffer::empty(area);
 
@@ -930,26 +945,32 @@ mod tests {
         // tab "A" occupies cols 2..4 (" A " minus its leading offset), a
         // separator sits at 4, and tab "B" starts at col 5.
         let tab_b_col = 5u16;
-        let click = |col: u16| {
+        let click = |col: u16, row: u16| {
             Event::Mouse(MouseEvent {
                 kind: MouseEventKind::Down(MouseButton::Left),
                 column: col,
-                row: area.top(),
+                row,
                 modifiers: KeyModifiers::NONE,
             })
         };
 
-        // A click on the second tab switches to it, proving the coordinates are live.
-        assert!(panel.handle_event(&click(tab_b_col)));
+        // A click on the second tab switches to it, and a click on a body row
+        // selects that nested-list item — proving the coordinates are live.
+        assert!(panel.handle_event(&click(tab_b_col, area.top())));
         assert_eq!(panel.tabs.selected_index(), 1);
-
-        // Reset selection, then invalidate the cached area as the left pane does
-        // for a panel it stops rendering. The identical click must now be a
-        // no-op: the panel is off-screen, so it owns no hit-test region.
         panel.tabs.set_selected(0);
+        assert!(panel.handle_event(&click(area.left() + 1, area.top() + 2)));
+        let selected_after_body_click = panel.active_panel().unwrap().selected_index();
+
+        // Invalidate the cached area as the left pane does for a panel it stops
+        // rendering. The identical clicks must now be no-ops: the panel is
+        // off-screen, so neither its tab row nor its nested list owns a hit-test
+        // region.
         panel.invalidate_area();
-        assert!(!panel.handle_event(&click(tab_b_col)));
+        assert!(!panel.handle_event(&click(tab_b_col, area.top())));
         assert_eq!(panel.tabs.selected_index(), 0);
+        assert!(!panel.handle_event(&click(area.left() + 1, area.top() + 3)));
+        assert_eq!(panel.active_panel().unwrap().selected_index(), selected_after_body_click);
     }
 
     #[test]
