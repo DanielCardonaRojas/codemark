@@ -303,21 +303,13 @@ pub fn render_confirmation(
     message: &str,
     confirm_selected: bool,
 ) {
-    // Calculate dialog dimensions (centered, 60% of width, max 60 chars)
-    let width = (area.width as f64 * 0.6).min(60.0) as u16;
-    let height = area.height.min(8);
-
-    let dialog_area = Rect {
-        x: area.x + area.width.saturating_sub(width) / 2,
-        y: area.y + area.height.saturating_sub(height) / 2,
-        width,
-        height,
-    };
-
-    // Clear the background to avoid overlap
-    Widget::render(Clear, dialog_area, buf);
+    use unicode_width::UnicodeWidthStr;
 
     let palette = crate::theme::palette();
+
+    // Calculate dialog width (centered, 60% of width, max 60 chars).
+    let width = (area.width as f64 * 0.6).min(60.0) as u16;
+    let interior_width = width.saturating_sub(2).max(1);
 
     // The focused button is filled; the other is drawn as an outline. The
     // Confirm button stays red to flag it as the destructive choice.
@@ -332,16 +324,69 @@ pub fn render_confirmation(
         Style::default().fg(palette.error)
     };
 
-    let text = Text::from(vec![
-        Line::from(""),
-        Line::from(vec![Span::styled(message, Style::default().bold())]),
-        Line::from(""),
-        Line::from(vec![
-            Span::styled("  Cancel  ", cancel_style),
-            Span::raw("      "),
-            Span::styled("  Confirm  ", confirm_style),
-        ]),
+    // Rows a string occupies once wrapped to `interior_width`. Uses display
+    // width (not scalar count) so double-width CJK/emoji characters are measured
+    // correctly and can't undercount the rows the terminal will actually use.
+    let wrapped_rows = |s: &str| (s.width() as u16).div_ceil(interior_width).max(1);
+
+    // Render each newline-separated segment as its own line so callers can
+    // include supplementary detail (e.g. how many bookmarks will be deleted).
+    // Count the rows each segment needs once wrapped, so a long collection name
+    // or extra lines can't push the buttons off the bottom of the dialog.
+    let mut message_lines = Vec::new();
+    let mut message_rows: u16 = 0;
+    for segment in message.split('\n') {
+        message_rows += wrapped_rows(segment);
+        message_lines
+            .push(Line::from(vec![Span::styled(segment.to_string(), Style::default().bold())]));
+    }
+
+    // The button row can itself wrap when the dialog interior is narrower than
+    // its label, so reserve however many rows it actually needs.
+    let cancel_label = "  Cancel  ";
+    let confirm_label = "  Confirm  ";
+    let button_gap = "      ";
+    let button_rows = ((cancel_label.width() + button_gap.width() + confirm_label.width()) as u16)
+        .div_ceil(interior_width)
+        .max(1);
+    let button_line = Line::from(vec![
+        Span::styled(cancel_label, cancel_style),
+        Span::raw(button_gap),
+        Span::styled(confirm_label, confirm_style),
     ]);
+
+    // Prefer a roomy layout with blank spacers above the message and buttons,
+    // but drop the spacers when the terminal is too short so Cancel/Confirm
+    // stay visible instead of being clipped.
+    let interior = area.height.saturating_sub(2);
+    let spacious = interior >= message_rows + button_rows + 2;
+
+    let mut lines = Vec::new();
+    if spacious {
+        lines.push(Line::from(""));
+    }
+    lines.extend(message_lines);
+    if spacious {
+        lines.push(Line::from(""));
+    }
+    lines.push(button_line);
+    let text = Text::from(lines);
+
+    // Size the dialog to its content (accounting for wrapped message and button
+    // rows plus the blank spacers), clamped to the available area.
+    let spacers = if spacious { 2 } else { 0 };
+    let content_rows = message_rows + button_rows + spacers;
+    let height = (content_rows + 2).min(area.height);
+
+    let dialog_area = Rect {
+        x: area.x + area.width.saturating_sub(width) / 2,
+        y: area.y + area.height.saturating_sub(height) / 2,
+        width,
+        height,
+    };
+
+    // Clear the background to avoid overlap
+    Widget::render(Clear, dialog_area, buf);
 
     let paragraph = Paragraph::new(text)
         .block(

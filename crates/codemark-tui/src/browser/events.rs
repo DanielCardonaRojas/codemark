@@ -1321,10 +1321,39 @@ impl BrowserLayout {
                 {
                     let collection_name = selected.text().to_string();
                     if let Ok(Some(collection)) = self.db.get_collection_by_name(&collection_name) {
+                        // Deleting a collection also deletes its bookmarks — they're
+                        // almost always created alongside the collection. Bookmarks
+                        // shared with another collection are preserved, so only count
+                        // the ones that will actually be removed.
+                        //
+                        // Surface a count failure rather than defaulting to 0, which
+                        // would open a destructive confirmation that understates what's
+                        // about to be deleted.
+                        let bm_count =
+                            match self.db.count_exclusive_collection_bookmarks(&collection.id) {
+                                Ok(count) => count,
+                                Err(err) => {
+                                    tracing::warn!(
+                                        target: "codemark::ui",
+                                        error = %err,
+                                        "failed to count collection bookmarks before delete"
+                                    );
+                                    self.pending_notification = Some(HealNotification {
+                                        message: format!("Couldn't count bookmarks: {err}"),
+                                        success: false,
+                                    });
+                                    return Some(true);
+                                }
+                            };
+                        let bookmarks_line = match bm_count {
+                            0 => String::new(),
+                            1 => "\n1 bookmark will be deleted.".to_string(),
+                            n => format!("\n{n} bookmarks will be deleted."),
+                        };
                         // Delete by the stable id; names are not uniquely constrained.
                         self.request_confirmation(ConfirmDialog::new(
                             "Delete Collection",
-                            format!("Delete collection \"{}\"?", collection_name),
+                            format!("Delete collection \"{collection_name}\"?{bookmarks_line}"),
                             DialogAction::DeleteCollection(collection.id),
                         ));
                         return Some(true);

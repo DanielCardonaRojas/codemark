@@ -84,8 +84,8 @@ impl BrowserLayout {
                 self.db.delete_bookmark(id).map(|_| ())
             }
             DialogAction::DeleteCollection(id) => {
-                tracing::debug!(target: "codemark::ui", %id, "deleting collection");
-                self.db.delete_collection_by_id(id).map(|_| ())
+                tracing::debug!(target: "codemark::ui", %id, "deleting collection and its bookmarks");
+                self.db.delete_collection_recursive(id).map(|_| ())
             }
         };
 
