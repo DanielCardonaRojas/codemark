@@ -303,6 +303,8 @@ pub fn render_confirmation(
     message: &str,
     confirm_selected: bool,
 ) {
+    use unicode_width::UnicodeWidthStr;
+
     let palette = crate::theme::palette();
 
     // Calculate dialog width (centered, 60% of width, max 60 chars).
@@ -322,6 +324,11 @@ pub fn render_confirmation(
         Style::default().fg(palette.error)
     };
 
+    // Rows a string occupies once wrapped to `interior_width`. Uses display
+    // width (not scalar count) so double-width CJK/emoji characters are measured
+    // correctly and can't undercount the rows the terminal will actually use.
+    let wrapped_rows = |s: &str| (s.width() as u16).div_ceil(interior_width).max(1);
+
     // Render each newline-separated segment as its own line so callers can
     // include supplementary detail (e.g. how many bookmarks will be deleted).
     // Count the rows each segment needs once wrapped, so a long collection name
@@ -329,21 +336,30 @@ pub fn render_confirmation(
     let mut message_lines = Vec::new();
     let mut message_rows: u16 = 0;
     for segment in message.split('\n') {
-        message_rows += (segment.chars().count() as u16).div_ceil(interior_width).max(1);
+        message_rows += wrapped_rows(segment);
         message_lines
             .push(Line::from(vec![Span::styled(segment.to_string(), Style::default().bold())]));
     }
+
+    // The button row can itself wrap when the dialog interior is narrower than
+    // its label, so reserve however many rows it actually needs.
+    let cancel_label = "  Cancel  ";
+    let confirm_label = "  Confirm  ";
+    let button_gap = "      ";
+    let button_rows = ((cancel_label.width() + button_gap.width() + confirm_label.width()) as u16)
+        .div_ceil(interior_width)
+        .max(1);
     let button_line = Line::from(vec![
-        Span::styled("  Cancel  ", cancel_style),
-        Span::raw("      "),
-        Span::styled("  Confirm  ", confirm_style),
+        Span::styled(cancel_label, cancel_style),
+        Span::raw(button_gap),
+        Span::styled(confirm_label, confirm_style),
     ]);
 
     // Prefer a roomy layout with blank spacers above the message and buttons,
     // but drop the spacers when the terminal is too short so Cancel/Confirm
     // stay visible instead of being clipped.
     let interior = area.height.saturating_sub(2);
-    let spacious = interior >= message_rows + 3;
+    let spacious = interior >= message_rows + button_rows + 2;
 
     let mut lines = Vec::new();
     if spacious {
@@ -356,9 +372,10 @@ pub fn render_confirmation(
     lines.push(button_line);
     let text = Text::from(lines);
 
-    // Size the dialog to its content (accounting for wrapped rows), clamped to
-    // the available area.
-    let content_rows = if spacious { message_rows + 3 } else { message_rows + 1 };
+    // Size the dialog to its content (accounting for wrapped message and button
+    // rows plus the blank spacers), clamped to the available area.
+    let spacers = if spacious { 2 } else { 0 };
+    let content_rows = message_rows + button_rows + spacers;
     let height = (content_rows + 2).min(area.height);
 
     let dialog_area = Rect {
