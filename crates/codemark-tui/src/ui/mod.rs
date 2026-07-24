@@ -332,16 +332,22 @@ pub fn render_confirmation(
         Style::default().fg(palette.error)
     };
 
-    let text = Text::from(vec![
-        Line::from(""),
-        Line::from(vec![Span::styled(message, Style::default().bold())]),
-        Line::from(""),
-        Line::from(vec![
-            Span::styled("  Cancel  ", cancel_style),
-            Span::raw("      "),
-            Span::styled("  Confirm  ", confirm_style),
-        ]),
-    ]);
+    // Render each newline-separated segment as its own line so callers can
+    // include supplementary detail (e.g. how many bookmarks will be deleted).
+    let mut lines = vec![Line::from("")];
+    for segment in message.split('\n') {
+        lines.push(Line::from(vec![Span::styled(
+            segment.to_string(),
+            Style::default().bold(),
+        )]));
+    }
+    lines.push(Line::from(""));
+    lines.push(Line::from(vec![
+        Span::styled("  Cancel  ", cancel_style),
+        Span::raw("      "),
+        Span::styled("  Confirm  ", confirm_style),
+    ]));
+    let text = Text::from(lines);
 
     let paragraph = Paragraph::new(text)
         .block(

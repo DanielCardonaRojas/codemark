@@ -1321,10 +1321,20 @@ impl BrowserLayout {
                 {
                     let collection_name = selected.text().to_string();
                     if let Ok(Some(collection)) = self.db.get_collection_by_name(&collection_name) {
+                        // Deleting a collection also deletes its bookmarks — they're
+                        // almost always created alongside the collection. Surface the
+                        // count so the user knows what's being removed.
+                        let bm_count =
+                            self.db.count_collection_bookmarks(&collection.id).unwrap_or(0);
+                        let bookmarks_line = match bm_count {
+                            0 => String::new(),
+                            1 => "\n1 bookmark will be deleted.".to_string(),
+                            n => format!("\n{n} bookmarks will be deleted."),
+                        };
                         // Delete by the stable id; names are not uniquely constrained.
                         self.request_confirmation(ConfirmDialog::new(
                             "Delete Collection",
-                            format!("Delete collection \"{}\"?", collection_name),
+                            format!("Delete collection \"{collection_name}\"?{bookmarks_line}"),
                             DialogAction::DeleteCollection(collection.id),
                         ));
                         return Some(true);

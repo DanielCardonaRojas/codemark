@@ -279,6 +279,16 @@ impl Database {
         Ok(count)
     }
 
+    /// Count how many bookmarks belong to a collection.
+    pub fn count_collection_bookmarks(&self, id: &str) -> Result<usize> {
+        let count = self.conn().query_row(
+            "SELECT COUNT(*) FROM collection_bookmarks WHERE collection_id = ?1",
+            [id],
+            |row| row.get(0),
+        )?;
+        Ok(count)
+    }
+
     /// Delete a collection by name, returning the number of bookmarks that were in it.
     #[allow(dead_code)]
     pub fn delete_collection(&self, name: &str) -> Result<usize> {
@@ -704,6 +714,20 @@ mod tests {
             .unwrap();
         db.delete_collection_recursive("col-temp2").unwrap();
         assert_eq!(store.count(db.conn()).unwrap(), 0, "recursive delete must drop the embedding");
+    }
+
+    #[test]
+    fn count_collection_bookmarks_reports_membership() {
+        init_test_env();
+        let db = Database::open_in_memory().unwrap();
+        db.insert_bookmark(&test_bookmark("bm-0001")).unwrap();
+        db.insert_bookmark(&test_bookmark("bm-0002")).unwrap();
+        db.insert_collection(&test_collection("temp")).unwrap();
+
+        assert_eq!(db.count_collection_bookmarks("col-temp").unwrap(), 0);
+
+        db.add_to_collection("col-temp", &["bm-0001".into(), "bm-0002".into()]).unwrap();
+        assert_eq!(db.count_collection_bookmarks("col-temp").unwrap(), 2);
     }
 
     #[test]
