@@ -330,10 +330,8 @@ pub fn render_confirmation(
     let mut message_rows: u16 = 0;
     for segment in message.split('\n') {
         message_rows += (segment.chars().count() as u16).div_ceil(interior_width).max(1);
-        message_lines.push(Line::from(vec![Span::styled(
-            segment.to_string(),
-            Style::default().bold(),
-        )]));
+        message_lines
+            .push(Line::from(vec![Span::styled(segment.to_string(), Style::default().bold())]));
     }
     let button_line = Line::from(vec![
         Span::styled("  Cancel  ", cancel_style),
