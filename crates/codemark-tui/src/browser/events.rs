@@ -1322,10 +1322,13 @@ impl BrowserLayout {
                     let collection_name = selected.text().to_string();
                     if let Ok(Some(collection)) = self.db.get_collection_by_name(&collection_name) {
                         // Deleting a collection also deletes its bookmarks — they're
-                        // almost always created alongside the collection. Surface the
-                        // count so the user knows what's being removed.
-                        let bm_count =
-                            self.db.count_collection_bookmarks(&collection.id).unwrap_or(0);
+                        // almost always created alongside the collection. Bookmarks
+                        // shared with another collection are preserved, so only count
+                        // the ones that will actually be removed.
+                        let bm_count = self
+                            .db
+                            .count_exclusive_collection_bookmarks(&collection.id)
+                            .unwrap_or(0);
                         let bookmarks_line = match bm_count {
                             0 => String::new(),
                             1 => "\n1 bookmark will be deleted.".to_string(),

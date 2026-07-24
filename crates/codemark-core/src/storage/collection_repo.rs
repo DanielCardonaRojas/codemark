@@ -249,23 +249,23 @@ impl Database {
         result
     }
 
-    /// Delete a collection and all its bookmarks atomically.
-    /// Returns the number of bookmarks deleted.
+    /// Delete a collection and the bookmarks that belong to it exclusively.
+    ///
+    /// Bookmarks that also live in another collection are left in place so that
+    /// deleting one collection can't silently remove entries the user still
+    /// references elsewhere. Returns the number of bookmarks actually deleted.
     pub fn delete_collection_recursive(&mut self, id: &str) -> Result<usize> {
         let conn = self.conn_mut();
         let tx = conn.transaction()?;
 
-        let count: usize = tx
-            .query_row(
-                "SELECT COUNT(*) FROM collection_bookmarks WHERE collection_id = ?1",
-                [id],
-                |row| row.get(0),
-            )
-            .unwrap_or(0);
-
-        // Delete bookmarks that are in this collection
-        tx.execute(
-            "DELETE FROM bookmarks WHERE id IN (SELECT bookmark_id FROM collection_bookmarks WHERE collection_id = ?1)",
+        // Delete bookmarks in this collection that aren't a member of any other
+        // collection. The number of affected rows is the deleted-bookmark count.
+        let deleted = tx.execute(
+            "DELETE FROM bookmarks WHERE id IN (
+                 SELECT bookmark_id FROM collection_bookmarks WHERE collection_id = ?1
+             ) AND id NOT IN (
+                 SELECT bookmark_id FROM collection_bookmarks WHERE collection_id != ?1
+             )",
             [id],
         )?;
 
@@ -276,13 +276,18 @@ impl Database {
         tx.execute("DELETE FROM collection_embeddings WHERE collection_id = ?1", [id])?;
 
         tx.commit()?;
-        Ok(count)
+        Ok(deleted)
     }
 
-    /// Count how many bookmarks belong to a collection.
-    pub fn count_collection_bookmarks(&self, id: &str) -> Result<usize> {
+    /// Count how many bookmarks would be deleted along with a collection: those
+    /// that belong to it and to no other collection. Bookmarks shared with
+    /// another collection are preserved, so they aren't counted here.
+    pub fn count_exclusive_collection_bookmarks(&self, id: &str) -> Result<usize> {
         let count = self.conn().query_row(
-            "SELECT COUNT(*) FROM collection_bookmarks WHERE collection_id = ?1",
+            "SELECT COUNT(*) FROM collection_bookmarks WHERE collection_id = ?1
+                 AND bookmark_id NOT IN (
+                     SELECT bookmark_id FROM collection_bookmarks WHERE collection_id != ?1
+                 )",
             [id],
             |row| row.get(0),
         )?;
@@ -717,17 +722,28 @@ mod tests {
     }
 
     #[test]
-    fn count_collection_bookmarks_reports_membership() {
+    fn recursive_delete_skips_bookmarks_shared_with_other_collections() {
         init_test_env();
-        let db = Database::open_in_memory().unwrap();
+        let mut db = Database::open_in_memory().unwrap();
         db.insert_bookmark(&test_bookmark("bm-0001")).unwrap();
         db.insert_bookmark(&test_bookmark("bm-0002")).unwrap();
         db.insert_collection(&test_collection("temp")).unwrap();
+        db.insert_collection(&test_collection("other")).unwrap();
 
-        assert_eq!(db.count_collection_bookmarks("col-temp").unwrap(), 0);
-
+        // bm-0001 lives only in "temp"; bm-0002 is shared with "other".
         db.add_to_collection("col-temp", &["bm-0001".into(), "bm-0002".into()]).unwrap();
-        assert_eq!(db.count_collection_bookmarks("col-temp").unwrap(), 2);
+        db.add_to_collection("col-other", &["bm-0002".into()]).unwrap();
+
+        // Only the exclusive bookmark counts toward deletion.
+        assert_eq!(db.count_exclusive_collection_bookmarks("col-temp").unwrap(), 1);
+
+        let deleted = db.delete_collection_recursive("col-temp").unwrap();
+        assert_eq!(deleted, 1, "only the exclusive bookmark should be deleted");
+
+        // The exclusive bookmark is gone; the shared one survives in "other".
+        assert!(db.get_bookmark("bm-0001").unwrap().is_none());
+        assert!(db.get_bookmark("bm-0002").unwrap().is_some());
+        assert!(db.get_collection_by_name("temp").unwrap().is_none());
     }
 
     #[test]

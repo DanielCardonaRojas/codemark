@@ -781,7 +781,7 @@ fn delete_collection_with_bookmarks() {
     let result = cm.run(&["show", &bm_id]);
     assert_ne!(result.status, 0);
 
-    // 4. Test preservation when multiple collections exist
+    // 4. Bookmarks shared with another collection are preserved
     // Create bookmark in two collections
     let json = cm.run_json(&[
         "add",
@@ -801,14 +801,14 @@ fn delete_collection_with_bookmarks() {
     // Delete col-a with bookmarks
     cm.run_json(&["collection", "delete", "col-a", "--with-bookmarks"]);
 
-    // Bookmark should be gone globally, even though it was in col-b
+    // Bookmark should survive because it still belongs to col-b
     let result = cm.run(&["show", &bm_id2]);
-    assert_ne!(result.status, 0);
+    assert_eq!(result.status, 0);
 
-    // col-b should still exist but be empty
+    // col-b should still exist and still contain the shared bookmark
     let json = cm.run_json(&["collection", "show", "col-b"]);
     let bookmarks = json["data"].as_array().unwrap();
-    assert_eq!(bookmarks.len(), 0);
+    assert_eq!(bookmarks.len(), 1);
 
     // 5. Verify default behavior (bookmarks are kept)
     let json = cm.run_json(&[
