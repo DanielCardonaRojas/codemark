@@ -702,10 +702,8 @@ impl TabbedPanel {
         // corrupts the shortcut cue. Reserve the badge's columns (plus the sort
         // glyph, when shown) and the left corner. See `render_pane_number_badge`.
         if let Some(number) = self.pane_number {
-            let reserved = crate::browser::tabs::top_border_reserved_width(
-                number,
-                sort_icon.is_some(),
-            );
+            let reserved =
+                crate::browser::tabs::top_border_reserved_width(number, sort_icon.is_some());
             // `- 1` for the left corner the title sits after.
             let max_title_width = (area.width as usize).saturating_sub(reserved as usize + 1);
             tab_titles = crate::browser::tabs::truncate_line_to_width(tab_titles, max_title_width);
@@ -1005,10 +1003,7 @@ mod tests {
         let mut buf = Buffer::empty(area);
         panel.render(area, &mut buf);
 
-        assert_eq!(
-            panel.active_sort_method(),
-            Some(crate::component::SortMethod::DateNewest)
-        );
+        assert_eq!(panel.active_sort_method(), Some(crate::component::SortMethod::DateNewest));
 
         // The glyph slot sits just left of the `[3]` badge: badge left edge is at
         // right - badge_width - 2 = 40 - 3 - 2 = 35, so the glyph is at col 33.
@@ -1017,10 +1012,7 @@ mod tests {
 
         assert!(panel.handle_event(&left_click(33, 0)));
         // Cycled to the next method, stayed on tab 0, and raised the drain flag.
-        assert_eq!(
-            panel.active_sort_method(),
-            Some(crate::component::SortMethod::DateOldest)
-        );
+        assert_eq!(panel.active_sort_method(), Some(crate::component::SortMethod::DateOldest));
         assert_eq!(panel.tabs.selected_index(), 0);
         assert!(panel.take_sort_changed());
         assert!(!panel.take_sort_changed());

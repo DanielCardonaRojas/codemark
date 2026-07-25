@@ -47,8 +47,7 @@ pub const SORT_ICON_WIDTH: u16 = 3;
 /// badge plus (optionally) a sort glyph to its left. Callers cap a left-aligned
 /// title to `area.width - 1 - reserved` so it never runs into either.
 pub fn top_border_reserved_width(number: u8, has_sort_icon: bool) -> u16 {
-    pane_number_badge_reserved_width(number)
-        + if has_sort_icon { SORT_ICON_WIDTH } else { 0 }
+    pane_number_badge_reserved_width(number) + if has_sort_icon { SORT_ICON_WIDTH } else { 0 }
 }
 
 /// The absolute column range `[start, end)` of the sort-glyph slot on the top

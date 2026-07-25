@@ -248,10 +248,10 @@ impl SortMethod {
     /// sort-numeric glyphs so the two axes read differently.
     pub fn icon(self) -> &'static str {
         match self {
-            SortMethod::AlphabeticalAsc => "\u{f15d}",  // nf-fa-sort_alpha_asc
+            SortMethod::AlphabeticalAsc => "\u{f15d}", // nf-fa-sort_alpha_asc
             SortMethod::AlphabeticalDesc => "\u{f15e}", // nf-fa-sort_alpha_desc
-            SortMethod::DateNewest => "\u{f163}",       // nf-fa-sort_numeric_desc
-            SortMethod::DateOldest => "\u{f162}",       // nf-fa-sort_numeric_asc
+            SortMethod::DateNewest => "\u{f163}",      // nf-fa-sort_numeric_desc
+            SortMethod::DateOldest => "\u{f162}",      // nf-fa-sort_numeric_asc
         }
     }
 
@@ -664,9 +664,7 @@ impl Panel {
     pub fn set_sort(&mut self, sort: SortMethod) {
         // Remember what's selected so the cursor follows the item across the
         // reorder rather than sticking to a now-different row index.
-        let selected_key = self.selected().map(|i| {
-            (i.user_data.clone(), i.text.clone())
-        });
+        let selected_key = self.selected().map(|i| (i.user_data.clone(), i.text.clone()));
 
         self.sort = Some(sort);
         self.apply_sort();
@@ -1721,9 +1719,11 @@ mod tests {
     fn test_alphabetical_sort_orders_by_display_name() {
         // Alphabetical sort keys off the emphasis text (a bookmark's symbol)
         // when present, otherwise the primary text.
-        let panel = Panel::new("")
-            .sort(SortMethod::AlphabeticalAsc)
-            .items(vec![PanelItem::new("charlie"), PanelItem::new("alpha"), PanelItem::new("bravo")]);
+        let panel = Panel::new("").sort(SortMethod::AlphabeticalAsc).items(vec![
+            PanelItem::new("charlie"),
+            PanelItem::new("alpha"),
+            PanelItem::new("bravo"),
+        ]);
         let order: Vec<&str> = panel.all_items().iter().map(|i| i.text()).collect();
         assert_eq!(order, vec!["alpha", "bravo", "charlie"]);
 
@@ -1770,10 +1770,9 @@ mod tests {
 
     #[test]
     fn test_sort_persists_across_set_items() {
-        let mut panel = Panel::new("").sort(SortMethod::AlphabeticalAsc).items(vec![
-            PanelItem::new("b"),
-            PanelItem::new("a"),
-        ]);
+        let mut panel = Panel::new("")
+            .sort(SortMethod::AlphabeticalAsc)
+            .items(vec![PanelItem::new("b"), PanelItem::new("a")]);
         assert_eq!(panel.all_items().iter().map(|i| i.text()).collect::<Vec<_>>(), vec!["a", "b"]);
 
         // A rebuild (e.g. panel refresh) re-applies the active sort.
