@@ -36,6 +36,66 @@ pub fn pane_number_badge_reserved_width(number: u8) -> u16 {
     badge_width + 3
 }
 
+/// Columns reserved on the top border for a sort-order glyph drawn just left of
+/// the `[N]` badge: a blank on each side of the glyph so it doesn't touch the
+/// border line or the badge. The trailing blank also absorbs the extra column
+/// when a Nerd Font glyph renders two columns wide, keeping the drawn width
+/// aligned (mirroring [`FILTER_ICON_WIDTH`]).
+pub const SORT_ICON_WIDTH: u16 = 3;
+
+/// Total columns reserved on the right of the top border for the pane-number
+/// badge plus (optionally) a sort glyph to its left. Callers cap a left-aligned
+/// title to `area.width - 1 - reserved` so it never runs into either.
+pub fn top_border_reserved_width(number: u8, has_sort_icon: bool) -> u16 {
+    pane_number_badge_reserved_width(number)
+        + if has_sort_icon { SORT_ICON_WIDTH } else { 0 }
+}
+
+/// The absolute column range `[start, end)` of the sort-glyph slot on the top
+/// border (the [`SORT_ICON_WIDTH`] cells left of the `[N]` badge, padding
+/// included), or `None` when there isn't room for it. Mirrors the placement in
+/// [`render_sort_icon`] so click hit-testing stays aligned with what's drawn.
+pub fn sort_icon_hit_range(area: Rect, number: u8) -> Option<(u16, u16)> {
+    let badge_width = format!("[{number}]").width() as u16;
+    let badge_x = area.right().saturating_sub(badge_width + 2);
+    if badge_x <= area.left() + SORT_ICON_WIDTH {
+        return None;
+    }
+    Some((badge_x - SORT_ICON_WIDTH, badge_x))
+}
+
+/// Draw a sort-order glyph on the top border just left of the `[N]` badge,
+/// flanked by a blank on each side so it doesn't butt against the border line or
+/// the badge.
+///
+/// The badge's left edge is at `area.right() - badge_width - 2`; going left from
+/// there the cells are: blank (right pad), glyph, blank (left pad) — the
+/// [`SORT_ICON_WIDTH`] slot. `number` must match the badge drawn by
+/// [`render_pane_number_badge`] so the two line up.
+pub fn render_sort_icon(area: Rect, buf: &mut Buffer, number: u8, icon: &str, style: Style) {
+    let badge_width = format!("[{number}]").width() as u16;
+    // Left edge of the badge, mirroring `render_pane_number_badge`.
+    let badge_x = area.right().saturating_sub(badge_width + 2);
+    // Need room for the full slot (left pad + glyph + right pad) after the corner.
+    if badge_x <= area.left() + SORT_ICON_WIDTH {
+        return;
+    }
+    let y = area.top();
+    // right pad (between glyph and badge), glyph, left pad (between glyph and border)
+    if let Some(cell) = buf.cell_mut((badge_x - 1, y)) {
+        cell.set_char(' ');
+        cell.set_style(style);
+    }
+    if let Some(cell) = buf.cell_mut((badge_x - 2, y)) {
+        cell.set_symbol(icon);
+        cell.set_style(style);
+    }
+    if let Some(cell) = buf.cell_mut((badge_x - 3, y)) {
+        cell.set_char(' ');
+        cell.set_style(style);
+    }
+}
+
 /// Draw a pane-number badge (e.g. `[3]`) on the top border of `area`, aligned to
 /// the right edge just inside the rounded corner.
 ///

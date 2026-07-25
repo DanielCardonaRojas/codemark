@@ -10,7 +10,7 @@ pub mod panel;
 // Re-export types for convenience
 pub use code_preview::CodePreview;
 pub use markdown_panel::MarkdownPanel;
-pub use panel::{HealthStatus, Panel, PanelItem, SyncDirection};
+pub use panel::{HealthStatus, Panel, PanelItem, SortMethod, SyncDirection};
 
 use ratatui::{
     buffer::Buffer,

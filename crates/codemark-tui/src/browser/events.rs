@@ -525,6 +525,7 @@ impl BrowserLayout {
                     .metadata(bm.created_by.clone().unwrap_or_default())
                     .health(HealthStatus::Unknown)
                     .icon(icon)
+                    .created_at(bm.created_at.clone())
                     .user_data(bm.id.clone());
 
                 // Render the symbol summary as bold emphasis, matching the
@@ -606,6 +607,7 @@ impl BrowserLayout {
                     .metadata(format!("{count} steps"))
                     .health(health)
                     .published(c.published_at.is_some())
+                    .created_at(c.created_at.clone())
                     .user_data(c.id.clone())
             })
             .collect()
@@ -994,6 +996,16 @@ impl BrowserLayout {
                 self.update_focus_state();
                 return Some(true);
             }
+            // `S` cycles the sort order of the focused Content list. Only the
+            // Bookmarks and Collections tabs support sorting; on any other tab
+            // (or pane) it falls through so the key isn't silently swallowed.
+            ratatui::crossterm::event::KeyCode::Char('S')
+                if self.should_handle_keybindings() && self.focus == FocusArea::ContentPanel =>
+            {
+                if self.cycle_content_sort() {
+                    return Some(true);
+                }
+            }
             ratatui::crossterm::event::KeyCode::Char('o') => {
                 return self.handle_o_key(key);
             }
@@ -1195,6 +1207,27 @@ impl BrowserLayout {
             None => {}
         }
         None
+    }
+
+    /// Cycle the sort order of the active Content list (Bookmarks or Collections).
+    ///
+    /// Returns `false` on tabs that don't support sorting (e.g. Tours) so the
+    /// caller can let the key fall through. On success the right-pane preview is
+    /// refreshed since the selection may now point at a different item.
+    fn cycle_content_sort(&mut self) -> bool {
+        let tab = ContentTab::from_index(self.left_pane.content_panel.tabs.selected_index());
+        if !matches!(tab, Some(ContentTab::Bookmarks) | Some(ContentTab::Collections)) {
+            return false;
+        }
+        let Some(panel) = self.left_pane.content_panel.active_panel_mut() else {
+            return false;
+        };
+        let method = panel.cycle_sort();
+        tracing::debug!(target: "codemark::ui", ?tab, ?method, "content sort cycled");
+        // The selection kept its item but its row (and neighbors) moved; refresh
+        // the preview so it matches whatever is now selected.
+        self.update_content_live_preview();
+        true
     }
 
     /// Handle number keys 1-6 for direct focus switching.
@@ -1451,6 +1484,13 @@ impl BrowserLayout {
                     }
                     // Refresh the preview for the newly active tab so it doesn't
                     // linger on content from the previous tab.
+                    self.update_content_live_preview();
+                }
+
+                // A click on the sort glyph reordered the list; refresh the
+                // preview so it tracks the (re-positioned) selection, matching
+                // the `S` shortcut path.
+                if self.left_pane.content_panel.take_sort_changed() {
                     self.update_content_live_preview();
                 }
 
