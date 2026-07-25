@@ -10,6 +10,7 @@ pub mod error;
 pub mod git;
 pub mod parser;
 pub mod query;
+pub mod sort;
 pub mod storage;
 pub mod sync;
 pub mod templates;

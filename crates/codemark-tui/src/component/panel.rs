@@ -16,6 +16,10 @@ use ratatui::{
 
 use super::{Component, SizeConstraints};
 use crate::event::Event;
+use codemark_core::sort::{Sortable, sort_by};
+// Re-exported from `crate::component` (see `component/mod.rs`); the ordering
+// logic itself lives in `codemark_core::sort` so the CLI can share it.
+use codemark_core::sort::SortMethod;
 
 use std::cell::{Cell, RefCell};
 
@@ -131,6 +135,10 @@ pub struct Panel {
     /// (`set_items`, `apply_filter`, `clear`) which move or clamp the selection
     /// can't leave a stale target pointing past the new list.
     pending_scroll: Cell<bool>,
+    /// Ordering applied to `all_items`. `None` leaves items in insertion order
+    /// (the default for panels that don't expose sorting); `Some` re-orders on
+    /// every rebuild so the chosen order survives refreshes.
+    sort: Option<SortMethod>,
 }
 
 /// Health status indicator for an item based on the projected UI status.
@@ -243,6 +251,9 @@ pub struct PanelItem {
     /// When true, the primary `text` is treated as a file path that is
     /// compressed at render time to fit the available width of the pane.
     compress_path: bool,
+    /// Optional creation timestamp (ISO-8601), used as the key for date-based
+    /// [`SortMethod`] ordering. ISO strings sort chronologically as plain text.
+    created_at: Option<String>,
     /// Optional hidden user data (e.g., database ID)
     pub user_data: Option<String>,
 }
@@ -276,8 +287,15 @@ impl PanelItem {
             published: false,
             spinner_text: None,
             compress_path: false,
+            created_at: None,
             user_data: None,
         }
+    }
+
+    /// Set the creation timestamp used for date-based sorting (see [`SortMethod`]).
+    pub fn created_at(mut self, created_at: impl Into<String>) -> Self {
+        self.created_at = Some(created_at.into());
+        self
     }
 
     /// Set the icon.
@@ -539,6 +557,18 @@ impl PanelItem {
     }
 }
 
+impl Sortable for PanelItem {
+    /// Order by the emphasized text (a bookmark's symbol identifier) when
+    /// present, otherwise the primary text (a collection's name).
+    fn sort_name(&self) -> &str {
+        self.emphasis_text.as_deref().unwrap_or(&self.text)
+    }
+
+    fn sort_timestamp(&self) -> Option<&str> {
+        self.created_at.as_deref()
+    }
+}
+
 impl Panel {
     /// Create a new panel with the given title.
     pub fn new(title: impl Into<String>) -> Self {
@@ -559,6 +589,63 @@ impl Panel {
             last_area: Cell::new(Rect::default()),
             last_selected_index: Cell::new(None),
             pending_scroll: Cell::new(false),
+            sort: None,
+        }
+    }
+
+    /// Enable sorting on this panel with the given initial [`SortMethod`]. The
+    /// order is re-applied whenever items are (re)built, so it persists across
+    /// panel refreshes. Panels created without this stay in insertion order.
+    pub fn sort(mut self, sort: SortMethod) -> Self {
+        self.sort = Some(sort);
+        self
+    }
+
+    /// The panel's current sort method, if sorting is enabled.
+    pub fn sort_method(&self) -> Option<SortMethod> {
+        self.sort
+    }
+
+    /// Advance to the next [`SortMethod`] in the cycle and re-order the list,
+    /// keeping the current selection on the same item. If sorting was not yet
+    /// enabled the cycle starts at [`SortMethod::AlphabeticalAsc`]. Returns the
+    /// newly active method.
+    pub fn cycle_sort(&mut self) -> SortMethod {
+        let next = self.sort.map_or(SortMethod::AlphabeticalAsc, SortMethod::next);
+        self.set_sort(next);
+        next
+    }
+
+    /// Set the sort method, re-order `all_items`, and re-apply the filter while
+    /// preserving the current selection by identity (user data, falling back to
+    /// text).
+    pub fn set_sort(&mut self, sort: SortMethod) {
+        // Remember what's selected so the cursor follows the item across the
+        // reorder rather than sticking to a now-different row index.
+        let selected_key = self.selected().map(|i| (i.user_data.clone(), i.text.clone()));
+
+        self.sort = Some(sort);
+        self.apply_sort();
+        self.apply_filter();
+
+        if let Some((user_data, text)) = selected_key {
+            let idx = self.items.iter().position(|i| match &user_data {
+                Some(ud) => i.user_data.as_ref() == Some(ud),
+                None => i.text == text,
+            });
+            if let Some(idx) = idx {
+                self.list_state.borrow_mut().select(Some(idx));
+                self.scroll_to_view(idx);
+            }
+        }
+    }
+
+    /// Re-order `all_items` in place according to the active sort method,
+    /// delegating to the shared [`codemark_core::sort`] logic. A no-op when
+    /// sorting is disabled.
+    fn apply_sort(&mut self) {
+        if let Some(sort) = self.sort {
+            sort_by(&mut self.all_items, sort);
         }
     }
 
@@ -581,6 +668,7 @@ impl Panel {
     /// Add an item to the panel.
     pub fn add_item(mut self, item: PanelItem) -> Self {
         self.all_items.push(item);
+        self.apply_sort();
         self.apply_filter();
         if self.selected_index().is_none() && !self.items.is_empty() {
             self.set_selected(0);
@@ -591,6 +679,7 @@ impl Panel {
     /// Add multiple items to the panel.
     pub fn items(mut self, items: impl IntoIterator<Item = PanelItem>) -> Self {
         self.all_items.extend(items);
+        self.apply_sort();
         self.apply_filter();
         if self.selected_index().is_none() && !self.items.is_empty() {
             self.set_selected(0);
@@ -978,6 +1067,7 @@ impl Panel {
         // Rebuilding the list drops any previous search-results marking; callers
         // that are applying search results re-assert it via `set_search_active`.
         self.search_active = false;
+        self.apply_sort();
         self.apply_filter();
 
         let mut state = self.list_state.borrow_mut();
@@ -1535,6 +1625,123 @@ mod tests {
         assert_eq!(panel.len(), 3);
         // Should preserve selection based on text match
         assert_eq!(panel.selected_index(), Some(1));
+    }
+
+    #[test]
+    fn test_alphabetical_sort_orders_by_display_name() {
+        // Alphabetical sort keys off the emphasis text (a bookmark's symbol)
+        // when present, otherwise the primary text.
+        let panel = Panel::new("").sort(SortMethod::AlphabeticalAsc).items(vec![
+            PanelItem::new("charlie"),
+            PanelItem::new("alpha"),
+            PanelItem::new("bravo"),
+        ]);
+        let order: Vec<&str> = panel.all_items().iter().map(|i| i.text()).collect();
+        assert_eq!(order, vec!["alpha", "bravo", "charlie"]);
+
+        let mut panel = panel;
+        panel.set_sort(SortMethod::AlphabeticalDesc);
+        let order: Vec<&str> = panel.all_items().iter().map(|i| i.text()).collect();
+        assert_eq!(order, vec!["charlie", "bravo", "alpha"]);
+    }
+
+    #[test]
+    fn test_date_sort_orders_by_created_at_with_missing_last() {
+        let panel = Panel::new("").sort(SortMethod::DateNewest).items(vec![
+            PanelItem::new("old").created_at("2024-01-01T00:00:00Z"),
+            PanelItem::new("new").created_at("2026-01-01T00:00:00Z"),
+            PanelItem::new("mid").created_at("2025-01-01T00:00:00Z"),
+            PanelItem::new("undated"),
+        ]);
+        // Newest first; the undated item sinks to the end.
+        let order: Vec<&str> = panel.all_items().iter().map(|i| i.text()).collect();
+        assert_eq!(order, vec!["new", "mid", "old", "undated"]);
+
+        let mut panel = panel;
+        panel.set_sort(SortMethod::DateOldest);
+        let order: Vec<&str> = panel.all_items().iter().map(|i| i.text()).collect();
+        // Oldest first; the undated item still sinks to the end.
+        assert_eq!(order, vec!["old", "mid", "new", "undated"]);
+    }
+
+    #[test]
+    fn test_cycle_sort_keeps_selection_on_same_item() {
+        let mut panel = Panel::new("").sort(SortMethod::DateNewest).items(vec![
+            PanelItem::new("a").created_at("2024-01-01T00:00:00Z").user_data("id-a"),
+            PanelItem::new("b").created_at("2026-01-01T00:00:00Z").user_data("id-b"),
+            PanelItem::new("c").created_at("2025-01-01T00:00:00Z").user_data("id-c"),
+        ]);
+        // Select "c" (currently in the middle under DateNewest: b, c, a).
+        panel.set_selected(1);
+        assert_eq!(panel.selected().and_then(|i| i.user_data.clone()), Some("id-c".to_string()));
+
+        // Cycling the order must keep the cursor on "c", not the row index.
+        panel.cycle_sort(); // DateNewest -> DateOldest: a, c, b
+        assert_eq!(panel.selected().and_then(|i| i.user_data.clone()), Some("id-c".to_string()));
+    }
+
+    #[test]
+    fn test_sort_persists_across_set_items() {
+        let mut panel = Panel::new("")
+            .sort(SortMethod::AlphabeticalAsc)
+            .items(vec![PanelItem::new("b"), PanelItem::new("a")]);
+        assert_eq!(panel.all_items().iter().map(|i| i.text()).collect::<Vec<_>>(), vec!["a", "b"]);
+
+        // A rebuild (e.g. panel refresh) re-applies the active sort.
+        panel.set_items(vec![PanelItem::new("z"), PanelItem::new("m"), PanelItem::new("a")]);
+        assert_eq!(
+            panel.all_items().iter().map(|i| i.text()).collect::<Vec<_>>(),
+            vec!["a", "m", "z"]
+        );
+    }
+
+    #[test]
+    fn test_sort_is_preserved_through_filtering_both_orders() {
+        let make = || {
+            Panel::new("").sort(SortMethod::AlphabeticalAsc).items(vec![
+                PanelItem::new("banana"),
+                PanelItem::new("apricot"),
+                PanelItem::new("avocado"),
+                PanelItem::new("cherry"),
+            ])
+        };
+
+        // Sort-then-filter: the visible list is the sorted order, narrowed to
+        // matches (substring "a" hits every item but "cherry"), still ascending.
+        let mut panel = make();
+        panel.set_filter("a");
+        let visible: Vec<&str> = panel.items.iter().map(|i| i.text()).collect();
+        assert_eq!(visible, vec!["apricot", "avocado", "banana"]);
+
+        // Filter-first, then cycle sort: re-sorting re-applies the active filter,
+        // so the narrowed list flips to descending order.
+        let mut panel = make();
+        panel.set_filter("a"); // apricot, avocado, banana
+        panel.set_sort(SortMethod::AlphabeticalDesc);
+        assert!(panel.is_filtered());
+        let visible: Vec<&str> = panel.items.iter().map(|i| i.text()).collect();
+        assert_eq!(visible, vec!["banana", "avocado", "apricot"]);
+
+        // Clearing the filter reveals the full list, still in the active
+        // (descending) sort order.
+        panel.set_filter("");
+        let visible: Vec<&str> = panel.items.iter().map(|i| i.text()).collect();
+        assert_eq!(visible, vec!["cherry", "banana", "avocado", "apricot"]);
+    }
+
+    #[test]
+    fn test_unsorted_panel_keeps_insertion_order() {
+        // Panels without an explicit sort (the default) are untouched.
+        let panel = Panel::new("").items(vec![
+            PanelItem::new("charlie"),
+            PanelItem::new("alpha"),
+            PanelItem::new("bravo"),
+        ]);
+        assert_eq!(
+            panel.all_items().iter().map(|i| i.text()).collect::<Vec<_>>(),
+            vec!["charlie", "alpha", "bravo"]
+        );
+        assert_eq!(panel.sort_method(), None);
     }
 
     #[test]

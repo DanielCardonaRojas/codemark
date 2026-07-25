@@ -34,6 +34,10 @@ pub struct TabbedPanel {
     /// owning layout drains this to clear the pane's stored filter on a tab
     /// switch instead of carrying it over to the newly active tab.
     pub tab_changed: std::cell::Cell<bool>,
+    /// Set when a click on the top-border sort glyph cycled the active list's
+    /// sort during the last `handle_event`. The owning layout drains this to
+    /// refresh the preview, mirroring the `S` keyboard shortcut.
+    pub sort_changed: std::cell::Cell<bool>,
     /// Number-key shortcut that jumps focus to this pane, rendered as a `[N]`
     /// badge on the top border. `None` hides the badge (e.g. in tests).
     pub pane_number: Option<u8>,
@@ -128,6 +132,7 @@ pub fn bookmark_to_panel_item(
         .metadata(bookmark.created_by.clone().unwrap_or_default())
         .health(health)
         .icon(icon)
+        .created_at(bookmark.created_at.clone())
         .user_data(bookmark.id.clone());
 
     if !summary.is_empty() {
@@ -161,6 +166,7 @@ fn bookmark_to_panel_item_unknown(bookmark: &Bookmark) -> PanelItem {
         .metadata(bookmark.created_by.clone().unwrap_or_default())
         .health(HealthStatus::Unknown)
         .icon(icon)
+        .created_at(bookmark.created_at.clone())
         .user_data(bookmark.id.clone());
 
     if !summary.is_empty() {
@@ -240,6 +246,12 @@ impl TabbedPanel {
             Some(TabContent::List(p)) => Some(p),
             _ => None,
         }
+    }
+
+    /// The active tab's list sort method, if that tab is a list with sorting
+    /// enabled. Drives the sort glyph on the top border.
+    pub fn active_sort_method(&self) -> Option<crate::component::SortMethod> {
+        self.active_panel().and_then(|p| p.sort_method())
     }
 
     /// Get the currently active panel for modification.
@@ -431,6 +443,7 @@ impl TabbedPanel {
                     .metadata(format!("{count} steps"))
                     .health(health)
                     .published(is_published) // Only show icon on Collections tab
+                    .created_at(c.created_at.clone())
                     .user_data(c.id.clone());
 
                 collections_items.push(collection_item);
@@ -498,6 +511,7 @@ impl TabbedPanel {
             last_area: std::cell::Cell::new(Rect::default()),
             pending_selection_change: std::cell::Cell::new(None),
             tab_changed: std::cell::Cell::new(false),
+            sort_changed: std::cell::Cell::new(false),
             pane_number: Some(1),
         }
     }
@@ -522,6 +536,7 @@ impl TabbedPanel {
             last_area: std::cell::Cell::new(Rect::default()),
             pending_selection_change: std::cell::Cell::new(None),
             tab_changed: std::cell::Cell::new(false),
+            sort_changed: std::cell::Cell::new(false),
             pane_number: Some(2),
         }
     }
@@ -549,9 +564,17 @@ impl TabbedPanel {
     pub fn new_tours_collections_bookmarks(db: &Database) -> Self {
         let (tours_items, collections_items, bookmarks_items) =
             TabbedPanel::build_content_items(db);
+        // Bookmarks and Collections expose the `S` sort cycle, so they start with
+        // an explicit order (most recent first). Tours keep insertion order.
         let tours_panel = Panel::new("").bordered(false).items(tours_items);
-        let collections_panel = Panel::new("").bordered(false).items(collections_items);
-        let bookmarks_panel = Panel::new("").bordered(false).items(bookmarks_items);
+        let collections_panel = Panel::new("")
+            .bordered(false)
+            .sort(crate::component::SortMethod::DateNewest)
+            .items(collections_items);
+        let bookmarks_panel = Panel::new("")
+            .bordered(false)
+            .sort(crate::component::SortMethod::DateNewest)
+            .items(bookmarks_items);
 
         let tabs = TabSelection::new(vec![
             Tab::new("Bookmarks"),
@@ -570,6 +593,7 @@ impl TabbedPanel {
             last_area: std::cell::Cell::new(Rect::default()),
             pending_selection_change: std::cell::Cell::new(None),
             tab_changed: std::cell::Cell::new(false),
+            sort_changed: std::cell::Cell::new(false),
             pane_number: Some(3),
         }
     }
@@ -598,6 +622,7 @@ impl TabbedPanel {
             last_area: std::cell::Cell::new(Rect::default()),
             pending_selection_change: std::cell::Cell::new(None),
             tab_changed: std::cell::Cell::new(false),
+            sort_changed: std::cell::Cell::new(false),
             pane_number: Some(4),
         }
     }
@@ -616,6 +641,7 @@ impl TabbedPanel {
             last_area: std::cell::Cell::new(Rect::default()),
             pending_selection_change: std::cell::Cell::new(None),
             tab_changed: std::cell::Cell::new(false),
+            sort_changed: std::cell::Cell::new(false),
             pane_number: Some(5),
         }
     }
@@ -666,13 +692,18 @@ impl TabbedPanel {
             .collect();
         let mut tab_titles = self.tabs.render_as_titles_with_counts_and_filters(&counts, &filtered);
 
+        // The active tab's sort glyph (if that tab's list has sorting enabled),
+        // drawn just left of the pane-number badge.
+        let sort_icon = self.active_sort_method().map(crate::browser::tabs::sort_method_icon);
+
         // When a pane-number badge is drawn on the right of the top border,
         // cap the (left-aligned) title width so a long tab row can't run into
         // the badge — otherwise it visually attaches to the last tab label and
-        // corrupts the shortcut cue. Reserve the badge's columns plus the left
-        // corner. See `render_pane_number_badge`.
+        // corrupts the shortcut cue. Reserve the badge's columns (plus the sort
+        // glyph, when shown) and the left corner. See `render_pane_number_badge`.
         if let Some(number) = self.pane_number {
-            let reserved = crate::browser::tabs::pane_number_badge_reserved_width(number);
+            let reserved =
+                crate::browser::tabs::top_border_reserved_width(number, sort_icon.is_some());
             // `- 1` for the left corner the title sits after.
             let max_title_width = (area.width as usize).saturating_sub(reserved as usize + 1);
             tab_titles = crate::browser::tabs::truncate_line_to_width(tab_titles, max_title_width);
@@ -708,9 +739,13 @@ impl TabbedPanel {
         }
 
         // Draw the pane-number badge (e.g. `[3]`) on the top-right border as a
-        // visual cue for the number-key shortcut that jumps focus here.
+        // visual cue for the number-key shortcut that jumps focus here, plus the
+        // active tab's sort glyph just to its left.
         if let Some(number) = self.pane_number {
             crate::browser::tabs::render_pane_number_badge(area, buf, number, border_style);
+            if let Some(icon) = sort_icon {
+                crate::browser::tabs::render_sort_icon(area, buf, number, icon, border_style);
+            }
         }
 
         // Render active panel content (full inner area, no separate tab row)
@@ -769,6 +804,9 @@ impl TabbedPanel {
         // Check for tab switching with [ and ] or mouse click
         let old_index = self.tabs.selected_index();
         let mut tab_changed = false;
+        // Set when a click landed on the top-border sort glyph; suppresses tab
+        // hit-testing and body forwarding for that same click.
+        let mut sort_cycled = false;
         match event {
             Event::Key(key) => match key.code {
                 ratatui::crossterm::event::KeyCode::Char(']') => {
@@ -794,6 +832,21 @@ impl TabbedPanel {
                         && mouse.column >= area.left()
                         && mouse.column < area.right()
                     {
+                        // A click on the top-border sort glyph cycles the active
+                        // list's order, mirroring the `S` shortcut. Only fires
+                        // when the active tab exposes sorting (the glyph is drawn).
+                        if let Some(number) = self.pane_number
+                            && self.active_sort_method().is_some()
+                            && let Some((sx, ex)) =
+                                crate::browser::tabs::sort_icon_hit_range(area, number)
+                            && mouse.column >= sx
+                            && mouse.column < ex
+                            && let Some(panel) = self.active_panel_mut()
+                        {
+                            panel.cycle_sort();
+                            self.sort_changed.set(true);
+                            sort_cycled = true;
+                        }
                         // Calculate x position relative to the panel's left edge
                         let relative_x = mouse.column - area.left();
                         // The tab click ranges are recorded before the title is
@@ -802,13 +855,17 @@ impl TabbedPanel {
                         // land on hidden title cells or the badge, not a tab.
                         let in_visible_title_region = match self.pane_number {
                             Some(number) => {
-                                let reserved =
-                                    crate::browser::tabs::pane_number_badge_reserved_width(number);
+                                let reserved = crate::browser::tabs::top_border_reserved_width(
+                                    number,
+                                    self.active_sort_method().is_some(),
+                                );
                                 relative_x <= area.width.saturating_sub(reserved + 1)
                             }
                             None => true,
                         };
-                        if in_visible_title_region && self.tabs.handle_click(relative_x, mouse.row)
+                        if !sort_cycled
+                            && in_visible_title_region
+                            && self.tabs.handle_click(relative_x, mouse.row)
                         {
                             tab_changed = true;
                         }
@@ -828,15 +885,14 @@ impl TabbedPanel {
             self.tab_changed.set(true);
         }
 
-        // Forward to active panel
-        let handled = if !tab_changed {
-            if let Some(panel) = self.panels.get_mut(active_index) {
-                panel.handle_event(event)
-            } else {
-                false
-            }
-        } else {
+        // Forward to active panel. A tab switch or a sort-glyph click already
+        // consumed the event, so don't also forward it to the nested panel.
+        let handled = if tab_changed || sort_cycled {
             true
+        } else if let Some(panel) = self.panels.get_mut(active_index) {
+            panel.handle_event(event)
+        } else {
+            false
         };
 
         // Capture selection changes for the active list panel (bookmarks,
@@ -862,6 +918,13 @@ impl TabbedPanel {
     /// filter so it does not carry over to the newly active tab.
     pub fn take_tab_changed(&self) -> bool {
         self.tab_changed.replace(false)
+    }
+
+    /// Take (and reset) the flag indicating a top-border sort-glyph click cycled
+    /// the active list's order during the last `handle_event`. The layout drains
+    /// this to refresh the preview, mirroring the `S` keyboard shortcut.
+    pub fn take_sort_changed(&self) -> bool {
+        self.sort_changed.replace(false)
     }
 
     /// Clear any active filter on every tab's list panel.
@@ -899,8 +962,75 @@ mod tests {
             last_area: std::cell::Cell::new(Rect::default()),
             pending_selection_change: std::cell::Cell::new(None),
             tab_changed: std::cell::Cell::new(false),
+            sort_changed: std::cell::Cell::new(false),
             pane_number: None,
         }
+    }
+
+    /// A pane with a badge and a sortable active list, for exercising the
+    /// top-border sort-glyph click.
+    fn sortable_panel() -> TabbedPanel {
+        let p1 = Panel::new("").sort(crate::component::SortMethod::DateNewest).items(vec![
+            PanelItem::new("a").created_at("2024-01-01T00:00:00Z"),
+            PanelItem::new("b").created_at("2026-01-01T00:00:00Z"),
+        ]);
+        let p2 = Panel::new("").items(vec![PanelItem::new("x")]);
+        TabbedPanel {
+            tabs: TabSelection::new(vec![Tab::new("A"), Tab::new("B")]),
+            panels: vec![TabContent::List(p1), TabContent::List(p2)],
+            focused: false,
+            last_area: std::cell::Cell::new(Rect::default()),
+            pending_selection_change: std::cell::Cell::new(None),
+            tab_changed: std::cell::Cell::new(false),
+            sort_changed: std::cell::Cell::new(false),
+            pane_number: Some(3),
+        }
+    }
+
+    fn left_click(col: u16, row: u16) -> Event {
+        Event::Mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: col,
+            row,
+            modifiers: KeyModifiers::NONE,
+        })
+    }
+
+    #[test]
+    fn test_sort_glyph_click_cycles_sort_without_switching_tab() {
+        let mut panel = sortable_panel();
+        let area = Rect::new(0, 0, 40, 6);
+        let mut buf = Buffer::empty(area);
+        panel.render(area, &mut buf);
+
+        assert_eq!(panel.active_sort_method(), Some(crate::component::SortMethod::DateNewest));
+
+        // The glyph slot sits just left of the `[3]` badge: badge left edge is at
+        // right - badge_width - 2 = 40 - 3 - 2 = 35, so the glyph is at col 33.
+        let (sx, ex) = crate::browser::tabs::sort_icon_hit_range(area, 3).unwrap();
+        assert!(sx <= 33 && 33 < ex);
+
+        assert!(panel.handle_event(&left_click(33, 0)));
+        // Cycled to the next method, stayed on tab 0, and raised the drain flag.
+        assert_eq!(panel.active_sort_method(), Some(crate::component::SortMethod::DateOldest));
+        assert_eq!(panel.tabs.selected_index(), 0);
+        assert!(panel.take_sort_changed());
+        assert!(!panel.take_sort_changed());
+    }
+
+    #[test]
+    fn test_top_border_click_outside_glyph_does_not_cycle_sort() {
+        let mut panel = sortable_panel();
+        let area = Rect::new(0, 0, 40, 6);
+        let mut buf = Buffer::empty(area);
+        panel.render(area, &mut buf);
+
+        // A click on the tab-title region (the second tab, "B", at col 5)
+        // switches tabs rather than touching the sort order.
+        panel.handle_event(&left_click(5, 0));
+        assert_eq!(panel.tabs.selected_index(), 1);
+        assert!(!panel.take_sort_changed());
+        assert!(panel.take_tab_changed());
     }
 
     #[test]

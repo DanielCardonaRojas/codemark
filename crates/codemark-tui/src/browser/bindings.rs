@@ -67,6 +67,7 @@ impl BrowserLayout {
                         }
                         bindings.push(("d", "Delete collection"));
                         bindings.push(("H", "Heal all"));
+                        bindings.push(("S", "Sort"));
                         bindings.push(("Ctrl+O", "Copy ID"));
                     }
                     Some(ContentTab::Bookmarks) => {
@@ -74,6 +75,7 @@ impl BrowserLayout {
                         bindings.push(("o", "Open in editor"));
                         bindings.push(("d", "Delete bookmark"));
                         bindings.push(("H", "Heal"));
+                        bindings.push(("S", "Sort"));
                         bindings.push(("Ctrl+O", "Copy ID"));
                     }
                     None => {}
@@ -193,6 +195,7 @@ impl BrowserLayout {
                         bindings.push(
                             KeyBinding::new("H", "Heal all").with_priority(HIDDEN_BINDING_PRIORITY),
                         );
+                        bindings.push(KeyBinding::new("S", "Sort").with_priority(35));
                         bindings.push(KeyBinding::new("Ctrl+O", "Copy ID").with_priority(30));
                         bindings.push(KeyBinding::new("+/-", "Resize").with_priority(20));
                     }
@@ -206,6 +209,7 @@ impl BrowserLayout {
                         bindings.push(
                             KeyBinding::new("H", "Heal").with_priority(HIDDEN_BINDING_PRIORITY),
                         );
+                        bindings.push(KeyBinding::new("S", "Sort").with_priority(35));
                         bindings.push(KeyBinding::new("Ctrl+O", "Copy ID").with_priority(30));
                         bindings.push(KeyBinding::new("+/-", "Resize").with_priority(20));
                     }
