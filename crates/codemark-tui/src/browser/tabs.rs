@@ -17,10 +17,10 @@ use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
 /// sort-numeric glyphs, so the two axes read differently.
 pub fn sort_method_icon(method: SortMethod) -> &'static str {
     match method {
-        SortMethod::AlphabeticalAsc => "\u{f15d}",  // nf-fa-sort_alpha_asc
+        SortMethod::AlphabeticalAsc => "\u{f15d}", // nf-fa-sort_alpha_asc
         SortMethod::AlphabeticalDesc => "\u{f15e}", // nf-fa-sort_alpha_desc
-        SortMethod::DateNewest => "\u{f163}",       // nf-fa-sort_numeric_desc
-        SortMethod::DateOldest => "\u{f162}",       // nf-fa-sort_numeric_asc
+        SortMethod::DateNewest => "\u{f163}",      // nf-fa-sort_numeric_desc
+        SortMethod::DateOldest => "\u{f162}",      // nf-fa-sort_numeric_asc
     }
 }
 
