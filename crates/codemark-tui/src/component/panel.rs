@@ -16,6 +16,10 @@ use ratatui::{
 
 use super::{Component, SizeConstraints};
 use crate::event::Event;
+use codemark_core::sort::{Sortable, sort_by};
+// Re-exported from `crate::component` (see `component/mod.rs`); the ordering
+// logic itself lives in `codemark_core::sort` so the CLI can share it.
+use codemark_core::sort::SortMethod;
 
 use std::cell::{Cell, RefCell};
 
@@ -215,57 +219,6 @@ impl HealthStatus {
     }
 }
 
-/// How a list panel's items are ordered.
-///
-/// Cycled with the `S` key on the Content panel (Bookmarks / Collections tabs).
-/// Each variant maps to a distinct Nerd Font glyph rendered beside the pane
-/// number badge so the active order is always visible.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SortMethod {
-    /// A → Z by the item's display name.
-    AlphabeticalAsc,
-    /// Z → A by the item's display name.
-    AlphabeticalDesc,
-    /// Most recently created first.
-    DateNewest,
-    /// Oldest created first.
-    DateOldest,
-}
-
-impl SortMethod {
-    /// The next method in the cycle (wraps back to the start).
-    pub fn next(self) -> Self {
-        match self {
-            SortMethod::AlphabeticalAsc => SortMethod::AlphabeticalDesc,
-            SortMethod::AlphabeticalDesc => SortMethod::DateNewest,
-            SortMethod::DateNewest => SortMethod::DateOldest,
-            SortMethod::DateOldest => SortMethod::AlphabeticalAsc,
-        }
-    }
-
-    /// Nerd Font glyph shown for this method beside the pane-number badge.
-    /// Alphabetical methods use the sort-alpha glyphs; date methods use the
-    /// sort-numeric glyphs so the two axes read differently.
-    pub fn icon(self) -> &'static str {
-        match self {
-            SortMethod::AlphabeticalAsc => "\u{f15d}", // nf-fa-sort_alpha_asc
-            SortMethod::AlphabeticalDesc => "\u{f15e}", // nf-fa-sort_alpha_desc
-            SortMethod::DateNewest => "\u{f163}",      // nf-fa-sort_numeric_desc
-            SortMethod::DateOldest => "\u{f162}",      // nf-fa-sort_numeric_asc
-        }
-    }
-
-    /// Human-readable label (used in help/tooltips).
-    pub fn label(self) -> &'static str {
-        match self {
-            SortMethod::AlphabeticalAsc => "Name A→Z",
-            SortMethod::AlphabeticalDesc => "Name Z→A",
-            SortMethod::DateNewest => "Newest",
-            SortMethod::DateOldest => "Oldest",
-        }
-    }
-}
-
 /// An item in a panel.
 #[derive(Debug, Clone)]
 pub struct PanelItem {
@@ -343,13 +296,6 @@ impl PanelItem {
     pub fn created_at(mut self, created_at: impl Into<String>) -> Self {
         self.created_at = Some(created_at.into());
         self
-    }
-
-    /// The key used to order this item alphabetically: the emphasized text (a
-    /// bookmark's symbol identifier) when present, otherwise the primary text (a
-    /// collection's name). Lower-cased so ordering is case-insensitive.
-    fn sort_name_key(&self) -> String {
-        self.emphasis_text.as_deref().unwrap_or(&self.text).to_lowercase()
     }
 
     /// Set the icon.
@@ -611,6 +557,18 @@ impl PanelItem {
     }
 }
 
+impl Sortable for PanelItem {
+    /// Order by the emphasized text (a bookmark's symbol identifier) when
+    /// present, otherwise the primary text (a collection's name).
+    fn sort_name(&self) -> &str {
+        self.emphasis_text.as_deref().unwrap_or(&self.text)
+    }
+
+    fn sort_timestamp(&self) -> Option<&str> {
+        self.created_at.as_deref()
+    }
+}
+
 impl Panel {
     /// Create a new panel with the given title.
     pub fn new(title: impl Into<String>) -> Self {
@@ -682,38 +640,12 @@ impl Panel {
         }
     }
 
-    /// Re-order `all_items` in place according to the active sort method. A
-    /// no-op when sorting is disabled. Uses a stable sort so equal keys keep
-    /// their relative (insertion) order.
+    /// Re-order `all_items` in place according to the active sort method,
+    /// delegating to the shared [`codemark_core::sort`] logic. A no-op when
+    /// sorting is disabled.
     fn apply_sort(&mut self) {
-        let Some(sort) = self.sort else {
-            return;
-        };
-        match sort {
-            SortMethod::AlphabeticalAsc => {
-                self.all_items.sort_by_key(|a| a.sort_name_key());
-            }
-            SortMethod::AlphabeticalDesc => {
-                self.all_items.sort_by_key(|b| std::cmp::Reverse(b.sort_name_key()));
-            }
-            // Items without a timestamp sort to the end regardless of direction,
-            // so placeholder rows (e.g. "No bookmarks found") don't lead the list.
-            SortMethod::DateNewest => {
-                self.all_items.sort_by(|a, b| match (&a.created_at, &b.created_at) {
-                    (Some(x), Some(y)) => y.cmp(x),
-                    (Some(_), None) => std::cmp::Ordering::Less,
-                    (None, Some(_)) => std::cmp::Ordering::Greater,
-                    (None, None) => std::cmp::Ordering::Equal,
-                });
-            }
-            SortMethod::DateOldest => {
-                self.all_items.sort_by(|a, b| match (&a.created_at, &b.created_at) {
-                    (Some(x), Some(y)) => x.cmp(y),
-                    (Some(_), None) => std::cmp::Ordering::Less,
-                    (None, Some(_)) => std::cmp::Ordering::Greater,
-                    (None, None) => std::cmp::Ordering::Equal,
-                });
-            }
+        if let Some(sort) = self.sort {
+            sort_by(&mut self.all_items, sort);
         }
     }
 
@@ -1693,26 +1625,6 @@ mod tests {
         assert_eq!(panel.len(), 3);
         // Should preserve selection based on text match
         assert_eq!(panel.selected_index(), Some(1));
-    }
-
-    #[test]
-    fn test_sort_method_cycles_through_all_four() {
-        assert_eq!(SortMethod::AlphabeticalAsc.next(), SortMethod::AlphabeticalDesc);
-        assert_eq!(SortMethod::AlphabeticalDesc.next(), SortMethod::DateNewest);
-        assert_eq!(SortMethod::DateNewest.next(), SortMethod::DateOldest);
-        assert_eq!(SortMethod::DateOldest.next(), SortMethod::AlphabeticalAsc);
-        // Each method has a distinct glyph.
-        let icons = [
-            SortMethod::AlphabeticalAsc.icon(),
-            SortMethod::AlphabeticalDesc.icon(),
-            SortMethod::DateNewest.icon(),
-            SortMethod::DateOldest.icon(),
-        ];
-        for (i, a) in icons.iter().enumerate() {
-            for b in &icons[i + 1..] {
-                assert_ne!(a, b, "sort icons must be unique");
-            }
-        }
     }
 
     #[test]

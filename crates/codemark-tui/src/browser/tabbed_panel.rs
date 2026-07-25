@@ -694,7 +694,7 @@ impl TabbedPanel {
 
         // The active tab's sort glyph (if that tab's list has sorting enabled),
         // drawn just left of the pane-number badge.
-        let sort_icon = self.active_sort_method().map(|s| s.icon());
+        let sort_icon = self.active_sort_method().map(crate::browser::tabs::sort_method_icon);
 
         // When a pane-number badge is drawn on the right of the top border,
         // cap the (left-aligned) title width so a long tab row can't run into

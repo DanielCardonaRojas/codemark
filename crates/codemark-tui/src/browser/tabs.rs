@@ -1,5 +1,6 @@
 //! Tab selection component for switching between views.
 
+use codemark_core::sort::SortMethod;
 use ratatui::{
     buffer::Buffer,
     layout::{Alignment, Rect},
@@ -8,6 +9,20 @@ use ratatui::{
     widgets::{Widget, Wrap},
 };
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
+
+/// Nerd Font glyph shown for a [`SortMethod`] beside the pane-number badge.
+///
+/// This is the TUI's presentation of the (presentation-agnostic) core sort
+/// method: alphabetical methods use the sort-alpha glyphs, date methods the
+/// sort-numeric glyphs, so the two axes read differently.
+pub fn sort_method_icon(method: SortMethod) -> &'static str {
+    match method {
+        SortMethod::AlphabeticalAsc => "\u{f15d}",  // nf-fa-sort_alpha_asc
+        SortMethod::AlphabeticalDesc => "\u{f15e}", // nf-fa-sort_alpha_desc
+        SortMethod::DateNewest => "\u{f163}",       // nf-fa-sort_numeric_desc
+        SortMethod::DateOldest => "\u{f162}",       // nf-fa-sort_numeric_asc
+    }
+}
 
 /// Number of characters to extend the top border line for tab titles.
 /// This must be kept in sync with the rendering in `TabbedPanel`.
@@ -546,6 +561,16 @@ impl Default for TabSelection {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_each_sort_method_has_a_distinct_icon() {
+        let icons: Vec<&str> = SortMethod::all().iter().copied().map(sort_method_icon).collect();
+        for (i, a) in icons.iter().enumerate() {
+            for b in &icons[i + 1..] {
+                assert_ne!(a, b, "sort icons must be unique");
+            }
+        }
+    }
 
     #[test]
     fn test_truncate_line_to_width_caps_and_preserves_shorter() {
