@@ -231,12 +231,8 @@ impl Panel {
             self.items = self.all_items.clone();
         } else {
             let query = self.filter_query.to_lowercase();
-            self.items = self
-                .all_items
-                .iter()
-                .filter(|item| item.matches_query(&query))
-                .cloned()
-                .collect();
+            self.items =
+                self.all_items.iter().filter(|item| item.matches_query(&query)).cloned().collect();
         }
 
         let mut state = self.list_state.borrow_mut();
@@ -446,8 +442,12 @@ impl Panel {
             if query.is_empty() {
                 self.items = self.all_items.clone();
             } else {
-                self.items =
-                    self.all_items.iter().filter(|item| item.matches_query(&query)).cloned().collect();
+                self.items = self
+                    .all_items
+                    .iter()
+                    .filter(|item| item.matches_query(&query))
+                    .cloned()
+                    .collect();
             }
         }
     }
