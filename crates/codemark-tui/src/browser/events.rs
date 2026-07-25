@@ -1225,7 +1225,10 @@ impl BrowserLayout {
         let method = panel.cycle_sort();
         tracing::debug!(target: "codemark::ui", ?tab, ?method, "content sort cycled");
         // The selection kept its item but its row (and neighbors) moved; refresh
-        // the preview so it matches whatever is now selected.
+        // the preview so it matches whatever is now selected. Cancel any pending/
+        // in-flight resolve first so a stale async result can't land on top of the
+        // synchronous render below.
+        self.cancel_inflight_preview();
         self.update_content_live_preview();
         true
     }
@@ -1489,8 +1492,11 @@ impl BrowserLayout {
 
                 // A click on the sort glyph reordered the list; refresh the
                 // preview so it tracks the (re-positioned) selection, matching
-                // the `S` shortcut path.
+                // the `S` shortcut path. Cancel any pending/in-flight resolve
+                // first so a stale async result can't overwrite the synchronous
+                // render.
                 if self.left_pane.content_panel.take_sort_changed() {
+                    self.cancel_inflight_preview();
                     self.update_content_live_preview();
                 }
 

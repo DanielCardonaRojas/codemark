@@ -484,6 +484,27 @@ impl BrowserLayout {
             Some((id.to_string(), label, self.tick_count + PREVIEW_DEBOUNCE_TICKS));
     }
 
+    /// Invalidate any pending or in-flight bookmark preview so a stale async
+    /// result can't clobber a subsequent *synchronous* render.
+    ///
+    /// [`update_content_live_preview`](Self::update_content_live_preview) loads
+    /// the selected bookmark synchronously and authoritatively. If a debounced
+    /// or in-flight resolve from an earlier navigation is still outstanding, its
+    /// `PreviewReady` would otherwise arrive afterward and overwrite the pane
+    /// with a now-stale preview. Bumping the request id makes that result get
+    /// dropped on arrival (id mismatch), and clearing the debounce/in-flight
+    /// bookkeeping stops a queued task from spawning. Mirrors the cancellation
+    /// in [`request_bookmark_preview`](Self::request_bookmark_preview).
+    pub(super) fn cancel_inflight_preview(&mut self) {
+        self.preview_seq = self.preview_seq.wrapping_add(1);
+        self.active_preview_request = self.preview_seq;
+        self.pending_preview = None;
+        self.inflight_preview = None;
+        if self.right_pane.is_loading() {
+            self.right_pane.finish_loading();
+        }
+    }
+
     /// Sync the right pane's first tab label based on the active Content panel tab.
     /// Shows "Content" when on Bookmarks (single items), "Steps" otherwise (collections/tours).
     fn sync_steps_tab_label(&mut self) {
