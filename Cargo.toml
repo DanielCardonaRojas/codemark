@@ -43,7 +43,7 @@ regex = "1"
 # libgit2 so cross-compiling to musl/Windows needs no system C libraries.
 git2 = { version = "0.20", default-features = false, features = ["vendored-libgit2"] }
 rusqlite = { version = "0.37", features = ["bundled"] }
-tree-sitter = "0.25"
+tree-sitter = { version = "0.25", features = ["wasm"] }
 tempfile = "3"
 deadpool-sqlite = "0.12"
 jsonwebtoken = "9"
