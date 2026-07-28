@@ -114,6 +114,15 @@ impl Language {
     /// Infer language from a file extension. Checks static languages first,
     /// then the dynamic grammar registry.
     pub fn from_extension(ext: &str) -> Option<Self> {
+        Self::static_from_extension(ext)
+            .or_else(|| crate::parser::registry::LanguageRegistry::from_extension(ext))
+    }
+
+    /// Resolve a file extension (without the dot) to a *built-in* language,
+    /// without consulting the dynamic registry. The registry uses this to reject
+    /// dynamic grammars claiming an extension a built-in already owns (which
+    /// would otherwise be shadowed and never resolve).
+    pub fn static_from_extension(ext: &str) -> Option<Language> {
         match ext.to_lowercase().as_str() {
             "swift" => Some(Language::Swift),
             "rs" => Some(Language::Rust),
@@ -123,7 +132,7 @@ impl Language {
             "java" => Some(Language::Java),
             "cs" => Some(Language::CSharp),
             "dart" => Some(Language::Dart),
-            _ => crate::parser::registry::LanguageRegistry::from_extension(ext),
+            _ => None,
         }
     }
 
@@ -159,17 +168,32 @@ impl FromStr for Language {
     type Err = Error;
 
     fn from_str(s: &str) -> Result<Self> {
+        if let Some(lang) = Language::static_from_name(s) {
+            return Ok(lang);
+        }
+        crate::parser::registry::LanguageRegistry::from_name(s)
+            .ok_or_else(|| Error::Input(format!("unsupported language: {s}")))
+    }
+}
+
+impl Language {
+    /// Resolve a name (including alias like `rs`/`ts`) to a *built-in* language,
+    /// without consulting the dynamic registry.
+    ///
+    /// This is the authoritative list of names the static languages claim. The
+    /// registry uses it to reject dynamic grammars whose name would be shadowed
+    /// by a built-in, so the two can never drift (see [`from_str`](Self::from_str)).
+    pub fn static_from_name(s: &str) -> Option<Language> {
         match s.to_lowercase().as_str() {
-            "swift" => Ok(Language::Swift),
-            "rust" | "rs" => Ok(Language::Rust),
-            "typescript" | "ts" | "tsx" => Ok(Language::TypeScript),
-            "python" | "py" => Ok(Language::Python),
-            "go" => Ok(Language::Go),
-            "java" => Ok(Language::Java),
-            "csharp" | "c#" | "cs" => Ok(Language::CSharp),
-            "dart" => Ok(Language::Dart),
-            _ => crate::parser::registry::LanguageRegistry::from_name(s)
-                .ok_or_else(|| Error::Input(format!("unsupported language: {s}"))),
+            "swift" => Some(Language::Swift),
+            "rust" | "rs" => Some(Language::Rust),
+            "typescript" | "ts" | "tsx" => Some(Language::TypeScript),
+            "python" | "py" => Some(Language::Python),
+            "go" => Some(Language::Go),
+            "java" => Some(Language::Java),
+            "csharp" | "c#" | "cs" => Some(Language::CSharp),
+            "dart" => Some(Language::Dart),
+            _ => None,
         }
     }
 }

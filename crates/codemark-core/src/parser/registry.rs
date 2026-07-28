@@ -129,6 +129,16 @@ impl LanguageRegistry {
 
                     for ext in &manifest.extensions {
                         let key = ext.to_lowercase();
+                        // A built-in owns this extension, so `from_extension`
+                        // would resolve to the built-in and never reach this
+                        // grammar. Skip it rather than register a dead mapping.
+                        if is_static_extension(&key) {
+                            eprintln!(
+                                "codemark: extension '.{key}' is owned by a built-in language — ignoring it for grammar '{}'",
+                                manifest.name
+                            );
+                            continue;
+                        }
                         // Keep the first grammar to claim an extension (entries
                         // are sorted, so this is deterministic) and warn rather
                         // than silently overwriting with a nondeterministic winner.
@@ -229,24 +239,18 @@ impl LanguageRegistry {
     }
 }
 
-/// Whether `name` matches a built-in static language.
+/// Whether `name` matches a built-in static language (including aliases).
 fn is_static_language_name(name: &str) -> bool {
-    matches!(
-        name.to_lowercase().as_str(),
-        "swift"
-            | "rust"
-            | "typescript"
-            | "ts"
-            | "tsx"
-            | "python"
-            | "py"
-            | "go"
-            | "java"
-            | "csharp"
-            | "c#"
-            | "cs"
-            | "dart"
-    )
+    // Delegate to the built-in resolver so this can't drift from the actual
+    // set of names/aliases (e.g. `rs`, `ts`) the static languages claim.
+    Language::static_from_name(name).is_some()
+}
+
+/// Whether `ext` (without the dot) is claimed by a built-in language, so a
+/// dynamic grammar registering it would be shadowed by the built-in in
+/// [`Language::from_extension`] and never resolve.
+fn is_static_extension(ext: &str) -> bool {
+    Language::static_from_extension(ext).is_some()
 }
 
 /// The on-disk manifest format for a WASM grammar.
@@ -451,5 +455,51 @@ mod tests {
         assert!(is_static_language_name("ts"));
         assert!(!is_static_language_name("lua"));
         assert!(!is_static_language_name("ruby"));
+    }
+
+    #[test]
+    fn is_static_language_name_covers_builtin_aliases() {
+        // Aliases resolve to a built-in, so a dynamic grammar can't claim them.
+        // `rs` regressed previously because the check was a hand-maintained list.
+        assert!(is_static_language_name("rs"));
+        assert!(is_static_language_name("py"));
+        assert!(is_static_language_name("cs"));
+        assert!(is_static_language_name("tsx"));
+    }
+
+    #[test]
+    fn discover_skips_name_colliding_with_builtin_alias() {
+        // A manifest named `rs` would be shadowed by built-in Rust at resolution
+        // time, so discovery must reject it rather than list a dead grammar.
+        let tmp = tempfile::tempdir().unwrap();
+        write_grammar(
+            tmp.path(),
+            "rs_grammar",
+            r#"{ "name": "rs", "extensions": ["myrs"], "profile": {} }"#,
+            true,
+        );
+
+        let reg = LanguageRegistry::discover_in(tmp.path()).unwrap();
+        assert!(reg.by_name.is_empty());
+        assert!(reg.by_extension.is_empty());
+    }
+
+    #[test]
+    fn discover_skips_extension_owned_by_builtin() {
+        // A dynamic grammar claiming `.rs` would never resolve (built-in Rust
+        // wins in `from_extension`), so that extension is dropped — but the
+        // grammar's other, free extensions still register.
+        let tmp = tempfile::tempdir().unwrap();
+        write_grammar(
+            tmp.path(),
+            "rusty",
+            r#"{ "name": "rusty", "extensions": ["rs", "rusty"], "profile": {} }"#,
+            true,
+        );
+
+        let reg = LanguageRegistry::discover_in(tmp.path()).unwrap();
+        assert!(reg.by_name.contains_key("rusty"));
+        assert!(!reg.by_extension.contains_key("rs"));
+        assert!(reg.by_extension.contains_key("rusty"));
     }
 }
