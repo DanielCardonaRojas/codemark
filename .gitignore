@@ -31,3 +31,10 @@ codetours.toml
 
 # Local docker-compose overrides
 docker-compose.override.yml
+
+# Dynamic-grammar spec/analysis working docs — kept on disk, out of git to
+# keep PRs slim. See CLAUDE.md for the canonical manifest schema pointer.
+/dynamic_grammar_loading_spec.md
+/dynamic_treesitter_analysis.md
+/dynamic_treesitter_deep_review.md
+/tags_scm_sufficiency_analysis.md
