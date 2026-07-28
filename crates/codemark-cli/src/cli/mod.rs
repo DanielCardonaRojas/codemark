@@ -84,6 +84,9 @@ pub enum Command {
     /// Full-text search across notes and context
     Search(SearchArgs),
 
+    /// List all supported languages (built-in and dynamically loaded)
+    Languages,
+
     /// Update metadata for an existing bookmark
     Edit(EditArgs),
 

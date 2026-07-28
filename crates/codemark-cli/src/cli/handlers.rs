@@ -91,6 +91,7 @@ pub async fn dispatch(cli: &Cli) -> Result<()> {
         Command::Status => maintenance::handle_status(cli, &mode).await,
         Command::List(args) => handle_list(cli, &mode, args).await,
         Command::Search(args) => search::handle_search(cli, &mode, args).await,
+        Command::Languages => handle_languages(cli, &mode).await,
         #[cfg(feature = "semantic")]
         Command::Reindex(args) => search::handle_reindex(cli, &mode, args).await,
         Command::Collection(args) => dispatch_collection(cli, &mode, args).await,
@@ -1963,6 +1964,45 @@ pub async fn handle_open(cli: &Cli, args: &OpenArgs) -> Result<()> {
             })?;
     }
 
+    Ok(())
+}
+
+pub async fn handle_languages(_cli: &Cli, mode: &OutputMode) -> Result<()> {
+    let languages = codemark_core::parser::languages::Language::all_supported();
+
+    if matches!(mode, OutputMode::Json) {
+        let mut out = Vec::new();
+        for lang in languages {
+            let is_dynamic = matches!(lang, codemark_core::parser::languages::Language::Dynamic(_));
+            out.push(serde_json::json!({
+                "name": lang.name(),
+                "type": if is_dynamic { "dynamic" } else { "built-in" },
+                "extensions": lang.file_extensions(),
+            }));
+        }
+        output::write_json_success(&out).unwrap();
+        return Ok(());
+    }
+
+    let mut table = comfy_table::Table::new();
+    table
+        .load_preset(comfy_table::presets::UTF8_FULL)
+        .set_content_arrangement(comfy_table::ContentArrangement::Dynamic)
+        .set_header(vec!["Language", "Type", "Extensions"]);
+
+    for lang in languages {
+        let is_dynamic = matches!(lang, codemark_core::parser::languages::Language::Dynamic(_));
+        let type_str = if is_dynamic { "dynamic (WASM)" } else { "built-in" };
+        let exts = lang.file_extensions().join(", ");
+        
+        table.add_row(vec![
+            lang.name().to_string(),
+            type_str.to_string(),
+            exts,
+        ]);
+    }
+
+    println!("{table}");
     Ok(())
 }
 

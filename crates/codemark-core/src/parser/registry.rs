@@ -120,6 +120,11 @@ impl LanguageRegistry {
     pub fn dynamic_language_names() -> Vec<&'static str> {
         GLOBAL_REGISTRY.by_name.keys().map(|s| s.as_str()).collect()
     }
+
+    /// List all registered dynamic languages.
+    pub fn dynamic_languages() -> Vec<Language> {
+        GLOBAL_REGISTRY.by_name.values().cloned().collect()
+    }
 }
 
 /// Whether `name` matches a built-in static language.

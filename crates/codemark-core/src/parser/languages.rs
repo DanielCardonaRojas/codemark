@@ -126,6 +126,27 @@ impl Language {
             _ => crate::parser::registry::LanguageRegistry::from_extension(ext),
         }
     }
+
+    /// List all built-in static languages.
+    pub fn builtins() -> Vec<Self> {
+        vec![
+            Language::Rust,
+            Language::Swift,
+            Language::TypeScript,
+            Language::Python,
+            Language::Go,
+            Language::Java,
+            Language::CSharp,
+            Language::Dart,
+        ]
+    }
+
+    /// List all supported languages (static + any dynamic ones discovered).
+    pub fn all_supported() -> Vec<Self> {
+        let mut all = Self::builtins();
+        all.extend(crate::parser::registry::LanguageRegistry::dynamic_languages());
+        all
+    }
 }
 
 impl fmt::Display for Language {
