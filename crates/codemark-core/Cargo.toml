@@ -22,6 +22,11 @@ semantic = [
   "dep:hf-hub",
 ]
 
+# Dynamic WASM grammar loading. Enables wasmtime (via tree-sitter's wasm
+# feature) so users can load additional language grammars at runtime from
+# ~/.cache/codemark/grammars/.
+wasm = ["tree-sitter/wasm"]
+
 [dependencies]
 async-trait = "0.1"
 chrono = { workspace = true }

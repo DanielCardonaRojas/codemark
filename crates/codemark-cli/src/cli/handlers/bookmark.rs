@@ -46,10 +46,10 @@ pub async fn handle_add(cli: &Cli, mode: &OutputMode, args: &AddArgsOriginal) ->
     let lang = resolve_language(args.lang.as_deref(), &args.file)?;
     let (abs_path, rel_path) = resolve_file_path(&args.file)?;
 
-    let mut parser = codemark_core::parser::languages::Parser::new(lang)?;
+    let mut parser = codemark_core::parser::languages::Parser::new(lang.clone())?;
     let provider = codemark_core::vfs::LocalFileProvider;
     let (tree, source) = parser.parse_file(&abs_path, &provider).await?;
-    let ts_lang = lang.tree_sitter_language();
+    let ts_lang = parser.language().clone();
 
     // Resolve byte range from --range or --hunk
     let byte_range = if let Some(ref hunk) = args.hunk {
@@ -297,10 +297,10 @@ pub async fn handle_add_from_snippet(
         return Err(Error::Input("no snippet provided on stdin".into()));
     }
 
-    let mut parser = codemark_core::parser::languages::Parser::new(lang)?;
+    let mut parser = codemark_core::parser::languages::Parser::new(lang.clone())?;
     let provider = codemark_core::vfs::LocalFileProvider;
     let (tree, source) = parser.parse_file(&abs_path, &provider).await?;
-    let ts_lang = lang.tree_sitter_language();
+    let ts_lang = parser.language().clone();
 
     let offset =
         source.find(snippet).ok_or_else(|| Error::Input("snippet not found in file".into()))?;
@@ -527,10 +527,10 @@ pub async fn handle_add_from_query(
     let lang = resolve_language(args.lang.as_deref(), &args.file)?;
     let (abs_path, rel_path) = resolve_file_path(&args.file)?;
 
-    let mut parser = codemark_core::parser::languages::Parser::new(lang)?;
+    let mut parser = codemark_core::parser::languages::Parser::new(lang.clone())?;
     let provider = codemark_core::vfs::LocalFileProvider;
     let (tree, source) = parser.parse_file(&abs_path, &provider).await?;
-    let ts_lang = lang.tree_sitter_language();
+    let ts_lang = parser.language().clone();
 
     // Validate the query by running it
     let matches =
@@ -816,8 +816,8 @@ pub async fn handle_resolve(cli: &Cli, mode: &OutputMode, args: &ResolveArgs) ->
         // Single bookmark resolution — search across all DBs
         let (bm, db) = find_bookmark_across(&dbs, id)?;
         let lang: Language = bm.language.parse()?;
-        let mut cache = ParseCache::new(lang)?;
-        let ts_lang = lang.tree_sitter_language();
+        let mut cache = ParseCache::new(lang.clone())?;
+        let ts_lang = cache.language().clone();
         let provider = codemark_core::vfs::LocalFileProvider;
 
         let result = resolution::resolve(&bm, &mut cache, &ts_lang, db.path(), &provider).await?;

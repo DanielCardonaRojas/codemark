@@ -66,6 +66,7 @@ impl BrowserLayout {
         let global_config = path_tuple(config::global_config_dir().map(|d| d.join("config.toml")));
         let data_dir = path_tuple(config::global_data_dir());
         let templates_dir = path_tuple(templates::templates_dir());
+        let grammars_dir = path_tuple(config::global_grammars_dir());
 
         let mut rows = vec![
             ("Version", crate::VERSION.to_string(), None),
@@ -74,6 +75,7 @@ impl BrowserLayout {
             ("Global config", global_config.0, global_config.1),
             ("Data dir", data_dir.0, data_dir.1),
             ("Templates", templates_dir.0, templates_dir.1),
+            ("Grammars dir", grammars_dir.0, grammars_dir.1),
             ("Logs", logs, Some(logs_path.to_string_lossy().to_string())),
         ];
 

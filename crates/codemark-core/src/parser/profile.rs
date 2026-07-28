@@ -21,7 +21,7 @@ use crate::parser::languages::Language;
 /// All fields are optional with graceful fallbacks so a partial manifest still
 /// works — an empty `landmark_kinds` means no structural anchoring, a missing
 /// `node_labels` entry falls back to `node_type.replace('_', " ")`.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, serde::Deserialize)]
 pub struct Profile {
     /// Node types that get structural anchoring in the query generator.
     ///
@@ -57,6 +57,7 @@ impl Language {
             Language::Java => &JAVA_PROFILE,
             Language::CSharp => &CSHARP_PROFILE,
             Language::Dart => &DART_PROFILE,
+            Language::Dynamic(dl) => &dl.profile,
         }
     }
 }

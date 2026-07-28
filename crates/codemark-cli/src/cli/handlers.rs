@@ -1183,8 +1183,8 @@ pub async fn resolve_batch(
         let Ok(lang) = bm.language.parse::<Language>() else {
             continue;
         };
-        let mut cache = ParseCache::new(lang)?;
-        let ts_lang = lang.tree_sitter_language();
+        let mut cache = ParseCache::new(lang.clone())?;
+        let ts_lang = cache.language().clone();
         let result = resolution::resolve(bm, &mut cache, &ts_lang, db.path(), &provider).await?;
         let days_since = health::days_since_resolution(bm.last_resolved_at.as_deref());
         let new_status = health::transition(
@@ -1746,7 +1746,7 @@ async fn handle_preview_live(
         .language
         .parse::<Language>()
         .map_err(|_| Error::Input(format!("unsupported language: {}", bm.language)))?;
-    let mut cache = ParseCache::new(lang)?;
+    let mut cache = ParseCache::new(lang.clone())?;
     let provider = codemark_core::vfs::LocalFileProvider;
 
     let result = resolve_transient(bm, &mut cache, lang, db.path(), &provider).await?;
@@ -1881,8 +1881,8 @@ pub async fn handle_open(cli: &Cli, args: &OpenArgs) -> Result<()> {
         .language
         .parse::<Language>()
         .map_err(|_| Error::Input(format!("unsupported language: {}", bookmark.language)))?;
-    let ts_lang = lang.tree_sitter_language();
-    let mut cache = ParseCache::new(lang)?;
+    let mut cache = ParseCache::new(lang.clone())?;
+    let ts_lang = cache.language().clone();
     let db_path = db.path();
     let provider = codemark_core::vfs::LocalFileProvider;
     let result = resolution::resolve(&bookmark, &mut cache, &ts_lang, db_path, &provider).await?;

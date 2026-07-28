@@ -697,10 +697,10 @@ impl BrowserLayout {
                     (|| -> std::result::Result<LiveUIStatus, codemark_core::error::Error> {
                         use std::str::FromStr;
                         let language = CL::from_str(&bm.language)?;
-                        let cache = match caches.entry(language) {
+                        let cache = match caches.entry(language.clone()) {
                             std::collections::hash_map::Entry::Occupied(e) => e.into_mut(),
                             std::collections::hash_map::Entry::Vacant(e) => {
-                                let pc = ParseCache::new(language).map_err(|err| {
+                                let pc = ParseCache::new(language.clone()).map_err(|err| {
                                     codemark_core::error::Error::TreeSitter(format!(
                                         "failed to create ParseCache for {}: {}",
                                         bm.language, err

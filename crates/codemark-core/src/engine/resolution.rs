@@ -49,7 +49,8 @@ impl TransientResolution {
 
 /// Resolve a bookmark on-the-fly for live preview, without persisting anything.
 ///
-/// Accepts the codemark `Language` enum and calls `tree_sitter_language()` internally.
+/// Accepts the codemark `Language` for logging; the tree-sitter handle comes
+/// from the parse cache (works for both static and WASM-loaded grammars).
 /// On file-not-found the error is propagated so the caller can fall back.
 pub async fn resolve_transient(
     bookmark: &Bookmark,
@@ -65,7 +66,7 @@ pub async fn resolve_transient(
         language = %language,
         "starting transient resolution"
     );
-    let ts_lang = language.tree_sitter_language();
+    let ts_lang = cache.language().clone();
     let result = resolve(bookmark, cache, &ts_lang, db_path, provider).await?;
     tracing::debug!(
         target: "codemark::resolution",

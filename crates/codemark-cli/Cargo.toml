@@ -24,6 +24,10 @@ default = ["semantic"]
 # Semantic (vector embedding) search. Enabled by default; disable with
 # `--no-default-features` to build without the candle/hf-hub stack.
 semantic = ["codemark-core/semantic"]
+# Dynamic WASM grammar loading. Opt-in: enables wasmtime so additional language
+# grammars can be loaded at runtime from ~/.cache/codemark/grammars/. Disabled
+# by default to keep dev/CI builds lean; enable with `--features wasm`.
+wasm = ["codemark-core/wasm"]
 man-pages = ["clap_mangen"]
 
 [dev-dependencies]
