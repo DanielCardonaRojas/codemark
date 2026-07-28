@@ -34,12 +34,22 @@ async fn handle_add(
     let safe_name = match (components.next(), components.next()) {
         (Some(std::path::Component::Normal(c)), None) => c,
         _ => {
+            tracing::debug!(
+                target: "codemark::languages",
+                name = %args.name,
+                "rejected grammar name — not a single normal path component"
+            );
             return Err(Error::Input(format!(
                 "Invalid grammar name '{}': must be a single path component with no separators or '..'",
                 args.name
             )));
         }
     };
+    tracing::debug!(
+        target: "codemark::languages",
+        name = %args.name,
+        "accepted grammar name"
+    );
 
     let lang_dir = grammar_dir.join(safe_name);
 
@@ -92,19 +102,33 @@ async fn handle_add(
     let manifest_str = serde_json::to_string_pretty(&manifest_json).unwrap();
     write_no_follow(&manifest_path, manifest_str.as_bytes(), &args.name)?;
 
+    // Loading WASM grammars at runtime requires the `wasm` feature (disabled by
+    // default). Without it the grammar is installed on disk but can't actually
+    // be used, so don't claim it will be — direct the user to a wasm build.
+    let wasm_enabled = cfg!(feature = "wasm");
+
     if matches!(mode, OutputMode::Json) {
         output::write_json_success(&serde_json::json!({
             "message": "Grammar added successfully",
             "name": args.name,
             "directory": lang_dir,
-        }))
-        .unwrap();
+            "runtime_enabled": wasm_enabled,
+        }))?;
     } else {
         println!("Successfully added grammar for '{}' to {}", args.name, lang_dir.display());
-        println!(
-            "Codemark will now automatically discover and use this grammar for the following extensions: {}",
-            args.extensions
-        );
+        if wasm_enabled {
+            println!(
+                "Codemark will now automatically discover and use this grammar for the following extensions: {}",
+                args.extensions
+            );
+        } else {
+            println!(
+                "Note: this build was compiled without the 'wasm' feature, so the grammar \
+                 cannot be loaded at runtime. Rebuild codemark with --features wasm to use it \
+                 for the following extensions: {}",
+                args.extensions
+            );
+        }
     }
 
     Ok(())
@@ -183,7 +207,7 @@ async fn handle_list(_cli: &crate::cli::Cli, mode: &OutputMode) -> Result<()> {
                 "wasm_path": path,
             }));
         }
-        output::write_json_success(&out).unwrap();
+        output::write_json_success(&out)?;
         return Ok(());
     }
 
@@ -213,6 +237,35 @@ async fn handle_list(_cli: &crate::cli::Cli, mode: &OutputMode) -> Result<()> {
     Ok(())
 }
 
+/// Load a grammar through the runtime parser path so `validate` can detect an
+/// empty or non-WASM `grammar.wasm` that mere existence checks would accept.
+/// The `profile` is not needed to prove loadability, so it's left at default.
+#[cfg(feature = "wasm")]
+fn load_dynamic_grammar(
+    name: &str,
+    wasm_path: &std::path::Path,
+    manifest: &serde_json::Value,
+) -> Result<()> {
+    use codemark_core::parser::languages::{DynamicLanguage, Language, Parser};
+
+    let extensions = manifest
+        .get("extensions")
+        .and_then(|v| v.as_array())
+        .map(|arr| arr.iter().filter_map(|e| e.as_str().map(String::from)).collect())
+        .unwrap_or_default();
+
+    let dl = std::sync::Arc::new(DynamicLanguage {
+        name: name.to_string(),
+        extensions,
+        wasm_path: wasm_path.to_path_buf(),
+        profile: Default::default(),
+    });
+
+    // Constructing the parser reads the .wasm and calls `set_language`, which is
+    // exactly what fails for an empty or malformed grammar.
+    Parser::new(Language::Dynamic(dl)).map(|_| ())
+}
+
 async fn handle_validate(_cli: &crate::cli::Cli, mode: &OutputMode) -> Result<()> {
     let Some(grammar_dir) = codemark_core::config::global_grammars_dir() else {
         return Err(Error::Operation("Could not determine global grammars directory".to_string()));
@@ -237,7 +290,8 @@ async fn handle_validate(_cli: &crate::cli::Cli, mode: &OutputMode) -> Result<()
             if let Ok(manifest_text) = std::fs::read_to_string(&manifest_path) {
                 match serde_json::from_str::<serde_json::Value>(&manifest_text) {
                     Ok(val) => {
-                        if val.get("name").is_none() {
+                        let name = val.get("name").and_then(|v| v.as_str());
+                        if name.is_none() {
                             issues.push(format!(
                                 "{}: manifest.json missing 'name' field",
                                 entry.path().display()
@@ -247,6 +301,23 @@ async fn handle_validate(_cli: &crate::cli::Cli, mode: &OutputMode) -> Result<()
                             issues.push(format!(
                                 "{}: manifest.json missing 'extensions' field",
                                 entry.path().display()
+                            ));
+                        }
+
+                        // Existence checks can't tell an empty or non-WASM
+                        // grammar.wasm from a usable one. Load it through the same
+                        // parser path used at runtime so `validate` fails for
+                        // grammars that can't actually be loaded. Only attempted
+                        // on wasm builds; a non-wasm build can't load any dynamic
+                        // grammar and would report a misleading feature error.
+                        #[cfg(feature = "wasm")]
+                        if let (Some(name), true) = (name, wasm_path.exists())
+                            && let Err(e) = load_dynamic_grammar(name, &wasm_path, &val)
+                        {
+                            issues.push(format!(
+                                "{}: grammar.wasm failed to load: {}",
+                                entry.path().display(),
+                                e
                             ));
                         }
                     }
@@ -262,8 +333,7 @@ async fn handle_validate(_cli: &crate::cli::Cli, mode: &OutputMode) -> Result<()
         output::write_json_success(&serde_json::json!({
             "valid": issues.is_empty(),
             "issues": issues,
-        }))
-        .unwrap();
+        }))?;
         return Ok(());
     }
 

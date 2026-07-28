@@ -282,9 +282,9 @@ Codemark is powered by Tree-sitter. It supports 8 built-in languages out of the 
 - 🎯 **Dart**
 - ♯ **C#**
 
-**Dynamic (WASM):**
+### Dynamic (WASM)
+
 You can add support for any language without recompiling Codemark. Simply drop a compiled Tree-sitter `.wasm` grammar and a `manifest.json` into Codemark's grammar cache directory (e.g., `~/Library/Caches/codemark/grammars/<language>/` on macOS). Codemark will automatically discover it on the next run.
----
 
 ## 🎨 Customizing Markdown Output
 
