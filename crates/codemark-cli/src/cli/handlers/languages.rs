@@ -47,13 +47,7 @@ async fn handle_add(
     // exists as a symlink: `create_dir_all`/`copy`/`write` would follow it and
     // land the files outside the cache. Reject any pre-existing symlink at the
     // target so writes always stay within the grammar cache.
-    if std::fs::symlink_metadata(&lang_dir).is_ok_and(|m| m.file_type().is_symlink()) {
-        return Err(Error::Input(format!(
-            "Refusing to install grammar '{}': {} is a symlink",
-            args.name,
-            lang_dir.display()
-        )));
-    }
+    reject_symlink(&lang_dir, &args.name)?;
 
     std::fs::create_dir_all(&lang_dir).map_err(|e| {
         Error::Operation(format!("Failed to create directory {}: {}", lang_dir.display(), e))
@@ -75,7 +69,11 @@ async fn handle_add(
         )));
     }
 
+    // The target files themselves may be pre-existing symlinks pointing outside
+    // the cache; `copy`/`write` follow them and would overwrite the external
+    // target. Reject any symlinked child before writing.
     let target_wasm = lang_dir.join("grammar.wasm");
+    reject_symlink(&target_wasm, &args.name)?;
     std::fs::copy(&args.wasm_file, &target_wasm)
         .map_err(|e| Error::Operation(format!("Failed to copy WASM file: {}", e)))?;
 
@@ -89,6 +87,7 @@ async fn handle_add(
     });
 
     let manifest_path = lang_dir.join("manifest.json");
+    reject_symlink(&manifest_path, &args.name)?;
     let manifest_str = serde_json::to_string_pretty(&manifest_json).unwrap();
     std::fs::write(&manifest_path, manifest_str)
         .map_err(|e| Error::Operation(format!("Failed to write manifest.json: {}", e)))?;
@@ -108,6 +107,20 @@ async fn handle_add(
         );
     }
 
+    Ok(())
+}
+
+/// Reject `path` if it already exists as a symlink, so a subsequent
+/// symlink-following write (`create_dir_all`/`copy`/`write`) can't be redirected
+/// to overwrite a target outside the grammar cache.
+fn reject_symlink(path: &std::path::Path, name: &str) -> Result<()> {
+    if std::fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink()) {
+        return Err(Error::Input(format!(
+            "Refusing to install grammar '{}': {} is a symlink",
+            name,
+            path.display()
+        )));
+    }
     Ok(())
 }
 

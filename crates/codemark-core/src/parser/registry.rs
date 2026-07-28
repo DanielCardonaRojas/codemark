@@ -45,19 +45,25 @@ impl LanguageRegistry {
             let _ = std::fs::create_dir_all(&grammar_dir);
         }
 
+        // A read failure yields an empty registry at startup — there's nothing to
+        // preserve yet. (`refresh` treats the same `None` differently: it keeps
+        // the working registry rather than blanking it.)
         Self::discover_in(&grammar_dir)
+            .unwrap_or_else(|| Self { by_extension: HashMap::new(), by_name: HashMap::new() })
     }
 
     /// Scan a specific grammar directory and build the registry.
     ///
+    /// Returns `None` when the directory itself can't be read (so callers can
+    /// distinguish "no grammars" from "couldn't scan"); an unreadable entry or
+    /// invalid manifest inside a readable directory is skipped, not fatal.
+    ///
     /// Split out from [`discover`](Self::discover) so the scan/skip logic can be
     /// tested against a fixture directory without touching the global cache.
-    fn discover_in(grammar_dir: &std::path::Path) -> Self {
+    fn discover_in(grammar_dir: &std::path::Path) -> Option<Self> {
         let mut registry = Self { by_extension: HashMap::new(), by_name: HashMap::new() };
 
-        let Ok(entries) = std::fs::read_dir(grammar_dir) else {
-            return registry;
-        };
+        let entries = std::fs::read_dir(grammar_dir).ok()?;
 
         // Sort entries by path so discovery is deterministic across processes:
         // filesystem iteration order is unspecified, so without this an
@@ -101,6 +107,20 @@ impl LanguageRegistry {
                     });
 
                     let lang = Language::Dynamic(dl);
+
+                    // First grammar to claim a name wins, matching the extension
+                    // rule below. Otherwise a duplicate name could win name-based
+                    // lookup while the first still wins extension lookup, so
+                    // creation (by extension) and resolution (by stored name)
+                    // could select different grammars.
+                    if let Some(existing) = registry.by_name.get(&manifest.name) {
+                        eprintln!(
+                            "codemark: language name '{}' already registered by grammar '{}' — ignoring duplicate",
+                            manifest.name,
+                            existing.name()
+                        );
+                        continue;
+                    }
                     registry.by_name.insert(manifest.name.clone(), lang.clone());
 
                     for ext in &manifest.extensions {
@@ -135,15 +155,31 @@ impl LanguageRegistry {
             }
         }
 
-        registry
+        Some(registry)
     }
 
     /// Re-scan the grammar cache directory, replacing the process-global
     /// registry. Long-running consumers should call this when they want to pick
     /// up grammars added or removed since startup (or since the last refresh).
+    ///
+    /// If the grammar directory can't be read (e.g. a transient FS error), the
+    /// existing registry is kept rather than blanked, so already-resolved
+    /// dynamic-language bookmarks don't suddenly become unsupported.
     pub fn refresh() {
-        let fresh = Self::discover();
-        *GLOBAL_REGISTRY.write().expect("grammar registry lock poisoned") = fresh;
+        let Some(dir) = global_grammars_dir() else {
+            return;
+        };
+        match Self::discover_in(&dir) {
+            Some(fresh) => {
+                *GLOBAL_REGISTRY.write().expect("grammar registry lock poisoned") = fresh;
+            }
+            None => {
+                eprintln!(
+                    "codemark: could not re-scan grammar cache {} — keeping current registry",
+                    dir.display()
+                );
+            }
+        }
     }
 
     /// Look up a dynamic language by file extension (case-insensitive).
@@ -238,7 +274,7 @@ mod tests {
             true,
         );
 
-        let reg = LanguageRegistry::discover_in(tmp.path());
+        let reg = LanguageRegistry::discover_in(tmp.path()).unwrap();
 
         // Name lookup is exact; extension lookup is case-insensitive.
         assert_eq!(reg.by_name.get("lua").map(|l| l.name()), Some("lua"));
@@ -259,7 +295,7 @@ mod tests {
             true,
         );
 
-        let reg = LanguageRegistry::discover_in(tmp.path());
+        let reg = LanguageRegistry::discover_in(tmp.path()).unwrap();
         assert!(reg.by_name.is_empty());
         assert!(reg.by_extension.is_empty());
     }
@@ -274,7 +310,7 @@ mod tests {
             false, // no grammar.wasm
         );
 
-        let reg = LanguageRegistry::discover_in(tmp.path());
+        let reg = LanguageRegistry::discover_in(tmp.path()).unwrap();
         assert!(reg.by_name.is_empty());
     }
 
@@ -283,7 +319,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         write_grammar(tmp.path(), "broken", "{ not valid json", true);
 
-        let reg = LanguageRegistry::discover_in(tmp.path());
+        let reg = LanguageRegistry::discover_in(tmp.path()).unwrap();
         assert!(reg.by_name.is_empty());
     }
 
@@ -301,7 +337,7 @@ mod tests {
             true,
         );
 
-        let reg = LanguageRegistry::discover_in(tmp.path());
+        let reg = LanguageRegistry::discover_in(tmp.path()).unwrap();
         let lang = reg.by_name.get("lua").expect("lua registered");
         assert!(lang.profile().landmark_kinds.iter().any(|k| k == "local_function_declaration"));
     }
@@ -325,11 +361,49 @@ mod tests {
             true,
         );
 
-        let reg = LanguageRegistry::discover_in(tmp.path());
+        let reg = LanguageRegistry::discover_in(tmp.path()).unwrap();
         // Both names still register; only the extension conflict is resolved.
         assert!(reg.by_name.contains_key("aaa"));
         assert!(reg.by_name.contains_key("zzz"));
         assert_eq!(reg.by_extension.get("foo").map(|l| l.name()), Some("aaa"));
+    }
+
+    #[test]
+    fn duplicate_name_keeps_first_by_sorted_path() {
+        // Two grammars declare the same name under different directories. The
+        // first by sorted path ("a_dir") wins name lookup, matching extension
+        // resolution so creation and resolution can't diverge.
+        let tmp = tempfile::tempdir().unwrap();
+        write_grammar(
+            tmp.path(),
+            "b_dir",
+            r#"{ "name": "dup", "extensions": ["bbb"], "profile": {} }"#,
+            true,
+        );
+        write_grammar(
+            tmp.path(),
+            "a_dir",
+            r#"{ "name": "dup", "extensions": ["aaa"], "profile": {} }"#,
+            true,
+        );
+
+        let reg = LanguageRegistry::discover_in(tmp.path()).unwrap();
+        // "dup" registers exactly once. The first grammar (a_dir, extension
+        // "aaa") wins; the duplicate's "bbb" extension is never registered
+        // because the whole duplicate entry is skipped.
+        assert!(reg.by_name.contains_key("dup"));
+        assert!(reg.by_extension.contains_key("aaa"));
+        assert!(!reg.by_extension.contains_key("bbb"));
+    }
+
+    #[test]
+    fn discover_in_returns_none_for_unreadable_directory() {
+        // A path that isn't a readable directory (here, one that doesn't exist)
+        // yields None so `refresh` can distinguish "couldn't scan" from "empty"
+        // and avoid blanking a working registry.
+        let tmp = tempfile::tempdir().unwrap();
+        let missing = tmp.path().join("does-not-exist");
+        assert!(LanguageRegistry::discover_in(&missing).is_none());
     }
 
     #[test]
