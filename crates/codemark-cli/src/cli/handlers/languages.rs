@@ -27,7 +27,21 @@ async fn handle_add(
         return Err(Error::Operation("Could not determine global grammars directory".to_string()));
     };
 
-    let lang_dir = grammar_dir.join(&args.name);
+    // Constrain the language name to a single safe path component so an
+    // absolute or `..`-laden `--name` can't escape the grammar cache and
+    // clobber files elsewhere on disk.
+    let mut components = std::path::Path::new(&args.name).components();
+    let safe_name = match (components.next(), components.next()) {
+        (Some(std::path::Component::Normal(c)), None) => c,
+        _ => {
+            return Err(Error::Input(format!(
+                "Invalid grammar name '{}': must be a single path component with no separators or '..'",
+                args.name
+            )));
+        }
+    };
+
+    let lang_dir = grammar_dir.join(safe_name);
     std::fs::create_dir_all(&lang_dir).map_err(|e| {
         Error::Operation(format!("Failed to create directory {}: {}", lang_dir.display(), e))
     })?;

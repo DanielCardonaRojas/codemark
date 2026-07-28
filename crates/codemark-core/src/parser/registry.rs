@@ -9,6 +9,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::LazyLock;
+use std::sync::RwLock;
 
 use serde::Deserialize;
 
@@ -16,8 +17,12 @@ use crate::config::global_grammars_dir;
 use crate::parser::languages::{DynamicLanguage, Language};
 use crate::parser::profile::Profile;
 
-/// The process-global registry, discovered once at first access.
-static GLOBAL_REGISTRY: LazyLock<LanguageRegistry> = LazyLock::new(LanguageRegistry::discover);
+/// The process-global registry, discovered on first access and re-buildable via
+/// [`LanguageRegistry::refresh`]. Guarded by an `RwLock` so long-running
+/// consumers (e.g. the TUI) can pick up grammars added/removed after startup
+/// instead of retaining the original snapshot until the process restarts.
+static GLOBAL_REGISTRY: LazyLock<RwLock<LanguageRegistry>> =
+    LazyLock::new(|| RwLock::new(LanguageRegistry::discover()));
 
 /// Registry of dynamically loaded languages, indexed by extension and name.
 pub struct LanguageRegistry {
@@ -54,7 +59,14 @@ impl LanguageRegistry {
             return registry;
         };
 
-        for entry in entries.flatten() {
+        // Sort entries by path so discovery is deterministic across processes:
+        // filesystem iteration order is unspecified, so without this an
+        // extension claimed by two grammars could resolve differently on
+        // different runs. On conflict the first grammar (by sorted path) wins.
+        let mut entries: Vec<_> = entries.flatten().collect();
+        entries.sort_by_key(|e| e.path());
+
+        for entry in entries {
             let manifest_path = entry.path().join("manifest.json");
             let wasm_path = entry.path().join("grammar.wasm");
 
@@ -92,7 +104,19 @@ impl LanguageRegistry {
                     registry.by_name.insert(manifest.name.clone(), lang.clone());
 
                     for ext in &manifest.extensions {
-                        registry.by_extension.insert(ext.to_lowercase(), lang.clone());
+                        let key = ext.to_lowercase();
+                        // Keep the first grammar to claim an extension (entries
+                        // are sorted, so this is deterministic) and warn rather
+                        // than silently overwriting with a nondeterministic winner.
+                        if let Some(existing) = registry.by_extension.get(&key) {
+                            eprintln!(
+                                "codemark: extension '.{key}' already claimed by grammar '{}' — ignoring '{}'",
+                                existing.name(),
+                                manifest.name
+                            );
+                            continue;
+                        }
+                        registry.by_extension.insert(key, lang.clone());
                     }
 
                     tracing::debug!(
@@ -114,24 +138,49 @@ impl LanguageRegistry {
         registry
     }
 
+    /// Re-scan the grammar cache directory, replacing the process-global
+    /// registry. Long-running consumers should call this when they want to pick
+    /// up grammars added or removed since startup (or since the last refresh).
+    pub fn refresh() {
+        let fresh = Self::discover();
+        *GLOBAL_REGISTRY.write().expect("grammar registry lock poisoned") = fresh;
+    }
+
     /// Look up a dynamic language by file extension (case-insensitive).
     pub fn from_extension(ext: &str) -> Option<Language> {
-        GLOBAL_REGISTRY.by_extension.get(&ext.to_lowercase()).cloned()
+        GLOBAL_REGISTRY
+            .read()
+            .expect("grammar registry lock poisoned")
+            .by_extension
+            .get(&ext.to_lowercase())
+            .cloned()
     }
 
     /// Look up a dynamic language by name.
     pub fn from_name(name: &str) -> Option<Language> {
-        GLOBAL_REGISTRY.by_name.get(name).cloned()
+        GLOBAL_REGISTRY.read().expect("grammar registry lock poisoned").by_name.get(name).cloned()
     }
 
     /// List all registered dynamic language names.
-    pub fn dynamic_language_names() -> Vec<&'static str> {
-        GLOBAL_REGISTRY.by_name.keys().map(|s| s.as_str()).collect()
+    pub fn dynamic_language_names() -> Vec<String> {
+        GLOBAL_REGISTRY
+            .read()
+            .expect("grammar registry lock poisoned")
+            .by_name
+            .keys()
+            .cloned()
+            .collect()
     }
 
     /// List all registered dynamic languages.
     pub fn dynamic_languages() -> Vec<Language> {
-        GLOBAL_REGISTRY.by_name.values().cloned().collect()
+        GLOBAL_REGISTRY
+            .read()
+            .expect("grammar registry lock poisoned")
+            .by_name
+            .values()
+            .cloned()
+            .collect()
     }
 }
 
@@ -255,6 +304,32 @@ mod tests {
         let reg = LanguageRegistry::discover_in(tmp.path());
         let lang = reg.by_name.get("lua").expect("lua registered");
         assert!(lang.profile().landmark_kinds.iter().any(|k| k == "local_function_declaration"));
+    }
+
+    #[test]
+    fn duplicate_extension_resolves_deterministically_to_first_by_sorted_path() {
+        // Two grammars claim ".foo". Entries are scanned in sorted path order,
+        // so "aaa" wins over "zzz" regardless of filesystem iteration order,
+        // and the same extension always selects the same grammar.
+        let tmp = tempfile::tempdir().unwrap();
+        write_grammar(
+            tmp.path(),
+            "zzz",
+            r#"{ "name": "zzz", "extensions": ["foo"], "profile": {} }"#,
+            true,
+        );
+        write_grammar(
+            tmp.path(),
+            "aaa",
+            r#"{ "name": "aaa", "extensions": ["foo"], "profile": {} }"#,
+            true,
+        );
+
+        let reg = LanguageRegistry::discover_in(tmp.path());
+        // Both names still register; only the extension conflict is resolved.
+        assert!(reg.by_name.contains_key("aaa"));
+        assert!(reg.by_name.contains_key("zzz"));
+        assert_eq!(reg.by_extension.get("foo").map(|l| l.name()), Some("aaa"));
     }
 
     #[test]

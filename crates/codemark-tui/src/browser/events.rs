@@ -348,6 +348,11 @@ impl BrowserLayout {
                 if let Ok(registry) = codemark_core::storage::registry::open_registry() {
                     self.registry = registry;
                 }
+                // The user may also have installed or removed a WASM grammar via
+                // `codemark languages add`/`remove` while unfocused. Re-scan the
+                // grammar cache so live resolution picks up new languages instead
+                // of retaining the startup snapshot until the process restarts.
+                codemark_core::parser::registry::LanguageRegistry::refresh();
                 self.update_tours_tab_visibility();
 
                 // Leaving the terminal is the only way the git HEAD moves while a
