@@ -177,11 +177,60 @@ fn write_no_follow(path: &std::path::Path, contents: &[u8], name: &str) -> Resul
     Ok(())
 }
 
-/// Non-Unix fallback: `O_NOFOLLOW` isn't available, so fall back to a
-/// symlink pre-check plus a plain write. (Codemark's grammar cache is a
-/// single-user local directory; the residual TOCTOU window matters only on
-/// Unix-style symlinks, which this platform lacks in the same form.)
-#[cfg(not(unix))]
+/// Windows equivalent of the Unix `O_NOFOLLOW` path. Opening with
+/// `FILE_FLAG_OPEN_REPARSE_POINT` returns a handle to the reparse point itself
+/// (symlink/junction) rather than following it, so checking the *opened
+/// handle's* metadata — not the path — makes the symlink check and the write a
+/// single atomic operation, closing the check-then-write (TOCTOU) window that a
+/// plain `symlink_metadata` + `write` would leave open.
+#[cfg(windows)]
+fn write_no_follow(path: &std::path::Path, contents: &[u8], name: &str) -> Result<()> {
+    use std::io::Write;
+    use std::os::windows::fs::OpenOptionsExt;
+
+    // FILE_FLAG_OPEN_REPARSE_POINT — open the link itself instead of its target.
+    const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT)
+        .open(path)
+        .map_err(|e| {
+            Error::Operation(format!(
+                "Refusing to install grammar '{}': cannot open {} for writing: {}",
+                name,
+                path.display(),
+                e
+            ))
+        })?;
+
+    // The handle came from the path above with no re-resolution, so this
+    // metadata reflects exactly what we opened. Reject a reparse point rather
+    // than writing through it to an external target.
+    let is_reparse = file
+        .metadata()
+        .map(|m| m.file_type().is_symlink())
+        .map_err(|e| Error::Operation(format!("Failed to stat {}: {}", path.display(), e)))?;
+    if is_reparse {
+        return Err(Error::Input(format!(
+            "Refusing to install grammar '{}': {} is a symlink",
+            name,
+            path.display()
+        )));
+    }
+
+    file.write_all(contents)
+        .map_err(|e| Error::Operation(format!("Failed to write {}: {}", path.display(), e)))?;
+    Ok(())
+}
+
+/// Fallback for any remaining non-Unix, non-Windows target: `O_NOFOLLOW` has no
+/// portable equivalent, so use a symlink pre-check plus a plain write. Codemark's
+/// grammar cache is a single-user local directory, so the residual window is
+/// negligible on platforms without Unix symlinks or Windows reparse points.
+#[cfg(not(any(unix, windows)))]
 fn write_no_follow(path: &std::path::Path, contents: &[u8], name: &str) -> Result<()> {
     reject_symlink(path, name)?;
     std::fs::write(path, contents)
