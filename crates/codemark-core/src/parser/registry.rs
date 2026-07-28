@@ -183,15 +183,56 @@ impl LanguageRegistry {
         let Some(dir) = global_grammars_dir() else {
             return;
         };
-        match Self::discover_in(&dir) {
-            Some(fresh) => {
-                *GLOBAL_REGISTRY.write().expect("grammar registry lock poisoned") = fresh;
+        let Some(mut fresh) = Self::discover_in(&dir) else {
+            eprintln!(
+                "codemark: could not re-scan grammar cache {} — keeping current registry",
+                dir.display()
+            );
+            return;
+        };
+
+        // A grammar can be dropped by an otherwise-successful scan if its manifest
+        // is transiently absent, unreadable, malformed, or mid-rewrite. Don't let
+        // such a transient state evict a working grammar: carry forward any
+        // currently-registered grammar the fresh scan lost whose directory still
+        // exists on disk. A grammar intentionally removed (its directory gone) is
+        // not carried forward, so real removals still take effect.
+        {
+            let current = GLOBAL_REGISTRY.read().expect("grammar registry lock poisoned");
+            fresh.carry_forward_transiently_missing(&current);
+        }
+
+        *GLOBAL_REGISTRY.write().expect("grammar registry lock poisoned") = fresh;
+    }
+
+    /// Re-add grammars from `previous` that this (freshly scanned) registry is
+    /// missing but whose on-disk grammar directory still exists — i.e. the fresh
+    /// scan lost them to a transient FS state rather than an intentional removal.
+    fn carry_forward_transiently_missing(&mut self, previous: &Self) {
+        for (name_key, lang) in &previous.by_name {
+            if self.by_name.contains_key(name_key) {
+                continue;
             }
-            None => {
-                eprintln!(
-                    "codemark: could not re-scan grammar cache {} — keeping current registry",
-                    dir.display()
-                );
+            let Language::Dynamic(dl) = lang else { continue };
+            // `wasm_path` is `<cache>/<grammar-dir>/grammar.wasm`; the grammar is
+            // only "transiently" missing if that directory is still present.
+            let dir_present = dl.wasm_path.parent().is_some_and(|d| d.exists());
+            if !dir_present {
+                continue;
+            }
+            eprintln!(
+                "codemark: keeping grammar '{}' across refresh — its manifest was momentarily unreadable",
+                dl.name
+            );
+            self.by_name.insert(name_key.clone(), lang.clone());
+            for ext in &dl.extensions {
+                let key = ext.to_lowercase();
+                // Preserve resolution rules: don't shadow a built-in or a grammar
+                // that already won this extension in the fresh scan.
+                if is_static_extension(&key) || self.by_extension.contains_key(&key) {
+                    continue;
+                }
+                self.by_extension.insert(key, lang.clone());
             }
         }
     }
@@ -446,6 +487,48 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let missing = tmp.path().join("does-not-exist");
         assert!(LanguageRegistry::discover_in(&missing).is_none());
+    }
+
+    #[test]
+    fn carry_forward_keeps_grammar_whose_manifest_went_transiently_bad() {
+        // A grammar registered previously, then a refresh where its manifest is
+        // momentarily unreadable/malformed but the directory (and wasm) remain.
+        let tmp = tempfile::tempdir().unwrap();
+        write_grammar(
+            tmp.path(),
+            "lua",
+            r#"{ "name": "lua", "extensions": ["lua"], "profile": {} }"#,
+            true,
+        );
+        let previous = LanguageRegistry::discover_in(tmp.path()).unwrap();
+        assert!(previous.by_name.contains_key("lua"));
+
+        // Corrupt the manifest in place (dir + grammar.wasm still present).
+        std::fs::write(tmp.path().join("lua").join("manifest.json"), "{ not json").unwrap();
+        let mut fresh = LanguageRegistry::discover_in(tmp.path()).unwrap();
+        assert!(fresh.by_name.is_empty(), "fresh scan drops the corrupt grammar");
+
+        fresh.carry_forward_transiently_missing(&previous);
+        assert_eq!(fresh.by_name.get("lua").map(|l| l.name()), Some("lua"));
+        assert!(fresh.by_extension.contains_key("lua"));
+    }
+
+    #[test]
+    fn carry_forward_drops_grammar_whose_directory_was_removed() {
+        // An intentional removal (directory gone) must NOT be carried forward.
+        let tmp = tempfile::tempdir().unwrap();
+        write_grammar(
+            tmp.path(),
+            "lua",
+            r#"{ "name": "lua", "extensions": ["lua"], "profile": {} }"#,
+            true,
+        );
+        let previous = LanguageRegistry::discover_in(tmp.path()).unwrap();
+
+        std::fs::remove_dir_all(tmp.path().join("lua")).unwrap();
+        let mut fresh = LanguageRegistry::discover_in(tmp.path()).unwrap();
+        fresh.carry_forward_transiently_missing(&previous);
+        assert!(fresh.by_name.is_empty(), "removed grammar stays removed");
     }
 
     #[test]
