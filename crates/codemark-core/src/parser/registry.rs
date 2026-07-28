@@ -112,8 +112,12 @@ impl LanguageRegistry {
                     // rule below. Otherwise a duplicate name could win name-based
                     // lookup while the first still wins extension lookup, so
                     // creation (by extension) and resolution (by stored name)
-                    // could select different grammars.
-                    if let Some(existing) = registry.by_name.get(&manifest.name) {
+                    // could select different grammars. Names are keyed
+                    // case-insensitively (like extensions) so `Lua` and `lua`
+                    // are treated as the same language rather than bypassing
+                    // dedup or missing a `--lang lua` lookup.
+                    let name_key = manifest.name.to_lowercase();
+                    if let Some(existing) = registry.by_name.get(&name_key) {
                         eprintln!(
                             "codemark: language name '{}' already registered by grammar '{}' — ignoring duplicate",
                             manifest.name,
@@ -121,7 +125,7 @@ impl LanguageRegistry {
                         );
                         continue;
                     }
-                    registry.by_name.insert(manifest.name.clone(), lang.clone());
+                    registry.by_name.insert(name_key, lang.clone());
 
                     for ext in &manifest.extensions {
                         let key = ext.to_lowercase();
@@ -192,9 +196,14 @@ impl LanguageRegistry {
             .cloned()
     }
 
-    /// Look up a dynamic language by name.
+    /// Look up a dynamic language by name (case-insensitive).
     pub fn from_name(name: &str) -> Option<Language> {
-        GLOBAL_REGISTRY.read().expect("grammar registry lock poisoned").by_name.get(name).cloned()
+        GLOBAL_REGISTRY
+            .read()
+            .expect("grammar registry lock poisoned")
+            .by_name
+            .get(&name.to_lowercase())
+            .cloned()
     }
 
     /// List all registered dynamic language names.
@@ -394,6 +403,35 @@ mod tests {
         assert!(reg.by_name.contains_key("dup"));
         assert!(reg.by_extension.contains_key("aaa"));
         assert!(!reg.by_extension.contains_key("bbb"));
+    }
+
+    #[test]
+    fn duplicate_name_is_case_insensitive() {
+        // `Lua` and `lua` name the same language. The first by sorted path
+        // ("a_dir" → "Lua") wins and the case-variant duplicate is skipped, so
+        // its extension never registers and name lookup stays consistent.
+        let tmp = tempfile::tempdir().unwrap();
+        write_grammar(
+            tmp.path(),
+            "a_dir",
+            r#"{ "name": "Lua", "extensions": ["lua"], "profile": {} }"#,
+            true,
+        );
+        write_grammar(
+            tmp.path(),
+            "b_dir",
+            r#"{ "name": "lua", "extensions": ["luau"], "profile": {} }"#,
+            true,
+        );
+
+        let reg = LanguageRegistry::discover_in(tmp.path()).unwrap();
+        // Keyed case-insensitively, so both names collapse to one entry, keeping
+        // the original-case display name "Lua". The duplicate's extension is
+        // dropped along with the skipped entry.
+        assert_eq!(reg.by_name.len(), 1);
+        assert_eq!(reg.by_name.get("lua").map(|l| l.name()), Some("Lua"));
+        assert!(reg.by_extension.contains_key("lua"));
+        assert!(!reg.by_extension.contains_key("luau"));
     }
 
     #[test]
