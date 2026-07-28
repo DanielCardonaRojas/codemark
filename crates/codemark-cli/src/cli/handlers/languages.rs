@@ -69,13 +69,15 @@ async fn handle_add(
         )));
     }
 
-    // The target files themselves may be pre-existing symlinks pointing outside
-    // the cache; `copy`/`write` follow them and would overwrite the external
-    // target. Reject any symlinked child before writing.
+    // The target files themselves may be (or be raced into becoming) symlinks
+    // pointing outside the cache; a plain `copy`/`write` follows them and would
+    // overwrite the external target. Open each destination with `O_NOFOLLOW` so
+    // the write fails atomically if the final component is a symlink — closing
+    // the check-then-write (TOCTOU) window rather than pre-checking.
     let target_wasm = lang_dir.join("grammar.wasm");
-    reject_symlink(&target_wasm, &args.name)?;
-    std::fs::copy(&args.wasm_file, &target_wasm)
-        .map_err(|e| Error::Operation(format!("Failed to copy WASM file: {}", e)))?;
+    let wasm_bytes = std::fs::read(&args.wasm_file)
+        .map_err(|e| Error::Operation(format!("Failed to read WASM file: {}", e)))?;
+    write_no_follow(&target_wasm, &wasm_bytes, &args.name)?;
 
     let extensions: Vec<String> =
         args.extensions.split(',').map(|s| s.trim().to_string()).collect();
@@ -87,10 +89,8 @@ async fn handle_add(
     });
 
     let manifest_path = lang_dir.join("manifest.json");
-    reject_symlink(&manifest_path, &args.name)?;
     let manifest_str = serde_json::to_string_pretty(&manifest_json).unwrap();
-    std::fs::write(&manifest_path, manifest_str)
-        .map_err(|e| Error::Operation(format!("Failed to write manifest.json: {}", e)))?;
+    write_no_follow(&manifest_path, manifest_str.as_bytes(), &args.name)?;
 
     if matches!(mode, OutputMode::Json) {
         output::write_json_success(&serde_json::json!({
@@ -111,8 +111,8 @@ async fn handle_add(
 }
 
 /// Reject `path` if it already exists as a symlink, so a subsequent
-/// symlink-following write (`create_dir_all`/`copy`/`write`) can't be redirected
-/// to overwrite a target outside the grammar cache.
+/// symlink-following operation (`create_dir_all`) can't be redirected to a
+/// target outside the grammar cache.
 fn reject_symlink(path: &std::path::Path, name: &str) -> Result<()> {
     if std::fs::symlink_metadata(path).is_ok_and(|m| m.file_type().is_symlink()) {
         return Err(Error::Input(format!(
@@ -122,6 +122,46 @@ fn reject_symlink(path: &std::path::Path, name: &str) -> Result<()> {
         )));
     }
     Ok(())
+}
+
+/// Write `contents` to `path`, refusing to follow a symlink at the final path
+/// component. Using `O_NOFOLLOW` at open time makes the symlink check and the
+/// write a single atomic operation, so a concurrent process can't swap the
+/// target for a symlink between a pre-check and the write (TOCTOU) to redirect
+/// it outside the grammar cache.
+#[cfg(unix)]
+fn write_no_follow(path: &std::path::Path, contents: &[u8], name: &str) -> Result<()> {
+    use std::io::Write;
+    use std::os::unix::fs::OpenOptionsExt;
+
+    let mut file = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(path)
+        .map_err(|e| {
+            Error::Operation(format!(
+                "Refusing to install grammar '{}': cannot open {} for writing: {}",
+                name,
+                path.display(),
+                e
+            ))
+        })?;
+    file.write_all(contents)
+        .map_err(|e| Error::Operation(format!("Failed to write {}: {}", path.display(), e)))?;
+    Ok(())
+}
+
+/// Non-Unix fallback: `O_NOFOLLOW` isn't available, so fall back to a
+/// symlink pre-check plus a plain write. (Codemark's grammar cache is a
+/// single-user local directory; the residual TOCTOU window matters only on
+/// Unix-style symlinks, which this platform lacks in the same form.)
+#[cfg(not(unix))]
+fn write_no_follow(path: &std::path::Path, contents: &[u8], name: &str) -> Result<()> {
+    reject_symlink(path, name)?;
+    std::fs::write(path, contents)
+        .map_err(|e| Error::Operation(format!("Failed to write {}: {}", path.display(), e)))
 }
 
 async fn handle_list(_cli: &crate::cli::Cli, mode: &OutputMode) -> Result<()> {

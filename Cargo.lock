@@ -544,6 +544,7 @@ dependencies = [
  "handlebars",
  "insta",
  "is-terminal",
+ "libc",
  "open",
  "regex",
  "reqwest",
