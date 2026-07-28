@@ -87,6 +87,10 @@ pub enum Command {
     /// List all supported languages (built-in and dynamically loaded)
     Languages,
 
+    /// Manage dynamically loaded WASM grammars
+    #[command(subcommand)]
+    Grammars(GrammarsCommand),
+
     /// Update metadata for an existing bookmark
     Edit(EditArgs),
 
@@ -1340,6 +1344,8 @@ pub enum SkillAgent {
     /// Generic Agent Skills location (~/.agents/skills or ./.agents/skills)
     Agents,
     /// Gemini CLI (~/.gemini or ./.gemini)
+
+
     Gemini,
 }
 
@@ -1350,4 +1356,31 @@ pub enum SkillScope {
     User,
     /// Install into the current project/repository
     Project,
+}
+
+/// Subcommands for managing dynamically loaded WASM grammars.
+#[derive(Debug, Subcommand)]
+pub enum GrammarsCommand {
+    /// Add a new WASM grammar from a compiled .wasm file
+    Add(GrammarsAddArgs),
+
+    /// List installed WASM grammars
+    List,
+
+    /// Validate installed WASM grammars
+    Validate,
+}
+
+#[derive(Debug, clap::Args)]
+pub struct GrammarsAddArgs {
+    /// Path to the compiled .wasm grammar file
+    pub wasm_file: PathBuf,
+
+    /// The language name (e.g., "ruby", "lua")
+    #[arg(long, short)]
+    pub name: String,
+
+    /// Comma-separated list of file extensions (e.g., "rb,ru")
+    #[arg(long, short)]
+    pub extensions: String,
 }

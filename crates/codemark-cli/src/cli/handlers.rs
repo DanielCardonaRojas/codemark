@@ -38,6 +38,7 @@ pub mod pull;
 pub mod repo;
 pub mod search;
 pub mod skill;
+pub mod grammars;
 pub mod tour;
 
 /// Pre-flight detection for `tour list` command.
@@ -92,6 +93,7 @@ pub async fn dispatch(cli: &Cli) -> Result<()> {
         Command::List(args) => handle_list(cli, &mode, args).await,
         Command::Search(args) => search::handle_search(cli, &mode, args).await,
         Command::Languages => handle_languages(cli, &mode).await,
+        Command::Grammars(args) => grammars::handle_grammars(cli, &mode, args).await,
         #[cfg(feature = "semantic")]
         Command::Reindex(args) => search::handle_reindex(cli, &mode, args).await,
         Command::Collection(args) => dispatch_collection(cli, &mode, args).await,
