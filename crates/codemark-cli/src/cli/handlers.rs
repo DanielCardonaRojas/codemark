@@ -32,13 +32,13 @@ pub mod auth;
 pub mod auth_resolve;
 pub mod bookmark;
 pub mod collection;
+pub mod languages;
 pub mod maintenance;
 pub mod publish;
 pub mod pull;
 pub mod repo;
 pub mod search;
 pub mod skill;
-pub mod languages;
 pub mod tour;
 
 /// Pre-flight detection for `tour list` command.

@@ -72,6 +72,7 @@ async fn test_swift_complex_query_snapshots() {
     let fixture_name = "complex_scenarios.swift";
     let (source, tree): (String, tree_sitter::Tree) = get_fixture_content(fixture_name).await;
     let language = CodemarkLang::Swift.tree_sitter_language();
+    let profile = CodemarkLang::Swift.profile();
 
     let scenarios = [
         ("declaration_method", "27"),
@@ -95,7 +96,7 @@ async fn test_swift_complex_query_snapshots() {
 
     for (name, range_str) in scenarios {
         let range = parse_test_range(&source, range_str);
-        let result = generator::generate_query(&tree, source.as_bytes(), range, &language)
+        let result = generator::generate_query(&tree, source.as_bytes(), range, &language, profile)
             .unwrap_or_else(|e| {
                 panic!("Failed to generate query for {} ({}): {}", name, range_str, e)
             });

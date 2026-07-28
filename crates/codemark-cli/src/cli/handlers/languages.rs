@@ -1,9 +1,12 @@
-use codemark_core::error::{Error, Result};
 use crate::cli::output::{self, OutputMode};
-use crate::cli::{LanguagesCommand, LanguagesAddArgs, LanguagesArgs};
+use crate::cli::{LanguagesAddArgs, LanguagesArgs, LanguagesCommand};
+use codemark_core::error::{Error, Result};
 
-
-pub async fn handle_languages(cli: &crate::cli::Cli, mode: &OutputMode, args: &LanguagesArgs) -> Result<()> {
+pub async fn handle_languages(
+    cli: &crate::cli::Cli,
+    mode: &OutputMode,
+    args: &LanguagesArgs,
+) -> Result<()> {
     match &args.command {
         Some(LanguagesCommand::Add(add_args)) => handle_add(cli, mode, add_args).await,
         Some(LanguagesCommand::Validate) => handle_validate(cli, mode).await,
@@ -11,13 +14,17 @@ pub async fn handle_languages(cli: &crate::cli::Cli, mode: &OutputMode, args: &L
     }
 }
 
-async fn handle_add(_cli: &crate::cli::Cli, mode: &OutputMode, args: &LanguagesAddArgs) -> Result<()> {
+async fn handle_add(
+    _cli: &crate::cli::Cli,
+    mode: &OutputMode,
+    args: &LanguagesAddArgs,
+) -> Result<()> {
     if !args.wasm_file.exists() {
-        return Err(Error::Input(format!("WASM file not found: {}", args.wasm_file.display())).into());
+        return Err(Error::Input(format!("WASM file not found: {}", args.wasm_file.display())));
     }
 
     let Some(grammar_dir) = codemark_core::config::global_grammars_dir() else {
-        return Err(Error::Operation("Could not determine global grammars directory".to_string()).into());
+        return Err(Error::Operation("Could not determine global grammars directory".to_string()));
     };
 
     let lang_dir = grammar_dir.join(&args.name);
@@ -26,11 +33,11 @@ async fn handle_add(_cli: &crate::cli::Cli, mode: &OutputMode, args: &LanguagesA
     })?;
 
     let target_wasm = lang_dir.join("grammar.wasm");
-    std::fs::copy(&args.wasm_file, &target_wasm).map_err(|e| {
-        Error::Operation(format!("Failed to copy WASM file: {}", e))
-    })?;
+    std::fs::copy(&args.wasm_file, &target_wasm)
+        .map_err(|e| Error::Operation(format!("Failed to copy WASM file: {}", e)))?;
 
-    let extensions: Vec<String> = args.extensions.split(',').map(|s| s.trim().to_string()).collect();
+    let extensions: Vec<String> =
+        args.extensions.split(',').map(|s| s.trim().to_string()).collect();
     let manifest_json = serde_json::json!({
         "name": args.name,
         "version": "0.1.0",
@@ -40,19 +47,22 @@ async fn handle_add(_cli: &crate::cli::Cli, mode: &OutputMode, args: &LanguagesA
 
     let manifest_path = lang_dir.join("manifest.json");
     let manifest_str = serde_json::to_string_pretty(&manifest_json).unwrap();
-    std::fs::write(&manifest_path, manifest_str).map_err(|e| {
-        Error::Operation(format!("Failed to write manifest.json: {}", e))
-    })?;
+    std::fs::write(&manifest_path, manifest_str)
+        .map_err(|e| Error::Operation(format!("Failed to write manifest.json: {}", e)))?;
 
     if matches!(mode, OutputMode::Json) {
         output::write_json_success(&serde_json::json!({
             "message": "Grammar added successfully",
             "name": args.name,
             "directory": lang_dir,
-        })).unwrap();
+        }))
+        .unwrap();
     } else {
         println!("Successfully added grammar for '{}' to {}", args.name, lang_dir.display());
-        println!("Codemark will now automatically discover and use this grammar for the following extensions: {}", args.extensions);
+        println!(
+            "Codemark will now automatically discover and use this grammar for the following extensions: {}",
+            args.extensions
+        );
     }
 
     Ok(())
@@ -60,7 +70,7 @@ async fn handle_add(_cli: &crate::cli::Cli, mode: &OutputMode, args: &LanguagesA
 
 async fn handle_list(_cli: &crate::cli::Cli, mode: &OutputMode) -> Result<()> {
     let languages = codemark_core::parser::languages::Language::all_supported();
-    
+
     if matches!(mode, OutputMode::Json) {
         let mut out = Vec::new();
         for lang in languages {
@@ -88,12 +98,13 @@ async fn handle_list(_cli: &crate::cli::Cli, mode: &OutputMode) -> Result<()> {
         .set_header(vec!["Language", "Type", "Extensions", "WASM Path"]);
 
     for lang in languages {
-        let (type_str, path_str) = if let codemark_core::parser::languages::Language::Dynamic(dl) = &lang {
-            ("dynamic (WASM)", dl.wasm_path.to_string_lossy().to_string())
-        } else {
-            ("built-in", "-".to_string())
-        };
-        
+        let (type_str, path_str) =
+            if let codemark_core::parser::languages::Language::Dynamic(dl) = &lang {
+                ("dynamic (WASM)", dl.wasm_path.to_string_lossy().to_string())
+            } else {
+                ("built-in", "-".to_string())
+            };
+
         table.add_row(vec![
             lang.name().to_string(),
             type_str.to_string(),
@@ -108,7 +119,7 @@ async fn handle_list(_cli: &crate::cli::Cli, mode: &OutputMode) -> Result<()> {
 
 async fn handle_validate(_cli: &crate::cli::Cli, mode: &OutputMode) -> Result<()> {
     let Some(grammar_dir) = codemark_core::config::global_grammars_dir() else {
-        return Err(Error::Operation("Could not determine global grammars directory".to_string()).into());
+        return Err(Error::Operation("Could not determine global grammars directory".to_string()));
     };
 
     let mut issues = Vec::new();
@@ -131,13 +142,21 @@ async fn handle_validate(_cli: &crate::cli::Cli, mode: &OutputMode) -> Result<()
                 match serde_json::from_str::<serde_json::Value>(&manifest_text) {
                     Ok(val) => {
                         if val.get("name").is_none() {
-                            issues.push(format!("{}: manifest.json missing 'name' field", entry.path().display()));
+                            issues.push(format!(
+                                "{}: manifest.json missing 'name' field",
+                                entry.path().display()
+                            ));
                         }
                         if val.get("extensions").is_none() {
-                            issues.push(format!("{}: manifest.json missing 'extensions' field", entry.path().display()));
+                            issues.push(format!(
+                                "{}: manifest.json missing 'extensions' field",
+                                entry.path().display()
+                            ));
                         }
-                    },
-                    Err(e) => issues.push(format!("{}: invalid JSON: {}", manifest_path.display(), e)),
+                    }
+                    Err(e) => {
+                        issues.push(format!("{}: invalid JSON: {}", manifest_path.display(), e))
+                    }
                 }
             }
         }
@@ -147,7 +166,8 @@ async fn handle_validate(_cli: &crate::cli::Cli, mode: &OutputMode) -> Result<()
         output::write_json_success(&serde_json::json!({
             "valid": issues.is_empty(),
             "issues": issues,
-        })).unwrap();
+        }))
+        .unwrap();
         return Ok(());
     }
 
@@ -159,6 +179,6 @@ async fn handle_validate(_cli: &crate::cli::Cli, mode: &OutputMode) -> Result<()
             println!("  - {}", issue);
         }
     }
-    
+
     Ok(())
 }

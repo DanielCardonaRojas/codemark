@@ -356,11 +356,13 @@ mod tests {
         let path = fixture_path(file);
         let mut cache = ParseCache::new(CodemarkLang::Swift).unwrap();
         let lang = CodemarkLang::Swift.tree_sitter_language();
+        let profile = CodemarkLang::Swift.profile();
 
         let provider = crate::vfs::LocalFileProvider;
         let (tree, source) = cache.get_or_parse(&path, &provider).await.unwrap();
         let range = find_function_range(tree, source, func_name);
-        let generated = qgen::generate_query(tree, source.as_bytes(), range, &lang).unwrap();
+        let generated =
+            qgen::generate_query(tree, source.as_bytes(), range, &lang, profile).unwrap();
         let ch = hash::content_hash(&source[range.0..range.1]);
 
         let bm = Bookmark {
@@ -691,6 +693,7 @@ class TierTest {
 
         let mut cache = ParseCache::new(CodemarkLang::Swift).unwrap();
         let lang = CodemarkLang::Swift.tree_sitter_language();
+        let profile = CodemarkLang::Swift.profile();
 
         // Generate a query for targetFunction with its hash
         let mut parser = crate::parser::languages::Parser::new(CodemarkLang::Swift).unwrap();
@@ -714,7 +717,8 @@ class TierTest {
         let byte_range = target_byte_range.unwrap();
         let range = (byte_range.start, byte_range.end);
 
-        let generated = qgen::generate_query(&tree, source.as_bytes(), range, &lang).unwrap();
+        let generated =
+            qgen::generate_query(&tree, source.as_bytes(), range, &lang, profile).unwrap();
         let ch = hash::content_hash(&source[byte_range]);
 
         // Test 1: Exact match - query as generated

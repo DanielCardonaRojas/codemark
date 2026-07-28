@@ -1340,8 +1340,6 @@ pub enum SkillAgent {
     /// Generic Agent Skills location (~/.agents/skills or ./.agents/skills)
     Agents,
     /// Gemini CLI (~/.gemini or ./.gemini)
-
-
     Gemini,
 }
 
