@@ -24,7 +24,11 @@ use crate::parser::languages::Language;
 #[derive(Debug, Clone, Default)]
 pub struct Profile {
     /// Node types that get structural anchoring in the query generator.
-    /// Replaces `DECLARATION_TYPES`.
+    ///
+    /// Populated per language here, but the query generator is switched over to
+    /// consult this field (in place of the hardcoded `DECLARATION_TYPES` table)
+    /// in the follow-up dynamic-grammar PR. Until then it carries the intended
+    /// data without yet driving generation, so the two must be kept in sync.
     pub landmark_kinds: Vec<String>,
 
     /// Node type → human-readable label mapping.
@@ -206,6 +210,7 @@ static PYTHON_PROFILE: LazyLock<Profile> = LazyLock::new(|| Profile {
     containers: vec![
         ("class_definition".into(), "name".into()),
         ("function_definition".into(), "name".into()),
+        ("async_function_definition".into(), "name".into()),
     ],
 });
 

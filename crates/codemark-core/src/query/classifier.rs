@@ -88,6 +88,7 @@ pub fn get_node_icon(label: &str) -> &'static str {
         "module" | "namespace" => "",                // nf-cod-symbol_module
         "variable" | "property" | "constant" => "",  // nf-cod-symbol_variable
         "type" => "",                                // nf-cod-symbol_parameter
+        "macro" => "",                               // nf-cod-symbol_constant
         "if statement" | "match" => "",               // nf-cod-split_horizontal
         "for loop" | "while loop" => "",              // nf-cod-sync
         "call" => "",                                 // nf-cod-symbol_event
