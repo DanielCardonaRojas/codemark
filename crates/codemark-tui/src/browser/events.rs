@@ -353,11 +353,13 @@ impl BrowserLayout {
                 // grammar cache so live resolution picks up new languages instead
                 // of retaining the startup snapshot until the process restarts.
                 codemark_core::parser::registry::LanguageRegistry::refresh();
-                // The session parse cache keys its `Parser`/`Profile` by language
-                // name, so after a refresh an *updated* grammar would still be
-                // served from the old cached parser. Drop the caches so the next
-                // resolution rebuilds against the freshly discovered grammar.
+                // The parse caches key their `Parser`/`Profile` by language name,
+                // so after a refresh an *updated* grammar would still be served
+                // from the old cached parser. Drop both the synchronous session
+                // cache and the background preview cache so the next resolution
+                // rebuilds against the freshly discovered grammar.
                 self.session_cache.clear();
+                self.preview_cache.lock().unwrap_or_else(|e| e.into_inner()).clear();
                 self.update_tours_tab_visibility();
 
                 // Leaving the terminal is the only way the git HEAD moves while a
