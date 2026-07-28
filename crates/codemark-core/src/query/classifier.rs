@@ -89,10 +89,10 @@ pub fn get_node_icon(label: &str) -> &'static str {
         "variable" | "property" | "constant" => "",  // nf-cod-symbol_variable
         "type" => "",                                // nf-cod-symbol_parameter
         "macro" => "",                               // nf-cod-symbol_constant
-        "if statement" | "match" => "",               // nf-cod-split_horizontal
-        "for loop" | "while loop" => "",              // nf-cod-sync
-        "call" => "",                                 // nf-cod-symbol_event
-        _ => "",                                      // nf-cod-file
+        "if statement" | "match" => "",              // nf-cod-split_horizontal
+        "for loop" | "while loop" => "",             // nf-cod-sync
+        "call" => "",                                // nf-cod-symbol_event
+        _ => "",                                     // nf-cod-file
     }
 }
 
@@ -171,5 +171,38 @@ mod tests {
         assert_eq!(classify_node_type("string_literal", None), None);
         assert_eq!(classify_node_type("comment", None), None);
         assert_eq!(classify_node_type("unknown_type", None), None);
+    }
+
+    #[test]
+    fn test_node_icons_are_non_empty() {
+        // Regression guard: every known summary label must map to a non-empty
+        // glyph. Emptying any of these (as happened during the profile refactor)
+        // silently strips icons from TUI bookmark entries.
+        for label in [
+            "function",
+            "method",
+            "constructor",
+            "class",
+            "struct",
+            "impl",
+            "interface",
+            "protocol",
+            "trait",
+            "enum",
+            "module",
+            "namespace",
+            "variable",
+            "property",
+            "constant",
+            "type",
+            "macro",
+            "if statement",
+            "match",
+            "for loop",
+            "while loop",
+            "call",
+        ] {
+            assert!(!get_node_icon(label).is_empty(), "icon missing for label {label:?}");
+        }
     }
 }
