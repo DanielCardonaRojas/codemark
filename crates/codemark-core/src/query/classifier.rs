@@ -175,9 +175,12 @@ mod tests {
 
     #[test]
     fn test_node_icons_are_non_empty() {
-        // Regression guard: every known summary label must map to a non-empty
-        // glyph. Emptying any of these (as happened during the profile refactor)
-        // silently strips icons from TUI bookmark entries.
+        // Regression guard: every label the classifier can emit must map to a
+        // non-empty glyph. Emptying any of these (as happened during the profile
+        // refactor) silently strips icons from TUI bookmark entries. Labels
+        // without a dedicated arm fall through to the non-empty default icon;
+        // they're listed here too so the set stays in sync with
+        // `classify_node_type_global`'s emitted labels.
         for label in [
             "function",
             "method",
@@ -196,11 +199,17 @@ mod tests {
             "constant",
             "type",
             "macro",
+            "subscript",
+            "init",
+            "deinit",
             "if statement",
             "match",
             "for loop",
             "while loop",
+            "return",
+            "assignment",
             "call",
+            "expression",
         ] {
             assert!(!get_node_icon(label).is_empty(), "icon missing for label {label:?}");
         }
