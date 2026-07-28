@@ -42,9 +42,38 @@ async fn handle_add(
     };
 
     let lang_dir = grammar_dir.join(safe_name);
+
+    // A lexically safe name still can't be trusted if `<cache>/<name>` already
+    // exists as a symlink: `create_dir_all`/`copy`/`write` would follow it and
+    // land the files outside the cache. Reject any pre-existing symlink at the
+    // target so writes always stay within the grammar cache.
+    if std::fs::symlink_metadata(&lang_dir).is_ok_and(|m| m.file_type().is_symlink()) {
+        return Err(Error::Input(format!(
+            "Refusing to install grammar '{}': {} is a symlink",
+            args.name,
+            lang_dir.display()
+        )));
+    }
+
     std::fs::create_dir_all(&lang_dir).map_err(|e| {
         Error::Operation(format!("Failed to create directory {}: {}", lang_dir.display(), e))
     })?;
+
+    // Defence in depth: after creation, confirm the resolved directory is still
+    // contained in the resolved grammar cache before writing into it.
+    let canonical_dir = std::fs::canonicalize(&lang_dir).map_err(|e| {
+        Error::Operation(format!("Failed to resolve {}: {}", lang_dir.display(), e))
+    })?;
+    let canonical_cache = std::fs::canonicalize(&grammar_dir).map_err(|e| {
+        Error::Operation(format!("Failed to resolve {}: {}", grammar_dir.display(), e))
+    })?;
+    if !canonical_dir.starts_with(&canonical_cache) {
+        return Err(Error::Input(format!(
+            "Refusing to install grammar '{}': {} escapes the grammar cache",
+            args.name,
+            canonical_dir.display()
+        )));
+    }
 
     let target_wasm = lang_dir.join("grammar.wasm");
     std::fs::copy(&args.wasm_file, &target_wasm)
