@@ -108,10 +108,9 @@ pub fn summarize_query(
     // 4. Extract identifier from predicates that reference target captures
     let identifier = extract_identifier(root, query_str, &target_captures);
 
-    // 5. Classify the node type to get a human-readable label
-    let label = classify_node_type(&node_type)
-        .map(|s| s.to_string())
-        .unwrap_or_else(|| node_type.replace('_', " "));
+    let profile = language.as_ref().map(|lang| lang.profile());
+    let label =
+        classify_node_type(&node_type, profile).unwrap_or_else(|| node_type.replace('_', " "));
 
     Ok(QuerySummary::new(label, identifier, language))
 }

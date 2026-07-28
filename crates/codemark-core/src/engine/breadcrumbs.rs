@@ -21,8 +21,9 @@ pub fn extract_breadcrumbs(
     if max_count == 0 {
         return Vec::new();
     }
+    let whitelist: Vec<&str> =
+        language.profile().containers.iter().map(|(kind, _)| kind.as_str()).collect();
     let mut breadcrumbs = Vec::new();
-    let whitelist = get_whitelist(language);
 
     let mut current = target_node.parent();
     while let Some(node) = current {
@@ -43,56 +44,6 @@ pub fn extract_breadcrumbs(
     // Breadcrumbs were collected from child to parent, so reverse them to get parent to child order
     breadcrumbs.reverse();
     breadcrumbs
-}
-
-/// Get the language-specific whitelist of node types that make useful breadcrumbs.
-fn get_whitelist(language: Language) -> &'static [&'static str] {
-    match language {
-        Language::Rust => &["mod_item", "impl_item", "trait_item", "function_item"],
-        Language::Swift => &[
-            "class_declaration",
-            "extension_declaration",
-            "protocol_declaration",
-            "function_declaration",
-            "struct_declaration",
-            "enum_declaration",
-        ],
-        Language::TypeScript => &[
-            "namespace_declaration",
-            "class_declaration",
-            "interface_declaration",
-            "method_definition",
-            "function_declaration",
-            "type_alias_declaration",
-            "enum_declaration",
-        ],
-        Language::Python => {
-            &["class_definition", "function_definition", "async_function_definition"]
-        }
-        Language::Go => &["type_declaration", "function_declaration", "method_declaration"],
-        Language::Java => &[
-            "class_declaration",
-            "interface_declaration",
-            "enum_declaration",
-            "method_declaration",
-        ],
-        Language::CSharp => &[
-            "class_declaration",
-            "interface_declaration",
-            "struct_declaration",
-            "enum_declaration",
-            "method_declaration",
-            "namespace_declaration",
-        ],
-        Language::Dart => &[
-            "class_definition",
-            "mixin_definition",
-            "extension_definition",
-            "enum_definition",
-            "function_signature",
-            "method_declaration",
-        ],
-    }
 }
 
 #[cfg(test)]

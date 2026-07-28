@@ -1,23 +1,32 @@
 /// Maps tree-sitter node types to human-readable labels for query summaries.
 ///
-/// This module provides a classification function that converts raw tree-sitter
-/// node type names (like "function_item" or "class_declaration") into concise,
-/// human-readable labels (like "function" or "class") for use in UI headlines.
-/// Maps a tree-sitter node type to a human-readable label.
-///
-/// Returns `None` for node types that don't have a canonical label or are
-/// considered anonymous/unnamed constructs.
+/// Classification consults the per-language [`Profile`] first, then falls back
+/// to a global default table for node types the profile doesn't cover.
+use crate::parser::profile::Profile;
+
+/// Classify a node type using the language profile first, then falling back to
+/// a global default table for node types not covered by the profile.
 ///
 /// # Examples
 ///
 /// ```
 /// use codemark_core::query::classifier::classify_node_type;
+/// use codemark_core::parser::languages::Language;
 ///
-/// assert_eq!(classify_node_type("function_item"), Some("function"));
-/// assert_eq!(classify_node_type("class_declaration"), Some("class"));
-/// assert_eq!(classify_node_type("identifier"), None);
+/// let profile = Language::Rust.profile();
+/// assert_eq!(classify_node_type("function_item", Some(profile)).as_deref(), Some("function"));
+/// assert_eq!(classify_node_type("identifier", Some(profile)).as_deref(), None);
 /// ```
-pub fn classify_node_type(node_type: &str) -> Option<&'static str> {
+pub fn classify_node_type(node_type: &str, profile: Option<&Profile>) -> Option<String> {
+    if let Some(p) = profile
+        && let Some(label) = p.node_labels.get(node_type)
+    {
+        return Some(label.clone());
+    }
+    classify_node_type_global(node_type).map(|s| s.to_string())
+}
+/// Used as a fallback when the per-language profile doesn't have an entry.
+fn classify_node_type_global(node_type: &str) -> Option<&'static str> {
     match node_type {
         // Functions / Methods
         "function_declaration" | "function_item" | "function_definition" => Some("function"),
@@ -93,74 +102,116 @@ mod tests {
 
     #[test]
     fn test_function_classifications() {
-        assert_eq!(classify_node_type("function_item"), Some("function"));
-        assert_eq!(classify_node_type("function_declaration"), Some("function"));
-        assert_eq!(classify_node_type("function_definition"), Some("function"));
-        assert_eq!(classify_node_type("method_definition"), Some("method"));
-        assert_eq!(classify_node_type("method_declaration"), Some("method"));
-        assert_eq!(classify_node_type("constructor_declaration"), Some("constructor"));
+        assert_eq!(classify_node_type("function_item", None), Some("function".into()));
+        assert_eq!(classify_node_type("function_declaration", None), Some("function".into()));
+        assert_eq!(classify_node_type("function_definition", None), Some("function".into()));
+        assert_eq!(classify_node_type("method_definition", None), Some("method".into()));
+        assert_eq!(classify_node_type("method_declaration", None), Some("method".into()));
+        assert_eq!(classify_node_type("constructor_declaration", None), Some("constructor".into()));
     }
 
     #[test]
     fn test_class_classifications() {
-        assert_eq!(classify_node_type("class_declaration"), Some("class"));
-        assert_eq!(classify_node_type("struct_declaration"), Some("class"));
-        assert_eq!(classify_node_type("struct_item"), Some("class"));
-        assert_eq!(classify_node_type("interface_declaration"), Some("interface"));
-        assert_eq!(classify_node_type("protocol_declaration"), Some("interface"));
-        assert_eq!(classify_node_type("trait_item"), Some("interface"));
-        assert_eq!(classify_node_type("impl_item"), Some("impl"));
+        assert_eq!(classify_node_type("class_declaration", None), Some("class".into()));
+        assert_eq!(classify_node_type("struct_declaration", None), Some("class".into()));
+        assert_eq!(classify_node_type("struct_item", None), Some("class".into()));
+        assert_eq!(classify_node_type("interface_declaration", None), Some("interface".into()));
+        assert_eq!(classify_node_type("protocol_declaration", None), Some("interface".into()));
+        assert_eq!(classify_node_type("trait_item", None), Some("interface".into()));
+        assert_eq!(classify_node_type("impl_item", None), Some("impl".into()));
     }
 
     #[test]
     fn test_enum_classifications() {
-        assert_eq!(classify_node_type("enum_declaration"), Some("enum"));
-        assert_eq!(classify_node_type("enum_item"), Some("enum"));
-        assert_eq!(classify_node_type("enum_entry"), Some("enum"));
-        assert_eq!(classify_node_type("enum_constant"), Some("enum"));
+        assert_eq!(classify_node_type("enum_declaration", None), Some("enum".into()));
+        assert_eq!(classify_node_type("enum_item", None), Some("enum".into()));
+        assert_eq!(classify_node_type("enum_entry", None), Some("enum".into()));
+        assert_eq!(classify_node_type("enum_constant", None), Some("enum".into()));
     }
 
     #[test]
     fn test_type_classifications() {
-        assert_eq!(classify_node_type("type_declaration"), Some("type"));
-        assert_eq!(classify_node_type("type_alias_declaration"), Some("type"));
-        assert_eq!(classify_node_type("type_spec"), Some("type"));
-        assert_eq!(classify_node_type("type_item"), Some("type"));
+        assert_eq!(classify_node_type("type_declaration", None), Some("type".into()));
+        assert_eq!(classify_node_type("type_alias_declaration", None), Some("type".into()));
+        assert_eq!(classify_node_type("type_spec", None), Some("type".into()));
+        assert_eq!(classify_node_type("type_item", None), Some("type".into()));
     }
 
     #[test]
     fn test_variable_classifications() {
-        assert_eq!(classify_node_type("variable_declaration"), Some("variable"));
-        assert_eq!(classify_node_type("lexical_declaration"), Some("variable"));
-        assert_eq!(classify_node_type("property_declaration"), Some("variable"));
-        assert_eq!(classify_node_type("const_item"), Some("variable"));
-        assert_eq!(classify_node_type("static_item"), Some("variable"));
-        assert_eq!(classify_node_type("var_declaration"), Some("variable"));
+        assert_eq!(classify_node_type("variable_declaration", None), Some("variable".into()));
+        assert_eq!(classify_node_type("lexical_declaration", None), Some("variable".into()));
+        assert_eq!(classify_node_type("property_declaration", None), Some("variable".into()));
+        assert_eq!(classify_node_type("const_item", None), Some("variable".into()));
+        assert_eq!(classify_node_type("static_item", None), Some("variable".into()));
+        assert_eq!(classify_node_type("var_declaration", None), Some("variable".into()));
     }
 
     #[test]
     fn test_module_classifications() {
-        assert_eq!(classify_node_type("mod_item"), Some("module"));
-        assert_eq!(classify_node_type("namespace_declaration"), Some("namespace"));
+        assert_eq!(classify_node_type("mod_item", None), Some("module".into()));
+        assert_eq!(classify_node_type("namespace_declaration", None), Some("namespace".into()));
     }
 
     #[test]
     fn test_statement_classifications() {
-        assert_eq!(classify_node_type("if_statement"), Some("if statement"));
-        assert_eq!(classify_node_type("if_expression"), Some("if statement"));
-        assert_eq!(classify_node_type("for_statement"), Some("for loop"));
-        assert_eq!(classify_node_type("while_statement"), Some("while loop"));
-        assert_eq!(classify_node_type("match_statement"), Some("match"));
-        assert_eq!(classify_node_type("switch_statement"), Some("match"));
-        assert_eq!(classify_node_type("return_statement"), Some("return"));
-        assert_eq!(classify_node_type("assignment_expression"), Some("assignment"));
+        assert_eq!(classify_node_type("if_statement", None), Some("if statement".into()));
+        assert_eq!(classify_node_type("if_expression", None), Some("if statement".into()));
+        assert_eq!(classify_node_type("for_statement", None), Some("for loop".into()));
+        assert_eq!(classify_node_type("while_statement", None), Some("while loop".into()));
+        assert_eq!(classify_node_type("match_statement", None), Some("match".into()));
+        assert_eq!(classify_node_type("switch_statement", None), Some("match".into()));
+        assert_eq!(classify_node_type("return_statement", None), Some("return".into()));
+        assert_eq!(classify_node_type("assignment_expression", None), Some("assignment".into()));
     }
 
     #[test]
     fn test_unknown_node_types() {
-        assert_eq!(classify_node_type("identifier"), None);
-        assert_eq!(classify_node_type("string_literal"), None);
-        assert_eq!(classify_node_type("comment"), None);
-        assert_eq!(classify_node_type("unknown_type"), None);
+        assert_eq!(classify_node_type("identifier", None), None);
+        assert_eq!(classify_node_type("string_literal", None), None);
+        assert_eq!(classify_node_type("comment", None), None);
+        assert_eq!(classify_node_type("unknown_type", None), None);
+    }
+
+    #[test]
+    fn test_node_icons_are_non_empty() {
+        // Regression guard: every label the classifier can emit must map to a
+        // non-empty glyph. Emptying any of these (as happened during the profile
+        // refactor) silently strips icons from TUI bookmark entries. Labels
+        // without a dedicated arm fall through to the non-empty default icon;
+        // they're listed here too so the set stays in sync with
+        // `classify_node_type_global`'s emitted labels.
+        for label in [
+            "function",
+            "method",
+            "constructor",
+            "class",
+            "struct",
+            "impl",
+            "interface",
+            "protocol",
+            "trait",
+            "enum",
+            "module",
+            "namespace",
+            "variable",
+            "property",
+            "constant",
+            "type",
+            "macro",
+            "subscript",
+            "init",
+            "deinit",
+            "if statement",
+            "match",
+            "for loop",
+            "while loop",
+            "return",
+            "assignment",
+            "call",
+            "expression",
+        ] {
+            assert!(!get_node_icon(label).is_empty(), "icon missing for label {label:?}");
+        }
     }
 }
