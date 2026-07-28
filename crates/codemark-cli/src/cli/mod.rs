@@ -84,12 +84,8 @@ pub enum Command {
     /// Full-text search across notes and context
     Search(SearchArgs),
 
-    /// List all supported languages (built-in and dynamically loaded)
-    Languages,
-
-    /// Manage dynamically loaded WASM grammars
-    #[command(subcommand)]
-    Grammars(GrammarsCommand),
+    /// Manage supported languages (list built-ins, add dynamic WASM grammars)
+    Languages(LanguagesArgs),
 
     /// Update metadata for an existing bookmark
     Edit(EditArgs),
@@ -1358,23 +1354,30 @@ pub enum SkillScope {
     Project,
 }
 
-/// Subcommands for managing dynamically loaded WASM grammars.
-#[derive(Debug, Subcommand)]
-pub enum GrammarsCommand {
-    /// Add a new WASM grammar from a compiled .wasm file
-    Add(GrammarsAddArgs),
+/// Arguments for the languages command group.
+#[derive(Debug, clap::Args)]
+pub struct LanguagesArgs {
+    #[command(subcommand)]
+    pub command: Option<LanguagesCommand>,
+}
 
-    /// List installed WASM grammars
+/// Subcommands for managing languages and WASM grammars.
+#[derive(Debug, Subcommand)]
+pub enum LanguagesCommand {
+    /// Add a new language from a compiled .wasm grammar file
+    Add(LanguagesAddArgs),
+
+    /// List all supported languages (built-in and dynamic)
     List,
 
-    /// Validate installed WASM grammars
+    /// Validate installed dynamic WASM grammars
     Validate,
 }
 
 #[derive(Debug, clap::Args)]
-pub struct GrammarsAddArgs {
+pub struct LanguagesAddArgs {
     /// Path to the compiled .wasm grammar file
-    pub wasm_file: PathBuf,
+    pub wasm_file: std::path::PathBuf,
 
     /// The language name (e.g., "ruby", "lua")
     #[arg(long, short)]

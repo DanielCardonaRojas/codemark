@@ -1,17 +1,17 @@
 use codemark_core::error::{Error, Result};
 use crate::cli::output::{self, OutputMode};
-use crate::cli::{GrammarsCommand, GrammarsAddArgs};
+use crate::cli::{LanguagesCommand, LanguagesAddArgs, LanguagesArgs};
 
 
-pub async fn handle_grammars(cli: &crate::cli::Cli, mode: &OutputMode, cmd: &GrammarsCommand) -> Result<()> {
-    match cmd {
-        GrammarsCommand::Add(args) => handle_add(cli, mode, args).await,
-        GrammarsCommand::List => handle_list(cli, mode).await,
-        GrammarsCommand::Validate => handle_validate(cli, mode).await,
+pub async fn handle_languages(cli: &crate::cli::Cli, mode: &OutputMode, args: &LanguagesArgs) -> Result<()> {
+    match &args.command {
+        Some(LanguagesCommand::Add(add_args)) => handle_add(cli, mode, add_args).await,
+        Some(LanguagesCommand::Validate) => handle_validate(cli, mode).await,
+        Some(LanguagesCommand::List) | None => handle_list(cli, mode).await,
     }
 }
 
-async fn handle_add(_cli: &crate::cli::Cli, mode: &OutputMode, args: &GrammarsAddArgs) -> Result<()> {
+async fn handle_add(_cli: &crate::cli::Cli, mode: &OutputMode, args: &LanguagesAddArgs) -> Result<()> {
     if !args.wasm_file.exists() {
         return Err(Error::Input(format!("WASM file not found: {}", args.wasm_file.display())).into());
     }
@@ -59,25 +59,25 @@ async fn handle_add(_cli: &crate::cli::Cli, mode: &OutputMode, args: &GrammarsAd
 }
 
 async fn handle_list(_cli: &crate::cli::Cli, mode: &OutputMode) -> Result<()> {
-    let dynamic_langs = codemark_core::parser::registry::LanguageRegistry::dynamic_languages();
+    let languages = codemark_core::parser::languages::Language::all_supported();
     
     if matches!(mode, OutputMode::Json) {
         let mut out = Vec::new();
-        for lang in dynamic_langs {
-            if let codemark_core::parser::languages::Language::Dynamic(dl) = lang {
-                out.push(serde_json::json!({
-                    "name": dl.name,
-                    "extensions": dl.extensions,
-                    "wasm_path": dl.wasm_path,
-                }));
-            }
+        for lang in languages {
+            let is_dynamic = matches!(lang, codemark_core::parser::languages::Language::Dynamic(_));
+            let path = if let codemark_core::parser::languages::Language::Dynamic(dl) = &lang {
+                Some(dl.wasm_path.clone())
+            } else {
+                None
+            };
+            out.push(serde_json::json!({
+                "name": lang.name(),
+                "type": if is_dynamic { "dynamic" } else { "built-in" },
+                "extensions": lang.file_extensions(),
+                "wasm_path": path,
+            }));
         }
         output::write_json_success(&out).unwrap();
-        return Ok(());
-    }
-
-    if dynamic_langs.is_empty() {
-        println!("No dynamic WASM grammars installed.");
         return Ok(());
     }
 
@@ -85,16 +85,21 @@ async fn handle_list(_cli: &crate::cli::Cli, mode: &OutputMode) -> Result<()> {
     table
         .load_preset(comfy_table::presets::UTF8_FULL)
         .set_content_arrangement(comfy_table::ContentArrangement::Dynamic)
-        .set_header(vec!["Name", "Extensions", "WASM Path"]);
+        .set_header(vec!["Language", "Type", "Extensions", "WASM Path"]);
 
-    for lang in dynamic_langs {
-        if let codemark_core::parser::languages::Language::Dynamic(dl) = lang {
-            table.add_row(vec![
-                dl.name.clone(),
-                dl.extensions.join(", "),
-                dl.wasm_path.to_string_lossy().to_string(),
-            ]);
-        }
+    for lang in languages {
+        let (type_str, path_str) = if let codemark_core::parser::languages::Language::Dynamic(dl) = &lang {
+            ("dynamic (WASM)", dl.wasm_path.to_string_lossy().to_string())
+        } else {
+            ("built-in", "-".to_string())
+        };
+        
+        table.add_row(vec![
+            lang.name().to_string(),
+            type_str.to_string(),
+            lang.file_extensions().join(", "),
+            path_str,
+        ]);
     }
 
     println!("{table}");
