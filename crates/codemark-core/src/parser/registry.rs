@@ -94,6 +94,19 @@ impl LanguageRegistry {
             let wasm_path = entry.path().join("grammar.wasm");
 
             let Ok(manifest_text) = std::fs::read_to_string(&manifest_path) else {
+                // A dir holding a grammar.wasm but no readable manifest.json is a
+                // half-installed grammar (e.g. the user dropped in a .wasm but
+                // never wrote the manifest). Warn — symmetric with the
+                // "grammar.wasm not found" case below — instead of silently
+                // dropping it, which leaves the user with no clue why their
+                // grammar isn't recognized. Dirs without a .wasm aren't grammars,
+                // so they're skipped quietly as before.
+                if wasm_path.exists() {
+                    eprintln!(
+                        "codemark: ignoring grammar at {} — grammar.wasm is present but manifest.json is missing or unreadable",
+                        entry.path().display()
+                    );
+                }
                 continue;
             };
 
@@ -544,6 +557,22 @@ mod tests {
 
         let reg = LanguageRegistry::discover_in(tmp.path()).unwrap();
         assert!(reg.by_name.is_empty());
+    }
+
+    #[test]
+    fn discover_skips_grammar_dir_missing_manifest() {
+        // A dir with grammar.wasm but no manifest.json is a half-installed
+        // grammar: it's skipped (not registered) but the warning branch is
+        // exercised so the user isn't left with no feedback.
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("orphan");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("grammar.wasm"), b"\0asm").unwrap();
+        // no manifest.json
+
+        let reg = LanguageRegistry::discover_in(tmp.path()).unwrap();
+        assert!(reg.by_name.is_empty());
+        assert!(reg.by_extension.is_empty());
     }
 
     #[test]
