@@ -223,7 +223,16 @@ fn install_staged(
 
         // Swap staging into place. Move any existing install aside first so we
         // can roll back if the rename fails, then remove it once we've committed.
-        let backup = lang_dir.with_extension("bak-old");
+        //
+        // Build the backup name by appending to the *full* directory name (not
+        // `with_extension`, which rewrites the last dot-segment and would map
+        // both `my.lang` and `my` to `my.bak-old`). Dot-prefixed + pid-suffixed
+        // so it's unique per process and skipped by registry discovery.
+        let backup = grammar_dir.join(format!(
+            ".bak-{}-{}",
+            safe_name.to_string_lossy(),
+            std::process::id()
+        ));
         let _ = std::fs::remove_dir_all(&backup);
         let had_existing = lang_dir.exists();
         if had_existing {
