@@ -1,6 +1,10 @@
 use crate::cli::output::{self, OutputMode};
-use crate::cli::{LanguagesAddArgs, LanguagesArgs, LanguagesCommand};
+use crate::cli::{LanguagesAddArgs, LanguagesArgs, LanguagesCommand, LanguagesInstallArgs};
 use codemark_core::error::{Error, Result};
+
+/// Cap on a downloaded grammar.wasm (32 MiB). Real grammars are well under this;
+/// a larger response means a wrong/corrupt asset.
+const MAX_WASM_BYTES: u64 = 32 * 1024 * 1024;
 
 pub async fn handle_languages(
     cli: &crate::cli::Cli,
@@ -9,6 +13,9 @@ pub async fn handle_languages(
 ) -> Result<()> {
     match &args.command {
         Some(LanguagesCommand::Add(add_args)) => handle_add(cli, mode, add_args).await,
+        Some(LanguagesCommand::Install(install_args)) => {
+            handle_install(cli, mode, install_args).await
+        }
         Some(LanguagesCommand::Validate(_)) => handle_validate(cli, mode).await,
         Some(LanguagesCommand::List(_)) | None => handle_list(cli, mode).await,
     }
@@ -23,89 +30,302 @@ async fn handle_add(
         return Err(Error::Input(format!("WASM file not found: {}", args.wasm_file.display())));
     }
 
+    // Read the source bytes once — validation and the committed install use these
+    // same bytes, so a concurrent edit of the source path can't make us validate
+    // one grammar and install a different one (TOCTOU).
+    let wasm_bytes = std::fs::read(&args.wasm_file)
+        .map_err(|e| Error::Operation(format!("Failed to read WASM file: {}", e)))?;
+
+    install_grammar(&args.name, &args.extensions, wasm_bytes, mode)
+}
+
+async fn handle_install(
+    _cli: &crate::cli::Cli,
+    mode: &OutputMode,
+    args: &LanguagesInstallArgs,
+) -> Result<()> {
+    let (owner, repo) = parse_source(&args.source)?;
+    let client = codemark_core::sync::build_sync_http_client()?;
+
+    // 1. Read the repo's tree-sitter.json for the grammar name, file-types, and
+    //    the Tree-sitter version (which governs WASM ABI compatibility).
+    let meta = fetch_tree_sitter_json(&client, &owner, &repo).await?;
+
+    if !args.allow_version_mismatch
+        && let Some(v) = &meta.version
+        && !v.starts_with("0.25")
+    {
+        return Err(Error::Input(format!(
+            "grammar '{owner}/{repo}' targets Tree-sitter {v}, but codemark loads 0.25 grammars — \
+             the downloaded .wasm would likely fail to load. Rebuild it from source with the 0.25 \
+             CLI, or pass --allow-version-mismatch to try anyway."
+        )));
+    }
+
+    // 2. Resolve name/extensions (CLI overrides win over tree-sitter.json).
+    let name = args.name.clone().or_else(|| meta.name.clone()).ok_or_else(|| {
+        Error::Input("could not determine the language name; pass --name explicitly".to_string())
+    })?;
+    let extensions = match &args.extensions {
+        Some(e) => e.clone(),
+        None if !meta.file_types.is_empty() => meta.file_types.join(","),
+        None => {
+            return Err(Error::Input(
+                "could not determine file extensions from tree-sitter.json; pass --extensions"
+                    .to_string(),
+            ));
+        }
+    };
+
+    // 3. Find and download the .wasm release asset.
+    let asset = find_wasm_asset(&client, &owner, &repo).await?;
+    if !matches!(mode, OutputMode::Json) {
+        println!("Downloading {} …", asset.name);
+    }
+    let wasm_bytes = download_capped(&client, &asset.url).await?;
+
+    // 4. Reuse the hardened install path (validation + stage-then-swap). The
+    //    manifest gets an empty profile — see the note printed on success.
+    install_grammar(&name, &extensions, wasm_bytes, mode)
+}
+
+/// A Tree-sitter grammar repo's `tree-sitter.json` metadata (only the fields we
+/// use). Unknown fields are ignored.
+#[derive(Debug, Default)]
+struct TreeSitterMeta {
+    name: Option<String>,
+    file_types: Vec<String>,
+    version: Option<String>,
+}
+
+/// Parse a grammar source into `(owner, repo)`. Accepts `owner/repo`,
+/// `github:owner/repo`, and `https://github.com/owner/repo[.git]`.
+fn parse_source(source: &str) -> Result<(String, String)> {
+    let s = source.trim();
+    let s = s.strip_prefix("github:").unwrap_or(s);
+    let s = s
+        .strip_prefix("https://github.com/")
+        .or_else(|| s.strip_prefix("http://github.com/"))
+        .or_else(|| s.strip_prefix("git@github.com:"))
+        .unwrap_or(s);
+    let s = s.strip_suffix(".git").unwrap_or(s);
+    let s = s.trim_matches('/');
+
+    let mut parts = s.split('/');
+    match (parts.next(), parts.next(), parts.next()) {
+        (Some(owner), Some(repo), None) if !owner.is_empty() && !repo.is_empty() => {
+            Ok((owner.to_string(), repo.to_string()))
+        }
+        _ => Err(Error::Input(format!(
+            "invalid grammar source '{source}': expected `owner/repo`, `github:owner/repo`, or a github.com URL"
+        ))),
+    }
+}
+
+/// Fetch and parse `tree-sitter.json` from the repo's default branch.
+async fn fetch_tree_sitter_json(
+    client: &reqwest::Client,
+    owner: &str,
+    repo: &str,
+) -> Result<TreeSitterMeta> {
+    // raw.githubusercontent serves the file directly; try the common default
+    // branches. (Avoids a GitHub API token and works for public repos.)
+    for branch in ["master", "main"] {
+        let url =
+            format!("https://raw.githubusercontent.com/{owner}/{repo}/{branch}/tree-sitter.json");
+        tracing::debug!(target: "codemark::http", %url, "fetching tree-sitter.json");
+        let resp = client
+            .get(&url)
+            .send()
+            .await
+            .map_err(|e| Error::Operation(format!("failed to fetch tree-sitter.json: {e}")))?;
+        if resp.status() == reqwest::StatusCode::NOT_FOUND {
+            continue;
+        }
+        if !resp.status().is_success() {
+            return Err(Error::Operation(format!(
+                "failed to fetch tree-sitter.json: HTTP {}",
+                resp.status()
+            )));
+        }
+        let json: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|e| Error::Operation(format!("tree-sitter.json is not valid JSON: {e}")))?;
+        return Ok(parse_tree_sitter_meta(&json));
+    }
+    Err(Error::Input(format!(
+        "no tree-sitter.json found in {owner}/{repo} (looked on master and main); \
+         is this a Tree-sitter grammar repo?"
+    )))
+}
+
+/// Extract the name, file-types, and Tree-sitter version from a parsed
+/// `tree-sitter.json`. The first grammar entry is used for name/file-types.
+fn parse_tree_sitter_meta(json: &serde_json::Value) -> TreeSitterMeta {
+    let grammar = json.get("grammars").and_then(|g| g.as_array()).and_then(|a| a.first());
+    let name = grammar.and_then(|g| g.get("name")).and_then(|n| n.as_str()).map(str::to_string);
+    let file_types = grammar
+        .and_then(|g| g.get("file-types"))
+        .and_then(|f| f.as_array())
+        .map(|arr| arr.iter().filter_map(|e| e.as_str().map(str::to_string)).collect())
+        .unwrap_or_default();
+    let version = json
+        .get("metadata")
+        .and_then(|m| m.get("version"))
+        .and_then(|v| v.as_str())
+        .map(str::to_string);
+    TreeSitterMeta { name, file_types, version }
+}
+
+/// A release asset we can download.
+struct ReleaseAsset {
+    name: String,
+    url: String,
+}
+
+/// Find the `.wasm` asset on the repo's latest release.
+async fn find_wasm_asset(
+    client: &reqwest::Client,
+    owner: &str,
+    repo: &str,
+) -> Result<ReleaseAsset> {
+    let url = format!("https://api.github.com/repos/{owner}/{repo}/releases/latest");
+    tracing::debug!(target: "codemark::http", %url, "fetching latest release");
+    let resp = client
+        .get(&url)
+        // GitHub's API requires a User-Agent.
+        .header(reqwest::header::USER_AGENT, "codemark")
+        .send()
+        .await
+        .map_err(|e| Error::Operation(format!("failed to query releases: {e}")))?;
+    if !resp.status().is_success() {
+        return Err(Error::Operation(format!(
+            "failed to query latest release of {owner}/{repo}: HTTP {}",
+            resp.status()
+        )));
+    }
+    let release: serde_json::Value =
+        resp.json().await.map_err(|e| Error::Operation(format!("release JSON invalid: {e}")))?;
+
+    let assets = release.get("assets").and_then(|a| a.as_array()).cloned().unwrap_or_default();
+    let wasm = assets
+        .iter()
+        .find(|a| a.get("name").and_then(|n| n.as_str()).is_some_and(|n| n.ends_with(".wasm")));
+    match wasm {
+        Some(a) => Ok(ReleaseAsset {
+            name: a.get("name").and_then(|n| n.as_str()).unwrap_or("grammar.wasm").to_string(),
+            url: a
+                .get("browser_download_url")
+                .and_then(|u| u.as_str())
+                .ok_or_else(|| Error::Operation("release asset has no download URL".to_string()))?
+                .to_string(),
+        }),
+        None => Err(Error::Input(format!(
+            "the latest release of {owner}/{repo} has no .wasm asset — this grammar doesn't ship a \
+             prebuilt WASM. Build it from source with `tree-sitter build --wasm` and use \
+             `codemark languages add` instead."
+        ))),
+    }
+}
+
+/// Download `url` into memory, rejecting an oversized body.
+async fn download_capped(client: &reqwest::Client, url: &str) -> Result<Vec<u8>> {
+    tracing::debug!(target: "codemark::http", %url, "downloading grammar.wasm");
+    let resp = client
+        .get(url)
+        .header(reqwest::header::USER_AGENT, "codemark")
+        .send()
+        .await
+        .map_err(|e| Error::Operation(format!("failed to download grammar.wasm: {e}")))?;
+    if !resp.status().is_success() {
+        return Err(Error::Operation(format!(
+            "failed to download grammar.wasm: HTTP {}",
+            resp.status()
+        )));
+    }
+    if let Some(len) = resp.content_length()
+        && len > MAX_WASM_BYTES
+    {
+        return Err(Error::Operation(format!(
+            "grammar.wasm is too large ({len} bytes, limit {MAX_WASM_BYTES})"
+        )));
+    }
+    let bytes = resp
+        .bytes()
+        .await
+        .map_err(|e| Error::Operation(format!("failed to read grammar.wasm body: {e}")))?;
+    if bytes.len() as u64 > MAX_WASM_BYTES {
+        return Err(Error::Operation(format!(
+            "grammar.wasm is too large ({} bytes, limit {MAX_WASM_BYTES})",
+            bytes.len()
+        )));
+    }
+    Ok(bytes.to_vec())
+}
+
+/// Install a grammar from in-memory `wasm_bytes` under `name`, writing a manifest
+/// with the given `raw_extensions` and an empty profile. Shared by `add` (local
+/// file) and `install` (downloaded release), so both go through the same
+/// validation and the hardened stage-then-swap install.
+fn install_grammar(
+    name: &str,
+    raw_extensions: &str,
+    wasm_bytes: Vec<u8>,
+    mode: &OutputMode,
+) -> Result<()> {
     let Some(grammar_dir) = codemark_core::config::global_grammars_dir() else {
         return Err(Error::Operation("Could not determine global grammars directory".to_string()));
     };
 
-    // Constrain the language name to a single safe path component so an
-    // absolute or `..`-laden `--name` can't escape the grammar cache and
-    // clobber files elsewhere on disk.
-    let mut components = std::path::Path::new(&args.name).components();
+    // Constrain the language name to a single safe path component so an absolute
+    // or `..`-laden name can't escape the grammar cache.
+    let mut components = std::path::Path::new(name).components();
     let safe_name = match (components.next(), components.next()) {
         (Some(std::path::Component::Normal(c)), None) => c,
         _ => {
             tracing::debug!(
                 target: "codemark::languages",
-                name = %args.name,
+                %name,
                 "rejected grammar name — not a single normal path component"
             );
             return Err(Error::Input(format!(
-                "Invalid grammar name '{}': must be a single path component with no separators or '..'",
-                args.name
+                "Invalid grammar name '{name}': must be a single path component with no separators or '..'"
             )));
         }
     };
-    tracing::debug!(
-        target: "codemark::languages",
-        name = %args.name,
-        "accepted grammar name"
-    );
+    tracing::debug!(target: "codemark::languages", %name, "accepted grammar name");
 
-    // Validate the name and extensions before any file is written, so a bad
-    // request can't truncate a working install (see `validate_name_and_extensions`).
-    let extensions = validate_name_and_extensions(&args.name, &args.extensions)?;
+    // Validate name + extensions before any file is written, so a bad request
+    // can't truncate a working install.
+    let extensions = validate_name_and_extensions(name, raw_extensions)?;
 
     let lang_dir = grammar_dir.join(safe_name);
-
-    // A lexically safe name still can't be trusted if `<cache>/<name>` already
-    // exists as a symlink: writes would follow it and land outside the cache.
-    reject_symlink(&lang_dir, &args.name)?;
+    reject_symlink(&lang_dir, name)?;
 
     let manifest_json = serde_json::json!({
-        "name": args.name,
+        "name": name,
         "version": "0.1.0",
         "extensions": extensions,
         "profile": {}
     });
     let manifest_str = serde_json::to_string_pretty(&manifest_json).unwrap();
 
-    // Read the source bytes exactly once. Validation and the committed install
-    // both use *these* bytes, so a concurrent edit of the source path can't make
-    // us validate one grammar and install a different one (TOCTOU).
-    let wasm_bytes = std::fs::read(&args.wasm_file)
-        .map_err(|e| Error::Operation(format!("Failed to read WASM file: {}", e)))?;
+    install_staged(&grammar_dir, safe_name, &lang_dir, &wasm_bytes, manifest_str.as_bytes(), name)?;
 
-    // Stage the full install in a temp dir, validate the staged grammar loads,
-    // then swap it into place. Writing straight into `lang_dir` would expose a
-    // truncated wasm before the manifest is committed, so an interrupted write
-    // could corrupt a working install; staging keeps the old install intact
-    // until a complete, validated new one is ready.
-    install_staged(
-        &grammar_dir,
-        safe_name,
-        &lang_dir,
-        &wasm_bytes,
-        manifest_str.as_bytes(),
-        &args.name,
-    )?;
-
-    // Loading WASM grammars at runtime requires the `wasm` feature (disabled by
-    // default). Without it the grammar is installed on disk but can't actually
-    // be used, so don't claim it will be — direct the user to a wasm build.
     let wasm_enabled = cfg!(feature = "wasm");
-
     let ext_list = extensions.join(", ");
 
     if matches!(mode, OutputMode::Json) {
         output::write_json_success(&serde_json::json!({
             "message": "Grammar added successfully",
-            "name": args.name,
+            "name": name,
             "directory": lang_dir,
             "extensions": extensions,
             "runtime_enabled": wasm_enabled,
         }))?;
     } else {
-        println!("Successfully added grammar for '{}' to {}", args.name, lang_dir.display());
+        println!("Successfully added grammar for '{name}' to {}", lang_dir.display());
         if wasm_enabled {
             println!(
                 "Codemark will now automatically discover and use this grammar for the following extensions: {ext_list}"
@@ -117,6 +337,11 @@ async fn handle_add(
                  for the following extensions: {ext_list}"
             );
         }
+        println!(
+            "The grammar has an empty profile — parsing works now, but for better breadcrumbs \
+             and query summaries fill in `profile` in {}/manifest.json (see the adding-wasm-grammars guide).",
+            lang_dir.display()
+        );
     }
 
     Ok(())
@@ -624,6 +849,48 @@ async fn handle_validate(_cli: &crate::cli::Cli, mode: &OutputMode) -> Result<()
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parse_source_accepts_slug_prefix_and_url_forms() {
+        for input in [
+            "tree-sitter/tree-sitter-bash",
+            "github:tree-sitter/tree-sitter-bash",
+            "https://github.com/tree-sitter/tree-sitter-bash",
+            "https://github.com/tree-sitter/tree-sitter-bash.git",
+            "git@github.com:tree-sitter/tree-sitter-bash.git",
+            "tree-sitter/tree-sitter-bash/",
+        ] {
+            let (owner, repo) = parse_source(input).unwrap_or_else(|_| panic!("{input}"));
+            assert_eq!((owner.as_str(), repo.as_str()), ("tree-sitter", "tree-sitter-bash"));
+        }
+    }
+
+    #[test]
+    fn parse_source_rejects_malformed() {
+        assert!(parse_source("bash").is_err());
+        assert!(parse_source("a/b/c").is_err());
+        assert!(parse_source("").is_err());
+    }
+
+    #[test]
+    fn parse_tree_sitter_meta_extracts_name_filetypes_version() {
+        let json = serde_json::json!({
+            "grammars": [{ "name": "bash", "file-types": ["sh", "bash", ".bashrc"] }],
+            "metadata": { "version": "0.25.1" }
+        });
+        let meta = parse_tree_sitter_meta(&json);
+        assert_eq!(meta.name.as_deref(), Some("bash"));
+        assert_eq!(meta.file_types, vec!["sh", "bash", ".bashrc"]);
+        assert_eq!(meta.version.as_deref(), Some("0.25.1"));
+    }
+
+    #[test]
+    fn parse_tree_sitter_meta_tolerates_missing_fields() {
+        let meta = parse_tree_sitter_meta(&serde_json::json!({}));
+        assert!(meta.name.is_none());
+        assert!(meta.file_types.is_empty());
+        assert!(meta.version.is_none());
+    }
 
     #[test]
     fn normalizes_extensions_stripping_dots_empties_and_case() {
