@@ -52,7 +52,6 @@ pub struct GlobalArgs {
     /// Database location; repeatable for cross-repo queries
     #[arg(
         long,
-        env = "CODEMARK_DB",
         value_delimiter = if cfg!(windows) { ';' } else { ':' }
     )]
     pub db: Vec<PathBuf>,
@@ -62,7 +61,7 @@ pub struct GlobalArgs {
     pub repo: Vec<String>,
 
     /// Output format: json (default), table, line, markdown (or a custom template)
-    #[arg(long, env = "CODEMARK_FORMAT")]
+    #[arg(long)]
     pub format: Option<String>,
 }
 
@@ -73,13 +72,12 @@ pub struct DbFormatArgs {
     /// Database location; repeatable for cross-repo queries
     #[arg(
         long,
-        env = "CODEMARK_DB",
         value_delimiter = if cfg!(windows) { ';' } else { ':' }
     )]
     pub db: Vec<PathBuf>,
 
     /// Output format: json (default), table, line, markdown (or a custom template)
-    #[arg(long, env = "CODEMARK_FORMAT")]
+    #[arg(long)]
     pub format: Option<String>,
 }
 
@@ -88,7 +86,7 @@ pub struct DbFormatArgs {
 #[derive(Debug, Clone, Default, clap::Args)]
 pub struct OutputArgs {
     /// Output format: json (default), table, line, markdown (or a custom template)
-    #[arg(long, env = "CODEMARK_FORMAT")]
+    #[arg(long)]
     pub format: Option<String>,
 }
 

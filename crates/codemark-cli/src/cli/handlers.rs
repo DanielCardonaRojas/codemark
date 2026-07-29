@@ -206,10 +206,10 @@ fn merge_globals(cli: &mut Cli) {
     };
 
     if !extracted.0.is_empty() {
-        cli.db = extracted.0;
+        cli.db.extend(extracted.0);
     }
     if !extracted.1.is_empty() {
-        cli.repo = extracted.1;
+        cli.repo.extend(extracted.1);
     }
     if let Some(f) = extracted.2 {
         cli.format = Some(f);
