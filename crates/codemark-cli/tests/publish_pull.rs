@@ -105,11 +105,7 @@ async fn test_cli_publish_pull_roundtrip() {
         repo: vec![],
         format: None,
         command: Command::Publish(PublishArgs {
-            global: GlobalArgs {
-                db: vec![],
-                repo: vec![],
-                format: None,
-            },
+            global: GlobalArgs { db: vec![], repo: vec![], format: None },
             collection: "test-collection".to_string(),
             server: Some(server_url.clone()),
             token: Some("test-token".to_string()),
@@ -131,10 +127,7 @@ async fn test_cli_publish_pull_roundtrip() {
         format: None,
         command: Command::Tour(codemark_cli::cli::TourArgs {
             command: codemark_cli::cli::TourCommand::List(codemark_cli::cli::TourListArgs {
-                dbfmt: DbFormatArgs {
-                    db: vec![],
-                    format: None,
-                },
+                dbfmt: DbFormatArgs { db: vec![], format: None },
                 server: Some(server_url.clone()),
                 // `GET /tours` is repo-scoped now; name a repo (the published tour
                 // has no repo_url, so the list is simply empty — this step just
@@ -155,11 +148,7 @@ async fn test_cli_publish_pull_roundtrip() {
         repo: vec![],
         format: None,
         command: Command::Pull(PullArgs {
-            global: GlobalArgs {
-                db: vec![],
-                repo: vec![],
-                format: None,
-            },
+            global: GlobalArgs { db: vec![], repo: vec![], format: None },
             tour: format!("{}/tours/{}", server_url, col_id),
             server: None,
             token: Some("test-token".to_string()),
