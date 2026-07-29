@@ -73,40 +73,8 @@ async fn handle_add(
     let lang_dir = grammar_dir.join(safe_name);
 
     // A lexically safe name still can't be trusted if `<cache>/<name>` already
-    // exists as a symlink: `create_dir_all`/`copy`/`write` would follow it and
-    // land the files outside the cache. Reject any pre-existing symlink at the
-    // target so writes always stay within the grammar cache.
+    // exists as a symlink: writes would follow it and land outside the cache.
     reject_symlink(&lang_dir, &args.name)?;
-
-    std::fs::create_dir_all(&lang_dir).map_err(|e| {
-        Error::Operation(format!("Failed to create directory {}: {}", lang_dir.display(), e))
-    })?;
-
-    // Defence in depth: after creation, confirm the resolved directory is still
-    // contained in the resolved grammar cache before writing into it.
-    let canonical_dir = std::fs::canonicalize(&lang_dir).map_err(|e| {
-        Error::Operation(format!("Failed to resolve {}: {}", lang_dir.display(), e))
-    })?;
-    let canonical_cache = std::fs::canonicalize(&grammar_dir).map_err(|e| {
-        Error::Operation(format!("Failed to resolve {}: {}", grammar_dir.display(), e))
-    })?;
-    if !canonical_dir.starts_with(&canonical_cache) {
-        return Err(Error::Input(format!(
-            "Refusing to install grammar '{}': {} escapes the grammar cache",
-            args.name,
-            canonical_dir.display()
-        )));
-    }
-
-    // The target files themselves may be (or be raced into becoming) symlinks
-    // pointing outside the cache; a plain `copy`/`write` follows them and would
-    // overwrite the external target. Open each destination with `O_NOFOLLOW` so
-    // the write fails atomically if the final component is a symlink — closing
-    // the check-then-write (TOCTOU) window rather than pre-checking.
-    let target_wasm = lang_dir.join("grammar.wasm");
-    let wasm_bytes = std::fs::read(&args.wasm_file)
-        .map_err(|e| Error::Operation(format!("Failed to read WASM file: {}", e)))?;
-    write_no_follow(&target_wasm, &wasm_bytes, &args.name)?;
 
     let manifest_json = serde_json::json!({
         "name": args.name,
@@ -114,10 +82,24 @@ async fn handle_add(
         "extensions": extensions,
         "profile": {}
     });
-
-    let manifest_path = lang_dir.join("manifest.json");
     let manifest_str = serde_json::to_string_pretty(&manifest_json).unwrap();
-    write_no_follow(&manifest_path, manifest_str.as_bytes(), &args.name)?;
+    let wasm_bytes = std::fs::read(&args.wasm_file)
+        .map_err(|e| Error::Operation(format!("Failed to read WASM file: {}", e)))?;
+
+    // Stage the full install in a temp dir, then swap it into place atomically.
+    // Writing grammar.wasm and manifest.json directly into `lang_dir` would
+    // expose a truncated wasm before the manifest is committed, so an
+    // interrupted or failed second write would corrupt a previously-working
+    // install. Staging keeps the old install intact until a complete new one is
+    // ready.
+    install_staged(
+        &grammar_dir,
+        safe_name,
+        &lang_dir,
+        &wasm_bytes,
+        manifest_str.as_bytes(),
+        &args.name,
+    )?;
 
     // Loading WASM grammars at runtime requires the `wasm` feature (disabled by
     // default). Without it the grammar is installed on disk but can't actually
@@ -189,6 +171,87 @@ fn validate_name_and_extensions(name: &str, raw_extensions: &str) -> Result<Vec<
     }
 
     Ok(extensions)
+}
+
+/// Stage `grammar.wasm` + `manifest.json` in a temp dir under the cache, then
+/// swap them into `lang_dir` so the install is all-or-nothing.
+///
+/// Writing the two files straight into `lang_dir` would leave a truncated wasm
+/// with a stale/missing manifest if the second write fails or the process dies,
+/// corrupting a previously-working grammar. Instead we write both into a staging
+/// directory and only replace the target once both are on disk. On any failure
+/// before the swap, the existing install is left untouched.
+fn install_staged(
+    grammar_dir: &std::path::Path,
+    safe_name: &std::ffi::OsStr,
+    lang_dir: &std::path::Path,
+    wasm_bytes: &[u8],
+    manifest_bytes: &[u8],
+    name: &str,
+) -> Result<()> {
+    // Unique staging dir under the cache (hidden, pid-suffixed) so it's removed
+    // on failure and can never collide with a real grammar name.
+    let staging = grammar_dir.join(format!(
+        ".staging-{}-{}",
+        safe_name.to_string_lossy(),
+        std::process::id()
+    ));
+    let _ = std::fs::remove_dir_all(&staging); // clear any stale leftover
+    std::fs::create_dir_all(&staging).map_err(|e| {
+        Error::Operation(format!("Failed to create staging dir {}: {}", staging.display(), e))
+    })?;
+
+    // Everything below must clean up `staging` on error, so run it in a closure.
+    let result = (|| -> Result<()> {
+        // Confirm the staging dir resolves inside the cache before writing.
+        let canonical_stage = std::fs::canonicalize(&staging).map_err(|e| {
+            Error::Operation(format!("Failed to resolve {}: {}", staging.display(), e))
+        })?;
+        let canonical_cache = std::fs::canonicalize(grammar_dir).map_err(|e| {
+            Error::Operation(format!("Failed to resolve {}: {}", grammar_dir.display(), e))
+        })?;
+        if !canonical_stage.starts_with(&canonical_cache) {
+            return Err(Error::Input(format!(
+                "Refusing to install grammar '{name}': staging dir escapes the grammar cache"
+            )));
+        }
+
+        // Fresh staging dir, so these targets can't be pre-existing symlinks;
+        // write_no_follow still guards against a concurrent swap-in.
+        write_no_follow(&staging.join("grammar.wasm"), wasm_bytes, name)?;
+        write_no_follow(&staging.join("manifest.json"), manifest_bytes, name)?;
+
+        // Swap staging into place. Move any existing install aside first so we
+        // can roll back if the rename fails, then remove it once we've committed.
+        let backup = lang_dir.with_extension("bak-old");
+        let _ = std::fs::remove_dir_all(&backup);
+        let had_existing = lang_dir.exists();
+        if had_existing {
+            std::fs::rename(lang_dir, &backup).map_err(|e| {
+                Error::Operation(format!("Failed to move existing install aside: {e}"))
+            })?;
+        }
+        match std::fs::rename(&staging, lang_dir) {
+            Ok(()) => {
+                if had_existing {
+                    let _ = std::fs::remove_dir_all(&backup);
+                }
+                Ok(())
+            }
+            Err(e) => {
+                // Restore the previous install so a failed swap doesn't lose it.
+                if had_existing {
+                    let _ = std::fs::rename(&backup, lang_dir);
+                }
+                Err(Error::Operation(format!("Failed to install grammar '{name}': {e}")))
+            }
+        }
+    })();
+
+    if result.is_err() {
+        let _ = std::fs::remove_dir_all(&staging);
+    }
+    result
 }
 
 /// Reject `path` if it already exists as a symlink, so a subsequent

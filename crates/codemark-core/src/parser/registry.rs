@@ -73,6 +73,12 @@ impl LanguageRegistry {
         entries.sort_by_key(|e| e.path());
 
         for entry in entries {
+            // Skip dot-prefixed entries (e.g. `.staging-*` written mid-install by
+            // `codemark languages add`): they're transient and not grammars.
+            if entry.file_name().to_string_lossy().starts_with('.') {
+                continue;
+            }
+
             let manifest_path = entry.path().join("manifest.json");
             let wasm_path = entry.path().join("grammar.wasm");
 
@@ -336,6 +342,21 @@ mod tests {
         // Extensions are lowercased on insert, so "LUA" collapses onto "lua".
         assert_eq!(reg.by_extension.get("lua").map(|l| l.name()), Some("lua"));
         assert!(!reg.by_extension.contains_key("LUA"));
+    }
+
+    #[test]
+    fn discover_skips_dot_prefixed_staging_dirs() {
+        // A `.staging-*` dir written mid-install must not be scanned as a grammar.
+        let tmp = tempfile::tempdir().unwrap();
+        write_grammar(
+            tmp.path(),
+            ".staging-lua-123",
+            r#"{ "name": "lua", "extensions": ["lua"], "profile": {} }"#,
+            true,
+        );
+        let reg = LanguageRegistry::discover_in(tmp.path()).unwrap();
+        assert!(reg.by_name.is_empty());
+        assert!(reg.by_extension.is_empty());
     }
 
     #[test]
