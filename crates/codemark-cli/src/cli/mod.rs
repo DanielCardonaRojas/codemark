@@ -26,32 +26,74 @@ pub struct Cli {
     /// Database location; repeatable for cross-repo queries
     #[arg(
         long,
-        global = true,
         env = "CODEMARK_DB",
         value_delimiter = if cfg!(windows) { ';' } else { ':' }
     )]
     pub db: Vec<PathBuf>,
 
     /// Repository reference (owner/name) for identity-based discovery; repeatable
-    #[arg(long, global = true)]
+    #[arg(long)]
     pub repo: Vec<String>,
 
     /// Output format: json (default), table, line, markdown (or a custom template)
-    #[arg(long, global = true, env = "CODEMARK_FORMAT")]
+    #[arg(long, env = "CODEMARK_FORMAT")]
     pub format: Option<String>,
-
-    /// Enable debug-level logging to stderr
-    #[arg(long, global = true)]
-    pub verbose: bool,
 
     #[command(subcommand)]
     pub command: Command,
 }
 
+// --- Shared option groups flattened into subcommands ---
+
+/// `--db`, `--repo`, and `--format` for commands that query the bookmark
+/// database (potentially across repositories).
+#[derive(Debug, Clone, Default, clap::Args)]
+pub struct GlobalArgs {
+    /// Database location; repeatable for cross-repo queries
+    #[arg(
+        long,
+        value_delimiter = if cfg!(windows) { ';' } else { ':' }
+    )]
+    pub db: Vec<PathBuf>,
+
+    /// Repository reference (owner/name) for identity-based discovery; repeatable
+    #[arg(long)]
+    pub repo: Vec<String>,
+
+    /// Output format: json (default), table, line, markdown (or a custom template)
+    #[arg(long)]
+    pub format: Option<String>,
+}
+
+/// `--db` and `--format` only (no `--repo`), for commands that already define
+/// their own `--repo` field and would otherwise collide on the clap arg id.
+#[derive(Debug, Clone, Default, clap::Args)]
+pub struct DbFormatArgs {
+    /// Database location; repeatable for cross-repo queries
+    #[arg(
+        long,
+        value_delimiter = if cfg!(windows) { ';' } else { ':' }
+    )]
+    pub db: Vec<PathBuf>,
+
+    /// Output format: json (default), table, line, markdown (or a custom template)
+    #[arg(long)]
+    pub format: Option<String>,
+}
+
+/// `--format` only, for commands that produce output but never touch the
+/// bookmark database (languages, auth, install-skill).
+#[derive(Debug, Clone, Default, clap::Args)]
+pub struct OutputArgs {
+    /// Output format: json (default), table, line, markdown (or a custom template)
+    #[arg(long)]
+    pub format: Option<String>,
+}
+
 #[derive(Debug, Subcommand)]
 pub enum Command {
     /// Initialize a new codemark repository
-    Init,
+    Init(InitArgs),
 
     /// Create a bookmark from a file and byte range
     Add(AddArgs),
@@ -117,7 +159,7 @@ pub enum Command {
 
     /// Print a summary of bookmark health
     #[command(name = "status", hide = true)]
-    Status,
+    Status(StatusArgs),
 
     /// Import, export, and indexing
     Data(DataArgs),
@@ -172,6 +214,8 @@ pub enum Command {
 
 #[derive(Debug, clap::Args)]
 pub struct AddArgs {
+    #[command(flatten)]
+    pub global: GlobalArgs,
     /// Path to the file (relative or absolute) — required unless using --snippet
     #[arg(long)]
     pub file: Option<PathBuf>,
@@ -280,6 +324,8 @@ pub struct AddArgsOriginal {
 
 #[derive(Debug, clap::Args)]
 pub struct AddFromSnippetArgs {
+    #[command(flatten)]
+    pub global: GlobalArgs,
     /// Language identifier; auto-detected from file extension if omitted
     #[arg(long)]
     pub lang: Option<String>,
@@ -321,6 +367,8 @@ pub struct AddFromSnippetArgs {
 
 #[derive(Debug, clap::Args)]
 pub struct AddFromQueryArgs {
+    #[command(flatten)]
+    pub global: GlobalArgs,
     /// Path to the file (relative or absolute)
     #[arg(long)]
     pub file: PathBuf,
@@ -366,6 +414,8 @@ pub struct AddFromQueryArgs {
 
 #[derive(Debug, clap::Args)]
 pub struct ResolveArgs {
+    #[command(flatten)]
+    pub global: GlobalArgs,
     /// Bookmark ID (full UUID or unambiguous prefix)
     pub id: Option<String>,
 
@@ -400,6 +450,8 @@ pub struct ResolveArgs {
 
 #[derive(Debug, clap::Args)]
 pub struct ShowArgs {
+    #[command(flatten)]
+    pub global: GlobalArgs,
     /// Bookmark ID (full UUID or unambiguous prefix)
     pub id: String,
 
@@ -418,6 +470,8 @@ pub struct ShowArgs {
 
 #[derive(Debug, clap::Args)]
 pub struct RemoveArgs {
+    #[command(flatten)]
+    pub global: GlobalArgs,
     /// Bookmark IDs to remove (full UUID or unambiguous prefix)
     #[arg(required = true)]
     pub ids: Vec<String>,
@@ -425,6 +479,8 @@ pub struct RemoveArgs {
 
 #[derive(Debug, clap::Args)]
 pub struct HealArgs {
+    #[command(flatten)]
+    pub global: GlobalArgs,
     /// Heal only bookmarks for this file
     #[arg(long)]
     pub file: Option<PathBuf>,
@@ -464,6 +520,8 @@ pub struct HealArgs {
 
 #[derive(Debug, clap::Args)]
 pub struct ListArgs {
+    #[command(flatten)]
+    pub dbfmt: DbFormatArgs,
     /// Filter by tag
     #[arg(long)]
     pub tag: Option<String>,
@@ -528,6 +586,8 @@ pub struct ListArgs {
 
 #[derive(Debug, clap::Args)]
 pub struct PreviewArgs {
+    #[command(flatten)]
+    pub global: GlobalArgs,
     /// Bookmark ID (full UUID or unambiguous prefix)
     pub id: String,
 
@@ -559,6 +619,8 @@ pub struct PreviewArgs {
 
 #[derive(Debug, clap::Args)]
 pub struct SearchArgs {
+    #[command(flatten)]
+    pub dbfmt: DbFormatArgs,
     /// Search query (searches both notes and context)
     pub query: Option<String>,
 
@@ -632,6 +694,8 @@ pub struct SearchArgs {
 #[cfg(feature = "semantic")]
 #[derive(Debug, clap::Args)]
 pub struct ReindexArgs {
+    #[command(flatten)]
+    pub global: GlobalArgs,
     /// Only reindex bookmarks for this language
     #[arg(long)]
     pub lang: Option<String>,
@@ -690,6 +754,8 @@ pub enum CollectionCommand {
 
 #[derive(Debug, clap::Args)]
 pub struct CollectionCreateArgs {
+    #[command(flatten)]
+    pub global: GlobalArgs,
     /// Collection name (lowercase, alphanumeric, hyphens)
     pub name: String,
 
@@ -712,6 +778,8 @@ pub struct CollectionCreateArgs {
 
 #[derive(Debug, clap::Args)]
 pub struct CollectionDeleteArgs {
+    #[command(flatten)]
+    pub global: GlobalArgs,
     /// Collection name
     pub name: String,
 
@@ -722,6 +790,8 @@ pub struct CollectionDeleteArgs {
 
 #[derive(Debug, clap::Args)]
 pub struct CollectionAddArgs {
+    #[command(flatten)]
+    pub global: GlobalArgs,
     /// Collection name
     pub name: String,
 
@@ -748,6 +818,8 @@ pub struct CollectionAddArgs {
 
 #[derive(Debug, clap::Args)]
 pub struct CollectionReorderArgs {
+    #[command(flatten)]
+    pub global: GlobalArgs,
     /// Collection name
     pub name: String,
 
@@ -758,6 +830,8 @@ pub struct CollectionReorderArgs {
 
 #[derive(Debug, clap::Args)]
 pub struct CollectionRemoveArgs {
+    #[command(flatten)]
+    pub global: GlobalArgs,
     /// Collection name
     pub name: String,
 
@@ -768,6 +842,8 @@ pub struct CollectionRemoveArgs {
 
 #[derive(Debug, clap::Args)]
 pub struct CollectionListArgs {
+    #[command(flatten)]
+    pub dbfmt: DbFormatArgs,
     /// List collections containing this bookmark
     #[arg(long)]
     pub bookmark: Option<String>,
@@ -783,12 +859,16 @@ pub struct CollectionListArgs {
 
 #[derive(Debug, clap::Args)]
 pub struct CollectionShowArgs {
+    #[command(flatten)]
+    pub global: GlobalArgs,
     /// Collection name
     pub name: String,
 }
 
 #[derive(Debug, clap::Args)]
 pub struct CollectionResolveArgs {
+    #[command(flatten)]
+    pub global: GlobalArgs,
     /// Collection name
     pub name: String,
 }
@@ -813,6 +893,8 @@ pub enum CollectionTagCommand {
 
 #[derive(Debug, clap::Args)]
 pub struct CollectionTagAddArgs {
+    #[command(flatten)]
+    pub global: GlobalArgs,
     /// Collection name
     pub name: String,
 
@@ -823,6 +905,8 @@ pub struct CollectionTagAddArgs {
 
 #[derive(Debug, clap::Args)]
 pub struct CollectionTagRmArgs {
+    #[command(flatten)]
+    pub global: GlobalArgs,
     /// Collection name
     pub name: String,
 
@@ -833,6 +917,8 @@ pub struct CollectionTagRmArgs {
 
 #[derive(Debug, clap::Args)]
 pub struct CollectionTagListArgs {
+    #[command(flatten)]
+    pub global: GlobalArgs,
     /// Collection name
     pub name: String,
 
@@ -864,6 +950,8 @@ pub enum CollectionLinkCommand {
 
 #[derive(Debug, clap::Args)]
 pub struct CollectionLinkAddArgs {
+    #[command(flatten)]
+    pub global: GlobalArgs,
     /// Collection name
     pub name: String,
 
@@ -886,6 +974,8 @@ pub struct CollectionLinkAddArgs {
 
 #[derive(Debug, clap::Args)]
 pub struct CollectionLinkRmArgs {
+    #[command(flatten)]
+    pub global: GlobalArgs,
     /// Collection name
     pub name: String,
 
@@ -896,12 +986,16 @@ pub struct CollectionLinkRmArgs {
 
 #[derive(Debug, clap::Args)]
 pub struct CollectionLinkListArgs {
+    #[command(flatten)]
+    pub global: GlobalArgs,
     /// Collection name
     pub name: String,
 }
 
 #[derive(Debug, clap::Args)]
 pub struct CollectionLinkReorderArgs {
+    #[command(flatten)]
+    pub global: GlobalArgs,
     /// Collection name
     pub name: String,
 
@@ -912,6 +1006,8 @@ pub struct CollectionLinkReorderArgs {
 
 #[derive(Debug, clap::Args)]
 pub struct DiffArgs {
+    #[command(flatten)]
+    pub global: GlobalArgs,
     /// Show bookmarks affected since this commit
     #[arg(long)]
     pub since: Option<String>,
@@ -919,6 +1015,8 @@ pub struct DiffArgs {
 
 #[derive(Debug, clap::Args)]
 pub struct GcArgs {
+    #[command(flatten)]
+    pub global: GlobalArgs,
     /// Remove archived bookmarks older than this duration (e.g., 30d, 2w, 6m)
     #[arg(long, default_value = "30d")]
     pub older_than: String,
@@ -930,6 +1028,8 @@ pub struct GcArgs {
 
 #[derive(Debug, clap::Args)]
 pub struct ExportArgs {
+    #[command(flatten)]
+    pub global: GlobalArgs,
     /// Export format (json or csv)
     #[arg(long = "export-format", default_value = "json")]
     pub export_format: ExportFormat,
@@ -955,6 +1055,8 @@ pub enum ExportFormat {
 
 #[derive(Debug, clap::Args)]
 pub struct ImportArgs {
+    #[command(flatten)]
+    pub global: GlobalArgs,
     /// Path to JSON export file
     pub file: PathBuf,
 }
@@ -967,6 +1069,8 @@ pub struct CompletionsArgs {
 
 #[derive(Debug, clap::Args)]
 pub struct EditArgs {
+    #[command(flatten)]
+    pub global: GlobalArgs,
     /// Bookmark ID (full UUID or unambiguous prefix)
     pub id: String,
 
@@ -989,6 +1093,8 @@ pub struct EditArgs {
 
 #[derive(Debug, clap::Args)]
 pub struct AnnotateArgs {
+    #[command(flatten)]
+    pub global: GlobalArgs,
     /// Bookmark ID (full UUID or unambiguous prefix)
     pub id: String,
 
@@ -1021,12 +1127,16 @@ pub struct AnnotateArgs {
 
 #[derive(Debug, clap::Args)]
 pub struct OpenArgs {
+    #[command(flatten)]
+    pub global: GlobalArgs,
     /// Bookmark ID (full UUID or unambiguous prefix)
     pub id: String,
 }
 
 #[derive(Debug, clap::Args)]
 pub struct PublishArgs {
+    #[command(flatten)]
+    pub global: GlobalArgs,
     /// Local collection name to publish
     pub collection: String,
 
@@ -1057,6 +1167,8 @@ pub struct PublishArgs {
 
 #[derive(Debug, clap::Args)]
 pub struct PullArgs {
+    #[command(flatten)]
+    pub global: GlobalArgs,
     /// Tour URL or ID
     pub tour: String,
 
@@ -1126,6 +1238,8 @@ pub enum TourCommand {
 
 #[derive(Debug, clap::Args)]
 pub struct TourListArgs {
+    #[command(flatten)]
+    pub dbfmt: DbFormatArgs,
     /// Server URL or name (for remote tours)
     #[arg(long)]
     pub server: Option<String>,
@@ -1153,6 +1267,8 @@ pub struct TourListArgs {
 
 #[derive(Debug, clap::Args)]
 pub struct CollectionAnnotateArgs {
+    #[command(flatten)]
+    pub global: GlobalArgs,
     /// Collection name
     pub name: String,
 
@@ -1180,7 +1296,7 @@ pub struct HealthArgs {
 #[derive(Debug, Subcommand)]
 pub enum HealthCommand {
     /// Print health summary
-    Status,
+    Status(HealthStatusArgs),
 
     /// Run resolution/validation pass
     Check(HealArgs),
@@ -1220,7 +1336,7 @@ pub struct RepoArgs {
 #[derive(Debug, Subcommand)]
 pub enum RepoCommand {
     /// List all known repositories in the global registry
-    List,
+    List(RepoListArgs),
 
     /// Show details for a repository (current or by owner/name)
     #[command(name = "show")]
@@ -1234,7 +1350,7 @@ pub enum RepoCommand {
     ///
     /// Run this from the repository's new location after moving it on disk to update
     /// the registry without recreating .codemark/.
-    Sync,
+    Sync(RepoSyncArgs),
 
     /// Remove registry entries whose repo_root no longer exists on disk
     Prune(RepoPruneArgs),
@@ -1242,6 +1358,8 @@ pub enum RepoCommand {
 
 #[derive(Debug, clap::Args)]
 pub struct RepoPruneArgs {
+    #[command(flatten)]
+    pub output: OutputArgs,
     /// Show what would be removed without modifying the registry
     #[arg(long)]
     pub dry_run: bool,
@@ -1249,12 +1367,16 @@ pub struct RepoPruneArgs {
 
 #[derive(Debug, clap::Args)]
 pub struct RepoShowArgs {
+    #[command(flatten)]
+    pub dbfmt: DbFormatArgs,
     /// Repository reference (owner/name) - defaults to current repo
     pub repo: Option<String>,
 }
 
 #[derive(Debug, clap::Args)]
 pub struct RepoSetServerArgs {
+    #[command(flatten)]
+    pub dbfmt: DbFormatArgs,
     /// Server URL (e.g., https://codemark.example.com)
     pub server: String,
 
@@ -1278,11 +1400,13 @@ pub enum AuthCommand {
     Logout(AuthLogoutArgs),
 
     /// List authenticated servers
-    List,
+    List(AuthListArgs),
 }
 
 #[derive(Debug, clap::Args)]
 pub struct AuthLoginArgs {
+    #[command(flatten)]
+    pub output: OutputArgs,
     /// Server URL (defaults to the public Codetours server)
     #[arg(default_value = crate::DEFAULT_SERVER_URL)]
     pub server: String,
@@ -1302,6 +1426,8 @@ pub struct AuthLoginArgs {
 
 #[derive(Debug, clap::Args)]
 pub struct AuthLogoutArgs {
+    #[command(flatten)]
+    pub output: OutputArgs,
     /// Server URL (e.g., https://codemark.example.com)
     pub server: String,
 
@@ -1313,6 +1439,8 @@ pub struct AuthLogoutArgs {
 /// Arguments for the `codemark install-skill` subcommand.
 #[derive(Debug, clap::Args)]
 pub struct InstallSkillArgs {
+    #[command(flatten)]
+    pub output: OutputArgs,
     /// Target AI coding agent (determines the install directory)
     #[arg(long, value_enum)]
     pub agent: SkillAgent,
@@ -1366,14 +1494,16 @@ pub enum LanguagesCommand {
     Add(LanguagesAddArgs),
 
     /// List all supported languages (built-in and dynamic)
-    List,
+    List(LanguagesListArgs),
 
     /// Validate installed dynamic WASM grammars
-    Validate,
+    Validate(LanguagesValidateArgs),
 }
 
 #[derive(Debug, clap::Args)]
 pub struct LanguagesAddArgs {
+    #[command(flatten)]
+    pub output: OutputArgs,
     /// Path to the compiled .wasm grammar file
     pub wasm_file: std::path::PathBuf,
 
@@ -1384,4 +1514,54 @@ pub struct LanguagesAddArgs {
     /// Comma-separated list of file extensions (e.g., "rb,ru")
     #[arg(long, short)]
     pub extensions: String,
+}
+
+// --- Args structs for formerly unit-variant subcommands ---
+
+#[derive(Debug, clap::Args)]
+pub struct InitArgs {
+    #[command(flatten)]
+    pub global: GlobalArgs,
+}
+
+#[derive(Debug, clap::Args)]
+pub struct StatusArgs {
+    #[command(flatten)]
+    pub global: GlobalArgs,
+}
+
+#[derive(Debug, clap::Args)]
+pub struct HealthStatusArgs {
+    #[command(flatten)]
+    pub global: GlobalArgs,
+}
+
+#[derive(Debug, clap::Args)]
+pub struct RepoListArgs {
+    #[command(flatten)]
+    pub output: OutputArgs,
+}
+
+#[derive(Debug, clap::Args)]
+pub struct RepoSyncArgs {
+    #[command(flatten)]
+    pub global: GlobalArgs,
+}
+
+#[derive(Debug, clap::Args)]
+pub struct AuthListArgs {
+    #[command(flatten)]
+    pub output: OutputArgs,
+}
+
+#[derive(Debug, clap::Args)]
+pub struct LanguagesListArgs {
+    #[command(flatten)]
+    pub output: OutputArgs,
+}
+
+#[derive(Debug, clap::Args)]
+pub struct LanguagesValidateArgs {
+    #[command(flatten)]
+    pub output: OutputArgs,
 }

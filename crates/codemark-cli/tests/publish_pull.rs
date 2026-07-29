@@ -1,4 +1,4 @@
-use codemark_cli::cli::{Cli, Command, PublishArgs, PullArgs, handlers};
+use codemark_cli::cli::{Cli, Command, DbFormatArgs, GlobalArgs, PublishArgs, PullArgs, handlers};
 use codemark_core::engine::bookmark::{Bookmark, Collection, Visibility};
 use codemark_core::storage::db::Database;
 use codetours_server::{
@@ -104,8 +104,8 @@ async fn test_cli_publish_pull_roundtrip() {
         db: vec![db_path.clone()],
         repo: vec![],
         format: None,
-        verbose: true,
         command: Command::Publish(PublishArgs {
+            global: GlobalArgs { db: vec![], repo: vec![], format: None },
             collection: "test-collection".to_string(),
             server: Some(server_url.clone()),
             token: Some("test-token".to_string()),
@@ -116,7 +116,7 @@ async fn test_cli_publish_pull_roundtrip() {
         }),
     };
 
-    handlers::dispatch(&cli).await.unwrap();
+    handlers::dispatch(cli).await.unwrap();
 
     // 4. Verify publication in server (via tour list)
     // We'll use the CLI to list tours
@@ -125,9 +125,9 @@ async fn test_cli_publish_pull_roundtrip() {
         db: vec![db_path.clone()],
         repo: vec![],
         format: None,
-        verbose: true,
         command: Command::Tour(codemark_cli::cli::TourArgs {
             command: codemark_cli::cli::TourCommand::List(codemark_cli::cli::TourListArgs {
+                dbfmt: DbFormatArgs { db: vec![], format: None },
                 server: Some(server_url.clone()),
                 // `GET /tours` is repo-scoped now; name a repo (the published tour
                 // has no repo_url, so the list is simply empty — this step just
@@ -140,22 +140,22 @@ async fn test_cli_publish_pull_roundtrip() {
             }),
         }),
     };
-    handlers::dispatch(&list_cli).await.unwrap();
+    handlers::dispatch(list_cli).await.unwrap();
 
     // 5. Run Pull (now persistent by default, with custom name)
     let pull_cli = Cli {
         db: vec![db_path.clone()],
         repo: vec![],
         format: None,
-        verbose: true,
         command: Command::Pull(PullArgs {
+            global: GlobalArgs { db: vec![], repo: vec![], format: None },
             tour: format!("{}/tours/{}", server_url, col_id),
             server: None,
             token: Some("test-token".to_string()),
             name: Some("pulled-collection".to_string()),
         }),
     };
-    handlers::dispatch(&pull_cli).await.unwrap();
+    handlers::dispatch(pull_cli).await.unwrap();
 
     // 6. Verify pulled collection
     let pulled_col = db

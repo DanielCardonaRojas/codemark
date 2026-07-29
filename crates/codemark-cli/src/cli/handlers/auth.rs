@@ -12,7 +12,7 @@ pub async fn handle_auth(cli: &Cli, mode: &OutputMode, args: &AuthArgs) -> Resul
     match &args.command {
         AuthCommand::Login(args) => handle_login(cli, mode, args).await,
         AuthCommand::Logout(args) => handle_logout(cli, mode, args).await,
-        AuthCommand::List => handle_list(cli, mode).await,
+        AuthCommand::List(_) => handle_list(cli, mode).await,
     }
 }
 

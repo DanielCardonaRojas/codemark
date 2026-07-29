@@ -75,12 +75,158 @@ pub fn detect_tour_list_repo(args: &TourListArgs) -> Option<String> {
     Some(tour::normalize_repo_url(&origin_url))
 }
 
+/// Merge subcommand-level `--db`/`--repo`/`--format` into the top-level `Cli`
+/// fields so handlers can read them uniformly from `cli.db` / `cli.repo` /
+/// `cli.format`.
+///
+/// Without `global = true`, clap stores values specified *after* the subcommand
+/// (e.g. `codemark list --db X`) in the subcommand's own args struct, not in
+/// `Cli`. Handlers all read from `Cli`, so we copy the subcommand values up.
+/// Non-empty subcommand values override empty top-level ones.
+fn merge_globals(cli: &mut Cli) {
+    use std::path::PathBuf;
+
+    type Globals = (Vec<PathBuf>, Vec<String>, Option<String>);
+
+    fn g_global(a: &crate::cli::GlobalArgs) -> Globals {
+        (a.db.clone(), a.repo.clone(), a.format.clone())
+    }
+    fn g_dbformat(d: &crate::cli::DbFormatArgs) -> Globals {
+        (d.db.clone(), Vec::new(), d.format.clone())
+    }
+    fn g_output(o: &crate::cli::OutputArgs) -> Globals {
+        (Vec::new(), Vec::new(), o.format.clone())
+    }
+    fn g_none() -> Globals {
+        (Vec::new(), Vec::new(), None)
+    }
+
+    let extracted: Globals = match &cli.command {
+        Command::Init(a) => g_global(&a.global),
+        Command::Add(a) => g_global(&a.global),
+        Command::AddFromSnippet(a) => g_global(&a.global),
+        Command::AddFromQuery(a) => g_global(&a.global),
+        Command::Resolve(a) => g_global(&a.global),
+        Command::Show(a) => g_global(&a.global),
+        Command::Preview(a) => g_global(&a.global),
+        Command::Remove(a) => g_global(&a.global),
+        Command::Heal(a) => g_global(&a.global),
+        Command::Status(a) => g_global(&a.global),
+        Command::List(a) => g_dbformat(&a.dbfmt),
+        Command::Search(a) => g_dbformat(&a.dbfmt),
+        #[cfg(feature = "semantic")]
+        Command::Reindex(a) => g_global(&a.global),
+        Command::Collection(args) => match &args.command {
+            crate::cli::CollectionCommand::Create(a) => g_global(&a.global),
+            crate::cli::CollectionCommand::Delete(a) => g_global(&a.global),
+            crate::cli::CollectionCommand::Add(a) => g_global(&a.global),
+            crate::cli::CollectionCommand::Remove(a) => g_global(&a.global),
+            crate::cli::CollectionCommand::List(a) => g_dbformat(&a.dbfmt),
+            crate::cli::CollectionCommand::Show(a) => g_global(&a.global),
+            crate::cli::CollectionCommand::Resolve(a) => g_global(&a.global),
+            crate::cli::CollectionCommand::Reorder(a) => g_global(&a.global),
+            crate::cli::CollectionCommand::Tag(a) => match &a.command {
+                crate::cli::CollectionTagCommand::Add(a) => g_global(&a.global),
+                crate::cli::CollectionTagCommand::Rm(a) => g_global(&a.global),
+                crate::cli::CollectionTagCommand::List(a) => g_global(&a.global),
+            },
+            crate::cli::CollectionCommand::Link(a) => match &a.command {
+                crate::cli::CollectionLinkCommand::Add(a) => g_global(&a.global),
+                crate::cli::CollectionLinkCommand::Rm(a) => g_global(&a.global),
+                crate::cli::CollectionLinkCommand::List(a) => g_global(&a.global),
+                crate::cli::CollectionLinkCommand::Reorder(a) => g_global(&a.global),
+            },
+        },
+        Command::Edit(a) => g_global(&a.global),
+        Command::Annotate(a) => g_global(&a.global),
+        Command::Open(a) => g_global(&a.global),
+        Command::Diff(a) => g_global(&a.global),
+        Command::Gc(a) => g_global(&a.global),
+        Command::Export(a) => g_global(&a.global),
+        Command::Import(a) => g_global(&a.global),
+        Command::Completions(_) => g_none(),
+        Command::Tour(args) => match &args.command {
+            crate::cli::TourCommand::List(a) => g_dbformat(&a.dbfmt),
+            crate::cli::TourCommand::Create(a) => g_global(&a.global),
+            crate::cli::TourCommand::Add(a) => g_global(&a.global),
+            crate::cli::TourCommand::Remove(a) => g_global(&a.global),
+            crate::cli::TourCommand::Delete(a) => g_global(&a.global),
+            crate::cli::TourCommand::Show(a) => g_global(&a.global),
+            crate::cli::TourCommand::Push(a) => g_global(&a.global),
+            crate::cli::TourCommand::Pull(a) => g_global(&a.global),
+            crate::cli::TourCommand::Diff(a) => g_global(&a.global),
+            crate::cli::TourCommand::Resolve(a) => g_global(&a.global),
+            crate::cli::TourCommand::Reorder(a) => g_global(&a.global),
+            crate::cli::TourCommand::Tag(a) => match &a.command {
+                crate::cli::CollectionTagCommand::Add(a) => g_global(&a.global),
+                crate::cli::CollectionTagCommand::Rm(a) => g_global(&a.global),
+                crate::cli::CollectionTagCommand::List(a) => g_global(&a.global),
+            },
+            crate::cli::TourCommand::Link(a) => match &a.command {
+                crate::cli::CollectionLinkCommand::Add(a) => g_global(&a.global),
+                crate::cli::CollectionLinkCommand::Rm(a) => g_global(&a.global),
+                crate::cli::CollectionLinkCommand::List(a) => g_global(&a.global),
+                crate::cli::CollectionLinkCommand::Reorder(a) => g_global(&a.global),
+            },
+            crate::cli::TourCommand::Annotate(a) => g_global(&a.global),
+        },
+        Command::Publish(a) => g_global(&a.global),
+        Command::Pull(a) => g_global(&a.global),
+        Command::Health(args) => match &args.command {
+            crate::cli::HealthCommand::Status(a) => g_global(&a.global),
+            crate::cli::HealthCommand::Check(a) => g_global(&a.global),
+            crate::cli::HealthCommand::Gc(a) => g_global(&a.global),
+        },
+        Command::Data(args) => match &args.command {
+            crate::cli::DataCommand::Export(a) => g_global(&a.global),
+            crate::cli::DataCommand::Import(a) => g_global(&a.global),
+            #[cfg(feature = "semantic")]
+            crate::cli::DataCommand::Reindex(a) => g_global(&a.global),
+        },
+        Command::Repo(args) => match &args.command {
+            crate::cli::RepoCommand::List(a) => g_output(&a.output),
+            crate::cli::RepoCommand::ShowRepo(a) => g_dbformat(&a.dbfmt),
+            crate::cli::RepoCommand::SetServer(a) => g_dbformat(&a.dbfmt),
+            crate::cli::RepoCommand::Sync(a) => g_global(&a.global),
+            crate::cli::RepoCommand::Prune(a) => g_output(&a.output),
+        },
+        Command::Auth(args) => match &args.command {
+            crate::cli::AuthCommand::Login(a) => g_output(&a.output),
+            crate::cli::AuthCommand::Logout(a) => g_output(&a.output),
+            crate::cli::AuthCommand::List(a) => g_output(&a.output),
+        },
+        Command::Languages(args) => match &args.command {
+            Some(crate::cli::LanguagesCommand::Add(a)) => g_output(&a.output),
+            Some(crate::cli::LanguagesCommand::List(a)) => g_output(&a.output),
+            Some(crate::cli::LanguagesCommand::Validate(a)) => g_output(&a.output),
+            None => g_none(),
+        },
+        Command::InstallSkill(a) => g_output(&a.output),
+        Command::External(_) => g_none(),
+    };
+
+    if !extracted.0.is_empty() {
+        cli.db.extend(extracted.0);
+    }
+    if !extracted.1.is_empty() {
+        cli.repo.extend(extracted.1);
+    }
+    if let Some(f) = extracted.2 {
+        cli.format = Some(f);
+    }
+}
+
 /// Dispatch a parsed CLI command to its handler.
-pub async fn dispatch(cli: &Cli) -> Result<()> {
+pub async fn dispatch(mut cli: Cli) -> Result<()> {
+    // Merge subcommand-level global options (--db/--repo/--format) into the
+    // top-level Cli fields so handlers can read them uniformly.
+    merge_globals(&mut cli);
+    let cli = &cli;
+
     // JSON is the default output format for all commands
     let mode = OutputMode::resolve_with_default(false, cli.format.as_deref(), true);
     match &cli.command {
-        Command::Init => handle_init(cli, &mode).await,
+        Command::Init(_) => handle_init(cli, &mode).await,
         Command::Add(args) => handle_add_v2(cli, &mode, args).await,
         Command::AddFromSnippet(args) => bookmark::handle_add_from_snippet(cli, &mode, args).await,
         Command::AddFromQuery(args) => bookmark::handle_add_from_query(cli, &mode, args).await,
@@ -89,7 +235,7 @@ pub async fn dispatch(cli: &Cli) -> Result<()> {
         Command::Preview(args) => handle_preview(cli, args).await,
         Command::Remove(args) => bookmark::handle_remove(cli, &mode, args).await,
         Command::Heal(args) => maintenance::handle_heal(cli, &mode, args).await,
-        Command::Status => maintenance::handle_status(cli, &mode).await,
+        Command::Status(_) => maintenance::handle_status(cli, &mode).await,
         Command::List(args) => handle_list(cli, &mode, args).await,
         Command::Search(args) => search::handle_search(cli, &mode, args).await,
         Command::Languages(args) => languages::handle_languages(cli, &mode, args).await,
@@ -183,7 +329,7 @@ async fn dispatch_tour_v2(cli: &Cli, mode: &OutputMode, args: &TourArgs) -> Resu
 async fn dispatch_health(cli: &Cli, mode: &OutputMode, args: &HealthArgs) -> Result<()> {
     use crate::cli::HealthCommand;
     match &args.command {
-        HealthCommand::Status => maintenance::handle_status(cli, mode).await,
+        HealthCommand::Status(_) => maintenance::handle_status(cli, mode).await,
         HealthCommand::Check(a) => maintenance::handle_heal(cli, mode, a).await,
         HealthCommand::Gc(a) => maintenance::handle_gc(cli, mode, a).await,
     }
@@ -211,6 +357,7 @@ pub async fn handle_add_v2(cli: &Cli, mode: &OutputMode, args: &AddArgs) -> Resu
             .as_ref()
             .ok_or_else(|| Error::Input("--file is required when using --snippet".to_string()))?;
         let snippet_args = cli::AddFromSnippetArgs {
+            global: GlobalArgs::default(),
             lang: args.lang.clone(),
             file: file.clone(),
             tag: args.tag.clone(),
@@ -231,6 +378,7 @@ pub async fn handle_add_v2(cli: &Cli, mode: &OutputMode, args: &AddArgs) -> Resu
             .as_ref()
             .ok_or_else(|| Error::Input("--file is required when using --query".to_string()))?;
         let query_args = cli::AddFromQueryArgs {
+            global: GlobalArgs::default(),
             lang: args.lang.clone(),
             file: file.clone(),
             query: query.clone(),
@@ -268,8 +416,8 @@ pub async fn handle_add_v2(cli: &Cli, mode: &OutputMode, args: &AddArgs) -> Resu
 /// V2 show handler that supports --location and --no-preview flags.
 pub async fn handle_show_v2(cli: &Cli, mode: &OutputMode, args: &ShowArgs) -> Result<()> {
     if args.location {
-        // Resolve mode (old resolve behavior)
         let resolve_args = crate::cli::ResolveArgs {
+            global: GlobalArgs::default(),
             id: Some(args.id.clone()),
             tag: None,
             health: None,
@@ -285,6 +433,7 @@ pub async fn handle_show_v2(cli: &Cli, mode: &OutputMode, args: &ShowArgs) -> Re
     // For backward compatibility, use the original show behavior (metadata + resolutions)
     // The --no-preview flag is for future use when we implement the merged show+preview
     let show_args = crate::cli::ShowArgs {
+        global: GlobalArgs::default(),
         id: args.id.clone(),
         location: false,
         no_preview: false,
@@ -314,6 +463,7 @@ pub async fn handle_edit_v2(cli: &Cli, mode: &OutputMode, args: &EditArgs) -> Re
     }
 
     let annotate_args = cli::AnnotateArgs {
+        global: GlobalArgs::default(),
         id: args.id.clone(),
         note: args.note.clone(),
         comment: args.comment.clone(),
@@ -1976,6 +2126,7 @@ mod tests {
     fn test_detect_tour_list_repo_with_all_flag() {
         // When --all is specified, detection should be bypassed
         let args = TourListArgs {
+            dbfmt: DbFormatArgs::default(),
             server: None,
             repo: None,
             all: true,
@@ -1990,6 +2141,7 @@ mod tests {
     fn test_detect_tour_list_repo_with_explicit_repo() {
         // When --repo is explicitly provided, don't override it
         let args = TourListArgs {
+            dbfmt: DbFormatArgs::default(),
             server: None,
             repo: Some("owner/repo".to_string()),
             all: false,
@@ -2004,6 +2156,7 @@ mod tests {
     fn test_detect_tour_list_repo_priority_all_over_repo() {
         // --all takes precedence even if --repo is provided (enforced by clap conflicts_with)
         let args = TourListArgs {
+            dbfmt: DbFormatArgs::default(),
             server: None,
             repo: Some("owner/repo".to_string()),
             all: true,
@@ -2020,6 +2173,7 @@ mod tests {
         // This test verifies the function doesn't panic and either returns
         // a normalized repo URL (if in a git repo with origin) or None (if not)
         let args = TourListArgs {
+            dbfmt: DbFormatArgs::default(),
             server: None,
             repo: None,
             all: false,

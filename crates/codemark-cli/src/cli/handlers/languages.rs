@@ -9,8 +9,8 @@ pub async fn handle_languages(
 ) -> Result<()> {
     match &args.command {
         Some(LanguagesCommand::Add(add_args)) => handle_add(cli, mode, add_args).await,
-        Some(LanguagesCommand::Validate) => handle_validate(cli, mode).await,
-        Some(LanguagesCommand::List) | None => handle_list(cli, mode).await,
+        Some(LanguagesCommand::Validate(_)) => handle_validate(cli, mode).await,
+        Some(LanguagesCommand::List(_)) | None => handle_list(cli, mode).await,
     }
 }
 
