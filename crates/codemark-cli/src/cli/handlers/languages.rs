@@ -161,6 +161,62 @@ fn validate_name_and_extensions(name: &str, raw_extensions: &str) -> Result<Vec<
     Ok(extensions)
 }
 
+/// Per-grammar-name exclusive lock, held across the install swap so two
+/// concurrent `codemark languages add` for the same name can't interleave and
+/// clobber the shared deterministic backup. Released (lock file removed) on drop,
+/// including on error or panic.
+struct InstallLock(std::path::PathBuf);
+
+impl InstallLock {
+    fn acquire(
+        grammar_dir: &std::path::Path,
+        safe_name: &std::ffi::OsStr,
+        name: &str,
+    ) -> Result<Self> {
+        let lock_path = grammar_dir.join(format!(".lock-{}", safe_name.to_string_lossy()));
+        // `create_new` is an atomic "create only if absent", so exactly one
+        // process wins. Retry briefly for a concurrent installer to finish;
+        // reap an orphaned lock older than the timeout so a killed process can't
+        // wedge future installs.
+        let start = std::time::Instant::now();
+        let timeout = std::time::Duration::from_secs(10);
+        loop {
+            match std::fs::OpenOptions::new().write(true).create_new(true).open(&lock_path) {
+                Ok(_) => return Ok(InstallLock(lock_path)),
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
+                    let stale = std::fs::metadata(&lock_path)
+                        .and_then(|m| m.modified())
+                        .map(|t| t.elapsed().unwrap_or_default() > timeout)
+                        .unwrap_or(false);
+                    if stale {
+                        let _ = std::fs::remove_file(&lock_path);
+                        continue;
+                    }
+                    if start.elapsed() > timeout {
+                        return Err(Error::Operation(format!(
+                            "Another install of grammar '{name}' is in progress (lock {} held)",
+                            lock_path.display()
+                        )));
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                }
+                Err(e) => {
+                    return Err(Error::Operation(format!(
+                        "Failed to acquire install lock {}: {e}",
+                        lock_path.display()
+                    )));
+                }
+            }
+        }
+    }
+}
+
+impl Drop for InstallLock {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
 /// Stage `grammar.wasm` + `manifest.json` in a temp dir under the cache, then
 /// swap them into `lang_dir` so the install is all-or-nothing.
 ///
@@ -221,6 +277,13 @@ fn install_staged(
                 Error::Input(format!("'{}' is not a loadable WASM grammar: {e}", name))
             })?;
         }
+
+        // Serialize the swap against another `languages add` replacing the same
+        // grammar. The backup path is deterministic (so discovery can recover a
+        // crash-interrupted swap), which means two concurrent same-name swaps
+        // would otherwise share and clobber it. A per-name lock makes the
+        // move-aside / rename-in / drop-backup sequence mutually exclusive.
+        let _lock = InstallLock::acquire(grammar_dir, safe_name, name)?;
 
         // No existing install: a single rename is fully atomic — the target
         // either doesn't exist or exists complete, never partial.
@@ -566,5 +629,27 @@ mod tests {
     fn accepts_a_normal_dynamic_grammar() {
         let exts = validate_name_and_extensions("lua", "lua").unwrap();
         assert_eq!(exts, vec!["lua".to_string()]);
+    }
+
+    #[test]
+    fn install_lock_is_mutually_exclusive_and_released_on_drop() {
+        let tmp = tempfile::tempdir().unwrap();
+        let name = std::ffi::OsString::from("lua");
+
+        let lock = InstallLock::acquire(tmp.path(), &name, "lua").unwrap();
+        // A second acquire for the same name can't win while the first is held.
+        // (Timeout is 10s; retry a couple times fast, expecting contention.)
+        let held = tmp.path().join(".lock-lua");
+        assert!(held.exists());
+        assert!(
+            std::fs::OpenOptions::new().write(true).create_new(true).open(&held).is_err(),
+            "lock file must already exist while held"
+        );
+
+        drop(lock);
+        // Released on drop, so the name is installable again.
+        assert!(!held.exists());
+        let lock2 = InstallLock::acquire(tmp.path(), &name, "lua").unwrap();
+        drop(lock2);
     }
 }
