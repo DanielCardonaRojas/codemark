@@ -24,6 +24,12 @@ default = ["semantic"]
 # Semantic (vector embedding) search. Enabled by default; disable with
 # `--no-default-features` to build without the candle/hf-hub stack.
 semantic = ["codemark-core/semantic"]
+# Dynamic WASM grammar loading. Opt-in: enables wasmtime so additional language
+# grammars can be loaded at runtime from the platform cache dir (the
+# `$CODEMARK_GRAMMARS_DIR` override, else `BaseDirs::cache_dir()/codemark/grammars`
+# — e.g. ~/.cache on Linux, ~/Library/Caches on macOS). Disabled by default to
+# keep dev/CI builds lean; enable with `--features wasm`.
+wasm = ["codemark-core/wasm"]
 man-pages = ["clap_mangen"]
 
 [dev-dependencies]
@@ -65,3 +71,8 @@ open = "5.3.5"
 copypasta = "0.10.2"
 tracing = { workspace = true }
 zip = { version = "2", default-features = false, features = ["deflate"] }
+
+# O_NOFOLLOW when writing installed grammar files, to close a symlink-swap
+# TOCTOU when writing into the grammar cache. Unix-only.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"

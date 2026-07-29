@@ -49,8 +49,10 @@ pub enum Event {
     /// Remote tours listing failed.
     RemoteToursFetchError(String),
     /// Background live health resolution results for bookmark list dots.
-    /// Each entry is (bookmark_id, live_status).
-    LiveHealthBatch(Vec<(String, LiveUIStatus)>),
+    /// Each entry is (bookmark_id, live_status). `generation` is the health epoch
+    /// the task was spawned in; a batch from a stale epoch (e.g. computed before a
+    /// grammar refresh on `FocusGained`) is dropped rather than applied.
+    LiveHealthBatch { generation: u64, batch: Vec<(String, LiveUIStatus)> },
     /// A bookmark preview finished resolving on a background task.
     /// `request_id` guards against applying stale results after the selection moved.
     PreviewReady {

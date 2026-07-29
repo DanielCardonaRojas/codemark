@@ -110,8 +110,8 @@ pub async fn heal_bookmark(
     };
 
     // Resolve the bookmark
-    let mut cache = ParseCache::new(lang)?;
-    let ts_lang = lang.tree_sitter_language();
+    let mut cache = ParseCache::new(lang.clone())?;
+    let ts_lang = cache.language().clone();
     let provider = crate::vfs::LocalFileProvider;
     let result = resolution::resolve(bookmark, &mut cache, &ts_lang, db.path(), &provider).await?;
 

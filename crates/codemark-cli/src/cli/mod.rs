@@ -84,6 +84,9 @@ pub enum Command {
     /// Full-text search across notes and context
     Search(SearchArgs),
 
+    /// Manage supported languages (list built-ins, add dynamic WASM grammars)
+    Languages(LanguagesArgs),
+
     /// Update metadata for an existing bookmark
     Edit(EditArgs),
 
@@ -1347,4 +1350,38 @@ pub enum SkillScope {
     User,
     /// Install into the current project/repository
     Project,
+}
+
+/// Arguments for the languages command group.
+#[derive(Debug, clap::Args)]
+pub struct LanguagesArgs {
+    #[command(subcommand)]
+    pub command: Option<LanguagesCommand>,
+}
+
+/// Subcommands for managing languages and WASM grammars.
+#[derive(Debug, Subcommand)]
+pub enum LanguagesCommand {
+    /// Add a new language from a compiled .wasm grammar file
+    Add(LanguagesAddArgs),
+
+    /// List all supported languages (built-in and dynamic)
+    List,
+
+    /// Validate installed dynamic WASM grammars
+    Validate,
+}
+
+#[derive(Debug, clap::Args)]
+pub struct LanguagesAddArgs {
+    /// Path to the compiled .wasm grammar file
+    pub wasm_file: std::path::PathBuf,
+
+    /// The language name (e.g., "ruby", "lua")
+    #[arg(long, short)]
+    pub name: String,
+
+    /// Comma-separated list of file extensions (e.g., "rb,ru")
+    #[arg(long, short)]
+    pub extensions: String,
 }

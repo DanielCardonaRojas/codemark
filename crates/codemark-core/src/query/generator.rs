@@ -1,6 +1,7 @@
 use tree_sitter::{Language, Node, Tree};
 
 use crate::error::{Error, Result};
+use crate::parser::profile::Profile;
 use crate::query::matcher;
 
 /// A generated tree-sitter query with metadata about the target.
@@ -17,6 +18,9 @@ pub struct GeneratedQuery {
 pub struct QueryContext<'a> {
     pub source: &'a [u8],
     pub language: &'a Language,
+    /// Structural metadata for the language being queried. Drives landmark
+    /// anchoring so dynamic (WASM) grammars honor their manifest `Profile`.
+    pub profile: &'a Profile,
     pub byte_range: (usize, usize),
     pub root: Node<'a>,
     pub tree: &'a Tree,
@@ -73,8 +77,9 @@ pub fn generate_query(
     source: &[u8],
     byte_range: (usize, usize),
     language: &Language,
+    profile: &Profile,
 ) -> Result<GeneratedQuery> {
-    let ctx = QueryContext { source, language, byte_range, root: tree.root_node(), tree };
+    let ctx = QueryContext { source, language, profile, byte_range, root: tree.root_node(), tree };
 
     // 1. Select the tightest meaningful target node
     let mut node = find_tightest_node(&ctx.root, ctx.source, ctx.byte_range)?;
@@ -246,6 +251,19 @@ const DECLARATION_TYPES: &[&str] = &[
     "enum_constant",
 ];
 
+/// Whether `node_kind` should be treated as a structural landmark for query
+/// anchoring.
+///
+/// Consults the language [`Profile::landmark_kinds`] first so dynamic (WASM)
+/// grammars honor their manifest, then falls back to the built-in
+/// [`DECLARATION_TYPES`] union. For static languages the profile's
+/// `landmark_kinds` mirrors the historical per-language subset, and the union
+/// fallback preserves exact pre-refactor behavior for any kind the profile
+/// omits.
+fn is_landmark_kind(node_kind: &str, profile: &Profile) -> bool {
+    profile.landmark_kinds.iter().any(|k| k == node_kind) || DECLARATION_TYPES.contains(&node_kind)
+}
+
 /// Map tree-sitter node types to breadcrumb category tags for @sticky captures.
 /// Returns the category name (e.g., "class", "function", "method") for landmark nodes.
 fn get_sticky_tag(node_kind: &str) -> Option<&'static str> {
@@ -309,13 +327,14 @@ fn build_base_query(
     _name: Option<&str>,
     semantic_info: Option<SemanticInfo>,
     source: &[u8],
+    profile: &Profile,
 ) -> Result<String> {
     // We leverage the structural path logic for a single node to ensure consistency
     let entry = PathEntry {
         node_type: node.kind().to_string(),
         name_info: extract_name_info(node, source),
         semantic_info,
-        is_landmark: DECLARATION_TYPES.contains(&node.kind()) && !is_local_declaration(node),
+        is_landmark: is_landmark_kind(node.kind(), profile) && !is_local_declaration(node),
         sticky_tag: get_sticky_tag(node.kind()).map(|s| s.to_string()),
     };
 
@@ -325,7 +344,7 @@ fn build_base_query(
 
 /// Helper to ensure a query is unique and anchored by walking up parents.
 fn disambiguate_query(target_node: Node, ctx: &QueryContext<'_>) -> Result<String> {
-    let mut path = build_structural_path(target_node, ctx.source);
+    let mut path = build_structural_path(target_node, ctx.source, ctx.profile);
 
     if path.is_empty() {
         // Fallback to simple base query if no path can be built
@@ -333,7 +352,13 @@ fn disambiguate_query(target_node: Node, ctx: &QueryContext<'_>) -> Result<Strin
             .map(|info| info.text)
             .or_else(|| extract_identifier_from_node(target_node, ctx.source));
         let semantic_info = extract_semantic_info(target_node, ctx.source);
-        return build_base_query(target_node, name.as_deref(), semantic_info, ctx.source);
+        return build_base_query(
+            target_node,
+            name.as_deref(),
+            semantic_info,
+            ctx.source,
+            ctx.profile,
+        );
     }
 
     // First, clear all names in the path to start with a pure structural query
@@ -422,15 +447,16 @@ pub fn generate_query_for_node(
     node: Node,
     source: &[u8],
     language: &Language,
+    profile: &Profile,
 ) -> Result<GeneratedQuery> {
-    generate_query(tree, source, (node.start_byte(), node.end_byte()), language)
+    generate_query(tree, source, (node.start_byte(), node.end_byte()), language, profile)
 }
 
 /// Build the structural path from the target node up to (but not including) the root.
 /// Body nodes (class_body, etc.) are included to ensure the query nesting matches the AST.
 /// Wrapper nodes (export_statement, decorated_definition) are skipped — they don't have
 /// queryable name fields.
-fn build_structural_path(target: Node, source: &[u8]) -> Vec<PathEntry> {
+fn build_structural_path(target: Node, source: &[u8], profile: &Profile) -> Vec<PathEntry> {
     if std::env::var("CODEMARK_DEBUG_QUERY").is_ok() {
         eprintln!(
             "DEBUG: build_structural_path: target={} at {:?}",
@@ -470,7 +496,7 @@ fn build_structural_path(target: Node, source: &[u8]) -> Vec<PathEntry> {
                 } else {
                     None
                 },
-                is_landmark: DECLARATION_TYPES.contains(&current.kind())
+                is_landmark: is_landmark_kind(current.kind(), profile)
                     && !is_local_declaration(current),
                 sticky_tag: get_sticky_tag(current.kind()).map(|s| s.to_string()),
             };
@@ -936,6 +962,69 @@ mod tests {
     use super::*;
     use crate::parser::languages::{Language as CodemarkLang, Parser};
 
+    // A profile-declared landmark kind that is *not* in the built-in
+    // `DECLARATION_TYPES` union — models a dynamic (WASM) grammar's manifest.
+    #[test]
+    fn is_landmark_kind_honors_profile_only_kinds() {
+        let profile = Profile {
+            landmark_kinds: vec!["local_function_declaration".into()],
+            ..Profile::default()
+        };
+        // Not in the static union, but present in the profile → landmark.
+        assert!(!DECLARATION_TYPES.contains(&"local_function_declaration"));
+        assert!(is_landmark_kind("local_function_declaration", &profile));
+    }
+
+    // Static languages carry a profile whose `landmark_kinds` may omit kinds
+    // that the built-in union still covers — the fallback must preserve them.
+    #[test]
+    fn is_landmark_kind_falls_back_to_static_union() {
+        let empty = Profile::default();
+        // `function_item` is in DECLARATION_TYPES but not in an empty profile.
+        assert!(DECLARATION_TYPES.contains(&"function_item"));
+        assert!(is_landmark_kind("function_item", &empty));
+    }
+
+    #[test]
+    fn is_landmark_kind_rejects_unknown_kinds() {
+        let empty = Profile::default();
+        assert!(!is_landmark_kind("identifier", &empty));
+        assert!(!is_landmark_kind("comment", &empty));
+    }
+
+    // End-to-end guard that the profile is actually threaded through path
+    // building: a profile that promotes `block` (never in DECLARATION_TYPES)
+    // to a landmark must flip `is_landmark` on the `block` path entry, while
+    // the default (empty) profile leaves it non-landmark. This is the behavior
+    // dynamic (WASM) grammars rely on for their manifest landmarks.
+    #[test]
+    fn build_structural_path_uses_profile_landmarks() {
+        let source = b"fn outer() {\n    let x = 1;\n}\n";
+        let mut parser = Parser::new(CodemarkLang::Rust).unwrap();
+        let tree = parser.parse(source).unwrap();
+        // Target the `let` statement so `block` is an ancestor in the path.
+        let target = tree.root_node().descendant_for_byte_range(17, 27).unwrap();
+
+        assert!(!DECLARATION_TYPES.contains(&"block"));
+
+        let default_profile = Profile::default();
+        let default_path = build_structural_path(target, source, &default_profile);
+        let default_block = default_path.iter().find(|e| e.node_type == "block");
+        assert!(default_block.is_some(), "expected a `block` entry in the path");
+        assert!(
+            !default_block.unwrap().is_landmark,
+            "`block` must not be a landmark under the default profile"
+        );
+
+        let custom_profile = Profile { landmark_kinds: vec!["block".into()], ..Profile::default() };
+        let custom_path = build_structural_path(target, source, &custom_profile);
+        let custom_block = custom_path.iter().find(|e| e.node_type == "block").unwrap();
+        assert!(
+            custom_block.is_landmark,
+            "`block` must become a landmark when the profile lists it"
+        );
+    }
+
     async fn parse_fixture(name: &str) -> (Tree, String) {
         let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join(format!("../../tests/fixtures/swift/{name}"));
@@ -970,9 +1059,11 @@ mod tests {
     async fn generate_query_for_top_level_function() {
         let (tree, source) = parse_fixture("auth_service.swift").await;
         let range = find_function_byte_range(&tree, &source, "createDefaultAuthService");
-        let lang = CodemarkLang::Swift.tree_sitter_language();
+        let cm_lang = CodemarkLang::Swift;
+        let lang = cm_lang.tree_sitter_language();
+        let profile = cm_lang.profile();
 
-        let result = generate_query(&tree, source.as_bytes(), range, &lang).unwrap();
+        let result = generate_query(&tree, source.as_bytes(), range, &lang, profile).unwrap();
         assert_eq!(result.target_node_type, "function_declaration");
         assert_eq!(result.target_name.as_deref(), Some("createDefaultAuthService"));
 
@@ -986,9 +1077,11 @@ mod tests {
     async fn generate_query_for_class_method() {
         let (tree, source) = parse_fixture("auth_service.swift").await;
         let range = find_function_byte_range(&tree, &source, "validateToken");
-        let lang = CodemarkLang::Swift.tree_sitter_language();
+        let cm_lang = CodemarkLang::Swift;
+        let lang = cm_lang.tree_sitter_language();
+        let profile = cm_lang.profile();
 
-        let result = generate_query(&tree, source.as_bytes(), range, &lang).unwrap();
+        let result = generate_query(&tree, source.as_bytes(), range, &lang, profile).unwrap();
         assert_eq!(result.target_node_type, "function_declaration");
         assert_eq!(result.target_name.as_deref(), Some("validateToken"));
 
@@ -1001,9 +1094,11 @@ mod tests {
     async fn generate_query_for_private_method() {
         let (tree, source) = parse_fixture("auth_service.swift").await;
         let range = find_function_byte_range(&tree, &source, "decode");
-        let lang = CodemarkLang::Swift.tree_sitter_language();
+        let cm_lang = CodemarkLang::Swift;
+        let lang = cm_lang.tree_sitter_language();
+        let profile = cm_lang.profile();
 
-        let result = generate_query(&tree, source.as_bytes(), range, &lang).unwrap();
+        let result = generate_query(&tree, source.as_bytes(), range, &lang, profile).unwrap();
         assert_eq!(result.target_name.as_deref(), Some("decode"));
 
         let matches = matcher::run_query(&result.query, &tree, source.as_bytes(), &lang).unwrap();
@@ -1014,9 +1109,11 @@ mod tests {
     async fn generate_query_for_extension_method() {
         let (tree, source) = parse_fixture("auth_service.swift").await;
         let range = find_function_byte_range(&tree, &source, "invalidateCache");
-        let lang = CodemarkLang::Swift.tree_sitter_language();
+        let cm_lang = CodemarkLang::Swift;
+        let lang = cm_lang.tree_sitter_language();
+        let profile = cm_lang.profile();
 
-        let result = generate_query(&tree, source.as_bytes(), range, &lang).unwrap();
+        let result = generate_query(&tree, source.as_bytes(), range, &lang, profile).unwrap();
         assert_eq!(result.target_name.as_deref(), Some("invalidateCache"));
 
         let matches = matcher::run_query(&result.query, &tree, source.as_bytes(), &lang).unwrap();
@@ -1026,7 +1123,9 @@ mod tests {
     #[tokio::test]
     async fn generated_query_round_trips() {
         let (tree, source) = parse_fixture("auth_service.swift").await;
-        let lang = CodemarkLang::Swift.tree_sitter_language();
+        let cm_lang = CodemarkLang::Swift;
+        let lang = cm_lang.tree_sitter_language();
+        let profile = cm_lang.profile();
 
         // For each function in the fixture, generate a query and verify it matches
         let functions = [
@@ -1042,7 +1141,7 @@ mod tests {
 
         for func_name in functions {
             let range = find_function_byte_range(&tree, &source, func_name);
-            let result = generate_query(&tree, source.as_bytes(), range, &lang).unwrap();
+            let result = generate_query(&tree, source.as_bytes(), range, &lang, profile).unwrap();
             let matches =
                 matcher::run_query(&result.query, &tree, source.as_bytes(), &lang).unwrap();
 
@@ -1094,9 +1193,11 @@ mod tests {
     async fn rust_top_level_function() {
         let (tree, source) = parse_rust_fixture("auth_service.rs").await;
         let range = find_rust_function_byte_range(&tree, &source, "create_default_auth_service");
-        let lang = CodemarkLang::Rust.tree_sitter_language();
+        let cm_lang = CodemarkLang::Rust;
+        let lang = cm_lang.tree_sitter_language();
+        let profile = cm_lang.profile();
 
-        let result = generate_query(&tree, source.as_bytes(), range, &lang).unwrap();
+        let result = generate_query(&tree, source.as_bytes(), range, &lang, profile).unwrap();
         assert_eq!(result.target_node_type, "function_item");
         assert_eq!(result.target_name.as_deref(), Some("create_default_auth_service"));
 
@@ -1108,9 +1209,11 @@ mod tests {
     async fn rust_impl_method() {
         let (tree, source) = parse_rust_fixture("auth_service.rs").await;
         let range = find_rust_function_byte_range(&tree, &source, "decode");
-        let lang = CodemarkLang::Rust.tree_sitter_language();
+        let cm_lang = CodemarkLang::Rust;
+        let lang = cm_lang.tree_sitter_language();
+        let profile = cm_lang.profile();
 
-        let result = generate_query(&tree, source.as_bytes(), range, &lang).unwrap();
+        let result = generate_query(&tree, source.as_bytes(), range, &lang, profile).unwrap();
         assert_eq!(result.target_name.as_deref(), Some("decode"));
 
         let matches = matcher::run_query(&result.query, &tree, source.as_bytes(), &lang).unwrap();
@@ -1123,9 +1226,11 @@ mod tests {
         let (tree, source) = parse_rust_fixture("auth_service.rs").await;
         // validate_token appears both in the trait and in the impl
         let range = find_rust_function_byte_range(&tree, &source, "validate_token");
-        let lang = CodemarkLang::Rust.tree_sitter_language();
+        let cm_lang = CodemarkLang::Rust;
+        let lang = cm_lang.tree_sitter_language();
+        let profile = cm_lang.profile();
 
-        let result = generate_query(&tree, source.as_bytes(), range, &lang).unwrap();
+        let result = generate_query(&tree, source.as_bytes(), range, &lang, profile).unwrap();
         let matches = matcher::run_query(&result.query, &tree, source.as_bytes(), &lang).unwrap();
         // Should match at least 1 (may match trait decl too if query isn't precise enough)
         assert!(!matches.is_empty(), "query:\n{}", result.query);
@@ -1135,9 +1240,11 @@ mod tests {
     async fn rust_generic_function() {
         let (tree, source) = parse_rust_fixture("auth_service.rs").await;
         let range = find_rust_function_byte_range(&tree, &source, "validate_and_check");
-        let lang = CodemarkLang::Rust.tree_sitter_language();
+        let cm_lang = CodemarkLang::Rust;
+        let lang = cm_lang.tree_sitter_language();
+        let profile = cm_lang.profile();
 
-        let result = generate_query(&tree, source.as_bytes(), range, &lang).unwrap();
+        let result = generate_query(&tree, source.as_bytes(), range, &lang, profile).unwrap();
         assert_eq!(result.target_name.as_deref(), Some("validate_and_check"));
 
         let matches = matcher::run_query(&result.query, &tree, source.as_bytes(), &lang).unwrap();
@@ -1147,7 +1254,9 @@ mod tests {
     #[tokio::test]
     async fn rust_round_trips() {
         let (tree, source) = parse_rust_fixture("auth_service.rs").await;
-        let lang = CodemarkLang::Rust.tree_sitter_language();
+        let cm_lang = CodemarkLang::Rust;
+        let lang = cm_lang.tree_sitter_language();
+        let profile = cm_lang.profile();
 
         let functions = [
             "new",
@@ -1160,7 +1269,7 @@ mod tests {
 
         for func_name in functions {
             let range = find_rust_function_byte_range(&tree, &source, func_name);
-            let result = generate_query(&tree, source.as_bytes(), range, &lang).unwrap();
+            let result = generate_query(&tree, source.as_bytes(), range, &lang, profile).unwrap();
             let matches =
                 matcher::run_query(&result.query, &tree, source.as_bytes(), &lang).unwrap();
 
@@ -1207,9 +1316,11 @@ mod tests {
     async fn ts_top_level_function() {
         let (tree, source) = parse_ts_fixture("auth_service.ts").await;
         let range = find_ts_function_byte_range(&tree, &source, "validateAndCheck");
-        let lang = CodemarkLang::TypeScript.tree_sitter_language();
+        let cm_lang = CodemarkLang::TypeScript;
+        let lang = cm_lang.tree_sitter_language();
+        let profile = cm_lang.profile();
 
-        let result = generate_query(&tree, source.as_bytes(), range, &lang).unwrap();
+        let result = generate_query(&tree, source.as_bytes(), range, &lang, profile).unwrap();
         assert_eq!(result.target_name.as_deref(), Some("validateAndCheck"));
 
         let matches = matcher::run_query(&result.query, &tree, source.as_bytes(), &lang).unwrap();
@@ -1220,9 +1331,11 @@ mod tests {
     async fn ts_class_method() {
         let (tree, source) = parse_ts_fixture("auth_service.ts").await;
         let range = find_ts_function_byte_range(&tree, &source, "validateToken");
-        let lang = CodemarkLang::TypeScript.tree_sitter_language();
+        let cm_lang = CodemarkLang::TypeScript;
+        let lang = cm_lang.tree_sitter_language();
+        let profile = cm_lang.profile();
 
-        let result = generate_query(&tree, source.as_bytes(), range, &lang).unwrap();
+        let result = generate_query(&tree, source.as_bytes(), range, &lang, profile).unwrap();
         assert_eq!(result.target_name.as_deref(), Some("validateToken"));
 
         let matches = matcher::run_query(&result.query, &tree, source.as_bytes(), &lang).unwrap();
@@ -1233,9 +1346,11 @@ mod tests {
     async fn ts_private_method() {
         let (tree, source) = parse_ts_fixture("auth_service.ts").await;
         let range = find_ts_function_byte_range(&tree, &source, "decode");
-        let lang = CodemarkLang::TypeScript.tree_sitter_language();
+        let cm_lang = CodemarkLang::TypeScript;
+        let lang = cm_lang.tree_sitter_language();
+        let profile = cm_lang.profile();
 
-        let result = generate_query(&tree, source.as_bytes(), range, &lang).unwrap();
+        let result = generate_query(&tree, source.as_bytes(), range, &lang, profile).unwrap();
         assert_eq!(result.target_name.as_deref(), Some("decode"));
 
         let matches = matcher::run_query(&result.query, &tree, source.as_bytes(), &lang).unwrap();
@@ -1277,9 +1392,11 @@ mod tests {
     async fn py_top_level_function() {
         let (tree, source) = parse_py_fixture("auth_service.py").await;
         let range = find_py_function_byte_range(&tree, &source, "create_default_auth_service");
-        let lang = CodemarkLang::Python.tree_sitter_language();
+        let cm_lang = CodemarkLang::Python;
+        let lang = cm_lang.tree_sitter_language();
+        let profile = cm_lang.profile();
 
-        let result = generate_query(&tree, source.as_bytes(), range, &lang).unwrap();
+        let result = generate_query(&tree, source.as_bytes(), range, &lang, profile).unwrap();
         assert_eq!(result.target_name.as_deref(), Some("create_default_auth_service"));
 
         let matches = matcher::run_query(&result.query, &tree, source.as_bytes(), &lang).unwrap();
@@ -1290,9 +1407,11 @@ mod tests {
     async fn py_class_method() {
         let (tree, source) = parse_py_fixture("auth_service.py").await;
         let range = find_py_function_byte_range(&tree, &source, "validate_token");
-        let lang = CodemarkLang::Python.tree_sitter_language();
+        let cm_lang = CodemarkLang::Python;
+        let lang = cm_lang.tree_sitter_language();
+        let profile = cm_lang.profile();
 
-        let result = generate_query(&tree, source.as_bytes(), range, &lang).unwrap();
+        let result = generate_query(&tree, source.as_bytes(), range, &lang, profile).unwrap();
         assert_eq!(result.target_name.as_deref(), Some("validate_token"));
 
         let matches = matcher::run_query(&result.query, &tree, source.as_bytes(), &lang).unwrap();
@@ -1303,9 +1422,11 @@ mod tests {
     async fn py_private_method() {
         let (tree, source) = parse_py_fixture("auth_service.py").await;
         let range = find_py_function_byte_range(&tree, &source, "_decode");
-        let lang = CodemarkLang::Python.tree_sitter_language();
+        let cm_lang = CodemarkLang::Python;
+        let lang = cm_lang.tree_sitter_language();
+        let profile = cm_lang.profile();
 
-        let result = generate_query(&tree, source.as_bytes(), range, &lang).unwrap();
+        let result = generate_query(&tree, source.as_bytes(), range, &lang, profile).unwrap();
         assert_eq!(result.target_name.as_deref(), Some("_decode"));
 
         let matches = matcher::run_query(&result.query, &tree, source.as_bytes(), &lang).unwrap();
@@ -1316,9 +1437,11 @@ mod tests {
     async fn py_decorated_function() {
         let (tree, source) = parse_py_fixture("auth_service.py").await;
         let range = find_py_function_byte_range(&tree, &source, "require_auth");
-        let lang = CodemarkLang::Python.tree_sitter_language();
+        let cm_lang = CodemarkLang::Python;
+        let lang = cm_lang.tree_sitter_language();
+        let profile = cm_lang.profile();
 
-        let result = generate_query(&tree, source.as_bytes(), range, &lang).unwrap();
+        let result = generate_query(&tree, source.as_bytes(), range, &lang, profile).unwrap();
         assert_eq!(result.target_name.as_deref(), Some("require_auth"));
 
         let matches = matcher::run_query(&result.query, &tree, source.as_bytes(), &lang).unwrap();
@@ -1360,8 +1483,10 @@ mod tests {
     async fn go_free_function() {
         let (tree, source) = parse_go_fixture("auth_service.go").await;
         let range = find_go_function_range(&tree, &source, "CreateDefaultAuthService");
-        let lang = CodemarkLang::Go.tree_sitter_language();
-        let result = generate_query(&tree, source.as_bytes(), range, &lang).unwrap();
+        let cm_lang = CodemarkLang::Go;
+        let lang = cm_lang.tree_sitter_language();
+        let profile = cm_lang.profile();
+        let result = generate_query(&tree, source.as_bytes(), range, &lang, profile).unwrap();
         assert_eq!(result.target_name.as_deref(), Some("CreateDefaultAuthService"));
         let matches = matcher::run_query(&result.query, &tree, source.as_bytes(), &lang).unwrap();
         assert_eq!(matches.len(), 1, "query:\n{}", result.query);
@@ -1371,8 +1496,10 @@ mod tests {
     async fn go_method() {
         let (tree, source) = parse_go_fixture("auth_service.go").await;
         let range = find_go_function_range(&tree, &source, "ValidateToken");
-        let lang = CodemarkLang::Go.tree_sitter_language();
-        let result = generate_query(&tree, source.as_bytes(), range, &lang).unwrap();
+        let cm_lang = CodemarkLang::Go;
+        let lang = cm_lang.tree_sitter_language();
+        let profile = cm_lang.profile();
+        let result = generate_query(&tree, source.as_bytes(), range, &lang, profile).unwrap();
         let matches = matcher::run_query(&result.query, &tree, source.as_bytes(), &lang).unwrap();
         assert!(!matches.is_empty(), "query:\n{}", result.query);
     }
@@ -1381,8 +1508,10 @@ mod tests {
     async fn go_private_method() {
         let (tree, source) = parse_go_fixture("auth_service.go").await;
         let range = find_go_function_range(&tree, &source, "decode");
-        let lang = CodemarkLang::Go.tree_sitter_language();
-        let result = generate_query(&tree, source.as_bytes(), range, &lang).unwrap();
+        let cm_lang = CodemarkLang::Go;
+        let lang = cm_lang.tree_sitter_language();
+        let profile = cm_lang.profile();
+        let result = generate_query(&tree, source.as_bytes(), range, &lang, profile).unwrap();
         assert_eq!(result.target_name.as_deref(), Some("decode"));
         let matches = matcher::run_query(&result.query, &tree, source.as_bytes(), &lang).unwrap();
         assert_eq!(matches.len(), 1, "query:\n{}", result.query);
@@ -1422,8 +1551,10 @@ mod tests {
     async fn java_method() {
         let (tree, source) = parse_java_fixture("AuthService.java").await;
         let range = find_java_range(&tree, &source, "validateToken");
-        let lang = CodemarkLang::Java.tree_sitter_language();
-        let result = generate_query(&tree, source.as_bytes(), range, &lang).unwrap();
+        let cm_lang = CodemarkLang::Java;
+        let lang = cm_lang.tree_sitter_language();
+        let profile = cm_lang.profile();
+        let result = generate_query(&tree, source.as_bytes(), range, &lang, profile).unwrap();
         assert_eq!(result.target_name.as_deref(), Some("validateToken"));
         let matches = matcher::run_query(&result.query, &tree, source.as_bytes(), &lang).unwrap();
         assert_eq!(matches.len(), 1, "query:\n{}", result.query);
@@ -1433,8 +1564,10 @@ mod tests {
     async fn java_private_method() {
         let (tree, source) = parse_java_fixture("AuthService.java").await;
         let range = find_java_range(&tree, &source, "decode");
-        let lang = CodemarkLang::Java.tree_sitter_language();
-        let result = generate_query(&tree, source.as_bytes(), range, &lang).unwrap();
+        let cm_lang = CodemarkLang::Java;
+        let lang = cm_lang.tree_sitter_language();
+        let profile = cm_lang.profile();
+        let result = generate_query(&tree, source.as_bytes(), range, &lang, profile).unwrap();
         assert_eq!(result.target_name.as_deref(), Some("decode"));
         let matches = matcher::run_query(&result.query, &tree, source.as_bytes(), &lang).unwrap();
         assert_eq!(matches.len(), 1, "query:\n{}", result.query);
@@ -1444,8 +1577,10 @@ mod tests {
     async fn java_static_method() {
         let (tree, source) = parse_java_fixture("AuthService.java").await;
         let range = find_java_range(&tree, &source, "createDefault");
-        let lang = CodemarkLang::Java.tree_sitter_language();
-        let result = generate_query(&tree, source.as_bytes(), range, &lang).unwrap();
+        let cm_lang = CodemarkLang::Java;
+        let lang = cm_lang.tree_sitter_language();
+        let profile = cm_lang.profile();
+        let result = generate_query(&tree, source.as_bytes(), range, &lang, profile).unwrap();
         assert_eq!(result.target_name.as_deref(), Some("createDefault"));
         let matches = matcher::run_query(&result.query, &tree, source.as_bytes(), &lang).unwrap();
         assert_eq!(matches.len(), 1, "query:\n{}", result.query);
@@ -1485,8 +1620,10 @@ mod tests {
     async fn csharp_method() {
         let (tree, source) = parse_csharp_fixture("AuthService.cs").await;
         let range = find_csharp_range(&tree, &source, "ValidateToken");
-        let lang = CodemarkLang::CSharp.tree_sitter_language();
-        let result = generate_query(&tree, source.as_bytes(), range, &lang).unwrap();
+        let cm_lang = CodemarkLang::CSharp;
+        let lang = cm_lang.tree_sitter_language();
+        let profile = cm_lang.profile();
+        let result = generate_query(&tree, source.as_bytes(), range, &lang, profile).unwrap();
         assert_eq!(result.target_name.as_deref(), Some("ValidateToken"));
         let matches = matcher::run_query(&result.query, &tree, source.as_bytes(), &lang).unwrap();
         assert_eq!(matches.len(), 1, "query:\n{}", result.query);
@@ -1496,8 +1633,10 @@ mod tests {
     async fn csharp_private_method() {
         let (tree, source) = parse_csharp_fixture("AuthService.cs").await;
         let range = find_csharp_range(&tree, &source, "Decode");
-        let lang = CodemarkLang::CSharp.tree_sitter_language();
-        let result = generate_query(&tree, source.as_bytes(), range, &lang).unwrap();
+        let cm_lang = CodemarkLang::CSharp;
+        let lang = cm_lang.tree_sitter_language();
+        let profile = cm_lang.profile();
+        let result = generate_query(&tree, source.as_bytes(), range, &lang, profile).unwrap();
         assert_eq!(result.target_name.as_deref(), Some("Decode"));
         let matches = matcher::run_query(&result.query, &tree, source.as_bytes(), &lang).unwrap();
         assert_eq!(matches.len(), 1, "query:\n{}", result.query);
@@ -1507,8 +1646,10 @@ mod tests {
     async fn csharp_static_method() {
         let (tree, source) = parse_csharp_fixture("AuthService.cs").await;
         let range = find_csharp_range(&tree, &source, "CreateDefault");
-        let lang = CodemarkLang::CSharp.tree_sitter_language();
-        let result = generate_query(&tree, source.as_bytes(), range, &lang).unwrap();
+        let cm_lang = CodemarkLang::CSharp;
+        let lang = cm_lang.tree_sitter_language();
+        let profile = cm_lang.profile();
+        let result = generate_query(&tree, source.as_bytes(), range, &lang, profile).unwrap();
         assert_eq!(result.target_name.as_deref(), Some("CreateDefault"));
         let matches = matcher::run_query(&result.query, &tree, source.as_bytes(), &lang).unwrap();
         assert_eq!(matches.len(), 1, "query:\n{}", result.query);
@@ -1530,8 +1671,10 @@ mod tests {
         // function_signature has the name
         let offset = source.find("createDefaultAuthService").unwrap();
         let range = (offset, offset + 10);
-        let lang = CodemarkLang::Dart.tree_sitter_language();
-        let result = generate_query(&tree, source.as_bytes(), range, &lang).unwrap();
+        let cm_lang = CodemarkLang::Dart;
+        let lang = cm_lang.tree_sitter_language();
+        let profile = cm_lang.profile();
+        let result = generate_query(&tree, source.as_bytes(), range, &lang, profile).unwrap();
         assert_eq!(result.target_name.as_deref(), Some("createDefaultAuthService"));
         let matches = matcher::run_query(&result.query, &tree, source.as_bytes(), &lang).unwrap();
         assert_eq!(matches.len(), 1, "query:\n{}", result.query);
@@ -1542,8 +1685,10 @@ mod tests {
         let (tree, source) = parse_dart_fixture("auth_service.dart").await;
         let offset = source.find("Claims _decode").unwrap();
         let range = (offset, offset + 10);
-        let lang = CodemarkLang::Dart.tree_sitter_language();
-        let result = generate_query(&tree, source.as_bytes(), range, &lang).unwrap();
+        let cm_lang = CodemarkLang::Dart;
+        let lang = cm_lang.tree_sitter_language();
+        let profile = cm_lang.profile();
+        let result = generate_query(&tree, source.as_bytes(), range, &lang, profile).unwrap();
         let matches = matcher::run_query(&result.query, &tree, source.as_bytes(), &lang).unwrap();
         assert!(!matches.is_empty(), "query:\n{}", result.query);
     }
@@ -1553,8 +1698,10 @@ mod tests {
         let (tree, source) = parse_dart_fixture("auth_service.dart").await;
         let offset = source.find("enum AuthError").unwrap();
         let range = (offset, offset + 10);
-        let lang = CodemarkLang::Dart.tree_sitter_language();
-        let result = generate_query(&tree, source.as_bytes(), range, &lang).unwrap();
+        let cm_lang = CodemarkLang::Dart;
+        let lang = cm_lang.tree_sitter_language();
+        let profile = cm_lang.profile();
+        let result = generate_query(&tree, source.as_bytes(), range, &lang, profile).unwrap();
         assert_eq!(result.target_name.as_deref(), Some("AuthError"));
         let matches = matcher::run_query(&result.query, &tree, source.as_bytes(), &lang).unwrap();
         assert_eq!(matches.len(), 1, "query:\n{}", result.query);
@@ -1565,12 +1712,14 @@ mod tests {
     #[tokio::test]
     async fn swift_exact_range_targets_method_not_class() {
         let (tree, source) = parse_fixture("auth_service.swift").await;
-        let lang = CodemarkLang::Swift.tree_sitter_language();
+        let cm_lang = CodemarkLang::Swift;
+        let lang = cm_lang.tree_sitter_language();
+        let profile = cm_lang.profile();
 
         // Get the exact byte range of validateToken
         let range = find_function_byte_range(&tree, &source, "validateToken");
 
-        let result = generate_query(&tree, source.as_bytes(), range, &lang).unwrap();
+        let result = generate_query(&tree, source.as_bytes(), range, &lang, profile).unwrap();
         assert_eq!(
             result.target_node_type, "function_declaration",
             "should target function_declaration, not class_declaration"
@@ -1581,11 +1730,13 @@ mod tests {
     #[tokio::test]
     async fn rust_exact_range_targets_method_not_impl() {
         let (tree, source) = parse_rust_fixture("auth_service.rs").await;
-        let lang = CodemarkLang::Rust.tree_sitter_language();
+        let cm_lang = CodemarkLang::Rust;
+        let lang = cm_lang.tree_sitter_language();
+        let profile = cm_lang.profile();
 
         let range = find_rust_function_byte_range(&tree, &source, "decode");
 
-        let result = generate_query(&tree, source.as_bytes(), range, &lang).unwrap();
+        let result = generate_query(&tree, source.as_bytes(), range, &lang, profile).unwrap();
         assert_eq!(
             result.target_node_type, "function_item",
             "should target function_item, not impl_item"
@@ -1596,11 +1747,13 @@ mod tests {
     #[tokio::test]
     async fn ts_exact_range_targets_method_not_class() {
         let (tree, source) = parse_ts_fixture("auth_service.ts").await;
-        let lang = CodemarkLang::TypeScript.tree_sitter_language();
+        let cm_lang = CodemarkLang::TypeScript;
+        let lang = cm_lang.tree_sitter_language();
+        let profile = cm_lang.profile();
 
         let range = find_ts_function_byte_range(&tree, &source, "validateToken");
 
-        let result = generate_query(&tree, source.as_bytes(), range, &lang).unwrap();
+        let result = generate_query(&tree, source.as_bytes(), range, &lang, profile).unwrap();
         assert_eq!(
             result.target_node_type, "method_definition",
             "should target method_definition, not class_declaration"
@@ -1611,11 +1764,13 @@ mod tests {
     #[tokio::test]
     async fn py_exact_range_targets_method_not_class() {
         let (tree, source) = parse_py_fixture("auth_service.py").await;
-        let lang = CodemarkLang::Python.tree_sitter_language();
+        let cm_lang = CodemarkLang::Python;
+        let lang = cm_lang.tree_sitter_language();
+        let profile = cm_lang.profile();
 
         let range = find_py_function_byte_range(&tree, &source, "validate_token");
 
-        let result = generate_query(&tree, source.as_bytes(), range, &lang).unwrap();
+        let result = generate_query(&tree, source.as_bytes(), range, &lang, profile).unwrap();
         assert_eq!(
             result.target_node_type, "function_definition",
             "should target function_definition, not class_definition"
@@ -1626,11 +1781,13 @@ mod tests {
     #[tokio::test]
     async fn go_exact_range_targets_method() {
         let (tree, source) = parse_go_fixture("auth_service.go").await;
-        let lang = CodemarkLang::Go.tree_sitter_language();
+        let cm_lang = CodemarkLang::Go;
+        let lang = cm_lang.tree_sitter_language();
+        let profile = cm_lang.profile();
 
         let range = find_go_function_range(&tree, &source, "ValidateToken");
 
-        let result = generate_query(&tree, source.as_bytes(), range, &lang).unwrap();
+        let result = generate_query(&tree, source.as_bytes(), range, &lang, profile).unwrap();
         assert_eq!(
             result.target_node_type, "method_declaration",
             "should target method_declaration"
@@ -1640,11 +1797,13 @@ mod tests {
     #[tokio::test]
     async fn java_exact_range_targets_method_not_class() {
         let (tree, source) = parse_java_fixture("AuthService.java").await;
-        let lang = CodemarkLang::Java.tree_sitter_language();
+        let cm_lang = CodemarkLang::Java;
+        let lang = cm_lang.tree_sitter_language();
+        let profile = cm_lang.profile();
 
         let range = find_java_range(&tree, &source, "validateToken");
 
-        let result = generate_query(&tree, source.as_bytes(), range, &lang).unwrap();
+        let result = generate_query(&tree, source.as_bytes(), range, &lang, profile).unwrap();
         assert_eq!(
             result.target_node_type, "method_declaration",
             "should target method_declaration, not class_declaration"
@@ -1656,14 +1815,17 @@ mod tests {
     async fn single_line_inside_method_targets_anchored_declaration() {
         // A single line inside a method should target the enclosing method
         let (tree, source) = parse_rust_fixture("auth_service.rs").await;
-        let lang = CodemarkLang::Rust.tree_sitter_language();
+        let cm_lang = CodemarkLang::Rust;
+        let lang = cm_lang.tree_sitter_language();
+        let profile = cm_lang.profile();
 
         // Line 50 is inside the decode function body
         let line_50_start = source.lines().take(49).map(|l: &str| l.len() + 1).sum::<usize>();
         let line_50_end = line_50_start + source.lines().nth(49).unwrap_or("").len();
 
         let result =
-            generate_query(&tree, source.as_bytes(), (line_50_start, line_50_end), &lang).unwrap();
+            generate_query(&tree, source.as_bytes(), (line_50_start, line_50_end), &lang, profile)
+                .unwrap();
         assert_eq!(
             result.target_node_type, "block",
             "single line inside method should target the tightest node (block)"
@@ -1676,9 +1838,11 @@ mod tests {
     async fn generated_query_includes_sticky_captures() {
         let (tree, source) = parse_fixture("auth_service.swift").await;
         let range = find_function_byte_range(&tree, &source, "validateToken");
-        let lang = CodemarkLang::Swift.tree_sitter_language();
+        let cm_lang = CodemarkLang::Swift;
+        let lang = cm_lang.tree_sitter_language();
+        let profile = cm_lang.profile();
 
-        let result = generate_query(&tree, source.as_bytes(), range, &lang).unwrap();
+        let result = generate_query(&tree, source.as_bytes(), range, &lang, profile).unwrap();
 
         // Query should contain @sticky.class and @sticky.function (Swift uses function_declaration for both)
         assert!(
@@ -1697,9 +1861,11 @@ mod tests {
     async fn generated_query_for_nested_class_has_sticky_captures() {
         let (tree, source) = parse_ts_fixture("auth_service.ts").await;
         let range = find_ts_function_byte_range(&tree, &source, "validateToken");
-        let lang = CodemarkLang::TypeScript.tree_sitter_language();
+        let cm_lang = CodemarkLang::TypeScript;
+        let lang = cm_lang.tree_sitter_language();
+        let profile = cm_lang.profile();
 
-        let result = generate_query(&tree, source.as_bytes(), range, &lang).unwrap();
+        let result = generate_query(&tree, source.as_bytes(), range, &lang, profile).unwrap();
 
         // Query should contain @sticky.class and @sticky.method (TypeScript distinguishes these)
         assert!(

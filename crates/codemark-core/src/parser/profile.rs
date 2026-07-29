@@ -21,14 +21,13 @@ use crate::parser::languages::Language;
 /// All fields are optional with graceful fallbacks so a partial manifest still
 /// works — an empty `landmark_kinds` means no structural anchoring, a missing
 /// `node_labels` entry falls back to `node_type.replace('_', " ")`.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, serde::Deserialize)]
+#[serde(default)]
 pub struct Profile {
     /// Node types that get structural anchoring in the query generator.
     ///
-    /// Populated per language here, but the query generator is switched over to
-    /// consult this field (in place of the hardcoded `DECLARATION_TYPES` table)
-    /// in the follow-up dynamic-grammar PR. Until then it carries the intended
-    /// data without yet driving generation, so the two must be kept in sync.
+    /// Consulted by `is_landmark_kind` (with the built-in `DECLARATION_TYPES`
+    /// union as a fallback), so dynamic (WASM) grammars honor these.
     pub landmark_kinds: Vec<String>,
 
     /// Node type → human-readable label mapping.
@@ -57,6 +56,7 @@ impl Language {
             Language::Java => &JAVA_PROFILE,
             Language::CSharp => &CSHARP_PROFILE,
             Language::Dart => &DART_PROFILE,
+            Language::Dynamic(dl) => &dl.profile,
         }
     }
 }
@@ -343,3 +343,38 @@ static DART_PROFILE: LazyLock<Profile> = LazyLock::new(|| Profile {
         ("method_declaration".into(), "name".into()),
     ],
 });
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // A manifest may specify only the fields it cares about; the rest must fall
+    // back to empty defaults rather than failing to deserialize. This is what
+    // lets a partial `manifest.json` register instead of being skipped.
+    #[test]
+    fn deserializes_partial_profile() {
+        let json = r#"{ "landmark_kinds": ["local_function_declaration"] }"#;
+        let profile: Profile = serde_json::from_str(json).unwrap();
+        assert_eq!(profile.landmark_kinds, vec!["local_function_declaration".to_string()]);
+        assert!(profile.node_labels.is_empty());
+        assert!(profile.containers.is_empty());
+    }
+
+    #[test]
+    fn deserializes_empty_profile() {
+        let profile: Profile = serde_json::from_str("{}").unwrap();
+        assert!(profile.landmark_kinds.is_empty());
+        assert!(profile.node_labels.is_empty());
+        assert!(profile.containers.is_empty());
+    }
+
+    // Unknown keys (e.g. a future `semantic_fields`) are ignored, not fatal, so
+    // newer manifests still load on older binaries.
+    #[test]
+    fn ignores_unknown_profile_keys() {
+        let json =
+            r#"{ "landmark_kinds": ["x"], "semantic_fields": { "if_statement": "condition" } }"#;
+        let profile: Profile = serde_json::from_str(json).unwrap();
+        assert_eq!(profile.landmark_kinds, vec!["x".to_string()]);
+    }
+}

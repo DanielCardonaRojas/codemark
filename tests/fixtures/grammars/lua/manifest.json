@@ -1,0 +1,33 @@
+{
+  "name": "lua",
+  "version": "0.2.0",
+  "extensions": ["lua"],
+  "profile": {
+    "landmark_kinds": [
+      "function_declaration",
+      "function_definition_statement",
+      "local_function_declaration",
+      "local_function_definition_statement",
+      "variable_declaration",
+      "local_variable_declaration"
+    ],
+    "node_labels": {
+      "function_declaration": "function",
+      "function_definition_statement": "function",
+      "local_function_declaration": "function",
+      "local_function_definition_statement": "function",
+      "if_statement": "if statement",
+      "for_statement": "for loop",
+      "while_statement": "while loop",
+      "return_statement": "return",
+      "assignment_statement": "assignment",
+      "call_expression": "call"
+    },
+    "containers": [
+      ["function_definition_statement", "name"]
+    ],
+    "semantic_fields": {
+      "if_statement": "condition"
+    }
+  }
+}

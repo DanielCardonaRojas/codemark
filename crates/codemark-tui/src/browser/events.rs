@@ -348,6 +348,31 @@ impl BrowserLayout {
                 if let Ok(registry) = codemark_core::storage::registry::open_registry() {
                     self.registry = registry;
                 }
+                // The user may also have installed or removed a WASM grammar via
+                // `codemark languages add`/`remove` while unfocused. Re-scan the
+                // grammar cache so live resolution picks up new languages instead
+                // of retaining the startup snapshot until the process restarts.
+                codemark_core::parser::registry::LanguageRegistry::refresh();
+                // The parse caches key their `Parser`/`Profile` by language name,
+                // so after a refresh an *updated* grammar would still be served
+                // from the old cached parser. Drop both the synchronous session
+                // cache and the background preview cache so the next resolution
+                // rebuilds against the freshly discovered grammar.
+                self.session_cache.clear();
+                self.preview_cache.lock().unwrap_or_else(|e| e.into_inner()).clear();
+                // Advance the health epoch so any live-health task spawned under
+                // the previous grammar is discarded on arrival rather than
+                // overwriting the panels we're about to rebuild.
+                self.health_generation = self.health_generation.wrapping_add(1);
+                tracing::debug!(
+                    target: "codemark::ui",
+                    health_generation = self.health_generation,
+                    "advanced health epoch on FocusGained grammar refresh"
+                );
+                // Same hazard for the bookmark preview: a preview task spawned
+                // before the refresh would resolve with the old grammar. Bumping
+                // the request id drops any in-flight/queued preview result.
+                self.cancel_inflight_preview();
                 self.update_tours_tab_visibility();
 
                 // Leaving the terminal is the only way the git HEAD moves while a
@@ -429,7 +454,13 @@ impl BrowserLayout {
                 });
                 Some(true)
             }
-            Event::LiveHealthBatch(batch) => {
+            Event::LiveHealthBatch { generation, batch } => {
+                // Drop results from a superseded epoch: a grammar refresh on
+                // FocusGained bumps `health_generation`, so a batch computed with
+                // the old grammar must not overwrite the freshly-refreshed panels.
+                if *generation != self.health_generation {
+                    return Some(false);
+                }
                 let mut touches_open_step = false;
                 for (bookmark_id, status) in batch {
                     if let Some(panel) = self.left_pane.content_panel.get_list_panel_mut(0) {
@@ -677,6 +708,9 @@ impl BrowserLayout {
 
         let db_path = self.db.path().to_path_buf();
         let event_handler = self.event_handler.clone();
+        // Stamp the current health epoch; results are discarded on apply if the
+        // epoch has since advanced (e.g. a grammar refresh on FocusGained).
+        let generation = self.health_generation;
 
         tokio::task::spawn_blocking(move || {
             let handle = tokio::runtime::Handle::current();
@@ -697,10 +731,10 @@ impl BrowserLayout {
                     (|| -> std::result::Result<LiveUIStatus, codemark_core::error::Error> {
                         use std::str::FromStr;
                         let language = CL::from_str(&bm.language)?;
-                        let cache = match caches.entry(language) {
+                        let cache = match caches.entry(language.clone()) {
                             std::collections::hash_map::Entry::Occupied(e) => e.into_mut(),
                             std::collections::hash_map::Entry::Vacant(e) => {
-                                let pc = ParseCache::new(language).map_err(|err| {
+                                let pc = ParseCache::new(language.clone()).map_err(|err| {
                                     codemark_core::error::Error::TreeSitter(format!(
                                         "failed to create ParseCache for {}: {}",
                                         bm.language, err
@@ -727,13 +761,16 @@ impl BrowserLayout {
 
                 // Send in batches of 10 for progressive rendering
                 if batch.len() >= 10 {
-                    let _ = event_handler.send(Event::LiveHealthBatch(std::mem::take(&mut batch)));
+                    let _ = event_handler.send(Event::LiveHealthBatch {
+                        generation,
+                        batch: std::mem::take(&mut batch),
+                    });
                 }
             }
 
             // Send remaining items
             if !batch.is_empty() {
-                let _ = event_handler.send(Event::LiveHealthBatch(batch));
+                let _ = event_handler.send(Event::LiveHealthBatch { generation, batch });
             }
         });
     }

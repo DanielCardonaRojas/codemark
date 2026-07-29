@@ -270,7 +270,9 @@ See the [**Full Command Reference**](./dev-docs/CLI.md) for every subcommand and
 
 ## 🌐 Supported Languages
 
-Codemark speaks AST for:
+Codemark is powered by Tree-sitter. It supports 8 built-in languages out of the box, and **any other language** via dynamic WASM grammar loading.
+
+**Built-in:**
 - 🦀 **Rust**
 - 🍎 **Swift**
 - 🔷 **TypeScript / TSX**
@@ -280,7 +282,9 @@ Codemark speaks AST for:
 - 🎯 **Dart**
 - ♯ **C#**
 
----
+### Dynamic (WASM)
+
+You can add support for any language without recompiling Codemark. Simply drop a compiled Tree-sitter `.wasm` grammar and a `manifest.json` into Codemark's grammar cache directory (e.g., `~/Library/Caches/codemark/grammars/<language>/` on macOS). Codemark will automatically discover it on the next run.
 
 ## 🎨 Customizing Markdown Output
 

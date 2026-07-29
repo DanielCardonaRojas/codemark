@@ -51,8 +51,8 @@ pub async fn build_snapshot(
             .language
             .parse::<Language>()
             .map_err(|e| crate::error::Error::Input(e.to_string()))?;
-        let mut cache = ParseCache::new(lang)?;
-        let ts_lang = lang.tree_sitter_language();
+        let mut cache = ParseCache::new(lang.clone())?;
+        let ts_lang = cache.language().clone();
 
         let result =
             resolution::resolve(&bm, &mut cache, &ts_lang, project_root, &provider).await?;

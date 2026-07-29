@@ -227,8 +227,8 @@ pub async fn handle_diff(cli: &Cli, mode: &OutputMode, args: &DiffArgs) -> Resul
             let mut results = Vec::new();
             for bm in &affected {
                 let Ok(lang) = bm.language.parse::<Language>() else { continue };
-                let mut cache = ParseCache::new(lang)?;
-                let ts_lang = lang.tree_sitter_language();
+                let mut cache = ParseCache::new(lang.clone())?;
+                let ts_lang = cache.language().clone();
                 let provider = codemark_core::vfs::LocalFileProvider;
                 let result =
                     resolution::resolve(bm, &mut cache, &ts_lang, db.path(), &provider).await?;
@@ -259,8 +259,8 @@ pub async fn handle_diff(cli: &Cli, mode: &OutputMode, args: &DiffArgs) -> Resul
             );
             for bm in &affected {
                 let Ok(lang) = bm.language.parse::<Language>() else { continue };
-                let mut cache = ParseCache::new(lang)?;
-                let ts_lang = lang.tree_sitter_language();
+                let mut cache = ParseCache::new(lang.clone())?;
+                let ts_lang = cache.language().clone();
                 let provider = codemark_core::vfs::LocalFileProvider;
                 let result =
                     resolution::resolve(bm, &mut cache, &ts_lang, db.path(), &provider).await?;

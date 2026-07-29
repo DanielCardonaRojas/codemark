@@ -29,6 +29,12 @@ default = ["semantic"]
 # `--no-default-features` to build without the candle/hf-hub stack. When off the
 # TUI hides the FTS/semantic toggle and its Ctrl+s binding.
 semantic = ["codemark-core/semantic"]
+# Dynamic WASM grammar loading. Opt-in: enables wasmtime so additional language
+# grammars can be loaded at runtime from the platform cache dir (the
+# `$CODEMARK_GRAMMARS_DIR` override, else `BaseDirs::cache_dir()/codemark/grammars`
+# — e.g. ~/.cache on Linux, ~/Library/Caches on macOS). Disabled by default to
+# keep dev/CI builds lean; enable with `--features wasm`.
+wasm = ["codemark-core/wasm"]
 
 [dependencies]
 ratatui = "0.29"

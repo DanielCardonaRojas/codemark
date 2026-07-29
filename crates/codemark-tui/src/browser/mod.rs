@@ -189,6 +189,11 @@ pub struct BrowserLayout {
     /// Results carrying a different id are stale (the selection moved on) and
     /// are dropped — this is how superseded previews are "cancelled".
     active_preview_request: u64,
+    /// Epoch for background live-health tasks. Bumped whenever a grammar refresh
+    /// (on `FocusGained`) could change how bookmarks resolve, so a `LiveHealthBatch`
+    /// computed under an old grammar is discarded instead of overwriting the
+    /// freshly-refreshed panels.
+    health_generation: u64,
     /// ID of the most recent search request, used to discard stale background results.
     pub active_search_request: u64,
     /// The query and mode that produced the search results currently shown in
@@ -280,6 +285,7 @@ impl BrowserLayout {
             preview_cache: Arc::new(Mutex::new(HashMap::new())),
             preview_seq: 0,
             active_preview_request: 0,
+            health_generation: 0,
             active_search_request: 0,
             search_contexts: [None, None],
             reconcile_search_requests: std::collections::HashMap::new(),

@@ -78,6 +78,22 @@ pub fn global_models_dir() -> Option<PathBuf> {
     directories::BaseDirs::new().map(|dirs| dirs.cache_dir().join("codemark").join("models"))
 }
 
+/// Returns the global grammars cache directory.
+///
+/// Platform-specific locations:
+/// - macOS: `~/Library/Caches/codemark/grammars`
+/// - Linux: `~/.cache/codemark/grammars` (XDG standard)
+/// - Windows: `%LOCALAPPDATA%\codemark\grammars`
+///
+/// Sits alongside `models/` — both are downloaded binaries, not user config.
+/// Can be overridden by the `CODEMARK_GRAMMARS_DIR` environment variable.
+pub fn global_grammars_dir() -> Option<PathBuf> {
+    if let Ok(env_dir) = std::env::var("CODEMARK_GRAMMARS_DIR") {
+        return Some(PathBuf::from(env_dir));
+    }
+    directories::BaseDirs::new().map(|dirs| dirs.cache_dir().join("codemark").join("grammars"))
+}
+
 /// Application configuration.
 ///
 /// Loaded from multiple sources with per-repo override:
