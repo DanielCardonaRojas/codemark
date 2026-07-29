@@ -63,6 +63,11 @@ impl LanguageRegistry {
     fn discover_in(grammar_dir: &std::path::Path) -> Option<Self> {
         let mut registry = Self { by_extension: HashMap::new(), by_name: HashMap::new() };
 
+        // Recover any install whose swap was interrupted mid-replace by
+        // `codemark languages add`, which leaves a `.bak-<name>` when the process
+        // died after moving the old install aside but before the new one landed.
+        recover_interrupted_installs(grammar_dir);
+
         let entries = std::fs::read_dir(grammar_dir).ok()?;
 
         // Sort entries by path so discovery is deterministic across processes:
@@ -286,6 +291,37 @@ impl LanguageRegistry {
     }
 }
 
+/// Restore installs left half-swapped by an interrupted `codemark languages add`.
+///
+/// The installer replaces `<cache>/<name>` by renaming it to `<cache>/.bak-<name>`
+/// and then renaming the new dir into place. If the process dies between those
+/// two renames, `<name>` is momentarily absent while `.bak-<name>` holds the
+/// previous (complete) install. Here we move the backup back so the grammar is
+/// discoverable again; a `.bak-<name>` whose `<name>` already exists is a
+/// leftover from a *completed* swap and is just removed.
+fn recover_interrupted_installs(grammar_dir: &std::path::Path) {
+    let Ok(entries) = std::fs::read_dir(grammar_dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let file_name = entry.file_name();
+        let Some(name) = file_name.to_string_lossy().strip_prefix(".bak-").map(str::to_string)
+        else {
+            continue;
+        };
+        let target = grammar_dir.join(&name);
+        if target.exists() {
+            // The swap completed; this backup is just an uncleaned leftover.
+            let _ = std::fs::remove_dir_all(entry.path());
+        } else {
+            // Swap was interrupted — restore the previous install.
+            if std::fs::rename(entry.path(), &target).is_ok() {
+                eprintln!("codemark: recovered grammar '{name}' from an interrupted install");
+            }
+        }
+    }
+}
+
 /// Whether `name` matches a built-in static language (including aliases).
 fn is_static_language_name(name: &str) -> bool {
     // Delegate to the built-in resolver so this can't drift from the actual
@@ -357,6 +393,49 @@ mod tests {
         let reg = LanguageRegistry::discover_in(tmp.path()).unwrap();
         assert!(reg.by_name.is_empty());
         assert!(reg.by_extension.is_empty());
+    }
+
+    #[test]
+    fn discover_recovers_backup_when_target_missing() {
+        // Simulate an install interrupted mid-swap: `.bak-lua` holds the previous
+        // install and `lua` is absent. Discovery must restore it and register it.
+        let tmp = tempfile::tempdir().unwrap();
+        write_grammar(
+            tmp.path(),
+            ".bak-lua",
+            r#"{ "name": "lua", "extensions": ["lua"], "profile": {} }"#,
+            true,
+        );
+        assert!(!tmp.path().join("lua").exists());
+
+        let reg = LanguageRegistry::discover_in(tmp.path()).unwrap();
+        assert!(tmp.path().join("lua").join("manifest.json").exists());
+        assert!(!tmp.path().join(".bak-lua").exists());
+        assert_eq!(reg.by_name.get("lua").map(|l| l.name()), Some("lua"));
+    }
+
+    #[test]
+    fn discover_removes_stale_backup_when_target_present() {
+        // A `.bak-lua` left over from a *completed* swap (its `lua` exists) is
+        // just cleaned up, not restored over the current install.
+        let tmp = tempfile::tempdir().unwrap();
+        write_grammar(
+            tmp.path(),
+            "lua",
+            r#"{ "name": "lua", "extensions": ["lua"], "profile": {} }"#,
+            true,
+        );
+        write_grammar(
+            tmp.path(),
+            ".bak-lua",
+            r#"{ "name": "lua", "extensions": ["old"], "profile": {} }"#,
+            true,
+        );
+
+        let reg = LanguageRegistry::discover_in(tmp.path()).unwrap();
+        assert!(!tmp.path().join(".bak-lua").exists());
+        assert!(reg.by_extension.contains_key("lua"));
+        assert!(!reg.by_extension.contains_key("old"));
     }
 
     #[test]

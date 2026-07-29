@@ -55,21 +55,6 @@ async fn handle_add(
     // request can't truncate a working install (see `validate_name_and_extensions`).
     let extensions = validate_name_and_extensions(&args.name, &args.extensions)?;
 
-    // Validate the WASM grammar actually loads *before* touching the cache, so an
-    // unloadable file can't be reported as a success or truncate a working
-    // install of the same name. Only meaningful on wasm builds.
-    #[cfg(feature = "wasm")]
-    {
-        let manifest = serde_json::json!({ "extensions": extensions });
-        load_dynamic_grammar(&args.name, &args.wasm_file, &manifest).map_err(|e| {
-            Error::Input(format!(
-                "'{}' is not a loadable WASM grammar: {}",
-                args.wasm_file.display(),
-                e
-            ))
-        })?;
-    }
-
     let lang_dir = grammar_dir.join(safe_name);
 
     // A lexically safe name still can't be trusted if `<cache>/<name>` already
@@ -83,15 +68,18 @@ async fn handle_add(
         "profile": {}
     });
     let manifest_str = serde_json::to_string_pretty(&manifest_json).unwrap();
+
+    // Read the source bytes exactly once. Validation and the committed install
+    // both use *these* bytes, so a concurrent edit of the source path can't make
+    // us validate one grammar and install a different one (TOCTOU).
     let wasm_bytes = std::fs::read(&args.wasm_file)
         .map_err(|e| Error::Operation(format!("Failed to read WASM file: {}", e)))?;
 
-    // Stage the full install in a temp dir, then swap it into place atomically.
-    // Writing grammar.wasm and manifest.json directly into `lang_dir` would
-    // expose a truncated wasm before the manifest is committed, so an
-    // interrupted or failed second write would corrupt a previously-working
-    // install. Staging keeps the old install intact until a complete new one is
-    // ready.
+    // Stage the full install in a temp dir, validate the staged grammar loads,
+    // then swap it into place. Writing straight into `lang_dir` would expose a
+    // truncated wasm before the manifest is committed, so an interrupted write
+    // could corrupt a working install; staging keeps the old install intact
+    // until a complete, validated new one is ready.
     install_staged(
         &grammar_dir,
         safe_name,
@@ -218,40 +206,45 @@ fn install_staged(
 
         // Fresh staging dir, so these targets can't be pre-existing symlinks;
         // write_no_follow still guards against a concurrent swap-in.
-        write_no_follow(&staging.join("grammar.wasm"), wasm_bytes, name)?;
+        let staged_wasm = staging.join("grammar.wasm");
+        write_no_follow(&staged_wasm, wasm_bytes, name)?;
         write_no_follow(&staging.join("manifest.json"), manifest_bytes, name)?;
 
-        // Swap staging into place. Move any existing install aside first so we
-        // can roll back if the rename fails, then remove it once we've committed.
-        //
-        // Build the backup name by appending to the *full* directory name (not
-        // `with_extension`, which rewrites the last dot-segment and would map
-        // both `my.lang` and `my` to `my.bak-old`). Dot-prefixed + pid-suffixed
-        // so it's unique per process and skipped by registry discovery.
-        let backup = grammar_dir.join(format!(
-            ".bak-{}-{}",
-            safe_name.to_string_lossy(),
-            std::process::id()
-        ));
-        let _ = std::fs::remove_dir_all(&backup);
-        let had_existing = lang_dir.exists();
-        if had_existing {
-            std::fs::rename(lang_dir, &backup).map_err(|e| {
-                Error::Operation(format!("Failed to move existing install aside: {e}"))
+        // Validate the *staged* grammar — the exact bytes we're about to commit,
+        // not the (mutable) source path. On wasm builds an unloadable grammar
+        // fails here, before any swap, so it can never replace a working install.
+        #[cfg(feature = "wasm")]
+        {
+            let manifest: serde_json::Value = serde_json::from_slice(manifest_bytes)
+                .map_err(|e| Error::Operation(format!("staged manifest not JSON: {e}")))?;
+            load_dynamic_grammar(name, &staged_wasm, &manifest).map_err(|e| {
+                Error::Input(format!("'{}' is not a loadable WASM grammar: {e}", name))
             })?;
         }
+
+        // No existing install: a single rename is fully atomic — the target
+        // either doesn't exist or exists complete, never partial.
+        if !lang_dir.exists() {
+            return std::fs::rename(&staging, lang_dir)
+                .map_err(|e| Error::Operation(format!("Failed to install grammar '{name}': {e}")));
+        }
+
+        // Replacing an existing install needs two dir renames (POSIX can't
+        // atomically replace a non-empty dir). Use a *deterministic* backup name
+        // so that if the process dies between the renames — leaving `lang_dir`
+        // momentarily absent — discovery can restore it (see `recover_backup`).
+        let backup = backup_dir(grammar_dir, safe_name);
+        let _ = std::fs::remove_dir_all(&backup);
+        std::fs::rename(lang_dir, &backup)
+            .map_err(|e| Error::Operation(format!("Failed to move existing install aside: {e}")))?;
         match std::fs::rename(&staging, lang_dir) {
             Ok(()) => {
-                if had_existing {
-                    let _ = std::fs::remove_dir_all(&backup);
-                }
+                let _ = std::fs::remove_dir_all(&backup);
                 Ok(())
             }
             Err(e) => {
                 // Restore the previous install so a failed swap doesn't lose it.
-                if had_existing {
-                    let _ = std::fs::rename(&backup, lang_dir);
-                }
+                let _ = std::fs::rename(&backup, lang_dir);
                 Err(Error::Operation(format!("Failed to install grammar '{name}': {e}")))
             }
         }
@@ -261,6 +254,17 @@ fn install_staged(
         let _ = std::fs::remove_dir_all(&staging);
     }
     result
+}
+
+/// Deterministic backup path for an install being replaced: `<cache>/.bak-<name>`.
+///
+/// Built by appending to the *full* directory name (not `with_extension`, which
+/// rewrites the last dot-segment and would collide `my.lang` with `my`). It is
+/// **not** pid-suffixed on purpose: if the process dies mid-swap leaving
+/// `<cache>/<name>` absent, the next run must be able to find and restore this
+/// exact path (see `codemark_core::parser::registry` recovery on discovery).
+fn backup_dir(grammar_dir: &std::path::Path, safe_name: &std::ffi::OsStr) -> std::path::PathBuf {
+    grammar_dir.join(format!(".bak-{}", safe_name.to_string_lossy()))
 }
 
 /// Reject `path` if it already exists as a symlink, so a subsequent

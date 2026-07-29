@@ -360,6 +360,10 @@ impl BrowserLayout {
                 // rebuilds against the freshly discovered grammar.
                 self.session_cache.clear();
                 self.preview_cache.lock().unwrap_or_else(|e| e.into_inner()).clear();
+                // Advance the health epoch so any live-health task spawned under
+                // the previous grammar is discarded on arrival rather than
+                // overwriting the panels we're about to rebuild.
+                self.health_generation = self.health_generation.wrapping_add(1);
                 self.update_tours_tab_visibility();
 
                 // Leaving the terminal is the only way the git HEAD moves while a
@@ -441,7 +445,13 @@ impl BrowserLayout {
                 });
                 Some(true)
             }
-            Event::LiveHealthBatch(batch) => {
+            Event::LiveHealthBatch { generation, batch } => {
+                // Drop results from a superseded epoch: a grammar refresh on
+                // FocusGained bumps `health_generation`, so a batch computed with
+                // the old grammar must not overwrite the freshly-refreshed panels.
+                if *generation != self.health_generation {
+                    return Some(false);
+                }
                 let mut touches_open_step = false;
                 for (bookmark_id, status) in batch {
                     if let Some(panel) = self.left_pane.content_panel.get_list_panel_mut(0) {
@@ -689,6 +699,9 @@ impl BrowserLayout {
 
         let db_path = self.db.path().to_path_buf();
         let event_handler = self.event_handler.clone();
+        // Stamp the current health epoch; results are discarded on apply if the
+        // epoch has since advanced (e.g. a grammar refresh on FocusGained).
+        let generation = self.health_generation;
 
         tokio::task::spawn_blocking(move || {
             let handle = tokio::runtime::Handle::current();
@@ -739,13 +752,16 @@ impl BrowserLayout {
 
                 // Send in batches of 10 for progressive rendering
                 if batch.len() >= 10 {
-                    let _ = event_handler.send(Event::LiveHealthBatch(std::mem::take(&mut batch)));
+                    let _ = event_handler.send(Event::LiveHealthBatch {
+                        generation,
+                        batch: std::mem::take(&mut batch),
+                    });
                 }
             }
 
             // Send remaining items
             if !batch.is_empty() {
-                let _ = event_handler.send(Event::LiveHealthBatch(batch));
+                let _ = event_handler.send(Event::LiveHealthBatch { generation, batch });
             }
         });
     }
