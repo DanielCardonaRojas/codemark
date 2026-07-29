@@ -23,8 +23,10 @@ semantic = [
 ]
 
 # Dynamic WASM grammar loading. Enables wasmtime (via tree-sitter's wasm
-# feature) so users can load additional language grammars at runtime from
-# ~/.cache/codemark/grammars/.
+# feature) so users can load additional language grammars at runtime from the
+# platform cache dir (`$CODEMARK_GRAMMARS_DIR` override, else
+# `BaseDirs::cache_dir()/codemark/grammars` — ~/.cache on Linux,
+# ~/Library/Caches on macOS).
 wasm = ["tree-sitter/wasm"]
 
 [dependencies]

@@ -30,8 +30,10 @@ default = ["semantic"]
 # TUI hides the FTS/semantic toggle and its Ctrl+s binding.
 semantic = ["codemark-core/semantic"]
 # Dynamic WASM grammar loading. Opt-in: enables wasmtime so additional language
-# grammars can be loaded at runtime from ~/.cache/codemark/grammars/. Disabled
-# by default to keep dev/CI builds lean; enable with `--features wasm`.
+# grammars can be loaded at runtime from the platform cache dir (the
+# `$CODEMARK_GRAMMARS_DIR` override, else `BaseDirs::cache_dir()/codemark/grammars`
+# — e.g. ~/.cache on Linux, ~/Library/Caches on macOS). Disabled by default to
+# keep dev/CI builds lean; enable with `--features wasm`.
 wasm = ["codemark-core/wasm"]
 
 [dependencies]

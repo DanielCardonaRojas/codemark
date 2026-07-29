@@ -519,8 +519,26 @@ async fn handle_validate(_cli: &crate::cli::Cli, mode: &OutputMode) -> Result<()
 
     let mut issues = Vec::new();
 
-    if let Ok(entries) = std::fs::read_dir(&grammar_dir) {
+    // A missing cache dir just means no grammars installed; any other read error
+    // (permissions, etc.) must be surfaced, not silently reported as "all valid".
+    let entries = match std::fs::read_dir(&grammar_dir) {
+        Ok(entries) => Some(entries),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+        Err(e) => {
+            return Err(Error::Operation(format!(
+                "Failed to read grammar cache {}: {e}",
+                grammar_dir.display()
+            )));
+        }
+    };
+
+    if let Some(entries) = entries {
         for entry in entries.flatten() {
+            // Skip transient/temp dirs the installer writes (`.staging-`,
+            // `.bak-`, `.lock-`); they aren't grammars.
+            if entry.file_name().to_string_lossy().starts_with('.') {
+                continue;
+            }
             let manifest_path = entry.path().join("manifest.json");
             let wasm_path = entry.path().join("grammar.wasm");
 
@@ -533,44 +551,52 @@ async fn handle_validate(_cli: &crate::cli::Cli, mode: &OutputMode) -> Result<()
                 issues.push(format!("{}: missing grammar.wasm", entry.path().display()));
             }
 
-            if let Ok(manifest_text) = std::fs::read_to_string(&manifest_path) {
-                match serde_json::from_str::<serde_json::Value>(&manifest_text) {
-                    Ok(val) => {
-                        let name = val.get("name").and_then(|v| v.as_str());
-                        if name.is_none() {
-                            issues.push(format!(
-                                "{}: manifest.json missing 'name' field",
-                                entry.path().display()
-                            ));
-                        }
-                        if val.get("extensions").is_none() {
-                            issues.push(format!(
-                                "{}: manifest.json missing 'extensions' field",
-                                entry.path().display()
-                            ));
-                        }
-
-                        // Existence checks can't tell an empty or non-WASM
-                        // grammar.wasm from a usable one. Load it through the same
-                        // parser path used at runtime so `validate` fails for
-                        // grammars that can't actually be loaded. Only attempted
-                        // on wasm builds; a non-wasm build can't load any dynamic
-                        // grammar and would report a misleading feature error.
-                        #[cfg(feature = "wasm")]
-                        if let (Some(name), true) = (name, wasm_path.exists())
-                            && let Err(e) = load_dynamic_grammar(name, &wasm_path, &val)
-                        {
-                            issues.push(format!(
-                                "{}: grammar.wasm failed to load: {}",
-                                entry.path().display(),
-                                e
-                            ));
-                        }
+            let manifest_text = match std::fs::read_to_string(&manifest_path) {
+                Ok(text) => text,
+                Err(e) => {
+                    // manifest.json exists (checked above) but couldn't be read —
+                    // record it rather than silently dropping the grammar.
+                    issues.push(format!(
+                        "{}: manifest.json could not be read: {e}",
+                        manifest_path.display()
+                    ));
+                    continue;
+                }
+            };
+            match serde_json::from_str::<serde_json::Value>(&manifest_text) {
+                Ok(val) => {
+                    let name = val.get("name").and_then(|v| v.as_str());
+                    if name.is_none() {
+                        issues.push(format!(
+                            "{}: manifest.json missing 'name' field",
+                            entry.path().display()
+                        ));
                     }
-                    Err(e) => {
-                        issues.push(format!("{}: invalid JSON: {}", manifest_path.display(), e))
+                    if val.get("extensions").is_none() {
+                        issues.push(format!(
+                            "{}: manifest.json missing 'extensions' field",
+                            entry.path().display()
+                        ));
+                    }
+
+                    // Existence checks can't tell an empty or non-WASM
+                    // grammar.wasm from a usable one. Load it through the same
+                    // parser path used at runtime so `validate` fails for
+                    // grammars that can't actually be loaded. Only attempted
+                    // on wasm builds; a non-wasm build can't load any dynamic
+                    // grammar and would report a misleading feature error.
+                    #[cfg(feature = "wasm")]
+                    if let (Some(name), true) = (name, wasm_path.exists())
+                        && let Err(e) = load_dynamic_grammar(name, &wasm_path, &val)
+                    {
+                        issues.push(format!(
+                            "{}: grammar.wasm failed to load: {}",
+                            entry.path().display(),
+                            e
+                        ));
                     }
                 }
+                Err(e) => issues.push(format!("{}: invalid JSON: {}", manifest_path.display(), e)),
             }
         }
     }

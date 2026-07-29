@@ -214,12 +214,14 @@ impl LanguageRegistry {
         // currently-registered grammar the fresh scan lost whose directory still
         // exists on disk. A grammar intentionally removed (its directory gone) is
         // not carried forward, so real removals still take effect.
-        {
-            let current = GLOBAL_REGISTRY.read().expect("grammar registry lock poisoned");
-            fresh.carry_forward_transiently_missing(&current);
-        }
-
-        *GLOBAL_REGISTRY.write().expect("grammar registry lock poisoned") = fresh;
+        //
+        // Hold a single write guard across both the carry-forward (which reads the
+        // current registry) and the swap, so a concurrent `refresh` can't complete
+        // in a read→write gap and be silently clobbered, and the carry-forward
+        // decision is made against the registry we're actually replacing.
+        let mut current = GLOBAL_REGISTRY.write().expect("grammar registry lock poisoned");
+        fresh.carry_forward_transiently_missing(&current);
+        *current = fresh;
     }
 
     /// Re-add grammars from `previous` that this (freshly scanned) registry is

@@ -364,6 +364,11 @@ impl BrowserLayout {
                 // the previous grammar is discarded on arrival rather than
                 // overwriting the panels we're about to rebuild.
                 self.health_generation = self.health_generation.wrapping_add(1);
+                tracing::debug!(
+                    target: "codemark::ui",
+                    health_generation = self.health_generation,
+                    "advanced health epoch on FocusGained grammar refresh"
+                );
                 // Same hazard for the bookmark preview: a preview task spawned
                 // before the refresh would resolve with the old grammar. Bumping
                 // the request id drops any in-flight/queued preview result.
