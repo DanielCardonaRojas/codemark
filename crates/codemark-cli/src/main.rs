@@ -18,7 +18,7 @@ async fn main() {
     // Ensure default templates exist in user's data directory.
     templates::ensure_default_template_exists();
 
-    if let Err(err) = handlers::dispatch(&cli).await {
+    if let Err(err) = handlers::dispatch(cli).await {
         exit_with_error(&err);
     }
 }

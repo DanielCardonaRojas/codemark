@@ -808,8 +808,12 @@ pub async fn handle_collection_list_v2(
     }
 
     // Convert TourListArgs to CollectionListArgs
-    let list_args =
-        CollectionListArgs { bookmark: None, repo: vec![], line_format: args.line_format.clone() };
+    let list_args = CollectionListArgs {
+        dbfmt: DbFormatArgs::default(),
+        bookmark: None,
+        repo: vec![],
+        line_format: args.line_format.clone(),
+    };
     handle_collection_list(cli, mode, &list_args).await
 }
 

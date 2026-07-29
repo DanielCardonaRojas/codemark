@@ -9,10 +9,10 @@ use std::path::PathBuf;
 /// Handle the `codemark repo` subcommand.
 pub async fn handle_repo(cli: &Cli, mode: &OutputMode, args: &RepoArgs) -> Result<()> {
     match &args.command {
-        RepoCommand::List => handle_repo_list(mode),
+        RepoCommand::List(_) => handle_repo_list(mode),
         RepoCommand::ShowRepo(args) => handle_repo_show(cli, mode, args),
         RepoCommand::SetServer(args) => handle_repo_set_server(cli, mode, args),
-        RepoCommand::Sync => handle_repo_sync(cli, mode),
+        RepoCommand::Sync(_) => handle_repo_sync(cli, mode),
         RepoCommand::Prune(args) => handle_repo_prune(mode, args),
     }
 }
