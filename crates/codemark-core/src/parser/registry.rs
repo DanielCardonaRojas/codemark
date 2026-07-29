@@ -17,6 +17,12 @@ use crate::config::global_grammars_dir;
 use crate::parser::languages::{DynamicLanguage, Language};
 use crate::parser::profile::Profile;
 
+/// How long a `.lock-<name>` install lock is honored before it's treated as
+/// orphaned (from a killed installer) and reaped. Shared by the CLI installer
+/// (which holds the lock) and registry recovery (which must not wait forever on
+/// a dead one), so the two can't disagree on staleness.
+pub const INSTALL_LOCK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
+
 /// The process-global registry, discovered on first access and re-buildable via
 /// [`LanguageRegistry::refresh`]. Guarded by an `RwLock` so long-running
 /// consumers (e.g. the TUI) can pick up grammars added/removed after startup
@@ -66,7 +72,7 @@ impl LanguageRegistry {
         // Recover any install whose swap was interrupted mid-replace by
         // `codemark languages add`, which leaves a `.bak-<name>` when the process
         // died after moving the old install aside but before the new one landed.
-        recover_interrupted_installs(grammar_dir);
+        recover_interrupted_installs(grammar_dir, INSTALL_LOCK_TIMEOUT);
 
         let entries = std::fs::read_dir(grammar_dir).ok()?;
 
@@ -304,7 +310,7 @@ impl LanguageRegistry {
 /// untouched: that same `<name>` absent + `.bak-<name>` present state is the
 /// *normal* transient of an active swap, not a crash, and recovering it would
 /// fight the installer and make a valid `languages add` fail.
-fn recover_interrupted_installs(grammar_dir: &std::path::Path) {
+fn recover_interrupted_installs(grammar_dir: &std::path::Path, lock_timeout: std::time::Duration) {
     let Ok(entries) = std::fs::read_dir(grammar_dir) else {
         return;
     };
@@ -316,10 +322,19 @@ fn recover_interrupted_installs(grammar_dir: &std::path::Path) {
         };
 
         // An install is mid-swap for this name — its transient state isn't ours
-        // to recover. (The installer reaps its own stale lock, so a dead process
-        // won't wedge recovery forever.)
-        if grammar_dir.join(format!(".lock-{name}")).exists() {
-            continue;
+        // to recover. But a lock outliving a killed installer would wedge this
+        // grammar forever, so treat a lock older than the install timeout as
+        // orphaned: reap it and proceed with recovery.
+        let lock_path = grammar_dir.join(format!(".lock-{name}"));
+        if let Ok(meta) = std::fs::metadata(&lock_path) {
+            let fresh = meta
+                .modified()
+                .map(|t| t.elapsed().unwrap_or_default() <= lock_timeout)
+                .unwrap_or(true);
+            if fresh {
+                continue;
+            }
+            let _ = std::fs::remove_file(&lock_path);
         }
 
         let target = grammar_dir.join(&name);
@@ -445,6 +460,25 @@ mod tests {
         assert!(tmp.path().join(".bak-lua").exists());
         assert!(!tmp.path().join("lua").exists());
         assert!(reg.by_name.is_empty());
+    }
+
+    #[test]
+    fn recovery_reaps_orphaned_lock_and_restores() {
+        // An installer killed after move-aside leaves both `.bak-lua` and a stale
+        // `.lock-lua`. With a zero timeout every lock reads as orphaned, so
+        // recovery reaps it and restores the grammar rather than skipping forever.
+        let tmp = tempfile::tempdir().unwrap();
+        write_grammar(
+            tmp.path(),
+            ".bak-lua",
+            r#"{ "name": "lua", "extensions": ["lua"], "profile": {} }"#,
+            true,
+        );
+        std::fs::write(tmp.path().join(".lock-lua"), b"").unwrap();
+
+        recover_interrupted_installs(tmp.path(), std::time::Duration::ZERO);
+        assert!(!tmp.path().join(".lock-lua").exists(), "stale lock reaped");
+        assert!(tmp.path().join("lua").join("manifest.json").exists(), "grammar recovered");
     }
 
     #[test]

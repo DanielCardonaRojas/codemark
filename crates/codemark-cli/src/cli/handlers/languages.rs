@@ -179,7 +179,8 @@ impl InstallLock {
         // reap an orphaned lock older than the timeout so a killed process can't
         // wedge future installs.
         let start = std::time::Instant::now();
-        let timeout = std::time::Duration::from_secs(10);
+        // Shared with registry recovery so the two agree on when a lock is stale.
+        let timeout = codemark_core::parser::registry::INSTALL_LOCK_TIMEOUT;
         loop {
             match std::fs::OpenOptions::new().write(true).create_new(true).open(&lock_path) {
                 Ok(_) => return Ok(InstallLock(lock_path)),
