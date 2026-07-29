@@ -581,4 +581,80 @@ Examples:
 - `Context: User preferences | Cached 30s | DB: users_table`
 
 ## Supported languages
-Swift, Rust, TypeScript, Python, Go, Java, C#, Dart.
+Swift, Rust, TypeScript, Python, Go, Java, C#, Dart (built-in).
+
+Additional languages load at runtime from WASM grammars — no recompile needed.
+
+## Adding a new language (WASM grammar)
+
+When the user wants to bookmark a language not listed above, install a Tree-sitter
+WASM grammar. **Do not** edit the `Language` enum or any Rust source — grammars
+load dynamically.
+
+### 1. Install the grammar (mechanical — let the CLI do it)
+
+```bash
+# Best: fetch a prebuilt .wasm from the grammar repo's GitHub release.
+codemark languages install tree-sitter/tree-sitter-bash
+```
+
+`install` reads the repo's `tree-sitter.json`, checks the Tree-sitter version is
+**0.25** (codemark's WASM ABI), derives the name + extensions, downloads the
+`.wasm`, and installs it. If it reports a version mismatch or no release `.wasm`,
+build it yourself with the 0.25 CLI and use `codemark languages add`:
+
+```bash
+tree-sitter build --wasm            # needs tree-sitter-cli@0.25 + Docker/emscripten
+codemark languages add --name ruby --extensions rb,rake ./tree-sitter-ruby.wasm
+```
+
+The binary must be built with `--features wasm`, or the grammar installs but is
+ignored at runtime (the CLI warns).
+
+### 2. Author the profile (your job — the CLI can't)
+
+`install`/`add` write a manifest with an **empty `profile`**. Parsing works
+immediately, but breadcrumbs and query summaries are weak until you fill the
+profile. This is the part that needs a human/agent: it depends on the grammar's
+specific node vocabulary, which you must inspect.
+
+Find the manifest (path is printed on install; default
+`$(codemark languages list)` shows it, or `~/Library/Caches/codemark/grammars/<name>/manifest.json`
+on macOS / `~/.cache/...` on Linux), then:
+
+```bash
+# Inspect the AST to learn this grammar's node kinds
+tree-sitter parse example.rb        # shows node types like `method`, `call`, ...
+# or bookmark something and read node_type back:
+codemark add --file example.rb --range 3-5 --dry-run
+```
+
+Edit `manifest.json`'s `profile` using what you observe:
+
+```jsonc
+"profile": {
+  // node kinds that should anchor a structural query (functions, classes, types…)
+  "landmark_kinds": ["method", "class", "module", "singleton_method"],
+  // node kind → human label (drives query summaries + TUI icons)
+  "node_labels": { "method": "function", "class": "class", "call": "call" },
+  // [container node kind, name-field] — ancestors that make good breadcrumbs
+  "containers": [["class", "name"], ["method", "name"], ["module", "name"]],
+  // optional: node kind → field to summarize
+  "semantic_fields": { "if": "condition" }
+}
+```
+
+Node names are **grammar-specific** — Ruby uses `method`, Python
+`function_definition`, bash `function_definition`, Lua
+`function_definition_statement`. Never assume; read them from `tree-sitter parse`.
+Reference: the committed Lua example at
+`tests/fixtures/grammars/lua/manifest.json`.
+
+### 3. Verify
+
+```bash
+codemark languages validate         # confirms the grammar loads
+codemark add --file example.rb --range 3-5 --dry-run   # check node_type + breadcrumb
+```
+
+Full details: `dev-docs/guides/adding-wasm-grammars.md`.
