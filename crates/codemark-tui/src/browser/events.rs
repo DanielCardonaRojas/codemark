@@ -364,6 +364,10 @@ impl BrowserLayout {
                 // the previous grammar is discarded on arrival rather than
                 // overwriting the panels we're about to rebuild.
                 self.health_generation = self.health_generation.wrapping_add(1);
+                // Same hazard for the bookmark preview: a preview task spawned
+                // before the refresh would resolve with the old grammar. Bumping
+                // the request id drops any in-flight/queued preview result.
+                self.cancel_inflight_preview();
                 self.update_tours_tab_visibility();
 
                 // Leaving the terminal is the only way the git HEAD moves while a
