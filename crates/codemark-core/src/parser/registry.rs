@@ -299,6 +299,11 @@ impl LanguageRegistry {
 /// previous (complete) install. Here we move the backup back so the grammar is
 /// discoverable again; a `.bak-<name>` whose `<name>` already exists is a
 /// leftover from a *completed* swap and is just removed.
+///
+/// A grammar with a live `.lock-<name>` (an install currently mid-swap) is left
+/// untouched: that same `<name>` absent + `.bak-<name>` present state is the
+/// *normal* transient of an active swap, not a crash, and recovering it would
+/// fight the installer and make a valid `languages add` fail.
 fn recover_interrupted_installs(grammar_dir: &std::path::Path) {
     let Ok(entries) = std::fs::read_dir(grammar_dir) else {
         return;
@@ -309,6 +314,14 @@ fn recover_interrupted_installs(grammar_dir: &std::path::Path) {
         else {
             continue;
         };
+
+        // An install is mid-swap for this name — its transient state isn't ours
+        // to recover. (The installer reaps its own stale lock, so a dead process
+        // won't wedge recovery forever.)
+        if grammar_dir.join(format!(".lock-{name}")).exists() {
+            continue;
+        }
+
         let target = grammar_dir.join(&name);
         if target.exists() {
             // The swap completed; this backup is just an uncleaned leftover.
@@ -412,6 +425,26 @@ mod tests {
         assert!(tmp.path().join("lua").join("manifest.json").exists());
         assert!(!tmp.path().join(".bak-lua").exists());
         assert_eq!(reg.by_name.get("lua").map(|l| l.name()), Some("lua"));
+    }
+
+    #[test]
+    fn discover_leaves_backup_untouched_while_install_lock_is_held() {
+        // `<name>` absent + `.bak-<name>` present is the normal transient of an
+        // active swap; a live `.lock-<name>` means recovery must not interfere.
+        let tmp = tempfile::tempdir().unwrap();
+        write_grammar(
+            tmp.path(),
+            ".bak-lua",
+            r#"{ "name": "lua", "extensions": ["lua"], "profile": {} }"#,
+            true,
+        );
+        std::fs::write(tmp.path().join(".lock-lua"), b"").unwrap();
+
+        let reg = LanguageRegistry::discover_in(tmp.path()).unwrap();
+        // Backup left in place (installer will finish the swap); not restored.
+        assert!(tmp.path().join(".bak-lua").exists());
+        assert!(!tmp.path().join("lua").exists());
+        assert!(reg.by_name.is_empty());
     }
 
     #[test]
