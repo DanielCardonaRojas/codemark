@@ -51,6 +51,25 @@ async fn handle_add(
         "accepted grammar name"
     );
 
+    // Validate the name and extensions before any file is written, so a bad
+    // request can't truncate a working install (see `validate_name_and_extensions`).
+    let extensions = validate_name_and_extensions(&args.name, &args.extensions)?;
+
+    // Validate the WASM grammar actually loads *before* touching the cache, so an
+    // unloadable file can't be reported as a success or truncate a working
+    // install of the same name. Only meaningful on wasm builds.
+    #[cfg(feature = "wasm")]
+    {
+        let manifest = serde_json::json!({ "extensions": extensions });
+        load_dynamic_grammar(&args.name, &args.wasm_file, &manifest).map_err(|e| {
+            Error::Input(format!(
+                "'{}' is not a loadable WASM grammar: {}",
+                args.wasm_file.display(),
+                e
+            ))
+        })?;
+    }
+
     let lang_dir = grammar_dir.join(safe_name);
 
     // A lexically safe name still can't be trusted if `<cache>/<name>` already
@@ -89,8 +108,6 @@ async fn handle_add(
         .map_err(|e| Error::Operation(format!("Failed to read WASM file: {}", e)))?;
     write_no_follow(&target_wasm, &wasm_bytes, &args.name)?;
 
-    let extensions: Vec<String> =
-        args.extensions.split(',').map(|s| s.trim().to_string()).collect();
     let manifest_json = serde_json::json!({
         "name": args.name,
         "version": "0.1.0",
@@ -107,31 +124,71 @@ async fn handle_add(
     // be used, so don't claim it will be — direct the user to a wasm build.
     let wasm_enabled = cfg!(feature = "wasm");
 
+    let ext_list = extensions.join(", ");
+
     if matches!(mode, OutputMode::Json) {
         output::write_json_success(&serde_json::json!({
             "message": "Grammar added successfully",
             "name": args.name,
             "directory": lang_dir,
+            "extensions": extensions,
             "runtime_enabled": wasm_enabled,
         }))?;
     } else {
         println!("Successfully added grammar for '{}' to {}", args.name, lang_dir.display());
         if wasm_enabled {
             println!(
-                "Codemark will now automatically discover and use this grammar for the following extensions: {}",
-                args.extensions
+                "Codemark will now automatically discover and use this grammar for the following extensions: {ext_list}"
             );
         } else {
             println!(
                 "Note: this build was compiled without the 'wasm' feature, so the grammar \
                  cannot be loaded at runtime. Rebuild codemark with --features wasm to use it \
-                 for the following extensions: {}",
-                args.extensions
+                 for the following extensions: {ext_list}"
             );
         }
     }
 
     Ok(())
+}
+
+/// Validate a grammar `name` and raw comma-separated `raw_extensions`, returning
+/// the normalized (trimmed, dot-stripped, lowercased, non-empty) extensions.
+///
+/// Runs before any file is written so a request that could never resolve — a
+/// name shadowed by a built-in (incl. aliases like `rs`/`ts`), or extensions
+/// that are all empty/dotted or owned by a built-in — is rejected instead of
+/// truncating an existing same-named install.
+fn validate_name_and_extensions(name: &str, raw_extensions: &str) -> Result<Vec<String>> {
+    use codemark_core::parser::languages::Language;
+
+    if Language::static_from_name(name).is_some() {
+        return Err(Error::Input(format!(
+            "Invalid grammar name '{name}': it is (or aliases) a built-in language and would never resolve"
+        )));
+    }
+
+    // Runtime lookup keys on non-empty, dotless, lowercase extensions, so a
+    // `.lua` or empty token stored verbatim would never match (or would wrongly
+    // claim extensionless files).
+    let extensions: Vec<String> = raw_extensions
+        .split(',')
+        .map(|s| s.trim().trim_start_matches('.').to_lowercase())
+        .filter(|s| !s.is_empty())
+        .collect();
+    if extensions.is_empty() {
+        return Err(Error::Input(
+            "No valid extensions given: provide a comma-separated list like `lua,luau`".to_string(),
+        ));
+    }
+    if let Some(builtin) = extensions.iter().find(|e| Language::static_from_extension(e).is_some())
+    {
+        return Err(Error::Input(format!(
+            "Extension '.{builtin}' is owned by a built-in language and can't be claimed by a dynamic grammar"
+        )));
+    }
+
+    Ok(extensions)
 }
 
 /// Reject `path` if it already exists as a symlink, so a subsequent
@@ -396,4 +453,42 @@ async fn handle_validate(_cli: &crate::cli::Cli, mode: &OutputMode) -> Result<()
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn normalizes_extensions_stripping_dots_empties_and_case() {
+        let exts = validate_name_and_extensions("lua", " .Lua, luau ,, ").unwrap();
+        assert_eq!(exts, vec!["lua".to_string(), "luau".to_string()]);
+    }
+
+    #[test]
+    fn rejects_name_that_aliases_a_builtin() {
+        // `rs` aliases built-in Rust — the grammar would never resolve, and
+        // installing it could clobber an unrelated same-named install.
+        assert!(validate_name_and_extensions("rs", "myrs").is_err());
+        assert!(validate_name_and_extensions("typescript", "myts").is_err());
+    }
+
+    #[test]
+    fn rejects_extensions_owned_by_a_builtin() {
+        // `.rs` is owned by built-in Rust; a dynamic grammar can't claim it.
+        assert!(validate_name_and_extensions("lua", "rs").is_err());
+    }
+
+    #[test]
+    fn rejects_when_no_valid_extensions_remain() {
+        // All tokens empty/dot-only → nothing usable.
+        assert!(validate_name_and_extensions("lua", " , . , ").is_err());
+        assert!(validate_name_and_extensions("lua", "").is_err());
+    }
+
+    #[test]
+    fn accepts_a_normal_dynamic_grammar() {
+        let exts = validate_name_and_extensions("lua", "lua").unwrap();
+        assert_eq!(exts, vec!["lua".to_string()]);
+    }
 }
