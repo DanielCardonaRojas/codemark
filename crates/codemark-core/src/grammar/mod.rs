@@ -44,7 +44,30 @@ pub async fn install(spec: &str, overrides: InstallOverrides) -> Result<InstallO
     let resolved = source::select_source(spec, client.clone())
         .resolve(spec, overrides.name.as_deref())
         .await?;
+    finish_install(&client, resolved, overrides).await
+}
 
+/// Install a grammar from a local `.wasm` file on disk (`codemark languages
+/// add`). Takes a `&Path` directly rather than a string spec so a non-UTF-8 path
+/// survives intact — routing it through [`install`]'s string spec would
+/// lossily convert it and misroute the file to the GitHub resolver.
+pub async fn install_from_path(
+    path: &std::path::Path,
+    overrides: InstallOverrides,
+) -> Result<InstallOutcome> {
+    let client = crate::sync::build_sync_http_client()?;
+    let resolved = source::LocalFileSource.resolve_path(path)?;
+    finish_install(&client, resolved, overrides).await
+}
+
+/// Shared tail of the install pipeline once a source has produced a
+/// [`ResolvedGrammar`](source::ResolvedGrammar): apply overrides, gate on the
+/// Tree-sitter version, materialize the wasm, and hand off to [`install_grammar`].
+async fn finish_install(
+    client: &reqwest::Client,
+    resolved: source::ResolvedGrammar,
+    overrides: InstallOverrides,
+) -> Result<InstallOutcome> {
     source::version_gate(resolved.ts_version.as_deref(), overrides.allow_version_mismatch)?;
 
     // Overrides win over the source's reported metadata.
@@ -62,7 +85,7 @@ pub async fn install(spec: &str, overrides: InstallOverrides) -> Result<InstallO
     // Reject built-in collisions before any download or file write.
     let extensions = validate_name_and_extensions(&name, &raw_extensions)?;
 
-    let wasm_bytes = resolved.wasm.into_bytes(&client).await?;
+    let wasm_bytes = resolved.wasm.into_bytes(client).await?;
     install_grammar(&name, &extensions, resolved.profile, wasm_bytes)
 }
 
@@ -126,7 +149,7 @@ pub fn install_grammar(
     let lang_dir = grammar_dir.join(safe_name);
     reject_symlink(&lang_dir, name)?;
 
-    let manifest_str = build_manifest(name, extensions, profile);
+    let manifest_str = build_manifest(name, extensions, profile)?;
 
     install_staged(&grammar_dir, safe_name, &lang_dir, &wasm_bytes, manifest_str.as_bytes(), name)?;
 
@@ -142,14 +165,34 @@ pub fn install_grammar(
 /// empty object (`{}`); `Some(..)` is written verbatim so a registry can ship a
 /// curated profile. Extracted so the profile-threading can be tested without
 /// touching the filesystem or the global grammar cache.
-fn build_manifest(name: &str, extensions: &[String], profile: Option<serde_json::Value>) -> String {
+fn build_manifest(
+    name: &str,
+    extensions: &[String],
+    profile: Option<serde_json::Value>,
+) -> Result<String> {
+    // Validate a supplied profile against the `Profile` schema *before* it's
+    // written, so a source (e.g. a future registry) can't commit a manifest whose
+    // profile the registry reader would reject — which would report a successful
+    // install of an unusable grammar. `None` writes an empty object, which is a
+    // valid (all-default) Profile.
+    let profile = match profile {
+        Some(value) => {
+            serde_json::from_value::<crate::parser::profile::Profile>(value.clone()).map_err(
+                |e| {
+                    Error::Input(format!("grammar profile does not match the expected schema: {e}"))
+                },
+            )?;
+            value
+        }
+        None => serde_json::json!({}),
+    };
     let manifest_json = serde_json::json!({
         "name": name,
         "version": "0.1.0",
         "extensions": extensions,
-        "profile": profile.unwrap_or_else(|| serde_json::json!({})),
+        "profile": profile,
     });
-    serde_json::to_string_pretty(&manifest_json).unwrap()
+    Ok(serde_json::to_string_pretty(&manifest_json).unwrap())
 }
 
 /// Validate a grammar `name` and raw comma-separated `raw_extensions`, returning
@@ -214,8 +257,15 @@ impl InstallLock {
             match std::fs::OpenOptions::new().write(true).create_new(true).open(&lock_path) {
                 Ok(_) => return Ok(InstallLock(lock_path)),
                 Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
-                    if protocol::lock_is_stale(&lock_path) {
-                        let _ = std::fs::remove_file(&lock_path);
+                    // Reap an orphaned lock, then retry immediately on success.
+                    // If the reap *fails* (EPERM/EACCES, or a directory squatting
+                    // at the lock path), fall through to the timeout+sleep path
+                    // below rather than `continue`-ing — otherwise a lock that
+                    // reads stale but can't be removed would spin the loop with no
+                    // sleep and no timeout check (100% CPU hang).
+                    if protocol::lock_is_stale(&lock_path)
+                        && std::fs::remove_file(&lock_path).is_ok()
+                    {
                         continue;
                     }
                     if start.elapsed() > timeout {
@@ -518,7 +568,8 @@ mod tests {
     #[test]
     fn manifest_writes_empty_profile_when_none() {
         let m: serde_json::Value =
-            serde_json::from_str(&build_manifest("lua", &["lua".to_string()], None)).unwrap();
+            serde_json::from_str(&build_manifest("lua", &["lua".to_string()], None).unwrap())
+                .unwrap();
         assert_eq!(m["profile"], serde_json::json!({}));
         assert_eq!(m["name"], "lua");
         assert_eq!(m["extensions"], serde_json::json!(["lua"]));
@@ -529,13 +580,24 @@ mod tests {
         // Proves the registry path: a source's curated profile survives into the
         // manifest rather than being flattened to `{}`.
         let profile = serde_json::json!({ "landmark_kinds": ["function_item"] });
-        let m: serde_json::Value = serde_json::from_str(&build_manifest(
-            "lua",
-            &["lua".to_string()],
-            Some(profile.clone()),
-        ))
+        let m: serde_json::Value = serde_json::from_str(
+            &build_manifest("lua", &["lua".to_string()], Some(profile.clone())).unwrap(),
+        )
         .unwrap();
         assert_eq!(m["profile"], profile);
+    }
+
+    #[test]
+    fn manifest_rejects_a_profile_that_isnt_a_valid_profile() {
+        // A non-object (or otherwise schema-invalid) profile is rejected before
+        // the manifest is written, so the writer can't commit something the
+        // registry reader would fail to deserialize.
+        let not_an_object = serde_json::json!("landmark_kinds");
+        assert!(build_manifest("lua", &["lua".to_string()], Some(not_an_object)).is_err());
+
+        // Wrong field type: landmark_kinds must be a string array, not a number.
+        let wrong_type = serde_json::json!({ "landmark_kinds": 3 });
+        assert!(build_manifest("lua", &["lua".to_string()], Some(wrong_type)).is_err());
     }
 
     #[test]

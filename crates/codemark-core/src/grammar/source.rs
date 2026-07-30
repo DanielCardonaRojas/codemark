@@ -95,17 +95,18 @@ pub fn version_gate(ts_version: Option<&str>, allow_mismatch: bool) -> Result<()
 /// extensions must be supplied by the caller.
 pub struct LocalFileSource;
 
-#[async_trait::async_trait]
-impl GrammarSource for LocalFileSource {
-    async fn resolve(&self, spec: &str, _requested_name: Option<&str>) -> Result<ResolvedGrammar> {
-        let path = PathBuf::from(spec);
+impl LocalFileSource {
+    /// Resolve directly from a filesystem [`Path`](std::path::Path), preserving a
+    /// non-UTF-8 path exactly (the string-`spec` trait method would lossily
+    /// convert it). This is the path `codemark languages add` uses.
+    pub fn resolve_path(&self, path: &std::path::Path) -> Result<ResolvedGrammar> {
         if !path.exists() {
             return Err(Error::Input(format!("WASM file not found: {}", path.display())));
         }
         // Read the bytes once — validation and the committed install use these
         // same bytes, so a concurrent edit of the source path can't make us
         // validate one grammar and install a different one (TOCTOU).
-        let bytes = std::fs::read(&path)
+        let bytes = std::fs::read(path)
             .map_err(|e| Error::Operation(format!("Failed to read WASM file: {e}")))?;
         Ok(ResolvedGrammar {
             name: None,
@@ -114,6 +115,13 @@ impl GrammarSource for LocalFileSource {
             wasm: WasmPayload::Bytes(bytes),
             ts_version: None,
         })
+    }
+}
+
+#[async_trait::async_trait]
+impl GrammarSource for LocalFileSource {
+    async fn resolve(&self, spec: &str, _requested_name: Option<&str>) -> Result<ResolvedGrammar> {
+        self.resolve_path(&PathBuf::from(spec))
     }
 }
 
