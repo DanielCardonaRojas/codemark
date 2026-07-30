@@ -48,8 +48,24 @@ async fn handle_install(
     let client = codemark_core::sync::build_sync_http_client()?;
 
     // 1. Read the repo's tree-sitter.json for the grammar name, file-types, and
-    //    the Tree-sitter version (which governs WASM ABI compatibility).
-    let meta = fetch_tree_sitter_json(&client, &owner, &repo).await?;
+    //    the Tree-sitter version (which governs WASM ABI compatibility). An
+    //    explicit --name selects the matching entry in a multi-grammar repo.
+    let meta = fetch_tree_sitter_json(&client, &owner, &repo, args.name.as_deref()).await?;
+
+    // A multi-grammar repo (e.g. typescript + tsx) exposes several grammar
+    // entries but often ships a single .wasm. Without --name we'd default to the
+    // first entry's name/extensions, which may not correspond to the published
+    // module — installing files that parse with the wrong grammar. Require the
+    // caller to disambiguate rather than guessing. (If --name was given but
+    // matched no entry, meta still fell back to the first entry; the name the
+    // user passed wins below, so the manifest matches their intent.)
+    if meta.grammar_count > 1 && args.name.is_none() {
+        return Err(Error::Input(format!(
+            "{owner}/{repo} declares {} grammars in tree-sitter.json — pass --name to choose which \
+             one to install (its name must match a grammar entry).",
+            meta.grammar_count
+        )));
+    }
 
     if !args.allow_version_mismatch
         && let Some(v) = &meta.version
@@ -97,6 +113,11 @@ struct TreeSitterMeta {
     name: Option<String>,
     file_types: Vec<String>,
     version: Option<String>,
+    /// How many grammar entries `tree-sitter.json` declared. >1 means a
+    /// multi-grammar repo where `name`/`file_types` (taken from a single entry)
+    /// can't be assumed to match the published `.wasm` unless the caller named
+    /// the grammar explicitly.
+    grammar_count: usize,
 }
 
 /// Parse a grammar source into `(owner, repo)`. Accepts `owner/repo`,
@@ -124,10 +145,14 @@ fn parse_source(source: &str) -> Result<(String, String)> {
 }
 
 /// Fetch and parse `tree-sitter.json` from the repo's default branch.
+///
+/// `requested_name` (an explicit `--name`) selects the matching grammar entry
+/// in a multi-grammar repo; see [`parse_tree_sitter_meta`].
 async fn fetch_tree_sitter_json(
     client: &reqwest::Client,
     owner: &str,
     repo: &str,
+    requested_name: Option<&str>,
 ) -> Result<TreeSitterMeta> {
     // Probe the repo's *actual* default branch first, then the conventional
     // fallbacks. Without this, a repo whose default is neither `master` nor
@@ -169,7 +194,7 @@ async fn fetch_tree_sitter_json(
             .json()
             .await
             .map_err(|e| Error::Operation(format!("tree-sitter.json is not valid JSON: {e}")))?;
-        return Ok(parse_tree_sitter_meta(&json));
+        return Ok(parse_tree_sitter_meta(&json, requested_name));
     }
     Err(Error::Input(format!(
         "no tree-sitter.json found in {owner}/{repo} (looked on {}); \
@@ -195,9 +220,30 @@ async fn fetch_default_branch(client: &reqwest::Client, owner: &str, repo: &str)
 }
 
 /// Extract the name, file-types, and Tree-sitter version from a parsed
-/// `tree-sitter.json`. The first grammar entry is used for name/file-types.
-fn parse_tree_sitter_meta(json: &serde_json::Value) -> TreeSitterMeta {
-    let grammar = json.get("grammars").and_then(|g| g.as_array()).and_then(|a| a.first());
+/// `tree-sitter.json`.
+///
+/// When `requested_name` is given and matches a grammar entry, that entry's
+/// name/file-types are used — so a multi-grammar repo (e.g. `typescript` + `tsx`)
+/// installed with `--name tsx` doesn't silently pick up the first entry's
+/// metadata. Otherwise the first entry is used, and `grammar_count` reports how
+/// many entries existed so the caller can detect the ambiguous case.
+fn parse_tree_sitter_meta(
+    json: &serde_json::Value,
+    requested_name: Option<&str>,
+) -> TreeSitterMeta {
+    let grammars = json.get("grammars").and_then(|g| g.as_array());
+    let grammar_count = grammars.map(|a| a.len()).unwrap_or(0);
+
+    // Prefer the entry matching an explicit --name; fall back to the first.
+    let grammar = grammars.and_then(|arr| {
+        requested_name
+            .and_then(|want| {
+                arr.iter()
+                    .find(|g| g.get("name").and_then(|n| n.as_str()).is_some_and(|n| n == want))
+            })
+            .or_else(|| arr.first())
+    });
+
     let name = grammar.and_then(|g| g.get("name")).and_then(|n| n.as_str()).map(str::to_string);
     let file_types = grammar
         .and_then(|g| g.get("file-types"))
@@ -209,7 +255,7 @@ fn parse_tree_sitter_meta(json: &serde_json::Value) -> TreeSitterMeta {
         .and_then(|m| m.get("version"))
         .and_then(|v| v.as_str())
         .map(str::to_string);
-    TreeSitterMeta { name, file_types, version }
+    TreeSitterMeta { name, file_types, version, grammar_count }
 }
 
 /// A release asset we can download.
@@ -264,7 +310,13 @@ async fn find_wasm_asset(
              `codemark languages add` instead."
         )));
     } else if let [only] = wasm_assets.as_slice() {
-        // Exactly one .wasm — unambiguous, no name match needed.
+        // Exactly one .wasm — unambiguous which module to download. The manifest
+        // name is already reconciled with the grammar the user meant: a single-
+        // grammar repo's metadata is correct, and a multi-grammar repo requires
+        // --name (handle_install rejects it otherwise), so no asset-name check
+        // is needed here. Repos routinely name the sole asset arbitrarily
+        // (`parser.wasm`, `<repo>.wasm`), so matching it against the grammar
+        // name would only cause false negatives.
         only
     } else {
         // Multiple .wasm — require an unambiguous match on the grammar name.
@@ -963,18 +1015,55 @@ mod tests {
             "grammars": [{ "name": "bash", "file-types": ["sh", "bash", ".bashrc"] }],
             "metadata": { "version": "0.25.1" }
         });
-        let meta = parse_tree_sitter_meta(&json);
+        let meta = parse_tree_sitter_meta(&json, None);
         assert_eq!(meta.name.as_deref(), Some("bash"));
         assert_eq!(meta.file_types, vec!["sh", "bash", ".bashrc"]);
         assert_eq!(meta.version.as_deref(), Some("0.25.1"));
+        assert_eq!(meta.grammar_count, 1);
     }
 
     #[test]
     fn parse_tree_sitter_meta_tolerates_missing_fields() {
-        let meta = parse_tree_sitter_meta(&serde_json::json!({}));
+        let meta = parse_tree_sitter_meta(&serde_json::json!({}), None);
         assert!(meta.name.is_none());
         assert!(meta.file_types.is_empty());
         assert!(meta.version.is_none());
+        assert_eq!(meta.grammar_count, 0);
+    }
+
+    #[test]
+    fn parse_tree_sitter_meta_selects_entry_matching_requested_name() {
+        // A multi-grammar repo (typescript + tsx). Without a name we default to
+        // the first entry; with --name tsx we must pick the tsx entry's metadata,
+        // not typescript's — otherwise a single .wasm install writes the wrong
+        // extensions.
+        let json = serde_json::json!({
+            "grammars": [
+                { "name": "typescript", "file-types": ["ts"] },
+                { "name": "tsx", "file-types": ["tsx"] }
+            ]
+        });
+
+        let first = parse_tree_sitter_meta(&json, None);
+        assert_eq!(first.name.as_deref(), Some("typescript"));
+        assert_eq!(first.file_types, vec!["ts"]);
+        assert_eq!(first.grammar_count, 2);
+
+        let picked = parse_tree_sitter_meta(&json, Some("tsx"));
+        assert_eq!(picked.name.as_deref(), Some("tsx"));
+        assert_eq!(picked.file_types, vec!["tsx"]);
+        assert_eq!(picked.grammar_count, 2);
+    }
+
+    #[test]
+    fn parse_tree_sitter_meta_falls_back_to_first_when_requested_name_absent() {
+        // A requested name that matches no entry falls back to the first entry;
+        // the caller's explicit --name still wins for the manifest downstream.
+        let json = serde_json::json!({
+            "grammars": [{ "name": "bash", "file-types": ["sh"] }]
+        });
+        let meta = parse_tree_sitter_meta(&json, Some("nonexistent"));
+        assert_eq!(meta.name.as_deref(), Some("bash"));
     }
 
     #[test]
