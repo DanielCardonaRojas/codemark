@@ -94,8 +94,9 @@ async fn handle_install(
     };
 
     // 3. Find and download the .wasm release asset (matched to this grammar so a
-    //    multi-.wasm release can't pair the manifest with the wrong module).
-    let asset = find_wasm_asset(&client, &owner, &repo, &name).await?;
+    //    multi-.wasm release — or a lone asset in a multi-grammar repo — can't
+    //    pair the manifest with the wrong module).
+    let asset = find_wasm_asset(&client, &owner, &repo, &name, meta.grammar_count).await?;
     if !matches!(mode, OutputMode::Json) {
         println!("Downloading {} …", asset.name);
     }
@@ -265,19 +266,29 @@ struct ReleaseAsset {
 }
 
 /// Find the `.wasm` release asset for `grammar_name` on the repo's latest
-/// release.
+/// release. `grammar_entry_count` is how many grammars `tree-sitter.json`
+/// declared, which decides how strictly the asset must match the name.
 ///
 /// A release may carry several `.wasm` modules (multi-grammar repos, or debug +
-/// release builds). Grabbing the first one independently of the chosen grammar
-/// can pair the manifest with a different module, so when there's more than one
-/// candidate we require an unambiguous match on the grammar name (Tree-sitter's
-/// convention is `tree-sitter-<name>.wasm` / `<name>.wasm`) and otherwise error
-/// with the candidate list rather than guessing.
+/// release builds). Grabbing an asset independently of the chosen grammar can
+/// pair the manifest with a different module, so:
+/// - **Multiple `.wasm` assets:** require an unambiguous match on the grammar
+///   name (Tree-sitter's convention is `tree-sitter-<name>.wasm` / `<name>.wasm`).
+/// - **One `.wasm` asset, single-grammar repo:** accept it — the sole asset *is*
+///   the grammar, and repos name it arbitrarily (`parser.wasm`, `<repo>.wasm`),
+///   so a name check would only cause false negatives.
+/// - **One `.wasm` asset, multi-grammar repo:** the user chose one grammar via
+///   `--name`, but a lone asset can't be assumed to be *that* grammar's module,
+///   so require the asset name to match and otherwise refuse rather than install
+///   a mismatched module.
+///
+/// Otherwise error with the candidate list rather than guessing.
 async fn find_wasm_asset(
     client: &reqwest::Client,
     owner: &str,
     repo: &str,
     grammar_name: &str,
+    grammar_entry_count: usize,
 ) -> Result<ReleaseAsset> {
     let url = format!("https://api.github.com/repos/{owner}/{repo}/releases/latest");
     tracing::debug!(target: "codemark::http", %url, "fetching latest release");
@@ -310,13 +321,22 @@ async fn find_wasm_asset(
              `codemark languages add` instead."
         )));
     } else if let [only] = wasm_assets.as_slice() {
-        // Exactly one .wasm — unambiguous which module to download. The manifest
-        // name is already reconciled with the grammar the user meant: a single-
-        // grammar repo's metadata is correct, and a multi-grammar repo requires
-        // --name (handle_install rejects it otherwise), so no asset-name check
-        // is needed here. Repos routinely name the sole asset arbitrarily
-        // (`parser.wasm`, `<repo>.wasm`), so matching it against the grammar
-        // name would only cause false negatives.
+        let asset_name = only.get("name").and_then(|n| n.as_str()).unwrap_or("");
+        if grammar_entry_count > 1 && !wasm_name_matches(asset_name, grammar_name) {
+            // Multi-grammar repo with a single published .wasm: we can't assume
+            // that lone asset is the module for the grammar the user chose via
+            // --name. Installing it would write a manifest for '{grammar_name}'
+            // over a different grammar's module. Refuse rather than mismatch.
+            return Err(Error::Input(format!(
+                "{owner}/{repo} declares multiple grammars but its latest release ships a single \
+                 .wasm ('{asset_name}') that doesn't match grammar '{grammar_name}'. It may be a \
+                 different grammar's module — download the correct .wasm and use \
+                 `codemark languages add`."
+            )));
+        }
+        // Single-grammar repo (or a matching lone asset): the sole asset *is* the
+        // grammar. Repos name it arbitrarily (`parser.wasm`, `<repo>.wasm`), so
+        // no further name check — that would only cause false negatives.
         only
     } else {
         // Multiple .wasm — require an unambiguous match on the grammar name.
