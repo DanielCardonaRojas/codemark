@@ -100,14 +100,10 @@ impl LocalFileSource {
     /// non-UTF-8 path exactly (the string-`spec` trait method would lossily
     /// convert it). This is the path `codemark languages add` uses.
     pub fn resolve_path(&self, path: &std::path::Path) -> Result<ResolvedGrammar> {
-        if !path.exists() {
-            return Err(Error::Input(format!("WASM file not found: {}", path.display())));
-        }
         // Read the bytes once — validation and the committed install use these
         // same bytes, so a concurrent edit of the source path can't make us
         // validate one grammar and install a different one (TOCTOU).
-        let bytes = std::fs::read(path)
-            .map_err(|e| Error::Operation(format!("Failed to read WASM file: {e}")))?;
+        let bytes = read_capped_file(path)?;
         Ok(ResolvedGrammar {
             name: None,
             raw_extensions: None,
@@ -116,6 +112,52 @@ impl LocalFileSource {
             ts_version: None,
         })
     }
+}
+
+/// Read a local `.wasm` file into memory, requiring a **regular file** and
+/// bounding the read to [`MAX_WASM_BYTES`].
+///
+/// A plain `std::fs::read` would happily open a FIFO/device/socket the user
+/// pointed us at (`codemark languages add /dev/zero`) and block or fill memory,
+/// and would ignore the size cap the remote download path enforces. Requiring a
+/// regular file rejects the former; reading through a `take(cap + 1)` reader
+/// bounds memory and catches a file that grows past the cap between the stat and
+/// EOF.
+fn read_capped_file(path: &std::path::Path) -> Result<Vec<u8>> {
+    use std::io::Read;
+
+    let meta = std::fs::metadata(path).map_err(|e| {
+        Error::Input(format!("WASM file not found or unreadable: {}: {e}", path.display()))
+    })?;
+    if !meta.is_file() {
+        return Err(Error::Input(format!(
+            "{} is not a regular file — pass a compiled .wasm grammar",
+            path.display()
+        )));
+    }
+    if meta.len() > MAX_WASM_BYTES {
+        return Err(Error::Input(format!(
+            "{} is too large ({} bytes, limit {MAX_WASM_BYTES})",
+            path.display(),
+            meta.len()
+        )));
+    }
+
+    let file = std::fs::File::open(path)
+        .map_err(|e| Error::Operation(format!("Failed to read WASM file: {e}")))?;
+    // `take(cap + 1)` bounds the read and lets us distinguish "exactly at the
+    // cap" from "grew past it" if the file changed after the stat above.
+    let mut bytes = Vec::new();
+    file.take(MAX_WASM_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|e| Error::Operation(format!("Failed to read WASM file: {e}")))?;
+    if bytes.len() as u64 > MAX_WASM_BYTES {
+        return Err(Error::Input(format!(
+            "{} is too large (exceeds limit {MAX_WASM_BYTES} bytes)",
+            path.display()
+        )));
+    }
+    Ok(bytes)
 }
 
 #[async_trait::async_trait]
@@ -665,5 +707,27 @@ mod tests {
         assert!(version_gate(Some("0.24.3"), true).is_ok(), "override bypasses the gate");
         assert!(version_gate(Some("0.25.1"), false).is_ok());
         assert!(version_gate(None, false).is_ok(), "unknown version can't be gated");
+    }
+
+    #[test]
+    fn read_capped_file_reads_a_regular_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("grammar.wasm");
+        std::fs::write(&path, b"\0asm\x01\x00\x00\x00").unwrap();
+        assert_eq!(read_capped_file(&path).unwrap(), b"\0asm\x01\x00\x00\x00");
+    }
+
+    #[test]
+    fn read_capped_file_rejects_a_directory() {
+        // A non-regular path (here a directory) is refused rather than read —
+        // stands in for FIFOs/devices/sockets that could block or fill memory.
+        let dir = tempfile::tempdir().unwrap();
+        assert!(read_capped_file(dir.path()).is_err());
+    }
+
+    #[test]
+    fn read_capped_file_rejects_a_missing_path() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(read_capped_file(&dir.path().join("nope.wasm")).is_err());
     }
 }
