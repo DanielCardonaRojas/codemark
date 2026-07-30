@@ -68,19 +68,16 @@ async fn handle_install(
     // --name was given but matches no declared grammar. `meta.name`/`file_types`
     // then fell back to the first entry, so installing under the requested name
     // would label the real grammar (and its extensions) with an unrelated
-    // identity — bookmarks and lookups for that name would silently miss. Allow
-    // it only when the caller also passes --extensions, explicitly taking
-    // ownership of the renamed identity; otherwise refuse and list what's there.
+    // identity — bookmarks and lookups for that name would silently miss. Refuse
+    // and point at the declared name. (Installing a grammar under a custom local
+    // name is deferred to a follow-up; keep the common case unambiguous.)
     if args.name.is_some() && meta.grammar_count > 0 && !meta.requested_name_matched {
         let requested = args.name.as_deref().unwrap_or_default();
         let declared = meta.name.as_deref().unwrap_or("<unknown>");
-        if args.extensions.is_none() {
-            return Err(Error::Input(format!(
-                "--name '{requested}' doesn't match any grammar declared in {owner}/{repo}'s \
-                 tree-sitter.json (found '{declared}'). Install it under its declared name, or pass \
-                 --extensions to install under '{requested}' explicitly."
-            )));
-        }
+        return Err(Error::Input(format!(
+            "--name '{requested}' doesn't match any grammar declared in {owner}/{repo}'s \
+             tree-sitter.json (found '{declared}'). Install it under its declared name '{declared}'."
+        )));
     }
 
     if !args.allow_version_mismatch
@@ -410,7 +407,7 @@ fn wasm_name_matches(asset_name: &str, grammar_name: &str) -> bool {
 /// Download `url` into memory, rejecting an oversized body.
 async fn download_capped(client: &reqwest::Client, url: &str) -> Result<Vec<u8>> {
     tracing::debug!(target: "codemark::http", %url, "downloading grammar.wasm");
-    let resp = client
+    let mut resp = client
         .get(url)
         .header(reqwest::header::USER_AGENT, "codemark")
         .send()
@@ -422,6 +419,7 @@ async fn download_capped(client: &reqwest::Client, url: &str) -> Result<Vec<u8>>
             resp.status()
         )));
     }
+    // Fast reject when the server advertises a length.
     if let Some(len) = resp.content_length()
         && len > MAX_WASM_BYTES
     {
@@ -429,17 +427,23 @@ async fn download_capped(client: &reqwest::Client, url: &str) -> Result<Vec<u8>>
             "grammar.wasm is too large ({len} bytes, limit {MAX_WASM_BYTES})"
         )));
     }
-    let bytes = resp
-        .bytes()
+    // Stream the body and enforce the cap as we go, so a missing/lying
+    // Content-Length or a chunked response can't buffer an unbounded body into
+    // memory before the check (the earlier `bytes()` path read it all first).
+    let mut bytes: Vec<u8> = Vec::new();
+    while let Some(chunk) = resp
+        .chunk()
         .await
-        .map_err(|e| Error::Operation(format!("failed to read grammar.wasm body: {e}")))?;
-    if bytes.len() as u64 > MAX_WASM_BYTES {
-        return Err(Error::Operation(format!(
-            "grammar.wasm is too large ({} bytes, limit {MAX_WASM_BYTES})",
-            bytes.len()
-        )));
+        .map_err(|e| Error::Operation(format!("failed to read grammar.wasm body: {e}")))?
+    {
+        if bytes.len() as u64 + chunk.len() as u64 > MAX_WASM_BYTES {
+            return Err(Error::Operation(format!(
+                "grammar.wasm is too large (exceeds limit {MAX_WASM_BYTES} bytes)"
+            )));
+        }
+        bytes.extend_from_slice(&chunk);
     }
-    Ok(bytes.to_vec())
+    Ok(bytes)
 }
 
 /// Install a grammar from in-memory `wasm_bytes` under `name`, writing a manifest

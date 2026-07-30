@@ -54,9 +54,12 @@ Accepted source forms: `owner/repo`, `github:owner/repo`, or a
 
 - **Name / extensions** come from the repo's `tree-sitter.json` (grammar `name`
   and `file-types`). Override with `--name` / `--extensions` if needed.
-- **Version safety:** if the grammar targets a non-0.25 Tree-sitter (its
-  `.wasm` would likely fail to load), install **refuses** with a clear message.
-  Pass `--allow-version-mismatch` to try anyway, or rebuild from source (below).
+- **Version safety:** if `tree-sitter.json` **declares** a non-0.25
+  `metadata.version` (its `.wasm` would likely fail to load), install
+  **refuses** with a clear message. Pass `--allow-version-mismatch` to try
+  anyway, or rebuild from source (below). Note: a repo that omits
+  `metadata.version` isn't gated on version — the staged-load validation after
+  download is the backstop that rejects a `.wasm` that can't actually load.
 - **No release `.wasm`?** Install tells you, and you fall back to building it
   yourself.
 - The generated manifest has an **empty `profile`** — parsing works immediately;
@@ -70,13 +73,15 @@ Examples verified to ship a 0.25 `.wasm`:
 ### Manual download (if you'd rather not use `install`)
 
 ```bash
-# Confirm the release targets 0.25 and lists a .wasm asset
-gh release view --repo tree-sitter/tree-sitter-bash latest --json tagName,assets \
-  | jq '{tag: .tagName, assets: [.assets[].name]}'
-# → { "tag": "v0.25.1", "assets": ["tree-sitter-bash.tar.gz", "tree-sitter-bash.wasm"] }
+# Confirm the release targets 0.25 and lists a .wasm asset, capturing the tag so
+# the download can't drift from what you inspected (the latest tag changes over
+# time — don't hard-code it).
+TAG=$(gh release view --repo tree-sitter/tree-sitter-bash latest --json tagName,assets \
+  --jq '{tag: .tagName, assets: [.assets[].name]} | .tag')
+echo "latest tag: $TAG"   # e.g. v0.25.1
 
 curl -sL -o /tmp/tree-sitter-bash.wasm \
-  https://github.com/tree-sitter/tree-sitter-bash/releases/download/v0.25.1/tree-sitter-bash.wasm
+  "https://github.com/tree-sitter/tree-sitter-bash/releases/download/$TAG/tree-sitter-bash.wasm"
 
 codemark languages add --name bash --extensions sh,bash /tmp/tree-sitter-bash.wasm
 ```
