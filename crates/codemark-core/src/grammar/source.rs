@@ -123,12 +123,24 @@ impl LocalFileSource {
 /// regular file rejects the former; reading through a `take(cap + 1)` reader
 /// bounds memory and catches a file that grows past the cap between the stat and
 /// EOF.
+///
+/// The regular-file / size checks run against the **opened descriptor's**
+/// metadata (not the pathname), so the path can't be swapped for a device
+/// between a check and the open. We deliberately don't go further (a
+/// nonblocking/no-follow open): this is a single-user, local `add` of a
+/// user-chosen path with no privilege boundary, and the read is already capped —
+/// the residual (a user replacing their own path with a slow blocking device
+/// mid-call) isn't worth the platform-specific `O_NONBLOCK`/`O_NOFOLLOW` code.
 fn read_capped_file(path: &std::path::Path) -> Result<Vec<u8>> {
     use std::io::Read;
 
-    let meta = std::fs::metadata(path).map_err(|e| {
+    let file = std::fs::File::open(path).map_err(|e| {
         Error::Input(format!("WASM file not found or unreadable: {}: {e}", path.display()))
     })?;
+    // Check the *handle's* metadata, so the type/size we validate is the file we
+    // actually opened, not whatever the pathname resolved to a moment earlier.
+    let meta =
+        file.metadata().map_err(|e| Error::Operation(format!("Failed to stat WASM file: {e}")))?;
     if !meta.is_file() {
         return Err(Error::Input(format!(
             "{} is not a regular file — pass a compiled .wasm grammar",
@@ -143,8 +155,6 @@ fn read_capped_file(path: &std::path::Path) -> Result<Vec<u8>> {
         )));
     }
 
-    let file = std::fs::File::open(path)
-        .map_err(|e| Error::Operation(format!("Failed to read WASM file: {e}")))?;
     // `take(cap + 1)` bounds the read and lets us distinguish "exactly at the
     // cap" from "grew past it" if the file changed after the stat above.
     let mut bytes = Vec::new();
@@ -157,6 +167,8 @@ fn read_capped_file(path: &std::path::Path) -> Result<Vec<u8>> {
             path.display()
         )));
     }
+    // Byte count only — never echo the user-provided local path into logs.
+    tracing::trace!(target: "codemark::languages", bytes = bytes.len(), "read local grammar.wasm");
     Ok(bytes)
 }
 
