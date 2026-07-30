@@ -15,6 +15,12 @@ use crate::error::{Error, Result};
 /// this; a larger response means a wrong/corrupt asset.
 const MAX_WASM_BYTES: u64 = 32 * 1024 * 1024;
 
+/// How many recent releases to scan when searching for a 0.25-compatible one.
+/// A 0.25 release is normally at or near the top for an active grammar, so this
+/// bounds the work (and the `raw.githubusercontent` fetches) for a repo that has
+/// long since moved past 0.25 without one.
+const MAX_RELEASE_SCAN: usize = 30;
+
 /// A grammar resolved from some source, ready to install. Source-agnostic: a
 /// local file, a GitHub release, or a registry all produce this same shape, so
 /// the install pipeline is written once.
@@ -215,88 +221,119 @@ impl GithubSource {
         }
     }
 
-    /// Fetch and parse `tree-sitter.json` from the repo's default branch.
+    /// Fetch and parse `tree-sitter.json` at a specific git ref (a release tag).
     ///
+    /// Returns `None` if the repo has no `tree-sitter.json` at that ref (404) so
+    /// the release scan can skip it; other HTTP/JSON failures are errors.
     /// `requested_name` (an explicit `--name`) selects the matching grammar entry
     /// in a multi-grammar repo; see [`parse_tree_sitter_meta`].
-    async fn fetch_tree_sitter_json(
+    async fn fetch_tree_sitter_json_at(
+        &self,
+        owner: &str,
+        repo: &str,
+        git_ref: &str,
+        requested_name: Option<&str>,
+    ) -> Result<Option<TreeSitterMeta>> {
+        let url =
+            format!("https://raw.githubusercontent.com/{owner}/{repo}/{git_ref}/tree-sitter.json");
+        tracing::debug!(target: "codemark::http", %url, "fetching tree-sitter.json at ref");
+        let resp = self
+            .client
+            .get(&url)
+            .send()
+            .await
+            .map_err(|e| Error::Operation(format!("failed to fetch tree-sitter.json: {e}")))?;
+        if resp.status() == reqwest::StatusCode::NOT_FOUND {
+            return Ok(None);
+        }
+        if !resp.status().is_success() {
+            return Err(Error::Operation(format!(
+                "failed to fetch tree-sitter.json: HTTP {}",
+                resp.status()
+            )));
+        }
+        let json: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|e| Error::Operation(format!("tree-sitter.json is not valid JSON: {e}")))?;
+        Ok(Some(parse_tree_sitter_meta(&json, requested_name)))
+    }
+
+    /// List the repo's releases (newest first), capped at [`MAX_RELEASE_SCAN`].
+    async fn list_releases(&self, owner: &str, repo: &str) -> Result<Vec<serde_json::Value>> {
+        let url = format!(
+            "https://api.github.com/repos/{owner}/{repo}/releases?per_page={MAX_RELEASE_SCAN}"
+        );
+        tracing::debug!(target: "codemark::http", %url, "listing releases");
+        let resp = self
+            .client
+            .get(&url)
+            // GitHub's API requires a User-Agent.
+            .header(reqwest::header::USER_AGENT, "codemark")
+            .send()
+            .await
+            .map_err(|e| Error::Operation(format!("failed to query releases: {e}")))?;
+        if !resp.status().is_success() {
+            return Err(Error::Operation(format!(
+                "failed to list releases of {owner}/{repo}: HTTP {}",
+                resp.status()
+            )));
+        }
+        resp.json::<Vec<serde_json::Value>>()
+            .await
+            .map_err(|e| Error::Operation(format!("releases JSON invalid: {e}")))
+    }
+
+    /// Select the newest release that ships a `.wasm` **and** whose tag
+    /// `tree-sitter.json` reports a 0.25.x Tree-sitter version (codemark's WASM
+    /// ABI), returning that release's metadata + asset list.
+    ///
+    /// Walks releases newest→oldest and stops at the first compatible one. A
+    /// release without a `.wasm`, or whose `tree-sitter.json` is missing or not
+    /// 0.25, is skipped — we never trust the tag string as the version, only the
+    /// authoritative `metadata.version` at that tag.
+    async fn select_compatible_release(
         &self,
         owner: &str,
         repo: &str,
         requested_name: Option<&str>,
-    ) -> Result<TreeSitterMeta> {
-        // Probe the repo's *actual* default branch first, then the conventional
-        // fallbacks. Without this, a repo whose default is neither `master` nor
-        // `main` (e.g. `develop`) reports the file missing, and a repo that still
-        // has an obsolete `master` alongside `main` would read stale metadata
-        // from `master` before `main` is ever tried. The API lookup is
-        // best-effort — on failure we fall back to the conventional branches so a
-        // token isn't required and rate-limited/offline cases still work.
-        let default_branch = self.fetch_default_branch(owner, repo).await;
-
-        // Ordered, de-duplicated: the real default (if known) leads, then the
-        // conventions. `main` before `master` so a stale `master` can't shadow it.
-        let mut branches: Vec<String> = Vec::new();
-        for b in default_branch.into_iter().chain(["main".to_string(), "master".to_string()]) {
-            if !branches.contains(&b) {
-                branches.push(b);
-            }
-        }
-
-        for branch in &branches {
-            let url = format!(
-                "https://raw.githubusercontent.com/{owner}/{repo}/{branch}/tree-sitter.json"
-            );
-            tracing::debug!(target: "codemark::http", %url, "fetching tree-sitter.json");
-            let resp =
-                self.client.get(&url).send().await.map_err(|e| {
-                    Error::Operation(format!("failed to fetch tree-sitter.json: {e}"))
-                })?;
-            if resp.status() == reqwest::StatusCode::NOT_FOUND {
+    ) -> Result<SelectedRelease> {
+        let releases = self.list_releases(owner, repo).await?;
+        for release in &releases {
+            // Skip releases that ship no .wasm at all — no point reading metadata.
+            if !release_has_wasm(release) {
                 continue;
             }
-            if !resp.status().is_success() {
-                return Err(Error::Operation(format!(
-                    "failed to fetch tree-sitter.json: HTTP {}",
-                    resp.status()
-                )));
+            let Some(tag) = release.get("tag_name").and_then(|t| t.as_str()) else {
+                continue;
+            };
+
+            // Confirm ABI via the tag's tree-sitter.json (not the tag string).
+            let Some(meta) =
+                self.fetch_tree_sitter_json_at(owner, repo, tag, requested_name).await?
+            else {
+                continue; // no tree-sitter.json at this tag
+            };
+            if is_compatible_version(meta.version.as_deref()) {
+                tracing::debug!(target: "codemark::languages", %tag, "selected 0.25-compatible release");
+                let assets =
+                    release.get("assets").and_then(|a| a.as_array()).cloned().unwrap_or_default();
+                return Ok(SelectedRelease { tag: tag.to_string(), meta, assets });
             }
-            let json: serde_json::Value = resp.json().await.map_err(|e| {
-                Error::Operation(format!("tree-sitter.json is not valid JSON: {e}"))
-            })?;
-            return Ok(parse_tree_sitter_meta(&json, requested_name));
         }
         Err(Error::Input(format!(
-            "no tree-sitter.json found in {owner}/{repo} (looked on {}); \
-             is this a Tree-sitter grammar repo?",
-            branches.join(", ")
+            "no Tree-sitter 0.25 release with a .wasm asset found in {owner}/{repo} \
+             (scanned the {} most recent releases). codemark loads 0.25 grammars — download a 0.25 \
+             `.wasm` from an older release and use `codemark languages add`, or rebuild it from \
+             source with the 0.25 CLI.",
+            releases.len()
         )))
     }
 
-    /// Best-effort lookup of a repo's default branch via the GitHub API. Returns
-    /// `None` on any failure (network, rate limit, non-2xx, malformed body) so
-    /// the caller falls back to the conventional branch names.
-    async fn fetch_default_branch(&self, owner: &str, repo: &str) -> Option<String> {
-        let url = format!("https://api.github.com/repos/{owner}/{repo}");
-        tracing::debug!(target: "codemark::http", %url, "fetching repo default branch");
-        let resp = self
-            .client
-            .get(&url)
-            .header(reqwest::header::USER_AGENT, "codemark")
-            .send()
-            .await
-            .ok()?;
-        if !resp.status().is_success() {
-            tracing::debug!(target: "codemark::http", status = %resp.status(), "default-branch lookup failed; using conventional fallbacks");
-            return None;
-        }
-        let json: serde_json::Value = resp.json().await.ok()?;
-        json.get("default_branch").and_then(|b| b.as_str()).map(str::to_string)
-    }
-
-    /// Find the `.wasm` release asset for `grammar_name` on the repo's latest
-    /// release. `grammar_entry_count` is how many grammars `tree-sitter.json`
-    /// declared, which decides how strictly the asset must match the name.
+    /// Choose the `.wasm` asset for `grammar_name` from an already-fetched
+    /// release's `assets` array. `grammar_entry_count` is how many grammars the
+    /// selected release's `tree-sitter.json` declared, which decides how strictly
+    /// the asset must match the name.
     ///
     /// A release may carry several `.wasm` modules (multi-grammar repos, or
     /// debug/release builds). Grabbing an asset independently of the chosen
@@ -314,47 +351,25 @@ impl GithubSource {
     ///   than install a mismatched module.
     ///
     /// Otherwise error with the candidate list rather than guessing.
-    async fn find_wasm_asset(
-        &self,
+    fn pick_wasm_asset(
+        assets: &[serde_json::Value],
         owner: &str,
         repo: &str,
+        tag: &str,
         grammar_name: &str,
         grammar_entry_count: usize,
     ) -> Result<ReleaseAsset> {
-        let url = format!("https://api.github.com/repos/{owner}/{repo}/releases/latest");
-        tracing::debug!(target: "codemark::http", %url, "fetching latest release");
-        let resp = self
-            .client
-            .get(&url)
-            // GitHub's API requires a User-Agent.
-            .header(reqwest::header::USER_AGENT, "codemark")
-            .send()
-            .await
-            .map_err(|e| Error::Operation(format!("failed to query releases: {e}")))?;
-        if !resp.status().is_success() {
-            return Err(Error::Operation(format!(
-                "failed to query latest release of {owner}/{repo}: HTTP {}",
-                resp.status()
-            )));
-        }
-        let release: serde_json::Value = resp
-            .json()
-            .await
-            .map_err(|e| Error::Operation(format!("release JSON invalid: {e}")))?;
-
-        let assets = release.get("assets").and_then(|a| a.as_array()).cloned().unwrap_or_default();
         let wasm_assets: Vec<&serde_json::Value> = assets
             .iter()
-            .filter(|a| {
-                a.get("name").and_then(|n| n.as_str()).is_some_and(|n| n.ends_with(".wasm"))
-            })
+            .filter(|a| a.get("name").and_then(|n| n.as_str()).is_some_and(is_wasm_asset))
             .collect();
 
         let chosen: &serde_json::Value = if wasm_assets.is_empty() {
+            // select_compatible_release only picks releases with a .wasm, so this
+            // is unreachable in the normal flow — kept as a defensive error.
             return Err(Error::Input(format!(
-                "the latest release of {owner}/{repo} has no .wasm asset — this grammar doesn't \
-                 ship a prebuilt WASM. Build it from source with `tree-sitter build --wasm` and \
-                 use `codemark languages add` instead."
+                "release {tag} of {owner}/{repo} has no .wasm asset — build it from source with \
+                 `tree-sitter build --wasm` and use `codemark languages add` instead."
             )));
         } else if let [only] = wasm_assets.as_slice() {
             let asset_name = only.get("name").and_then(|n| n.as_str()).unwrap_or("");
@@ -364,9 +379,9 @@ impl GithubSource {
                 // chose via --name. Installing it would write a manifest for
                 // '{grammar_name}' over a different grammar's module. Refuse.
                 return Err(Error::Input(format!(
-                    "{owner}/{repo} declares multiple grammars but its latest release ships a \
-                     single .wasm ('{asset_name}') that doesn't match grammar '{grammar_name}'. It \
-                     may be a different grammar's module — download the correct .wasm and use \
+                    "{owner}/{repo} declares multiple grammars but release {tag} ships a single \
+                     .wasm ('{asset_name}') that doesn't match grammar '{grammar_name}'. It may be \
+                     a different grammar's module — download the correct .wasm and use \
                      `codemark languages add`."
                 )));
             }
@@ -394,7 +409,7 @@ impl GithubSource {
                     .filter_map(|a| a.get("name").and_then(|n| n.as_str()))
                     .collect();
                 return Err(Error::Input(format!(
-                    "the latest release of {owner}/{repo} has multiple .wasm assets and none \
+                    "release {tag} of {owner}/{repo} has multiple .wasm assets and none \
                      unambiguously matches grammar '{grammar_name}' ({}). Rename the grammar with \
                      --name to match an asset, or download the right .wasm and use \
                      `codemark languages add`.",
@@ -418,7 +433,13 @@ impl GithubSource {
 impl GrammarSource for GithubSource {
     async fn resolve(&self, spec: &str, requested_name: Option<&str>) -> Result<ResolvedGrammar> {
         let (owner, repo) = Self::parse_source(spec)?;
-        let meta = self.fetch_tree_sitter_json(&owner, &repo, requested_name).await?;
+
+        // Pick the newest release that ships a .wasm *and* is 0.25-compatible,
+        // rather than blindly taking `releases/latest` (which may have moved to a
+        // newer ABI like 0.26). Metadata and the asset now both come from this one
+        // release, so the version we gate on matches the module we download.
+        let SelectedRelease { tag, meta, assets } =
+            self.select_compatible_release(&owner, &repo, requested_name).await?;
 
         // A multi-grammar repo (e.g. typescript + tsx) exposes several grammar
         // entries but often ships a single .wasm. Without --name we'd default to
@@ -459,8 +480,8 @@ impl GrammarSource for GithubSource {
                 )
             })?;
 
-        let asset = self.find_wasm_asset(&owner, &repo, &name, meta.grammar_count).await?;
-        tracing::debug!(target: "codemark::languages", asset = %asset.name, "resolved github grammar asset");
+        let asset = Self::pick_wasm_asset(&assets, &owner, &repo, &tag, &name, meta.grammar_count)?;
+        tracing::debug!(target: "codemark::languages", asset = %asset.name, %tag, "resolved github grammar asset");
         Ok(ResolvedGrammar {
             name: meta.name,
             raw_extensions: (!meta.file_types.is_empty()).then(|| meta.file_types.join(",")),
@@ -543,6 +564,31 @@ fn parse_tree_sitter_meta(
 struct ReleaseAsset {
     name: String,
     url: String,
+}
+
+/// A release chosen by [`GithubSource::select_compatible_release`]: its tag, the
+/// `tree-sitter.json` metadata read at that tag, and its asset list.
+struct SelectedRelease {
+    tag: String,
+    meta: TreeSitterMeta,
+    assets: Vec<serde_json::Value>,
+}
+
+/// Whether a release asset filename is a WASM grammar module.
+fn is_wasm_asset(asset_name: &str) -> bool {
+    asset_name.ends_with(".wasm")
+}
+
+/// Whether a release JSON value carries at least one `.wasm` asset.
+fn release_has_wasm(release: &serde_json::Value) -> bool {
+    release.get("assets").and_then(|a| a.as_array()).is_some_and(|assets| {
+        assets.iter().any(|a| a.get("name").and_then(|n| n.as_str()).is_some_and(is_wasm_asset))
+    })
+}
+
+/// Whether a `tree-sitter.json` version string is codemark's 0.25 WASM ABI.
+fn is_compatible_version(version: Option<&str>) -> bool {
+    version.is_some_and(|v| v.starts_with("0.25"))
 }
 
 /// Whether a release asset filename `asset_name` corresponds to grammar
@@ -741,5 +787,104 @@ mod tests {
     fn read_capped_file_rejects_a_missing_path() {
         let dir = tempfile::tempdir().unwrap();
         assert!(read_capped_file(&dir.path().join("nope.wasm")).is_err());
+    }
+
+    // --- release selection ---
+
+    fn release(tag: &str, asset_names: &[&str]) -> serde_json::Value {
+        serde_json::json!({
+            "tag_name": tag,
+            "assets": asset_names.iter().map(|n| serde_json::json!({
+                "name": n,
+                "browser_download_url": format!("https://example.test/{tag}/{n}"),
+            })).collect::<Vec<_>>(),
+        })
+    }
+
+    #[test]
+    fn release_has_wasm_detects_wasm_assets() {
+        assert!(release_has_wasm(&release("v0.25.1", &["tree-sitter-scala.wasm", "src.tar.gz"])));
+        assert!(!release_has_wasm(&release("v0.23.2", &["src.tar.gz"])));
+        assert!(!release_has_wasm(&release("v0.20.0", &[])));
+    }
+
+    #[test]
+    fn is_compatible_version_only_accepts_025() {
+        assert!(is_compatible_version(Some("0.25.0")));
+        assert!(is_compatible_version(Some("0.25.1")));
+        assert!(!is_compatible_version(Some("0.26.0")));
+        assert!(!is_compatible_version(Some("0.24.1")));
+        // A missing version is never confirmed-compatible — the release is skipped.
+        assert!(!is_compatible_version(None));
+    }
+
+    #[test]
+    fn pick_wasm_asset_selects_the_sole_asset() {
+        // scala-shaped release: one wasm, single-grammar repo.
+        let assets = release("v0.25.1", &["tree-sitter-scala.wasm"])
+            .get("assets")
+            .and_then(|a| a.as_array())
+            .unwrap()
+            .clone();
+        let asset = GithubSource::pick_wasm_asset(
+            &assets,
+            "tree-sitter",
+            "tree-sitter-scala",
+            "v0.25.1",
+            "scala",
+            1,
+        )
+        .unwrap();
+        assert_eq!(asset.name, "tree-sitter-scala.wasm");
+        assert!(asset.url.ends_with("/v0.25.1/tree-sitter-scala.wasm"));
+    }
+
+    #[test]
+    fn pick_wasm_asset_matches_the_named_grammar_among_many() {
+        // Multi-.wasm release: pick the one matching --name.
+        let assets = release("v0.25.0", &["tree-sitter-typescript.wasm", "tree-sitter-tsx.wasm"])
+            .get("assets")
+            .and_then(|a| a.as_array())
+            .unwrap()
+            .clone();
+        let asset = GithubSource::pick_wasm_asset(
+            &assets,
+            "tree-sitter",
+            "tree-sitter-typescript",
+            "v0.25.0",
+            "tsx",
+            2,
+        )
+        .unwrap();
+        assert_eq!(asset.name, "tree-sitter-tsx.wasm");
+    }
+
+    #[test]
+    fn pick_wasm_asset_errors_when_multi_grammar_lone_asset_mismatches() {
+        // Multi-grammar repo, single .wasm that isn't the --name'd grammar → refuse.
+        let assets = release("v0.25.0", &["tree-sitter-typescript.wasm"])
+            .get("assets")
+            .and_then(|a| a.as_array())
+            .unwrap()
+            .clone();
+        let err = GithubSource::pick_wasm_asset(
+            &assets,
+            "tree-sitter",
+            "tree-sitter-typescript",
+            "v0.25.0",
+            "tsx",
+            2,
+        );
+        assert!(err.is_err());
+    }
+
+    #[test]
+    fn pick_wasm_asset_errors_when_no_wasm() {
+        let assets = release("v0.25.0", &["src.tar.gz"])
+            .get("assets")
+            .and_then(|a| a.as_array())
+            .unwrap()
+            .clone();
+        assert!(GithubSource::pick_wasm_asset(&assets, "o", "r", "v0.25.0", "x", 1).is_err());
     }
 }
