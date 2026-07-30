@@ -77,8 +77,9 @@ async fn handle_install(
         }
     };
 
-    // 3. Find and download the .wasm release asset.
-    let asset = find_wasm_asset(&client, &owner, &repo).await?;
+    // 3. Find and download the .wasm release asset (matched to this grammar so a
+    //    multi-.wasm release can't pair the manifest with the wrong module).
+    let asset = find_wasm_asset(&client, &owner, &repo, &name).await?;
     if !matches!(mode, OutputMode::Json) {
         println!("Downloading {} …", asset.name);
     }
@@ -128,9 +129,25 @@ async fn fetch_tree_sitter_json(
     owner: &str,
     repo: &str,
 ) -> Result<TreeSitterMeta> {
-    // raw.githubusercontent serves the file directly; try the common default
-    // branches. (Avoids a GitHub API token and works for public repos.)
-    for branch in ["master", "main"] {
+    // Probe the repo's *actual* default branch first, then the conventional
+    // fallbacks. Without this, a repo whose default is neither `master` nor
+    // `main` (e.g. `develop`) reports the file missing, and a repo that still
+    // has an obsolete `master` alongside `main` would read stale metadata from
+    // `master` before `main` is ever tried. The API lookup is best-effort — on
+    // failure we fall back to the conventional branches so a token isn't
+    // required and rate-limited/offline cases still work.
+    let default_branch = fetch_default_branch(client, owner, repo).await;
+
+    // Ordered, de-duplicated: the real default (if known) leads, then the
+    // conventions. `main` before `master` so a stale `master` can't shadow it.
+    let mut branches: Vec<String> = Vec::new();
+    for b in default_branch.into_iter().chain(["main".to_string(), "master".to_string()]) {
+        if !branches.contains(&b) {
+            branches.push(b);
+        }
+    }
+
+    for branch in &branches {
         let url =
             format!("https://raw.githubusercontent.com/{owner}/{repo}/{branch}/tree-sitter.json");
         tracing::debug!(target: "codemark::http", %url, "fetching tree-sitter.json");
@@ -155,9 +172,26 @@ async fn fetch_tree_sitter_json(
         return Ok(parse_tree_sitter_meta(&json));
     }
     Err(Error::Input(format!(
-        "no tree-sitter.json found in {owner}/{repo} (looked on master and main); \
-         is this a Tree-sitter grammar repo?"
+        "no tree-sitter.json found in {owner}/{repo} (looked on {}); \
+         is this a Tree-sitter grammar repo?",
+        branches.join(", ")
     )))
+}
+
+/// Best-effort lookup of a repo's default branch via the GitHub API. Returns
+/// `None` on any failure (network, rate limit, non-2xx, malformed body) so the
+/// caller falls back to the conventional branch names.
+async fn fetch_default_branch(client: &reqwest::Client, owner: &str, repo: &str) -> Option<String> {
+    let url = format!("https://api.github.com/repos/{owner}/{repo}");
+    tracing::debug!(target: "codemark::http", %url, "fetching repo default branch");
+    let resp =
+        client.get(&url).header(reqwest::header::USER_AGENT, "codemark").send().await.ok()?;
+    if !resp.status().is_success() {
+        tracing::debug!(target: "codemark::http", status = %resp.status(), "default-branch lookup failed; using conventional fallbacks");
+        return None;
+    }
+    let json: serde_json::Value = resp.json().await.ok()?;
+    json.get("default_branch").and_then(|b| b.as_str()).map(str::to_string)
 }
 
 /// Extract the name, file-types, and Tree-sitter version from a parsed
@@ -184,11 +218,20 @@ struct ReleaseAsset {
     url: String,
 }
 
-/// Find the `.wasm` asset on the repo's latest release.
+/// Find the `.wasm` release asset for `grammar_name` on the repo's latest
+/// release.
+///
+/// A release may carry several `.wasm` modules (multi-grammar repos, or debug +
+/// release builds). Grabbing the first one independently of the chosen grammar
+/// can pair the manifest with a different module, so when there's more than one
+/// candidate we require an unambiguous match on the grammar name (Tree-sitter's
+/// convention is `tree-sitter-<name>.wasm` / `<name>.wasm`) and otherwise error
+/// with the candidate list rather than guessing.
 async fn find_wasm_asset(
     client: &reqwest::Client,
     owner: &str,
     repo: &str,
+    grammar_name: &str,
 ) -> Result<ReleaseAsset> {
     let url = format!("https://api.github.com/repos/{owner}/{repo}/releases/latest");
     tracing::debug!(target: "codemark::http", %url, "fetching latest release");
@@ -209,24 +252,66 @@ async fn find_wasm_asset(
         resp.json().await.map_err(|e| Error::Operation(format!("release JSON invalid: {e}")))?;
 
     let assets = release.get("assets").and_then(|a| a.as_array()).cloned().unwrap_or_default();
-    let wasm = assets
+    let wasm_assets: Vec<&serde_json::Value> = assets
         .iter()
-        .find(|a| a.get("name").and_then(|n| n.as_str()).is_some_and(|n| n.ends_with(".wasm")));
-    match wasm {
-        Some(a) => Ok(ReleaseAsset {
-            name: a.get("name").and_then(|n| n.as_str()).unwrap_or("grammar.wasm").to_string(),
-            url: a
-                .get("browser_download_url")
-                .and_then(|u| u.as_str())
-                .ok_or_else(|| Error::Operation("release asset has no download URL".to_string()))?
-                .to_string(),
-        }),
-        None => Err(Error::Input(format!(
+        .filter(|a| a.get("name").and_then(|n| n.as_str()).is_some_and(|n| n.ends_with(".wasm")))
+        .collect();
+
+    let chosen: &serde_json::Value = if wasm_assets.is_empty() {
+        return Err(Error::Input(format!(
             "the latest release of {owner}/{repo} has no .wasm asset — this grammar doesn't ship a \
              prebuilt WASM. Build it from source with `tree-sitter build --wasm` and use \
              `codemark languages add` instead."
-        ))),
-    }
+        )));
+    } else if let [only] = wasm_assets.as_slice() {
+        // Exactly one .wasm — unambiguous, no name match needed.
+        only
+    } else {
+        // Multiple .wasm — require an unambiguous match on the grammar name.
+        let matches: Vec<&serde_json::Value> = wasm_assets
+            .iter()
+            .copied()
+            .filter(|a| {
+                a.get("name")
+                    .and_then(|n| n.as_str())
+                    .is_some_and(|n| wasm_name_matches(n, grammar_name))
+            })
+            .collect();
+        if let [one] = matches.as_slice() {
+            one
+        } else {
+            let names: Vec<&str> =
+                wasm_assets.iter().filter_map(|a| a.get("name").and_then(|n| n.as_str())).collect();
+            return Err(Error::Input(format!(
+                "the latest release of {owner}/{repo} has multiple .wasm assets and none \
+                 unambiguously matches grammar '{grammar_name}' ({}). Rename the grammar with \
+                 --name to match an asset, or download the right .wasm and use \
+                 `codemark languages add`.",
+                names.join(", ")
+            )));
+        }
+    };
+
+    Ok(ReleaseAsset {
+        name: chosen.get("name").and_then(|n| n.as_str()).unwrap_or("grammar.wasm").to_string(),
+        url: chosen
+            .get("browser_download_url")
+            .and_then(|u| u.as_str())
+            .ok_or_else(|| Error::Operation("release asset has no download URL".to_string()))?
+            .to_string(),
+    })
+}
+
+/// Whether a release asset filename `asset_name` corresponds to grammar
+/// `grammar_name`. Compares the `.wasm` stem case-insensitively against the name
+/// and the Tree-sitter `tree-sitter-<name>` convention, tolerating `_`/`-`
+/// differences (e.g. `c_sharp` vs `c-sharp`).
+fn wasm_name_matches(asset_name: &str, grammar_name: &str) -> bool {
+    let stem = asset_name.strip_suffix(".wasm").unwrap_or(asset_name);
+    let norm = |s: &str| s.to_lowercase().replace('_', "-");
+    let stem = norm(stem);
+    let name = norm(grammar_name);
+    stem == name || stem == format!("tree-sitter-{name}")
 }
 
 /// Download `url` into memory, rejecting an oversized body.
@@ -890,6 +975,24 @@ mod tests {
         assert!(meta.name.is_none());
         assert!(meta.file_types.is_empty());
         assert!(meta.version.is_none());
+    }
+
+    #[test]
+    fn wasm_name_matches_bare_and_tree_sitter_prefixed() {
+        // Bare `<name>.wasm` and the `tree-sitter-<name>.wasm` convention both match.
+        assert!(wasm_name_matches("lua.wasm", "lua"));
+        assert!(wasm_name_matches("tree-sitter-lua.wasm", "lua"));
+        // Case-insensitive, and `_`/`-` are treated the same (c_sharp vs c-sharp).
+        assert!(wasm_name_matches("tree-sitter-c-sharp.wasm", "c_sharp"));
+        assert!(wasm_name_matches("Lua.wasm", "lua"));
+    }
+
+    #[test]
+    fn wasm_name_does_not_match_unrelated_or_substring() {
+        // A different grammar's asset must not match.
+        assert!(!wasm_name_matches("tree-sitter-python.wasm", "lua"));
+        // Substring is not enough — `lua` must not match `lualatex`.
+        assert!(!wasm_name_matches("lualatex.wasm", "lua"));
     }
 
     #[test]
