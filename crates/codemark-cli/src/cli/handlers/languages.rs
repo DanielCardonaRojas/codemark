@@ -56,15 +56,31 @@ async fn handle_install(
     // entries but often ships a single .wasm. Without --name we'd default to the
     // first entry's name/extensions, which may not correspond to the published
     // module — installing files that parse with the wrong grammar. Require the
-    // caller to disambiguate rather than guessing. (If --name was given but
-    // matched no entry, meta still fell back to the first entry; the name the
-    // user passed wins below, so the manifest matches their intent.)
+    // caller to disambiguate rather than guessing.
     if meta.grammar_count > 1 && args.name.is_none() {
         return Err(Error::Input(format!(
             "{owner}/{repo} declares {} grammars in tree-sitter.json — pass --name to choose which \
              one to install (its name must match a grammar entry).",
             meta.grammar_count
         )));
+    }
+
+    // --name was given but matches no declared grammar. `meta.name`/`file_types`
+    // then fell back to the first entry, so installing under the requested name
+    // would label the real grammar (and its extensions) with an unrelated
+    // identity — bookmarks and lookups for that name would silently miss. Allow
+    // it only when the caller also passes --extensions, explicitly taking
+    // ownership of the renamed identity; otherwise refuse and list what's there.
+    if args.name.is_some() && meta.grammar_count > 0 && !meta.requested_name_matched {
+        let requested = args.name.as_deref().unwrap_or_default();
+        let declared = meta.name.as_deref().unwrap_or("<unknown>");
+        if args.extensions.is_none() {
+            return Err(Error::Input(format!(
+                "--name '{requested}' doesn't match any grammar declared in {owner}/{repo}'s \
+                 tree-sitter.json (found '{declared}'). Install it under its declared name, or pass \
+                 --extensions to install under '{requested}' explicitly."
+            )));
+        }
     }
 
     if !args.allow_version_mismatch
@@ -119,6 +135,11 @@ struct TreeSitterMeta {
     /// can't be assumed to match the published `.wasm` unless the caller named
     /// the grammar explicitly.
     grammar_count: usize,
+    /// Whether the caller's `--name` matched a declared grammar entry. `false`
+    /// (with a name requested) means `name`/`file_types` fell back to the first
+    /// entry and don't describe the requested grammar — the caller must then
+    /// supply `--extensions` to take ownership of that identity explicitly.
+    requested_name_matched: bool,
 }
 
 /// Parse a grammar source into `(owner, repo)`. Accepts `owner/repo`,
@@ -235,15 +256,15 @@ fn parse_tree_sitter_meta(
     let grammars = json.get("grammars").and_then(|g| g.as_array());
     let grammar_count = grammars.map(|a| a.len()).unwrap_or(0);
 
-    // Prefer the entry matching an explicit --name; fall back to the first.
-    let grammar = grammars.and_then(|arr| {
-        requested_name
-            .and_then(|want| {
-                arr.iter()
-                    .find(|g| g.get("name").and_then(|n| n.as_str()).is_some_and(|n| n == want))
-            })
-            .or_else(|| arr.first())
+    // Prefer the entry matching an explicit --name; fall back to the first, and
+    // record whether the requested name actually matched.
+    let matched = grammars.and_then(|arr| {
+        requested_name.and_then(|want| {
+            arr.iter().find(|g| g.get("name").and_then(|n| n.as_str()).is_some_and(|n| n == want))
+        })
     });
+    let requested_name_matched = matched.is_some();
+    let grammar = matched.or_else(|| grammars.and_then(|arr| arr.first()));
 
     let name = grammar.and_then(|g| g.get("name")).and_then(|n| n.as_str()).map(str::to_string);
     let file_types = grammar
@@ -256,7 +277,7 @@ fn parse_tree_sitter_meta(
         .and_then(|m| m.get("version"))
         .and_then(|v| v.as_str())
         .map(str::to_string);
-    TreeSitterMeta { name, file_types, version, grammar_count }
+    TreeSitterMeta { name, file_types, version, grammar_count, requested_name_matched }
 }
 
 /// A release asset we can download.
@@ -1073,17 +1094,29 @@ mod tests {
         assert_eq!(picked.name.as_deref(), Some("tsx"));
         assert_eq!(picked.file_types, vec!["tsx"]);
         assert_eq!(picked.grammar_count, 2);
+        assert!(picked.requested_name_matched);
     }
 
     #[test]
-    fn parse_tree_sitter_meta_falls_back_to_first_when_requested_name_absent() {
-        // A requested name that matches no entry falls back to the first entry;
-        // the caller's explicit --name still wins for the manifest downstream.
+    fn parse_tree_sitter_meta_flags_unmatched_requested_name() {
+        // A requested name that matches no entry falls back to the first entry's
+        // metadata but reports requested_name_matched = false, so handle_install
+        // can refuse (or demand --extensions) rather than mislabel the grammar.
         let json = serde_json::json!({
             "grammars": [{ "name": "bash", "file-types": ["sh"] }]
         });
         let meta = parse_tree_sitter_meta(&json, Some("nonexistent"));
         assert_eq!(meta.name.as_deref(), Some("bash"));
+        assert_eq!(meta.file_types, vec!["sh"]);
+        assert!(!meta.requested_name_matched);
+
+        // No name requested is not a "mismatch".
+        let none = parse_tree_sitter_meta(&json, None);
+        assert!(!none.requested_name_matched);
+
+        // An exact match sets the flag.
+        let matched = parse_tree_sitter_meta(&json, Some("bash"));
+        assert!(matched.requested_name_matched);
     }
 
     #[test]
