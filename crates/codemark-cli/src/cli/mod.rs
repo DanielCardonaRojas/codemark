@@ -1493,6 +1493,10 @@ pub enum LanguagesCommand {
     /// Add a new language from a compiled .wasm grammar file
     Add(LanguagesAddArgs),
 
+    /// Install a language by downloading a prebuilt WASM grammar from a
+    /// Tree-sitter grammar repository's GitHub release
+    Install(LanguagesInstallArgs),
+
     /// List all supported languages (built-in and dynamic)
     List(LanguagesListArgs),
 
@@ -1552,6 +1556,31 @@ pub struct RepoSyncArgs {
 pub struct AuthListArgs {
     #[command(flatten)]
     pub output: OutputArgs,
+}
+
+#[derive(Debug, clap::Args)]
+pub struct LanguagesInstallArgs {
+    #[command(flatten)]
+    pub output: OutputArgs,
+
+    /// The grammar source: `owner/repo`, `github:owner/repo`, or a
+    /// `https://github.com/owner/repo` URL (e.g. `tree-sitter/tree-sitter-bash`).
+    pub source: String,
+
+    /// Override the language name (default: derived from the repo's
+    /// tree-sitter.json grammar name).
+    #[arg(long, short)]
+    pub name: Option<String>,
+
+    /// Override the file extensions, comma-separated (default: derived from the
+    /// repo's tree-sitter.json `file-types`).
+    #[arg(long, short)]
+    pub extensions: Option<String>,
+
+    /// Install even if the grammar's Tree-sitter version isn't 0.25.x. The
+    /// downloaded .wasm may fail to load — validated after download regardless.
+    #[arg(long)]
+    pub allow_version_mismatch: bool,
 }
 
 #[derive(Debug, clap::Args)]

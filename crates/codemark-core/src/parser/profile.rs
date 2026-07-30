@@ -24,10 +24,12 @@ use crate::parser::languages::Language;
 #[derive(Debug, Clone, Default, serde::Deserialize)]
 #[serde(default)]
 pub struct Profile {
-    /// Node types that get structural anchoring in the query generator.
+    /// Node types that act as structural anchors for the query generator.
     ///
-    /// Consulted by `is_landmark_kind` (with the built-in `DECLARATION_TYPES`
-    /// union as a fallback), so dynamic (WASM) grammars honor these.
+    /// This list is used by the engine to disambiguate tree-sitter queries and ensure
+    /// bookmarks are stable across refactors. It includes all major declarations (e.g.,
+    /// classes, functions, constants, macros).
+    /// Consulted by `is_landmark_kind`.
     pub landmark_kinds: Vec<String>,
 
     /// Node type → human-readable label mapping.
@@ -35,8 +37,11 @@ pub struct Profile {
     pub node_labels: HashMap<String, String>,
 
     /// Container node kinds paired with their name field, e.g. `("impl_item", "type")`.
-    /// These are the node types whose first source line makes a useful breadcrumb
-    /// ancestor. Replaces `get_whitelist()`.
+    ///
+    /// Unlike `landmark_kinds` (which is for machine-level query stability), `containers`
+    /// is used strictly for the human-facing UI to build contextual breadcrumb paths
+    /// (e.g., `Class > Method`). Node types here are usually a strict subset of
+    /// `landmark_kinds`, limited only to nodes that nest other executable code.
     pub containers: Vec<(String, String)>,
 }
 
