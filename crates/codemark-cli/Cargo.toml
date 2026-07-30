@@ -71,8 +71,3 @@ open = "5.3.5"
 copypasta = "0.10.2"
 tracing = { workspace = true }
 zip = { version = "2", default-features = false, features = ["deflate"] }
-
-# O_NOFOLLOW when writing installed grammar files, to close a symlink-swap
-# TOCTOU when writing into the grammar cache. Unix-only.
-[target.'cfg(unix)'.dependencies]
-libc = "0.2"

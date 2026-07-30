@@ -14,14 +14,9 @@ use std::sync::RwLock;
 use serde::Deserialize;
 
 use crate::config::global_grammars_dir;
+use crate::grammar::protocol;
 use crate::parser::languages::{DynamicLanguage, Language};
 use crate::parser::profile::Profile;
-
-/// How long a `.lock-<name>` install lock is honored before it's treated as
-/// orphaned (from a killed installer) and reaped. Shared by the CLI installer
-/// (which holds the lock) and registry recovery (which must not wait forever on
-/// a dead one), so the two can't disagree on staleness.
-pub const INSTALL_LOCK_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(10);
 
 /// The process-global registry, discovered on first access and re-buildable via
 /// [`LanguageRegistry::refresh`]. Guarded by an `RwLock` so long-running
@@ -72,7 +67,7 @@ impl LanguageRegistry {
         // Recover any install whose swap was interrupted mid-replace by
         // `codemark languages add`, which leaves a `.bak-<name>` when the process
         // died after moving the old install aside but before the new one landed.
-        recover_interrupted_installs(grammar_dir, INSTALL_LOCK_TIMEOUT);
+        recover_interrupted_installs(grammar_dir, protocol::INSTALL_LOCK_TIMEOUT);
 
         let entries = std::fs::read_dir(grammar_dir).ok()?;
 
@@ -331,7 +326,7 @@ fn recover_interrupted_installs(grammar_dir: &std::path::Path, lock_timeout: std
     };
     for entry in entries.flatten() {
         let file_name = entry.file_name();
-        let Some(name) = file_name.to_string_lossy().strip_prefix(".bak-").map(str::to_string)
+        let Some(name) = protocol::backup_name(&file_name.to_string_lossy()).map(str::to_string)
         else {
             continue;
         };
@@ -340,13 +335,9 @@ fn recover_interrupted_installs(grammar_dir: &std::path::Path, lock_timeout: std
         // to recover. But a lock outliving a killed installer would wedge this
         // grammar forever, so treat a lock older than the install timeout as
         // orphaned: reap it and proceed with recovery.
-        let lock_path = grammar_dir.join(format!(".lock-{name}"));
-        if let Ok(meta) = std::fs::metadata(&lock_path) {
-            let fresh = meta
-                .modified()
-                .map(|t| t.elapsed().unwrap_or_default() <= lock_timeout)
-                .unwrap_or(true);
-            if fresh {
+        let lock_path = protocol::lock_path(grammar_dir, &name);
+        if lock_path.exists() {
+            if !protocol::lock_is_stale_after(&lock_path, lock_timeout) {
                 continue;
             }
             let _ = std::fs::remove_file(&lock_path);

@@ -8,6 +8,7 @@ pub mod embeddings;
 pub mod engine;
 pub mod error;
 pub mod git;
+pub mod grammar;
 pub mod parser;
 pub mod query;
 pub mod sort;
