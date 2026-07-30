@@ -14,8 +14,57 @@
 //! caller — this module returns a value, it does not print.
 
 pub mod protocol;
+pub mod source;
 
 use crate::error::{Error, Result};
+
+/// Caller-supplied overrides that win over whatever a [`source::GrammarSource`]
+/// resolves. Both optional: a GitHub source fills them from `tree-sitter.json`,
+/// a local file requires them.
+#[derive(Debug, Default)]
+pub struct InstallOverrides {
+    pub name: Option<String>,
+    pub extensions: Option<String>,
+    /// Skip the 0.25 Tree-sitter ABI compatibility gate (the staged-load
+    /// validation is still the backstop).
+    pub allow_version_mismatch: bool,
+}
+
+/// End-to-end install pipeline: resolve `spec` via the right
+/// [`source::GrammarSource`], apply `overrides`, gate on the Tree-sitter
+/// version, download the wasm if remote, then hand off to [`install_grammar`].
+///
+/// This is the single entry point the CLI drives; it owns no presentation, so a
+/// registry source (once added) needs no changes here.
+pub async fn install(spec: &str, overrides: InstallOverrides) -> Result<InstallOutcome> {
+    let client = crate::sync::build_sync_http_client()?;
+    // The requested --name lets a source disambiguate (select the grammar entry
+    // in a multi-grammar repo and match its release asset) and reject a name that
+    // doesn't describe the published grammar.
+    let resolved = source::select_source(spec, client.clone())
+        .resolve(spec, overrides.name.as_deref())
+        .await?;
+
+    source::version_gate(resolved.ts_version.as_deref(), overrides.allow_version_mismatch)?;
+
+    // Overrides win over the source's reported metadata.
+    let name = overrides.name.or(resolved.name).ok_or_else(|| {
+        Error::Input("could not determine the language name; pass --name explicitly".to_string())
+    })?;
+    let raw_extensions = overrides.extensions.or(resolved.raw_extensions).ok_or_else(|| {
+        Error::Input(
+            "could not determine file extensions; pass --extensions (or, for a local file, they \
+             are required)"
+                .to_string(),
+        )
+    })?;
+
+    // Reject built-in collisions before any download or file write.
+    let extensions = validate_name_and_extensions(&name, &raw_extensions)?;
+
+    let wasm_bytes = resolved.wasm.into_bytes(&client).await?;
+    install_grammar(&name, &extensions, resolved.profile, wasm_bytes)
+}
 
 /// The outcome of a successful [`install_grammar`], returned so the caller can
 /// format it (human or JSON) without this module owning presentation.
@@ -33,17 +82,23 @@ pub struct InstallOutcome {
 }
 
 /// Install a grammar from in-memory `wasm_bytes` under `name`, writing a manifest
-/// with the given normalized `extensions` and an empty profile. Shared by `add`
-/// (local file) and `install` (downloaded release) so both go through the same
-/// validation and the hardened stage-then-swap install.
+/// with the given normalized `extensions` and `profile`. Shared by `add` (local
+/// file) and `install` (downloaded release / registry) so all go through the
+/// same validation and the hardened stage-then-swap install.
 ///
 /// `extensions` must already be normalized (trimmed, dot-stripped, lowercased,
 /// non-empty). Use [`validate_name_and_extensions`] to produce them; it also
 /// rejects names/extensions that collide with a built-in language, an invariant
 /// that must run before any file is written.
+///
+/// `profile` is written into the manifest verbatim. `None` writes an empty
+/// profile (`{}`) — today's behavior for local files and GitHub releases; a
+/// future registry source can supply a curated profile here so breadcrumbs and
+/// query summaries work without hand-authoring.
 pub fn install_grammar(
     name: &str,
     extensions: &[String],
+    profile: Option<serde_json::Value>,
     wasm_bytes: Vec<u8>,
 ) -> Result<InstallOutcome> {
     let Some(grammar_dir) = crate::config::global_grammars_dir() else {
@@ -71,13 +126,7 @@ pub fn install_grammar(
     let lang_dir = grammar_dir.join(safe_name);
     reject_symlink(&lang_dir, name)?;
 
-    let manifest_json = serde_json::json!({
-        "name": name,
-        "version": "0.1.0",
-        "extensions": extensions,
-        "profile": {}
-    });
-    let manifest_str = serde_json::to_string_pretty(&manifest_json).unwrap();
+    let manifest_str = build_manifest(name, extensions, profile);
 
     install_staged(&grammar_dir, safe_name, &lang_dir, &wasm_bytes, manifest_str.as_bytes(), name)?;
 
@@ -87,6 +136,20 @@ pub fn install_grammar(
         extensions: extensions.to_vec(),
         runtime_enabled: cfg!(feature = "wasm"),
     })
+}
+
+/// Build the `manifest.json` text for an install. A `None` profile writes an
+/// empty object (`{}`); `Some(..)` is written verbatim so a registry can ship a
+/// curated profile. Extracted so the profile-threading can be tested without
+/// touching the filesystem or the global grammar cache.
+fn build_manifest(name: &str, extensions: &[String], profile: Option<serde_json::Value>) -> String {
+    let manifest_json = serde_json::json!({
+        "name": name,
+        "version": "0.1.0",
+        "extensions": extensions,
+        "profile": profile.unwrap_or_else(|| serde_json::json!({})),
+    });
+    serde_json::to_string_pretty(&manifest_json).unwrap()
 }
 
 /// Validate a grammar `name` and raw comma-separated `raw_extensions`, returning
@@ -450,6 +513,29 @@ mod tests {
     fn accepts_a_normal_dynamic_grammar() {
         let exts = validate_name_and_extensions("lua", "lua").unwrap();
         assert_eq!(exts, vec!["lua".to_string()]);
+    }
+
+    #[test]
+    fn manifest_writes_empty_profile_when_none() {
+        let m: serde_json::Value =
+            serde_json::from_str(&build_manifest("lua", &["lua".to_string()], None)).unwrap();
+        assert_eq!(m["profile"], serde_json::json!({}));
+        assert_eq!(m["name"], "lua");
+        assert_eq!(m["extensions"], serde_json::json!(["lua"]));
+    }
+
+    #[test]
+    fn manifest_threads_a_supplied_profile_verbatim() {
+        // Proves the registry path: a source's curated profile survives into the
+        // manifest rather than being flattened to `{}`.
+        let profile = serde_json::json!({ "landmark_kinds": ["function_item"] });
+        let m: serde_json::Value = serde_json::from_str(&build_manifest(
+            "lua",
+            &["lua".to_string()],
+            Some(profile.clone()),
+        ))
+        .unwrap();
+        assert_eq!(m["profile"], profile);
     }
 
     #[test]
