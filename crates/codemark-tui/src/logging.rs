@@ -30,7 +30,9 @@ pub fn init_logging() -> WorkerGuard {
         EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("codemark=info"));
 
     // `try_init` errors only when a global subscriber already exists; degrade
-    // gracefully rather than aborting the dashboard.
+    // gracefully rather than aborting the dashboard. That subscriber is still
+    // active, so report through it (not stderr, which would corrupt the TUI)
+    // using the shared `codemark::ui` target.
     if let Err(err) = fmt::Subscriber::builder()
         .with_env_filter(filter)
         .with_writer(non_blocking)
@@ -39,7 +41,11 @@ pub fn init_logging() -> WorkerGuard {
         .with_ansi(false)
         .try_init()
     {
-        eprintln!("codemark-tui: tracing already initialized, using existing subscriber: {err}");
+        tracing::debug!(
+            target: "codemark::ui",
+            %err,
+            "tracing already initialized; using the existing subscriber"
+        );
     }
 
     guard

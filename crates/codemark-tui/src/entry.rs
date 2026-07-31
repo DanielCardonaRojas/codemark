@@ -56,8 +56,12 @@ pub async fn run() -> Result<Option<i32>> {
     // Initialize file-based logging before anything else
     let _log_guard = crate::logging::init_logging();
 
-    // Setup panic handler to restore terminal on panic
-    setup_panic_handler();
+    // Install a panic hook that restores the terminal, saving the caller's hook
+    // so it can be reinstated on exit. This matters when the TUI runs in-process
+    // inside a host (e.g. `codemark tui` bundled into the CLI): without this the
+    // host would be left with our terminal-restoration hook after the dashboard
+    // returns.
+    let prev_hook = install_panic_handler();
 
     // Create and run the app
     let result = run_app().await;
@@ -65,11 +69,17 @@ pub async fn run() -> Result<Option<i32>> {
     // Ensure terminal is restored
     restore_terminal();
 
+    // Reinstate the caller's panic hook now that we own the terminal no longer.
+    std::panic::set_hook(prev_hook);
+
     // Drop the log guard before returning so buffered tracing entries are
     // flushed regardless of whether the caller exits or propagates the result.
     drop(_log_guard);
     result
 }
+
+/// The boxed panic hook type returned by [`std::panic::take_hook`].
+type PanicHook = Box<dyn Fn(&std::panic::PanicHookInfo<'_>) + Sync + Send + 'static>;
 
 /// Run the main application.
 ///
@@ -539,12 +549,15 @@ async fn run_app() -> Result<Option<i32>> {
     Ok(None)
 }
 
-/// Setup a panic handler to restore the terminal.
-fn setup_panic_handler() {
+/// Install a panic hook that restores the terminal, returning the hook it
+/// replaced so the caller can reinstate it when the dashboard exits.
+fn install_panic_handler() -> PanicHook {
+    let prev_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(|panic_info| {
         restore_terminal();
         eprintln!("Panic: {}", panic_info);
     }));
+    prev_hook
 }
 
 /// Restore terminal state.
