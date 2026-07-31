@@ -1,0 +1,594 @@
+//! Process entry point for the TUI, shared by the standalone `codemark-tui`
+//! binary and the bundled `codemark tui` subcommand.
+//!
+//! The whole run loop lives here (rather than in `main.rs`) so it can be linked
+//! as a library and driven in-process: when `codemark-cli` is built with its
+//! `bundled-tui` feature, `codemark tui` calls [`run`] directly instead of
+//! `exec`ing a separate `codemark-tui` binary. The standalone binary's `main`
+//! is a thin wrapper over the same function.
+
+use anyhow::Result;
+use crossterm::{
+    event::{self, DisableFocusChange, DisableMouseCapture, EnableFocusChange, EnableMouseCapture},
+    execute,
+    terminal::{EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode},
+};
+use ratatui::{Terminal, backend::CrosstermBackend};
+use std::io;
+use std::time::{Duration, Instant};
+
+use crate::{
+    browser::BrowserLayout,
+    event::{Event, EventHandlerConfig},
+    state::{AppMode, AppState},
+    ui::{self, NotificationType},
+};
+
+/// Run the TUI to completion.
+///
+/// Returns `Ok(None)` for a normal exit and `Ok(Some(code))` when the process
+/// should terminate with a specific exit code (e.g. after handing the terminal
+/// to an external editor). Callers own the decision to `std::process::exit`.
+///
+/// Reads `std::env::args` directly so it behaves identically whether invoked as
+/// the standalone `codemark-tui` binary or as `codemark tui ...` (the extra
+/// leading `codemark`/`tui` arguments are harmless; only flags are inspected).
+pub async fn run() -> Result<Option<i32>> {
+    // `--list-themes` prints every known theme name (one per line) and exits,
+    // without entering the alternate screen; `--list-schemes` prints only the
+    // base16/base24 schemes (which re-theme the whole TUI chrome). Used by the
+    // screenshot tooling to drive a per-theme capture loop, and handy for
+    // discovering theme names.
+    let args: Vec<String> = std::env::args().collect();
+    if args.iter().any(|a| a == "--list-themes" || a == "--list-schemes") {
+        let registry = crate::theme::ThemeRegistry::new();
+        let names = if args.iter().any(|a| a == "--list-schemes") {
+            registry.scheme_names()
+        } else {
+            registry.available()
+        };
+        for name in names {
+            println!("{name}");
+        }
+        return Ok(None);
+    }
+
+    // Initialize file-based logging before anything else
+    let _log_guard = crate::logging::init_logging();
+
+    // Install a panic hook that restores the terminal before delegating to the
+    // hook it replaced, and reinstate that hook when the dashboard exits. The
+    // guard's Drop runs on both a normal return and a caught unwind, so a host
+    // embedding the TUI in-process (e.g. `codemark tui` bundled into the CLI)
+    // keeps its own panic handling once `run` returns.
+    let _panic_guard = PanicHookGuard::install();
+
+    // Create and run the app
+    let result = run_app().await;
+
+    // Ensure terminal is restored
+    restore_terminal();
+
+    result
+}
+
+/// The boxed panic hook type returned by [`std::panic::take_hook`].
+type PanicHook = Box<dyn Fn(&std::panic::PanicHookInfo<'_>) + Sync + Send + 'static>;
+
+/// RAII guard that installs a terminal-restoring panic hook and reinstates the
+/// hook it replaced on drop.
+///
+/// The installed hook first restores the terminal, then calls the previous hook
+/// so the host's (or default) panic reporting still runs. This is the standard
+/// save/restore pattern for terminal apps (as used by ratatui and color-eyre).
+///
+/// On a **normal** drop the original hook is reinstated. On drop **during a
+/// panic unwind** the restore is skipped: `std::panic::set_hook` aborts the
+/// process when called from a panicking thread ("panic in a destructor during
+/// cleanup"), so restoring there would turn a host's recoverable
+/// `catch_unwind(run)` into a hard abort. In that case the installed hook simply
+/// stays — and because it chains to the previous hook, the host's reporting is
+/// still invoked (just after a harmless extra terminal restore).
+struct PanicHookGuard {
+    // Wrapped in `Arc` so both the installed hook and the Drop-time restore can
+    // share ownership of the previous hook (a `Box<dyn Fn>` is not `Clone`).
+    prev: std::sync::Arc<PanicHook>,
+}
+
+impl PanicHookGuard {
+    fn install() -> Self {
+        let prev = std::sync::Arc::new(std::panic::take_hook());
+        let chained = std::sync::Arc::clone(&prev);
+        std::panic::set_hook(Box::new(move |panic_info| {
+            restore_terminal();
+            chained(panic_info);
+        }));
+        Self { prev }
+    }
+}
+
+impl Drop for PanicHookGuard {
+    fn drop(&mut self) {
+        // Never call `set_hook` while unwinding — it aborts the process. The
+        // chained hook stays installed instead, keeping host reporting intact.
+        if std::thread::panicking() {
+            return;
+        }
+        let prev = std::sync::Arc::clone(&self.prev);
+        std::panic::set_hook(Box::new(move |panic_info| prev(panic_info)));
+    }
+}
+
+/// Run the main application.
+///
+/// Returns `Ok(None)` for normal exit, `Ok(Some(code))` when the process
+/// should terminate with a specific exit code (e.g. after spawning a terminal editor).
+async fn run_app() -> Result<Option<i32>> {
+    // Setup terminal
+    enable_raw_mode()?;
+    let mut stdout = io::stdout();
+    // EnableFocusChange lets the terminal report FocusGained/FocusLost so the
+    // browser can re-check login state (Tours-tab visibility) when the user
+    // returns after an external `codemark auth login`/`logout`.
+    execute!(stdout, EnterAlternateScreen, EnableMouseCapture, EnableFocusChange)?;
+    let backend = CrosstermBackend::new(stdout);
+    let mut terminal = Terminal::new(backend)?;
+
+    // Create app state
+    let mut state = AppState::new();
+
+    // Initialize Codemark Core Database
+    use codemark_core::storage::Workspace;
+    let db = Workspace::open_primary(None)?;
+
+    // Setup event receiver
+    let (mut event_rx, event_handler) = crate::event::EventHandler::with_receiver(
+        EventHandlerConfig::default().tick_rate(Duration::from_millis(100)),
+    )?;
+
+    // Apply the configured TUI theme to code previews before any are created.
+    // Theme is a user preference resolved from the layered config (global +
+    // per-repo override) using the primary database's `.codemark` directory.
+    crate::theme::ensure_default_themes_exist();
+    let config = match db.path().parent() {
+        Some(codemark_dir) => codemark_core::config::Config::load_layered(codemark_dir),
+        None => codemark_core::config::Config::default(),
+    };
+    // Theme precedence: the CODEMARK_TUI_THEME env var (used by the screenshot
+    // tooling and for ad-hoc previewing) overrides the layered config value.
+    let theme_name = std::env::var("CODEMARK_TUI_THEME")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .or_else(|| config.tui.theme.clone());
+    if let Some(theme_name) = theme_name.as_deref() {
+        // Resolve the preview theme and the chrome palette from one source so the
+        // whole TUI is cohesive (base16 schemes drive both from a single palette).
+        let registry = crate::theme::ThemeRegistry::new();
+        let (theme, palette) = registry.resolve_full(theme_name);
+        crate::theme::set_palette(palette);
+        crate::component::code_preview::set_default_theme(theme);
+    }
+
+    // Create the browser layout
+    let mut layout = BrowserLayout::new(db, event_handler);
+
+    // Notification state (message, type, when it was shown)
+    let mut notification: Option<(String, NotificationType, Instant)> = None;
+    let notification_duration = Duration::from_secs(2);
+
+    // Main loop. Two independent modal overlays, both painted on top of the
+    // main UI: the contextual keybindings cheat sheet (`?`) and the global
+    // settings overlay (`,`). They are mutually exclusive — opening one closes
+    // the other.
+    let mut show_keys = false;
+    // Baseline the settings theme selector on the theme actually applied above
+    // (env var or layered config), not just the persisted global config.
+    let mut settings = crate::settings::SettingsOverlay::new(theme_name);
+
+    while state.is_running() {
+        // Draw the UI
+        terminal.draw(|f| {
+            let size = f.area();
+
+            // The main layout + status bar are always drawn; an overlay (when
+            // visible) is painted on top as a modal popup.
+            let chunks = ratatui::layout::Layout::default()
+                .direction(ratatui::layout::Direction::Vertical)
+                .constraints([
+                    ratatui::layout::Constraint::Min(0),
+                    ratatui::layout::Constraint::Length(1),
+                ])
+                .split(size);
+
+            layout.render(chunks[0], f.buffer_mut());
+
+            ui::render_status_bar(
+                chunks[1],
+                f.buffer_mut(),
+                state.mode(),
+                &layout.get_status_bindings(),
+                Some(layout.get_status_metadata()),
+                state.get_string("filter_buffer"),
+            );
+
+            if show_keys {
+                // Contextual keybindings cheat sheet: a simple centered list.
+                let bindings = layout.get_help_bindings();
+                let help_width = 50.min(size.width.saturating_sub(4));
+                let help_height = (bindings.len() as u16 + 4).min(size.height.saturating_sub(4));
+                let help_area = ratatui::layout::Rect {
+                    x: (size.width.saturating_sub(help_width)) / 2,
+                    y: (size.height.saturating_sub(help_height)) / 2,
+                    width: help_width,
+                    height: help_height,
+                };
+                ui::render_help_panel(help_area, f.buffer_mut(), &bindings);
+            } else if settings.is_visible() {
+                let config = layout.config_info();
+                settings.render(size, f.buffer_mut(), &config);
+            }
+
+            // Draw notification if present
+            if let Some((msg, notification_type, _)) = &notification {
+                let notif_area = ratatui::layout::Rect {
+                    x: 0,
+                    y: size.height.saturating_sub(1),
+                    width: size.width,
+                    height: 1,
+                };
+                ui::render_notification(notif_area, f.buffer_mut(), msg, *notification_type);
+            }
+        })?;
+
+        // Handle events (blocking wait for next event)
+        if let Some(event) = event_rx.recv().await {
+            let mut events = vec![event];
+
+            // Drain any other pending events to process them all before next draw
+            while let Ok(ev) = event_rx.try_recv() {
+                events.push(ev);
+            }
+
+            for event in events {
+                let mut handled = false;
+                let mode_before = state.mode();
+
+                match &event {
+                    Event::Key(key) => {
+                        // Ctrl+C quits from any mode or overlay, mirroring lazygit:
+                        // it's the universal "get me out" escape hatch. Raw mode
+                        // (enabled in `run_app`) suppresses the terminal's
+                        // Ctrl+C→SIGINT translation, so it arrives here as an
+                        // ordinary key event rather than a signal — hence a key
+                        // binding, not a signal handler. This precedes the
+                        // per-mode dispatch below so it also fires behind modal
+                        // overlays (keybindings, settings) and in input modes,
+                        // where `q` is intentionally suppressed.
+                        if key.code == event::KeyCode::Char('c')
+                            && key.modifiers.contains(event::KeyModifiers::CONTROL)
+                        {
+                            tracing::debug!(target: "codemark::ui", "Ctrl+C received, quitting");
+                            state.quit();
+                            break;
+                        }
+                        match state.mode() {
+                            AppMode::Normal if show_keys => {
+                                // The keybindings cheat sheet is modal: it
+                                // swallows every key; Esc or `?` closes it.
+                                if matches!(
+                                    key.code,
+                                    event::KeyCode::Esc | event::KeyCode::Char('?')
+                                ) {
+                                    show_keys = false;
+                                }
+                                handled = true;
+                            }
+                            AppMode::Normal if settings.is_visible() => {
+                                // The settings overlay is modal: it swallows
+                                // every key (tab switching, Esc/`,` to close).
+                                let config = layout.config_info();
+                                match settings.handle_key(key.code, &config) {
+                                    crate::settings::SettingsAction::ThemeChanged => {
+                                        // Re-highlight existing previews with the
+                                        // newly applied theme (the chrome updates
+                                        // automatically on the next render).
+                                        layout.reapply_preview_theme();
+                                        handled = true;
+                                    }
+                                    crate::settings::SettingsAction::Notify(msg) => {
+                                        notification =
+                                            Some((msg, NotificationType::Error, Instant::now()));
+                                        handled = true;
+                                    }
+                                    crate::settings::SettingsAction::Handled
+                                    | crate::settings::SettingsAction::Unhandled => {
+                                        handled = true; // Still modal, so swallow
+                                    }
+                                }
+                            }
+                            AppMode::Normal => {
+                                // Handle global key bindings (disabled when Search is focused).
+                                // A modal dialog also suppresses them so all keys route to the
+                                // dialog via layout.handle_event below.
+                                let search_focused =
+                                    layout.focus() == crate::browser::FocusArea::Search;
+                                let dialog_active = layout.has_active_dialog();
+                                match key.code {
+                                    event::KeyCode::Char('q')
+                                        if !search_focused && !dialog_active =>
+                                    {
+                                        state.quit();
+                                        handled = true;
+                                    }
+                                    event::KeyCode::Char('?')
+                                        if !search_focused && !dialog_active =>
+                                    {
+                                        // Open the contextual keybindings cheat
+                                        // sheet (closing settings if it was up).
+                                        show_keys = true;
+                                        settings.hide();
+                                        handled = true;
+                                    }
+                                    event::KeyCode::Char(',')
+                                        if !search_focused && !dialog_active =>
+                                    {
+                                        // Open the global settings overlay.
+                                        if settings.toggle()
+                                            == crate::settings::SettingsAction::ThemeChanged
+                                        {
+                                            layout.refresh_all_panels();
+                                        }
+                                        handled = true;
+                                    }
+                                    event::KeyCode::Char('/') if !dialog_active => {
+                                        // Set the filter target based on current focus before entering filter mode
+                                        let filter_target = match layout.focus() {
+                                            crate::browser::FocusArea::ContextPanel => "panel1",
+                                            crate::browser::FocusArea::FiltersPanel => "panel2",
+                                            crate::browser::FocusArea::ContentPanel => "panel3",
+                                            crate::browser::FocusArea::Main => "main",
+                                            crate::browser::FocusArea::Search => "panel1", // Search filters ContextPanel
+                                            crate::browser::FocusArea::Filter => "panel3",
+                                        };
+                                        state.set_string("filter_target", filter_target);
+                                    }
+                                    event::KeyCode::Esc if !dialog_active => {
+                                        if notification.is_some() {
+                                            notification = None;
+                                            handled = true;
+                                        } else {
+                                            // Clear the active filter for the focused panel
+                                            let filter_key = match layout.focus() {
+                                                crate::browser::FocusArea::ContextPanel => {
+                                                    "active_filter_panel1"
+                                                }
+                                                crate::browser::FocusArea::FiltersPanel => {
+                                                    "active_filter_panel2"
+                                                }
+                                                crate::browser::FocusArea::ContentPanel => {
+                                                    "active_filter_panel3"
+                                                }
+                                                crate::browser::FocusArea::Main => {
+                                                    "active_filter_main"
+                                                }
+                                                crate::browser::FocusArea::Search => {
+                                                    "active_filter_panel1"
+                                                }
+                                                crate::browser::FocusArea::Filter => {
+                                                    "active_filter_panel3"
+                                                }
+                                            };
+                                            if state
+                                                .get_string(filter_key)
+                                                .is_some_and(|q| !q.is_empty())
+                                            {
+                                                state.set_string(filter_key, "");
+                                                handled = true;
+                                            }
+                                        }
+                                    }
+                                    _ => {}
+                                }
+                            }
+                            AppMode::Command => {}
+                            _ => {}
+                        }
+                    }
+                    Event::Mouse(mouse) if settings.is_visible() => {
+                        // The settings overlay is modal: route clicks to it (so
+                        // tabs are clickable) and swallow the event.
+                        match settings.handle_mouse(*mouse) {
+                            crate::settings::SettingsAction::ThemeChanged => {
+                                layout.reapply_preview_theme();
+                            }
+                            crate::settings::SettingsAction::Notify(msg) => {
+                                notification = Some((msg, NotificationType::Error, Instant::now()));
+                            }
+                            crate::settings::SettingsAction::Handled
+                            | crate::settings::SettingsAction::Unhandled => {}
+                        }
+                        handled = true;
+                    }
+                    Event::Resize(width, height) => {
+                        state.set_size(*width, *height);
+                    }
+                    Event::Tick => {
+                        if let Some((_, _, shown_at)) = &notification
+                            && shown_at.elapsed() >= notification_duration
+                        {
+                            notification = None;
+                        }
+                    }
+                    _ => {}
+                }
+
+                // Either overlay is modal: while one is open, all input is
+                // routed to it (above) and withheld from the layout/state.
+                let overlay_open = show_keys || settings.is_visible();
+
+                // If not handled by global keys, pass to layout (includes mouse events)
+                // Skip when an overlay is shown to keep it modal
+                // In input modes (Command/Search/Insert), only pass mouse events to layout
+                // so that Esc can be handled by state to exit the mode
+                let is_input_mode =
+                    matches!(state.mode(), AppMode::Command | AppMode::Search | AppMode::Insert);
+                let is_mouse_event = matches!(event, Event::Mouse(_));
+                // Focus changes must always reach the layout (even in an input mode
+                // or behind an overlay): returning to the TUI after an external
+                // `codemark auth login`/`logout` triggers a registry/visibility
+                // refresh that would otherwise be dropped by the input-mode filter.
+                let is_focus_event = matches!(event, Event::FocusGained | Event::FocusLost);
+                if !handled
+                    && (is_focus_event || (!overlay_open && (!is_input_mode || is_mouse_event)))
+                {
+                    handled = layout.handle_event(&event);
+                }
+
+                // Let state handle the event too (captures keys for Search mode)
+                // Skip when an overlay is shown to keep it modal
+                // Skip if layout already handled the event (prevents keybinding conflicts)
+                if !overlay_open && !handled {
+                    state.handle_event(&event);
+                }
+
+                // Track mode transitions to manage focus
+                let mode_after = state.mode();
+                if mode_before != mode_after {
+                    match (mode_before, mode_after) {
+                        (AppMode::Normal, AppMode::Search) | (AppMode::Normal, AppMode::Insert) => {
+                            // Entering filter/input mode
+                            layout.enter_filter_mode();
+                        }
+                        (AppMode::Search, AppMode::Normal) | (AppMode::Insert, AppMode::Normal) => {
+                            // Exiting filter/input mode
+                            layout.exit_filter_mode();
+                        }
+                        _ => {}
+                    }
+                }
+
+                // A tab switch clears that pane's stored filter so it doesn't
+                // carry over to the newly active tab (filters are pane-scoped
+                // and applied to whichever tab is active).
+                for target in layout.take_filter_targets_to_clear() {
+                    state.set_string(format!("active_filter_{target}"), "");
+                    state.set_string(format!("filter_buffer_{target}"), "");
+                    if state.get_string("filter_target") == Some(target) {
+                        state.set_string("filter_buffer", "");
+                    }
+                }
+
+                // Update filter based on the focused panel's active_filter (live updated on each keystroke)
+                // When in Search mode, use the filter_target to determine which panel's filter to apply.
+                // Otherwise, use the current layout focus.
+                let filter_key = if state.mode() == AppMode::Search {
+                    // In Search mode, use the filter_target set when entering filter mode
+                    let target = state.get_string("filter_target").unwrap_or("panel3");
+                    format!("active_filter_{}", target)
+                } else {
+                    // In Normal mode, use the current layout focus
+                    match layout.focus() {
+                        crate::browser::FocusArea::ContextPanel => {
+                            "active_filter_panel1".to_string()
+                        }
+                        crate::browser::FocusArea::FiltersPanel => {
+                            "active_filter_panel2".to_string()
+                        }
+                        crate::browser::FocusArea::ContentPanel => {
+                            "active_filter_panel3".to_string()
+                        }
+                        crate::browser::FocusArea::Main => "active_filter_main".to_string(),
+                        crate::browser::FocusArea::Search => "active_filter_panel1".to_string(),
+                        crate::browser::FocusArea::Filter => "active_filter_panel3".to_string(),
+                    }
+                };
+                let query = state.get_string(&filter_key).unwrap_or("");
+                layout.apply_filter(query);
+
+                // Handle external commands (e.g. Open in Editor)
+                if let Some(cmd) = layout.take_pending_command() {
+                    tracing::info!(
+                        target: "codemark::shell",
+                        program = %cmd.program,
+                        args = ?cmd.args,
+                        wait = cmd.should_wait,
+                        "spawning external command"
+                    );
+
+                    if cmd.should_wait {
+                        // Terminal editor: exit TUI and replace process
+                        restore_terminal();
+
+                        #[cfg(unix)]
+                        {
+                            use std::os::unix::process::CommandExt;
+                            let err =
+                                std::process::Command::new(&cmd.program).args(&cmd.args).exec();
+
+                            // If exec returns, it failed
+                            tracing::error!(target: "codemark::shell", error = %err, "failed to exec editor");
+                            eprintln!("Failed to run editor: {}", err);
+                            return Ok(Some(1));
+                        }
+
+                        #[cfg(not(unix))]
+                        {
+                            match std::process::Command::new(&cmd.program).args(&cmd.args).status()
+                            {
+                                Ok(status) if status.success() => return Ok(Some(0)),
+                                Ok(status) => {
+                                    let code = status.code().unwrap_or(1);
+                                    tracing::error!(target: "codemark::shell", code, "editor exited with non-zero status");
+                                    eprintln!("Editor exited with status {}", code);
+                                    return Ok(Some(code));
+                                }
+                                Err(e) => {
+                                    tracing::error!(target: "codemark::shell", error = %e, "failed to spawn editor");
+                                    eprintln!("Failed to run editor: {}", e);
+                                    return Ok(Some(1));
+                                }
+                            }
+                        }
+                    } else {
+                        // GUI editor: spawn in background
+                        let status =
+                            std::process::Command::new(&cmd.program).args(&cmd.args).spawn();
+
+                        if let Err(e) = status {
+                            tracing::error!(target: "codemark::shell", error = %e, "failed to spawn editor");
+                            notification = Some((
+                                format!("Failed to spawn editor: {}", e),
+                                NotificationType::Error,
+                                Instant::now(),
+                            ));
+                        }
+                    }
+                }
+
+                // Handle heal notifications
+                if let Some(heal_notif) = layout.take_pending_notification() {
+                    notification = Some((
+                        heal_notif.message,
+                        if heal_notif.success {
+                            NotificationType::Info
+                        } else {
+                            NotificationType::Error
+                        },
+                        Instant::now(),
+                    ));
+                }
+            }
+        } else {
+            // Event channel closed, quit the app
+            state.quit();
+        }
+    }
+
+    Ok(None)
+}
+
+/// Restore terminal state.
+fn restore_terminal() {
+    let _ = disable_raw_mode();
+    let _ = execute!(io::stdout(), LeaveAlternateScreen, DisableMouseCapture, DisableFocusChange);
+}

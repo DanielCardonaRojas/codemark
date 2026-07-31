@@ -537,6 +537,7 @@ dependencies = [
  "clap_complete",
  "clap_mangen",
  "codemark-core",
+ "codemark-tui",
  "codetours-server",
  "comfy-table",
  "copypasta",
