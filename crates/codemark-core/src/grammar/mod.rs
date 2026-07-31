@@ -8,10 +8,11 @@
 //! on-disk layout via [`protocol`].
 //!
 //! [`install_grammar`] is the source-agnostic seam: it takes a name, normalized
-//! extensions, an optional profile, and the wasm bytes, regardless of whether
-//! those came from a local file (`codemark languages add`) or a download
-//! (`codemark languages install`). Presentation (output formatting) stays in the
-//! caller — this module returns a value, it does not print.
+//! extensions, an optional profile, and the wasm bytes. Today those always come
+//! from a local file (`codemark languages add`); the seam stays source-agnostic
+//! so a future registry source could feed it too. Presentation (output
+//! formatting) stays in the caller — this module returns a value, it does not
+//! print.
 
 pub mod protocol;
 pub mod source;
@@ -19,56 +20,26 @@ pub mod source;
 use crate::error::{Error, Result};
 
 /// Caller-supplied overrides that win over whatever a [`source::GrammarSource`]
-/// resolves. Both optional: a GitHub source fills them from `tree-sitter.json`,
-/// a local file requires them.
+/// resolves. Both optional — a local file requires them (it carries no metadata).
 #[derive(Debug, Default)]
 pub struct InstallOverrides {
     pub name: Option<String>,
     pub extensions: Option<String>,
-    /// Skip the 0.25 Tree-sitter ABI compatibility gate (the staged-load
-    /// validation is still the backstop).
-    pub allow_version_mismatch: bool,
-}
-
-/// End-to-end install pipeline: resolve `spec` via the right
-/// [`source::GrammarSource`], apply `overrides`, gate on the Tree-sitter
-/// version, download the wasm if remote, then hand off to [`install_grammar`].
-///
-/// This is the single entry point the CLI drives; it owns no presentation, so a
-/// registry source (once added) needs no changes here.
-pub async fn install(spec: &str, overrides: InstallOverrides) -> Result<InstallOutcome> {
-    let client = crate::sync::build_sync_http_client()?;
-    // The requested --name lets a source disambiguate (select the grammar entry
-    // in a multi-grammar repo and match its release asset) and reject a name that
-    // doesn't describe the published grammar.
-    let resolved = source::select_source(spec, client.clone())
-        .resolve(spec, overrides.name.as_deref())
-        .await?;
-    finish_install(&client, resolved, overrides).await
 }
 
 /// Install a grammar from a local `.wasm` file on disk (`codemark languages
-/// add`). Takes a `&Path` directly rather than a string spec so a non-UTF-8 path
-/// survives intact — routing it through [`install`]'s string spec would
-/// lossily convert it and misroute the file to the GitHub resolver.
+/// add`). Takes a `&Path` directly so a non-UTF-8 path survives intact.
+///
+/// This is the single install entry point the CLI drives. It resolves the file
+/// through [`source::LocalFileSource`], applies `overrides`, and hands off to the
+/// hardened [`install_grammar`]. (When a grammar *registry* source is added it
+/// will grow a sibling entry point; the [`source::GrammarSource`] trait keeps the
+/// door open.)
 pub async fn install_from_path(
     path: &std::path::Path,
     overrides: InstallOverrides,
 ) -> Result<InstallOutcome> {
-    let client = crate::sync::build_sync_http_client()?;
     let resolved = source::LocalFileSource.resolve_path(path)?;
-    finish_install(&client, resolved, overrides).await
-}
-
-/// Shared tail of the install pipeline once a source has produced a
-/// [`ResolvedGrammar`](source::ResolvedGrammar): apply overrides, gate on the
-/// Tree-sitter version, materialize the wasm, and hand off to [`install_grammar`].
-async fn finish_install(
-    client: &reqwest::Client,
-    resolved: source::ResolvedGrammar,
-    overrides: InstallOverrides,
-) -> Result<InstallOutcome> {
-    source::version_gate(resolved.ts_version.as_deref(), overrides.allow_version_mismatch)?;
 
     // Overrides win over the source's reported metadata.
     let name = overrides.name.or(resolved.name).ok_or_else(|| {
@@ -76,16 +47,16 @@ async fn finish_install(
     })?;
     let raw_extensions = overrides.extensions.or(resolved.raw_extensions).ok_or_else(|| {
         Error::Input(
-            "could not determine file extensions; pass --extensions (or, for a local file, they \
-             are required)"
+            "could not determine file extensions; pass --extensions (they are required for a \
+             local file)"
                 .to_string(),
         )
     })?;
 
-    // Reject built-in collisions before any download or file write.
+    // Reject built-in collisions before any file write.
     let extensions = validate_name_and_extensions(&name, &raw_extensions)?;
 
-    let wasm_bytes = resolved.wasm.into_bytes(client).await?;
+    let wasm_bytes = resolved.wasm.into_bytes().await?;
     install_grammar(&name, &extensions, resolved.profile, wasm_bytes)
 }
 
@@ -105,9 +76,9 @@ pub struct InstallOutcome {
 }
 
 /// Install a grammar from in-memory `wasm_bytes` under `name`, writing a manifest
-/// with the given normalized `extensions` and `profile`. Shared by `add` (local
-/// file) and `install` (downloaded release / registry) so all go through the
-/// same validation and the hardened stage-then-swap install.
+/// with the given normalized `extensions` and `profile`. Used by `add` (local
+/// file) — and kept source-agnostic so a future registry source could reuse the
+/// same validation and hardened stage-then-swap install.
 ///
 /// `extensions` must already be normalized (trimmed, dot-stripped, lowercased,
 /// non-empty). Use [`validate_name_and_extensions`] to produce them; it also

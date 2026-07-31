@@ -1,5 +1,5 @@
 use crate::cli::output::{self, OutputMode};
-use crate::cli::{LanguagesAddArgs, LanguagesArgs, LanguagesCommand, LanguagesInstallArgs};
+use crate::cli::{LanguagesAddArgs, LanguagesArgs, LanguagesCommand};
 use codemark_core::error::{Error, Result};
 use codemark_core::grammar::{self, InstallOutcome, InstallOverrides};
 
@@ -10,9 +10,6 @@ pub async fn handle_languages(
 ) -> Result<()> {
     match &args.command {
         Some(LanguagesCommand::Add(add_args)) => handle_add(cli, mode, add_args).await,
-        Some(LanguagesCommand::Install(install_args)) => {
-            handle_install(cli, mode, install_args).await
-        }
         Some(LanguagesCommand::Validate(_)) => handle_validate(cli, mode).await,
         Some(LanguagesCommand::List(_)) | None => handle_list(cli, mode).await,
     }
@@ -25,31 +22,14 @@ async fn handle_add(
 ) -> Result<()> {
     // A local .wasm carries no metadata, so name + extensions are required
     // overrides; the source layer reads the bytes and the shared pipeline
-    // validates, stages, and swaps them in. A local .wasm reports no ts_version,
-    // so the version gate is a no-op here regardless of this flag; the
-    // staged-load validation is the real backstop.
+    // validates, stages, and swaps them in.
     let overrides = InstallOverrides {
         name: Some(args.name.clone()),
         extensions: Some(args.extensions.clone()),
-        allow_version_mismatch: false,
     };
     // Pass the PathBuf straight through (not a lossy string) so a non-UTF-8 path
-    // isn't mangled and misrouted to the GitHub resolver.
+    // isn't mangled.
     let outcome = grammar::install_from_path(&args.wasm_file, overrides).await?;
-    print_install_outcome(mode, &outcome)
-}
-
-async fn handle_install(
-    _cli: &crate::cli::Cli,
-    mode: &OutputMode,
-    args: &LanguagesInstallArgs,
-) -> Result<()> {
-    let overrides = InstallOverrides {
-        name: args.name.clone(),
-        extensions: args.extensions.clone(),
-        allow_version_mismatch: args.allow_version_mismatch,
-    };
-    let outcome = grammar::install(&args.source, overrides).await?;
     print_install_outcome(mode, &outcome)
 }
 

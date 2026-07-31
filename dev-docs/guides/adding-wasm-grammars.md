@@ -16,82 +16,19 @@ get a grammar, install it, and write its profile.
 Codemark loads grammars with Tree-sitter **0.25**'s `WasmStore`. A `.wasm` built
 against a different Tree-sitter version can fail to load or crash while parsing.
 
-So the single most important check is: **the grammar's `.wasm` must be built with
-Tree-sitter 0.25.** Everything below is about getting a 0.25-compatible `.wasm`.
+So the single most important thing is: **the grammar's `.wasm` must be built with
+the Tree-sitter 0.25 CLI.** The reliable way to guarantee that is to build it
+yourself with a 0.25 CLI (below). Codemark does **not** download grammars for you
+— you provide the `.wasm` and install it with `codemark languages add`.
 
-You can confirm a repo's version from its `tree-sitter.json`:
-
-```json
-// tree-sitter.json  →  metadata.version
-{ "metadata": { "version": "0.25.1", ... } }
-```
-
-`version` here is the **grammar release version**, which the Tree-sitter org keeps
-in lockstep with the Tree-sitter minor it targets — so a grammar at `0.25.x` is
-built for the 0.25 ABI. That's exactly what codemark wants. (Grammars still on
-`0.23.x`/`0.24.x` should be rebuilt from source — see the fallback below.)
+> A grammar repo's `tree-sitter.json` has a `metadata.version`, but that is the
+> grammar package's **own** semver — *not* the Tree-sitter/ABI version — so don't
+> rely on it to judge compatibility. The CLI a grammar was built with is what
+> matters, and building it yourself removes the guesswork.
 
 ---
 
-## Recommended: `codemark languages install` (automatic)
-
-Many official grammars ship a `.wasm` artifact right in their GitHub Releases,
-built for their declared Tree-sitter version. `codemark languages install` does
-the whole thing for you: it reads the repo's `tree-sitter.json`, checks the
-version is 0.25-compatible, derives the name and extensions, downloads the
-release `.wasm`, and installs it through the hardened path.
-
-```bash
-codemark languages install tree-sitter/tree-sitter-bash
-# → downloads tree-sitter-bash.wasm, name=bash, extensions from file-types,
-#   installs and validates. Then:
-codemark languages validate
-codemark languages list        # bash now shows as type "dynamic"
-```
-
-Accepted source forms: `owner/repo`, `github:owner/repo`, or a
-`https://github.com/owner/repo` URL.
-
-- **Name / extensions** come from the repo's `tree-sitter.json` (grammar `name`
-  and `file-types`). Override with `--name` / `--extensions` if needed.
-- **Version safety:** if `tree-sitter.json` **declares** a non-0.25
-  `metadata.version` (its `.wasm` would likely fail to load), install
-  **refuses** with a clear message. Pass `--allow-version-mismatch` to try
-  anyway, or rebuild from source (below). Note: a repo that omits
-  `metadata.version` isn't gated on version — the staged-load validation after
-  download is the backstop that rejects a `.wasm` that can't actually load.
-- **No release `.wasm`?** Install tells you, and you fall back to building it
-  yourself.
-- The generated manifest has an **empty `profile`** — parsing works immediately;
-  see [The manifest and the language profile](#the-manifest-and-the-language-profile)
-  to improve breadcrumbs.
-
-Examples verified to ship a 0.25 `.wasm`:
-[tree-sitter-bash](https://github.com/tree-sitter/tree-sitter-bash/releases),
-[tree-sitter-julia](https://github.com/tree-sitter/tree-sitter-julia/releases).
-
-### Manual download (if you'd rather not use `install`)
-
-```bash
-# Confirm the release targets 0.25 and lists a .wasm asset, capturing the tag so
-# the download can't drift from what you inspected (the latest tag changes over
-# time — don't hard-code it).
-TAG=$(gh release view --repo tree-sitter/tree-sitter-bash latest --json tagName,assets \
-  --jq '{tag: .tagName, assets: [.assets[].name]} | .tag')
-echo "latest tag: $TAG"   # e.g. v0.25.1
-
-curl -sL -o /tmp/tree-sitter-bash.wasm \
-  "https://github.com/tree-sitter/tree-sitter-bash/releases/download/$TAG/tree-sitter-bash.wasm"
-
-codemark languages add --name bash --extensions sh,bash /tmp/tree-sitter-bash.wasm
-```
-
----
-
-## Fallback: build the `.wasm` yourself
-
-Use this when a grammar has no prebuilt `.wasm`, or is still on an older
-Tree-sitter version and needs rebuilding against 0.25.
+## Build the `.wasm` with the 0.25 CLI, then `add` it
 
 ```bash
 # CLI must be 0.25 to match codemark's runtime
@@ -103,11 +40,36 @@ cd tree-sitter-ruby
 tree-sitter build --wasm               # emits tree-sitter-ruby.wasm
 
 codemark languages add --name ruby --extensions rb,rake ./tree-sitter-ruby.wasm
+# Then:
+codemark languages validate
+codemark languages list                # ruby now shows as type "dynamic"
 ```
 
 `tree-sitter build --wasm` needs **Docker** or a local **Emscripten** (`emcc`)
 toolchain. See [tree-sitter-local-setup.md](./tree-sitter-local-setup.md) for CLI
 setup details.
+
+`codemark languages add` validates the `.wasm` (on a `--features wasm` build it
+loads it through the 0.25 `WasmStore`, so an incompatible module is rejected up
+front), writes a `manifest.json`, and installs both atomically. The generated
+manifest has an **empty `profile`** — parsing works immediately; see
+[The manifest and the language profile](#the-manifest-and-the-language-profile)
+to improve breadcrumbs.
+
+### Using a prebuilt `.wasm` from a release
+
+Some grammar repos publish a `.wasm` in their GitHub releases. You can use one —
+but **only if it was built with the 0.25 CLI** (check the repo's `package.json`
+`tree-sitter-cli` dev-dependency at that tag; if it isn't `0.25.x`, build from
+source instead). Download it and `add` it the same way:
+
+```bash
+# -f makes curl fail on a 404/moved asset instead of saving an HTML error page
+# to the .wasm path (which `add` would then accept as a regular file).
+curl -fsSL -o /tmp/tree-sitter-bash.wasm \
+  https://github.com/tree-sitter/tree-sitter-bash/releases/download/v0.25.1/tree-sitter-bash.wasm
+codemark languages add --name bash --extensions sh,bash /tmp/tree-sitter-bash.wasm
+```
 
 ---
 
@@ -172,12 +134,18 @@ Then edit the manifest in the cache dir and re-run `codemark languages validate`
 
 ## Versioning convention
 
-Two independent version numbers are in play — don't conflate them:
+Three different version numbers are in play — don't conflate them:
 
-- **Grammar / Tree-sitter version** — the `metadata.version` in the grammar's
-  `tree-sitter.json` (e.g. `0.25.1`). This determines **ABI compatibility** and
-  must be a **0.25.x** for codemark. It's the grammar author's number; you don't
-  choose it, you check it.
+- **Tree-sitter CLI / ABI version** — the version of the `tree-sitter` CLI the
+  grammar was **compiled with** (its `package.json` `tree-sitter-cli`
+  dev-dependency). This is what determines **ABI compatibility** and must be
+  **0.25.x** for codemark. Build the `.wasm` with a 0.25 CLI and this is
+  guaranteed.
+
+- **Grammar package version** — the `metadata.version` in the grammar's
+  `tree-sitter.json`. This is the grammar *package's* own semver (e.g.
+  `tree-sitter-elm` is `5.9.4`), unrelated to the Tree-sitter ABI. Ignore it for
+  compatibility purposes.
 
 - **Manifest `version`** — the `version` field in *your* `manifest.json`. This
   versions *your profile* (the labels/landmarks/containers you authored), not the
@@ -186,9 +154,9 @@ Two independent version numbers are in play — don't conflate them:
   independent of the grammar's version. (The Lua fixture uses `0.2.0` for its
   hand-tuned profile even though it wraps a specific grammar build.)
 
-If you want the grammar's Tree-sitter version recorded for provenance, add it as
-a separate field (e.g. `"grammar_version": "0.25.1"`) rather than overloading
-`version`; codemark ignores unknown manifest fields.
+If you want the CLI version the grammar was built with recorded for provenance,
+add it as a separate field (e.g. `"built_with_cli": "0.25.6"`) rather than
+overloading `version`; codemark ignores unknown manifest fields.
 
 ---
 
