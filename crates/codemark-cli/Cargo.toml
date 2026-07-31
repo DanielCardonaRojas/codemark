@@ -20,16 +20,23 @@ path = "examples/gen-man-pages.rs"
 required-features = ["man-pages"]
 
 [features]
-default = ["semantic"]
+default = ["semantic", "bundled-tui"]
 # Semantic (vector embedding) search. Enabled by default; disable with
-# `--no-default-features` to build without the candle/hf-hub stack.
-semantic = ["codemark-core/semantic"]
+# `--no-default-features` to build without the candle/hf-hub stack. Propagated
+# to the bundled TUI so a single-binary build stays consistent with the CLI.
+semantic = ["codemark-core/semantic", "codemark-tui?/semantic"]
 # Dynamic WASM grammar loading. Opt-in: enables wasmtime so additional language
 # grammars can be loaded at runtime from the platform cache dir (the
 # `$CODEMARK_GRAMMARS_DIR` override, else `BaseDirs::cache_dir()/codemark/grammars`
 # — e.g. ~/.cache on Linux, ~/Library/Caches on macOS). Disabled by default to
 # keep dev/CI builds lean; enable with `--features wasm`.
-wasm = ["codemark-core/wasm"]
+wasm = ["codemark-core/wasm", "codemark-tui?/wasm"]
+# Bundle the TUI into the `codemark` binary so `codemark tui` runs in-process
+# instead of exec'ing a separate `codemark-tui` executable. Enabled by default
+# so single-binary installers (mise/script/PowerShell) ship the dashboard with
+# no second binary. Disable with `--no-default-features` for a lean CLI that
+# dispatches to a standalone `codemark-tui` on PATH (the Homebrew layout).
+bundled-tui = ["dep:codemark-tui"]
 man-pages = ["clap_mangen"]
 
 [dev-dependencies]
@@ -45,6 +52,10 @@ axum = { workspace = true }
 # default-features = false so codemark-cli's own `semantic` feature (on by
 # default) is what pulls in core's semantic stack; a lean CLI build drops it.
 codemark-core = { path = "../codemark-core", default-features = false }
+# Bundled in-process TUI, gated behind the `bundled-tui` feature. default-features
+# = false for the same reason as core: the CLI's own `semantic`/`wasm` features
+# drive the TUI's matching features so both halves of the binary stay in sync.
+codemark-tui = { path = "../codemark-tui", default-features = false, optional = true }
 clap = { workspace = true }
 clap_complete = "4"
 clap_mangen = { version = "0.2", optional = true }

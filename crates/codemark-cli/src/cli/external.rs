@@ -42,6 +42,19 @@ pub fn executable_name(subcommand: &str) -> String {
     format!("codemark-{subcommand}")
 }
 
+/// Subcommand backed by the bundled TUI when the `bundled-tui` feature is on.
+#[cfg(feature = "bundled-tui")]
+const TUI_SUBCOMMAND: &str = "tui";
+
+/// Whether `command` is the `tui` subcommand, which the `bundled-tui` build
+/// handles in-process (linking `codemark-tui` as a library) rather than by
+/// exec'ing a standalone `codemark-tui` binary. The caller runs the async TUI
+/// entry point itself, since dispatch here is synchronous.
+#[cfg(feature = "bundled-tui")]
+pub fn is_bundled_tui(command: &Command) -> bool {
+    matches!(command, Command::External(parts) if parts.first().is_some_and(|s| s == TUI_SUBCOMMAND))
+}
+
 /// Dispatch a parsed command if it is external (a plugin such as `tui`),
 /// forwarding its trailing arguments to the backing executable.
 ///
@@ -112,13 +125,17 @@ fn spawn_error(err: std::io::Error, exe: &str, subcommand: &str) -> DispatchErro
 
 /// Build the "executable not found" message, special-casing the TUI so it
 /// points users at the right install command.
+///
+/// This path is only reached by a lean CLI built without the `bundled-tui`
+/// feature (the default build serves `codemark tui` in-process), so the hint
+/// steers users toward a bundled build or a standalone `codemark-tui`.
 fn not_found_message(exe: &str, subcommand: &str) -> String {
     if exe == TUI_EXECUTABLE {
         format!(
             "The TUI is not installed.\n\n\
-             It ships bundled with Homebrew:\n\n    \
+             The prebuilt binaries (Homebrew, install script, PowerShell, mise) bundle it:\n\n    \
              brew install DanielCardonaRojas/codemark/codemark\n\n\
-             or build it from source:\n\n    \
+             or build the standalone dashboard from source:\n\n    \
              cargo install --git https://github.com/DanielCardonaRojas/codemark {exe}"
         )
     } else {

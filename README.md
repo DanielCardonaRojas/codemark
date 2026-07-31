@@ -229,8 +229,10 @@ cargo install --git https://github.com/DanielCardonaRojas/codemark codemark-cli
 
 > The script, PowerShell, and `mise` methods install prebuilt binaries from the [GitHub releases](https://github.com/DanielCardonaRojas/codemark/releases). You can also download a platform archive there directly.
 
-### Terminal UI (optional)
-`codemark tui` opens the interactive dashboard, a separate companion binary. **Homebrew installs it automatically** alongside the CLI. The other prebuilt methods (script, PowerShell, mise) install the `codemark` CLI only; add the dashboard with:
+### Terminal UI
+`codemark tui` opens the interactive dashboard. The prebuilt `codemark` binary (script, PowerShell, mise) and Homebrew all bundle the dashboard, so it works out of the box with no extra install.
+
+If you build a lean CLI from source with `--no-default-features` (dropping the bundled TUI), `codemark tui` instead looks for a standalone `codemark-tui` on your `PATH`; add it with:
 ```bash
 cargo install --git https://github.com/DanielCardonaRojas/codemark codemark-tui
 ```

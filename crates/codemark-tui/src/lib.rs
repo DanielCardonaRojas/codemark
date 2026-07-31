@@ -30,6 +30,7 @@
 pub mod app;
 pub mod browser;
 pub mod component;
+pub mod entry;
 pub mod event;
 pub mod layout;
 pub mod logging;
@@ -44,6 +45,7 @@ pub use browser::{BrowserLayout, FocusArea, HealNotification, SearchBar, Tab, Ta
 pub use component::{
     Component, HealthStatus, Label, Panel, PanelItem, SizeConstraints, Spacer, SyncDirection,
 };
+pub use entry::run;
 pub use event::{Event, EventHandler, EventHandlerConfig, KeyBindings};
 pub use layout::{LayoutChild, LayoutManager, SplitLayout, helpers};
 pub use settings::{SettingsOverlay, SettingsTab};
