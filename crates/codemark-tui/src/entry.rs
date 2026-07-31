@@ -79,19 +79,16 @@ type PanicHook = Box<dyn Fn(&std::panic::PanicHookInfo<'_>) + Sync + Send + 'sta
 /// hook it replaced on drop.
 ///
 /// The installed hook first restores the terminal, then calls the previous hook
-/// so the host's (or default) panic reporting still runs. On drop — whether
-/// `run` returns normally or unwinds — a hook delegating to the original is
-/// reinstated, leaving the process's panic handling as it was found. This is the
-/// standard save/restore pattern for terminal apps (as used by ratatui and
-/// color-eyre).
+/// so the host's (or default) panic reporting still runs. This is the standard
+/// save/restore pattern for terminal apps (as used by ratatui and color-eyre).
 ///
-/// The panic hook is a single piece of process-global state with no identity or
-/// comparison in `std::panic`, so restore is unconditional: if another thread
-/// swaps the global hook *while the dashboard is running*, drop will overwrite
-/// that newer hook with the original. That is out of scope by construction — the
-/// TUI owns the terminal for the duration of `run`, and swapping the panic hook
-/// concurrently from another thread during an interactive session is not a
-/// supported embedding — and it is unavoidable without hook identity in std.
+/// On a **normal** drop the original hook is reinstated. On drop **during a
+/// panic unwind** the restore is skipped: `std::panic::set_hook` aborts the
+/// process when called from a panicking thread ("panic in a destructor during
+/// cleanup"), so restoring there would turn a host's recoverable
+/// `catch_unwind(run)` into a hard abort. In that case the installed hook simply
+/// stays — and because it chains to the previous hook, the host's reporting is
+/// still invoked (just after a harmless extra terminal restore).
 struct PanicHookGuard {
     // Wrapped in `Arc` so both the installed hook and the Drop-time restore can
     // share ownership of the previous hook (a `Box<dyn Fn>` is not `Clone`).
@@ -112,6 +109,11 @@ impl PanicHookGuard {
 
 impl Drop for PanicHookGuard {
     fn drop(&mut self) {
+        // Never call `set_hook` while unwinding — it aborts the process. The
+        // chained hook stays installed instead, keeping host reporting intact.
+        if std::thread::panicking() {
+            return;
+        }
         let prev = std::sync::Arc::clone(&self.prev);
         std::panic::set_hook(Box::new(move |panic_info| prev(panic_info)));
     }
