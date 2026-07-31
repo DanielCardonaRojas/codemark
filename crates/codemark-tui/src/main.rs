@@ -204,6 +204,21 @@ async fn run_app() -> Result<Option<i32>> {
 
                 match &event {
                     Event::Key(key) => {
+                        // Ctrl+C quits from any mode or overlay, mirroring lazygit:
+                        // it's the universal "get me out" escape hatch. Raw mode
+                        // (enabled in `run_app`) suppresses the terminal's
+                        // Ctrl+C→SIGINT translation, so it arrives here as an
+                        // ordinary key event rather than a signal — hence a key
+                        // binding, not a signal handler. This precedes the
+                        // per-mode dispatch below so it also fires behind modal
+                        // overlays (keybindings, settings) and in input modes,
+                        // where `q` is intentionally suppressed.
+                        if key.code == event::KeyCode::Char('c')
+                            && key.modifiers.contains(event::KeyModifiers::CONTROL)
+                        {
+                            state.quit();
+                            continue;
+                        }
                         match state.mode() {
                             AppMode::Normal if show_keys => {
                                 // The keybindings cheat sheet is modal: it

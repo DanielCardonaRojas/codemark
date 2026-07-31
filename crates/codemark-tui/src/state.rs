@@ -252,6 +252,16 @@ impl AppState {
                 true
             }
             Event::Key(key) => {
+                // Ctrl+C quits from any mode (lazygit-style). Checked before the
+                // mode-specific dispatch so it also fires in input modes, and kept
+                // here as the state-level contract so quit works for any caller —
+                // the legacy `App` in `app.rs` routes events here first.
+                if key.code == ratatui::crossterm::event::KeyCode::Char('c')
+                    && key.modifiers.contains(ratatui::crossterm::event::KeyModifiers::CONTROL)
+                {
+                    self.quit();
+                    return true;
+                }
                 // Handle mode-specific key bindings
                 match self.mode {
                     AppMode::Normal => {
@@ -566,6 +576,31 @@ mod tests {
         let mut state = AppState::new();
         state.quit();
         assert!(!state.is_running());
+    }
+
+    #[test]
+    fn test_ctrl_c_quits_from_any_mode() {
+        use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+        let ctrl_c = Event::Key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL));
+        let plain_c = Event::Key(KeyEvent::new(KeyCode::Char('c'), KeyModifiers::NONE));
+
+        // From Normal mode, Ctrl+C quits; a bare 'c' does not.
+        let mut state = AppState::new();
+        assert!(state.handle_event(&ctrl_c));
+        assert!(!state.is_running());
+
+        let mut state = AppState::new();
+        assert!(!state.handle_event(&plain_c));
+        assert!(state.is_running());
+
+        // Ctrl+C also quits from input modes, where 'q' is suppressed.
+        for mode in [AppMode::Search, AppMode::Command, AppMode::Insert] {
+            let mut state = AppState::new();
+            state.set_mode(mode);
+            assert!(state.handle_event(&ctrl_c));
+            assert!(!state.is_running(), "Ctrl+C should quit from {mode:?}");
+        }
     }
 
     #[test]
