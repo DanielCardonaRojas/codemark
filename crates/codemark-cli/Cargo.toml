@@ -32,10 +32,12 @@ semantic = ["codemark-core/semantic", "codemark-tui?/semantic"]
 # keep dev/CI builds lean; enable with `--features wasm`.
 wasm = ["codemark-core/wasm", "codemark-tui?/wasm"]
 # Bundle the TUI into the `codemark` binary so `codemark tui` runs in-process
-# instead of exec'ing a separate `codemark-tui` executable. Enabled by default
-# so single-binary installers (mise/script/PowerShell) ship the dashboard with
-# no second binary. Disable with `--no-default-features` for a lean CLI that
-# dispatches to a standalone `codemark-tui` on PATH (the Homebrew layout).
+# instead of exec'ing a separate `codemark-tui` executable. Enabled by default,
+# so every prebuilt distribution ships the dashboard: the single-binary
+# installers (mise/script/PowerShell) need no second binary, and Homebrew's
+# prebuilt `codemark` (built with default features) carries it too. Disable with
+# `--no-default-features` for a lean CLI that instead dispatches to a standalone
+# `codemark-tui` on PATH.
 bundled-tui = ["dep:codemark-tui"]
 man-pages = ["clap_mangen"]
 

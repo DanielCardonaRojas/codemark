@@ -63,6 +63,11 @@ fn builtin_command_is_not_treated_as_external() {
     assert!(out.stdout.contains("codemark"), "stdout: {}", out.stdout);
 }
 
+// The `tui` subcommand is only dispatched to an external `codemark-tui` binary
+// in a lean build. The default `bundled-tui` build serves it in-process (see
+// `bundled_tui_runs_in_process_without_exec` below), so this exec-path test is
+// compiled only when the feature is off.
+#[cfg(not(feature = "bundled-tui"))]
 #[test]
 fn tui_dispatches_to_codemark_tui_binary() {
     let dir = plugin_dir();
@@ -71,6 +76,27 @@ fn tui_dispatches_to_codemark_tui_binary() {
     let out = run_with_path(dir.path(), &["tui"]);
     assert_eq!(out.code, 0, "stderr: {}", out.stderr);
     assert!(out.stdout.contains("PLUGIN ARGS:"), "stdout: {}", out.stdout);
+}
+
+/// With `bundled-tui` (the default), `codemark tui` runs the linked-in TUI
+/// library rather than exec'ing a sibling binary. `--list-schemes` exercises
+/// that in-process path without touching the terminal: it prints theme names
+/// and exits. A fake `codemark-tui` is placed on `PATH` to prove it is *not*
+/// invoked (no `PLUGIN ARGS` output).
+#[cfg(feature = "bundled-tui")]
+#[test]
+fn bundled_tui_runs_in_process_without_exec() {
+    let dir = plugin_dir();
+    install_fake_plugin(dir.path(), "codemark-tui", 0);
+
+    let out = run_with_path(dir.path(), &["tui", "--list-schemes"]);
+    assert_eq!(out.code, 0, "stderr: {}", out.stderr);
+    assert!(!out.stdout.is_empty(), "expected scheme names, stdout: {}", out.stdout);
+    assert!(
+        !out.stdout.contains("PLUGIN ARGS:"),
+        "bundled tui must not exec the external binary, stdout: {}",
+        out.stdout
+    );
 }
 
 #[test]
@@ -116,6 +142,9 @@ fn plugin_exit_code_is_propagated() {
     assert_eq!(out.code, 42, "stderr: {}", out.stderr);
 }
 
+// Only meaningful for a lean build: the bundled build never looks for an
+// external `codemark-tui`, so it can't be "missing".
+#[cfg(not(feature = "bundled-tui"))]
 #[test]
 fn missing_tui_executable_shows_install_hint() {
     // Empty PATH dir -> codemark-tui cannot be found.
