@@ -295,15 +295,9 @@ async fn run_app() -> Result<Option<i32>> {
                                     event::KeyCode::Char('/') if !dialog_active => {
                                         // Set the filter target based on current focus before entering filter mode
                                         let filter_target = match layout.focus() {
-                                            crate::browser::FocusArea::ContextPanel => {
-                                                "panel1"
-                                            }
-                                            crate::browser::FocusArea::FiltersPanel => {
-                                                "panel2"
-                                            }
-                                            crate::browser::FocusArea::ContentPanel => {
-                                                "panel3"
-                                            }
+                                            crate::browser::FocusArea::ContextPanel => "panel1",
+                                            crate::browser::FocusArea::FiltersPanel => "panel2",
+                                            crate::browser::FocusArea::ContentPanel => "panel3",
                                             crate::browser::FocusArea::Main => "main",
                                             crate::browser::FocusArea::Search => "panel1", // Search filters ContextPanel
                                             crate::browser::FocusArea::Filter => "panel3",
@@ -456,12 +450,8 @@ async fn run_app() -> Result<Option<i32>> {
                             "active_filter_panel3".to_string()
                         }
                         crate::browser::FocusArea::Main => "active_filter_main".to_string(),
-                        crate::browser::FocusArea::Search => {
-                            "active_filter_panel1".to_string()
-                        }
-                        crate::browser::FocusArea::Filter => {
-                            "active_filter_panel3".to_string()
-                        }
+                        crate::browser::FocusArea::Search => "active_filter_panel1".to_string(),
+                        crate::browser::FocusArea::Filter => "active_filter_panel3".to_string(),
                     }
                 };
                 let query = state.get_string(&filter_key).unwrap_or("");
