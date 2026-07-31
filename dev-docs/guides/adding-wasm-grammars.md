@@ -64,7 +64,9 @@ but **only if it was built with the 0.25 CLI** (check the repo's `package.json`
 source instead). Download it and `add` it the same way:
 
 ```bash
-curl -sL -o /tmp/tree-sitter-bash.wasm \
+# -f makes curl fail on a 404/moved asset instead of saving an HTML error page
+# to the .wasm path (which `add` would then accept as a regular file).
+curl -fsSL -o /tmp/tree-sitter-bash.wasm \
   https://github.com/tree-sitter/tree-sitter-bash/releases/download/v0.25.1/tree-sitter-bash.wasm
 codemark languages add --name bash --extensions sh,bash /tmp/tree-sitter-bash.wasm
 ```

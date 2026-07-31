@@ -8,10 +8,11 @@
 //! on-disk layout via [`protocol`].
 //!
 //! [`install_grammar`] is the source-agnostic seam: it takes a name, normalized
-//! extensions, an optional profile, and the wasm bytes, regardless of whether
-//! those came from a local file (`codemark languages add`) or a download
-//! (`codemark languages install`). Presentation (output formatting) stays in the
-//! caller — this module returns a value, it does not print.
+//! extensions, an optional profile, and the wasm bytes. Today those always come
+//! from a local file (`codemark languages add`); the seam stays source-agnostic
+//! so a future registry source could feed it too. Presentation (output
+//! formatting) stays in the caller — this module returns a value, it does not
+//! print.
 
 pub mod protocol;
 pub mod source;
@@ -75,9 +76,9 @@ pub struct InstallOutcome {
 }
 
 /// Install a grammar from in-memory `wasm_bytes` under `name`, writing a manifest
-/// with the given normalized `extensions` and `profile`. Shared by `add` (local
-/// file) and `install` (downloaded release / registry) so all go through the
-/// same validation and the hardened stage-then-swap install.
+/// with the given normalized `extensions` and `profile`. Used by `add` (local
+/// file) — and kept source-agnostic so a future registry source could reuse the
+/// same validation and hardened stage-then-swap install.
 ///
 /// `extensions` must already be normalized (trimmed, dot-stripped, lowercased,
 /// non-empty). Use [`validate_name_and_extensions`] to produce them; it also
