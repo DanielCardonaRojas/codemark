@@ -35,11 +35,11 @@ built for the 0.25 ABI. That's exactly what codemark wants. (Grammars still on
 
 ## Recommended: `codemark languages install` (automatic)
 
-Many official grammars ship a `.wasm` artifact right in their GitHub Releases,
-built for their declared Tree-sitter version. `codemark languages install` does
-the whole thing for you: it **finds the newest 0.25-compatible release**, reads
-its `tree-sitter.json`, derives the name and extensions, downloads that release's
-`.wasm`, and installs it through the hardened path.
+Many official grammars ship a `.wasm` artifact right in their GitHub Releases.
+`codemark languages install` does the whole thing for you: it takes the latest
+release, checks it was built with the 0.25 Tree-sitter CLI, derives the name and
+extensions, downloads that release's `.wasm`, and installs it through the
+hardened path.
 
 ```bash
 codemark languages install tree-sitter/tree-sitter-bash
@@ -52,18 +52,25 @@ codemark languages list        # bash now shows as type "dynamic"
 Accepted source forms: `owner/repo`, `github:owner/repo`, or a
 `https://github.com/owner/repo` URL.
 
-- **Automatic 0.25 selection:** codemark loads 0.25 grammars, so install scans
-  the repo's releases newest→oldest and picks the first one that ships a `.wasm`
-  **and** whose tag `tree-sitter.json` reports a `0.25.x` version. This means a
-  repo whose *latest* release has moved on to a newer ABI (e.g.
-  [tree-sitter-scala](https://github.com/tree-sitter/tree-sitter-scala/releases)
-  at `v0.26.0`) still installs cleanly from its older `v0.25.x` release — you
-  don't pass a version.
+- **ABI check via `package.json`:** codemark loads 0.25 grammars, so install
+  reads the release tag's `package.json` `tree-sitter-cli` — the CLI that
+  *compiled* the grammar, which is the real ABI signal. (Don't be fooled by
+  `tree-sitter.json`'s `metadata.version`: that's the grammar's own package
+  version — e.g. `tree-sitter-elm` is `5.9.4` while built with the 0.26 CLI — and
+  has nothing to do with the ABI.)
+  - CLI **< 0.25** → error (too old; rebuild from source).
+  - CLI **> 0.25** → error, telling you to pin an older 0.25 release with
+    `--release` (see below).
+  - CLI **= 0.25.x** → installs.
+  - No readable `package.json` → codemark doesn't block; the post-download
+    staged-load validation is the backstop.
+- **`--release <tag>`:** when the latest release has moved to a newer Tree-sitter
+  (e.g. [tree-sitter-scala](https://github.com/tree-sitter/tree-sitter-scala/releases)
+  is now `v0.26.0`), pin an older 0.25 build:
+  `codemark languages install tree-sitter/tree-sitter-scala --release v0.25.1`.
+  The chosen tag is checked the same way.
 - **Name / extensions** come from the selected release's `tree-sitter.json`
   (grammar `name` and `file-types`). Override with `--name` / `--extensions`.
-- **No 0.25 release?** If none of the recent releases is a 0.25 build with a
-  `.wasm`, install says so and you fall back to building it yourself (below) or
-  `codemark languages add` with a manually-downloaded 0.25 `.wasm`.
 - The generated manifest has an **empty `profile`** — parsing works immediately;
   see [The manifest and the language profile](#the-manifest-and-the-language-profile)
   to improve breadcrumbs.

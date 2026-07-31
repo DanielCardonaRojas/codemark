@@ -1577,6 +1577,12 @@ pub struct LanguagesInstallArgs {
     #[arg(long, short)]
     pub extensions: Option<String>,
 
+    /// Install from a specific release tag instead of the latest — use this to
+    /// pick an older 0.25 build when the latest release targets a newer
+    /// Tree-sitter (e.g. `--release v0.25.1`).
+    #[arg(long)]
+    pub release: Option<String>,
+
     /// Install even if the grammar's Tree-sitter version isn't 0.25.x. The
     /// downloaded .wasm may fail to load — validated after download regardless.
     #[arg(long)]

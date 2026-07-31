@@ -25,13 +25,12 @@ async fn handle_add(
 ) -> Result<()> {
     // A local .wasm carries no metadata, so name + extensions are required
     // overrides; the source layer reads the bytes and the shared pipeline
-    // validates, stages, and swaps them in. A local .wasm reports no ts_version,
-    // so the version gate is a no-op here regardless of this flag; the
-    // staged-load validation is the real backstop.
+    // validates, stages, and swaps them in. There's no release/ABI gate for a
+    // local file — the staged-load validation is the backstop.
     let overrides = InstallOverrides {
         name: Some(args.name.clone()),
         extensions: Some(args.extensions.clone()),
-        allow_version_mismatch: false,
+        ..Default::default()
     };
     // Pass the PathBuf straight through (not a lossy string) so a non-UTF-8 path
     // isn't mangled and misrouted to the GitHub resolver.
@@ -47,6 +46,7 @@ async fn handle_install(
     let overrides = InstallOverrides {
         name: args.name.clone(),
         extensions: args.extensions.clone(),
+        release: args.release.clone(),
         allow_version_mismatch: args.allow_version_mismatch,
     };
     let outcome = grammar::install(&args.source, overrides).await?;

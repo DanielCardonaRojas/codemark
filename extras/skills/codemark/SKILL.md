@@ -598,13 +598,14 @@ load dynamically.
 codemark languages install tree-sitter/tree-sitter-bash
 ```
 
-`install` scans the repo's releases newest→oldest and picks the first that ships
-a `.wasm` **and** whose tag `tree-sitter.json` reports a **0.25.x** version
-(codemark's WASM ABI) — so a repo whose latest release has moved to a newer ABI
-still installs from its older 0.25 release, with no version flag. It derives the
-name + extensions from that release, downloads its `.wasm`, and installs it. If
-no recent release is a 0.25 build with a `.wasm`, build it yourself with the 0.25
-CLI and use `codemark languages add`:
+`install` takes the latest release and checks its `package.json` `tree-sitter-cli`
+(the CLI that compiled the grammar — the real ABI signal, **not**
+`tree-sitter.json`'s `metadata.version`, which is the grammar's own semver). It
+requires **0.25.x**: an older CLI errors (rebuild from source), a newer one (e.g.
+scala/elm at 0.26) errors with a hint to pin an older 0.25 release via
+`--release <tag>`. It then derives the name + extensions from that release,
+downloads its `.wasm`, and installs. If a 0.25 build isn't available, build it
+yourself with the 0.25 CLI and use `codemark languages add`:
 
 ```bash
 tree-sitter build --wasm            # needs tree-sitter-cli@0.25 + Docker/emscripten

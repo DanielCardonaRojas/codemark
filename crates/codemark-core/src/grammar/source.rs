@@ -15,12 +15,6 @@ use crate::error::{Error, Result};
 /// this; a larger response means a wrong/corrupt asset.
 const MAX_WASM_BYTES: u64 = 32 * 1024 * 1024;
 
-/// How many recent releases to scan when searching for a 0.25-compatible one.
-/// A 0.25 release is normally at or near the top for an active grammar, so this
-/// bounds the work (and the `raw.githubusercontent` fetches) for a repo that has
-/// long since moved past 0.25 without one.
-const MAX_RELEASE_SCAN: usize = 30;
-
 /// A grammar resolved from some source, ready to install. Source-agnostic: a
 /// local file, a GitHub release, or a registry all produce this same shape, so
 /// the install pipeline is written once.
@@ -39,9 +33,6 @@ pub struct ResolvedGrammar {
     /// Where the wasm bytes come from. Deferred so `resolve` stays cheap
     /// (metadata only) and the big download happens once, after checks.
     pub wasm: WasmPayload,
-    /// The grammar's Tree-sitter ABI version, for the 0.25 compat gate. `None`
-    /// when the source can't report it (e.g. a bare local file).
-    pub ts_version: Option<String>,
 }
 
 /// Where a resolved grammar's `grammar.wasm` bytes come from.
@@ -63,37 +54,30 @@ impl WasmPayload {
     }
 }
 
+/// Options that steer a [`GrammarSource::resolve`] beyond the bare spec.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct ResolveOptions<'a> {
+    /// The caller's `--name` override, which a source may need to disambiguate a
+    /// multi-grammar repo (selects the grammar entry, matches the release asset).
+    pub requested_name: Option<&'a str>,
+    /// The caller's `--release <tag>` override, pinning a specific GitHub release
+    /// (ignored by sources that don't have releases).
+    pub requested_release: Option<&'a str>,
+    /// `--allow-version-mismatch`: skip the up-front ABI gate (a source's
+    /// package.json `tree-sitter-cli` check). The staged-load validation before
+    /// the install swap is still the final backstop.
+    pub allow_version_mismatch: bool,
+}
+
 /// A place codemark can resolve a grammar from. One `resolve` per source kind;
 /// the install pipeline treats them uniformly.
 #[async_trait::async_trait]
 pub trait GrammarSource {
-    /// Resolve a user `spec` into installable metadata. `requested_name` is the
-    /// caller's `--name` override, which a source may need to disambiguate (a
-    /// multi-grammar GitHub repo selects the matching grammar entry, and matches
-    /// the release asset to it). Does **not** download the wasm — that is
-    /// deferred to [`WasmPayload`] so name/version checks run before the large
-    /// transfer.
-    async fn resolve(&self, spec: &str, requested_name: Option<&str>) -> Result<ResolvedGrammar>;
-}
-
-/// The 0.25 Tree-sitter ABI compatibility gate. Codemark loads 0.25 grammars; a
-/// grammar built for another ABI would likely fail `set_language`. Rejected
-/// unless `allow_mismatch`, in which case the staged-load validation is still
-/// the backstop.
-pub fn version_gate(ts_version: Option<&str>, allow_mismatch: bool) -> Result<()> {
-    if allow_mismatch {
-        return Ok(());
-    }
-    if let Some(v) = ts_version
-        && !v.starts_with("0.25")
-    {
-        return Err(Error::Input(format!(
-            "grammar targets Tree-sitter {v}, but codemark loads 0.25 grammars — the downloaded \
-             .wasm would likely fail to load. Rebuild it from source with the 0.25 CLI, or pass \
-             --allow-version-mismatch to try anyway."
-        )));
-    }
-    Ok(())
+    /// Resolve a user `spec` into installable metadata.
+    ///
+    /// Does **not** download the wasm — that is deferred to [`WasmPayload`] so
+    /// name/version checks run before the large transfer.
+    async fn resolve(&self, spec: &str, opts: ResolveOptions<'_>) -> Result<ResolvedGrammar>;
 }
 
 /// A grammar sitting on the local filesystem as a compiled `.wasm`
@@ -115,7 +99,6 @@ impl LocalFileSource {
             raw_extensions: None,
             profile: None,
             wasm: WasmPayload::Bytes(bytes),
-            ts_version: None,
         })
     }
 }
@@ -180,7 +163,7 @@ fn read_capped_file(path: &std::path::Path) -> Result<Vec<u8>> {
 
 #[async_trait::async_trait]
 impl GrammarSource for LocalFileSource {
-    async fn resolve(&self, spec: &str, _requested_name: Option<&str>) -> Result<ResolvedGrammar> {
+    async fn resolve(&self, spec: &str, _opts: ResolveOptions<'_>) -> Result<ResolvedGrammar> {
         self.resolve_path(&PathBuf::from(spec))
     }
 }
@@ -259,12 +242,19 @@ impl GithubSource {
         Ok(Some(parse_tree_sitter_meta(&json, requested_name)))
     }
 
-    /// List the repo's releases (newest first), capped at [`MAX_RELEASE_SCAN`].
-    async fn list_releases(&self, owner: &str, repo: &str) -> Result<Vec<serde_json::Value>> {
-        let url = format!(
-            "https://api.github.com/repos/{owner}/{repo}/releases?per_page={MAX_RELEASE_SCAN}"
-        );
-        tracing::debug!(target: "codemark::http", %url, "listing releases");
+    /// Fetch a single release: the one tagged `tag` if given, else the latest.
+    /// Returns the raw release JSON (with its `assets` and `tag_name`).
+    async fn fetch_release(
+        &self,
+        owner: &str,
+        repo: &str,
+        tag: Option<&str>,
+    ) -> Result<serde_json::Value> {
+        let url = match tag {
+            Some(t) => format!("https://api.github.com/repos/{owner}/{repo}/releases/tags/{t}"),
+            None => format!("https://api.github.com/repos/{owner}/{repo}/releases/latest"),
+        };
+        tracing::debug!(target: "codemark::http", %url, "fetching release");
         let resp = self
             .client
             .get(&url)
@@ -272,62 +262,44 @@ impl GithubSource {
             .header(reqwest::header::USER_AGENT, "codemark")
             .send()
             .await
-            .map_err(|e| Error::Operation(format!("failed to query releases: {e}")))?;
+            .map_err(|e| Error::Operation(format!("failed to query release: {e}")))?;
+        if resp.status() == reqwest::StatusCode::NOT_FOUND {
+            return Err(Error::Input(match tag {
+                Some(t) => format!("{owner}/{repo} has no release tagged '{t}'"),
+                None => format!("{owner}/{repo} has no releases"),
+            }));
+        }
         if !resp.status().is_success() {
             return Err(Error::Operation(format!(
-                "failed to list releases of {owner}/{repo}: HTTP {}",
+                "failed to fetch release of {owner}/{repo}: HTTP {}",
                 resp.status()
             )));
         }
-        resp.json::<Vec<serde_json::Value>>()
+        resp.json::<serde_json::Value>()
             .await
-            .map_err(|e| Error::Operation(format!("releases JSON invalid: {e}")))
+            .map_err(|e| Error::Operation(format!("release JSON invalid: {e}")))
     }
 
-    /// Select the newest release that ships a `.wasm` **and** whose tag
-    /// `tree-sitter.json` reports a 0.25.x Tree-sitter version (codemark's WASM
-    /// ABI), returning that release's metadata + asset list.
+    /// Fetch and parse a release tag's `package.json`, returning the
+    /// `tree-sitter-cli` version as a normalized `(major, minor)`.
     ///
-    /// Walks releases newest→oldest and stops at the first compatible one. A
-    /// release without a `.wasm`, or whose `tree-sitter.json` is missing or not
-    /// 0.25, is skipped — we never trust the tag string as the version, only the
-    /// authoritative `metadata.version` at that tag.
-    async fn select_compatible_release(
-        &self,
-        owner: &str,
-        repo: &str,
-        requested_name: Option<&str>,
-    ) -> Result<SelectedRelease> {
-        let releases = self.list_releases(owner, repo).await?;
-        for release in &releases {
-            // Skip releases that ship no .wasm at all — no point reading metadata.
-            if !release_has_wasm(release) {
-                continue;
-            }
-            let Some(tag) = release.get("tag_name").and_then(|t| t.as_str()) else {
-                continue;
-            };
-
-            // Confirm ABI via the tag's tree-sitter.json (not the tag string).
-            let Some(meta) =
-                self.fetch_tree_sitter_json_at(owner, repo, tag, requested_name).await?
-            else {
-                continue; // no tree-sitter.json at this tag
-            };
-            if is_compatible_version(meta.version.as_deref()) {
-                tracing::debug!(target: "codemark::languages", %tag, "selected 0.25-compatible release");
-                let assets =
-                    release.get("assets").and_then(|a| a.as_array()).cloned().unwrap_or_default();
-                return Ok(SelectedRelease { tag: tag.to_string(), meta, assets });
-            }
+    /// This — **not** `tree-sitter.json`'s `metadata.version` — is the true ABI
+    /// signal: it's the CLI that compiled the grammar. `metadata.version` is the
+    /// grammar package's own semver (e.g. `elm` at `5.9.4` while built with the
+    /// 0.26 CLI), so keying on it would misjudge compatibility.
+    ///
+    /// Returns `None` if the repo ships no readable `package.json` or no
+    /// parseable `tree-sitter-cli`, so the caller can fall through to the
+    /// staged-load validation rather than falsely rejecting the grammar.
+    async fn fetch_cli_minor_at(&self, owner: &str, repo: &str, tag: &str) -> Option<(u64, u64)> {
+        let url = format!("https://raw.githubusercontent.com/{owner}/{repo}/{tag}/package.json");
+        tracing::debug!(target: "codemark::http", %url, "fetching package.json at ref");
+        let resp = self.client.get(&url).send().await.ok()?;
+        if !resp.status().is_success() {
+            return None;
         }
-        Err(Error::Input(format!(
-            "no Tree-sitter 0.25 release with a .wasm asset found in {owner}/{repo} \
-             (scanned the {} most recent releases). codemark loads 0.25 grammars — download a 0.25 \
-             `.wasm` from an older release and use `codemark languages add`, or rebuild it from \
-             source with the 0.25 CLI.",
-            releases.len()
-        )))
+        let json: serde_json::Value = resp.json().await.ok()?;
+        parse_tree_sitter_cli_minor(&json)
     }
 
     /// Choose the `.wasm` asset for `grammar_name` from an already-fetched
@@ -431,15 +403,64 @@ impl GithubSource {
 
 #[async_trait::async_trait]
 impl GrammarSource for GithubSource {
-    async fn resolve(&self, spec: &str, requested_name: Option<&str>) -> Result<ResolvedGrammar> {
+    async fn resolve(&self, spec: &str, opts: ResolveOptions<'_>) -> Result<ResolvedGrammar> {
         let (owner, repo) = Self::parse_source(spec)?;
+        let requested_name = opts.requested_name;
 
-        // Pick the newest release that ships a .wasm *and* is 0.25-compatible,
-        // rather than blindly taking `releases/latest` (which may have moved to a
-        // newer ABI like 0.26). Metadata and the asset now both come from this one
-        // release, so the version we gate on matches the module we download.
-        let SelectedRelease { tag, meta, assets } =
-            self.select_compatible_release(&owner, &repo, requested_name).await?;
+        // Take the pinned `--release <tag>` if given, else the latest release.
+        // (We don't scan older releases: the tag's package.json tells us up front
+        // whether it's a 0.25 build, so we fail fast with a --release hint instead
+        // of downloading many .wasm modules to probe.)
+        let release = self.fetch_release(&owner, &repo, opts.requested_release).await?;
+        let tag = release
+            .get("tag_name")
+            .and_then(|t| t.as_str())
+            .ok_or_else(|| Error::Operation("release has no tag_name".to_string()))?
+            .to_string();
+        let assets = release.get("assets").and_then(|a| a.as_array()).cloned().unwrap_or_default();
+
+        // ABI gate via that tag's package.json `tree-sitter-cli` — the CLI that
+        // compiled the grammar, which is the real ABI signal (unlike
+        // tree-sitter.json's metadata.version, which is the grammar's own semver).
+        // Absent/unparseable → don't block; the staged-load validation is the
+        // backstop. Too old → refuse. Newer than 0.25 → refuse with a --release
+        // hint so the user can pin an older 0.25 build. `--allow-version-mismatch`
+        // skips this up-front gate entirely (staged-load still validates).
+        if !opts.allow_version_mismatch {
+            match self.fetch_cli_minor_at(&owner, &repo, &tag).await {
+                Some((0, 25)) => {}
+                Some((major, minor)) if (major, minor) < (0, 25) => {
+                    return Err(Error::Input(format!(
+                        "release {tag} of {owner}/{repo} was built with Tree-sitter {major}.{minor} \
+                         (from package.json), but codemark loads 0.25 grammars. Rebuild it from \
+                         source with the 0.25 CLI and use `codemark languages add`, or pass \
+                         --allow-version-mismatch to try anyway."
+                    )));
+                }
+                Some((major, minor)) => {
+                    return Err(Error::Input(format!(
+                        "release {tag} of {owner}/{repo} was built with Tree-sitter {major}.{minor} \
+                         (from package.json), but codemark loads 0.25 grammars. Pass `--release \
+                         <tag>` to pick an older 0.25 release, use `codemark languages add` with a \
+                         0.25 `.wasm`, or pass --allow-version-mismatch to try anyway."
+                    )));
+                }
+                None => {
+                    tracing::debug!(target: "codemark::languages", %tag, "no package.json tree-sitter-cli; relying on staged-load validation");
+                }
+            }
+        }
+
+        // Name / extensions from that tag's tree-sitter.json.
+        let meta = self
+            .fetch_tree_sitter_json_at(&owner, &repo, &tag, requested_name)
+            .await?
+            .ok_or_else(|| {
+                Error::Input(format!(
+                    "no tree-sitter.json found in {owner}/{repo} at {tag} — is this a Tree-sitter \
+                     grammar repo?"
+                ))
+            })?;
 
         // A multi-grammar repo (e.g. typescript + tsx) exposes several grammar
         // entries but often ships a single .wasm. Without --name we'd default to
@@ -487,7 +508,6 @@ impl GrammarSource for GithubSource {
             raw_extensions: (!meta.file_types.is_empty()).then(|| meta.file_types.join(",")),
             profile: None,
             wasm: WasmPayload::Url(asset.url),
-            ts_version: meta.version,
         })
     }
 }
@@ -505,11 +525,15 @@ pub fn select_source(spec: &str, client: reqwest::Client) -> Box<dyn GrammarSour
 
 /// A Tree-sitter grammar repo's `tree-sitter.json` metadata (only the fields we
 /// use). Unknown fields are ignored.
+///
+/// Deliberately does **not** carry `metadata.version`: that is the grammar
+/// package's own semver (e.g. `elm` at `5.9.4`), not the Tree-sitter ABI, so it
+/// must never drive compatibility. The ABI comes from `package.json`'s
+/// `tree-sitter-cli` (see [`parse_tree_sitter_cli_minor`]).
 #[derive(Debug, Default)]
 struct TreeSitterMeta {
     name: Option<String>,
     file_types: Vec<String>,
-    version: Option<String>,
     /// How many grammar entries `tree-sitter.json` declared. >1 means a
     /// multi-grammar repo where `name`/`file_types` (taken from a single entry)
     /// can't be assumed to match the published `.wasm` unless the caller named
@@ -521,8 +545,7 @@ struct TreeSitterMeta {
     requested_name_matched: bool,
 }
 
-/// Extract the name, file-types, and Tree-sitter version from a parsed
-/// `tree-sitter.json`.
+/// Extract the name and file-types from a parsed `tree-sitter.json`.
 ///
 /// When `requested_name` is given and matches a grammar entry, that entry's
 /// name/file-types are used — so a multi-grammar repo (e.g. `typescript` + `tsx`)
@@ -552,12 +575,7 @@ fn parse_tree_sitter_meta(
         .and_then(|f| f.as_array())
         .map(|arr| arr.iter().filter_map(|e| e.as_str().map(str::to_string)).collect())
         .unwrap_or_default();
-    let version = json
-        .get("metadata")
-        .and_then(|m| m.get("version"))
-        .and_then(|v| v.as_str())
-        .map(str::to_string);
-    TreeSitterMeta { name, file_types, version, grammar_count, requested_name_matched }
+    TreeSitterMeta { name, file_types, grammar_count, requested_name_matched }
 }
 
 /// A release asset we can download.
@@ -566,29 +584,35 @@ struct ReleaseAsset {
     url: String,
 }
 
-/// A release chosen by [`GithubSource::select_compatible_release`]: its tag, the
-/// `tree-sitter.json` metadata read at that tag, and its asset list.
-struct SelectedRelease {
-    tag: String,
-    meta: TreeSitterMeta,
-    assets: Vec<serde_json::Value>,
-}
-
 /// Whether a release asset filename is a WASM grammar module.
 fn is_wasm_asset(asset_name: &str) -> bool {
     asset_name.ends_with(".wasm")
 }
 
-/// Whether a release JSON value carries at least one `.wasm` asset.
-fn release_has_wasm(release: &serde_json::Value) -> bool {
-    release.get("assets").and_then(|a| a.as_array()).is_some_and(|assets| {
-        assets.iter().any(|a| a.get("name").and_then(|n| n.as_str()).is_some_and(is_wasm_asset))
-    })
-}
+/// Extract the `tree-sitter-cli` version from a `package.json` as a normalized
+/// `(major, minor)` — the CLI that compiled the grammar, hence its WASM ABI.
+///
+/// Reads `devDependencies` then `dependencies`, strips a leading `^`/`~`/`>=`/
+/// `=`/`v`, and parses the leading `major.minor`. Returns `None` if absent or
+/// unparseable so the caller falls through to the staged-load backstop rather
+/// than falsely rejecting.
+fn parse_tree_sitter_cli_minor(package_json: &serde_json::Value) -> Option<(u64, u64)> {
+    let spec = ["devDependencies", "dependencies"]
+        .iter()
+        .find_map(|k| package_json.get(k).and_then(|d| d.get("tree-sitter-cli")))
+        .and_then(|v| v.as_str())?;
 
-/// Whether a `tree-sitter.json` version string is codemark's 0.25 WASM ABI.
-fn is_compatible_version(version: Option<&str>) -> bool {
-    version.is_some_and(|v| v.starts_with("0.25"))
+    // Drop a leading range/prefix operator and any `v`, then take major.minor.
+    let s = spec.trim().trim_start_matches(['^', '~', '=', '>', '<', 'v', ' ']);
+    let mut parts = s.split('.');
+    let major = parts.next()?.parse::<u64>().ok()?;
+    // A missing minor (bare `1`) reads as `.0`.
+    let minor = parts.next().and_then(|m| {
+        // Stop at the first non-digit (e.g. `6-rc.1`).
+        let digits: String = m.chars().take_while(|c| c.is_ascii_digit()).collect();
+        digits.parse::<u64>().ok()
+    })?;
+    Some((major, minor))
 }
 
 /// Whether a release asset filename `asset_name` corresponds to grammar
@@ -673,7 +697,7 @@ mod tests {
     }
 
     #[test]
-    fn parse_tree_sitter_meta_extracts_name_filetypes_version() {
+    fn parse_tree_sitter_meta_extracts_name_and_filetypes() {
         let json = serde_json::json!({
             "grammars": [{ "name": "bash", "file-types": ["sh", "bash", ".bashrc"] }],
             "metadata": { "version": "0.25.1" }
@@ -681,7 +705,6 @@ mod tests {
         let meta = parse_tree_sitter_meta(&json, None);
         assert_eq!(meta.name.as_deref(), Some("bash"));
         assert_eq!(meta.file_types, vec!["sh", "bash", ".bashrc"]);
-        assert_eq!(meta.version.as_deref(), Some("0.25.1"));
         assert_eq!(meta.grammar_count, 1);
     }
 
@@ -690,7 +713,6 @@ mod tests {
         let meta = parse_tree_sitter_meta(&serde_json::json!({}), None);
         assert!(meta.name.is_none());
         assert!(meta.file_types.is_empty());
-        assert!(meta.version.is_none());
         assert_eq!(meta.grammar_count, 0);
     }
 
@@ -760,14 +782,6 @@ mod tests {
     }
 
     #[test]
-    fn version_gate_rejects_non_025_unless_allowed() {
-        assert!(version_gate(Some("0.24.3"), false).is_err());
-        assert!(version_gate(Some("0.24.3"), true).is_ok(), "override bypasses the gate");
-        assert!(version_gate(Some("0.25.1"), false).is_ok());
-        assert!(version_gate(None, false).is_ok(), "unknown version can't be gated");
-    }
-
-    #[test]
     fn read_capped_file_reads_a_regular_file() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("grammar.wasm");
@@ -802,20 +816,55 @@ mod tests {
     }
 
     #[test]
-    fn release_has_wasm_detects_wasm_assets() {
-        assert!(release_has_wasm(&release("v0.25.1", &["tree-sitter-scala.wasm", "src.tar.gz"])));
-        assert!(!release_has_wasm(&release("v0.23.2", &["src.tar.gz"])));
-        assert!(!release_has_wasm(&release("v0.20.0", &[])));
+    fn parse_tree_sitter_cli_minor_reads_devdependencies() {
+        // The real ABI signal, across the specifier forms grammars use in the
+        // wild (verified against scala/bash/elm/typescript).
+        let cases = [
+            (serde_json::json!({"devDependencies": {"tree-sitter-cli": "^0.26.8"}}), Some((0, 26))),
+            (serde_json::json!({"devDependencies": {"tree-sitter-cli": "^0.25.6"}}), Some((0, 25))),
+            (serde_json::json!({"devDependencies": {"tree-sitter-cli": "^0.24.4"}}), Some((0, 24))),
+            (serde_json::json!({"devDependencies": {"tree-sitter-cli": "~0.25.1"}}), Some((0, 25))),
+            (serde_json::json!({"devDependencies": {"tree-sitter-cli": "0.25.9"}}), Some((0, 25))),
+            (
+                serde_json::json!({"devDependencies": {"tree-sitter-cli": ">=0.25.0"}}),
+                Some((0, 25)),
+            ),
+            // dependencies (not dev) is also honored.
+            (serde_json::json!({"dependencies": {"tree-sitter-cli": "^0.25.0"}}), Some((0, 25))),
+            // elm-style: grammar semver in metadata is irrelevant; only the CLI matters.
+            (
+                serde_json::json!({"version": "5.9.4", "devDependencies": {"tree-sitter-cli": "^0.26.10"}}),
+                Some((0, 26)),
+            ),
+        ];
+        for (json, expected) in cases {
+            assert_eq!(parse_tree_sitter_cli_minor(&json), expected, "for {json}");
+        }
     }
 
     #[test]
-    fn is_compatible_version_only_accepts_025() {
-        assert!(is_compatible_version(Some("0.25.0")));
-        assert!(is_compatible_version(Some("0.25.1")));
-        assert!(!is_compatible_version(Some("0.26.0")));
-        assert!(!is_compatible_version(Some("0.24.1")));
-        // A missing version is never confirmed-compatible — the release is skipped.
-        assert!(!is_compatible_version(None));
+    fn parse_tree_sitter_cli_minor_none_when_absent_or_unparseable() {
+        assert_eq!(parse_tree_sitter_cli_minor(&serde_json::json!({})), None);
+        assert_eq!(
+            parse_tree_sitter_cli_minor(
+                &serde_json::json!({"devDependencies": {"other": "1.2.3"}})
+            ),
+            None
+        );
+        // A bare major with no minor isn't a usable ABI signal.
+        assert_eq!(
+            parse_tree_sitter_cli_minor(
+                &serde_json::json!({"devDependencies": {"tree-sitter-cli": "1"}})
+            ),
+            None
+        );
+        // Non-semver garbage.
+        assert_eq!(
+            parse_tree_sitter_cli_minor(
+                &serde_json::json!({"devDependencies": {"tree-sitter-cli": "latest"}})
+            ),
+            None
+        );
     }
 
     #[test]

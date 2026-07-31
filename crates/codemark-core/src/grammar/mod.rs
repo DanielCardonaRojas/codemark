@@ -25,6 +25,9 @@ use crate::error::{Error, Result};
 pub struct InstallOverrides {
     pub name: Option<String>,
     pub extensions: Option<String>,
+    /// Pin a specific GitHub release tag to install from (`--release`), instead
+    /// of the latest. Ignored by non-release sources (e.g. a local file).
+    pub release: Option<String>,
     /// Skip the 0.25 Tree-sitter ABI compatibility gate (the staged-load
     /// validation is still the backstop).
     pub allow_version_mismatch: bool,
@@ -41,9 +44,12 @@ pub async fn install(spec: &str, overrides: InstallOverrides) -> Result<InstallO
     // The requested --name lets a source disambiguate (select the grammar entry
     // in a multi-grammar repo and match its release asset) and reject a name that
     // doesn't describe the published grammar.
-    let resolved = source::select_source(spec, client.clone())
-        .resolve(spec, overrides.name.as_deref())
-        .await?;
+    let opts = source::ResolveOptions {
+        requested_name: overrides.name.as_deref(),
+        requested_release: overrides.release.as_deref(),
+        allow_version_mismatch: overrides.allow_version_mismatch,
+    };
+    let resolved = source::select_source(spec, client.clone()).resolve(spec, opts).await?;
     finish_install(&client, resolved, overrides).await
 }
 
@@ -61,15 +67,14 @@ pub async fn install_from_path(
 }
 
 /// Shared tail of the install pipeline once a source has produced a
-/// [`ResolvedGrammar`](source::ResolvedGrammar): apply overrides, gate on the
-/// Tree-sitter version, materialize the wasm, and hand off to [`install_grammar`].
+/// [`ResolvedGrammar`](source::ResolvedGrammar): apply overrides, materialize the
+/// wasm, and hand off to [`install_grammar`]. The ABI/version gate lives in the
+/// source (it's the only place that knows how to read the real signal).
 async fn finish_install(
     client: &reqwest::Client,
     resolved: source::ResolvedGrammar,
     overrides: InstallOverrides,
 ) -> Result<InstallOutcome> {
-    source::version_gate(resolved.ts_version.as_deref(), overrides.allow_version_mismatch)?;
-
     // Overrides win over the source's reported metadata.
     let name = overrides.name.or(resolved.name).ok_or_else(|| {
         Error::Input("could not determine the language name; pass --name explicitly".to_string())
