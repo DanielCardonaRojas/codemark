@@ -591,38 +591,37 @@ When the user wants to bookmark a language not listed above, install a Tree-sitt
 WASM grammar. **Do not** edit the `Language` enum or any Rust source — grammars
 load dynamically.
 
-### 1. Install the grammar (mechanical — let the CLI do it)
+### 1. Get a 0.25-compiled `.wasm`, then add it (mechanical)
+
+Codemark loads grammars with Tree-sitter **0.25**, so the `.wasm` must be built
+with the 0.25 CLI. Build it from source (reliable) and install with
+`codemark languages add`:
 
 ```bash
-# Best: fetch a prebuilt .wasm from the grammar repo's GitHub release.
-codemark languages install tree-sitter/tree-sitter-bash
-```
-
-`install` reads the repo's `tree-sitter.json`, and if it **declares** a
-Tree-sitter version, requires it to be **0.25** (codemark's WASM ABI); a repo
-that omits the version isn't gated, and the post-download staged-load validation
-is the backstop. It then derives the name + extensions, downloads the `.wasm`,
-and installs it. If it reports a version mismatch or no release `.wasm`, build it
-yourself with the 0.25 CLI and use `codemark languages add`:
-
-```bash
-tree-sitter build --wasm            # needs tree-sitter-cli@0.25 + Docker/emscripten
+npm install -g tree-sitter-cli@0.25   # or cargo install tree-sitter-cli --version ^0.25
+git clone --depth 1 https://github.com/tree-sitter/tree-sitter-ruby && cd tree-sitter-ruby
+tree-sitter build --wasm              # needs Docker or emscripten; emits tree-sitter-ruby.wasm
 codemark languages add --name ruby --extensions rb,rake ./tree-sitter-ruby.wasm
 ```
 
-The binary must be built with `--features wasm`, or the grammar installs but is
-ignored at runtime (the CLI warns).
+`add` validates the `.wasm` (on a `--features wasm` build it loads it through the
+0.25 `WasmStore`, rejecting an incompatible module), writes the manifest, and
+installs atomically. A prebuilt release `.wasm` works too **only if it was built
+with the 0.25 CLI** (check the repo's `package.json` `tree-sitter-cli` at that
+tag — **not** `tree-sitter.json`'s `metadata.version`, which is the grammar's own
+semver). The binary must be built with `--features wasm`, or the grammar installs
+but is ignored at runtime (the CLI warns).
 
 ### 2. Author the profile (your job — the CLI can't)
 
-`install`/`add` write a manifest with an **empty `profile`**. Parsing works
+`add` writes a manifest with an **empty `profile`**. Parsing works
 immediately, but breadcrumbs and query summaries are weak until you fill the
 profile. This is the part that needs a human/agent: it depends on the grammar's
 specific node vocabulary, which you must inspect.
 
-Find the manifest (path is printed on install; default
-`$(codemark languages list)` shows it, or `~/Library/Caches/codemark/grammars/<name>/manifest.json`
-on macOS / `~/.cache/...` on Linux), then:
+Find the manifest (path is printed by `add`; `codemark languages list` shows it,
+or `~/Library/Caches/codemark/grammars/<name>/manifest.json` on macOS /
+`~/.cache/...` on Linux), then:
 
 ```bash
 # Inspect the AST to learn this grammar's node kinds
