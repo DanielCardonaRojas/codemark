@@ -259,6 +259,7 @@ impl AppState {
                 if key.code == ratatui::crossterm::event::KeyCode::Char('c')
                     && key.modifiers.contains(ratatui::crossterm::event::KeyModifiers::CONTROL)
                 {
+                    tracing::debug!(target: "codemark::ui", "Ctrl+C received, quitting");
                     self.quit();
                     return true;
                 }

@@ -216,8 +216,9 @@ async fn run_app() -> Result<Option<i32>> {
                         if key.code == event::KeyCode::Char('c')
                             && key.modifiers.contains(event::KeyModifiers::CONTROL)
                         {
+                            tracing::debug!(target: "codemark::ui", "Ctrl+C received, quitting");
                             state.quit();
-                            continue;
+                            break;
                         }
                         match state.mode() {
                             AppMode::Normal if show_keys => {
