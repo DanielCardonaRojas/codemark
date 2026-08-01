@@ -627,7 +627,7 @@ impl BrowserLayout {
                         .unwrap_or(EmbeddingModel::AllMiniLmL6V2);
 
                     let distance_metric = config.semantic.get_distance_metric();
-                    let threshold = config.semantic.threshold;
+                    let threshold = config.semantic.effective_threshold();
                     let models_dir = config.semantic.get_models_dir();
 
                     let semantic_repo =
@@ -736,7 +736,7 @@ impl BrowserLayout {
                         .unwrap_or(EmbeddingModel::AllMiniLmL6V2);
 
                     let distance_metric = config.semantic.get_distance_metric();
-                    let threshold = config.semantic.threshold;
+                    let threshold = config.semantic.effective_threshold();
                     let models_dir = config.semantic.get_models_dir();
 
                     let semantic_repo =
@@ -1450,10 +1450,7 @@ impl BrowserLayout {
             return false;
         };
         let selected_id = p.selected().and_then(|i| i.user_data.clone());
-        p.set_items(items);
-        // `set_items` clears the search-results flag, so re-assert it to keep the
-        // tab's filter glyph.
-        p.set_search_active(true);
+        p.set_search_items(items);
         if let Some(id) = selected_id {
             p.select_by_user_data(&id);
         }

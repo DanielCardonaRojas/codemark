@@ -300,6 +300,14 @@ impl VecStore {
             })?
             .collect::<Result<Vec<_>, _>>()?;
 
+        // sqlite-vec always returns Euclidean (L2) distance regardless of the
+        // configured metric. Convert each distance so reported values and
+        // threshold comparisons match `distance_metric`. The conversion is
+        // monotonic in L2, so the ORDER BY ranking above is preserved.
+        for r in &mut results {
+            r.distance = self.distance_metric.from_l2_distance(r.distance);
+        }
+
         // Apply threshold filter if specified
         if let Some(threshold) = threshold {
             if self.distance_metric.is_lower_better() {

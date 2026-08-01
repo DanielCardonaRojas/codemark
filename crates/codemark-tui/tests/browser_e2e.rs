@@ -459,6 +459,71 @@ async fn search_reconcile_drops_rows_that_no_longer_match() {
     );
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn collection_semantic_search_preserves_relevance_order() {
+    // Regression: semantic search ranks collections by distance and returns
+    // them pre-ordered. The Collections panel is built with `.sort(DateNewest)`,
+    // so applying results through the normal `set_items` path re-sorted them by
+    // date — destroying the ranking and making every query look identical.
+    // Injecting reordered results (reverse of date order) and checking the panel
+    // keeps that order exercises apply_collection_search_results -> set_search_items
+    // end to end, without loading the embedding model.
+    use codemark_core::engine::bookmark::{Collection, Visibility};
+    let mk = |id: &str, name: &str, created_at: &str| Collection {
+        id: id.to_string(),
+        name: name.to_string(),
+        description: None,
+        visibility: Visibility::Private,
+        created_at: created_at.to_string(),
+        created_by: None,
+        created_branch: None,
+        published_at: None,
+        published_commit_sha: None,
+        repo_url: None,
+        repo_id: None,
+        status: None,
+        health: None,
+        health_computed_at: None,
+        updated_at: None,
+        imported_from_url: None,
+    };
+
+    let sandbox = Sandbox::with_bookmarks([sample_bookmark("bm-1", "fn main", "src/main.rs")]);
+    sandbox.write_repo_file("src/main.rs", "fn main() {}\n");
+    // Three collections with strictly decreasing created_at, so a DateNewest
+    // sort would order them Alpha, Bravo, Charlie — the opposite of the
+    // injected (relevance) order below.
+    sandbox.db.insert_collection(&mk("c-new", "Alpha", "2026-01-01T00:00:00Z")).unwrap();
+    sandbox.db.insert_collection(&mk("c-mid", "Bravo", "2025-01-01T00:00:00Z")).unwrap();
+    sandbox.db.insert_collection(&mk("c-old", "Charlie", "2024-01-01T00:00:00Z")).unwrap();
+    let (mut layout, _sandbox) = make_layout(sandbox);
+
+    // Seeded content focuses the Content panel (Bookmarks). Move to Collections.
+    assert_eq!(layout.focus(), FocusArea::ContentPanel);
+    key_char(&mut layout, ']');
+
+    // Simulate a semantic search ranking: deliver the oldest collection first,
+    // the newest last (the reverse of DateNewest order). request_id 0 matches
+    // the initial active_search_request, satisfying the stale-result guard.
+    layout.handle_event(&Event::CollectionSearchResults {
+        request_id: 0,
+        collections: vec![
+            (mk("c-old", "Charlie", "2024-01-01T00:00:00Z"), 0),
+            (mk("c-mid", "Bravo", "2025-01-01T00:00:00Z"), 0),
+            (mk("c-new", "Alpha", "2026-01-01T00:00:00Z"), 0),
+        ],
+    });
+
+    let rendered = render_to_string(&layout, 100, 30);
+    let charlie_line = rendered.lines().position(|l| l.contains("Charlie"));
+    let alpha_line = rendered.lines().position(|l| l.contains("Alpha"));
+    assert!(
+        matches!((charlie_line, alpha_line), (Some(c), Some(a)) if c < a),
+        "semantic ranking must be preserved: expected Charlie above Alpha, \
+         got Charlie at {charlie_line:?}, Alpha at {alpha_line:?}:\n{rendered}"
+    );
+}
+
 /// Build a minimal private collection with the given id/name for seeding.
 fn sample_collection(id: &str, name: &str) -> codemark_core::engine::bookmark::Collection {
     use codemark_core::engine::bookmark::{Collection, Visibility};

@@ -185,7 +185,7 @@ async fn handle_semantic_search(
 
     // Get distance metric and threshold from config
     let distance_metric = config.semantic.get_distance_metric();
-    let threshold = config.semantic.threshold;
+    let threshold = config.semantic.effective_threshold();
 
     // Get models directory from config (defaults to global cache)
     let models_dir = config.semantic.get_models_dir();
@@ -323,7 +323,7 @@ async fn collection_semantic_search(
         .and_then(|m| m.parse::<EmbeddingModel>().ok())
         .unwrap_or(EmbeddingModel::AllMiniLmL6V2);
     let distance_metric = config.semantic.get_distance_metric();
-    let threshold = config.semantic.threshold;
+    let threshold = config.semantic.effective_threshold();
     let models_dir = config.semantic.get_models_dir();
 
     let semantic_repo = SemanticRepo::with_config(models_dir, model, distance_metric, threshold);
@@ -426,7 +426,7 @@ pub async fn handle_reindex(cli: &Cli, mode: &OutputMode, args: &ReindexArgs) ->
 
     // Get distance metric and threshold from config
     let distance_metric = config.semantic.get_distance_metric();
-    let threshold = config.semantic.threshold;
+    let threshold = config.semantic.effective_threshold();
 
     // Get models directory from config (defaults to global cache)
     let models_dir = config.semantic.get_models_dir();

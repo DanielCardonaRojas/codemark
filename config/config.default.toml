@@ -87,9 +87,12 @@ enabled = true
 # Results with distance worse than this threshold are filtered out.
 # - For "l2" and "cosine": only returns results with distance <= threshold
 # - For "ip": only returns results with distance >= threshold
-# Set to null to disable threshold filtering (return all results).
-# Typical values: 0.3-0.5 for l2/cosine, 0.7-0.9 for ip
-# threshold = 0.4
+# When unset, a sensible default is chosen for the distance metric so unrelated
+# matches are filtered out (rather than returning the whole corpus ranked):
+#   l2 default 1.3 | cosine default 0.85 | ip default 0.15
+# These are equivalent for codemark's L2-normalized embeddings. Set a very
+# large (l2/cosine) or very small (ip) value to effectively disable filtering.
+# threshold = 1.3
 
 [databases]
 # Additional database paths to include in read-only cross-repo queries.

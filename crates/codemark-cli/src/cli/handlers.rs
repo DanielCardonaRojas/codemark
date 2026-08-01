@@ -535,7 +535,7 @@ pub async fn generate_embedding_for_bookmark(
 
     // Get distance metric and threshold from config
     let distance_metric = config.semantic.get_distance_metric();
-    let threshold = config.semantic.threshold;
+    let threshold = config.semantic.effective_threshold();
 
     let semantic_repo = SemanticRepo::with_config(models_dir, model, distance_metric, threshold);
 
@@ -593,7 +593,7 @@ pub async fn generate_embedding_for_collection(
 
     // Get distance metric and threshold from config
     let distance_metric = config.semantic.get_distance_metric();
-    let threshold = config.semantic.threshold;
+    let threshold = config.semantic.effective_threshold();
 
     let semantic_repo = SemanticRepo::with_config(models_dir, model, distance_metric, threshold);
 
