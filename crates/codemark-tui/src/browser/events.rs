@@ -596,11 +596,8 @@ impl BrowserLayout {
         }
 
         if let Some(TabContent::List(p)) = self.left_pane.content_panel.panels.get_mut(0) {
-            p.set_items(items);
+            p.set_search_items(items);
             p.set_selected(0);
-            // Flag the panel as showing search results so its tab title gets a
-            // filter glyph, like any other narrowed list.
-            p.set_search_active(true);
             self.left_pane.content_panel.tabs.set_selected(0);
         }
 
@@ -681,11 +678,8 @@ impl BrowserLayout {
 
         let idx = ContentTab::Collections.index();
         if let Some(TabContent::List(p)) = self.left_pane.content_panel.panels.get_mut(idx) {
-            p.set_items(items);
+            p.set_search_items(items);
             p.set_selected(0);
-            // Flag the panel as showing search results so its tab title gets a
-            // filter glyph, like any other narrowed list.
-            p.set_search_active(true);
             self.left_pane.content_panel.tabs.set_selected(idx);
         }
 

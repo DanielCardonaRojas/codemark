@@ -1450,10 +1450,7 @@ impl BrowserLayout {
             return false;
         };
         let selected_id = p.selected().and_then(|i| i.user_data.clone());
-        p.set_items(items);
-        // `set_items` clears the search-results flag, so re-assert it to keep the
-        // tab's filter glyph.
-        p.set_search_active(true);
+        p.set_search_items(items);
         if let Some(id) = selected_id {
             p.select_by_user_data(&id);
         }

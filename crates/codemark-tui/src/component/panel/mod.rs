@@ -555,17 +555,45 @@ impl Panel {
     }
 
     /// Update the items in the panel, preserving selection if possible.
+    ///
+    /// Re-applies the panel's sort method, so this is for browse/refresh
+    /// rebuilds where the configured order should win. For pre-ranked search
+    /// results use [`set_search_items`](Self::set_search_items), which skips
+    /// the sort.
     pub fn set_items(&mut self, items: Vec<PanelItem>) {
-        let selected_text = self
-            .list_state
-            .borrow()
-            .selected()
-            .and_then(|idx| self.items.get(idx).map(|i| i.text().to_string()));
+        let selected_text = self.capture_selected_text();
         self.all_items = items;
-        // Rebuilding the list drops any previous search-results marking; callers
-        // that are applying search results re-assert it via `set_search_active`.
+        // Rebuilding the list drops any previous search-results marking.
         self.search_active = false;
         self.apply_sort();
+        self.rebuild_view(selected_text);
+    }
+
+    /// Replace the panel's items with externally-supplied, pre-ranked search
+    /// results (FTS or semantic) and mark the panel as showing search results.
+    ///
+    /// Unlike [`set_items`](Self::set_items) this does **not** re-apply the
+    /// panel's sort method: search results carry their own ranking (relevance
+    /// order for semantic search), which a date/name sort would destroy.
+    /// Selection is preserved by text like `set_items`.
+    pub fn set_search_items(&mut self, items: Vec<PanelItem>) {
+        let selected_text = self.capture_selected_text();
+        self.all_items = items;
+        self.search_active = true;
+        self.rebuild_view(selected_text);
+    }
+
+    /// Capture the text of the currently selected (filtered) item, if any.
+    fn capture_selected_text(&self) -> Option<String> {
+        self.list_state
+            .borrow()
+            .selected()
+            .and_then(|idx| self.items.get(idx).map(|i| i.text().to_string()))
+    }
+
+    /// Re-apply the filter and restore the selection by text, falling back to
+    /// the first item. Shared tail of [`set_items`] and [`set_search_items`].
+    fn rebuild_view(&mut self, selected_text: Option<String>) {
         self.apply_filter();
 
         let mut state = self.list_state.borrow_mut();
@@ -1100,12 +1128,42 @@ mod tests {
         assert!(!panel.is_filtered());
 
         // Applying search results: marked as filtered without a local query.
-        panel.set_items(vec![PanelItem::new("result1")]);
-        panel.set_search_active(true);
+        panel.set_search_items(vec![PanelItem::new("result1")]);
         assert!(panel.is_filtered());
 
         // A subsequent rebuild (e.g. clearing the search) drops the marking.
         panel.set_items(vec![PanelItem::new("all1"), PanelItem::new("all2")]);
         assert!(!panel.is_filtered());
+    }
+
+    #[test]
+    fn test_search_items_preserve_caller_order_over_panel_sort() {
+        // Regression: a search-result list is pre-ranked by the search engine
+        // (e.g. semantic distance). The panel must NOT re-sort it by its
+        // configured SortMethod — otherwise the relevance order is destroyed
+        // and every query yields the same date-sorted list.
+        let mut panel = Panel::new("").sort(SortMethod::DateNewest);
+
+        // Hand in results out of date order on purpose.
+        panel.set_search_items(vec![
+            PanelItem::new("old").created_at("2024-01-01T00:00:00Z"),
+            PanelItem::new("new").created_at("2026-01-01T00:00:00Z"),
+            PanelItem::new("mid").created_at("2025-01-01T00:00:00Z"),
+        ]);
+
+        // Insertion (relevance) order is preserved, not re-sorted by date.
+        let order: Vec<&str> = panel.all_items().iter().map(|i| i.text()).collect();
+        assert_eq!(order, vec!["old", "new", "mid"]);
+        assert!(panel.is_search_active());
+
+        // A normal rebuild re-applies the sort, so date order returns — the
+        // bypass only applies while showing search results.
+        panel.set_items(vec![
+            PanelItem::new("old").created_at("2024-01-01T00:00:00Z"),
+            PanelItem::new("new").created_at("2026-01-01T00:00:00Z"),
+            PanelItem::new("mid").created_at("2025-01-01T00:00:00Z"),
+        ]);
+        let order: Vec<&str> = panel.all_items().iter().map(|i| i.text()).collect();
+        assert_eq!(order, vec!["new", "mid", "old"]);
     }
 }
