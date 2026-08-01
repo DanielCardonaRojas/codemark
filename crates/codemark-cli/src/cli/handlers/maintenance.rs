@@ -424,7 +424,7 @@ pub async fn handle_import(cli: &Cli, mode: &OutputMode, args: &ImportArgs) -> R
                 .unwrap_or(EmbeddingModel::AllMiniLmL6V2);
 
             let distance_metric = config.semantic.get_distance_metric();
-            let threshold = config.semantic.threshold;
+            let threshold = config.semantic.effective_threshold();
 
             let semantic_repo =
                 SemanticRepo::with_config(models_dir, model, distance_metric, threshold);

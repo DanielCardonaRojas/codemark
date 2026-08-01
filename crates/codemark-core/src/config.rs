@@ -207,6 +207,25 @@ impl SemanticConfig {
         self.distance_metric.as_ref().and_then(|s| s.parse().ok()).unwrap_or_default()
     }
 
+    /// Resolved distance threshold for semantic search.
+    ///
+    /// Returns the explicitly-configured threshold, or — when unset — a default
+    /// tuned to the configured distance metric's scale so that unrelated
+    /// matches are filtered out (rather than returning the entire corpus
+    /// ranked). The per-metric defaults are equivalent (~L2 1.3). To disable
+    /// thresholding entirely, set a very large (L2/cosine) or very small (ip)
+    /// threshold explicitly.
+    pub fn effective_threshold(&self) -> Option<f32> {
+        if let Some(t) = self.threshold {
+            return Some(t);
+        }
+        Some(match self.get_distance_metric() {
+            DistanceMetric::L2 => 1.3,
+            DistanceMetric::Cosine => 0.85,
+            DistanceMetric::InnerProduct => 0.15,
+        })
+    }
+
     /// Get the effective models directory.
     ///
     /// Returns the configured directory if set, otherwise the global cache.
@@ -818,6 +837,29 @@ threshold = 0.4
         assert_eq!(config.semantic.threshold, Some(0.4));
         assert_eq!(config.semantic.distance_metric, Some("cosine".to_string()));
         assert_eq!(config.semantic.get_distance_metric(), DistanceMetric::Cosine);
+    }
+
+    #[test]
+    fn effective_threshold_defaults_are_metric_aware() {
+        // Unset threshold -> a default tuned to the configured metric.
+        let mut cfg = SemanticConfig::default();
+        assert_eq!(cfg.effective_threshold(), Some(1.3), "L2 default");
+
+        cfg.distance_metric = Some("cosine".into());
+        assert_eq!(cfg.effective_threshold(), Some(0.85), "cosine default");
+
+        cfg.distance_metric = Some("ip".into());
+        assert_eq!(cfg.effective_threshold(), Some(0.15), "ip default");
+    }
+
+    #[test]
+    fn effective_threshold_respects_explicit_value() {
+        let mut cfg = SemanticConfig::default();
+        cfg.threshold = Some(0.5);
+        assert_eq!(cfg.effective_threshold(), Some(0.5));
+        // Explicit value wins even when the metric would imply a different default.
+        cfg.distance_metric = Some("cosine".into());
+        assert_eq!(cfg.effective_threshold(), Some(0.5));
     }
 
     #[test]

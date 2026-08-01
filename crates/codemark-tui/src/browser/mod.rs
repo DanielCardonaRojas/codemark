@@ -627,7 +627,7 @@ impl BrowserLayout {
                         .unwrap_or(EmbeddingModel::AllMiniLmL6V2);
 
                     let distance_metric = config.semantic.get_distance_metric();
-                    let threshold = config.semantic.threshold;
+                    let threshold = config.semantic.effective_threshold();
                     let models_dir = config.semantic.get_models_dir();
 
                     let semantic_repo =
@@ -736,7 +736,7 @@ impl BrowserLayout {
                         .unwrap_or(EmbeddingModel::AllMiniLmL6V2);
 
                     let distance_metric = config.semantic.get_distance_metric();
-                    let threshold = config.semantic.threshold;
+                    let threshold = config.semantic.effective_threshold();
                     let models_dir = config.semantic.get_models_dir();
 
                     let semantic_repo =
