@@ -24,16 +24,16 @@ name = "codemark-tui"
 path = "src/main.rs"
 
 [features]
-default = ["semantic"]
+default = ["semantic", "wasm"]
 # Semantic (vector embedding) search. Enabled by default; disable with
 # `--no-default-features` to build without the candle/hf-hub stack. When off the
 # TUI hides the FTS/semantic toggle and its Ctrl+s binding.
 semantic = ["codemark-core/semantic"]
-# Dynamic WASM grammar loading. Opt-in: enables wasmtime so additional language
-# grammars can be loaded at runtime from the platform cache dir (the
+# Dynamic WASM grammar loading. Enabled by default; propagates to core so
+# additional language grammars load at runtime from the platform cache dir (the
 # `$CODEMARK_GRAMMARS_DIR` override, else `BaseDirs::cache_dir()/codemark/grammars`
-# — e.g. ~/.cache on Linux, ~/Library/Caches on macOS). Disabled by default to
-# keep dev/CI builds lean; enable with `--features wasm`.
+# — e.g. ~/.cache on Linux, ~/Library/Caches on macOS). Disable with
+# `--no-default-features`.
 wasm = ["codemark-core/wasm"]
 
 [dependencies]

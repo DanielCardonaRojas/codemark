@@ -604,13 +604,14 @@ tree-sitter build --wasm              # needs Docker or emscripten; emits tree-s
 codemark languages add --name ruby --extensions rb,rake ./tree-sitter-ruby.wasm
 ```
 
-`add` validates the `.wasm` (on a `--features wasm` build it loads it through the
-0.25 `WasmStore`, rejecting an incompatible module), writes the manifest, and
-installs atomically. A prebuilt release `.wasm` works too **only if it was built
-with the 0.25 CLI** (check the repo's `package.json` `tree-sitter-cli` at that
-tag — **not** `tree-sitter.json`'s `metadata.version`, which is the grammar's own
-semver). The binary must be built with `--features wasm`, or the grammar installs
-but is ignored at runtime (the CLI warns).
+`add` validates the `.wasm` by loading it through the 0.25 `WasmStore`,
+rejecting an incompatible module, then writes the manifest and installs
+atomically. A prebuilt release `.wasm` works too **only if it was built with the
+0.25 CLI** (check the repo's `package.json` `tree-sitter-cli` at that tag —
+**not** `tree-sitter.json`'s `metadata.version`, which is the grammar's own
+semver). WASM grammar loading is enabled in the default build; only a
+`--no-default-features` build lacks it (the CLI then warns the grammar installs
+but is ignored at runtime).
 
 ### 2. Author the profile (your job — the CLI can't)
 

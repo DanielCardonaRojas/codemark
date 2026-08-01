@@ -10,7 +10,7 @@ name = "codemark_core"
 path = "src/lib.rs"
 
 [features]
-default = ["semantic"]
+default = ["semantic", "wasm"]
 # Semantic search via local embeddings. Pulls in the heavy candle/hf-hub/
 # tokenizers stack; disable (`--no-default-features`) to build a lean binary
 # without vector search.
@@ -22,11 +22,11 @@ semantic = [
   "dep:hf-hub",
 ]
 
-# Dynamic WASM grammar loading. Enables wasmtime (via tree-sitter's wasm
-# feature) so users can load additional language grammars at runtime from the
-# platform cache dir (`$CODEMARK_GRAMMARS_DIR` override, else
+# Dynamic WASM grammar loading. Enabled by default: enables wasmtime (via
+# tree-sitter's wasm feature) so users can load additional language grammars at
+# runtime from the platform cache dir (`$CODEMARK_GRAMMARS_DIR` override, else
 # `BaseDirs::cache_dir()/codemark/grammars` — ~/.cache on Linux,
-# ~/Library/Caches on macOS).
+# ~/Library/Caches on macOS). Disable with `--no-default-features`.
 wasm = ["tree-sitter/wasm"]
 
 [dependencies]

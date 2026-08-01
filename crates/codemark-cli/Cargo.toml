@@ -20,16 +20,16 @@ path = "examples/gen-man-pages.rs"
 required-features = ["man-pages"]
 
 [features]
-default = ["semantic", "bundled-tui"]
+default = ["semantic", "bundled-tui", "wasm"]
 # Semantic (vector embedding) search. Enabled by default; disable with
 # `--no-default-features` to build without the candle/hf-hub stack. Propagated
 # to the bundled TUI so a single-binary build stays consistent with the CLI.
 semantic = ["codemark-core/semantic", "codemark-tui?/semantic"]
-# Dynamic WASM grammar loading. Opt-in: enables wasmtime so additional language
-# grammars can be loaded at runtime from the platform cache dir (the
-# `$CODEMARK_GRAMMARS_DIR` override, else `BaseDirs::cache_dir()/codemark/grammars`
-# — e.g. ~/.cache on Linux, ~/Library/Caches on macOS). Disabled by default to
-# keep dev/CI builds lean; enable with `--features wasm`.
+# Dynamic WASM grammar loading. Enabled by default; propagates to core and the
+# bundled TUI so additional language grammars load at runtime from the platform
+# cache dir (the `$CODEMARK_GRAMMARS_DIR` override, else
+# `BaseDirs::cache_dir()/codemark/grammars` — e.g. ~/.cache on Linux,
+# ~/Library/Caches on macOS). Disable with `--no-default-features`.
 wasm = ["codemark-core/wasm", "codemark-tui?/wasm"]
 # Bundle the TUI into the `codemark` binary so `codemark tui` runs in-process
 # instead of exec'ing a separate `codemark-tui` executable. Enabled by default,
