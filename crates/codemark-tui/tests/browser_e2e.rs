@@ -340,6 +340,70 @@ async fn search_filter_survives_focus_regained() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn empty_search_query_restores_full_list() {
+    let sandbox = Sandbox::with_bookmarks([
+        sample_bookmark("bm-1", "fn main", "src/main.rs"),
+        sample_bookmark("bm-2", "struct Config", "src/config.rs"),
+    ]);
+    sandbox.write_repo_file("src/main.rs", "fn main() {\n    println!(\"hi\");\n}\n");
+    sandbox.write_repo_file("src/config.rs", "struct Config {\n    name: String,\n}\n");
+    let (mut layout, _sandbox, mut rx) = make_layout_with_rx(sandbox);
+
+    // Focus the search bar, type a query, and run it. The list narrows to the
+    // single match and the footer no longer shows "of 2".
+    key_char(&mut layout, 's');
+    type_str(&mut layout, "config");
+    key_code(&mut layout, KeyCode::Enter);
+    pump_pending_events(&mut layout, &mut rx).await;
+
+    let filtered = render_to_string(&layout, 100, 30);
+    assert!(
+        filtered.contains("config.rs") && !filtered.contains("of 2"),
+        "search should narrow the bookmark list to the match; got:\n{filtered}"
+    );
+
+    // apply_search_results moved focus to the ContentPanel, so re-focus the
+    // search bar before clearing the query. Then backspace the entire query
+    // ("config" = 6 chars) and press Enter. Previously this was a no-op
+    // (execute_search returned early on an empty query), leaving the stale
+    // filtered list. Now it restores the full list.
+    key_char(&mut layout, 's');
+    for _ in 0.."config".len() {
+        key_code(&mut layout, KeyCode::Backspace);
+    }
+    key_code(&mut layout, KeyCode::Enter);
+
+    let restored = render_to_string(&layout, 100, 30);
+    assert!(
+        restored.contains("of 2"),
+        "empty-query Enter should restore the full list; got:\n{restored}"
+    );
+    assert!(
+        restored.contains("main.rs") && restored.contains("config.rs"),
+        "both bookmarks should be visible after restore; got:\n{restored}"
+    );
+
+    // Focus stays on the search bar so the user can type a new query.
+    assert_eq!(layout.focus(), FocusArea::Search);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn search_bar_shows_esc_clear_hint() {
+    let sandbox = Sandbox::with_bookmarks([sample_bookmark("bm-1", "fn main", "src/main.rs")]);
+    sandbox.write_repo_file("src/main.rs", "fn main() {}\n");
+    let (mut layout, _sandbox) = make_layout(sandbox);
+
+    // Focus the search bar. The status bar (rendered outside the layout, by
+    // the entry point) sources its keybindings from get_status_bindings, so
+    // check that the Esc "Clear" hint is among the contextual bindings.
+    key_char(&mut layout, 's');
+
+    let bindings = layout.get_status_bindings();
+    let has_esc_hint = bindings.iter().any(|b| b.key == "Esc" && b.description == "Clear");
+    assert!(has_esc_hint, "search-focus bindings should include 'Esc: Clear'; got: {bindings:?}");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn search_results_reconcile_with_db_on_focus_regained() {
     // Two bookmarks match a "config" path search; one of them will be deleted
     // out from under the TUI (as the CLI might while the terminal is unfocused).
