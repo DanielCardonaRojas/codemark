@@ -264,6 +264,10 @@ impl RightPane {
     /// [`refresh_step_health`](Self::refresh_step_health) is a no-op).
     pub fn refresh_overview_health(&mut self, db: &Database) {
         let Some(id) = &self.active_collection_id else { return };
+        // Recompute from bookmark resolutions so the label reflects the current
+        // state, not a stale persisted value — sync/pull can change the
+        // underlying bookmarks without updating collection.health.
+        let _ = db.recompute_collection_health(id);
         let Some(collection) = db.get_collection_by_id(id).ok().flatten() else { return };
         self.overview_health = collection.health.map(|h| match h {
             codemark_core::engine::bookmark::CollectionHealth::Active => {
