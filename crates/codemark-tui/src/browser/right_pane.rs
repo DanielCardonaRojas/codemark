@@ -895,8 +895,12 @@ impl RightPane {
                 step.resolved = true;
                 step.health = crate::component::HealthStatus::from(live_status);
             }
-            Err(_) => {
-                step.health = crate::component::HealthStatus::Broken;
+            Err(e) => {
+                step.health = if matches!(e, codemark_core::error::Error::Resolution(_)) {
+                    crate::component::HealthStatus::Broken
+                } else {
+                    crate::component::HealthStatus::Unknown
+                };
             }
         }
     }

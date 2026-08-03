@@ -822,18 +822,26 @@ impl BrowserLayout {
                                 health: crate::component::HealthStatus::from(live_status),
                             }
                         }
-                        Err(_) => {
+                        Err(e) => {
                             // Live resolution failed; fall back to the persisted
                             // location (the same one the cheap build used).
                             let (file_path, line_number, line_end, _res) =
                                 super::RightPane::persisted_step_location(&db, bm);
+                            let health = if matches!(
+                                e,
+                                codemark_core::error::Error::Resolution(_)
+                            ) {
+                                crate::component::HealthStatus::Broken
+                            } else {
+                                crate::component::HealthStatus::Unknown
+                            };
                             super::StepLiveUpdate {
                                 index: *index,
                                 file_path,
                                 line_number,
                                 line_end,
                                 resolved: false,
-                                health: crate::component::HealthStatus::Broken,
+                                health,
                             }
                         }
                     };
