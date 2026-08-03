@@ -494,11 +494,8 @@ impl BrowserLayout {
                     // synchronously (no tree-sitter parse, so it's cheap). The
                     // health distinguishes query-not-resolving (Unmatched) from
                     // operational failures (Error).
-                    let health = if *unresolved {
-                        HealthStatus::Broken
-                    } else {
-                        HealthStatus::Unknown
-                    };
+                    let health =
+                        if *unresolved { HealthStatus::Broken } else { HealthStatus::Unknown };
                     self.right_pane.load_bookmark(&self.db, bookmark_id, health);
                     self.right_pane.finish_loading();
                 }
@@ -827,10 +824,8 @@ impl BrowserLayout {
                             // location (the same one the cheap build used).
                             let (file_path, line_number, line_end, _res) =
                                 super::RightPane::persisted_step_location(&db, bm);
-                            let health = if matches!(
-                                e,
-                                codemark_core::error::Error::Resolution(_)
-                            ) {
+                            let health = if matches!(e, codemark_core::error::Error::Resolution(_))
+                            {
                                 crate::component::HealthStatus::Broken
                             } else {
                                 crate::component::HealthStatus::Unknown
@@ -932,12 +927,11 @@ impl BrowserLayout {
                 }
                 Err(e) => {
                     let unresolved = matches!(e, codemark_core::error::Error::Resolution(_));
-                    let _ =
-                        event_handler.send(Event::PreviewFailed {
-                            request_id,
-                            bookmark_id,
-                            unresolved,
-                        });
+                    let _ = event_handler.send(Event::PreviewFailed {
+                        request_id,
+                        bookmark_id,
+                        unresolved,
+                    });
                 }
             }
         });
