@@ -769,7 +769,7 @@ impl TabbedPanel {
                 area,
                 buf,
                 health,
-                border_color,
+                crate::theme::palette().accent,
                 number,
                 sort_icon.is_some(),
             );

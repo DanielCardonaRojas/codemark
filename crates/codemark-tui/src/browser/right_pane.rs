@@ -1371,7 +1371,7 @@ impl RightPane {
         // Draw the health label (knockout text) just left of the badge, matching
         // the steps panel.
         if let Some(h) = health {
-            crate::browser::tabs::render_health_label(area, buf, h, border_color, 4, false);
+            crate::browser::tabs::render_health_label(area, buf, h, crate::theme::palette().accent, 4, false);
         }
 
         let message = match &self.loading_label {
@@ -1440,7 +1440,7 @@ impl RightPane {
         // Draw the collection's health label (knockout text) just left of the
         // badge, matching the steps panel.
         if let Some(h) = self.overview_health {
-            crate::browser::tabs::render_health_label(area, buf, h, border_color, 4, false);
+            crate::browser::tabs::render_health_label(area, buf, h, crate::theme::palette().accent, 4, false);
         }
 
         self.overview.render(inner, buf);
