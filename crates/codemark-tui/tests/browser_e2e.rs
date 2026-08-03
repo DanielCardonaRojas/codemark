@@ -399,13 +399,8 @@ async fn search_bar_shows_esc_clear_hint() {
     key_char(&mut layout, 's');
 
     let bindings = layout.get_status_bindings();
-    let has_esc_hint = bindings
-        .iter()
-        .any(|b| b.key == "Esc" && b.description == "Clear");
-    assert!(
-        has_esc_hint,
-        "search-focus bindings should include 'Esc: Clear'; got: {bindings:?}"
-    );
+    let has_esc_hint = bindings.iter().any(|b| b.key == "Esc" && b.description == "Clear");
+    assert!(has_esc_hint, "search-focus bindings should include 'Esc: Clear'; got: {bindings:?}");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
