@@ -879,9 +879,10 @@ impl TabbedPanel {
                         // land on hidden title cells or the badge, not a tab.
                         let in_visible_title_region = match self.pane_number {
                             Some(number) => {
-                                let reserved = crate::browser::tabs::top_border_reserved_width(
+                                let reserved = crate::browser::tabs::top_border_reserved_width_full(
                                     number,
                                     self.active_sort_method().is_some(),
+                                    self.health_label.get(),
                                 );
                                 relative_x <= area.width.saturating_sub(reserved + 1)
                             }
