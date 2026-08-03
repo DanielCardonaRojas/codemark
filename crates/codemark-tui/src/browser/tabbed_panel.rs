@@ -41,6 +41,11 @@ pub struct TabbedPanel {
     /// Number-key shortcut that jumps focus to this pane, rendered as a `[N]`
     /// badge on the top border. `None` hides the badge (e.g. in tests).
     pub pane_number: Option<u8>,
+    /// Optional health label drawn as knockout text on the top border, just left
+    /// of the sort-icon/pane-number badge. Set by the owning pane before render
+    /// so the preview's health is spelled out alongside the colored dots. `None`
+    /// hides the label (all panels except the preview/steps panel).
+    pub health_label: std::cell::Cell<Option<HealthStatus>>,
 }
 
 /// Convert a bookmark to a PanelItem with consistent formatting.
@@ -513,6 +518,7 @@ impl TabbedPanel {
             tab_changed: std::cell::Cell::new(false),
             sort_changed: std::cell::Cell::new(false),
             pane_number: Some(1),
+            health_label: std::cell::Cell::new(None),
         }
     }
 
@@ -538,6 +544,7 @@ impl TabbedPanel {
             tab_changed: std::cell::Cell::new(false),
             sort_changed: std::cell::Cell::new(false),
             pane_number: Some(2),
+            health_label: std::cell::Cell::new(None),
         }
     }
 
@@ -595,6 +602,7 @@ impl TabbedPanel {
             tab_changed: std::cell::Cell::new(false),
             sort_changed: std::cell::Cell::new(false),
             pane_number: Some(3),
+            health_label: std::cell::Cell::new(None),
         }
     }
 
@@ -624,6 +632,7 @@ impl TabbedPanel {
             tab_changed: std::cell::Cell::new(false),
             sort_changed: std::cell::Cell::new(false),
             pane_number: Some(4),
+            health_label: std::cell::Cell::new(None),
         }
     }
 
@@ -643,6 +652,7 @@ impl TabbedPanel {
             tab_changed: std::cell::Cell::new(false),
             sort_changed: std::cell::Cell::new(false),
             pane_number: Some(5),
+            health_label: std::cell::Cell::new(None),
         }
     }
 
@@ -702,19 +712,24 @@ impl TabbedPanel {
         // corrupts the shortcut cue. Reserve the badge's columns (plus the sort
         // glyph, when shown) and the left corner. See `render_pane_number_badge`.
         if let Some(number) = self.pane_number {
-            let reserved =
-                crate::browser::tabs::top_border_reserved_width(number, sort_icon.is_some());
+            let health = self.health_label.get();
+            let reserved = crate::browser::tabs::top_border_reserved_width_full(
+                number,
+                sort_icon.is_some(),
+                health,
+            );
             // `- 1` for the left corner the title sits after.
             let max_title_width = (area.width as usize).saturating_sub(reserved as usize + 1);
             tab_titles = crate::browser::tabs::truncate_line_to_width(tab_titles, max_title_width);
         }
 
         // Render outer border for the entire panel area with inline tabs
-        let border_style = if self.focused {
-            Style::default().fg(crate::theme::palette().accent)
+        let border_color = if self.focused {
+            crate::theme::palette().accent
         } else {
-            Style::default().fg(crate::theme::palette().dim)
+            crate::theme::palette().dim
         };
+        let border_style = Style::default().fg(border_color);
 
         let block = ratatui::widgets::Block::bordered()
             .border_type(ratatui::widgets::BorderType::Rounded)
@@ -746,6 +761,18 @@ impl TabbedPanel {
             if let Some(icon) = sort_icon {
                 crate::browser::tabs::render_sort_icon(area, buf, number, icon, border_style);
             }
+        }
+
+        // Draw the health label (knockout text) just left of the sort-icon/badge.
+        if let (Some(number), Some(health)) = (self.pane_number, self.health_label.get()) {
+            crate::browser::tabs::render_health_label(
+                area,
+                buf,
+                health,
+                border_color,
+                number,
+                sort_icon.is_some(),
+            );
         }
 
         // Render active panel content (full inner area, no separate tab row)
@@ -964,6 +991,7 @@ mod tests {
             tab_changed: std::cell::Cell::new(false),
             sort_changed: std::cell::Cell::new(false),
             pane_number: None,
+            health_label: std::cell::Cell::new(None),
         }
     }
 
@@ -984,6 +1012,7 @@ mod tests {
             tab_changed: std::cell::Cell::new(false),
             sort_changed: std::cell::Cell::new(false),
             pane_number: Some(3),
+            health_label: std::cell::Cell::new(None),
         }
     }
 

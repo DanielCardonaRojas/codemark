@@ -1,9 +1,8 @@
 ---
 source: crates/codemark-tui/tests/browser_e2e.rs
-assertion_line: 276
 expression: "render_to_string(&layout, 100, 30)"
 ---
-╭──────────────────────────────────────╮╭──Content  Info  Query ───────────────────────────────[4]─╮
+╭──────────────────────────────────────╮╭──Content  Info  Query ─────────────────── Unmatched ─[4]─╮
 │ Search...              [ FTS | Sem ] ││ src/main.rs                                              │
 ╰──────────────────────────────────────╯│   1 fn main() {                                          │
 ╭──Repos  Owners  Auth ────────────[1]─╮│   2     println!("hi");                                  │

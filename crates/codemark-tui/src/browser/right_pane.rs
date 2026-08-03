@@ -51,6 +51,10 @@ pub struct RightPane {
     pub overview: MarkdownPanel,
     /// When true, the overview panel replaces the steps panel in the main area.
     pub overview_active: bool,
+    /// Cached health of the collection whose overview is shown, so the border
+    /// health label can reflect it while browsing a collection (before entering
+    /// its steps). `None` when no collection overview is active.
+    pub overview_health: Option<crate::component::HealthStatus>,
     /// Details panel showing bookmark metadata and comments (now template-driven)
     pub details: TabbedPanel,
     /// Data for each step in the current tour
@@ -167,6 +171,7 @@ impl RightPane {
             steps: TabbedPanel::new_steps_info(db),
             overview: MarkdownPanel::new(),
             overview_active: false,
+            overview_health: None,
             details: TabbedPanel::new_details_comments(),
             steps_data: Vec::new(),
             focused: RightPaneFocus::Steps,
@@ -448,6 +453,17 @@ impl RightPane {
         self.steps_data.get(self.pager_current).map(|s| s.bookmark.id.as_str())
     }
 
+    /// The health to show on the preview-pane border. While browsing a collection
+    /// overview this is the collection's cached health; otherwise it's the
+    /// current step's health. `None` when nothing is loaded.
+    pub fn preview_health(&self) -> Option<crate::component::HealthStatus> {
+        if self.overview_active {
+            self.overview_health
+        } else {
+            self.steps_data.get(self.pager_current).map(|s| s.health)
+        }
+    }
+
     /// Snapshot the current step's bookmark and resolutions for an off-thread
     /// markdown render. Returns `None` when no step is loaded.
     pub fn current_step_render_input(&self) -> Option<(Bookmark, Vec<Resolution>)> {
@@ -501,7 +517,10 @@ impl RightPane {
             if let Ok(abs_path) =
                 codemark_core::git::context::resolve_bookmark_file_path(&file_path, db.path())
             {
-                let health = bookmark_health(&bm, db, self.cached_head_commit.as_deref());
+                // Live resolution failed (this is the persisted fallback), so the
+                // query does not resolve against the current code. The persisted
+                // projection may say otherwise, but the live result is authoritative.
+                let health = crate::component::HealthStatus::Broken;
                 self.steps_data = vec![StepData {
                     file_path: abs_path.to_string_lossy().to_string(),
                     line_number,
@@ -520,6 +539,7 @@ impl RightPane {
                 self.active_tour_name = None;
                 self.active_remote_tour_id = None;
                 self.overview_active = false;
+                self.overview_health = None;
                 // A single bookmark now owns the steps; drop any in-flight
                 // collection resolve so its batch can't clobber this step.
                 self.invalidate_pending_step_resolution();
@@ -587,7 +607,7 @@ impl RightPane {
         on_runtime_worker: bool,
     ) -> Option<Box<PreviewPayload>> {
         let bm = db.get_bookmark(bookmark_id).ok().flatten()?;
-        let (abs_path, start_line, end_line, code) =
+        let (abs_path, start_line, end_line, code, live_status) =
             Self::resolve_bookmark_live(&bm, db, cache, on_runtime_worker).ok()?;
 
         let resolutions = db.list_resolutions(&bm.id, 100).unwrap_or_default();
@@ -605,7 +625,6 @@ impl RightPane {
         let comments_markdown =
             render_bookmark_markdown(db, &bm, &resolutions, templates.comments, head);
         let query = bm.query.clone();
-        let health = bookmark_health(&bm, db, head);
 
         let step = StepData {
             file_path: abs_path,
@@ -614,7 +633,7 @@ impl RightPane {
             bookmark: bm,
             resolution: None,
             resolutions,
-            health,
+            health: crate::component::HealthStatus::from(live_status),
             // Live resolution succeeded, so the range reflects the current
             // location and is safe to highlight.
             resolved: true,
@@ -676,6 +695,7 @@ impl RightPane {
         self.active_tour_name = None;
         self.active_remote_tour_id = None;
         self.overview_active = false;
+        self.overview_health = None;
         // A single bookmark now owns the steps; drop any in-flight collection
         // resolve so its batch can't clobber this step.
         self.invalidate_pending_step_resolution();
@@ -737,6 +757,7 @@ impl RightPane {
         self.active_bookmark_id = None;
         self.active_remote_tour_id = None;
         self.overview_active = false;
+        self.overview_health = None;
         // Bump the generation so a background resolve batch from a previously
         // open collection is dropped when it arrives.
         self.invalidate_pending_step_resolution();
@@ -817,15 +838,18 @@ impl RightPane {
         session_cache: &mut HashMap<CodemarkLanguage, ParseCache>,
         head: Option<&str>,
     ) {
-        if let Ok((abs_path, start_line, end_line, _source)) =
-            Self::resolve_bookmark_live(&step.bookmark, db, session_cache, true)
-        {
-            step.file_path = abs_path;
-            step.line_number = start_line;
-            step.line_end = Some(end_line);
-            step.resolved = true;
+        match Self::resolve_bookmark_live(&step.bookmark, db, session_cache, true) {
+            Ok((abs_path, start_line, end_line, _source, live_status)) => {
+                step.file_path = abs_path;
+                step.line_number = start_line;
+                step.line_end = Some(end_line);
+                step.resolved = true;
+                step.health = crate::component::HealthStatus::from(live_status);
+            }
+            Err(_) => {
+                step.health = bookmark_health(&step.bookmark, db, head);
+            }
         }
-        step.health = bookmark_health(&step.bookmark, db, head);
     }
 
     /// Snapshot the current steps' `(index, bookmark)` pairs for a background live
@@ -885,7 +909,7 @@ impl RightPane {
         db: &Database,
         session_cache: &mut HashMap<CodemarkLanguage, ParseCache>,
         on_runtime_worker: bool,
-    ) -> std::result::Result<(String, usize, usize, String), codemark_core::error::Error> {
+    ) -> std::result::Result<(String, usize, usize, String, live_resolution::LiveUIStatus), codemark_core::error::Error> {
         use std::str::FromStr;
 
         let language = CodemarkLanguage::from_str(&bm.language).map_err(|e| {
@@ -918,9 +942,10 @@ impl RightPane {
             let result =
                 live_resolution::resolve_transient(bm, cache, language, db.path(), &provider)
                     .await?;
+            let live_status = result.live_status();
 
             // Treat Failed resolutions as errors so callers fall back to persisted snapshots
-            if result.live_status() == live_resolution::LiveUIStatus::Broken {
+            if live_status == live_resolution::LiveUIStatus::Broken {
                 return Err(codemark_core::error::Error::Resolution(
                     "bookmark code not found in current file".into(),
                 ));
@@ -937,6 +962,7 @@ impl RightPane {
                 result.start_line,
                 result.end_line,
                 source.clone(),
+                live_status,
             ))
         };
 
@@ -961,6 +987,7 @@ impl RightPane {
         self.active_tour_name = None;
         self.active_remote_tour_id = None;
         self.overview_active = false;
+        self.overview_health = None;
         // The steps are gone; drop any in-flight collection resolve so its batch
         // can't repopulate stale steps.
         self.invalidate_pending_step_resolution();
@@ -1016,6 +1043,17 @@ impl RightPane {
 
         self.overview.set_markdown(markdown);
         self.overview_active = true;
+        self.overview_health = collection.health.map(|h| match h {
+            codemark_core::engine::bookmark::CollectionHealth::Active => {
+                crate::component::HealthStatus::Healthy
+            }
+            codemark_core::engine::bookmark::CollectionHealth::Drifted => {
+                crate::component::HealthStatus::Drifted
+            }
+            codemark_core::engine::bookmark::CollectionHealth::Stale => {
+                crate::component::HealthStatus::Broken
+            }
+        });
 
         // Clear the Details pane so stale annotations from a previously viewed
         // bookmark don't linger beneath the overview.
@@ -1042,6 +1080,7 @@ impl RightPane {
 
         self.overview.set_markdown(markdown);
         self.overview_active = true;
+        self.overview_health = None;
 
         // Clear the Details pane so stale annotations from a previously viewed
         // bookmark don't linger beneath the overview.
@@ -1136,6 +1175,7 @@ impl RightPane {
                 self.active_bookmark_id = None;
                 self.active_remote_tour_id = None;
                 self.overview_active = false;
+                self.overview_health = None;
                 // Persisted (non-live) reload replaces the steps; drop any
                 // in-flight collection resolve so its batch can't clobber them.
                 self.invalidate_pending_step_resolution();
@@ -1227,6 +1267,7 @@ impl RightPane {
         if self.overview_active {
             self.render_overview_block(chunks[0], buf);
         } else {
+            self.steps.health_label.set(self.preview_health());
             self.render_steps_or_loading(chunks[0], buf);
         }
 
@@ -1289,18 +1330,20 @@ impl RightPane {
         ];
         let frame = SPINNER_FRAMES[self.loading_tick % SPINNER_FRAMES.len()];
 
-        let border_style = if self.focused == RightPaneFocus::Steps {
-            Style::default().fg(crate::theme::palette().accent)
+        let border_color = if self.focused == RightPaneFocus::Steps {
+            crate::theme::palette().accent
         } else {
-            Style::default().fg(crate::theme::palette().dim)
+            crate::theme::palette().dim
         };
+        let border_style = Style::default().fg(border_color);
         let mut title = ratatui::text::Line::from(vec![
             ratatui::text::Span::raw("  "),
             ratatui::text::Span::styled("Content", Style::default().bold()),
         ]);
         // Reserve room on the right so the `[4]` badge can't overwrite the title
         // on a narrow pane (mirrors `TabbedPanel::render`).
-        let reserved = crate::browser::tabs::pane_number_badge_reserved_width(4);
+        let health = self.preview_health();
+        let reserved = crate::browser::tabs::top_border_reserved_width_full(4, false, health);
         let max_title_width = (area.width as usize).saturating_sub(reserved as usize + 1);
         title = crate::browser::tabs::truncate_line_to_width(title, max_title_width);
         let block = Block::bordered()
@@ -1325,6 +1368,12 @@ impl RightPane {
         // Match the steps panel's `[4]` badge while its preview is loading.
         crate::browser::tabs::render_pane_number_badge(area, buf, 4, border_style);
 
+        // Draw the health label (knockout text) just left of the badge, matching
+        // the steps panel.
+        if let Some(h) = health {
+            crate::browser::tabs::render_health_label(area, buf, h, border_color, 4, false);
+        }
+
         let message = match &self.loading_label {
             Some(label) => format!("{frame}  Loading {label}…"),
             None => format!("{frame}  Loading preview…"),
@@ -1348,11 +1397,12 @@ impl RightPane {
     /// Mirrors the steps tabbed panel's framing so the live collection overview
     /// occupies the same main area while browsing collections.
     fn render_overview_block(&self, area: Rect, buf: &mut Buffer) {
-        let border_style = if self.focused == RightPaneFocus::Steps {
-            Style::default().fg(crate::theme::palette().accent)
+        let border_color = if self.focused == RightPaneFocus::Steps {
+            crate::theme::palette().accent
         } else {
-            Style::default().fg(crate::theme::palette().dim)
+            crate::theme::palette().dim
         };
+        let border_style = Style::default().fg(border_color);
 
         let mut title = ratatui::text::Line::from(vec![
             ratatui::text::Span::raw("  "),
@@ -1360,7 +1410,8 @@ impl RightPane {
         ]);
         // Reserve room on the right so the `[4]` badge can't overwrite the title
         // on a narrow pane (mirrors `TabbedPanel::render`).
-        let reserved = crate::browser::tabs::pane_number_badge_reserved_width(4);
+        let reserved =
+            crate::browser::tabs::top_border_reserved_width_full(4, false, self.overview_health);
         let max_title_width = (area.width as usize).saturating_sub(reserved as usize + 1);
         title = crate::browser::tabs::truncate_line_to_width(title, max_title_width);
         let block = Block::bordered()
@@ -1385,6 +1436,12 @@ impl RightPane {
 
         // Match the steps panel's `[4]` badge while browsing a collection.
         crate::browser::tabs::render_pane_number_badge(area, buf, 4, border_style);
+
+        // Draw the collection's health label (knockout text) just left of the
+        // badge, matching the steps panel.
+        if let Some(h) = self.overview_health {
+            crate::browser::tabs::render_health_label(area, buf, h, border_color, 4, false);
+        }
 
         self.overview.render(inner, buf);
     }

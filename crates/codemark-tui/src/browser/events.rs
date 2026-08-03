@@ -461,21 +461,18 @@ impl BrowserLayout {
                 if *generation != self.health_generation {
                     return Some(false);
                 }
-                let mut touches_open_step = false;
                 for (bookmark_id, status) in batch {
+                    let health = HealthStatus::from(*status);
                     if let Some(panel) = self.left_pane.content_panel.get_list_panel_mut(0) {
-                        panel.update_item_health(bookmark_id, HealthStatus::from(*status));
+                        panel.update_item_health(bookmark_id, health);
                     }
-                    touches_open_step |= self
-                        .right_pane
-                        .steps_data
-                        .iter()
-                        .any(|step| step.bookmark.id == *bookmark_id);
-                }
-                // Recompute open collection pager health once if this batch could
-                // have changed a visible step, keeping the dots in sync with the panel.
-                if touches_open_step {
-                    self.right_pane.refresh_step_health(&self.db);
+                    // Mirror the live status into the open step so the preview
+                    // border label and pager dots stay in sync with the list dots.
+                    for step in &mut self.right_pane.steps_data {
+                        if step.bookmark.id == *bookmark_id {
+                            step.health = health;
+                        }
+                    }
                 }
                 Some(true)
             }
@@ -805,21 +802,24 @@ impl BrowserLayout {
             let mut batch: Vec<super::StepLiveUpdate> = Vec::new();
 
             for (index, bm) in &steps {
-                // Health is projected regardless of whether live resolution
-                // succeeds, so the pager dot is accurate either way.
-                let health = crate::browser::tabbed_panel::bookmark_health(bm, &db, head_ref);
+                // Fallback health from persisted data, used when live resolution
+                // fails so the pager dot is still accurate.
+                let fallback_health =
+                    crate::browser::tabbed_panel::bookmark_health(bm, &db, head_ref);
 
                 // This runs on a spawn_blocking thread, not a runtime worker.
                 let update =
                     match super::RightPane::resolve_bookmark_live(bm, &db, &mut caches, false) {
-                        Ok((file_path, start_line, end_line, _source)) => super::StepLiveUpdate {
-                            index: *index,
-                            file_path,
-                            line_number: start_line,
-                            line_end: Some(end_line),
-                            resolved: true,
-                            health,
-                        },
+                        Ok((file_path, start_line, end_line, _source, live_status)) => {
+                            super::StepLiveUpdate {
+                                index: *index,
+                                file_path,
+                                line_number: start_line,
+                                line_end: Some(end_line),
+                                resolved: true,
+                                health: crate::component::HealthStatus::from(live_status),
+                            }
+                        }
                         Err(_) => {
                             // Live resolution failed; fall back to the persisted
                             // location (the same one the cheap build used).
@@ -831,7 +831,7 @@ impl BrowserLayout {
                                 line_number,
                                 line_end,
                                 resolved: false,
-                                health,
+                                health: fallback_health,
                             }
                         }
                     };
