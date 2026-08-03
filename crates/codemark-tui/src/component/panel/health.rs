@@ -93,9 +93,9 @@ impl HealthStatus {
             | HealthStatus::Verified
             | HealthStatus::Future => "Exact",
             // Drifted match — the query resolved, but the code has changed.
-            HealthStatus::Drifted
-            | HealthStatus::UnanchoredDrifting
-            | HealthStatus::Outdated => "Drifted",
+            HealthStatus::Drifted | HealthStatus::UnanchoredDrifting | HealthStatus::Outdated => {
+                "Drifted"
+            }
             // Unmatched — the query does not resolve at all.
             HealthStatus::Broken | HealthStatus::BrokenUnanchored => "Unmatched",
             // Error — file missing, parse failure, or not yet resolved.

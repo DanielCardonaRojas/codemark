@@ -162,8 +162,7 @@ pub fn top_border_reserved_width_full(
     has_sort_icon: bool,
     health: Option<HealthStatus>,
 ) -> u16 {
-    top_border_reserved_width(number, has_sort_icon)
-        + health.map_or(0, health_label_reserved_width)
+    top_border_reserved_width(number, has_sort_icon) + health.map_or(0, health_label_reserved_width)
 }
 
 /// Draw the health label as knockout text — a filled box (background =

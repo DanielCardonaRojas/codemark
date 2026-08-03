@@ -909,7 +909,10 @@ impl RightPane {
         db: &Database,
         session_cache: &mut HashMap<CodemarkLanguage, ParseCache>,
         on_runtime_worker: bool,
-    ) -> std::result::Result<(String, usize, usize, String, live_resolution::LiveUIStatus), codemark_core::error::Error> {
+    ) -> std::result::Result<
+        (String, usize, usize, String, live_resolution::LiveUIStatus),
+        codemark_core::error::Error,
+    > {
         use std::str::FromStr;
 
         let language = CodemarkLanguage::from_str(&bm.language).map_err(|e| {
@@ -1371,7 +1374,14 @@ impl RightPane {
         // Draw the health label (knockout text) just left of the badge, matching
         // the steps panel.
         if let Some(h) = health {
-            crate::browser::tabs::render_health_label(area, buf, h, crate::theme::palette().accent, 4, false);
+            crate::browser::tabs::render_health_label(
+                area,
+                buf,
+                h,
+                crate::theme::palette().accent,
+                4,
+                false,
+            );
         }
 
         let message = match &self.loading_label {
@@ -1440,7 +1450,14 @@ impl RightPane {
         // Draw the collection's health label (knockout text) just left of the
         // badge, matching the steps panel.
         if let Some(h) = self.overview_health {
-            crate::browser::tabs::render_health_label(area, buf, h, crate::theme::palette().accent, 4, false);
+            crate::browser::tabs::render_health_label(
+                area,
+                buf,
+                h,
+                crate::theme::palette().accent,
+                4,
+                false,
+            );
         }
 
         self.overview.render(inner, buf);

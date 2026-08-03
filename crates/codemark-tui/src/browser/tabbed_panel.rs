@@ -724,11 +724,8 @@ impl TabbedPanel {
         }
 
         // Render outer border for the entire panel area with inline tabs
-        let border_color = if self.focused {
-            crate::theme::palette().accent
-        } else {
-            crate::theme::palette().dim
-        };
+        let border_color =
+            if self.focused { crate::theme::palette().accent } else { crate::theme::palette().dim };
         let border_style = Style::default().fg(border_color);
 
         let block = ratatui::widgets::Block::bordered()
