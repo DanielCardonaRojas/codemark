@@ -543,6 +543,14 @@ impl BrowserLayout {
     pub fn execute_search(&mut self) {
         let query = self.left_pane.search.query().to_string();
         if query.is_empty() {
+            // An empty query restores the full list — the same effect as Esc's
+            // "clear search", but without moving focus, so the user can start a
+            // new query immediately. Drop any in-flight search, clear the
+            // recorded search contexts, and rebuild the panels from the DB.
+            self.reconcile_search_requests.clear();
+            self.active_search_request = self.active_search_request.wrapping_add(1);
+            self.search_contexts = [None, None];
+            self.refresh_all_panels();
             return;
         }
 

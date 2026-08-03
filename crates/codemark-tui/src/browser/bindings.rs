@@ -33,6 +33,7 @@ impl BrowserLayout {
         match self.focus {
             FocusArea::Search => {
                 bindings.push(("Enter", "Search"));
+                bindings.push(("Esc", "Clear"));
                 // The FTS/semantic toggle only exists in semantic builds.
                 #[cfg(feature = "semantic")]
                 bindings.push(("Ctrl+S", "FTS / Sem"));
@@ -153,6 +154,10 @@ impl BrowserLayout {
                 bindings.push(
                     KeyBinding::new("Enter", "Search").with_priority(HIDDEN_BINDING_PRIORITY),
                 );
+                // Esc clears the query and restores the full list, but there is
+                // no on-screen affordance for it, so advertise it as the primary
+                // context action while the search bar holds focus.
+                bindings.push(KeyBinding::new("Esc", "Clear").with_priority(95));
                 // The FTS/semantic toggle only exists in semantic builds.
                 #[cfg(feature = "semantic")]
                 bindings.push(KeyBinding::new("Ctrl+S", "FTS / Sem").with_priority(90));
