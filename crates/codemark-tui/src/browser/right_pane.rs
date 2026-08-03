@@ -55,6 +55,9 @@ pub struct RightPane {
     /// health label can reflect it while browsing a collection (before entering
     /// its steps). `None` when no collection overview is active.
     pub overview_health: Option<crate::component::HealthStatus>,
+    /// ID of the collection whose overview is shown, so a heal/sync can refresh
+    /// [`overview_health`](Self::overview_health) without reloading the overview.
+    pub active_collection_id: Option<String>,
     /// Details panel showing bookmark metadata and comments (now template-driven)
     pub details: TabbedPanel,
     /// Data for each step in the current tour
@@ -172,6 +175,7 @@ impl RightPane {
             overview: MarkdownPanel::new(),
             overview_active: false,
             overview_health: None,
+            active_collection_id: None,
             details: TabbedPanel::new_details_comments(),
             steps_data: Vec::new(),
             focused: RightPaneFocus::Steps,
@@ -252,6 +256,26 @@ impl RightPane {
             let bookmark = fresh.as_ref().unwrap_or(&step.bookmark);
             step.health = bookmark_health(bookmark, db, head.as_deref());
         }
+    }
+
+    /// Refresh [`overview_health`](Self::overview_health) from the database.
+    /// Called after a heal or sync that may have changed the collection's health
+    /// while its overview is on screen (where `steps_data` is empty so
+    /// [`refresh_step_health`](Self::refresh_step_health) is a no-op).
+    pub fn refresh_overview_health(&mut self, db: &Database) {
+        let Some(id) = &self.active_collection_id else { return };
+        let Some(collection) = db.get_collection_by_id(id).ok().flatten() else { return };
+        self.overview_health = collection.health.map(|h| match h {
+            codemark_core::engine::bookmark::CollectionHealth::Active => {
+                crate::component::HealthStatus::Healthy
+            }
+            codemark_core::engine::bookmark::CollectionHealth::Drifted => {
+                crate::component::HealthStatus::Drifted
+            }
+            codemark_core::engine::bookmark::CollectionHealth::Stale => {
+                crate::component::HealthStatus::Broken
+            }
+        });
     }
 
     /// Whether a bookmark preview is currently being resolved.
@@ -481,8 +505,16 @@ impl RightPane {
     }
 
     // @lat: [[tui-line-range-selection#Load bookmark with range]]
-    /// Load a single bookmark for previewing.
-    pub fn load_bookmark(&mut self, db: &Database, bookmark_id: &str) {
+    /// Load a single bookmark for previewing from persisted data. `health` is
+    /// supplied by the caller (the live-resolution fallback path) because the
+    /// reason the live path failed — query unresolved vs. operational error —
+    /// determines whether the label should say Unmatched or Error.
+    pub fn load_bookmark(
+        &mut self,
+        db: &Database,
+        bookmark_id: &str,
+        health: crate::component::HealthStatus,
+    ) {
         if let Ok(Some(bm)) = db.get_bookmark(bookmark_id) {
             let mut line_number = 0;
             let mut line_end = None;
@@ -517,10 +549,6 @@ impl RightPane {
             if let Ok(abs_path) =
                 codemark_core::git::context::resolve_bookmark_file_path(&file_path, db.path())
             {
-                // Live resolution failed (this is the persisted fallback), so the
-                // query does not resolve against the current code. The persisted
-                // projection may say otherwise, but the live result is authoritative.
-                let health = crate::component::HealthStatus::Broken;
                 self.steps_data = vec![StepData {
                     file_path: abs_path.to_string_lossy().to_string(),
                     line_number,
@@ -540,6 +568,7 @@ impl RightPane {
                 self.active_remote_tour_id = None;
                 self.overview_active = false;
                 self.overview_health = None;
+                self.active_collection_id = None;
                 // A single bookmark now owns the steps; drop any in-flight
                 // collection resolve so its batch can't clobber this step.
                 self.invalidate_pending_step_resolution();
@@ -576,16 +605,28 @@ impl RightPane {
             // Synchronous path runs on the UI runtime worker thread.
             true,
         ) {
-            Some(payload) => self.apply_preview(*payload),
-            None => {
-                // Live resolution failed (or bookmark missing); fall back to the
-                // persisted path, which also clears state when not found.
-                tracing::warn!(
-                    target: "codemark::ui",
-                    bookmark_id = %bookmark_id,
-                    "Live resolution failed, falling back to persisted path"
-                );
-                self.load_bookmark(db, bookmark_id);
+            Ok(Some(payload)) => self.apply_preview(*payload),
+            Ok(None) => self.clear_preview_state(db),
+            Err(e) => {
+                // Distinguish query-not-resolving (Unmatched) from operational
+                // failures (Error) so the border label reflects the real cause.
+                let health = if matches!(e, codemark_core::error::Error::Resolution(_)) {
+                    tracing::warn!(
+                        target: "codemark::ui",
+                        bookmark_id = %bookmark_id,
+                        "Query does not resolve, falling back to persisted path"
+                    );
+                    crate::component::HealthStatus::Broken
+                } else {
+                    tracing::warn!(
+                        target: "codemark::ui",
+                        bookmark_id = %bookmark_id,
+                        error = %e,
+                        "Live resolution error, falling back to persisted path"
+                    );
+                    crate::component::HealthStatus::Unknown
+                };
+                self.load_bookmark(db, bookmark_id, health);
             }
         }
     }
@@ -598,6 +639,12 @@ impl RightPane {
     /// is missing or cannot be resolved live (caller falls back to the persisted
     /// path). This is a free-standing computation (no `&self`) so it can run on a
     /// background task as well as synchronously.
+    ///
+    /// Returns:
+    /// - `Ok(Some(payload))` — live resolution succeeded.
+    /// - `Ok(None)` — bookmark not found in the database.
+    /// - `Err(Error::Resolution(_))` — the query does not resolve (Unmatched).
+    /// - `Err(other)` — operational failure: file missing, parse error, … (Error).
     pub(crate) fn build_bookmark_preview(
         db: &Database,
         bookmark_id: &str,
@@ -605,10 +652,12 @@ impl RightPane {
         templates: PreviewTemplates<'_>,
         head: Option<&str>,
         on_runtime_worker: bool,
-    ) -> Option<Box<PreviewPayload>> {
-        let bm = db.get_bookmark(bookmark_id).ok().flatten()?;
+    ) -> Result<Option<Box<PreviewPayload>>, codemark_core::error::Error> {
+        let Some(bm) = db.get_bookmark(bookmark_id).ok().flatten() else {
+            return Ok(None);
+        };
         let (abs_path, start_line, end_line, code, live_status) =
-            Self::resolve_bookmark_live(&bm, db, cache, on_runtime_worker).ok()?;
+            Self::resolve_bookmark_live(&bm, db, cache, on_runtime_worker)?;
 
         let resolutions = db.list_resolutions(&bm.id, 100).unwrap_or_default();
         let extension = std::path::Path::new(&abs_path)
@@ -639,7 +688,7 @@ impl RightPane {
             resolved: true,
         };
 
-        Some(Box::new(PreviewPayload {
+        Ok(Some(Box::new(PreviewPayload {
             bookmark_id: bookmark_id.to_string(),
             step,
             code,
@@ -649,7 +698,7 @@ impl RightPane {
             details_markdown,
             comments_markdown,
             query,
-        }))
+        })))
     }
 
     /// Apply a pre-computed preview to the panels. Pure UI-thread work (no I/O):
@@ -696,6 +745,7 @@ impl RightPane {
         self.active_remote_tour_id = None;
         self.overview_active = false;
         self.overview_health = None;
+        self.active_collection_id = None;
         // A single bookmark now owns the steps; drop any in-flight collection
         // resolve so its batch can't clobber this step.
         self.invalidate_pending_step_resolution();
@@ -745,9 +795,8 @@ impl RightPane {
         // Resolve only the first step live so the initially-shown code + health
         // are accurate immediately; the rest are corrected by the background
         // resolve the caller spawns.
-        let head = self.cached_head_commit.clone();
         if let Some(first) = new_steps.first_mut() {
-            Self::resolve_step_live_into(first, db, session_cache, head.as_deref());
+            Self::resolve_step_live_into(first, db, session_cache);
         }
 
         self.steps_data = new_steps;
@@ -758,6 +807,7 @@ impl RightPane {
         self.active_remote_tour_id = None;
         self.overview_active = false;
         self.overview_health = None;
+        self.active_collection_id = None;
         // Bump the generation so a background resolve batch from a previously
         // open collection is dropped when it arrives.
         self.invalidate_pending_step_resolution();
@@ -836,7 +886,6 @@ impl RightPane {
         step: &mut StepData,
         db: &Database,
         session_cache: &mut HashMap<CodemarkLanguage, ParseCache>,
-        head: Option<&str>,
     ) {
         match Self::resolve_bookmark_live(&step.bookmark, db, session_cache, true) {
             Ok((abs_path, start_line, end_line, _source, live_status)) => {
@@ -847,7 +896,7 @@ impl RightPane {
                 step.health = crate::component::HealthStatus::from(live_status);
             }
             Err(_) => {
-                step.health = bookmark_health(&step.bookmark, db, head);
+                step.health = crate::component::HealthStatus::Broken;
             }
         }
     }
@@ -991,6 +1040,7 @@ impl RightPane {
         self.active_remote_tour_id = None;
         self.overview_active = false;
         self.overview_health = None;
+        self.active_collection_id = None;
         // The steps are gone; drop any in-flight collection resolve so its batch
         // can't repopulate stale steps.
         self.invalidate_pending_step_resolution();
@@ -1057,6 +1107,7 @@ impl RightPane {
                 crate::component::HealthStatus::Broken
             }
         });
+        self.active_collection_id = Some(collection.id.clone());
 
         // Clear the Details pane so stale annotations from a previously viewed
         // bookmark don't linger beneath the overview.
@@ -1084,6 +1135,7 @@ impl RightPane {
         self.overview.set_markdown(markdown);
         self.overview_active = true;
         self.overview_health = None;
+        self.active_collection_id = None;
 
         // Clear the Details pane so stale annotations from a previously viewed
         // bookmark don't linger beneath the overview.
@@ -1179,6 +1231,7 @@ impl RightPane {
                 self.active_remote_tour_id = None;
                 self.overview_active = false;
                 self.overview_health = None;
+                self.active_collection_id = None;
                 // Persisted (non-live) reload replaces the steps; drop any
                 // in-flight collection resolve so its batch can't clobber them.
                 self.invalidate_pending_step_resolution();
