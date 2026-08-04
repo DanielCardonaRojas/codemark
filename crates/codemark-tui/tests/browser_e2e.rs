@@ -656,6 +656,55 @@ async fn enter_on_focused_collection_overview_opens_the_bookmarks_flow() {
     );
 }
 
+/// A collection's preview-border health label must follow the worst *live*
+/// status of its bookmarks, not the persisted snapshot — otherwise a collection
+/// whose code has drifted keeps showing "Exact" while its bookmarks show
+/// "Drifted"/"Unmatched".
+///
+/// `make_layout` drops the event receiver, so the background live-health task
+/// spawned in `BrowserLayout::new` can't deliver and the cache stays empty.
+/// That lets us drive a `CollectionHealthBatch` by hand and assert the
+/// persisted→live transition deterministically.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn collection_overview_label_reflects_live_bookmark_health() {
+    use codemark_core::engine::resolution::LiveUIStatus;
+
+    let sandbox = Sandbox::with_bookmarks([sample_bookmark("bm-1", "fn login", "src/auth.rs")]);
+    // Source present and matching so the seeded resolution is Active.
+    sandbox.write_repo_file("src/auth.rs", "fn login() -> bool { true }\n");
+    sandbox
+        .db
+        .insert_collection(&sample_collection("col-1", "auth-flow"))
+        .expect("seed collection");
+    sandbox.db.add_to_collection("col-1", &["bm-1".to_string()]).expect("populate collection");
+    // Persisted collection health = Active (worst of the bookmark resolutions),
+    // so without a live batch the overview label is "Exact".
+    sandbox.db.recompute_collection_health("col-1").expect("recompute health");
+    let (mut layout, _sandbox) = make_layout(sandbox);
+
+    assert_eq!(layout.focus(), FocusArea::ContentPanel);
+    key_char(&mut layout, ']'); // Bookmarks -> Collections (renders the overview)
+
+    let persisted = render_to_string(&layout, 140, 40);
+    assert!(
+        persisted.contains("Exact"),
+        "overview should show the persisted (Active) label before any live batch; got:\n{persisted}"
+    );
+
+    // The background task reports the bookmark has drifted on disk. generation
+    // is 0 for a fresh layout (no FocusGained has bumped health_generation).
+    layout.handle_event(&Event::CollectionHealthBatch {
+        generation: 0,
+        batch: vec![("col-1".to_string(), LiveUIStatus::Drifted)],
+    });
+
+    let live = render_to_string(&layout, 140, 40);
+    assert!(
+        live.contains("Drifted") && !live.contains("Exact"),
+        "overview label should follow the worst live bookmark status, not the persisted snapshot; got:\n{live}"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn remote_tour_overview_survives_a_panel_refresh() {
     use codemark_core::sync::RemoteTourSummary;

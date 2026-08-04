@@ -36,6 +36,25 @@ pub enum LiveUIStatus {
     Broken,
 }
 
+impl LiveUIStatus {
+    /// Severity rank used to pick the worst of two statuses: `Broken > Drifted
+    /// > Healthy`.
+    fn rank(self) -> u8 {
+        match self {
+            LiveUIStatus::Healthy => 0,
+            LiveUIStatus::Drifted => 1,
+            LiveUIStatus::Broken => 2,
+        }
+    }
+
+    /// Return the more severe of `self` and `other`. Used to aggregate a
+    /// collection's health from its bookmarks: a collection is as healthy as its
+    /// worst bookmark.
+    pub fn worst(self, other: LiveUIStatus) -> LiveUIStatus {
+        if other.rank() > self.rank() { other } else { self }
+    }
+}
+
 impl TransientResolution {
     /// Derive a [`LiveUIStatus`] from the resolution method and hash match.
     pub fn live_status(&self) -> LiveUIStatus {
@@ -791,5 +810,20 @@ class TierTest {
 
         // Clean up
         std::fs::remove_file(&path).ok();
+    }
+
+    #[test]
+    fn live_status_worst_picks_the_most_severe() {
+        use LiveUIStatus::{Broken, Drifted, Healthy};
+        // A collection is as healthy as its worst bookmark.
+        assert_eq!(Healthy.worst(Drifted), Drifted);
+        assert_eq!(Drifted.worst(Healthy), Drifted);
+        assert_eq!(Healthy.worst(Broken), Broken);
+        assert_eq!(Broken.worst(Healthy), Broken);
+        assert_eq!(Drifted.worst(Broken), Broken);
+        // Symmetric and idempotent.
+        assert_eq!(Drifted.worst(Drifted), Drifted);
+        assert_eq!(Healthy.worst(Healthy), Healthy);
+        assert_eq!(Broken.worst(Broken), Broken);
     }
 }

@@ -194,6 +194,13 @@ pub struct BrowserLayout {
     /// computed under an old grammar is discarded instead of overwriting the
     /// freshly-refreshed panels.
     health_generation: u64,
+
+    /// Cached worst-case *live* health per collection id, populated by the
+    /// background [`spawn_collection_health_task`](Self::spawn_collection_health_task).
+    /// Collection dots and the overview label read from here so they reflect the
+    /// current on-disk state of each collection's bookmarks instead of the
+    /// persisted snapshot, which goes stale the moment a bookmark's code drifts.
+    collection_live_health: HashMap<String, crate::component::HealthStatus>,
     /// ID of the most recent search request, used to discard stale background results.
     pub active_search_request: u64,
     /// The query and mode that produced the search results currently shown in
@@ -241,6 +248,27 @@ pub struct BrowserLayout {
 /// FTS or semantic). Shared so every search path caps consistently.
 const SEARCH_RESULT_LIMIT: usize = 20;
 
+/// Resolve a collection's display health: a cached worst-case *live* status of
+/// its bookmarks (`live`) wins when a background pass has computed one;
+/// otherwise it falls back to the persisted snapshot. Centralizes the
+/// `CollectionHealth → HealthStatus` mapping that every panel-build site shares,
+/// so the fallback stays consistent.
+fn collection_health_status(
+    persisted: Option<codemark_core::engine::bookmark::CollectionHealth>,
+    live: Option<crate::component::HealthStatus>,
+) -> crate::component::HealthStatus {
+    use codemark_core::engine::bookmark::CollectionHealth;
+    match live {
+        Some(h) => h,
+        None => match persisted {
+            Some(CollectionHealth::Active) => crate::component::HealthStatus::Healthy,
+            Some(CollectionHealth::Drifted) => crate::component::HealthStatus::Drifted,
+            Some(CollectionHealth::Stale) => crate::component::HealthStatus::Broken,
+            None => crate::component::HealthStatus::Unknown,
+        },
+    }
+}
+
 impl BrowserLayout {
     /// Create a new browser layout.
     pub fn new(db: Database, event_handler: crate::event::EventHandler) -> Self {
@@ -280,6 +308,7 @@ impl BrowserLayout {
             spinner_clear_at: None,
             tick_count: 0,
             cached_remote_tours: Vec::new(),
+            collection_live_health: HashMap::new(),
             pending_remote_repos: None,
             session_cache: HashMap::new(),
             preview_cache: Arc::new(Mutex::new(HashMap::new())),
@@ -306,9 +335,23 @@ impl BrowserLayout {
             layout.db.list_bookmarks(&codemark_core::engine::bookmark::BookmarkFilter::default())
         {
             layout.spawn_live_health_task(all_bookmarks);
+            layout.spawn_collection_health_task();
         }
 
         layout
+    }
+
+    /// Load a collection overview and override its health label with the cached
+    /// worst-case *live* status of the collection's bookmarks, so the preview
+    /// border label reflects the current on-disk state instead of the persisted
+    /// snapshot. When no live pass has run yet, the persisted value (set by
+    /// [`RightPane::load_collection_overview`]) stands until the background task
+    /// arrives and the handler corrects it.
+    fn load_collection_overview_live(&mut self, id: &str) {
+        self.right_pane.load_collection_overview(&self.db, id);
+        if let Some(&h) = self.collection_live_health.get(id) {
+            self.right_pane.overview_health = Some(h);
+        }
     }
 
     /// Update the right-pane live preview for the active Content panel tab + selection.
@@ -406,7 +449,7 @@ impl BrowserLayout {
                 self.right_pane.load_bookmark_live(&self.db, id, &mut self.session_cache);
             }
             ContentTab::Collections => {
-                self.right_pane.load_collection_overview(&self.db, id);
+                self.load_collection_overview_live(id);
             }
             ContentTab::Tours => self.preview_tour_item(id),
         }
@@ -424,7 +467,7 @@ impl BrowserLayout {
                 None => self.right_pane.clear_preview_state(&self.db),
             }
         } else {
-            self.right_pane.load_collection_overview(&self.db, id);
+            self.load_collection_overview_live(id);
         }
     }
 
@@ -438,7 +481,7 @@ impl BrowserLayout {
     pub(super) fn on_content_selection_changed(&mut self, tab: ContentTab, id: &str) {
         match tab {
             ContentTab::Bookmarks => self.request_bookmark_preview(id),
-            ContentTab::Collections => self.right_pane.load_collection_overview(&self.db, id),
+            ContentTab::Collections => self.load_collection_overview_live(id),
             ContentTab::Tours => self.preview_tour_item(id),
         }
     }
@@ -1282,20 +1325,10 @@ impl BrowserLayout {
             for (c, count) in collections {
                 let is_tour = c.published_at.is_some() || c.imported_from_url.is_some();
                 if is_tour {
-                    let health = match c.health {
-                        Some(h) => match h {
-                            codemark_core::engine::bookmark::CollectionHealth::Active => {
-                                HealthStatus::Healthy
-                            }
-                            codemark_core::engine::bookmark::CollectionHealth::Drifted => {
-                                HealthStatus::Drifted
-                            }
-                            codemark_core::engine::bookmark::CollectionHealth::Stale => {
-                                HealthStatus::Broken
-                            }
-                        },
-                        None => HealthStatus::Unknown,
-                    };
+                    let health = collection_health_status(
+                        c.health,
+                        self.collection_live_health.get(&c.id).copied(),
+                    );
                     let branch = c.created_branch.clone().unwrap_or_else(|| "main".to_string());
                     // Show the author (if known) before the branch name.
                     let secondary = match c.created_by.as_deref() {
@@ -1348,6 +1381,11 @@ impl BrowserLayout {
                 panel.select_by_user_data(&ud);
             }
         }
+
+        // The Tours tab mirrors collection rows, so a rebuild is also the right
+        // moment to refresh collection live health (this also covers the refresh
+        // path, which calls here, and the pull/sync/remote-load paths that don't).
+        self.spawn_collection_health_task();
     }
 
     /// Refresh all panels from the current active database.
@@ -1404,7 +1442,10 @@ impl BrowserLayout {
                         ContentTab::Collections => {
                             self.db.search_collections(Some(&query), None).map(|mut cols| {
                                 cols.truncate(SEARCH_RESULT_LIMIT);
-                                Self::build_collection_search_items(&cols)
+                                Self::build_collection_search_items(
+                                    &cols,
+                                    &self.collection_live_health,
+                                )
                             })
                         }
                         ContentTab::Tours => continue,
@@ -1488,7 +1529,7 @@ impl BrowserLayout {
                     Some((c, count))
                 })
                 .collect();
-            Self::build_collection_search_items(&cols)
+            Self::build_collection_search_items(&cols, &self.collection_live_health)
         } else {
             let bms: Vec<_> =
                 row_ids.iter().filter_map(|id| self.db.get_bookmark(id).ok().flatten()).collect();
@@ -1567,7 +1608,8 @@ impl BrowserLayout {
         // then pruned in place by `reconcile_preserved_search_rows`. The Esc
         // "clear search" path uses the non-preserving refresh, so the full list
         // is rebuilt there regardless of this flag.
-        let (tours, collections, bookmarks) = TabbedPanel::build_content_items(&self.db);
+        let (tours, collections, bookmarks) =
+            TabbedPanel::build_content_items(&self.db, &self.collection_live_health);
         if let Some(p) = self.left_pane.content_panel.get_list_panel_mut(0)
             && !(preserve_search && p.is_search_active())
         {
@@ -1627,7 +1669,7 @@ impl BrowserLayout {
             });
             if let Some(local_id) = pulled_local {
                 // load_collection_overview clears active_remote_tour_id.
-                self.right_pane.load_collection_overview(&self.db, &local_id);
+                self.load_collection_overview_live(&local_id);
                 // The remote:<id> row is gone, so move the Tours selection to the
                 // pulled local collection — otherwise the list could stay on a
                 // same-titled sibling while the right pane shows the pulled tour.
@@ -2013,20 +2055,10 @@ impl BrowserLayout {
                 };
 
                 if branch_match && tag_match {
-                    let health = match c.health {
-                        Some(h) => match h {
-                            codemark_core::engine::bookmark::CollectionHealth::Active => {
-                                HealthStatus::Healthy
-                            }
-                            codemark_core::engine::bookmark::CollectionHealth::Drifted => {
-                                HealthStatus::Drifted
-                            }
-                            codemark_core::engine::bookmark::CollectionHealth::Stale => {
-                                HealthStatus::Broken
-                            }
-                        },
-                        None => HealthStatus::Unknown,
-                    };
+                    let health = collection_health_status(
+                        c.health,
+                        self.collection_live_health.get(&c.id).copied(),
+                    );
 
                     let is_published = c.published_at.is_some();
                     let is_tour = is_published || c.imported_from_url.is_some();
@@ -2111,6 +2143,10 @@ impl BrowserLayout {
             // Spawn background live health resolution for filtered bookmarks
             self.spawn_live_health_task(filtered_bookmarks);
         }
+
+        // A tag/branch toggle rebuilds the collection rows from the (cached) live
+        // health; refresh the cache so newly-relevant collections are current.
+        self.spawn_collection_health_task();
     }
 
     /// Update the Repos panel (Context panel, Repos tab) based on active owner filters.
@@ -2490,6 +2526,32 @@ mod tests {
         // No usable segment.
         assert_eq!(BrowserLayout::extract_remote_tour_id("/"), None);
         assert_eq!(BrowserLayout::extract_remote_tour_id(""), None);
+    }
+
+    #[test]
+    fn collection_health_status_prefers_live_over_persisted() {
+        use codemark_core::engine::bookmark::CollectionHealth;
+        // A cached live status wins over the persisted snapshot — this is the
+        // fix: a collection persisted as Active shows Drifted once its bookmarks
+        // are resolved live and found to have drifted.
+        assert_eq!(
+            collection_health_status(Some(CollectionHealth::Active), Some(HealthStatus::Drifted),),
+            HealthStatus::Drifted
+        );
+        assert_eq!(
+            collection_health_status(Some(CollectionHealth::Active), Some(HealthStatus::Broken)),
+            HealthStatus::Broken
+        );
+        // No live value yet → fall back to the persisted mapping.
+        assert_eq!(
+            collection_health_status(Some(CollectionHealth::Active), None),
+            HealthStatus::Healthy
+        );
+        assert_eq!(
+            collection_health_status(Some(CollectionHealth::Stale), None),
+            HealthStatus::Broken
+        );
+        assert_eq!(collection_health_status(None, None), HealthStatus::Unknown);
     }
 
     #[test]
