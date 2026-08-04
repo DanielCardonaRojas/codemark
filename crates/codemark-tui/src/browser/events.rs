@@ -409,6 +409,7 @@ impl BrowserLayout {
                 // still mutated the bookmarks that did resolve. It no-ops when no
                 // collection is open.
                 self.right_pane.refresh_step_health(&self.db);
+                self.right_pane.refresh_overview_health(&self.db);
                 Some(true)
             }
             Event::SyncComplete(msg, success) => {
@@ -424,6 +425,7 @@ impl BrowserLayout {
                 // partial pull reports failure yet still writes some), so refresh
                 // its pager dots unconditionally; no-ops when no collection is open.
                 self.right_pane.refresh_step_health(&self.db);
+                self.right_pane.refresh_overview_health(&self.db);
                 Some(true)
             }
             Event::TourPullFinished(tour_id) => {
@@ -461,21 +463,18 @@ impl BrowserLayout {
                 if *generation != self.health_generation {
                     return Some(false);
                 }
-                let mut touches_open_step = false;
                 for (bookmark_id, status) in batch {
+                    let health = HealthStatus::from(*status);
                     if let Some(panel) = self.left_pane.content_panel.get_list_panel_mut(0) {
-                        panel.update_item_health(bookmark_id, HealthStatus::from(*status));
+                        panel.update_item_health(bookmark_id, health);
                     }
-                    touches_open_step |= self
-                        .right_pane
-                        .steps_data
-                        .iter()
-                        .any(|step| step.bookmark.id == *bookmark_id);
-                }
-                // Recompute open collection pager health once if this batch could
-                // have changed a visible step, keeping the dots in sync with the panel.
-                if touches_open_step {
-                    self.right_pane.refresh_step_health(&self.db);
+                    // Mirror the live status into the open step so the preview
+                    // border label and pager dots stay in sync with the list dots.
+                    for step in &mut self.right_pane.steps_data {
+                        if step.bookmark.id == *bookmark_id {
+                            step.health = health;
+                        }
+                    }
                 }
                 Some(true)
             }
@@ -488,12 +487,16 @@ impl BrowserLayout {
                 }
                 Some(true)
             }
-            Event::PreviewFailed { request_id, bookmark_id } => {
+            Event::PreviewFailed { request_id, bookmark_id, unresolved } => {
                 if *request_id == self.active_preview_request {
                     self.inflight_preview = None;
                     // Live resolution failed; fall back to the persisted snapshot
-                    // synchronously (no tree-sitter parse, so it's cheap).
-                    self.right_pane.load_bookmark(&self.db, bookmark_id);
+                    // synchronously (no tree-sitter parse, so it's cheap). The
+                    // health distinguishes query-not-resolving (Unmatched) from
+                    // operational failures (Error).
+                    let health =
+                        if *unresolved { HealthStatus::Broken } else { HealthStatus::Unknown };
+                    self.right_pane.load_bookmark(&self.db, bookmark_id, health);
                     self.right_pane.finish_loading();
                 }
                 Some(true)
@@ -789,7 +792,6 @@ impl BrowserLayout {
         }
         let generation = self.right_pane.collection_generation();
         let db_path = self.db.path().to_path_buf();
-        let head = self.right_pane.head_commit().map(|s| s.to_string());
         let event_handler = self.event_handler.clone();
 
         tokio::task::spawn_blocking(move || {
@@ -801,30 +803,33 @@ impl BrowserLayout {
             use std::collections::HashMap;
 
             let mut caches: HashMap<CL, ParseCache> = HashMap::new();
-            let head_ref = head.as_deref();
             let mut batch: Vec<super::StepLiveUpdate> = Vec::new();
 
             for (index, bm) in &steps {
-                // Health is projected regardless of whether live resolution
-                // succeeds, so the pager dot is accurate either way.
-                let health = crate::browser::tabbed_panel::bookmark_health(bm, &db, head_ref);
-
                 // This runs on a spawn_blocking thread, not a runtime worker.
                 let update =
                     match super::RightPane::resolve_bookmark_live(bm, &db, &mut caches, false) {
-                        Ok((file_path, start_line, end_line, _source)) => super::StepLiveUpdate {
-                            index: *index,
-                            file_path,
-                            line_number: start_line,
-                            line_end: Some(end_line),
-                            resolved: true,
-                            health,
-                        },
-                        Err(_) => {
+                        Ok((file_path, start_line, end_line, _source, live_status)) => {
+                            super::StepLiveUpdate {
+                                index: *index,
+                                file_path,
+                                line_number: start_line,
+                                line_end: Some(end_line),
+                                resolved: true,
+                                health: crate::component::HealthStatus::from(live_status),
+                            }
+                        }
+                        Err(e) => {
                             // Live resolution failed; fall back to the persisted
                             // location (the same one the cheap build used).
                             let (file_path, line_number, line_end, _res) =
                                 super::RightPane::persisted_step_location(&db, bm);
+                            let health = if matches!(e, codemark_core::error::Error::Resolution(_))
+                            {
+                                crate::component::HealthStatus::Broken
+                            } else {
+                                crate::component::HealthStatus::Unknown
+                            };
                             super::StepLiveUpdate {
                                 index: *index,
                                 file_path,
@@ -876,7 +881,11 @@ impl BrowserLayout {
 
         tokio::task::spawn_blocking(move || {
             let Ok(db) = Database::open(&db_path) else {
-                let _ = event_handler.send(Event::PreviewFailed { request_id, bookmark_id });
+                let _ = event_handler.send(Event::PreviewFailed {
+                    request_id,
+                    bookmark_id,
+                    unresolved: false,
+                });
                 return;
             };
 
@@ -906,17 +915,27 @@ impl BrowserLayout {
                 // This closure runs on a spawn_blocking thread, not a runtime worker.
                 false,
             ) {
-                Some(payload) => {
+                Ok(Some(payload)) => {
                     let _ = event_handler.send(Event::PreviewReady { request_id, payload });
                 }
-                None => {
-                    let _ = event_handler.send(Event::PreviewFailed { request_id, bookmark_id });
+                Ok(None) => {
+                    let _ = event_handler.send(Event::PreviewFailed {
+                        request_id,
+                        bookmark_id,
+                        unresolved: false,
+                    });
+                }
+                Err(e) => {
+                    let unresolved = matches!(e, codemark_core::error::Error::Resolution(_));
+                    let _ = event_handler.send(Event::PreviewFailed {
+                        request_id,
+                        bookmark_id,
+                        unresolved,
+                    });
                 }
             }
         });
     }
-
-    // ── Mouse events ─────────────────────────────────────────────────────
 
     /// Update focus based on mouse click position.
     fn handle_mouse_focus(&mut self, event: &Event) {

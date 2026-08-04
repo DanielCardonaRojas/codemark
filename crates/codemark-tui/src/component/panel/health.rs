@@ -78,6 +78,30 @@ impl HealthStatus {
             _ => "●", // Filled dot for all other statuses
         }
     }
+
+    /// Short label for this status, reflecting the live-preview model: a
+    /// bookmark's query is applied live to the files on disk, so there are
+    /// only four outcomes — an exact match, a drifted (partial) match, no
+    /// match at all, or an error (file missing, parse failure, …). Drawn as
+    /// knockout text on the preview-pane border.
+    pub(crate) fn label(&self) -> &'static str {
+        match self {
+            // Exact match — the query resolved perfectly (possibly uncommitted
+            // or from a historical/future commit, but the code is there).
+            HealthStatus::Healthy
+            | HealthStatus::UnanchoredHealthy
+            | HealthStatus::Verified
+            | HealthStatus::Future => "Exact",
+            // Drifted match — the query resolved, but the code has changed.
+            HealthStatus::Drifted | HealthStatus::UnanchoredDrifting | HealthStatus::Outdated => {
+                "Drifted"
+            }
+            // Unmatched — the query does not resolve at all.
+            HealthStatus::Broken | HealthStatus::BrokenUnanchored => "Unmatched",
+            // Error — file missing, parse failure, or not yet resolved.
+            HealthStatus::Unknown => "Error",
+        }
+    }
 }
 
 #[cfg(test)]
@@ -131,5 +155,21 @@ mod tests {
         assert_eq!(HealthStatus::UnanchoredHealthy.symbol(), "●");
         assert_eq!(HealthStatus::Drifted.symbol(), "●");
         assert_eq!(HealthStatus::Broken.symbol(), "●");
+    }
+
+    #[test]
+    fn test_health_status_labels() {
+        // Live-preview model collapses the granular UI statuses into four
+        // outcomes the user can actually distinguish.
+        assert_eq!(HealthStatus::Healthy.label(), "Exact");
+        assert_eq!(HealthStatus::UnanchoredHealthy.label(), "Exact");
+        assert_eq!(HealthStatus::Verified.label(), "Exact");
+        assert_eq!(HealthStatus::Future.label(), "Exact");
+        assert_eq!(HealthStatus::Drifted.label(), "Drifted");
+        assert_eq!(HealthStatus::UnanchoredDrifting.label(), "Drifted");
+        assert_eq!(HealthStatus::Outdated.label(), "Drifted");
+        assert_eq!(HealthStatus::Broken.label(), "Unmatched");
+        assert_eq!(HealthStatus::BrokenUnanchored.label(), "Unmatched");
+        assert_eq!(HealthStatus::Unknown.label(), "Error");
     }
 }

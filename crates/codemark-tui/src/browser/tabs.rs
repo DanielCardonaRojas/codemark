@@ -4,11 +4,13 @@ use codemark_core::sort::SortMethod;
 use ratatui::{
     buffer::Buffer,
     layout::{Alignment, Rect},
-    style::Style,
+    style::{Color, Style},
     text::{Line, Span},
     widgets::{Widget, Wrap},
 };
 use unicode_width::{UnicodeWidthChar, UnicodeWidthStr};
+
+use crate::component::HealthStatus;
 
 /// Nerd Font glyph shown for a [`SortMethod`] beside the pane-number badge.
 ///
@@ -138,6 +140,77 @@ pub fn render_pane_number_badge(area: Rect, buf: &mut Buffer, number: u8, style:
         if let Some(cell) = buf.cell_mut((x + i as u16, y)) {
             cell.set_char(c);
             cell.set_style(style);
+        }
+    }
+}
+
+/// Display columns the knockout-text health label reserves on the top border to
+/// the left of the sort-icon/pane-number badge group: a one-column gap, then
+/// the filled box (one column of padding on each side of the label text). The
+/// gap to the badge's right is already provided by the sort-icon blank or the
+/// badge separator, so callers add only this width to the title reservation.
+pub fn health_label_reserved_width(health: HealthStatus) -> u16 {
+    health.label().width() as u16 + 3 // gap(1) + pad(1) + label + pad(1)
+}
+
+/// Total columns reserved on the right of the top border for the pane-number
+/// badge, an optional sort glyph, and an optional health label — all drawn left
+/// to right. Callers cap a left-aligned title to `area.width - 1 - reserved`
+/// so it never collides with any of them.
+pub fn top_border_reserved_width_full(
+    number: u8,
+    has_sort_icon: bool,
+    health: Option<HealthStatus>,
+) -> u16 {
+    top_border_reserved_width(number, has_sort_icon) + health.map_or(0, health_label_reserved_width)
+}
+
+/// Draw the health label as knockout text — a filled box (background =
+/// `fill_color`) with the label text knocked out in the theme background
+/// ([`palette().inverse`](crate::theme::Palette::inverse)) — on the top border,
+/// positioned just left of the sort-icon/pane-number badge.
+///
+/// `number` and `has_sort_icon` must match the badge and sort glyph (if any)
+/// drawn by the caller so the label lines up to their left. The one-column gap
+/// to the label's left is the existing `─` border line (left untouched); the
+/// gap to its right is the sort-icon blank or the badge separator.
+pub fn render_health_label(
+    area: Rect,
+    buf: &mut Buffer,
+    health: HealthStatus,
+    fill_color: Color,
+    number: u8,
+    has_sort_icon: bool,
+) {
+    let badge_width = format!("[{number}]").width() as u16;
+    let badge_x = area.right().saturating_sub(badge_width + 2);
+
+    // Right edge of the health box: just left of the sort-icon slot, or the
+    // badge separator when there's no sort icon.
+    let box_right = if has_sort_icon {
+        badge_x.saturating_sub(SORT_ICON_WIDTH)
+    } else {
+        badge_x.saturating_sub(1)
+    };
+
+    let text = health.label();
+    let text_w = text.width() as u16;
+    let box_w = text_w + 2; // pad(1) + text + pad(1)
+    let box_left = box_right.saturating_sub(box_w);
+
+    // Need the full box plus its left gap after the corner.
+    if box_left <= area.left() + 1 {
+        return;
+    }
+
+    let y = area.top();
+    let label_style = Style::default().bg(fill_color).fg(crate::theme::palette().inverse);
+
+    // Left padding, label text, right padding — all part of the filled box.
+    for (i, c) in format!(" {text} ").chars().enumerate() {
+        if let Some(cell) = buf.cell_mut((box_left + i as u16, y)) {
+            cell.set_char(c);
+            cell.set_style(label_style);
         }
     }
 }
@@ -751,5 +824,45 @@ mod tests {
 
         // Out of bounds should be safe (no panic)
         tabs.set_tab_label(10, "Invalid");
+    }
+
+    #[test]
+    fn test_health_label_is_knockout_text() {
+        use crate::component::HealthStatus;
+        use ratatui::buffer::Buffer;
+        use ratatui::layout::Rect;
+
+        let area = Rect { x: 0, y: 0, width: 60, height: 3 };
+        let mut buf = Buffer::empty(area);
+
+        // Simulate the border line the Block would draw.
+        for x in 0..area.width {
+            if let Some(cell) = buf.cell_mut((x, 0)) {
+                cell.set_char('─');
+            }
+        }
+
+        let fill = crate::theme::palette().accent;
+        let style = ratatui::style::Style::default().fg(fill);
+        super::render_pane_number_badge(area, &mut buf, 4, style);
+        super::render_health_label(area, &mut buf, HealthStatus::Healthy, fill, 4, false);
+        // Find the 'E' cell of "Exact" and verify knockout styling:
+        // bg = fill color (the box), fg = palette.inverse (text subtracted).
+        let mut found = None;
+        for x in 0..area.width {
+            if let Some(cell) = buf.cell((x, 0)) {
+                if cell.symbol().contains('E') {
+                    found = Some(cell);
+                    break;
+                }
+            }
+        }
+        let target = found.expect("'E' cell should exist");
+        assert_eq!(target.style().bg, Some(fill), "background should be the fill color");
+        assert_eq!(
+            target.style().fg,
+            Some(crate::theme::palette().inverse),
+            "foreground should be the theme background (knockout)"
+        );
     }
 }

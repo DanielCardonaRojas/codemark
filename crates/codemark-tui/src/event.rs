@@ -68,6 +68,9 @@ pub enum Event {
         request_id: u64,
         /// Bookmark that failed to resolve.
         bookmark_id: String,
+        /// `true` when the query does not resolve (Unmatched); `false` for
+        /// operational failures like a missing file or parse error (Error).
+        unresolved: bool,
     },
     /// The Info/Details/Comments markdown for a collection step finished
     /// rendering on a background task. The code pane is updated inline on
