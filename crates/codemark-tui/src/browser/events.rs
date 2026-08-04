@@ -840,10 +840,10 @@ impl BrowserLayout {
             let db_path_ref = &db_path;
 
             for (c, _count) in &collections {
-                // `list_bookmarks_in_collection` already excludes archived
-                // bookmarks (it routes through `list_bookmarks`, which drops
-                // `r.health = 'archived'` by default), matching the persisted
-                // aggregation rule.
+                // `list_bookmarks` does *not* exclude archived bookmarks (unlike
+                // `search_bookmarks`), so filter them here to match the persisted
+                // aggregation rule (`r.health != 'archived'`). An all-archived
+                // collection then has no live bookmarks and emits None.
                 let Ok(bookmarks) = db.list_bookmarks_in_collection(&c.id) else {
                     // Emit None so the handler clears any stale cached status
                     // instead of leaving the previous value lingering.
@@ -853,6 +853,9 @@ impl BrowserLayout {
 
                 let mut worst: Option<LiveUIStatus> = None;
                 for bm in &bookmarks {
+                    if bm.health == codemark_core::engine::bookmark::BookmarkHealth::Archived {
+                        continue;
+                    }
                     let status =
                         (|| -> std::result::Result<LiveUIStatus, codemark_core::error::Error> {
                             use std::str::FromStr;

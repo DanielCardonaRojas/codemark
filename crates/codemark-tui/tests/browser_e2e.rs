@@ -718,6 +718,39 @@ async fn collection_overview_label_reflects_live_bookmark_health() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn all_archived_collection_shows_no_live_health_label() {
+    let sandbox = Sandbox::new();
+    // The function is present, so without the archived filter the bookmark would
+    // resolve live to Exact — but the bookmark is archived, so the collection has
+    // no live bookmarks and must show no health label.
+    sandbox.write_repo_file("src/auth.rs", "fn login() -> bool { true }\n");
+    let mut bm = sample_bookmark("bm-arch", "fn login", "src/auth.rs");
+    bm.health = BookmarkHealth::Archived;
+    sandbox.db.insert_bookmark(&bm).expect("seed archived bookmark");
+    sandbox
+        .db
+        .insert_collection(&sample_collection("col-arch", "arch-only"))
+        .expect("seed collection");
+    sandbox
+        .db
+        .add_to_collection("col-arch", &["bm-arch".to_string()])
+        .expect("populate collection");
+    let (mut layout, _sandbox, mut rx) = make_layout_with_rx(sandbox);
+
+    // Let the background collection-health task run: it filters archived
+    // bookmarks, so the only collection emits None and clears to Unknown.
+    pump_pending_events(&mut layout, &mut rx).await;
+    pump_pending_events(&mut layout, &mut rx).await;
+
+    key_char(&mut layout, ']'); // Bookmarks -> Collections (shows col-arch overview)
+    let rendered = render_to_string(&layout, 140, 40);
+    assert!(
+        !rendered.contains("Exact"),
+        "an all-archived collection must not show a live health label; got:\n{rendered}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn remote_tour_overview_survives_a_panel_refresh() {
     use codemark_core::sync::RemoteTourSummary;
 

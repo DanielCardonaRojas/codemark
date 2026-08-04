@@ -349,8 +349,14 @@ impl BrowserLayout {
     /// arrives and the handler corrects it.
     fn load_collection_overview_live(&mut self, id: &str) {
         self.right_pane.load_collection_overview(&self.db, id);
-        if let Some(&h) = self.collection_live_health.get(id) {
-            self.right_pane.overview_health = Some(h);
+        match self.collection_live_health.get(id).copied() {
+            // A real live status overrides the persisted snapshot.
+            Some(h) if h != HealthStatus::Unknown => self.right_pane.overview_health = Some(h),
+            // Unknown means the collection has no live bookmarks (empty or
+            // all-archived): there is no health to report, so show no label
+            // rather than the "Error" label Unknown would otherwise render.
+            Some(_) => self.right_pane.overview_health = None,
+            None => {}
         }
     }
 
