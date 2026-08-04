@@ -851,7 +851,7 @@ impl BrowserLayout {
         if db_path.exists() {
             self.db = Database::open(&db_path)?;
             self.right_pane.refresh_head_commit(&self.db);
-            self.session_cache.clear();
+            self.collection_live_health.clear();
             self.cached_remote_tours.clear();
             self.pending_remote_repos = None;
             self.right_pane.active_remote_tour_id = None;

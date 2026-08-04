@@ -831,7 +831,14 @@ impl BrowserLayout {
             let handle = tokio::runtime::Handle::current();
             let provider = codemark_core::vfs::LocalFileProvider;
 
-            let Ok(db) = Database::open(&db_path) else { return };
+            let Ok(db) = Database::open(&db_path) else {
+                tracing::debug!(
+                    target: "codemark::ui",
+                    generation,
+                    "collection health task: could not open database"
+                );
+                return;
+            };
 
             use codemark_core::parser::languages::{Language as CL, ParseCache};
             use std::collections::HashMap;
@@ -917,6 +924,13 @@ impl BrowserLayout {
             if !batch.is_empty() {
                 let _ = event_handler.send(Event::CollectionHealthBatch { generation, batch });
             }
+
+            tracing::debug!(
+                target: "codemark::ui",
+                generation,
+                collection_count = collections.len(),
+                "collection health task complete"
+            );
         });
     }
 
