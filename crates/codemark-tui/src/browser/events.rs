@@ -845,6 +845,9 @@ impl BrowserLayout {
                 // `r.health = 'archived'` by default), matching the persisted
                 // aggregation rule.
                 let Ok(bookmarks) = db.list_bookmarks_in_collection(&c.id) else {
+                    // Emit None so the handler clears any stale cached status
+                    // instead of leaving the previous value lingering.
+                    batch.push((c.id.clone(), None));
                     continue;
                 };
 
