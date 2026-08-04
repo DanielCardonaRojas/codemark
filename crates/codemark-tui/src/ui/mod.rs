@@ -450,9 +450,7 @@ pub fn render_notification(
 
     let text = Line::from(vec![Span::styled(icon, style), Span::styled(message, style)]);
 
-    let paragraph = Paragraph::new(text)
-        .style(style.bg(crate::theme::palette().dim))
-        .alignment(Alignment::Left);
+    let paragraph = Paragraph::new(text).style(style).alignment(Alignment::Left);
 
     // Render at the bottom of the area
     let notification_area =
