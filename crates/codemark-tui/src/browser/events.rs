@@ -844,13 +844,21 @@ impl BrowserLayout {
                 // `search_bookmarks`), so filter them here to match the persisted
                 // aggregation rule (`r.health != 'archived'`). An all-archived
                 // collection then has no live bookmarks and emits None.
-                let Ok(bookmarks) = db.list_bookmarks_in_collection(&c.id) else {
-                    // A transient query failure (e.g. a locked DB) is not
-                    // evidence the collection is empty, so skip it and keep the
-                    // last-known cached status rather than wiping it to Unknown.
-                    // A later successful pass — or the genuine empty/all-archived
-                    // case below — corrects it.
-                    continue;
+                // A transient query failure (e.g. a momentary SQLite lock) is
+                // retried once so a populated collection's health doesn't linger
+                // stale on a hiccup. A *persisting* failure keeps the last-known
+                // cached status rather than wiping it to Unknown (which would
+                // conflate the error with a genuinely empty/all-archived
+                // collection); the next refresh pass corrects it.
+                let bookmarks = match db.list_bookmarks_in_collection(&c.id) {
+                    Ok(b) => b,
+                    Err(_) => {
+                        std::thread::sleep(std::time::Duration::from_millis(50));
+                        match db.list_bookmarks_in_collection(&c.id) {
+                            Ok(b) => b,
+                            Err(_) => continue,
+                        }
+                    }
                 };
 
                 let mut worst: Option<LiveUIStatus> = None;
