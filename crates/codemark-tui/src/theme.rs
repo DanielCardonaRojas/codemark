@@ -391,18 +391,19 @@ impl Palette {
         }
 
         // Health cues are resolved separately from the roles above: a `.tmTheme`
-        // carries no palette, so we search a pool of syntax-scope colors for the
-        // nearest real red/yellow/green hue rather than trusting any single scope
-        // (which may be off-hue). A target with no qualifying candidate keeps its
-        // ANSI default.
+        // carries no palette, so we search a pool of syntax-scope colors for a
+        // real red/yellow/green hue rather than trusting any single scope (which
+        // may be off-hue). A target with no qualifying candidate keeps its ANSI
+        // default.
         let candidates = health_candidates(&hl, theme);
-        if let Some(c) = nearest_hue(&candidates, HUE_GREEN) {
+        let HealthHues { good, warn, bad } = resolve_health_hues(&candidates);
+        if let Some(c) = good {
             palette.health_good = c;
         }
-        if let Some(c) = nearest_hue(&candidates, HUE_YELLOW) {
+        if let Some(c) = warn {
             palette.health_warn = c;
         }
-        if let Some(c) = nearest_hue(&candidates, HUE_RED) {
+        if let Some(c) = bad {
             palette.health_bad = c;
         }
 
@@ -418,6 +419,14 @@ impl Palette {
 const HUE_RED: f32 = 0.0;
 const HUE_YELLOW: f32 = 50.0;
 const HUE_GREEN: f32 = 130.0;
+
+/// The nearest theme candidate for each health role, or `None` where no
+/// candidate qualified (the caller keeps its ANSI fallback).
+struct HealthHues {
+    good: Option<Color>,
+    warn: Option<Color>,
+    bad: Option<Color>,
+}
 
 /// A candidate must be within this many degrees of a target hue to qualify.
 const HUE_TOLERANCE: f32 = 40.0;
@@ -454,23 +463,49 @@ fn health_candidates(hl: &Highlighter, theme: &Theme) -> Vec<Color> {
     colors
 }
 
-/// Pick the candidate closest to `target` hue that clears the saturation and
-/// lightness floors and lies within [`HUE_TOLERANCE`]. Returns `None` when no
-/// candidate qualifies, so the caller can keep its fallback.
-fn nearest_hue(candidates: &[Color], target: f32) -> Option<Color> {
-    candidates
-        .iter()
-        .filter_map(|&c| {
-            let Color::Rgb(r, g, b) = c else { return None };
-            let (h, s, l) = rgb_to_hsl(r, g, b);
-            if s < SATURATION_FLOOR || !(LIGHTNESS_MIN..=LIGHTNESS_MAX).contains(&l) {
-                return None;
-            }
-            let dist = hue_distance(h, target);
-            (dist <= HUE_TOLERANCE).then_some((c, dist))
-        })
-        .min_by(|a, b| a.1.total_cmp(&b.1))
-        .map(|(c, _)| c)
+/// Assign each candidate to the health role (green/yellow/red) whose target hue
+/// it is *nearest* to, then keep the closest candidate for each role.
+///
+/// Assigning to the single nearest target — rather than testing each role
+/// independently — is what keeps the three cues distinct. The red and yellow
+/// acceptance windows overlap in the orange band (≈10°–40°), so an independent
+/// test would let one orange candidate fill *both* `bad` and `warn` and collapse
+/// the distinction. Here that candidate lands in exactly one role.
+///
+/// A candidate is ignored entirely if it fails the saturation/lightness floors
+/// or if even its nearest target is beyond [`HUE_TOLERANCE`]; a role with no
+/// assigned candidate stays `None` so the caller keeps its ANSI fallback.
+fn resolve_health_hues(candidates: &[Color]) -> HealthHues {
+    // Ordered [green, yellow, red] to match the destructuring in the caller;
+    // ties in `min_by` resolve to the earlier target, deterministically.
+    let targets = [HUE_GREEN, HUE_YELLOW, HUE_RED];
+    let mut best: [Option<(Color, f32)>; 3] = [None, None, None];
+
+    for &c in candidates {
+        let Color::Rgb(r, g, b) = c else { continue };
+        let (h, s, l) = rgb_to_hsl(r, g, b);
+        if s < SATURATION_FLOOR || !(LIGHTNESS_MIN..=LIGHTNESS_MAX).contains(&l) {
+            continue;
+        }
+        let (idx, dist) = targets
+            .iter()
+            .enumerate()
+            .map(|(i, &t)| (i, hue_distance(h, t)))
+            .min_by(|a, b| a.1.total_cmp(&b.1))
+            .expect("targets is non-empty");
+        if dist > HUE_TOLERANCE {
+            continue;
+        }
+        if best[idx].is_none_or(|(_, d)| dist < d) {
+            best[idx] = Some((c, dist));
+        }
+    }
+
+    HealthHues {
+        good: best[0].map(|(c, _)| c),
+        warn: best[1].map(|(c, _)| c),
+        bad: best[2].map(|(c, _)| c),
+    }
 }
 
 /// Shortest angular distance between two hues, in degrees (0..=180).
@@ -763,6 +798,18 @@ mod tests {
         assert_eq!(p.health_good, Color::Green);
         assert_eq!(p.health_warn, Color::Yellow);
         assert_eq!(p.health_bad, Color::Red);
+    }
+
+    #[test]
+    fn from_theme_orange_candidate_fills_only_one_role() {
+        // Orange (hue ~30°) sits in the overlap of the red and yellow acceptance
+        // windows. It must fill exactly one role (yellow, its nearest target) —
+        // never both — so the warn and bad cues stay distinct. The unfilled role
+        // keeps its ANSI fallback.
+        let theme = theme_with_scopes(&[("string", (0xFF, 0x80, 0x00))]); // hue 30
+        let p = Palette::from_theme(&theme);
+        assert_eq!(p.health_warn, Color::Rgb(0xFF, 0x80, 0x00));
+        assert_eq!(p.health_bad, Color::Red, "orange must not also fill the bad role");
     }
 
     #[test]

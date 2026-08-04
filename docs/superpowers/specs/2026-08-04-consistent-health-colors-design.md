@@ -62,13 +62,20 @@ real red/yellow/green:
    `entity.name.type`, `variable`, `support.type`, `invalid`) plus the global
    foreground. Dedupe.
 2. Convert each candidate to HSL.
-3. For each target hue — **red ≈ 0°, yellow ≈ 50°, green ≈ 130°** — keep only
-   candidates that clear a **saturation floor** (≈ 0.25) and sit in a
+3. Keep only candidates that clear a **saturation floor** (≈ 0.25) and sit in a
    **lightness band** (≈ 0.2–0.85), rejecting grays and near-black/near-white.
-   Among candidates within a **±40° hue tolerance**, pick the minimum hue
-   distance.
-4. If a target has no qualifying candidate, that field keeps its
+4. Assign each surviving candidate to the **single nearest** target hue — **red
+   ≈ 0°, yellow ≈ 50°, green ≈ 130°** — provided that nearest target is within a
+   **±40° tolerance**. Within each role, keep the closest candidate.
+5. If a target has no assigned candidate, that field keeps its
    `Palette::default()` value (ANSI).
+
+Assigning to the *single nearest* target (rather than testing each role
+independently) is what keeps the three cues distinct. The red and yellow
+acceptance windows overlap in the orange band (≈ 10°–40°); an independent test
+would let one orange candidate fill *both* `bad` and `warn` and collapse the
+distinction. Nearest-target assignment routes that candidate into exactly one
+role.
 
 The HSL conversion and hue-matching live in small private helpers in `theme.rs`,
 used only by `from_theme`.
@@ -102,6 +109,8 @@ existing `test_health_status_colors` assertions still hold.
   at ANSI.
 - **Saturation floor**: a desaturated near-gray candidate in the green hue range
   is rejected in favor of the ANSI fallback.
+- **Overlap**: a single orange candidate (in the red/yellow overlap band) fills
+  only its nearest role (yellow), leaving the other at its ANSI fallback.
 - Existing `health.rs` color tests updated for the new field routing (values
   unchanged under the default palette).
 
