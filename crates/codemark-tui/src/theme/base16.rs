@@ -83,6 +83,11 @@ impl Base16Scheme {
             info: c(0x0D),     // blue
             marker: c(0x0E),   // keywords (magenta/purple)
             inverse: c(0x00),  // background, for text on accent fills
+            // Health cues trust the canonical base16 slots (the scheme author
+            // deliberately assigns these), giving a real red/yellow/green.
+            health_good: c(0x0B), // green
+            health_warn: c(0x0A), // yellow
+            health_bad: c(0x08),  // red
         }
     }
 

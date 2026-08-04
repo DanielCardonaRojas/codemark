@@ -307,6 +307,17 @@ pub struct Palette {
     pub marker: Color,
     /// Foreground drawn on inverted/highlighted backgrounds. Default: black.
     pub inverse: Color,
+    /// Health "good" cue (healthy). A real green in every theme. Default: green.
+    ///
+    /// Dedicated to the health indicator and resolved to an actual green/yellow/
+    /// red hue per theme (see [`Palette::from_theme`]), so the health state reads
+    /// consistently regardless of what the theme assigns to `success`/`warning`/
+    /// `error`. Falls back to the ANSI default when a theme has no such hue.
+    pub health_good: Color,
+    /// Health "warn" cue (drifted). A real yellow in every theme. Default: yellow.
+    pub health_warn: Color,
+    /// Health "bad" cue (broken). A real red in every theme. Default: red.
+    pub health_bad: Color,
 }
 
 impl Default for Palette {
@@ -322,6 +333,9 @@ impl Default for Palette {
             info: Color::Blue,
             marker: Color::Magenta,
             inverse: Color::Black,
+            health_good: Color::Green,
+            health_warn: Color::Yellow,
+            health_bad: Color::Red,
         }
     }
 }
@@ -376,8 +390,155 @@ impl Palette {
             palette.marker = c;
         }
 
+        // Health cues are resolved separately from the roles above: a `.tmTheme`
+        // carries no palette, so we search a pool of syntax-scope colors for a
+        // real red/yellow/green hue rather than trusting any single scope (which
+        // may be off-hue). A target with no qualifying candidate keeps its ANSI
+        // default.
+        let candidates = health_candidates(&hl, theme);
+        let HealthHues { good, warn, bad } = resolve_health_hues(&candidates);
+        if let Some(c) = good {
+            palette.health_good = c;
+        }
+        if let Some(c) = warn {
+            palette.health_warn = c;
+        }
+        if let Some(c) = bad {
+            palette.health_bad = c;
+        }
+
         palette
     }
+}
+
+// ---------------------------------------------------------------------------
+// Health-color hue search
+// ---------------------------------------------------------------------------
+
+/// Target hues (degrees on the color wheel) the health cues snap to.
+const HUE_RED: f32 = 0.0;
+const HUE_YELLOW: f32 = 50.0;
+const HUE_GREEN: f32 = 130.0;
+
+/// The nearest theme candidate for each health role, or `None` where no
+/// candidate qualified (the caller keeps its ANSI fallback).
+struct HealthHues {
+    good: Option<Color>,
+    warn: Option<Color>,
+    bad: Option<Color>,
+}
+
+/// A candidate must be within this many degrees of a target hue to qualify.
+const HUE_TOLERANCE: f32 = 40.0;
+/// Reject washed-out candidates: anything less saturated than this is treated as
+/// a gray with no meaningful hue.
+const SATURATION_FLOOR: f32 = 0.25;
+/// Reject near-black and near-white candidates, which read poorly as a cue.
+const LIGHTNESS_MIN: f32 = 0.20;
+const LIGHTNESS_MAX: f32 = 0.85;
+
+/// Collect the pool of colors a `.tmTheme` might offer as a red/yellow/green,
+/// drawn from common syntax scopes plus the global foreground.
+fn health_candidates(hl: &Highlighter, theme: &Theme) -> Vec<Color> {
+    const SCOPES: &[&str] = &[
+        "string",
+        "constant.numeric",
+        "constant.language",
+        "keyword",
+        "entity.name.function",
+        "entity.name.type",
+        "variable",
+        "support.type",
+        "invalid",
+    ];
+    let mut colors: Vec<Color> = SCOPES.iter().filter_map(|s| scope_color(hl, s)).collect();
+    if let Some(fg) = theme.settings.foreground.and_then(to_rgb) {
+        colors.push(fg);
+    }
+    colors.sort_by_key(|c| match c {
+        Color::Rgb(r, g, b) => (*r, *g, *b),
+        _ => (0, 0, 0),
+    });
+    colors.dedup();
+    colors
+}
+
+/// Assign each candidate to the health role (green/yellow/red) whose target hue
+/// it is *nearest* to, then keep the closest candidate for each role.
+///
+/// Assigning to the single nearest target — rather than testing each role
+/// independently — is what keeps the three cues distinct. The red and yellow
+/// acceptance windows overlap in the orange band (≈10°–40°), so an independent
+/// test would let one orange candidate fill *both* `bad` and `warn` and collapse
+/// the distinction. Here that candidate lands in exactly one role.
+///
+/// A candidate is ignored entirely if it fails the saturation/lightness floors
+/// or if even its nearest target is beyond [`HUE_TOLERANCE`]; a role with no
+/// assigned candidate stays `None` so the caller keeps its ANSI fallback.
+fn resolve_health_hues(candidates: &[Color]) -> HealthHues {
+    // Ordered [green, yellow, red] to match the destructuring in the caller;
+    // ties in `min_by` resolve to the earlier target, deterministically.
+    let targets = [HUE_GREEN, HUE_YELLOW, HUE_RED];
+    let mut best: [Option<(Color, f32)>; 3] = [None, None, None];
+
+    for &c in candidates {
+        let Color::Rgb(r, g, b) = c else { continue };
+        let (h, s, l) = rgb_to_hsl(r, g, b);
+        if s < SATURATION_FLOOR || !(LIGHTNESS_MIN..=LIGHTNESS_MAX).contains(&l) {
+            continue;
+        }
+        let (idx, dist) = targets
+            .iter()
+            .enumerate()
+            .map(|(i, &t)| (i, hue_distance(h, t)))
+            .min_by(|a, b| a.1.total_cmp(&b.1))
+            .expect("targets is non-empty");
+        if dist > HUE_TOLERANCE {
+            continue;
+        }
+        if best[idx].is_none_or(|(_, d)| dist < d) {
+            best[idx] = Some((c, dist));
+        }
+    }
+
+    HealthHues {
+        good: best[0].map(|(c, _)| c),
+        warn: best[1].map(|(c, _)| c),
+        bad: best[2].map(|(c, _)| c),
+    }
+}
+
+/// Shortest angular distance between two hues, in degrees (0..=180).
+fn hue_distance(a: f32, b: f32) -> f32 {
+    let d = (a - b).abs() % 360.0;
+    if d > 180.0 { 360.0 - d } else { d }
+}
+
+/// Convert an RGB color to HSL: hue in degrees (0..360), saturation and
+/// lightness in 0.0..=1.0.
+fn rgb_to_hsl(r: u8, g: u8, b: u8) -> (f32, f32, f32) {
+    let (r, g, b) = (r as f32 / 255.0, g as f32 / 255.0, b as f32 / 255.0);
+    let max = r.max(g).max(b);
+    let min = r.min(g).min(b);
+    let delta = max - min;
+
+    let l = (max + min) / 2.0;
+    if delta == 0.0 {
+        return (0.0, 0.0, l);
+    }
+
+    let s = delta / (1.0 - (2.0 * l - 1.0).abs());
+    let mut h = if max == r {
+        60.0 * (((g - b) / delta) % 6.0)
+    } else if max == g {
+        60.0 * (((b - r) / delta) + 2.0)
+    } else {
+        60.0 * (((r - g) / delta) + 4.0)
+    };
+    if h < 0.0 {
+        h += 360.0;
+    }
+    (h, s, l)
 }
 
 /// Convert a syntect color to a ratatui RGB color, treating fully transparent
@@ -429,6 +590,33 @@ pub fn palette() -> Palette {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use syntect::highlighting::{ScopeSelectors, StyleModifier, ThemeItem, ThemeSettings};
+
+    /// Build a syntect [`Theme`] whose listed scopes carry the given RGB
+    /// foregrounds, with a neutral-gray default foreground so unmatched scopes
+    /// don't introduce spurious colored candidates. Used to drive the health-cue
+    /// hue search without depending on a real `.tmTheme`.
+    fn theme_with_scopes(scopes: &[(&str, (u8, u8, u8))]) -> Theme {
+        let items = scopes
+            .iter()
+            .filter_map(|(sel, (r, g, b))| {
+                ScopeSelectors::from_str(sel).ok().map(|scope| ThemeItem {
+                    scope,
+                    style: StyleModifier {
+                        foreground: Some(SyntectColor { r: *r, g: *g, b: *b, a: 0xFF }),
+                        background: None,
+                        font_style: None,
+                    },
+                })
+            })
+            .collect();
+        let settings = ThemeSettings {
+            foreground: Some(SyntectColor { r: 0x80, g: 0x80, b: 0x80, a: 0xFF }),
+            background: Some(SyntectColor { r: 0x10, g: 0x10, b: 0x10, a: 0xFF }),
+            ..ThemeSettings::default()
+        };
+        Theme { name: Some("Test".into()), author: None, settings, scopes: items }
+    }
 
     /// A minimal valid `.tmTheme` plist used to exercise the user-directory path
     /// without depending on any vendored theme files.
@@ -563,5 +751,90 @@ mod tests {
         let mut deduped = names.clone();
         deduped.dedup();
         assert_eq!(names.len(), deduped.len(), "available() must be deduped");
+    }
+
+    #[test]
+    fn palette_default_health_is_ansi() {
+        let p = Palette::default();
+        assert_eq!(p.health_good, Color::Green);
+        assert_eq!(p.health_warn, Color::Yellow);
+        assert_eq!(p.health_bad, Color::Red);
+    }
+
+    #[test]
+    fn base16_scheme_health_uses_canonical_slots() {
+        let registry = registry_with_no_user_dir();
+        let (_theme, palette) = registry.resolve_full("Catppuccin Mocha");
+        assert_eq!(palette.health_good, Color::Rgb(0xa6, 0xe3, 0xa1)); // base0B green
+        assert_eq!(palette.health_warn, Color::Rgb(0xf9, 0xe2, 0xaf)); // base0A yellow
+        assert_eq!(palette.health_bad, Color::Rgb(0xf3, 0x8b, 0xa8)); // base08 red
+    }
+
+    #[test]
+    fn from_theme_finds_red_yellow_green_by_hue() {
+        // String is green, numeric is yellow, invalid is red — regardless of the
+        // conventional role each scope plays, the health cues snap to the hue.
+        let theme = theme_with_scopes(&[
+            ("string", (0x00, 0xC8, 0x00)),           // green (hue 120)
+            ("constant.numeric", (0xC8, 0xC8, 0x00)), // yellow (hue 60)
+            ("invalid", (0xC8, 0x00, 0x00)),          // red (hue 0)
+        ]);
+        let p = Palette::from_theme(&theme);
+        assert_eq!(p.health_good, Color::Rgb(0x00, 0xC8, 0x00));
+        assert_eq!(p.health_warn, Color::Rgb(0xC8, 0xC8, 0x00));
+        assert_eq!(p.health_bad, Color::Rgb(0xC8, 0x00, 0x00));
+    }
+
+    #[test]
+    fn from_theme_falls_back_when_no_hue_qualifies() {
+        // Only grayscale scope colors: no candidate has a usable hue, so every
+        // health cue keeps its ANSI default.
+        let theme = theme_with_scopes(&[
+            ("string", (0x88, 0x88, 0x88)),
+            ("keyword", (0x55, 0x55, 0x55)),
+            ("invalid", (0xBB, 0xBB, 0xBB)),
+        ]);
+        let p = Palette::from_theme(&theme);
+        assert_eq!(p.health_good, Color::Green);
+        assert_eq!(p.health_warn, Color::Yellow);
+        assert_eq!(p.health_bad, Color::Red);
+    }
+
+    #[test]
+    fn from_theme_orange_candidate_fills_only_one_role() {
+        // Orange (hue ~30°) sits in the overlap of the red and yellow acceptance
+        // windows. It must fill exactly one role (yellow, its nearest target) —
+        // never both — so the warn and bad cues stay distinct. The unfilled role
+        // keeps its ANSI fallback.
+        let theme = theme_with_scopes(&[("string", (0xFF, 0x80, 0x00))]); // hue 30
+        let p = Palette::from_theme(&theme);
+        assert_eq!(p.health_warn, Color::Rgb(0xFF, 0x80, 0x00));
+        assert_eq!(p.health_bad, Color::Red, "orange must not also fill the bad role");
+    }
+
+    #[test]
+    fn from_theme_rejects_desaturated_candidate() {
+        // A green-*hued* but washed-out candidate is below the saturation floor,
+        // so it's rejected and health_good falls back to ANSI green.
+        let theme = theme_with_scopes(&[("string", (0x6E, 0x82, 0x6E))]);
+        let p = Palette::from_theme(&theme);
+        assert_eq!(p.health_good, Color::Green);
+    }
+
+    #[test]
+    fn rgb_to_hsl_matches_known_values() {
+        // Pure primaries land on their canonical hues.
+        assert!((rgb_to_hsl(255, 0, 0).0 - 0.0).abs() < 0.5);
+        assert!((rgb_to_hsl(0, 255, 0).0 - 120.0).abs() < 0.5);
+        assert!((rgb_to_hsl(0, 0, 255).0 - 240.0).abs() < 0.5);
+        // Gray has zero saturation.
+        assert!(rgb_to_hsl(0x80, 0x80, 0x80).1 < f32::EPSILON);
+    }
+
+    #[test]
+    fn hue_distance_wraps_around_the_wheel() {
+        assert!((hue_distance(350.0, 10.0) - 20.0).abs() < 0.5);
+        assert!((hue_distance(10.0, 350.0) - 20.0).abs() < 0.5);
+        assert!((hue_distance(0.0, 180.0) - 180.0).abs() < 0.5);
     }
 }

@@ -59,13 +59,15 @@ impl HealthStatus {
     /// Get the color for this health status.
     pub(crate) fn color(&self) -> Color {
         match self {
-            HealthStatus::Healthy => crate::theme::palette().success,
-            HealthStatus::UnanchoredHealthy => crate::theme::palette().warning,
-            HealthStatus::Drifted => crate::theme::palette().warning,
+            HealthStatus::Healthy => crate::theme::palette().health_good,
+            HealthStatus::UnanchoredHealthy => crate::theme::palette().health_warn,
+            HealthStatus::Drifted => crate::theme::palette().health_warn,
             HealthStatus::UnanchoredDrifting => Color::Rgb(255, 165, 0), // Orange
-            HealthStatus::Broken | HealthStatus::BrokenUnanchored => crate::theme::palette().error,
-            HealthStatus::Verified => crate::theme::palette().success,
-            HealthStatus::Outdated => crate::theme::palette().warning,
+            HealthStatus::Broken | HealthStatus::BrokenUnanchored => {
+                crate::theme::palette().health_bad
+            }
+            HealthStatus::Verified => crate::theme::palette().health_good,
+            HealthStatus::Outdated => crate::theme::palette().health_warn,
             HealthStatus::Unknown => crate::theme::palette().dim,
             HealthStatus::Future => crate::theme::palette().info,
         }
