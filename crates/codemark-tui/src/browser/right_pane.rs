@@ -263,12 +263,30 @@ impl RightPane {
     /// while its overview is on screen (where `steps_data` is empty so
     /// [`refresh_step_health`](Self::refresh_step_health) is a no-op).
     pub fn refresh_overview_health(&mut self, db: &Database) {
-        let Some(id) = &self.active_collection_id else { return };
+        let Some(id) = self.active_collection_id.clone() else { return };
+
+        // A pull re-imports an existing collection under a *fresh* id and
+        // deletes the old row, so the id captured when the overview was opened
+        // can be dangling by the time the sync completes. Re-anchor onto the
+        // replacement by name — the import carries the name over — otherwise
+        // the lookup below misses and the pre-pull label stays on screen.
+        let id = match db.get_collection_by_id(&id) {
+            Ok(Some(_)) => id,
+            _ => {
+                let Some(name) = self.active_tour_name.clone() else { return };
+                let Some(replacement) = db.get_collection_by_name(&name).ok().flatten() else {
+                    return;
+                };
+                self.active_collection_id = Some(replacement.id.clone());
+                replacement.id
+            }
+        };
+
         // Recompute from bookmark resolutions so the label reflects the current
         // state, not a stale persisted value — sync/pull can change the
         // underlying bookmarks without updating collection.health.
-        let _ = db.recompute_collection_health(id);
-        let Some(collection) = db.get_collection_by_id(id).ok().flatten() else { return };
+        let _ = db.recompute_collection_health(&id);
+        let Some(collection) = db.get_collection_by_id(&id).ok().flatten() else { return };
         self.overview_health = collection.health.map(|h| match h {
             codemark_core::engine::bookmark::CollectionHealth::Active => {
                 crate::component::HealthStatus::Healthy
@@ -1865,5 +1883,50 @@ mod tests {
             pane.step_preview_request() > in_flight,
             "a synchronous render must advance the request id past an in-flight background render"
         );
+    }
+
+    #[test]
+    fn refresh_overview_health_re_anchors_after_a_pull_replaces_the_collection() {
+        let (mut pane, db, _tmp) = right_pane_with_collection();
+
+        pane.load_collection_overview(&db, "col-1");
+        pane.overview_health = Some(crate::component::HealthStatus::Broken);
+
+        // Mimic a pull: the re-import deletes the row the overview captured and
+        // recreates the collection under a fresh id carrying the same name.
+        //
+        // A distinct (file_path, query) so `insert_bookmark`'s dedupe returns this
+        // fresh id rather than reusing bm-1's row.
+        db.insert_bookmark(&sample_bookmark("bm-3", "fn pulled", "src/pulled.rs")).unwrap();
+        // Collection health is derived from each member's current resolution, so
+        // the replacement needs a resolved bookmark to report Active.
+        db.insert_resolution(&codemark_core::engine::bookmark::Resolution {
+            id: "res-3".to_string(),
+            bookmark_id: "bm-3".to_string(),
+            resolved_at: "2026-01-01T00:00:00Z".to_string(),
+            health: BookmarkHealth::Active,
+            commit_hash: None,
+            method: codemark_core::engine::bookmark::ResolutionMethod::Exact,
+            match_count: Some(1),
+            file_path: Some("src/pulled.rs".to_string()),
+            byte_range: None,
+            line_range: None,
+            content_hash: None,
+            headline: None,
+            snapshot: None,
+            breadcrumbs: None,
+            is_dirty: false,
+        })
+        .unwrap();
+        db.delete_collection_by_id("col-1").unwrap();
+        db.insert_collection(&sample_collection("col-2", "Tour")).unwrap();
+        db.add_to_collection("col-2", &["bm-3".to_string()]).unwrap();
+
+        pane.refresh_overview_health(&db);
+
+        // The label must track the replacement rather than freezing at the
+        // pre-pull value, and the pane must now be anchored to the new id.
+        assert_eq!(pane.active_collection_id.as_deref(), Some("col-2"));
+        assert_eq!(pane.overview_health, Some(crate::component::HealthStatus::Healthy));
     }
 }
