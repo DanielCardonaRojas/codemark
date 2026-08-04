@@ -53,6 +53,16 @@ pub enum Event {
     /// the task was spawned in; a batch from a stale epoch (e.g. computed before a
     /// grammar refresh on `FocusGained`) is dropped rather than applied.
     LiveHealthBatch { generation: u64, batch: Vec<(String, LiveUIStatus)> },
+    /// Background worst-case live health for a batch of collections, so
+    /// collection dots and the overview label reflect the worst bookmark status
+    /// rather than the stale persisted snapshot. Each entry is (collection_id,
+    /// worst live status across the collection's non-archived bookmarks).
+    /// `None` means the collection has no live bookmarks (empty or all-archived):
+    /// the handler clears any cached value and shows Unknown so a previously
+    /// cached status doesn't linger. `generation` is the health epoch; a batch
+    /// from a stale epoch (e.g. computed before a grammar refresh on
+    /// `FocusGained`) is dropped rather than applied.
+    CollectionHealthBatch { generation: u64, batch: Vec<(String, Option<LiveUIStatus>)> },
     /// A bookmark preview finished resolving on a background task.
     /// `request_id` guards against applying stale results after the selection moved.
     PreviewReady {

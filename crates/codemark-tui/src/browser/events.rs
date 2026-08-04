@@ -478,6 +478,39 @@ impl BrowserLayout {
                 }
                 Some(true)
             }
+            Event::CollectionHealthBatch { generation, batch } => {
+                if *generation != self.health_generation {
+                    return Some(false);
+                }
+                for (collection_id, status) in batch {
+                    // `None` = the collection has no live bookmarks (empty or
+                    // all-archived): cache Unknown so a previously-computed
+                    // Exact/Drifted/Broken can't linger and override persisted
+                    // health across rebuilds.
+                    let health = match status {
+                        Some(s) => HealthStatus::from(*s),
+                        None => HealthStatus::Unknown,
+                    };
+                    // Cache so subsequent panel rebuilds render the live status
+                    // instead of flashing back to the persisted snapshot.
+                    self.collection_live_health.insert(collection_id.clone(), health);
+                    // A collection appears in both the Collections and Tours tabs,
+                    // so update both dots (no-op where the panel/item is absent).
+                    for idx in [ContentTab::Collections.index(), ContentTab::Tours.index()] {
+                        if let Some(panel) = self.left_pane.content_panel.get_list_panel_mut(idx) {
+                            panel.update_item_health(collection_id, health);
+                        }
+                    }
+                    // Keep the open overview's border label in sync. An empty
+                    // collection has no health signal, so it shows no label.
+                    if self.right_pane.overview_active
+                        && self.right_pane.active_collection_id.as_deref() == Some(collection_id)
+                    {
+                        self.right_pane.overview_health = status.map(HealthStatus::from);
+                    }
+                }
+                Some(true)
+            }
             Event::PreviewReady { request_id, payload } => {
                 // Drop stale results: the selection moved on since this resolve
                 // was spawned, so a newer request supersedes it.
@@ -619,18 +652,12 @@ impl BrowserLayout {
     /// and refocus reconcile paths.
     pub(super) fn build_collection_search_items(
         collections: &[(codemark_core::engine::bookmark::Collection, usize)],
+        live: &std::collections::HashMap<String, HealthStatus>,
     ) -> Vec<PanelItem> {
-        use codemark_core::engine::bookmark::CollectionHealth;
-
         collections
             .iter()
             .map(|(c, count)| {
-                let health = match c.health {
-                    Some(CollectionHealth::Active) => HealthStatus::Healthy,
-                    Some(CollectionHealth::Drifted) => HealthStatus::Drifted,
-                    Some(CollectionHealth::Stale) => HealthStatus::Broken,
-                    None => HealthStatus::Unknown,
-                };
+                let health = super::collection_health_status(c.health, live.get(&c.id).copied());
                 let branch = c.created_branch.clone().unwrap_or_else(|| "main".to_string());
 
                 PanelItem::new(&c.name)
@@ -657,7 +684,7 @@ impl BrowserLayout {
         // The search finished, so stop the loading spinner.
         self.left_pane.search.set_loading(false);
 
-        let items = Self::build_collection_search_items(collections);
+        let items = Self::build_collection_search_items(collections, &self.collection_live_health);
 
         // A reconcile re-run refreshes the Collections panel in place, keeping
         // focus and selection. It applies even when Collections isn't the active
@@ -769,6 +796,141 @@ impl BrowserLayout {
             if !batch.is_empty() {
                 let _ = event_handler.send(Event::LiveHealthBatch { generation, batch });
             }
+        });
+    }
+
+    /// Spawn a background task that live-resolves every collection's bookmarks
+    /// and sends [`Event::CollectionHealthBatch`] events carrying each
+    /// collection's *worst* live status. This makes collection dots and the
+    /// overview label reflect the current on-disk state (the live-preview model)
+    /// rather than the persisted snapshot, which goes stale the moment a
+    /// bookmark's code drifts.
+    ///
+    /// A collection is only as healthy as its worst bookmark, so the worst status
+    /// across the collection's (non-archived) bookmarks wins. Mirrors
+    /// [`spawn_live_health_task`](Self::spawn_live_health_task): reopens the DB by
+    /// path, reuses parse caches across collections, and posts in small batches.
+    pub(super) fn spawn_collection_health_task(&self) {
+        use codemark_core::storage::db::Database;
+
+        // Probe on the UI thread so we skip the `spawn_blocking` (which needs a
+        // Tokio runtime) entirely when there are no collections — mirroring
+        // [`spawn_live_health_task`](Self::spawn_live_health_task)'s empty-set
+        // guard, which keeps the unit tests (no runtime) from panicking in
+        // `BrowserLayout::new`.
+        let collections = match self.db.list_collections() {
+            Ok(c) if !c.is_empty() => c,
+            _ => return,
+        };
+
+        let db_path = self.db.path().to_path_buf();
+        let event_handler = self.event_handler.clone();
+        let generation = self.health_generation;
+
+        tokio::task::spawn_blocking(move || {
+            let handle = tokio::runtime::Handle::current();
+            let provider = codemark_core::vfs::LocalFileProvider;
+
+            let Ok(db) = Database::open(&db_path) else {
+                tracing::debug!(
+                    target: "codemark::ui",
+                    generation,
+                    "collection health task: could not open database"
+                );
+                return;
+            };
+
+            use codemark_core::parser::languages::{Language as CL, ParseCache};
+            use std::collections::HashMap;
+            let mut caches: HashMap<CL, ParseCache> = HashMap::new();
+            let mut batch: Vec<(String, Option<LiveUIStatus>)> = Vec::new();
+            let db_path_ref = &db_path;
+
+            for (c, _count) in &collections {
+                // `list_bookmarks` does *not* exclude archived bookmarks (unlike
+                // `search_bookmarks`), so filter them here to match the persisted
+                // aggregation rule (`r.health != 'archived'`). An all-archived
+                // collection then has no live bookmarks and emits None.
+                // A transient query failure (e.g. a momentary SQLite lock) is
+                // retried once so a populated collection's health doesn't linger
+                // stale on a hiccup. A *persisting* failure keeps the last-known
+                // cached status rather than wiping it to Unknown (which would
+                // conflate the error with a genuinely empty/all-archived
+                // collection); the next refresh pass corrects it.
+                let bookmarks = match db.list_bookmarks_in_collection(&c.id) {
+                    Ok(b) => b,
+                    Err(_) => {
+                        std::thread::sleep(std::time::Duration::from_millis(50));
+                        match db.list_bookmarks_in_collection(&c.id) {
+                            Ok(b) => b,
+                            Err(_) => continue,
+                        }
+                    }
+                };
+
+                let mut worst: Option<LiveUIStatus> = None;
+                for bm in &bookmarks {
+                    if bm.health == codemark_core::engine::bookmark::BookmarkHealth::Archived {
+                        continue;
+                    }
+                    let status =
+                        (|| -> std::result::Result<LiveUIStatus, codemark_core::error::Error> {
+                            use std::str::FromStr;
+                            let language = CL::from_str(&bm.language)?;
+                            let cache = match caches.entry(language.clone()) {
+                                std::collections::hash_map::Entry::Occupied(e) => e.into_mut(),
+                                std::collections::hash_map::Entry::Vacant(e) => {
+                                    let pc = ParseCache::new(language.clone()).map_err(|err| {
+                                        codemark_core::error::Error::TreeSitter(format!(
+                                            "failed to create ParseCache for {}: {}",
+                                            bm.language, err
+                                        ))
+                                    })?;
+                                    e.insert(pc)
+                                }
+                            };
+                            let result = handle.block_on(
+                                codemark_core::engine::resolution::resolve_transient(
+                                    bm,
+                                    cache,
+                                    language,
+                                    db_path_ref,
+                                    &provider,
+                                ),
+                            )?;
+                            Ok(result.live_status())
+                        })()
+                        .unwrap_or(LiveUIStatus::Broken);
+
+                    worst = Some(match worst {
+                        None => status,
+                        Some(cur) => cur.worst(status),
+                    });
+                }
+
+                // Emit an entry for *every* collection, including empty ones
+                // (worst = None): the handler clears the cache for those so a
+                // previously cached status doesn't linger after the collection's
+                // bookmarks are removed or archived.
+                batch.push((c.id.clone(), worst));
+                if batch.len() >= 5 {
+                    let _ = event_handler.send(Event::CollectionHealthBatch {
+                        generation,
+                        batch: std::mem::take(&mut batch),
+                    });
+                }
+            }
+
+            if !batch.is_empty() {
+                let _ = event_handler.send(Event::CollectionHealthBatch { generation, batch });
+            }
+
+            tracing::debug!(
+                target: "codemark::ui",
+                generation,
+                collection_count = collections.len(),
+                "collection health task complete"
+            );
         });
     }
 

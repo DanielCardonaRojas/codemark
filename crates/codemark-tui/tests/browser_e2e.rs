@@ -656,6 +656,100 @@ async fn enter_on_focused_collection_overview_opens_the_bookmarks_flow() {
     );
 }
 
+/// A collection's preview-border health label must follow the worst *live*
+/// status of its bookmarks, not the persisted snapshot — otherwise a collection
+/// whose code has drifted keeps showing "Exact" while its bookmarks show
+/// "Drifted"/"Unmatched".
+///
+/// `make_layout` drops the event receiver, so the background live-health task
+/// spawned in `BrowserLayout::new` can't deliver and the cache stays empty.
+/// That lets us drive a `CollectionHealthBatch` by hand and assert the
+/// persisted→live transition deterministically.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn collection_overview_label_reflects_live_bookmark_health() {
+    use codemark_core::engine::resolution::LiveUIStatus;
+
+    let sandbox = Sandbox::with_bookmarks([sample_bookmark("bm-1", "fn login", "src/auth.rs")]);
+    // Source present and matching so the seeded resolution is Active.
+    sandbox.write_repo_file("src/auth.rs", "fn login() -> bool { true }\n");
+    sandbox
+        .db
+        .insert_collection(&sample_collection("col-1", "auth-flow"))
+        .expect("seed collection");
+    sandbox.db.add_to_collection("col-1", &["bm-1".to_string()]).expect("populate collection");
+    // Persisted collection health = Active (worst of the bookmark resolutions),
+    // so without a live batch the overview label is "Exact".
+    sandbox.db.recompute_collection_health("col-1").expect("recompute health");
+    let (mut layout, _sandbox) = make_layout(sandbox);
+
+    assert_eq!(layout.focus(), FocusArea::ContentPanel);
+    key_char(&mut layout, ']'); // Bookmarks -> Collections (renders the overview)
+
+    let persisted = render_to_string(&layout, 140, 40);
+    assert!(
+        persisted.contains("Exact"),
+        "overview should show the persisted (Active) label before any live batch; got:\n{persisted}"
+    );
+
+    // The background task reports the bookmark has drifted on disk. generation
+    // is 0 for a fresh layout (no FocusGained has bumped health_generation).
+    layout.handle_event(&Event::CollectionHealthBatch {
+        generation: 0,
+        batch: vec![("col-1".to_string(), Some(LiveUIStatus::Drifted))],
+    });
+    let live = render_to_string(&layout, 140, 40);
+    assert!(
+        live.contains("Drifted") && !live.contains("Exact"),
+        "overview label should follow the worst live bookmark status, not the persisted snapshot; got:\n{live}"
+    );
+
+    // The collection's last bookmark is removed/archived, so the background pass
+    // reports None. The cached Drifted must not linger — the overview label
+    // clears (and the dot would go gray).
+    layout.handle_event(&Event::CollectionHealthBatch {
+        generation: 0,
+        batch: vec![("col-1".to_string(), None)],
+    });
+    let emptied = render_to_string(&layout, 140, 40);
+    assert!(
+        !emptied.contains("Drifted"),
+        "an empty collection must not retain a stale cached status; got:\n{emptied}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn all_archived_collection_shows_no_live_health_label() {
+    let sandbox = Sandbox::new();
+    // The function is present, so without the archived filter the bookmark would
+    // resolve live to Exact — but the bookmark is archived, so the collection has
+    // no live bookmarks and must show no health label.
+    sandbox.write_repo_file("src/auth.rs", "fn login() -> bool { true }\n");
+    let mut bm = sample_bookmark("bm-arch", "fn login", "src/auth.rs");
+    bm.health = BookmarkHealth::Archived;
+    sandbox.db.insert_bookmark(&bm).expect("seed archived bookmark");
+    sandbox
+        .db
+        .insert_collection(&sample_collection("col-arch", "arch-only"))
+        .expect("seed collection");
+    sandbox
+        .db
+        .add_to_collection("col-arch", &["bm-arch".to_string()])
+        .expect("populate collection");
+    let (mut layout, _sandbox, mut rx) = make_layout_with_rx(sandbox);
+
+    // Let the background collection-health task run: it filters archived
+    // bookmarks, so the only collection emits None and clears to Unknown.
+    pump_pending_events(&mut layout, &mut rx).await;
+    pump_pending_events(&mut layout, &mut rx).await;
+
+    key_char(&mut layout, ']'); // Bookmarks -> Collections (shows col-arch overview)
+    let rendered = render_to_string(&layout, 140, 40);
+    assert!(
+        !rendered.contains("Exact"),
+        "an all-archived collection must not show a live health label; got:\n{rendered}"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn remote_tour_overview_survives_a_panel_refresh() {
     use codemark_core::sync::RemoteTourSummary;

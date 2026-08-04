@@ -417,26 +417,16 @@ impl TabbedPanel {
     }
 
     /// Build tours, collections, and bookmarks items.
-    pub fn build_content_items(db: &Database) -> (Vec<PanelItem>, Vec<PanelItem>, Vec<PanelItem>) {
+    pub fn build_content_items(
+        db: &Database,
+        live: &std::collections::HashMap<String, HealthStatus>,
+    ) -> (Vec<PanelItem>, Vec<PanelItem>, Vec<PanelItem>) {
         let mut collections_items = Vec::new();
         let mut tours_items = Vec::new();
 
         if let Ok(collections) = db.list_collections() {
             for (c, count) in collections {
-                let health = match c.health {
-                    Some(h) => match h {
-                        codemark_core::engine::bookmark::CollectionHealth::Active => {
-                            HealthStatus::Healthy
-                        }
-                        codemark_core::engine::bookmark::CollectionHealth::Drifted => {
-                            HealthStatus::Drifted
-                        }
-                        codemark_core::engine::bookmark::CollectionHealth::Stale => {
-                            HealthStatus::Broken
-                        }
-                    },
-                    None => HealthStatus::Unknown,
-                };
+                let health = super::collection_health_status(c.health, live.get(&c.id).copied());
 
                 let is_published = c.published_at.is_some();
                 let branch = c.created_branch.clone().unwrap_or_else(|| "main".to_string());
@@ -570,7 +560,7 @@ impl TabbedPanel {
     /// Create panel 3 with Bookmarks/Collections/Tours tabs.
     pub fn new_tours_collections_bookmarks(db: &Database) -> Self {
         let (tours_items, collections_items, bookmarks_items) =
-            TabbedPanel::build_content_items(db);
+            TabbedPanel::build_content_items(db, &std::collections::HashMap::new());
         // Bookmarks and Collections expose the `S` sort cycle, so they start with
         // an explicit order (most recent first). Tours keep insertion order.
         let tours_panel = Panel::new("").bordered(false).items(tours_items);
