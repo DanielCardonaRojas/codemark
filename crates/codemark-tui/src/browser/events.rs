@@ -483,7 +483,14 @@ impl BrowserLayout {
                     return Some(false);
                 }
                 for (collection_id, status) in batch {
-                    let health = HealthStatus::from(*status);
+                    // `None` = the collection has no live bookmarks (empty or
+                    // all-archived): cache Unknown so a previously-computed
+                    // Exact/Drifted/Broken can't linger and override persisted
+                    // health across rebuilds.
+                    let health = match status {
+                        Some(s) => HealthStatus::from(*s),
+                        None => HealthStatus::Unknown,
+                    };
                     // Cache so subsequent panel rebuilds render the live status
                     // instead of flashing back to the persisted snapshot.
                     self.collection_live_health.insert(collection_id.clone(), health);
@@ -494,11 +501,12 @@ impl BrowserLayout {
                             panel.update_item_health(collection_id, health);
                         }
                     }
-                    // Keep the open overview's border label in sync.
+                    // Keep the open overview's border label in sync. An empty
+                    // collection has no health signal, so it shows no label.
                     if self.right_pane.overview_active
                         && self.right_pane.active_collection_id.as_deref() == Some(collection_id)
                     {
-                        self.right_pane.overview_health = Some(health);
+                        self.right_pane.overview_health = status.map(HealthStatus::from);
                     }
                 }
                 Some(true)
@@ -828,7 +836,7 @@ impl BrowserLayout {
             use codemark_core::parser::languages::{Language as CL, ParseCache};
             use std::collections::HashMap;
             let mut caches: HashMap<CL, ParseCache> = HashMap::new();
-            let mut batch: Vec<(String, LiveUIStatus)> = Vec::new();
+            let mut batch: Vec<(String, Option<LiveUIStatus>)> = Vec::new();
             let db_path_ref = &db_path;
 
             for (c, _count) in &collections {
@@ -877,16 +885,16 @@ impl BrowserLayout {
                     });
                 }
 
-                // An empty (or all-archived) collection has no live signal; leave
-                // its persisted dot untouched rather than forcing a status.
-                if let Some(w) = worst {
-                    batch.push((c.id.clone(), w));
-                    if batch.len() >= 5 {
-                        let _ = event_handler.send(Event::CollectionHealthBatch {
-                            generation,
-                            batch: std::mem::take(&mut batch),
-                        });
-                    }
+                // Emit an entry for *every* collection, including empty ones
+                // (worst = None): the handler clears the cache for those so a
+                // previously cached status doesn't linger after the collection's
+                // bookmarks are removed or archived.
+                batch.push((c.id.clone(), worst));
+                if batch.len() >= 5 {
+                    let _ = event_handler.send(Event::CollectionHealthBatch {
+                        generation,
+                        batch: std::mem::take(&mut batch),
+                    });
                 }
             }
 

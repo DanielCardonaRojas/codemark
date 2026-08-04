@@ -695,13 +695,25 @@ async fn collection_overview_label_reflects_live_bookmark_health() {
     // is 0 for a fresh layout (no FocusGained has bumped health_generation).
     layout.handle_event(&Event::CollectionHealthBatch {
         generation: 0,
-        batch: vec![("col-1".to_string(), LiveUIStatus::Drifted)],
+        batch: vec![("col-1".to_string(), Some(LiveUIStatus::Drifted))],
     });
-
     let live = render_to_string(&layout, 140, 40);
     assert!(
         live.contains("Drifted") && !live.contains("Exact"),
         "overview label should follow the worst live bookmark status, not the persisted snapshot; got:\n{live}"
+    );
+
+    // The collection's last bookmark is removed/archived, so the background pass
+    // reports None. The cached Drifted must not linger — the overview label
+    // clears (and the dot would go gray).
+    layout.handle_event(&Event::CollectionHealthBatch {
+        generation: 0,
+        batch: vec![("col-1".to_string(), None)],
+    });
+    let emptied = render_to_string(&layout, 140, 40);
+    assert!(
+        !emptied.contains("Drifted"),
+        "an empty collection must not retain a stale cached status; got:\n{emptied}"
     );
 }
 
