@@ -845,9 +845,11 @@ impl BrowserLayout {
                 // aggregation rule (`r.health != 'archived'`). An all-archived
                 // collection then has no live bookmarks and emits None.
                 let Ok(bookmarks) = db.list_bookmarks_in_collection(&c.id) else {
-                    // Emit None so the handler clears any stale cached status
-                    // instead of leaving the previous value lingering.
-                    batch.push((c.id.clone(), None));
+                    // A transient query failure (e.g. a locked DB) is not
+                    // evidence the collection is empty, so skip it and keep the
+                    // last-known cached status rather than wiping it to Unknown.
+                    // A later successful pass — or the genuine empty/all-archived
+                    // case below — corrects it.
                     continue;
                 };
 
