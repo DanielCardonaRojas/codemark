@@ -22,6 +22,11 @@
 
 set -euo pipefail
 
+# Unset NO_COLOR if it was set by the environment (e.g. CI or an AI harness)
+# so that the TUI renders with full color for the screenshots.
+unset NO_COLOR
+export COLORTERM=truecolor
+
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SHOTS_DIR="$REPO_ROOT/screenshots"
 IMAGES_DIR="$SHOTS_DIR/images"
