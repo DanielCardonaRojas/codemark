@@ -570,12 +570,11 @@ impl TabbedPanel {
 
     /// Create panel 3 with Bookmarks/Collections/Tours tabs.
     pub fn new_tours_collections_bookmarks(db: &Database) -> Self {
-        let (tours_items, collections_items, bookmarks_items) =
-            TabbedPanel::build_content_items(
-                db,
-                &std::collections::HashMap::new(),
-                &std::collections::HashMap::new(),
-            );
+        let (tours_items, collections_items, bookmarks_items) = TabbedPanel::build_content_items(
+            db,
+            &std::collections::HashMap::new(),
+            &std::collections::HashMap::new(),
+        );
         // Bookmarks and Collections expose the `S` sort cycle, so they start with
         // an explicit order (most recent first). Tours keep insertion order.
         let tours_panel = Panel::new("").bordered(false).items(tours_items);
