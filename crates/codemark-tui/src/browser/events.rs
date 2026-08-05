@@ -465,6 +465,10 @@ impl BrowserLayout {
                 }
                 for (bookmark_id, status) in batch {
                     let health = HealthStatus::from(*status);
+                    // Cache so subsequent panel rebuilds (e.g. a tag/branch filter)
+                    // render the resolved dot instead of flashing back to Unknown
+                    // and re-resolving the bookmark against the file.
+                    self.bookmark_live_health.insert(bookmark_id.clone(), health);
                     if let Some(panel) = self.left_pane.content_panel.get_list_panel_mut(0) {
                         panel.update_item_health(bookmark_id, health);
                     }
@@ -562,11 +566,12 @@ impl BrowserLayout {
 
     /// Build the bookmark-search list rows for a set of bookmarks, formatted to
     /// match the normal bookmark list (symbol summary as emphasis, shortened
-    /// path, node icon). Health starts as `Unknown`; callers resolve it via a
-    /// background live-health task. Shared by the search-apply and refocus
-    /// reconcile paths.
+    /// path, node icon). Health is seeded from the `live` cache, falling back to
+    /// `Unknown` on a miss; callers refresh it via a background live-health task.
+    /// Shared by the search-apply and refocus reconcile paths.
     pub(super) fn build_bookmark_search_items(
         bookmarks: &[codemark_core::engine::bookmark::Bookmark],
+        live: &std::collections::HashMap<String, HealthStatus>,
     ) -> Vec<PanelItem> {
         bookmarks
             .iter()
@@ -588,9 +593,13 @@ impl BrowserLayout {
 
                 let short_path = shorten_path(&bm.file_path, 25);
 
+                // Seed from the live-health cache so a reconcile/refocus rebuild
+                // keeps the resolved dot instead of flashing grey; the caller's
+                // background task refreshes it if the code has since drifted.
+                let health = live.get(&bm.id).copied().unwrap_or(HealthStatus::Unknown);
                 let mut item = PanelItem::new(short_path)
                     .metadata(bm.created_by.clone().unwrap_or_default())
-                    .health(HealthStatus::Unknown)
+                    .health(health)
                     .icon(icon)
                     .created_at(bm.created_at.clone())
                     .user_data(bm.id.clone());
@@ -608,9 +617,10 @@ impl BrowserLayout {
 
     /// Populate the bookmarks panel from search results.
     ///
-    /// Sets health to `Unknown` initially for instant rendering, then spawns
-    /// a background task to resolve all bookmarks and send `LiveHealthBatch`
-    /// events that progressively update the dots.
+    /// Seeds each row's health from the live-health cache for instant rendering
+    /// (falling back to `Unknown` on a miss), then spawns a background task to
+    /// re-resolve all bookmarks and send `LiveHealthBatch` events that refresh
+    /// the dots.
     fn apply_search_results(
         &mut self,
         request_id: u64,
@@ -619,7 +629,7 @@ impl BrowserLayout {
         // The search finished, so stop the loading spinner.
         self.left_pane.search.set_loading(false);
 
-        let items = Self::build_bookmark_search_items(bookmarks);
+        let items = Self::build_bookmark_search_items(bookmarks, &self.bookmark_live_health);
 
         // A reconcile re-run refreshes an already-visible narrowed list in place,
         // keeping the user's focus and selection instead of jumping onto the
