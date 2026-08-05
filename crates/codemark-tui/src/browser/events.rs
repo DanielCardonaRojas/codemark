@@ -566,9 +566,9 @@ impl BrowserLayout {
 
     /// Build the bookmark-search list rows for a set of bookmarks, formatted to
     /// match the normal bookmark list (symbol summary as emphasis, shortened
-    /// path, node icon). Health starts as `Unknown`; callers resolve it via a
-    /// background live-health task. Shared by the search-apply and refocus
-    /// reconcile paths.
+    /// path, node icon). Health is seeded from the `live` cache, falling back to
+    /// `Unknown` on a miss; callers refresh it via a background live-health task.
+    /// Shared by the search-apply and refocus reconcile paths.
     pub(super) fn build_bookmark_search_items(
         bookmarks: &[codemark_core::engine::bookmark::Bookmark],
         live: &std::collections::HashMap<String, HealthStatus>,
@@ -617,9 +617,10 @@ impl BrowserLayout {
 
     /// Populate the bookmarks panel from search results.
     ///
-    /// Sets health to `Unknown` initially for instant rendering, then spawns
-    /// a background task to resolve all bookmarks and send `LiveHealthBatch`
-    /// events that progressively update the dots.
+    /// Seeds each row's health from the live-health cache for instant rendering
+    /// (falling back to `Unknown` on a miss), then spawns a background task to
+    /// re-resolve all bookmarks and send `LiveHealthBatch` events that refresh
+    /// the dots.
     fn apply_search_results(
         &mut self,
         request_id: u64,

@@ -861,6 +861,12 @@ impl BrowserLayout {
             self.right_pane.refresh_head_commit(&self.db);
             self.collection_live_health.clear();
             self.bookmark_live_health.clear();
+            // Advance the health epoch so any live-health task still in flight for
+            // the previous database fails the generation guard on apply and can't
+            // repopulate the freshly-cleared caches (or a panel dot) with a status
+            // from the old repo — which, on a colliding bookmark/collection id,
+            // would show the wrong health for the new repo.
+            self.health_generation = self.health_generation.wrapping_add(1);
             self.cached_remote_tours.clear();
             self.pending_remote_repos = None;
             self.right_pane.active_remote_tour_id = None;
