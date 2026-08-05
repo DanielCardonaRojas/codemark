@@ -147,12 +147,18 @@ pub fn bookmark_to_panel_item(
     item
 }
 
-/// Create a `PanelItem` from a bookmark with `Unknown` health status.
+/// Create a `PanelItem` from a bookmark, seeding its health dot from the cached
+/// *live* status when one has already been resolved (else `Unknown`).
 ///
-/// Used when building panels that will have their health dots updated
-/// asynchronously via `LiveHealthBatch` events. Avoids the per-bookmark
-/// DB + git ancestry queries that `bookmark_to_panel_item` performs.
-fn bookmark_to_panel_item_unknown(bookmark: &Bookmark) -> PanelItem {
+/// Used when building panels whose health dots are updated asynchronously via
+/// `LiveHealthBatch` events. Seeding from the cache means a rebuild (e.g. a
+/// tag/branch filter) shows the resolved dot immediately instead of flashing
+/// grey, while still avoiding the per-bookmark DB + git ancestry queries that
+/// `bookmark_to_panel_item` performs.
+fn bookmark_to_panel_item_cached(
+    bookmark: &Bookmark,
+    live: &std::collections::HashMap<String, HealthStatus>,
+) -> PanelItem {
     let summary_info = bookmark
         .language
         .parse::<Language>()
@@ -166,10 +172,11 @@ fn bookmark_to_panel_item_unknown(bookmark: &Bookmark) -> PanelItem {
 
     let icon = summary_info.as_ref().map(|s| get_node_icon(&s.label)).unwrap_or("");
 
+    let health = live.get(&bookmark.id).copied().unwrap_or(HealthStatus::Unknown);
     let mut item = PanelItem::new(&bookmark.file_path)
         .compressible_path()
         .metadata(bookmark.created_by.clone().unwrap_or_default())
-        .health(HealthStatus::Unknown)
+        .health(health)
         .icon(icon)
         .created_at(bookmark.created_at.clone())
         .user_data(bookmark.id.clone());
@@ -420,6 +427,7 @@ impl TabbedPanel {
     pub fn build_content_items(
         db: &Database,
         live: &std::collections::HashMap<String, HealthStatus>,
+        bookmark_live: &std::collections::HashMap<String, HealthStatus>,
     ) -> (Vec<PanelItem>, Vec<PanelItem>, Vec<PanelItem>) {
         let mut collections_items = Vec::new();
         let mut tours_items = Vec::new();
@@ -458,7 +466,10 @@ impl TabbedPanel {
         }
 
         let bookmarks = match db.list_bookmarks(&BookmarkFilter::default()) {
-            Ok(bookmarks) => bookmarks.iter().map(bookmark_to_panel_item_unknown).collect(),
+            Ok(bookmarks) => bookmarks
+                .iter()
+                .map(|bm| bookmark_to_panel_item_cached(bm, bookmark_live))
+                .collect(),
             Err(_) => Vec::new(),
         };
 
@@ -560,7 +571,11 @@ impl TabbedPanel {
     /// Create panel 3 with Bookmarks/Collections/Tours tabs.
     pub fn new_tours_collections_bookmarks(db: &Database) -> Self {
         let (tours_items, collections_items, bookmarks_items) =
-            TabbedPanel::build_content_items(db, &std::collections::HashMap::new());
+            TabbedPanel::build_content_items(
+                db,
+                &std::collections::HashMap::new(),
+                &std::collections::HashMap::new(),
+            );
         // Bookmarks and Collections expose the `S` sort cycle, so they start with
         // an explicit order (most recent first). Tours keep insertion order.
         let tours_panel = Panel::new("").bordered(false).items(tours_items);

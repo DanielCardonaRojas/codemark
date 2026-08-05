@@ -201,6 +201,13 @@ pub struct BrowserLayout {
     /// current on-disk state of each collection's bookmarks instead of the
     /// persisted snapshot, which goes stale the moment a bookmark's code drifts.
     collection_live_health: HashMap<String, crate::component::HealthStatus>,
+    /// Cached *live* health per bookmark id, populated by the background
+    /// [`spawn_live_health_task`](Self::spawn_live_health_task) via
+    /// [`Event::LiveHealthBatch`]. Bookmark list rows read from here so a tag/branch
+    /// filter (or any panel rebuild) renders the already-resolved dot instead of
+    /// flashing back to `Unknown` and re-resolving every bookmark against the file.
+    /// Refreshed whenever a batch is applied, so it stays current as code drifts.
+    bookmark_live_health: HashMap<String, crate::component::HealthStatus>,
     /// ID of the most recent search request, used to discard stale background results.
     pub active_search_request: u64,
     /// The query and mode that produced the search results currently shown in
@@ -309,6 +316,7 @@ impl BrowserLayout {
             tick_count: 0,
             cached_remote_tours: Vec::new(),
             collection_live_health: HashMap::new(),
+            bookmark_live_health: HashMap::new(),
             pending_remote_repos: None,
             session_cache: HashMap::new(),
             preview_cache: Arc::new(Mutex::new(HashMap::new())),
@@ -852,6 +860,7 @@ impl BrowserLayout {
             self.db = Database::open(&db_path)?;
             self.right_pane.refresh_head_commit(&self.db);
             self.collection_live_health.clear();
+            self.bookmark_live_health.clear();
             self.cached_remote_tours.clear();
             self.pending_remote_repos = None;
             self.right_pane.active_remote_tour_id = None;
@@ -1444,7 +1453,9 @@ impl BrowserLayout {
                         ContentTab::Bookmarks => self
                             .db
                             .search_bookmarks(Some(&query), None, None, None, None, None, None)
-                            .map(|bms| Self::build_bookmark_search_items(&bms)),
+                            .map(|bms| {
+                                Self::build_bookmark_search_items(&bms, &self.bookmark_live_health)
+                            }),
                         ContentTab::Collections => {
                             self.db.search_collections(Some(&query), None).map(|mut cols| {
                                 cols.truncate(SEARCH_RESULT_LIMIT);
@@ -1539,7 +1550,7 @@ impl BrowserLayout {
         } else {
             let bms: Vec<_> =
                 row_ids.iter().filter_map(|id| self.db.get_bookmark(id).ok().flatten()).collect();
-            Self::build_bookmark_search_items(&bms)
+            Self::build_bookmark_search_items(&bms, &self.bookmark_live_health)
         };
 
         self.apply_reconciled_search_items(idx, items)
@@ -1614,8 +1625,11 @@ impl BrowserLayout {
         // then pruned in place by `reconcile_preserved_search_rows`. The Esc
         // "clear search" path uses the non-preserving refresh, so the full list
         // is rebuilt there regardless of this flag.
-        let (tours, collections, bookmarks) =
-            TabbedPanel::build_content_items(&self.db, &self.collection_live_health);
+        let (tours, collections, bookmarks) = TabbedPanel::build_content_items(
+            &self.db,
+            &self.collection_live_health,
+            &self.bookmark_live_health,
+        );
         if let Some(p) = self.left_pane.content_panel.get_list_panel_mut(0)
             && !(preserve_search && p.is_search_active())
         {
@@ -2130,9 +2144,17 @@ impl BrowserLayout {
                         .unwrap_or("");
                     let short_path = shorten_path(&bm.file_path, 25);
 
+                    // Seed the dot from the live-health cache so a tag/branch
+                    // filter shows the resolved status instead of flashing grey;
+                    // the spawned task below refreshes it if code has since drifted.
+                    let health = self
+                        .bookmark_live_health
+                        .get(&bm.id)
+                        .copied()
+                        .unwrap_or(HealthStatus::Unknown);
                     let mut item = PanelItem::new(&short_path)
                         .metadata(bm.created_by.clone().unwrap_or_default())
-                        .health(HealthStatus::Unknown)
+                        .health(health)
                         .icon(icon)
                         .user_data(bm.id.clone());
                     if !summary.is_empty() {
