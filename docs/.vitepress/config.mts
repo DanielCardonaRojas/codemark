@@ -1,6 +1,7 @@
 import { defineConfig } from 'vitepress'
+import { withMermaid } from 'vitepress-plugin-mermaid'
 
-export default defineConfig({
+export default withMermaid(defineConfig({
   base: "/codemark/docs/",
   title: "Codemark",
   description: "Durable, semantic bookmarks for AI agents and humans",
@@ -18,19 +19,34 @@ export default defineConfig({
 
     sidebar: [
       {
-        text: 'Getting Started',
+        text: 'Overview',
         items: [
           { text: 'What is Codemark?', link: '/guide/introduction' },
-          { text: 'Installation & Quickstart', link: '/guide/getting-started' },
           { text: 'Core Concepts', link: '/guide/core-concepts' },
         ]
       },
       {
-        text: 'Usage & Workflows',
+        text: 'Quickstart',
+        items: [
+          { text: 'Installation', link: '/guide/getting-started' },
+          { text: 'Agent Skill', link: '/guide/agent-skills' },
+        ]
+      },
+      {
+        text: 'Workflows',
         items: [
           { text: 'Workflows', link: '/guide/workflows' },
-          { text: 'Agent Skills', link: '/guide/agent-skills' },
           { text: 'Agent Walkthrough', link: '/guide/agent-workflow-walkthrough' },
+        ]
+      },
+      {
+        text: 'How It Works',
+        items: [
+          { text: 'Tree-sitter', link: '/guide/tree-sitter' },
+          { text: 'Query Generation', link: '/guide/query-generation' },
+          { text: 'Health Status', link: '/guide/health-status' },
+          { text: 'Repository Registry', link: '/guide/repository-registry' },
+          { text: 'Semantic Search', link: '/guide/embeddings' },
         ]
       },
       {
@@ -38,14 +54,9 @@ export default defineConfig({
         items: [
           { text: 'Keybindings & UI', link: '/guide/keybindings' },
           { text: 'Configuration', link: '/guide/configuration' },
+          { text: 'Dynamic Grammars', link: '/guide/dynamic-grammars' },
           { text: 'CLI Reference', link: '/guide/cli-reference' },
           { text: 'Markdown Templates', link: '/guide/templates' },
-        ]
-      },
-      {
-        text: 'Architecture',
-        items: [
-          { text: 'Under the Hood', link: '/guide/under-the-hood' },
         ]
       }
     ],
@@ -59,4 +70,5 @@ export default defineConfig({
       text: 'Edit this page on GitHub'
     }
   }
-})
+}))
+
