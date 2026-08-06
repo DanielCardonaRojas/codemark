@@ -35,49 +35,49 @@ $EDITOR ~/.config/codemark/templates/codemark_show.md
 
 | Placeholder | Type | Description |
 |-------------|------|-------------|
-| `{{short_id}}` | String | First 8 chars of bookmark ID (computed) |
-| `{{id}}` | String | Full bookmark ID |
-| `{{file_path}}` | String | Path to the file |
-| `{{file_name}}` | String | Just the filename (computed) |
-| `{{language}}` | String | Programming language |
-| `{{status}}` | String | `active`, `drifted`, `stale`, or `archived` |
-| `{{query}}` | String | Tree-sitter query |
-| `{{created_at}}` | String | Creation timestamp |
-| `{{created_by}}` | String? | Creator (optional) |
-| `{{commit_hash}}` | String? | Git commit hash (optional) |
-| `{{short_commit}}` | String? | First 8 chars of commit (computed) |
-| `{{last_resolved_at}}` | String? | Last resolution time (optional) |
-| `{{resolution_method}}` | String? | `exact`, `relaxed`, `hash_fallback`, `failed` (optional) |
-| `{{stale_since}}` | String? | When it became stale (optional) |
+| <code v-pre>&#123;&#123;short_id&#125;&#125;</code> | String | First 8 chars of bookmark ID (computed) |
+| <code v-pre>&#123;&#123;id&#125;&#125;</code> | String | Full bookmark ID |
+| <code v-pre>&#123;&#123;file_path&#125;&#125;</code> | String | Path to the file |
+| <code v-pre>&#123;&#123;file_name&#125;&#125;</code> | String | Just the filename (computed) |
+| <code v-pre>&#123;&#123;language&#125;&#125;</code> | String | Programming language |
+| <code v-pre>&#123;&#123;status&#125;&#125;</code> | String | `active`, `drifted`, `stale`, or `archived` |
+| <code v-pre>&#123;&#123;query&#125;&#125;</code> | String | Tree-sitter query |
+| <code v-pre>&#123;&#123;created_at&#125;&#125;</code> | String | Creation timestamp |
+| <code v-pre>&#123;&#123;created_by&#125;&#125;</code> | String? | Creator (optional) |
+| <code v-pre>&#123;&#123;commit_hash&#125;&#125;</code> | String? | Git commit hash (optional) |
+| <code v-pre>&#123;&#123;short_commit&#125;&#125;</code> | String? | First 8 chars of commit (computed) |
+| <code v-pre>&#123;&#123;last_resolved_at&#125;&#125;</code> | String? | Last resolution time (optional) |
+| <code v-pre>&#123;&#123;resolution_method&#125;&#125;</code> | String? | `exact`, `relaxed`, `hash_fallback`, `failed` (optional) |
+| <code v-pre>&#123;&#123;stale_since&#125;&#125;</code> | String? | When it became stale (optional) |
 
-### Tags (`{{#each tags}}` loop)
-
-| Placeholder | Type | Description |
-|-------------|------|-------------|
-| `{{this}}` | String | Individual tag name |
-
-### Annotations (`{{#each annotations}}` loop)
+### Tags (<code v-pre>&#123;&#123;#each tags&#125;&#125;</code> loop)
 
 | Placeholder | Type | Description |
 |-------------|------|-------------|
-| `{{added_at}}` | String | When annotation was added |
-| `{{added_by}}` | String? | Who added it |
-| `{{source}}` | String? | Source (e.g., "annotate" command) |
-| `{{notes}}` | String? | Annotation notes |
-| `{{context}}` | String? | Code context snippet |
+| <code v-pre>&#123;&#123;this&#125;&#125;</code> | String | Individual tag name |
 
-### Resolution History (`{{#each resolutions}}` loop)
+### Annotations (<code v-pre>&#123;&#123;#each annotations&#125;&#125;</code> loop)
 
 | Placeholder | Type | Description |
 |-------------|------|-------------|
-| `{{resolved_at}}` | String | When resolution occurred |
-| `{{method}}` | String | Resolution method |
-| `{{file_path}}` | String? | Resolved file path |
-| `{{line_range}}` | String? | Line range (e.g., "10-20") |
-| `{{line_range_colon}}` | String? | Line range with colon for tools (e.g., "10:20") |
-| `{{match_count}}` | Number? | Number of matches |
-| `{{commit_hash}}` | String? | Resolution commit |
-| `{{short_commit}}` | String? | First 8 chars (computed) |
+| <code v-pre>&#123;&#123;added_at&#125;&#125;</code> | String | When annotation was added |
+| <code v-pre>&#123;&#123;added_by&#125;&#125;</code> | String? | Who added it |
+| <code v-pre>&#123;&#123;source&#125;&#125;</code> | String? | Source (e.g., "annotate" command) |
+| <code v-pre>&#123;&#123;notes&#125;&#125;</code> | String? | Annotation notes |
+| <code v-pre>&#123;&#123;context&#125;&#125;</code> | String? | Code context snippet |
+
+### Resolution History (<code v-pre>&#123;&#123;#each resolutions&#125;&#125;</code> loop)
+
+| Placeholder | Type | Description |
+|-------------|------|-------------|
+| <code v-pre>&#123;&#123;resolved_at&#125;&#125;</code> | String | When resolution occurred |
+| <code v-pre>&#123;&#123;method&#125;&#125;</code> | String | Resolution method |
+| <code v-pre>&#123;&#123;file_path&#125;&#125;</code> | String? | Resolved file path |
+| <code v-pre>&#123;&#123;line_range&#125;&#125;</code> | String? | Line range (e.g., "10-20") |
+| <code v-pre>&#123;&#123;line_range_colon&#125;&#125;</code> | String? | Line range with colon for tools (e.g., "10:20") |
+| <code v-pre>&#123;&#123;match_count&#125;&#125;</code> | Number? | Number of matches |
+| <code v-pre>&#123;&#123;commit_hash&#125;&#125;</code> | String? | Resolution commit |
+| <code v-pre>&#123;&#123;short_commit&#125;&#125;</code> | String? | First 8 chars (computed) |
 
 ### Collection Overview (`codemark_collection_overview.md`)
 
@@ -87,32 +87,33 @@ the bookmark templates:
 
 | Placeholder | Type | Description |
 |-------------|------|-------------|
-| `{{name}}` | String | Collection name |
-| `{{description}}` | String? | Collection description |
-| `{{visibility}}` | String | `public` or `private` |
-| `{{health}}` | String? | `active`, `drifted`, or `stale` |
-| `{{created_at}}` | String | Creation timestamp |
-| `{{created_by}}` | String? | Creator |
-| `{{branch}}` | String? | Branch the collection was created on |
-| `{{published}}` | Bool | Whether the collection has been published |
-| `{{published_at}}` | String? | Publish timestamp |
-| `{{repo_url}}` | String? | Source repository URL |
-| `{{step_count}}` | Number | Number of bookmarks in the collection |
+| <code v-pre>&#123;&#123;name&#125;&#125;</code> | String | Collection name |
+| <code v-pre>&#123;&#123;description&#125;&#125;</code> | String? | Collection description |
+| <code v-pre>&#123;&#123;visibility&#125;&#125;</code> | String | `public` or `private` |
+| <code v-pre>&#123;&#123;health&#125;&#125;</code> | String? | `active`, `drifted`, or `stale` |
+| <code v-pre>&#123;&#123;created_at&#125;&#125;</code> | String | Creation timestamp |
+| <code v-pre>&#123;&#123;created_by&#125;&#125;</code> | String? | Creator |
+| <code v-pre>&#123;&#123;branch&#125;&#125;</code> | String? | Branch the collection was created on |
+| <code v-pre>&#123;&#123;published&#125;&#125;</code> | Bool | Whether the collection has been published |
+| <code v-pre>&#123;&#123;published_at&#125;&#125;</code> | String? | Publish timestamp |
+| <code v-pre>&#123;&#123;repo_url&#125;&#125;</code> | String? | Source repository URL |
+| <code v-pre>&#123;&#123;step_count&#125;&#125;</code> | Number | Number of bookmarks in the collection |
 
-Loops: `{{#each tags}}` (each `{{this}}`), `{{#each links}}` (each `{{kind}}`,
-`{{label}}`, `{{url}}`), and `{{#each steps}}` (each `{{index}}`, `{{file_path}}`,
-`{{file_name}}`, `{{language}}`, `{{summary}}`).
+Loops: <code v-pre>&#123;&#123;#each tags&#125;&#125;</code> (each <code v-pre>&#123;&#123;this&#125;&#125;</code>), <code v-pre>&#123;&#123;#each links&#125;&#125;</code> (each <code v-pre>&#123;&#123;kind&#125;&#125;</code>,
+<code v-pre>&#123;&#123;label&#125;&#125;</code>, <code v-pre>&#123;&#123;url&#125;&#125;</code>), and <code v-pre>&#123;&#123;#each steps&#125;&#125;</code> (each <code v-pre>&#123;&#123;index&#125;&#125;</code>, <code v-pre>&#123;&#123;file_path&#125;&#125;</code>,
+<code v-pre>&#123;&#123;file_name&#125;&#125;</code>, <code v-pre>&#123;&#123;language&#125;&#125;</code>, <code v-pre>&#123;&#123;summary&#125;&#125;</code>).
 
 ### Custom Helpers
 
-- `{{escape_markdown value}}` - Escapes special markdown characters
-- `{{truncate value}}` - Truncates a string to 8 characters
-- `{{format_date value "%Y-%m-%d %H:%M:%S"}}` - Formats a timestamp
+- <code v-pre>&#123;&#123;escape_markdown value&#125;&#125;</code> - Escapes special markdown characters
+- <code v-pre>&#123;&#123;truncate value&#125;&#125;</code> - Truncates a string to 8 characters
+- <code v-pre>&#123;&#123;format_date value "%Y-%m-%d %H:%M:%S"&#125;&#125;</code> - Formats a timestamp
 
 ## Default Template
 
 This is the default template used when no custom template is provided:
 
+::: raw
 ```handlebars
 # Bookmark: {{short_id}}
 
@@ -126,45 +127,46 @@ This is the default template used when no custom template is provided:
 {{#if created_by}}| **Author** | {{escape_markdown created_by}} |{{/if}}
 {{#if last_resolved_at}}| **Last Resolved** | {{last_resolved_at}} |{{/if}}
 {{#if resolution_method}}| **Resolution Method** | {{resolution_method}} |{{/if}}
-{{#if commit_hash}}| **Commit** | `{{short_commit}}` |{{/if}}
+{{#if commit_hash}}| **Commit** | <code v-pre>{{short_commit}}</code> |{{/if}}
 {{#if stale_since}}| **Stale Since** | {{stale_since}} |{{/if}}
 
 ## Tree-sitter Query
-```scheme
-{{query}}
+```
+:::scheme
+&#123;&#123;query&#125;&#125;
 ```
 
-{{#if tags}}
+&#123;&#123;#if tags&#125;&#125;
 ## Tags
-{{#each tags}}
-- `{{escape_markdown this}}`
-{{/each}}
-{{/if}}
+&#123;&#123;#each tags&#125;&#125;
+- <code v-pre>&#123;&#123;escape_markdown this&#125;&#125;</code>
+&#123;&#123;/each&#125;&#125;
+&#123;&#123;/if&#125;&#125;
 
-{{#if annotations}}
+&#123;&#123;#if annotations&#125;&#125;
 ## Annotations
-{{#each annotations}}
-### {{added_by}}
-*{{source}}* added: {{added_at}}
+&#123;&#123;#each annotations&#125;&#125;
+### &#123;&#123;added_by&#125;&#125;
+*&#123;&#123;source&#125;&#125;* added: &#123;&#123;added_at&#125;&#125;
 
-{{#if notes}}{{escape_markdown notes}}{{/if}}
+&#123;&#123;#if notes&#125;&#125;&#123;&#123;escape_markdown notes&#125;&#125;&#123;&#123;/if&#125;&#125;
 
-{{#if context}}
+&#123;&#123;#if context&#125;&#125;
 ```
-{{escape_markdown context}}
+&#123;&#123;escape_markdown context&#125;&#125;
 ```
-{{/if}}
-{{/each}}
-{{/if}}
+&#123;&#123;/if&#125;&#125;
+&#123;&#123;/each&#125;&#125;
+&#123;&#123;/if&#125;&#125;
 
-{{#if resolutions}}
+&#123;&#123;#if resolutions&#125;&#125;
 ## Resolution History
 | Time | Method | File | Lines | Matches | Commit |
 |------|--------|------|-------|---------|--------|
-{{#each resolutions}}
-| {{resolved_at}} | {{method}} | {{file_path}} | {{line_range}} | {{match_count}} | {{#if commit_hash}}`{{short_commit}}`{{else}}-{{/if}} |
-{{/each}}
-{{/if}}
+&#123;&#123;#each resolutions&#125;&#125;
+| &#123;&#123;resolved_at&#125;&#125; | &#123;&#123;method&#125;&#125; | &#123;&#123;file_path&#125;&#125; | &#123;&#123;line_range&#125;&#125; | &#123;&#123;match_count&#125;&#125; | &#123;&#123;#if commit_hash&#125;&#125;<code v-pre>&#123;&#123;short_commit&#125;&#125;</code>&#123;&#123;else&#125;&#125;-&#123;&#123;/if&#125;&#125; |
+&#123;&#123;/each&#125;&#125;
+&#123;&#123;/if&#125;&#125;
 ```
 
 ## Template Storage
