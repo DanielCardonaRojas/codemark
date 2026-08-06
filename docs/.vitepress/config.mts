@@ -30,6 +30,7 @@ export default defineConfig({
         items: [
           { text: 'Workflows', link: '/guide/workflows' },
           { text: 'Agent Skills', link: '/guide/agent-skills' },
+          { text: 'Agent Walkthrough', link: '/guide/agent-workflow-walkthrough' },
         ]
       },
       {
@@ -37,6 +38,8 @@ export default defineConfig({
         items: [
           { text: 'Keybindings & UI', link: '/guide/keybindings' },
           { text: 'Configuration', link: '/guide/configuration' },
+          { text: 'CLI Reference', link: '/guide/cli-reference' },
+          { text: 'Markdown Templates', link: '/guide/templates' },
         ]
       },
       {
