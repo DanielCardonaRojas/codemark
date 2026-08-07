@@ -39,6 +39,12 @@ impl RepoWorkspace {
         Ok(Self { dbs: vec![(root.clone(), db)], focus: root })
     }
 
+    /// Wrap an already-open database as a single-repo workspace (checked + focused).
+    /// `root` is the repo root the db belongs to (used as its lookup key).
+    pub fn from_db(root: PathBuf, db: Database) -> Self {
+        Self { dbs: vec![(root.clone(), db)], focus: root }
+    }
+
     /// Replace the checked set with `checked`.
     ///
     /// Opens newly-checked repos, drops unchecked ones, and *reuses* already-open
@@ -123,6 +129,18 @@ impl RepoWorkspace {
         self.get(&self.focus).expect("focus is always a checked repo")
     }
 
+    /// Mutable access to the focused repo's database, for the few DB operations
+    /// that take `&mut self` (e.g. `delete_collection_recursive`). Never panics:
+    /// `focus` is always checked.
+    pub fn focus_db_mut(&mut self) -> &mut Database {
+        let focus = self.focus.clone();
+        self.dbs
+            .iter_mut()
+            .find(|(r, _)| r == &focus)
+            .map(|(_, d)| d)
+            .expect("focus is always a checked repo")
+    }
+
     /// Set the focused repo. Ignored if `root` is not currently checked, so
     /// focus stays valid.
     pub fn set_focus(&mut self, root: PathBuf) {
@@ -177,6 +195,18 @@ mod tests {
         assert!(ws.get(&root_a).is_some());
         assert!(ws.get(&root_b).is_none());
         assert!(!ws.is_multi());
+    }
+
+    #[test]
+    fn from_db_wraps_single_repo() {
+        let (_a, root_a) = temp_repo();
+        let db = Database::open(&RepoWorkspace::db_path(&root_a)).unwrap();
+        let db_path = db.path().to_path_buf();
+
+        let ws = RepoWorkspace::from_db(root_a.clone(), db);
+        assert!(!ws.is_multi());
+        assert_eq!(ws.focus(), root_a.as_path());
+        assert_eq!(ws.focus_db().path(), db_path.as_path());
     }
 
     #[test]

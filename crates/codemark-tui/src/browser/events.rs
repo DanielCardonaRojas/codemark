@@ -91,7 +91,11 @@ impl BrowserLayout {
                 %tour_name,
                 "entering collection overview -> bookmarks flow"
             );
-            self.right_pane.load_tour_live(&self.db, &tour_name, &mut self.session_cache);
+            self.right_pane.load_tour_live(
+                self.workspace.focus_db(),
+                &tour_name,
+                &mut self.session_cache,
+            );
             // Only the first step was resolved live; resolve the rest off the UI
             // thread so entering the collection stays snappy.
             self.spawn_collection_live_resolve();
@@ -251,7 +255,7 @@ impl BrowserLayout {
         // Take a fresh render id so a result from an earlier task (same bookmark,
         // older state) is superseded and dropped on arrival.
         let request_id = self.right_pane.next_step_preview_request();
-        let repo_path = self.db.path().parent().unwrap_or_else(|| self.db.path()).to_path_buf();
+        let repo_path = self.db().path().parent().unwrap_or_else(|| self.db().path()).to_path_buf();
         let head = self.right_pane.head_commit().map(|s| s.to_string());
         let (show_tpl, details_tpl, comments_tpl) = self.right_pane.markdown_templates();
         let event_handler = self.event_handler.clone();
@@ -382,7 +386,7 @@ impl BrowserLayout {
                 // current checkout. Paging itself no longer refreshes HEAD (that
                 // subprocess was the source of the navigation lag), so this is
                 // where a branch change gets reflected in the pager dots.
-                self.right_pane.refresh_head_commit(&self.db);
+                self.right_pane.refresh_head_commit(self.workspace.focus_db());
 
                 // A plain `refresh_all_panels` rebuilds the Bookmarks/Collections
                 // lists from the full DB set, which would drop any active search
@@ -408,8 +412,8 @@ impl BrowserLayout {
                 // runs regardless of `success`: a partial heal reports failure yet
                 // still mutated the bookmarks that did resolve. It no-ops when no
                 // collection is open.
-                self.right_pane.refresh_step_health(&self.db);
-                self.right_pane.refresh_overview_health(&self.db);
+                self.right_pane.refresh_step_health(self.workspace.focus_db());
+                self.right_pane.refresh_overview_health(self.workspace.focus_db());
                 Some(true)
             }
             Event::SyncComplete(msg, success) => {
@@ -424,8 +428,8 @@ impl BrowserLayout {
                 // A pull can update bookmark records for an open collection (and a
                 // partial pull reports failure yet still writes some), so refresh
                 // its pager dots unconditionally; no-ops when no collection is open.
-                self.right_pane.refresh_step_health(&self.db);
-                self.right_pane.refresh_overview_health(&self.db);
+                self.right_pane.refresh_step_health(self.workspace.focus_db());
+                self.right_pane.refresh_overview_health(self.workspace.focus_db());
                 Some(true)
             }
             Event::TourPullFinished(tour_id) => {
@@ -533,7 +537,7 @@ impl BrowserLayout {
                     // operational failures (Error).
                     let health =
                         if *unresolved { HealthStatus::Broken } else { HealthStatus::Unknown };
-                    self.right_pane.load_bookmark(&self.db, bookmark_id, health);
+                    self.right_pane.load_bookmark(self.workspace.focus_db(), bookmark_id, health);
                     self.right_pane.finish_loading();
                 }
                 Some(true)
@@ -740,7 +744,7 @@ impl BrowserLayout {
             return;
         }
 
-        let db_path = self.db.path().to_path_buf();
+        let db_path = self.db().path().to_path_buf();
         let event_handler = self.event_handler.clone();
         // Stamp the current health epoch; results are discarded on apply if the
         // epoch has since advanced (e.g. a grammar refresh on FocusGained).
@@ -828,12 +832,12 @@ impl BrowserLayout {
         // [`spawn_live_health_task`](Self::spawn_live_health_task)'s empty-set
         // guard, which keeps the unit tests (no runtime) from panicking in
         // `BrowserLayout::new`.
-        let collections = match self.db.list_collections() {
+        let collections = match self.db().list_collections() {
             Ok(c) if !c.is_empty() => c,
             _ => return,
         };
 
-        let db_path = self.db.path().to_path_buf();
+        let db_path = self.db().path().to_path_buf();
         let event_handler = self.event_handler.clone();
         let generation = self.health_generation;
 
@@ -963,7 +967,7 @@ impl BrowserLayout {
             return;
         }
         let generation = self.right_pane.collection_generation();
-        let db_path = self.db.path().to_path_buf();
+        let db_path = self.db().path().to_path_buf();
         let event_handler = self.event_handler.clone();
 
         tokio::task::spawn_blocking(move || {
@@ -1046,7 +1050,7 @@ impl BrowserLayout {
         use codemark_core::storage::db::Database;
 
         let request_id = self.active_preview_request;
-        let db_path = self.db.path().to_path_buf();
+        let db_path = self.db().path().to_path_buf();
         let head = self.right_pane.head_commit().map(|s| s.to_string());
         let event_handler = self.event_handler.clone();
         let preview_cache = Arc::clone(&self.preview_cache);
@@ -1393,7 +1397,11 @@ impl BrowserLayout {
                     }
                     let tour_name = selected.text().to_string();
                     panel.activate_selected();
-                    self.right_pane.load_tour_live(&self.db, &tour_name, &mut self.session_cache);
+                    self.right_pane.load_tour_live(
+                        self.workspace.focus_db(),
+                        &tour_name,
+                        &mut self.session_cache,
+                    );
                     // Only the first step was resolved live; resolve the rest off
                     // the UI thread so entering the tour stays snappy.
                     self.spawn_collection_live_resolve();
@@ -1407,7 +1415,11 @@ impl BrowserLayout {
                 {
                     let tour_name = selected.text().to_string();
                     panel.activate_selected();
-                    self.right_pane.load_tour_live(&self.db, &tour_name, &mut self.session_cache);
+                    self.right_pane.load_tour_live(
+                        self.workspace.focus_db(),
+                        &tour_name,
+                        &mut self.session_cache,
+                    );
                     // Only the first step was resolved live; resolve the rest off
                     // the UI thread so entering the collection stays snappy.
                     self.spawn_collection_live_resolve();
@@ -1421,7 +1433,11 @@ impl BrowserLayout {
                     && let Some(id) = selected.user_data.clone()
                 {
                     panel.activate_selected();
-                    self.right_pane.load_bookmark_live(&self.db, &id, &mut self.session_cache);
+                    self.right_pane.load_bookmark_live(
+                        self.workspace.focus_db(),
+                        &id,
+                        &mut self.session_cache,
+                    );
                     self.set_focus(FocusArea::Main);
                     return Some(true);
                 }
@@ -1578,7 +1594,8 @@ impl BrowserLayout {
                     && let Some(selected) = panel.selected()
                 {
                     let collection_name = selected.text().to_string();
-                    if let Ok(Some(collection)) = self.db.get_collection_by_name(&collection_name) {
+                    if let Ok(Some(collection)) = self.db().get_collection_by_name(&collection_name)
+                    {
                         // Deleting a collection also deletes its bookmarks — they're
                         // almost always created alongside the collection. Bookmarks
                         // shared with another collection are preserved, so only count
@@ -1588,7 +1605,7 @@ impl BrowserLayout {
                         // would open a destructive confirmation that understates what's
                         // about to be deleted.
                         let bm_count =
-                            match self.db.count_exclusive_collection_bookmarks(&collection.id) {
+                            match self.db().count_exclusive_collection_bookmarks(&collection.id) {
                                 Ok(count) => count,
                                 Err(err) => {
                                     tracing::warn!(
