@@ -135,6 +135,62 @@ impl SemanticRepo {
         Ok(entries.len())
     }
 
+    /// Embed a query string once (loads the model). Reuse the result across DBs.
+    ///
+    /// This is the "embed-once" half of the split: callers that want to search
+    /// many databases with the same query can call this once and then feed the
+    /// resulting embedding into [`search_prepared`](Self::search_prepared) /
+    /// [`search_collections_prepared`](Self::search_collections_prepared)
+    /// per-connection without reloading the embedding model each time.
+    pub async fn embed_query(&self, query: &str) -> Result<Vec<f32>> {
+        // Ensure sqlite-vec extension is loaded
+        crate::embeddings::VecStore::ensure_extension_loaded();
+
+        let provider = self.provider()?;
+
+        provider.embed(query).await.map_err(|e| {
+            crate::error::Error::Operation(format!("Failed to generate query embedding: {}", e))
+        })
+    }
+
+    /// Search a single connection with a pre-computed query embedding (no model load).
+    ///
+    /// The store is constructed from `query_embedding.len()`, which equals the
+    /// provider's dimensions since the embedding was produced by that provider,
+    /// so this is behaviorally identical to embedding the query inline.
+    pub fn search_prepared(
+        &self,
+        conn: &Connection,
+        query_embedding: &[f32],
+        limit: usize,
+        threshold: Option<f32>,
+    ) -> Result<Vec<SearchResult>> {
+        // Ensure sqlite-vec extension is loaded
+        crate::embeddings::VecStore::ensure_extension_loaded();
+
+        let store = VecStore::with_metric(query_embedding.len(), self.distance_metric);
+        store
+            .search_with_threshold(conn, query_embedding, limit, threshold)
+            .map_err(|e| crate::error::Error::Operation(format!("Semantic search failed: {}", e)))
+    }
+
+    /// Collection-target variant of [`search_prepared`](Self::search_prepared).
+    pub fn search_collections_prepared(
+        &self,
+        conn: &Connection,
+        query_embedding: &[f32],
+        limit: usize,
+        threshold: Option<f32>,
+    ) -> Result<Vec<SearchResult>> {
+        // Ensure sqlite-vec extension is loaded
+        crate::embeddings::VecStore::ensure_extension_loaded();
+
+        let store = self.collection_store(query_embedding.len());
+        store
+            .search_with_threshold(conn, query_embedding, limit, threshold)
+            .map_err(|e| crate::error::Error::Operation(format!("Semantic search failed: {}", e)))
+    }
+
     /// Search for similar bookmarks by semantic similarity.
     pub async fn search(
         &self,
@@ -153,22 +209,8 @@ impl SemanticRepo {
         limit: usize,
         threshold: Option<f32>,
     ) -> Result<Vec<SearchResult>> {
-        // Ensure sqlite-vec extension is loaded
-        crate::embeddings::VecStore::ensure_extension_loaded();
-
-        let provider = self.provider()?;
-
-        let query_embedding = provider.embed(query).await.map_err(|e| {
-            crate::error::Error::Operation(format!("Failed to generate query embedding: {}", e))
-        })?;
-
-        let store = VecStore::with_metric(provider.dimensions(), self.distance_metric);
-        let results =
-            store.search_with_threshold(conn, &query_embedding, limit, threshold).map_err(|e| {
-                crate::error::Error::Operation(format!("Semantic search failed: {}", e))
-            })?;
-
-        Ok(results)
+        let query_embedding = self.embed_query(query).await?;
+        self.search_prepared(conn, &query_embedding, limit, threshold)
     }
 
     /// Find bookmarks that don't have embeddings yet.
@@ -314,21 +356,8 @@ impl SemanticRepo {
         limit: usize,
         threshold: Option<f32>,
     ) -> Result<Vec<SearchResult>> {
-        crate::embeddings::VecStore::ensure_extension_loaded();
-
-        let provider = self.provider()?;
-
-        let query_embedding = provider.embed(query).await.map_err(|e| {
-            crate::error::Error::Operation(format!("Failed to generate query embedding: {}", e))
-        })?;
-
-        let store = self.collection_store(provider.dimensions());
-        let results =
-            store.search_with_threshold(conn, &query_embedding, limit, threshold).map_err(|e| {
-                crate::error::Error::Operation(format!("Semantic search failed: {}", e))
-            })?;
-
-        Ok(results)
+        let query_embedding = self.embed_query(query).await?;
+        self.search_collections_prepared(conn, &query_embedding, limit, threshold)
     }
 
     /// Find collections that don't have embeddings yet.
@@ -405,5 +434,87 @@ mod tests {
         assert!(text.contains("Context: Testing utilities"));
         assert!(text.contains("Node Type: function"));
         assert!(text.contains("Node Target: cycle_mode"));
+    }
+
+    /// Build a minimal bookmark with the given id, tags, and notes for embedding.
+    fn sample_bookmark(id: &str, tags: &[&str], notes: &str) -> Bookmark {
+        Bookmark {
+            id: id.to_string(),
+            query: r#"(function_item name: (identifier) @fn_name) @target"#.to_string(),
+            language: "rust".to_string(),
+            file_path: "/test.rs".to_string(),
+            content_hash: Some("hash".to_string()),
+            commit_hash: None,
+            health: crate::engine::bookmark::BookmarkHealth::Active,
+            resolution_method: Some(crate::engine::bookmark::ResolutionMethod::Exact),
+            last_resolved_at: None,
+            stale_since: None,
+            created_at: chrono::Utc::now().to_string(),
+            created_by: Some("user".to_string()),
+            current_resolution_id: None,
+            repo_id: None,
+            tags: tags.iter().map(|t| t.to_string()).collect(),
+            annotations: vec![crate::engine::bookmark::Annotation {
+                id: format!("{id}-ann"),
+                bookmark_id: id.to_string(),
+                added_at: chrono::Utc::now().to_string(),
+                added_by: None,
+                notes: Some(notes.to_string()),
+                context: None,
+                source: None,
+            }],
+            comments: vec![],
+        }
+    }
+
+    /// Verifies the embed-once + search_prepared split is behaviorally identical
+    /// to the all-in-one `search`: embedding a query once and searching a
+    /// connection with the prepared embedding must return the same ids in the
+    /// same order as `search`, which embeds inline.
+    ///
+    /// Requires the AllMiniLmL6V2 model to be cached locally (hf-hub cache).
+    /// Ignored by default so CI without model access still passes; run with
+    /// `cargo test -p codemark-core embed_query_then_prepared -- --ignored`.
+    #[tokio::test]
+    #[ignore = "needs the AllMiniLmL6V2 embedding model cached locally"]
+    async fn embed_query_then_prepared_matches_search() {
+        let repo = SemanticRepo::new(None, EmbeddingModel::AllMiniLmL6V2);
+
+        // In-memory store with the bookmark_embeddings table created for the model.
+        crate::embeddings::VecStore::ensure_extension_loaded();
+        let mut conn = rusqlite::Connection::open_in_memory().unwrap();
+        VecStore::with_metric(
+            EmbeddingModel::AllMiniLmL6V2.dimensions(),
+            DistanceMetric::default(),
+        )
+        .create_table(&mut conn)
+        .unwrap();
+
+        let bookmarks = vec![
+            sample_bookmark("auth", &["auth", "login"], "Handles user authentication and login"),
+            sample_bookmark("parse", &["parser"], "Parses configuration files from disk"),
+            sample_bookmark("net", &["network"], "Opens a TCP socket and sends bytes"),
+        ];
+        let stored = repo.store_embeddings(&mut conn, &bookmarks).await.unwrap();
+        assert_eq!(stored, 3);
+
+        let query = "how does user sign in work";
+
+        // All-in-one path.
+        let inline = repo.search(&conn, query, 5).await.unwrap();
+
+        // Embed-once + prepared path.
+        let emb = repo.embed_query(query).await.unwrap();
+        assert_eq!(emb.len(), EmbeddingModel::AllMiniLmL6V2.dimensions());
+        let prepared = repo.search_prepared(&conn, &emb, 5, None).unwrap();
+
+        let inline_ids: Vec<&str> = inline.iter().map(|r| r.id.as_str()).collect();
+        let prepared_ids: Vec<&str> = prepared.iter().map(|r| r.id.as_str()).collect();
+        assert_eq!(inline_ids, prepared_ids, "prepared search must match inline search ordering");
+
+        // Distances must also match since the embedding and store are identical.
+        for (a, b) in inline.iter().zip(prepared.iter()) {
+            assert_eq!(a.distance, b.distance);
+        }
     }
 }
