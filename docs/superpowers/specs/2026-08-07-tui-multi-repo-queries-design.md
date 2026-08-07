@@ -44,14 +44,24 @@ today.
   genuinely shared, non-trivial helper — `find_bookmark_across` — moves into
   core. The fan-out/tagging loops stay in each consumer because their outputs
   diverge (CLI stdout vs. TUI `PanelItem`s).
+- **Semantic search across repos** is the primary use case and does **not exist
+  today** (both the CLI and TUI semantic paths are single-DB). A new core
+  primitive embeds the query **once** and searches each DB's connection,
+  merging by distance. It is wired into **both** the TUI and the CLI (parity).
+- **Model comparability:** cross-repo semantic search **assumes all checked
+  repos are indexed with the same embedding model/metric** — no guard for v1.
+  Distances from a differently-indexed repo would rank incorrectly. This is an
+  accepted known limitation; see "Known limitations" for the future guard.
 
 ## Non-goals
 
 - No cross-repo *tours* (Tours is hidden in multi-repo mode).
 - No new "create bookmark" flow. TUI writes remain item-scoped (delete, heal,
   publish/sync of a selected item).
-- No change to CLI behavior beyond calling the relocated `find_bookmark_across`.
-- No merged/shared "multi-repo query engine" in core.
+- No embedding-model **compatibility guard** for cross-repo semantic search (v1
+  assumes a shared model; see Known limitations).
+- No general "multi-repo query engine" in core — only the two targeted shared
+  primitives (`find_bookmark_across`, the embed-once semantic search).
 
 ## Architecture
 
@@ -74,17 +84,36 @@ The TUI reuses the primitives (`Database::open`, `source_label_from_path`,
 *checked repos in the Repos panel* (registry-backed roots), not CLI
 `--db`/`--repo` flags, and it mutates at runtime.
 
-### Step 0 — relocate `find_bookmark_across` into core
+### Step 0 — shared core primitives
 
-Move `find_bookmark_across` (currently
+Two targeted extractions/additions into `codemark-core`, done first so both the
+CLI and TUI consume them:
+
+**0a. Relocate `find_bookmark_across`.** Move it (currently
 `crates/codemark-cli/src/cli/handlers.rs`) into `codemark-core` (e.g.
 `Workspace::find_bookmark_across(dbs, id) -> Result<(Bookmark, &Database)>`,
 matching full-id then ≥4-char prefix). The CLI calls the relocated version so
 its tests stay green; the TUI reuses it for open-by-id and resolving a selected
-row's DB. Everything else in the CLI stays put.
+row's DB. Everything else in the CLI stays put. The two DB filters
+(`filter_dbs_by_user_email`, `filter_dbs_by_repo_owner`) may move too if
+convenient — optional, not required.
 
-The two DB filters (`filter_dbs_by_user_email`, `filter_dbs_by_repo_owner`) may
-move too if convenient, but that is optional and not required by this feature.
+**0b. Embed-once semantic primitive.** Today `SemanticRepo::search(conn, query,
+limit)` rebuilds the embedding provider (loads the model) and re-embeds the
+query on every call — so looping it over N repos would load the model N times.
+Split embedding from per-connection search:
+
+- `SemanticRepo::embed_query(query) -> Result<Vec<f32>>` — builds the provider
+  once and returns the query embedding.
+- `SemanticRepo::search_prepared(conn, &embedding, limit, threshold) ->
+  Result<Vec<SearchResult>>` — runs `VecStore::search_with_threshold` against a
+  single connection using a pre-computed embedding (no model load).
+  `VecStore::search_with_threshold` already accepts a `&[f32]`, so this is a
+  clean extraction. Add the collection-target variant too
+  (`search_collections_prepared`).
+
+The existing `search`/`search_collections` become thin wrappers
+(`embed_query` + `search_prepared`) so current single-DB callers are unchanged.
 
 ### Component 1 — `RepoWorkspace` (new, TUI-side)
 
@@ -149,11 +178,39 @@ The bookmark and collection live-health `HashMap`s become keyed by
 cross-contaminate. The existing generation guard is unchanged.
 `spawn_live_health_task` fans out across all checked repos.
 
-### Component 5 — search
+### Component 5 — search (FTS and semantic)
 
 Search fans out across all checked DBs and merges results, each tagged by repo.
-The existing `request_id` / generation guards are preserved. Results carry the
-repo so opening one resolves the correct DB.
+The existing `request_id` / generation guards are preserved (a merged result set
+belongs to one request_id). Results carry the repo so opening one resolves the
+correct DB.
+
+**FTS.** `Database::search_bookmarks` is a per-DB `LIKE` scan with no global
+score, so the merge is a concatenation. The TUI's `execute_bookmark_search` FTS
+arm (and the collection equivalent) loops `workspace.dbs()`, runs the per-DB
+search, tags each row with its repo, and concatenates. It stays synchronous.
+
+**Semantic (primary use case).** Built on the Step 0b primitive so the model
+loads once per query, not once per repo:
+
+1. Resolve model/metric/threshold **once** from the **focus repo's** config
+   (`Config::load_layered`). Per the model-comparability decision, this single
+   config is applied to all checked repos (v1 assumes a shared model).
+2. `embed_query(query)` once.
+3. For each checked DB: `search_prepared(db.conn(), &embedding, limit,
+   threshold)`, tagging each `SearchResult` with its repo. A repo with no vec
+   index / no embeddings simply returns nothing.
+4. Merge all hits, **global sort by distance ascending, truncate to
+   `SEARCH_RESULT_LIMIT`**, then resolve each surviving hit to its full bookmark
+   from its own DB.
+
+This runs on the existing blocking task (model load + embed). The same embed-
+once/merge flow applies to collection semantic search.
+
+**CLI parity.** `handle_semantic_search` (currently `open_db` single-DB) is
+rewired to `open_all_dbs*` + the same embed-once/merge flow, so `codemark search
+--semantic --repo a/b --repo c/d` works and matches the TUI. FTS CLI search
+already fans out and is unchanged.
 
 ### Component 6 — Tours visibility
 
@@ -189,6 +246,19 @@ like Owners) and calls `workspace.set_scope(checked_roots)` followed by
   nothing.
 - **Id collision across repos** is handled by keying selection, live-health, and
   `db_for_item` on `(repo_root, id)`.
+- **Repo without a semantic index** contributes no semantic hits (its
+  `search_prepared` returns empty); the other repos still return results.
+
+## Known limitations
+
+- **Cross-repo semantic ranking assumes a shared embedding model/metric.** v1
+  applies one model (from the focus repo) to every checked repo and merges raw
+  distances. If a repo was indexed with a different model or dimension, its
+  distances are not comparable and it will rank incorrectly (or, on a dimension
+  mismatch, the underlying `VecStore` query may error for that DB). A future
+  guard could resolve each repo's configured model and either skip or warn on
+  mismatch (the vec-table dimension is the reliable signal; per-embedding model
+  identity is not currently stored). Out of scope for v1 by decision.
 
 ## Testing
 
@@ -201,11 +271,18 @@ like Owners) and calls `workspace.set_scope(checked_roots)` followed by
 - `db_for_item` resolves the correct DB by repo root.
 - Tours visibility flips with `is_multi()`.
 - Relocated `find_bookmark_across` still matches full id and ≥4-char prefix.
+- `SemanticRepo::embed_query` + `search_prepared` produce the same results as the
+  old `search` for a single DB (refactor-parity), and `search_prepared` runs
+  without reloading the model.
 
 **Integration**
 - Two temp repos, each with bookmarks → check both → merged list shows both,
   each labeled with its repo name.
 - Select a repo-B bookmark → preview, heal, and delete all target repo B.
-- Search across both repos merges results tagged by repo.
+- FTS search across both repos merges and tags results by repo.
+- **Semantic search across both repos**: index both, run one semantic query,
+  assert hits from both repos appear, ordered by ascending distance, capped at
+  the limit — and the embedding model is loaded once (not once per repo).
 - CLI regression: `find_bookmark_across` relocation keeps existing CLI tests
-  green.
+  green; `codemark search --semantic` with multiple `--repo` returns merged,
+  distance-ordered hits.
