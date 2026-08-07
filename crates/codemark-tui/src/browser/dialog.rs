@@ -81,11 +81,11 @@ impl BrowserLayout {
         let result = match &action {
             DialogAction::DeleteBookmark(id) => {
                 tracing::debug!(target: "codemark::ui", %id, "deleting bookmark");
-                self.db.delete_bookmark(id).map(|_| ())
+                self.db().delete_bookmark(id).map(|_| ())
             }
             DialogAction::DeleteCollection(id) => {
                 tracing::debug!(target: "codemark::ui", %id, "deleting collection and its bookmarks");
-                self.db.delete_collection_recursive(id).map(|_| ())
+                self.db_mut().delete_collection_recursive(id).map(|_| ())
             }
         };
 

@@ -131,8 +131,9 @@ fn shorten_path(path: &str, max_width: usize) -> String {
 /// Splits the screen vertically with a left sidebar (40%) and right main area (60%).
 /// Each section has numbered tabs that can be cycled with `[` and `]`.
 pub struct BrowserLayout {
-    /// Database connection
-    db: Database,
+    /// Open database connections for the checked repos, with a focused repo that
+    /// single-repo operations act on via [`BrowserLayout::db`].
+    workspace: RepoWorkspace,
     /// Global repository registry
     registry: rusqlite::Connection,
     /// Left sidebar components
@@ -297,12 +298,27 @@ impl BrowserLayout {
             FocusArea::ContextPanel
         };
 
+        let left_pane = LeftPane::new(&db, &registry);
+        let right_pane = RightPane::new(&db);
+
+        // Derive the repo root from the db path the same way `switch_database`
+        // and `build_repo_items` do: `<root>/.codemark/codemark.db`. In-memory
+        // (`:memory:`) paths have no parent, so fall back to the db path itself
+        // as the lookup key — `focus_db()` returns the single db regardless.
+        let root = db
+            .path()
+            .parent()
+            .and_then(|p| p.parent())
+            .map(|p| p.to_path_buf())
+            .unwrap_or_else(|| db.path().to_path_buf());
+        let workspace = RepoWorkspace::from_db(root, db);
+
         let mut layout = Self {
-            left_pane: LeftPane::new(&db, &registry),
-            right_pane: RightPane::new(&db),
+            left_pane,
+            right_pane,
             focus: initial_focus,
             previous_focus: None,
-            db,
+            workspace,
             registry,
             pending_command: None,
             pending_notification: None,
@@ -342,13 +358,25 @@ impl BrowserLayout {
 
         // Spawn background live health resolution so bookmark dots update on startup
         if let Ok(all_bookmarks) =
-            layout.db.list_bookmarks(&codemark_core::engine::bookmark::BookmarkFilter::default())
+            layout.db().list_bookmarks(&codemark_core::engine::bookmark::BookmarkFilter::default())
         {
             layout.spawn_live_health_task(all_bookmarks);
             layout.spawn_collection_health_task();
         }
 
         layout
+    }
+
+    /// The focused repo's database. Single-repo operations read/write through
+    /// this accessor so they act on the currently-focused repo.
+    fn db(&self) -> &codemark_core::storage::db::Database {
+        self.workspace.focus_db()
+    }
+
+    /// Mutable access to the focused repo's database, for the few DB operations
+    /// that require `&mut self` (e.g. `delete_collection_recursive`).
+    fn db_mut(&mut self) -> &mut codemark_core::storage::db::Database {
+        self.workspace.focus_db_mut()
     }
 
     /// Load a collection overview and override its health label with the cached
@@ -358,7 +386,7 @@ impl BrowserLayout {
     /// [`RightPane::load_collection_overview`]) stands until the background task
     /// arrives and the handler corrects it.
     fn load_collection_overview_live(&mut self, id: &str) {
-        self.right_pane.load_collection_overview(&self.db, id);
+        self.right_pane.load_collection_overview(self.workspace.focus_db(), id);
         match self.collection_live_health.get(id).copied() {
             // A real live status overrides the persisted snapshot.
             Some(h) if h != HealthStatus::Unknown => self.right_pane.overview_health = Some(h),
@@ -406,7 +434,7 @@ impl BrowserLayout {
     /// keep the tab visible after `codemark auth logout` and let remote actions
     /// run without credentials (they'd just fail).
     fn is_logged_in(&self) -> bool {
-        if let Some(dir) = self.db.path().parent() {
+        if let Some(dir) = self.db().path().parent() {
             let config = codemark_core::config::Config::load_layered(dir);
             codemark_core::sync::resolve_server_and_token(&config)
                 .map(|(_, token)| token.is_some())
@@ -436,7 +464,7 @@ impl BrowserLayout {
         // (Done unconditionally because the clamped-to tab may have no selection
         // to load, in which case the branch below wouldn't refresh the pane.)
         if self.right_pane.active_remote_tour_id.is_some() {
-            self.right_pane.clear_preview_state(&self.db);
+            self.right_pane.clear_preview_state(self.workspace.focus_db());
         }
 
         // Then refresh the preview for the clamped-to tab's current selection.
@@ -462,7 +490,11 @@ impl BrowserLayout {
     pub(super) fn preview_content_item(&mut self, tab: ContentTab, id: &str) {
         match tab {
             ContentTab::Bookmarks => {
-                self.right_pane.load_bookmark_live(&self.db, id, &mut self.session_cache);
+                self.right_pane.load_bookmark_live(
+                    self.workspace.focus_db(),
+                    id,
+                    &mut self.session_cache,
+                );
             }
             ContentTab::Collections => {
                 self.load_collection_overview_live(id);
@@ -480,7 +512,7 @@ impl BrowserLayout {
             match self.cached_remote_tours.iter().find(|t| t.tour_id == tour_id) {
                 Some(tour) => self.right_pane.load_tour_overview(tour),
                 // No cached summary (e.g. stale selection) — clear stale preview.
-                None => self.right_pane.clear_preview_state(&self.db),
+                None => self.right_pane.clear_preview_state(self.workspace.focus_db()),
             }
         } else {
             self.load_collection_overview_live(id);
@@ -642,14 +674,14 @@ impl BrowserLayout {
     /// out of [`Self::execute_search`] so a refocus reconcile can re-run the
     /// bookmark search directly, independent of the selected tab.
     fn execute_bookmark_search(&mut self, request_id: u64, mode: SearchMode, query: String) {
-        let db_path = self.db.path().to_path_buf();
+        let db_path = self.db().path().to_path_buf();
         let event_handler = self.event_handler.clone();
 
         match mode {
             SearchMode::Fts => {
                 // FTS search can be done synchronously as it's usually fast
                 let bookmarks =
-                    self.db.search_bookmarks(Some(&query), None, None, None, None, None, None);
+                    self.db().search_bookmarks(Some(&query), None, None, None, None, None, None);
                 match bookmarks {
                     Ok(bm) => {
                         let _ =
@@ -671,7 +703,7 @@ impl BrowserLayout {
             #[cfg(feature = "semantic")]
             SearchMode::Semantic => {
                 // Load config to get semantic settings
-                let Some(codemark_dir) = self.db.path().parent() else {
+                let Some(codemark_dir) = self.db().path().parent() else {
                     return;
                 };
                 let config = Config::load_layered(codemark_dir);
@@ -748,7 +780,7 @@ impl BrowserLayout {
         );
 
         match mode {
-            SearchMode::Fts => match self.db.search_collections(Some(&query), None) {
+            SearchMode::Fts => match self.db().search_collections(Some(&query), None) {
                 Ok(mut collections) => {
                     collections.truncate(SEARCH_RESULT_LIMIT);
                     tracing::debug!(
@@ -780,11 +812,11 @@ impl BrowserLayout {
             }
             #[cfg(feature = "semantic")]
             SearchMode::Semantic => {
-                let Some(codemark_dir) = self.db.path().parent() else {
+                let Some(codemark_dir) = self.db().path().parent() else {
                     return;
                 };
                 let config = Config::load_layered(codemark_dir);
-                let db_path = self.db.path().to_path_buf();
+                let db_path = self.db().path().to_path_buf();
 
                 tokio::task::spawn_blocking(move || {
                     let Ok(db) = Database::open(&db_path) else {
@@ -859,8 +891,10 @@ impl BrowserLayout {
     pub fn switch_database(&mut self, repo_root: &str) -> codemark_core::error::Result<()> {
         let db_path = std::path::Path::new(repo_root).join(".codemark").join("codemark.db");
         if db_path.exists() {
-            self.db = Database::open(&db_path)?;
-            self.right_pane.refresh_head_commit(&self.db);
+            let root = std::path::PathBuf::from(repo_root);
+            self.workspace.set_scope(std::slice::from_ref(&root))?;
+            self.workspace.set_focus(root);
+            self.right_pane.refresh_head_commit(self.workspace.focus_db());
             self.collection_live_health.clear();
             self.bookmark_live_health.clear();
             // Advance the health epoch so any live-health task still in flight for
@@ -938,7 +972,7 @@ impl BrowserLayout {
     /// This spawns an async background task to perform the heal operation.
     /// When complete, a HealComplete event will be sent with the result.
     pub fn start_heal_selection(&mut self) {
-        let db_path = self.db.path().to_path_buf();
+        let db_path = self.db().path().to_path_buf();
         let event_handler = self.event_handler.clone();
 
         // Determine the heal target and the item to show a spinner on.
@@ -972,9 +1006,14 @@ impl BrowserLayout {
                                 } else {
                                     // Fallback to name lookup if user_data is missing
                                     let name = s.text().to_string();
-                                    self.db.get_collection_by_name(&name).ok().flatten().map(|c| {
-                                        (HealTarget::Collection(c.id.clone()), (c.id, tab.index()))
-                                    })
+                                    self.db().get_collection_by_name(&name).ok().flatten().map(
+                                        |c| {
+                                            (
+                                                HealTarget::Collection(c.id.clone()),
+                                                (c.id, tab.index()),
+                                            )
+                                        },
+                                    )
                                 }
                             });
                             match result {
@@ -1035,7 +1074,7 @@ impl BrowserLayout {
     /// This spawns an async background task to perform the push operation.
     /// When complete, a SyncComplete event will be sent with the result.
     pub fn start_push_collection(&mut self) {
-        let db_path = self.db.path().to_path_buf();
+        let db_path = self.db().path().to_path_buf();
         let event_handler = self.event_handler.clone();
 
         // Get the selected collection
@@ -1050,7 +1089,7 @@ impl BrowserLayout {
                         } else {
                             // Fallback to name lookup if user_data is missing
                             let name = s.text().to_string();
-                            self.db.get_collection_by_name(&name).ok().flatten().map(|c| c.id)
+                            self.db().get_collection_by_name(&name).ok().flatten().map(|c| c.id)
                         }
                     })
                 } else {
@@ -1074,7 +1113,7 @@ impl BrowserLayout {
         self.add_spinner(&collection_id, ContentTab::Collections.index());
 
         // Get config for the push operation
-        let codemark_dir = match self.db.path().parent() {
+        let codemark_dir = match self.db().path().parent() {
             Some(dir) => dir.to_path_buf(),
             None => {
                 let _ = event_handler
@@ -1148,7 +1187,7 @@ impl BrowserLayout {
         let event_handler = self.event_handler.clone();
 
         // Resolve server URL and token
-        let codemark_dir = match self.db.path().parent() {
+        let codemark_dir = match self.db().path().parent() {
             Some(dir) => dir.to_path_buf(),
             None => {
                 let _ = event_handler.send(Event::RemoteToursFetchError(
@@ -1196,7 +1235,7 @@ impl BrowserLayout {
             // A remote overview can no longer be backed by the now-empty cache, so
             // clear it (mirrors switch_database) instead of leaving stale markdown.
             if self.right_pane.active_remote_tour_id.is_some() {
-                self.right_pane.clear_preview_state(&self.db);
+                self.right_pane.clear_preview_state(self.workspace.focus_db());
             }
             self.rebuild_tours_panel();
             return;
@@ -1238,10 +1277,10 @@ impl BrowserLayout {
         self.is_pulling_tour = true;
         self.add_spinner(&user_data_key, tabs::ContentTab::Tours.index());
 
-        let db_path = self.db.path().to_path_buf();
+        let db_path = self.db().path().to_path_buf();
         let event_handler = self.event_handler.clone();
 
-        let codemark_dir = match self.db.path().parent() {
+        let codemark_dir = match self.db().path().parent() {
             Some(dir) => dir.to_path_buf(),
             None => {
                 let _ = event_handler
@@ -1344,7 +1383,7 @@ impl BrowserLayout {
         let mut local_items = Vec::new();
         // Track which remote tour IDs have been pulled locally
         let mut matched_remote_ids = std::collections::HashSet::new();
-        if let Ok(collections) = self.db.list_collections() {
+        if let Ok(collections) = self.db().list_collections() {
             for (c, count) in collections {
                 let is_tour = c.published_at.is_some() || c.imported_from_url.is_some();
                 if is_tour {
@@ -1459,13 +1498,13 @@ impl BrowserLayout {
                     let query = query.clone();
                     let items = match tab {
                         ContentTab::Bookmarks => self
-                            .db
+                            .db()
                             .search_bookmarks(Some(&query), None, None, None, None, None, None)
                             .map(|bms| {
                                 Self::build_bookmark_search_items(&bms, &self.bookmark_live_health)
                             }),
                         ContentTab::Collections => {
-                            self.db.search_collections(Some(&query), None).map(|mut cols| {
+                            self.db().search_collections(Some(&query), None).map(|mut cols| {
                                 cols.truncate(SEARCH_RESULT_LIMIT);
                                 Self::build_collection_search_items(
                                     &cols,
@@ -1548,16 +1587,16 @@ impl BrowserLayout {
             let cols: Vec<_> = row_ids
                 .iter()
                 .filter_map(|id| {
-                    let c = self.db.get_collection_by_id(id).ok().flatten()?;
+                    let c = self.db().get_collection_by_id(id).ok().flatten()?;
                     let count =
-                        self.db.list_bookmarks_in_collection(&c.id).map(|b| b.len()).unwrap_or(0);
+                        self.db().list_bookmarks_in_collection(&c.id).map(|b| b.len()).unwrap_or(0);
                     Some((c, count))
                 })
                 .collect();
             Self::build_collection_search_items(&cols, &self.collection_live_health)
         } else {
             let bms: Vec<_> =
-                row_ids.iter().filter_map(|id| self.db.get_bookmark(id).ok().flatten()).collect();
+                row_ids.iter().filter_map(|id| self.db().get_bookmark(id).ok().flatten()).collect();
             Self::build_bookmark_search_items(&bms, &self.bookmark_live_health)
         };
 
@@ -1614,7 +1653,7 @@ impl BrowserLayout {
 
         // Update Context panel Repos (respecting active owner filter)
         if active_owners.is_empty() {
-            let repo_items = TabbedPanel::build_repo_items(&self.db, &self.registry);
+            let repo_items = TabbedPanel::build_repo_items(self.db(), &self.registry);
             if let Some(p) =
                 self.left_pane.context_panel.get_list_panel_mut(ContextTab::Repos.index())
             {
@@ -1634,7 +1673,7 @@ impl BrowserLayout {
         // "clear search" path uses the non-preserving refresh, so the full list
         // is rebuilt there regardless of this flag.
         let (tours, collections, bookmarks) = TabbedPanel::build_content_items(
-            &self.db,
+            self.db(),
             &self.collection_live_health,
             &self.bookmark_live_health,
         );
@@ -1662,30 +1701,38 @@ impl BrowserLayout {
         self.update_tours_tab_visibility();
 
         // 3c. Spawn background live health resolution for all bookmarks
-        if let Ok(all_bookmarks) = self.db.list_bookmarks(&BookmarkFilter::default()) {
+        if let Ok(all_bookmarks) = self.db().list_bookmarks(&BookmarkFilter::default()) {
             self.spawn_live_health_task(all_bookmarks);
         }
 
         // 4. Update Step previews (Right Pane) using live resolution
         let current_step = self.right_pane.pager_current;
         if let Some(tour_name) = self.right_pane.active_tour_name.clone() {
-            self.right_pane.load_tour_live(&self.db, &tour_name, &mut self.session_cache);
+            self.right_pane.load_tour_live(
+                self.workspace.focus_db(),
+                &tour_name,
+                &mut self.session_cache,
+            );
             // Restore step if possible
             if current_step < self.right_pane.pager_total {
                 self.right_pane.pager_current = current_step;
-                self.right_pane.update_preview(&self.db);
+                self.right_pane.update_preview(self.workspace.focus_db());
             }
             // load_tour_live resolves only the first step live; resolve the rest
             // (including the restored current step) off the UI thread.
             self.spawn_collection_live_resolve();
         } else if let Some(bm_id) = self.right_pane.active_bookmark_id.clone() {
-            self.right_pane.load_bookmark_live(&self.db, &bm_id, &mut self.session_cache);
+            self.right_pane.load_bookmark_live(
+                self.workspace.focus_db(),
+                &bm_id,
+                &mut self.session_cache,
+            );
         } else if let Some(remote_id) = self.right_pane.active_remote_tour_id.clone() {
             // A remote tour overview was showing. If it has since been pulled
             // (a local collection imported from this remote id now exists), the
             // Tours list shows the local row, so translate the preview to that
             // local tour instead of re-rendering stale server metadata.
-            let pulled_local = self.db.list_collections().ok().and_then(|cols| {
+            let pulled_local = self.db().list_collections().ok().and_then(|cols| {
                 cols.into_iter()
                     .find(|(c, _)| {
                         c.imported_from_url
@@ -1727,20 +1774,24 @@ impl BrowserLayout {
                             panel.select_by_user_data(&format!("remote:{remote_id}"));
                         }
                     }
-                    None => self.right_pane.clear_preview_state(&self.db),
+                    None => self.right_pane.clear_preview_state(self.workspace.focus_db()),
                 }
             }
         } else if let Some((first_tour, _)) =
-            self.db.list_collections().ok().and_then(|c| c.into_iter().next())
+            self.db().list_collections().ok().and_then(|c| c.into_iter().next())
         {
             // Default to the first tour only if nothing was active.
-            self.right_pane.load_tour_live(&self.db, &first_tour.name, &mut self.session_cache);
+            self.right_pane.load_tour_live(
+                self.workspace.focus_db(),
+                &first_tour.name,
+                &mut self.session_cache,
+            );
             self.spawn_collection_live_resolve();
         } else {
             // Nothing to show — clear the *whole* preview (steps and any overview)
             // so a stale remote/collection overview doesn't linger, e.g. after
             // switching to a repo with no collections.
-            self.right_pane.clear_preview_state(&self.db);
+            self.right_pane.clear_preview_state(self.workspace.focus_db());
         }
     }
 
@@ -1748,7 +1799,7 @@ impl BrowserLayout {
     pub fn refresh_tags(&mut self) {
         let active_tab = ContentTab::from_index(self.left_pane.content_panel.tabs.selected_index())
             .unwrap_or(ContentTab::Bookmarks);
-        let (tags, branches) = TabbedPanel::build_tags_branches_items(&self.db, active_tab);
+        let (tags, branches) = TabbedPanel::build_tags_branches_items(self.db(), active_tab);
         if let Some(p) = self.left_pane.filters_panel.get_list_panel_mut(0) {
             p.set_items(tags);
         }
@@ -1792,12 +1843,12 @@ impl BrowserLayout {
     /// Get current filters/metadata for the status bar.
     pub fn get_status_metadata(&self) -> Line<'_> {
         let repo_name = self
-            .db
+            .db()
             .list_repos()
             .ok()
             .and_then(|repos| repos.first().map(|r| r.repo_name.clone()))
             .unwrap_or_else(|| {
-                self.db
+                self.db()
                     .path()
                     .parent()
                     .and_then(|p| p.parent())
@@ -1853,7 +1904,7 @@ impl BrowserLayout {
                     // Get the bookmark ID from user_data
                     let bookmark_id = item.user_data.as_ref()?;
                     // Get the bookmark (flatten Result<Option<Bookmark>>)
-                    self.db.get_bookmark(bookmark_id).ok().flatten()
+                    self.workspace.focus_db().get_bookmark(bookmark_id).ok().flatten()
                 })
         {
             self.open_bookmark_in_editor(bookmark);
@@ -1865,7 +1916,7 @@ impl BrowserLayout {
             return;
         };
 
-        let Some(codemark_dir) = self.db.path().parent() else {
+        let Some(codemark_dir) = self.db().path().parent() else {
             return;
         };
         let config = Config::load_layered(codemark_dir);
@@ -1914,14 +1965,14 @@ impl BrowserLayout {
     fn open_bookmark_in_editor(&mut self, bookmark: Bookmark) {
         use codemark_core::git::context::resolve_bookmark_file_path;
 
-        let Some(codemark_dir) = self.db.path().parent() else {
+        let Some(codemark_dir) = self.db().path().parent() else {
             return;
         };
         let config = Config::load_layered(codemark_dir);
 
         // Resolve the file path and line range from the bookmark's latest resolution
         let (relative_path, line_start, line_end) = if let Some(resolution) =
-            self.db.list_resolutions(&bookmark.id, 1).ok().and_then(|mut v| v.pop())
+            self.db().list_resolutions(&bookmark.id, 1).ok().and_then(|mut v| v.pop())
         {
             tracing::debug!(
                 target: "codemark::shell",
@@ -1950,7 +2001,7 @@ impl BrowserLayout {
         };
 
         // Resolve relative path to absolute path
-        let absolute_path = match resolve_bookmark_file_path(&relative_path, self.db.path()) {
+        let absolute_path = match resolve_bookmark_file_path(&relative_path, self.db().path()) {
             Ok(p) => p.to_string_lossy().to_string(),
             Err(_) => {
                 tracing::warn!(
@@ -2064,7 +2115,7 @@ impl BrowserLayout {
             .unwrap_or_default();
 
         // 1. Update Tours/Collections (Content panel, tabs 0 and 1)
-        if let Ok(collections) = self.db.list_collections() {
+        if let Ok(collections) = self.db().list_collections() {
             let mut collection_items = Vec::new();
             let mut tour_items = Vec::new();
 
@@ -2075,7 +2126,7 @@ impl BrowserLayout {
 
                 // Filter by tags if any are active
                 let tag_match = active_tags.is_empty() || {
-                    if let Ok(c_tags) = self.db.list_tags_for_collection(&c.id) {
+                    if let Ok(c_tags) = self.db().list_tags_for_collection(&c.id) {
                         c_tags.iter().any(|t| active_tags.contains(&t.tag))
                     } else {
                         false
@@ -2120,7 +2171,7 @@ impl BrowserLayout {
         }
 
         // 2. Update Bookmarks (Content panel, tab 0)
-        if let Ok(bookmarks) = self.db.list_bookmarks(&BookmarkFilter::default()) {
+        if let Ok(bookmarks) = self.db().list_bookmarks(&BookmarkFilter::default()) {
             let filtered_bookmarks: Vec<_> = bookmarks
                 .into_iter()
                 .filter(|bm| {
@@ -2204,10 +2255,10 @@ impl BrowserLayout {
 
         let repo_items = if active_owners.is_empty() {
             // No filter — show all repos
-            TabbedPanel::build_repo_items(&self.db, &self.registry)
+            TabbedPanel::build_repo_items(self.db(), &self.registry)
         } else {
             // Filter repos by selected owners
-            TabbedPanel::build_repo_items(&self.db, &self.registry)
+            TabbedPanel::build_repo_items(self.db(), &self.registry)
                 .into_iter()
                 .filter(|item| {
                     item.get_secondary_text()
