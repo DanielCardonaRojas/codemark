@@ -119,6 +119,13 @@ impl RepoWorkspace {
         self.dbs.iter().find(|(r, _)| r == root).map(|(_, d)| d)
     }
 
+    /// Resolve the database for a repo root string (as carried on a PanelItem's
+    /// `repo_root()`), falling back to the focused repo when the tag is missing or
+    /// doesn't match a checked repo.
+    pub fn db_for(&self, repo_root: Option<&str>) -> &Database {
+        repo_root.and_then(|r| self.get(std::path::Path::new(r))).unwrap_or_else(|| self.focus_db())
+    }
+
     /// The focused repo root (always a checked repo).
     pub fn focus(&self) -> &Path {
         &self.focus
@@ -255,6 +262,37 @@ mod tests {
         assert!(ws.get(&root_a).is_some());
         assert_eq!(ws.focus(), root_a.as_path());
         assert!(!ws.is_multi());
+    }
+
+    #[test]
+    fn db_for_resolves_by_repo_root() {
+        let (_a, root_a) = temp_repo();
+        let (_b, root_b) = temp_repo();
+
+        let mut ws = RepoWorkspace::new(root_a.clone()).unwrap();
+        ws.set_scope(&[root_a.clone(), root_b.clone()]).unwrap();
+
+        let db_a_path = RepoWorkspace::db_path(&root_a);
+        let db_b_path = RepoWorkspace::db_path(&root_b);
+
+        assert_eq!(ws.db_for(Some(&root_a.to_string_lossy())).path(), db_a_path.as_path());
+        assert_eq!(ws.db_for(Some(&root_b.to_string_lossy())).path(), db_b_path.as_path());
+    }
+
+    #[test]
+    fn db_for_falls_back_to_focus_when_unknown_or_none() {
+        let (_a, root_a) = temp_repo();
+        let (_b, root_b) = temp_repo();
+
+        let mut ws = RepoWorkspace::new(root_a.clone()).unwrap();
+        ws.set_scope(&[root_a.clone(), root_b.clone()]).unwrap();
+        // Focus B so the fallback is distinguishable from resolving A.
+        ws.set_focus(root_b.clone());
+
+        let focus_path = ws.focus_db().path().to_path_buf();
+
+        assert_eq!(ws.db_for(None).path(), focus_path.as_path());
+        assert_eq!(ws.db_for(Some("/no/such/repo")).path(), focus_path.as_path());
     }
 
     #[test]

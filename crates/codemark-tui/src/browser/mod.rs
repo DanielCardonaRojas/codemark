@@ -379,6 +379,14 @@ impl BrowserLayout {
         self.workspace.focus_db_mut()
     }
 
+    /// The database owning a given row, resolved from its repo tag.
+    // Not wired into any call site yet — Task 3.2 routes preview/heal/delete
+    // through this, so it is `allow(dead_code)` until then to stay clippy-clean.
+    #[allow(dead_code)]
+    fn db_for_item(&self, item: &PanelItem) -> &codemark_core::storage::db::Database {
+        self.workspace.db_for(item.repo_root())
+    }
+
     /// Load a collection overview and override its health label with the cached
     /// worst-case *live* status of the collection's bookmarks, so the preview
     /// border label reflects the current on-disk state instead of the persisted
