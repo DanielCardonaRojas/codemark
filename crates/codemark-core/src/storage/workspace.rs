@@ -1,5 +1,6 @@
 //! Workspace database discovery and resolution.
 
+use crate::engine::bookmark::Bookmark;
 use crate::error::{Error, Result};
 use crate::storage::db::Database;
 use std::path::{Path, PathBuf};
@@ -231,7 +232,7 @@ impl Workspace {
     pub fn find_bookmark_across<'a>(
         dbs: &'a [(String, Database)],
         id: &str,
-    ) -> Result<(crate::engine::bookmark::Bookmark, &'a Database)> {
+    ) -> Result<(Bookmark, &'a Database)> {
         // Preserve the CLI's original extract_id behavior (strip tab-delimited
         // line-format suffix), and also tolerate a leading '#'.
         let id = id.split('\t').next().unwrap_or(id);
@@ -253,7 +254,7 @@ impl Workspace {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::engine::bookmark::{Bookmark, BookmarkHealth, ResolutionMethod};
+    use crate::engine::bookmark::{BookmarkHealth, ResolutionMethod};
 
     fn test_bookmark(id: &str) -> Bookmark {
         Bookmark {
@@ -281,14 +282,32 @@ mod tests {
     fn find_bookmark_across_finds_by_prefix_in_second_db() {
         let db1 = Database::open_in_memory().unwrap();
         let db2 = Database::open_in_memory().unwrap();
+        // Insert a distinct bookmark into each DB so we can prove *which* DB was
+        // selected by asserting on the returned bookmark id.
+        db1.insert_bookmark(&test_bookmark("aaaa-1111-2222-3333")).unwrap();
         db2.insert_bookmark(&test_bookmark("beef-1111-2222-3333")).unwrap();
 
         let dbs = vec![("first".to_string(), db1), ("second".to_string(), db2)];
 
-        let (bm, db) = Workspace::find_bookmark_across(&dbs, "beef").unwrap();
+        // Prefix in the second DB resolves to db2's bookmark.
+        let (bm, _db) = Workspace::find_bookmark_across(&dbs, "beef").unwrap();
         assert_eq!(bm.id, "beef-1111-2222-3333");
-        // The returned db reference should be the second database.
-        assert_eq!(db.path(), dbs[1].1.path());
+
+        // Prefix in the first DB resolves to db1's bookmark, confirming the
+        // search actually selects the correct database rather than a fixed one.
+        let (bm, _db) = Workspace::find_bookmark_across(&dbs, "aaaa").unwrap();
+        assert_eq!(bm.id, "aaaa-1111-2222-3333");
+    }
+
+    #[test]
+    fn find_bookmark_across_strips_leading_hash() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_bookmark(&test_bookmark("beef-1111-2222-3333")).unwrap();
+
+        let dbs = vec![("only".to_string(), db)];
+
+        let (bm, _db) = Workspace::find_bookmark_across(&dbs, "#beef-1111-2222-3333").unwrap();
+        assert_eq!(bm.id, "beef-1111-2222-3333");
     }
 
     #[test]
