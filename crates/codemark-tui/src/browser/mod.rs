@@ -1672,7 +1672,16 @@ impl BrowserLayout {
         // then pruned in place by `reconcile_preserved_search_rows`. The Esc
         // "clear search" path uses the non-preserving refresh, so the full list
         // is rebuilt there regardless of this flag.
-        let (tours, collections, bookmarks) = TabbedPanel::build_content_items(
+        // Bookmarks and Collections merge across every checked repo (with a repo
+        // tag on each row, and the repo name surfaced when multiple are checked).
+        let (collections, bookmarks) = crate::browser::tabbed_panel::build_merged_content(
+            self.workspace.dbs(),
+            &self.collection_live_health,
+            &self.bookmark_live_health,
+        );
+        // Tours stay scoped to the focus repo (re-merged with cached remote rows
+        // by `rebuild_tours_panel` below).
+        let (tours, _, _) = TabbedPanel::build_content_items(
             self.db(),
             &self.collection_live_health,
             &self.bookmark_live_health,

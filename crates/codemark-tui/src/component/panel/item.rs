@@ -144,6 +144,16 @@ impl PanelItem {
         self.secondary_text.as_deref()
     }
 
+    /// Get the metadata value.
+    pub fn get_metadata(&self) -> Option<&str> {
+        self.metadata.as_deref()
+    }
+
+    /// Get the emphasized text value.
+    pub fn get_emphasis(&self) -> Option<&str> {
+        self.emphasis_text.as_deref()
+    }
+
     /// Tag this item with the repository it belongs to (display name + root path key).
     pub fn repo(mut self, name: impl Into<String>, root: impl Into<String>) -> Self {
         self.repo_name = Some(name.into());
@@ -175,6 +185,16 @@ impl PanelItem {
     /// Update the secondary text in place.
     pub fn set_secondary_text(&mut self, text: impl Into<String>) {
         self.secondary_text = Some(text.into());
+    }
+
+    /// Update the metadata in place.
+    pub fn set_metadata(&mut self, metadata: impl Into<String>) {
+        self.metadata = Some(metadata.into());
+    }
+
+    /// Get the creation timestamp used for date-based sorting, if any.
+    pub fn created_at_str(&self) -> Option<&str> {
+        self.created_at.as_deref()
     }
 
     /// Set the active flag in place.
