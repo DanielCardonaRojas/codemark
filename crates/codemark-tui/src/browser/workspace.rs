@@ -13,8 +13,10 @@ use std::path::{Path, PathBuf};
 /// Owns the open databases for the *checked* repos, plus the focused repo.
 ///
 /// The checked set is never empty: [`RepoWorkspace::new`] seeds one repo and
-/// [`set_scope`](RepoWorkspace::set_scope) treats an empty request as a no-op
-/// (the "uncheck-last" invariant). `focus` is always one of the checked repos.
+/// [`set_scope`](RepoWorkspace::set_scope) treats an empty request — or a
+/// request whose repos are all unopenable — as a no-op (the "uncheck-last"
+/// invariant), so the scope never drops to zero entries. `focus` is always one
+/// of the checked repos.
 pub struct RepoWorkspace {
     /// Checked repos, insertion-ordered: `repo_root -> open db`. A `Vec` (not a
     /// map) so insertion order — the order the user checked repos in — is
@@ -40,29 +42,58 @@ impl RepoWorkspace {
     /// Replace the checked set with `checked`.
     ///
     /// Opens newly-checked repos, drops unchecked ones, and *reuses* already-open
-    /// connections (a `retain` keeps their live `Database`, so an unchanged repo
-    /// is never reopened). A repo whose DB fails to open is silently skipped.
+    /// connections (still-checked `(root, db)` entries keep their live
+    /// `Database`, so an unchanged repo is never reopened). A newly-checked repo
+    /// whose DB fails to open is skipped but logged.
     ///
-    /// An empty `checked` is a no-op: the checked set never empties
-    /// (uncheck-last invariant). If the current focus is dropped, focus falls
-    /// back to the first remaining checked repo.
+    /// The scope never empties. An empty `checked` is a no-op (uncheck-last
+    /// invariant); likewise, if the entire requested scope is unopenable (no
+    /// currently-open entry survives the filter *and* every newly-checked root
+    /// fails to open), the previous scope is kept unchanged. If the current
+    /// focus is dropped, focus falls back to the first remaining checked repo.
     pub fn set_scope(&mut self, checked: &[PathBuf]) -> Result<()> {
         if checked.is_empty() {
-            return Ok(());
+            return Ok(()); // uncheck-last is a no-op; scope never empties
         }
-        // Drop unchecked repos, keeping the open connections for the rest.
-        self.dbs.retain(|(root, _)| checked.contains(root));
-        // Open any newly-checked repo not already present.
+        // Open newly-checked roots that aren't already open, into a temp vec
+        // first — so a failed open never forces dropping good connections.
+        // Tolerate (log) failures.
+        let mut opened: Vec<(PathBuf, Database)> = Vec::new();
         for root in checked {
-            if !self.dbs.iter().any(|(r, _)| r == root)
-                && let Ok(db) = Database::open(&Self::db_path(root))
-            {
-                self.dbs.push((root.clone(), db));
+            let already_open = self.dbs.iter().any(|(r, _)| r == root);
+            let already_queued = opened.iter().any(|(r, _)| r == root);
+            if !already_open && !already_queued {
+                match Database::open(&Self::db_path(root)) {
+                    Ok(db) => opened.push((root.clone(), db)),
+                    Err(e) => tracing::warn!(
+                        target: "codemark::ui",
+                        root = %root.display(),
+                        error = %e,
+                        "failed to open repo database; excluding from scope"
+                    ),
+                }
             }
         }
-        // Keep focus valid: if it was dropped, fall back to the first checked repo.
-        if !self.dbs.iter().any(|(r, _)| r == &self.focus) {
-            self.focus = self.dbs[0].0.clone();
+        // Would the new scope be empty? (no surviving open entry AND nothing
+        // newly opened). If so, keep the previous scope intact.
+        let has_survivor = self.dbs.iter().any(|(r, _)| checked.contains(r));
+        if !has_survivor && opened.is_empty() {
+            return Ok(());
+        }
+        // Commit: keep still-checked open connections (reused), drop the rest,
+        // add the newly opened ones.
+        let mut kept: Vec<(PathBuf, Database)> = std::mem::take(&mut self.dbs)
+            .into_iter()
+            .filter(|(r, _)| checked.contains(r))
+            .collect();
+        kept.extend(opened);
+        self.dbs = kept;
+        // Keep focus valid: if it was dropped, fall back to the first checked
+        // repo via a safe accessor (never unchecked indexing).
+        if !self.dbs.iter().any(|(r, _)| r == &self.focus)
+            && let Some((root, _)) = self.dbs.first()
+        {
+            self.focus = root.clone();
         }
         Ok(())
     }
@@ -142,7 +173,7 @@ mod tests {
         // survives across scope changes while B is opened then dropped.
         //
         // Narrowing back to just A drops B and reuses A again.
-        ws.set_scope(&[root_a.clone()]).unwrap();
+        ws.set_scope(std::slice::from_ref(&root_a)).unwrap();
         assert!(ws.get(&root_a).is_some());
         assert!(ws.get(&root_b).is_none());
         assert!(!ws.is_multi());
@@ -171,9 +202,45 @@ mod tests {
         assert_eq!(ws.focus(), root_b.as_path());
 
         // Unchecking B (the focus) must fall focus back to a checked repo (A).
-        ws.set_scope(&[root_a.clone()]).unwrap();
+        ws.set_scope(std::slice::from_ref(&root_a)).unwrap();
         assert_eq!(ws.focus(), root_a.as_path());
         // focus_db must resolve without panicking.
         let _ = ws.focus_db();
+    }
+
+    #[test]
+    fn set_scope_keeps_prior_scope_when_all_unopenable() {
+        let (_a, root_a) = temp_repo();
+
+        let mut ws = RepoWorkspace::new(root_a.clone()).unwrap();
+
+        // A temp path with NO `.codemark/codemark.db`, so `Database::open` fails.
+        let missing = tempfile::tempdir().expect("tempdir");
+        let nonexistent_root = missing.path().to_path_buf();
+
+        // The entire requested scope is unopenable: must be a no-op, not a panic.
+        ws.set_scope(std::slice::from_ref(&nonexistent_root)).unwrap();
+
+        // Prior scope (just A) is preserved.
+        assert!(ws.get(&root_a).is_some());
+        assert_eq!(ws.focus(), root_a.as_path());
+        assert!(!ws.is_multi());
+    }
+
+    #[test]
+    fn set_scope_keeps_valid_and_skips_invalid_mix() {
+        let (_a, root_a) = temp_repo();
+
+        let mut ws = RepoWorkspace::new(root_a.clone()).unwrap();
+
+        let missing = tempfile::tempdir().expect("tempdir");
+        let nonexistent_root = missing.path().to_path_buf();
+
+        // A valid + invalid mix keeps the valid one and skips the invalid.
+        ws.set_scope(&[root_a.clone(), nonexistent_root.clone()]).unwrap();
+
+        assert!(ws.get(&root_a).is_some());
+        assert!(ws.get(&nonexistent_root).is_none());
+        assert!(!ws.is_multi());
     }
 }
