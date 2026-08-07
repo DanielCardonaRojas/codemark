@@ -14,6 +14,7 @@ mod search;
 mod tabbed_panel;
 mod tabs;
 mod types;
+mod workspace;
 
 pub use left_pane::LeftPane;
 pub use right_pane::{RightPane, RightPaneFocus};
@@ -25,6 +26,7 @@ pub use types::{
     HealNotification, HealTarget, LeftPaneSize, PreviewPayload, RightPaneSize, SectionConfig,
     SpinningItem, StepData, StepLiveUpdate, StepPreviewMarkdown, TabContent, escape_markdown,
 };
+pub use workspace::RepoWorkspace;
 
 use crate::component::{Component, HealthStatus, PanelItem};
 use crate::event::Event;
