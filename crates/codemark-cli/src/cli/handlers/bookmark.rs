@@ -17,10 +17,11 @@ use codemark_core::parser::languages::{Language, ParseCache};
 use codemark_core::query::generator as qgen;
 
 use super::{
-    add_bookmark_to_collection, find_bookmark, find_bookmark_across,
-    generate_embedding_for_bookmark, now_iso, open_all_dbs, open_db_for_write, resolve_batch,
-    resolve_identity, resolve_or_create_repo_metadata, write_resolution_output,
+    add_bookmark_to_collection, find_bookmark, generate_embedding_for_bookmark, now_iso,
+    open_all_dbs, open_db_for_write, resolve_batch, resolve_identity,
+    resolve_or_create_repo_metadata, write_resolution_output,
 };
+use codemark_core::storage::Workspace;
 
 /// Build a flat list of `BookmarkComment`s from repeatable `--comment` values.
 ///
@@ -816,7 +817,7 @@ pub async fn handle_resolve(cli: &Cli, mode: &OutputMode, args: &ResolveArgs) ->
 
     if let Some(ref id) = args.id {
         // Single bookmark resolution — search across all DBs
-        let (bm, db) = find_bookmark_across(&dbs, id)?;
+        let (bm, db) = Workspace::find_bookmark_across(&dbs, id)?;
         let lang: Language = bm.language.parse()?;
         let mut cache = ParseCache::new(lang.clone())?;
         let ts_lang = cache.language().clone();
@@ -924,7 +925,7 @@ pub async fn handle_resolve(cli: &Cli, mode: &OutputMode, args: &ResolveArgs) ->
 /// Show detailed information and resolution history for a bookmark.
 pub async fn handle_show(cli: &Cli, mode: &OutputMode, args: &ShowArgs) -> Result<()> {
     let dbs = open_all_dbs(cli)?;
-    let (bm, db) = find_bookmark_across(&dbs, &args.id)?;
+    let (bm, db) = Workspace::find_bookmark_across(&dbs, &args.id)?;
     let resolutions = db.list_resolutions(&bm.id, 5)?;
 
     // Compute UI status at the presentation boundary

@@ -1191,25 +1191,6 @@ pub fn find_bookmark(db: &Database, id: &str) -> Result<Bookmark> {
     db.get_bookmark_by_prefix(id)?.ok_or_else(|| Error::Input(format!("bookmark not found: {id}")))
 }
 
-/// Search for a bookmark across multiple databases. Returns the bookmark and a reference to the DB.
-pub fn find_bookmark_across<'a>(
-    dbs: &'a [(String, Database)],
-    id: &str,
-) -> Result<(Bookmark, &'a Database)> {
-    let id = extract_id(id);
-    for (_label, db) in dbs {
-        if let Some(bm) = db.get_bookmark(id)? {
-            return Ok((bm, db));
-        }
-        if id.len() >= 4
-            && let Ok(Some(bm)) = db.get_bookmark_by_prefix(id)
-        {
-            return Ok((bm, db));
-        }
-    }
-    Err(Error::Input(format!("bookmark not found: {id}")))
-}
-
 /// Get current timestamp in ISO format with millisecond precision.
 /// Milliseconds ensure unique timestamps for deterministic ordering in `ORDER BY`.
 pub fn now_iso() -> String {
@@ -1723,7 +1704,7 @@ pub async fn handle_preview(cli: &Cli, args: &PreviewArgs) -> Result<()> {
 
     let dbs = open_all_dbs(cli)?;
     let id = extract_id(&args.id);
-    let (bm, db) = find_bookmark_across(&dbs, id)?;
+    let (bm, db) = Workspace::find_bookmark_across(&dbs, id)?;
 
     // Use snapshot mode if --snapshot or any historical flag is given
     let use_snapshot = args.snapshot
