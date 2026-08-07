@@ -49,6 +49,10 @@ pub struct PanelItem {
     created_at: Option<String>,
     /// Optional hidden user data (e.g., database ID)
     pub user_data: Option<String>,
+    /// Optional repository display name this item belongs to (multi-repo view).
+    repo_name: Option<String>,
+    /// Optional repository root path key this item belongs to (multi-repo view).
+    repo_root: Option<String>,
 }
 
 /// Sync direction indicator for tours.
@@ -82,6 +86,8 @@ impl PanelItem {
             compress_path: false,
             created_at: None,
             user_data: None,
+            repo_name: None,
+            repo_root: None,
         }
     }
 
@@ -136,6 +142,23 @@ impl PanelItem {
     /// Get the secondary text value.
     pub fn get_secondary_text(&self) -> Option<&str> {
         self.secondary_text.as_deref()
+    }
+
+    /// Tag this item with the repository it belongs to (display name + root path key).
+    pub fn repo(mut self, name: impl Into<String>, root: impl Into<String>) -> Self {
+        self.repo_name = Some(name.into());
+        self.repo_root = Some(root.into());
+        self
+    }
+
+    /// Get the repository display name this item belongs to, if any.
+    pub fn repo_name(&self) -> Option<&str> {
+        self.repo_name.as_deref()
+    }
+
+    /// Get the repository root path key this item belongs to, if any.
+    pub fn repo_root(&self) -> Option<&str> {
+        self.repo_root.as_deref()
     }
 
     /// Whether this item is currently active (selected/activated).
@@ -395,6 +418,20 @@ mod tests {
         assert_eq!(item.text, "test");
         assert_eq!(item.secondary_text, Some("secondary".to_string()));
         assert_eq!(item.metadata, Some("meta".to_string()));
+    }
+
+    #[test]
+    fn panel_item_carries_repo() {
+        let item = PanelItem::new("x").repo("codemark", "/home/u/codemark");
+        assert_eq!(item.repo_name(), Some("codemark"));
+        assert_eq!(item.repo_root(), Some("/home/u/codemark"));
+    }
+
+    #[test]
+    fn panel_item_repo_defaults_none() {
+        let item = PanelItem::new("x");
+        assert_eq!(item.repo_name(), None);
+        assert_eq!(item.repo_root(), None);
     }
 
     #[test]
