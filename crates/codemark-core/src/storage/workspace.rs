@@ -232,6 +232,9 @@ impl Workspace {
         dbs: &'a [(String, Database)],
         id: &str,
     ) -> Result<(crate::engine::bookmark::Bookmark, &'a Database)> {
+        // Preserve the CLI's original extract_id behavior (strip tab-delimited
+        // line-format suffix), and also tolerate a leading '#'.
+        let id = id.split('\t').next().unwrap_or(id);
         let id = id.strip_prefix('#').unwrap_or(id);
         for (_label, db) in dbs {
             if let Some(bm) = db.get_bookmark(id)? {
@@ -286,5 +289,17 @@ mod tests {
         assert_eq!(bm.id, "beef-1111-2222-3333");
         // The returned db reference should be the second database.
         assert_eq!(db.path(), dbs[1].1.path());
+    }
+
+    #[test]
+    fn find_bookmark_across_strips_tab_line_format_suffix() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_bookmark(&test_bookmark("beef-1111-2222-3333")).unwrap();
+
+        let dbs = vec![("only".to_string(), db)];
+
+        let (bm, _db) =
+            Workspace::find_bookmark_across(&dbs, "beef-1111-2222-3333\tsrc/foo.rs:12").unwrap();
+        assert_eq!(bm.id, "beef-1111-2222-3333");
     }
 }
