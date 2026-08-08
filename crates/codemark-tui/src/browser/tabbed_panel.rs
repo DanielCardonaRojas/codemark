@@ -158,6 +158,7 @@ pub fn bookmark_to_panel_item(
 fn bookmark_to_panel_item_cached(
     bookmark: &Bookmark,
     live: &std::collections::HashMap<String, HealthStatus>,
+    repo_root: Option<&str>,
 ) -> PanelItem {
     let summary_info = bookmark
         .language
@@ -172,7 +173,10 @@ fn bookmark_to_panel_item_cached(
 
     let icon = summary_info.as_ref().map(|s| get_node_icon(&s.label)).unwrap_or("");
 
-    let health = live.get(&bookmark.id).copied().unwrap_or(HealthStatus::Unknown);
+    let health = live
+        .get(&super::health_key(repo_root, &bookmark.id))
+        .copied()
+        .unwrap_or(HealthStatus::Unknown);
     let mut item = PanelItem::new(&bookmark.file_path)
         .compressible_path()
         .metadata(bookmark.created_by.clone().unwrap_or_default())
@@ -222,8 +226,10 @@ pub fn build_merged_content<'a>(
         let name = repo_display_name(root);
         let root_key = root.to_string_lossy();
 
+        // Key the live-health lookups by this repo's root so a shared id across
+        // repos reads each repo's own cached dot.
         let (_tours, repo_collections, repo_bookmarks) =
-            TabbedPanel::build_content_items(db, live, bookmark_live);
+            TabbedPanel::build_content_items(db, live, bookmark_live, Some(&root_key));
 
         for mut item in repo_collections {
             item = item.repo(name.clone(), root_key.clone());
@@ -494,13 +500,17 @@ impl TabbedPanel {
         db: &Database,
         live: &std::collections::HashMap<String, HealthStatus>,
         bookmark_live: &std::collections::HashMap<String, HealthStatus>,
+        repo_root: Option<&str>,
     ) -> (Vec<PanelItem>, Vec<PanelItem>, Vec<PanelItem>) {
         let mut collections_items = Vec::new();
         let mut tours_items = Vec::new();
 
         if let Ok(collections) = db.list_collections() {
             for (c, count) in collections {
-                let health = super::collection_health_status(c.health, live.get(&c.id).copied());
+                let health = super::collection_health_status(
+                    c.health,
+                    live.get(&super::health_key(repo_root, &c.id)).copied(),
+                );
 
                 let is_published = c.published_at.is_some();
                 let branch = c.created_branch.clone().unwrap_or_else(|| "main".to_string());
@@ -534,7 +544,7 @@ impl TabbedPanel {
         let bookmarks = match db.list_bookmarks(&BookmarkFilter::default()) {
             Ok(bookmarks) => bookmarks
                 .iter()
-                .map(|bm| bookmark_to_panel_item_cached(bm, bookmark_live))
+                .map(|bm| bookmark_to_panel_item_cached(bm, bookmark_live, repo_root))
                 .collect(),
             Err(_) => Vec::new(),
         };
@@ -636,10 +646,13 @@ impl TabbedPanel {
 
     /// Create panel 3 with Bookmarks/Collections/Tours tabs.
     pub fn new_tours_collections_bookmarks(db: &Database) -> Self {
+        // Empty caches here (nothing resolved yet), so the health-key repo_root
+        // is immaterial; pass the db's own root for consistency.
         let (tours_items, collections_items, bookmarks_items) = TabbedPanel::build_content_items(
             db,
             &std::collections::HashMap::new(),
             &std::collections::HashMap::new(),
+            super::db_repo_root(db).as_deref(),
         );
         // Bookmarks and Collections expose the `S` sort cycle, so they start with
         // an explicit order (most recent first). Tours keep insertion order.
@@ -1136,8 +1149,12 @@ mod tests {
                 .unwrap();
         });
 
-        let (_tours, want_collections, want_bookmarks) =
-            TabbedPanel::build_content_items(&db, &live, &bookmark_live);
+        let (_tours, want_collections, want_bookmarks) = TabbedPanel::build_content_items(
+            &db,
+            &live,
+            &bookmark_live,
+            Some(root.to_string_lossy().as_ref()),
+        );
         let (got_collections, got_bookmarks) =
             build_merged_content(std::iter::once((root.as_path(), &db)), &live, &bookmark_live);
 

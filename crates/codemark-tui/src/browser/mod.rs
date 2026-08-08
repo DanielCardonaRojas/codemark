@@ -258,6 +258,31 @@ pub struct BrowserLayout {
 /// FTS or semantic). Shared so every search path caps consistently.
 const SEARCH_RESULT_LIMIT: usize = 20;
 
+/// Compose the composite cache key for a live-health map entry.
+///
+/// The live-health caches ([`BrowserLayout::bookmark_live_health`] /
+/// [`BrowserLayout::collection_live_health`]) are keyed by `(repo_root, id)` so
+/// two checked repos holding items with the *same* id (e.g. a published tour
+/// imported into both) keep their own health dot instead of cross-contaminating.
+/// The separator `\u{1f}` (ASCII unit separator) can appear in neither a
+/// filesystem path nor a ULID, so the key is unambiguous. A missing `repo_root`
+/// (in-memory/degenerate db paths) folds to the empty prefix — but populate and
+/// lookup must then agree on that same `None`, which they do because both derive
+/// the root from the same db path.
+fn health_key(repo_root: Option<&str>, id: &str) -> String {
+    format!("{}\u{1f}{}", repo_root.unwrap_or(""), id)
+}
+
+/// The repo-root key for a database, derived the same way
+/// [`crate::browser::tabbed_panel::build_merged_content`] and
+/// `RightPane::repo_root_of` derive it: `<root>/.codemark/codemark.db` ->
+/// `<root>`. `None` for in-memory/degenerate paths (no grandparent). Kept as a
+/// single derivation so the string used at *populate* time matches the one a
+/// `PanelItem::repo_root()` tag carries at *lookup* time.
+fn db_repo_root(db: &codemark_core::storage::db::Database) -> Option<String> {
+    db.path().parent().and_then(|p| p.parent()).map(|p| p.to_string_lossy().to_string())
+}
+
 /// Resolve a collection's display health: a cached worst-case *live* status of
 /// its bookmarks (`live`) wins when a background pass has computed one;
 /// otherwise it falls back to the persisted snapshot. Centralizes the
@@ -381,7 +406,8 @@ impl BrowserLayout {
     /// arrives and the handler corrects it.
     fn load_collection_overview_live(&mut self, id: &str) {
         self.right_pane.load_collection_overview(self.workspace.focus_db(), id);
-        match self.collection_live_health.get(id).copied() {
+        let key = health_key(db_repo_root(self.workspace.focus_db()).as_deref(), id);
+        match self.collection_live_health.get(&key).copied() {
             // A real live status overrides the persisted snapshot.
             Some(h) if h != HealthStatus::Unknown => self.right_pane.overview_health = Some(h),
             // Unknown means the collection has no live bookmarks (empty or
@@ -1401,13 +1427,17 @@ impl BrowserLayout {
         let mut local_items = Vec::new();
         // Track which remote tour IDs have been pulled locally
         let mut matched_remote_ids = std::collections::HashSet::new();
+        // Tours are focus-repo scoped, so key live health by the focus root.
+        let focus_root = db_repo_root(self.db());
         if let Ok(collections) = self.db().list_collections() {
             for (c, count) in collections {
                 let is_tour = c.published_at.is_some() || c.imported_from_url.is_some();
                 if is_tour {
                     let health = collection_health_status(
                         c.health,
-                        self.collection_live_health.get(&c.id).copied(),
+                        self.collection_live_health
+                            .get(&health_key(focus_root.as_deref(), &c.id))
+                            .copied(),
                     );
                     let branch = c.created_branch.clone().unwrap_or_else(|| "main".to_string());
                     // Show the author (if known) before the branch name.
@@ -1514,12 +1544,18 @@ impl BrowserLayout {
                 // FTS is cheap to re-run, so refresh the whole result set.
                 Some((query, SearchMode::Fts)) => {
                     let query = query.clone();
+                    // Search runs against the focus db, so key by the focus root.
+                    let focus_root = db_repo_root(self.db());
                     let items = match tab {
                         ContentTab::Bookmarks => self
                             .db()
                             .search_bookmarks(Some(&query), None, None, None, None, None, None)
                             .map(|bms| {
-                                Self::build_bookmark_search_items(&bms, &self.bookmark_live_health)
+                                Self::build_bookmark_search_items(
+                                    &bms,
+                                    &self.bookmark_live_health,
+                                    focus_root.as_deref(),
+                                )
                             }),
                         ContentTab::Collections => {
                             self.db().search_collections(Some(&query), None).map(|mut cols| {
@@ -1527,6 +1563,7 @@ impl BrowserLayout {
                                 Self::build_collection_search_items(
                                     &cols,
                                     &self.collection_live_health,
+                                    focus_root.as_deref(),
                                 )
                             })
                         }
@@ -1601,6 +1638,8 @@ impl BrowserLayout {
             .map(|p| p.all_items().iter().filter_map(|i| i.user_data.clone()).collect())
             .unwrap_or_default();
 
+        // These rows come from the focus db, so key by the focus repo root.
+        let focus_root = db_repo_root(self.db());
         let items = if idx == ContentTab::Collections.index() {
             let cols: Vec<_> = row_ids
                 .iter()
@@ -1611,11 +1650,19 @@ impl BrowserLayout {
                     Some((c, count))
                 })
                 .collect();
-            Self::build_collection_search_items(&cols, &self.collection_live_health)
+            Self::build_collection_search_items(
+                &cols,
+                &self.collection_live_health,
+                focus_root.as_deref(),
+            )
         } else {
             let bms: Vec<_> =
                 row_ids.iter().filter_map(|id| self.db().get_bookmark(id).ok().flatten()).collect();
-            Self::build_bookmark_search_items(&bms, &self.bookmark_live_health)
+            Self::build_bookmark_search_items(
+                &bms,
+                &self.bookmark_live_health,
+                focus_root.as_deref(),
+            )
         };
 
         self.apply_reconciled_search_items(idx, items)
@@ -1699,10 +1746,12 @@ impl BrowserLayout {
         );
         // Tours stay scoped to the focus repo (re-merged with cached remote rows
         // by `rebuild_tours_panel` below).
+        let focus_root = db_repo_root(self.db());
         let (tours, _, _) = TabbedPanel::build_content_items(
             self.db(),
             &self.collection_live_health,
             &self.bookmark_live_health,
+            focus_root.as_deref(),
         );
         if let Some(p) = self.left_pane.content_panel.get_list_panel_mut(0)
             && !(preserve_search && p.is_search_active())
@@ -1727,10 +1776,10 @@ impl BrowserLayout {
         // remote tours, which are meaningless without a sync server).
         self.update_tours_tab_visibility();
 
-        // 3c. Spawn background live health resolution for all bookmarks
-        if let Ok(all_bookmarks) = self.db().list_bookmarks(&BookmarkFilter::default()) {
-            self.spawn_live_health_task(all_bookmarks);
-        }
+        // 3c. Spawn background live health resolution for all bookmarks across
+        // every checked repo (each batch tagged with its repo root so the caches
+        // don't collide on shared ids).
+        self.spawn_live_health_all_repos();
 
         // 4. Update Step previews (Right Pane) using live resolution
         let current_step = self.right_pane.pager_current;
@@ -2144,6 +2193,10 @@ impl BrowserLayout {
             })
             .unwrap_or_default();
 
+        // The filter path is focus-repo scoped, so key live health by the focus
+        // repo root for both the collection and bookmark lookups below.
+        let focus_root = db_repo_root(self.db());
+
         // 1. Update Tours/Collections (Content panel, tabs 0 and 1)
         if let Ok(collections) = self.db().list_collections() {
             let mut collection_items = Vec::new();
@@ -2166,7 +2219,9 @@ impl BrowserLayout {
                 if branch_match && tag_match {
                     let health = collection_health_status(
                         c.health,
-                        self.collection_live_health.get(&c.id).copied(),
+                        self.collection_live_health
+                            .get(&health_key(focus_root.as_deref(), &c.id))
+                            .copied(),
                     );
 
                     let is_published = c.published_at.is_some();
@@ -2238,7 +2293,7 @@ impl BrowserLayout {
                     // the spawned task below refreshes it if code has since drifted.
                     let health = self
                         .bookmark_live_health
-                        .get(&bm.id)
+                        .get(&health_key(focus_root.as_deref(), &bm.id))
                         .copied()
                         .unwrap_or(HealthStatus::Unknown);
                     let mut item = PanelItem::new(&short_path)
@@ -2669,6 +2724,37 @@ mod tests {
             HealthStatus::Broken
         );
         assert_eq!(collection_health_status(None, None), HealthStatus::Unknown);
+    }
+
+    #[test]
+    fn health_key_isolates_same_id_across_repos() {
+        // Two checked repos hold an item with the SAME id (e.g. a published tour
+        // imported into both). Keying the live-health cache by (repo_root, id)
+        // must give them distinct buckets so one repo's dot can't overwrite the
+        // other's.
+        let mut map: HashMap<String, HealthStatus> = HashMap::new();
+        let id = "01J000000000000000000SHARED";
+        let root_a = "/home/u/repo-a";
+        let root_b = "/home/u/repo-b";
+
+        let key_a = health_key(Some(root_a), id);
+        let key_b = health_key(Some(root_b), id);
+        assert_ne!(key_a, key_b, "same id in different repos must produce different keys");
+
+        // Apply each repo's own live status; they must not collide.
+        map.insert(key_a.clone(), HealthStatus::Healthy);
+        map.insert(key_b.clone(), HealthStatus::Broken);
+        assert_eq!(map.get(&key_a).copied(), Some(HealthStatus::Healthy));
+        assert_eq!(map.get(&key_b).copied(), Some(HealthStatus::Broken));
+
+        // A bare-id lookup (the old, buggy behavior) misses entirely, proving the
+        // buckets are namespaced by repo.
+        assert_eq!(map.get(id), None);
+
+        // The unit-separator makes the composite key unambiguous, and a missing
+        // repo_root folds to the empty prefix (its own bucket).
+        assert_eq!(health_key(Some(root_a), id), format!("{root_a}\u{1f}{id}"));
+        assert_ne!(health_key(None, id), health_key(Some(root_a), id));
     }
 
     #[test]
