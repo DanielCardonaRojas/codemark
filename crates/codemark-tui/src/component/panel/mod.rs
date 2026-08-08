@@ -1022,6 +1022,42 @@ mod tests {
     }
 
     #[test]
+    fn multi_select_toggle_tracks_active_items_and_reveals_uncheck_last() {
+        // The multi-select Repos panel drives the query scope: `activate_selected`
+        // toggles the selected item, and `active_items()` reports the checked set
+        // by `user_data`. This is exactly the API `activate_context_selection`
+        // relies on, including its uncheck-last guard, which triggers when
+        // toggling off the sole checked item leaves `active_items()` empty.
+        let mut panel = Panel::new("").multi_select(true).items(vec![
+            PanelItem::new("repo-a").user_data("/repos/a").active(true),
+            PanelItem::new("repo-b").user_data("/repos/b"),
+        ]);
+
+        // Startup: exactly one repo checked (mirrors the focus repo).
+        assert_eq!(panel.active_items(), vec!["/repos/a".to_string()]);
+
+        // Toggle the second repo on → both checked (scope fans out).
+        panel.set_selected(1);
+        panel.activate_selected();
+        let mut checked = panel.active_items();
+        checked.sort();
+        assert_eq!(checked, vec!["/repos/a".to_string(), "/repos/b".to_string()]);
+
+        // Toggle the second repo back off → single repo again.
+        panel.activate_selected();
+        assert_eq!(panel.active_items(), vec!["/repos/a".to_string()]);
+
+        // Uncheck-last: toggling off the sole remaining checked repo leaves the
+        // panel with zero checkmarks — the condition the guard detects. Re-toggling
+        // (the guard's revert) restores the single checkmark.
+        panel.set_selected(0);
+        panel.activate_selected();
+        assert!(panel.active_items().is_empty(), "expected zero checkmarks after uncheck-last");
+        panel.activate_selected();
+        assert_eq!(panel.active_items(), vec!["/repos/a".to_string()]);
+    }
+
+    #[test]
     fn test_alphabetical_sort_orders_by_display_name() {
         // Alphabetical sort keys off the emphasis text (a bookmark's symbol)
         // when present, otherwise the primary text.

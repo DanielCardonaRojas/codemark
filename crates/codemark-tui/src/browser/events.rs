@@ -542,16 +542,21 @@ impl BrowserLayout {
                 }
                 Some(true)
             }
-            Event::PreviewFailed { request_id, bookmark_id, unresolved } => {
+            Event::PreviewFailed { request_id, bookmark_id, repo_root, unresolved } => {
                 if *request_id == self.active_preview_request {
                     self.inflight_preview = None;
                     // Live resolution failed; fall back to the persisted snapshot
                     // synchronously (no tree-sitter parse, so it's cheap). The
                     // health distinguishes query-not-resolving (Unmatched) from
-                    // operational failures (Error).
+                    // operational failures (Error). Load from the failed bookmark's
+                    // owning repo (None → focused repo) under multi-select.
                     let health =
                         if *unresolved { HealthStatus::Broken } else { HealthStatus::Unknown };
-                    self.right_pane.load_bookmark(self.workspace.focus_db(), bookmark_id, health);
+                    self.right_pane.load_bookmark(
+                        self.workspace.db_for(repo_root.as_deref()),
+                        bookmark_id,
+                        health,
+                    );
                     self.right_pane.finish_loading();
                 }
                 Some(true)
@@ -1148,6 +1153,8 @@ impl BrowserLayout {
         use codemark_core::storage::db::Database;
 
         let request_id = self.active_preview_request;
+        // Resolve the db from the selected row's repo (None → focused repo) so
+        // the preview reads from the right db under multi-select.
         let db_path = self.workspace.db_for(repo_root.as_deref()).path().to_path_buf();
         let head = self.right_pane.head_commit().map(|s| s.to_string());
         let event_handler = self.event_handler.clone();
@@ -1158,6 +1165,7 @@ impl BrowserLayout {
                 let _ = event_handler.send(Event::PreviewFailed {
                     request_id,
                     bookmark_id,
+                    repo_root,
                     unresolved: false,
                 });
                 return;
@@ -1196,6 +1204,7 @@ impl BrowserLayout {
                     let _ = event_handler.send(Event::PreviewFailed {
                         request_id,
                         bookmark_id,
+                        repo_root,
                         unresolved: false,
                     });
                 }
@@ -1204,6 +1213,7 @@ impl BrowserLayout {
                     let _ = event_handler.send(Event::PreviewFailed {
                         request_id,
                         bookmark_id,
+                        repo_root,
                         unresolved,
                     });
                 }
@@ -1460,19 +1470,43 @@ impl BrowserLayout {
             }
             _ => {}
         }
+        // Repos tab: multi-select. Toggling a repo adds/removes it from the
+        // query scope (`RepoWorkspace::set_scope`), which the merged panels then
+        // span. The last checked repo can't be unchecked (the scope never empties
+        // and the panel never shows zero checkmarks).
         if let Some(panel) = self.left_pane.context_panel.active_panel_mut()
             && let Some(selected) = panel.selected()
             && let Some(root) = selected.user_data.as_ref()
         {
-            // Repos tab: switch database
-            let root = root.clone();
+            // Owned copy of the toggled repo's root before mutating the panel.
+            let toggled_root = root.clone();
             panel.activate_selected();
+
+            // Uncheck-last guard: if toggling off left zero checkmarks, revert
+            // it so at least one repo stays checked, then bail without touching
+            // scope. `set_scope` already no-ops on empty, but the panel must not
+            // display zero checkmarks either.
+            if panel.active_items().is_empty() {
+                panel.activate_selected();
+                return true;
+            }
+
+            // Collect all checked repo roots (owned) before the &mut self calls.
+            let checked_roots: Vec<std::path::PathBuf> =
+                panel.active_items().into_iter().map(std::path::PathBuf::from).collect();
+            // Was the toggled repo just checked (in scope) or unchecked?
+            let toggled_in_scope =
+                checked_roots.iter().any(|r| r.as_os_str() == toggled_root.as_str());
+
+            let _ = self.workspace.set_scope(&checked_roots);
+            // If the toggled repo is now checked, focus it. If the user just
+            // UNchecked the selected repo, leave focus to set_scope's fallback.
+            if toggled_in_scope {
+                self.workspace.set_focus(std::path::PathBuf::from(&toggled_root));
+            }
+            self.after_scope_change();
             if move_focus {
-                if self.switch_database(&root).is_ok() {
-                    self.set_focus(FocusArea::ContentPanel);
-                }
-            } else {
-                let _ = self.switch_database(&root);
+                self.set_focus(FocusArea::ContentPanel);
             }
             return true;
         }
