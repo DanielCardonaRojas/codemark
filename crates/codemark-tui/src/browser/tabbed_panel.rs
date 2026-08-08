@@ -194,7 +194,7 @@ fn bookmark_to_panel_item_cached(
 
 /// Display name for a repo root: its last path component (e.g.
 /// `/home/u/codemark` -> `codemark`), falling back to the full string.
-fn repo_display_name(root: &std::path::Path) -> String {
+pub(super) fn repo_display_name(root: &std::path::Path) -> String {
     root.file_name()
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_else(|| root.to_string_lossy().to_string())
