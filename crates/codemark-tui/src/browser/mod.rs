@@ -227,9 +227,12 @@ pub struct BrowserLayout {
     /// search. A map (not a single id) so a refocus can reconcile the Bookmarks
     /// and Collections panels concurrently without one superseding the other.
     reconcile_search_requests: std::collections::HashMap<u64, usize>,
-    /// A debounced, not-yet-spawned preview request: (bookmark_id, label, due tick).
-    /// Coalesces rapid scrolling into a single resolve once movement settles.
-    pending_preview: Option<(String, Option<String>, usize)>,
+    /// A debounced, not-yet-spawned preview request:
+    /// (bookmark_id, label, repo_root, due tick). `repo_root` is the selected
+    /// row's owning repo tag (None → focused repo) so the resolve reads from the
+    /// right db under multi-select. Coalesces rapid scrolling into a single
+    /// resolve once movement settles.
+    pending_preview: Option<(String, Option<String>, Option<String>, usize)>,
     /// A spawned-but-not-yet-resolved preview: (label, spawn tick). Used to defer
     /// the loading indicator — the previous preview stays visible and the spinner
     /// only appears if the resolve outlives a short grace period, so fast/cached
@@ -510,8 +513,17 @@ impl BrowserLayout {
     pub(super) fn preview_content_item(&mut self, tab: ContentTab, id: &str) {
         match tab {
             ContentTab::Bookmarks => {
+                // Resolve from the selected row's owning repo (owned copy before
+                // the &mut borrow of the right pane), so the preview loads from
+                // the right db under multi-select.
+                let repo_root = self
+                    .left_pane
+                    .content_panel
+                    .active_panel()
+                    .and_then(|panel| panel.selected())
+                    .and_then(|s| s.repo_root().map(str::to_string));
                 self.right_pane.load_bookmark_live(
-                    self.workspace.focus_db(),
+                    self.workspace.db_for(repo_root.as_deref()),
                     id,
                     &mut self.session_cache,
                 );
@@ -587,18 +599,22 @@ impl BrowserLayout {
             self.right_pane.finish_loading();
         }
 
-        // Label the (eventual) loading indicator with the selected row's path —
-        // cheap, read from the already-rendered list item.
-        let label = self
+        // Label the (eventual) loading indicator with the selected row's path,
+        // and capture its owning repo tag (both cheap, read from the
+        // already-rendered list item) so the resolve targets the right db.
+        let (label, repo_root) = self
             .left_pane
             .content_panel
             .active_panel()
             .and_then(|panel| panel.selected())
-            .map(|selected| selected.text().to_string());
+            .map(|selected| {
+                (Some(selected.text().to_string()), selected.repo_root().map(str::to_string))
+            })
+            .unwrap_or((None, None));
 
         // Debounce: fire one tick from now; rapid moves keep resetting this.
         self.pending_preview =
-            Some((id.to_string(), label, self.tick_count + PREVIEW_DEBOUNCE_TICKS));
+            Some((id.to_string(), label, repo_root, self.tick_count + PREVIEW_DEBOUNCE_TICKS));
     }
 
     /// Invalidate any pending or in-flight bookmark preview so a stale async
@@ -914,21 +930,28 @@ impl BrowserLayout {
             let root = std::path::PathBuf::from(repo_root);
             self.workspace.set_scope(std::slice::from_ref(&root))?;
             self.workspace.set_focus(root);
-            self.right_pane.refresh_head_commit(self.workspace.focus_db());
-            self.collection_live_health.clear();
-            self.bookmark_live_health.clear();
-            // Advance the health epoch so any live-health task still in flight for
-            // the previous database fails the generation guard on apply and can't
-            // repopulate the freshly-cleared caches (or a panel dot) with a status
-            // from the old repo — which, on a colliding bookmark/collection id,
-            // would show the wrong health for the new repo.
-            self.health_generation = self.health_generation.wrapping_add(1);
-            self.cached_remote_tours.clear();
-            self.pending_remote_repos = None;
-            self.right_pane.active_remote_tour_id = None;
-            self.refresh_all_panels();
+            self.after_scope_change();
         }
         Ok(())
+    }
+
+    /// Reset the caches and derived state that become stale after the workspace
+    /// scope (or focus) changes, then rebuild every panel.
+    ///
+    /// Shared by [`switch_database`](Self::switch_database) and the multi-select
+    /// Repos toggle so both take the same clears: the live-health caches, the
+    /// health epoch bump (so an in-flight task for a dropped repo can't
+    /// repopulate a freshly-cleared cache or panel dot with a stale status), the
+    /// remote-tour caches, and the head commit.
+    pub(super) fn after_scope_change(&mut self) {
+        self.right_pane.refresh_head_commit(self.workspace.focus_db());
+        self.collection_live_health.clear();
+        self.bookmark_live_health.clear();
+        self.health_generation = self.health_generation.wrapping_add(1);
+        self.cached_remote_tours.clear();
+        self.pending_remote_repos = None;
+        self.right_pane.active_remote_tour_id = None;
+        self.refresh_all_panels();
     }
 
     /// Minimum number of ticks a spinner must run before clearing (one visual cycle).

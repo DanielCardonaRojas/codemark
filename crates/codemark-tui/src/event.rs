@@ -92,6 +92,9 @@ pub enum Event {
         request_id: u64,
         /// Bookmark that failed to resolve.
         bookmark_id: String,
+        /// The failed bookmark's owning repo tag (None → focused repo), so the
+        /// persisted-snapshot fallback loads from the right db under multi-select.
+        repo_root: Option<String>,
         /// `true` when the query does not resolve (Unmatched); `false` for
         /// operational failures like a missing file or parse error (Error).
         unresolved: bool,

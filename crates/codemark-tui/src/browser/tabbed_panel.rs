@@ -555,7 +555,10 @@ impl TabbedPanel {
     /// Create panel 1 with Repos/Owners/Auth tabs.
     pub fn new_repos_accounts(db: &Database, registry: &rusqlite::Connection) -> Self {
         let repos_items = TabbedPanel::build_repo_items(db, registry);
-        let mut repos_panel = Panel::new("").bordered(false);
+        // Multi-select: toggling a repo adds/removes it from the query scope
+        // (see `activate_context_selection`). `build_repo_items` marks exactly
+        // the focus repo `.active(true)`, so startup shows one checked repo.
+        let mut repos_panel = Panel::new("").bordered(false).multi_select(true);
         repos_panel = repos_panel.items(repos_items);
 
         // Move the cursor to the active repo (the one with the checkmark) so the
