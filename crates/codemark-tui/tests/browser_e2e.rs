@@ -569,12 +569,18 @@ async fn collection_semantic_search_preserves_relevance_order() {
     // Simulate a semantic search ranking: deliver the oldest collection first,
     // the newest last (the reverse of DateNewest order). request_id 0 matches
     // the initial active_search_request, satisfying the stale-result guard.
+    let hit = |id: &str, name: &str, created: &str| codemark_tui::event::CollectionHit {
+        repo_name: String::new(),
+        repo_root: String::new(),
+        collection: mk(id, name, created),
+        count: 0,
+    };
     layout.handle_event(&Event::CollectionSearchResults {
         request_id: 0,
-        collections: vec![
-            (mk("c-old", "Charlie", "2024-01-01T00:00:00Z"), 0),
-            (mk("c-mid", "Bravo", "2025-01-01T00:00:00Z"), 0),
-            (mk("c-new", "Alpha", "2026-01-01T00:00:00Z"), 0),
+        hits: vec![
+            hit("c-old", "Charlie", "2024-01-01T00:00:00Z"),
+            hit("c-mid", "Bravo", "2025-01-01T00:00:00Z"),
+            hit("c-new", "Alpha", "2026-01-01T00:00:00Z"),
         ],
     });
 

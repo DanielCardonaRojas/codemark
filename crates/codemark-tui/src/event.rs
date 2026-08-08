@@ -10,6 +10,38 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
 
+/// A bookmark search hit tagged with the repo it came from.
+///
+/// Search fans out across every checked repo (`RepoWorkspace::dbs()`); tagging
+/// each hit with its repo (display name + root) lets the UI render the repo on
+/// the row and route selection/preview/health back to the owning db. In
+/// single-repo mode every hit carries the one focused repo, so behavior is
+/// identical to the pre-fan-out payload.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BookmarkHit {
+    /// Display name of the owning repo (last path component of `repo_root`).
+    pub repo_name: String,
+    /// Root of the owning repo (as carried on `PanelItem::repo_root()`), used to
+    /// resolve the db and key live health via `(repo_root, id)`.
+    pub repo_root: String,
+    /// The matched bookmark.
+    pub bookmark: Bookmark,
+}
+
+/// A collection search hit tagged with the repo it came from, carrying the
+/// collection's bookmark count. See [`BookmarkHit`] for the tagging rationale.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CollectionHit {
+    /// Display name of the owning repo (last path component of `repo_root`).
+    pub repo_name: String,
+    /// Root of the owning repo (as carried on `PanelItem::repo_root()`).
+    pub repo_root: String,
+    /// The matched collection.
+    pub collection: Collection,
+    /// Number of bookmarks in the collection (rendered as the step count).
+    pub count: usize,
+}
+
 /// Events that can be handled by the TUI.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Event {
@@ -27,11 +59,13 @@ pub enum Event {
     FocusLost,
     /// A paste event (clipboard content).
     Paste(String),
-    /// Search results returned from background task.
-    SearchResults { request_id: u64, bookmarks: Vec<Bookmark> },
-    /// Collection search results returned from background task, paired with each
-    /// collection's bookmark count.
-    CollectionSearchResults { request_id: u64, collections: Vec<(Collection, usize)> },
+    /// Search results returned from background task. Each hit is tagged with the
+    /// repo it came from so multi-repo (fan-out) results resolve/preview/health
+    /// per repo; single-repo results all carry the one focused repo.
+    SearchResults { request_id: u64, hits: Vec<BookmarkHit> },
+    /// Collection search results returned from background task. Each hit carries
+    /// its owning repo and the collection's bookmark count.
+    CollectionSearchResults { request_id: u64, hits: Vec<CollectionHit> },
     /// Search failed with an error message.
     SearchError { request_id: u64, msg: String },
     /// Heal operation completed with a notification message.

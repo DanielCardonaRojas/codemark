@@ -709,6 +709,67 @@ impl BrowserLayout {
         self.execute_bookmark_search(request_id, mode, query);
     }
 
+    /// The focus repo's `(display_name, root)` tag, matching what a merged row
+    /// and the live-health cache use. `root` is the empty string for
+    /// in-memory/degenerate db paths (mirrors [`db_repo_root`] folding `None` to
+    /// the empty prefix), so a focus-tagged hit's health key agrees with the
+    /// focus keying used before fan-out.
+    fn focus_repo_tag(&self) -> (String, String) {
+        let root = db_repo_root(self.db()).unwrap_or_default();
+        let name = crate::browser::tabbed_panel::repo_display_name(std::path::Path::new(&root));
+        (name, root)
+    }
+
+    /// Run an FTS bookmark search across every checked repo, tagging each hit
+    /// with its owning repo. Returns the first db error encountered. In
+    /// single-repo mode this is exactly one `search_bookmarks` call, identical to
+    /// the pre-fan-out behavior.
+    fn fts_bookmark_hits(
+        workspace: &RepoWorkspace,
+        query: &str,
+    ) -> codemark_core::error::Result<Vec<crate::event::BookmarkHit>> {
+        let mut hits = Vec::new();
+        for (root, db) in workspace.dbs() {
+            let bookmarks = db.search_bookmarks(Some(query), None, None, None, None, None, None)?;
+            let repo_name = crate::browser::tabbed_panel::repo_display_name(root);
+            let repo_root = root.to_string_lossy().into_owned();
+            for bookmark in bookmarks {
+                hits.push(crate::event::BookmarkHit {
+                    repo_name: repo_name.clone(),
+                    repo_root: repo_root.clone(),
+                    bookmark,
+                });
+            }
+        }
+        Ok(hits)
+    }
+
+    /// Run an FTS collection search across every checked repo, tagging each hit
+    /// with its owning repo and carrying the collection's bookmark count. Each
+    /// repo's results are truncated to [`SEARCH_RESULT_LIMIT`], matching the
+    /// single-repo behavior. Returns the first db error encountered.
+    fn fts_collection_hits(
+        workspace: &RepoWorkspace,
+        query: &str,
+    ) -> codemark_core::error::Result<Vec<crate::event::CollectionHit>> {
+        let mut hits = Vec::new();
+        for (root, db) in workspace.dbs() {
+            let mut collections = db.search_collections(Some(query), None)?;
+            collections.truncate(SEARCH_RESULT_LIMIT);
+            let repo_name = crate::browser::tabbed_panel::repo_display_name(root);
+            let repo_root = root.to_string_lossy().into_owned();
+            for (collection, count) in collections {
+                hits.push(crate::event::CollectionHit {
+                    repo_name: repo_name.clone(),
+                    repo_root: repo_root.clone(),
+                    collection,
+                    count,
+                });
+            }
+        }
+        Ok(hits)
+    }
+
     /// Execute a bookmark search for `query`, emitting `SearchResults` (or
     /// `SearchError`). FTS runs synchronously (a fast `LIKE` scan); semantic
     /// search runs on a blocking task since it loads an embedding model. Split
@@ -720,13 +781,13 @@ impl BrowserLayout {
 
         match mode {
             SearchMode::Fts => {
-                // FTS search can be done synchronously as it's usually fast
-                let bookmarks =
-                    self.db().search_bookmarks(Some(&query), None, None, None, None, None, None);
-                match bookmarks {
-                    Ok(bm) => {
-                        let _ =
-                            event_handler.send(Event::SearchResults { request_id, bookmarks: bm });
+                // FTS search can be done synchronously as it's usually fast.
+                // Fan out across every checked repo and tag each hit with its
+                // owning repo so selection/preview/health resolve per repo. In
+                // single-repo mode this is exactly one db, identical to before.
+                match Self::fts_bookmark_hits(&self.workspace, &query) {
+                    Ok(hits) => {
+                        let _ = event_handler.send(Event::SearchResults { request_id, hits });
                     }
                     Err(e) => {
                         let _ = event_handler
@@ -748,6 +809,11 @@ impl BrowserLayout {
                     return;
                 };
                 let config = Config::load_layered(codemark_dir);
+
+                // Semantic is still single-db in this task; tag every hit with
+                // the focus repo so the payload type matches FTS. (Task 5.2 fans
+                // this out.)
+                let (focus_name, focus_root) = self.focus_repo_tag();
 
                 tokio::task::spawn_blocking(move || {
                     // Open a new DB connection for the background task to avoid !Send issues
@@ -782,14 +848,17 @@ impl BrowserLayout {
                         ))
                     }) {
                         Ok(results) => {
-                            let mut bookmarks = Vec::new();
+                            let mut hits = Vec::new();
                             for result in results {
-                                if let Ok(Some(bm)) = db.get_bookmark(&result.id) {
-                                    bookmarks.push(bm);
+                                if let Ok(Some(bookmark)) = db.get_bookmark(&result.id) {
+                                    hits.push(crate::event::BookmarkHit {
+                                        repo_name: focus_name.clone(),
+                                        repo_root: focus_root.clone(),
+                                        bookmark,
+                                    });
                                 }
                             }
-                            let _ =
-                                event_handler.send(Event::SearchResults { request_id, bookmarks });
+                            let _ = event_handler.send(Event::SearchResults { request_id, hits });
                         }
                         Err(e) => {
                             let _ = event_handler
@@ -821,18 +890,18 @@ impl BrowserLayout {
         );
 
         match mode {
-            SearchMode::Fts => match self.db().search_collections(Some(&query), None) {
-                Ok(mut collections) => {
-                    collections.truncate(SEARCH_RESULT_LIMIT);
+            // Fan out across every checked repo, tagging each hit with its
+            // owning repo; single-repo mode is exactly one db as before.
+            SearchMode::Fts => match Self::fts_collection_hits(&self.workspace, &query) {
+                Ok(hits) => {
                     tracing::debug!(
                         target: "codemark::ui",
                         request_id,
                         mode = mode_label,
-                        result_count = collections.len(),
+                        result_count = hits.len(),
                         "collection search completed"
                     );
-                    let _ = event_handler
-                        .send(Event::CollectionSearchResults { request_id, collections });
+                    let _ = event_handler.send(Event::CollectionSearchResults { request_id, hits });
                 }
                 Err(e) => {
                     tracing::debug!(
@@ -858,6 +927,10 @@ impl BrowserLayout {
                 };
                 let config = Config::load_layered(codemark_dir);
                 let db_path = self.db().path().to_path_buf();
+
+                // Single-db in this task; tag every hit with the focus repo so
+                // the payload type matches FTS. (Task 5.2 fans this out.)
+                let (focus_name, focus_root) = self.focus_repo_tag();
 
                 tokio::task::spawn_blocking(move || {
                     let Ok(db) = Database::open(&db_path) else {
@@ -891,25 +964,30 @@ impl BrowserLayout {
                         ))
                     }) {
                         Ok(results) => {
-                            let mut collections = Vec::new();
+                            let mut hits = Vec::new();
                             for result in results {
-                                if let Ok(Some(c)) = db.get_collection_by_id(&result.id) {
+                                if let Ok(Some(collection)) = db.get_collection_by_id(&result.id) {
                                     let count = db
-                                        .list_bookmarks_in_collection(&c.id)
+                                        .list_bookmarks_in_collection(&collection.id)
                                         .map(|b| b.len())
                                         .unwrap_or(0);
-                                    collections.push((c, count));
+                                    hits.push(crate::event::CollectionHit {
+                                        repo_name: focus_name.clone(),
+                                        repo_root: focus_root.clone(),
+                                        collection,
+                                        count,
+                                    });
                                 }
                             }
                             tracing::debug!(
                                 target: "codemark::ui",
                                 request_id,
                                 mode = mode_label,
-                                result_count = collections.len(),
+                                result_count = hits.len(),
                                 "collection search completed"
                             );
                             let _ = event_handler
-                                .send(Event::CollectionSearchResults { request_id, collections });
+                                .send(Event::CollectionSearchResults { request_id, hits });
                         }
                         Err(e) => {
                             tracing::debug!(
@@ -1572,26 +1650,18 @@ impl BrowserLayout {
                 // FTS is cheap to re-run, so refresh the whole result set.
                 Some((query, SearchMode::Fts)) => {
                     let query = query.clone();
-                    // Search runs against the focus db, so key by the focus root.
-                    let focus_root = db_repo_root(self.db());
+                    // Re-run the FTS fan-out across every checked repo so the
+                    // reconciled set stays multi-repo and each row keeps its tag.
                     let items = match tab {
-                        ContentTab::Bookmarks => self
-                            .db()
-                            .search_bookmarks(Some(&query), None, None, None, None, None, None)
-                            .map(|bms| {
-                                Self::build_bookmark_search_items(
-                                    &bms,
-                                    &self.bookmark_live_health,
-                                    focus_root.as_deref(),
-                                )
+                        ContentTab::Bookmarks => Self::fts_bookmark_hits(&self.workspace, &query)
+                            .map(|hits| {
+                                Self::build_bookmark_search_items(&hits, &self.bookmark_live_health)
                             }),
                         ContentTab::Collections => {
-                            self.db().search_collections(Some(&query), None).map(|mut cols| {
-                                cols.truncate(SEARCH_RESULT_LIMIT);
+                            Self::fts_collection_hits(&self.workspace, &query).map(|hits| {
                                 Self::build_collection_search_items(
-                                    &cols,
+                                    &hits,
                                     &self.collection_live_health,
-                                    focus_root.as_deref(),
                                 )
                             })
                         }
@@ -1659,38 +1729,67 @@ impl BrowserLayout {
     /// removes deleted rows — the best available reconcile when a semantic re-run
     /// isn't run or fails. Returns whether the panel existed.
     fn refresh_search_panel_by_id(&mut self, idx: usize) -> bool {
-        let row_ids: Vec<String> = self
+        // Each row carries its owning repo (name + root); resolve each id against
+        // that repo's db so a multi-repo result set reconciles correctly. Rows
+        // without a tag (shouldn't happen for search rows) fall back to focus.
+        let (focus_name, focus_root) = self.focus_repo_tag();
+        let rows: Vec<(String, String, String)> = self
             .left_pane
             .content_panel
             .get_list_panel_mut(idx)
-            .map(|p| p.all_items().iter().filter_map(|i| i.user_data.clone()).collect())
+            .map(|p| {
+                p.all_items()
+                    .iter()
+                    .filter_map(|i| {
+                        i.user_data.clone().map(|id| {
+                            (
+                                i.repo_name()
+                                    .map(str::to_string)
+                                    .unwrap_or_else(|| focus_name.clone()),
+                                i.repo_root()
+                                    .map(str::to_string)
+                                    .unwrap_or_else(|| focus_root.clone()),
+                                id,
+                            )
+                        })
+                    })
+                    .collect()
+            })
             .unwrap_or_default();
 
-        // These rows come from the focus db, so key by the focus repo root.
-        let focus_root = db_repo_root(self.db());
         let items = if idx == ContentTab::Collections.index() {
-            let cols: Vec<_> = row_ids
+            let hits: Vec<crate::event::CollectionHit> = rows
                 .iter()
-                .filter_map(|id| {
-                    let c = self.db().get_collection_by_id(id).ok().flatten()?;
-                    let count =
-                        self.db().list_bookmarks_in_collection(&c.id).map(|b| b.len()).unwrap_or(0);
-                    Some((c, count))
+                .filter_map(|(repo_name, repo_root, id)| {
+                    let db = self.workspace.db_for(Some(repo_root));
+                    let collection = db.get_collection_by_id(id).ok().flatten()?;
+                    let count = db
+                        .list_bookmarks_in_collection(&collection.id)
+                        .map(|b| b.len())
+                        .unwrap_or(0);
+                    Some(crate::event::CollectionHit {
+                        repo_name: repo_name.clone(),
+                        repo_root: repo_root.clone(),
+                        collection,
+                        count,
+                    })
                 })
                 .collect();
-            Self::build_collection_search_items(
-                &cols,
-                &self.collection_live_health,
-                focus_root.as_deref(),
-            )
+            Self::build_collection_search_items(&hits, &self.collection_live_health)
         } else {
-            let bms: Vec<_> =
-                row_ids.iter().filter_map(|id| self.db().get_bookmark(id).ok().flatten()).collect();
-            Self::build_bookmark_search_items(
-                &bms,
-                &self.bookmark_live_health,
-                focus_root.as_deref(),
-            )
+            let hits: Vec<crate::event::BookmarkHit> = rows
+                .iter()
+                .filter_map(|(repo_name, repo_root, id)| {
+                    let bookmark =
+                        self.workspace.db_for(Some(repo_root)).get_bookmark(id).ok().flatten()?;
+                    Some(crate::event::BookmarkHit {
+                        repo_name: repo_name.clone(),
+                        repo_root: repo_root.clone(),
+                        bookmark,
+                    })
+                })
+                .collect();
+            Self::build_bookmark_search_items(&hits, &self.bookmark_live_health)
         };
 
         self.apply_reconciled_search_items(idx, items)
