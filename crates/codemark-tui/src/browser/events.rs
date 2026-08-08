@@ -1395,10 +1395,13 @@ impl BrowserLayout {
                         self.start_pull_tour(remote_id);
                         return Some(true);
                     }
+                    // Capture the owning repo (owned) before dropping the panel
+                    // borrow so the preview loads from the selected row's repo.
+                    let repo_root = selected.repo_root().map(str::to_string);
                     let tour_name = selected.text().to_string();
                     panel.activate_selected();
                     self.right_pane.load_tour_live(
-                        self.workspace.focus_db(),
+                        self.workspace.db_for(repo_root.as_deref()),
                         &tour_name,
                         &mut self.session_cache,
                     );
@@ -1413,10 +1416,13 @@ impl BrowserLayout {
                 if let Some(panel) = self.left_pane.content_panel.active_panel_mut()
                     && let Some(selected) = panel.selected()
                 {
+                    // Capture the owning repo (owned) before dropping the panel
+                    // borrow so the preview loads from the selected row's repo.
+                    let repo_root = selected.repo_root().map(str::to_string);
                     let tour_name = selected.text().to_string();
                     panel.activate_selected();
                     self.right_pane.load_tour_live(
-                        self.workspace.focus_db(),
+                        self.workspace.db_for(repo_root.as_deref()),
                         &tour_name,
                         &mut self.session_cache,
                     );
@@ -1432,9 +1438,10 @@ impl BrowserLayout {
                     && let Some(selected) = panel.selected()
                     && let Some(id) = selected.user_data.clone()
                 {
+                    let repo_root = selected.repo_root().map(str::to_string);
                     panel.activate_selected();
                     self.right_pane.load_bookmark_live(
-                        self.workspace.focus_db(),
+                        self.workspace.db_for(repo_root.as_deref()),
                         &id,
                         &mut self.session_cache,
                     );
@@ -1590,49 +1597,61 @@ impl BrowserLayout {
     fn handle_delete_key(&mut self) -> Option<bool> {
         match ContentTab::from_index(self.left_pane.content_panel.tabs.selected_index()) {
             Some(ContentTab::Collections) => {
-                if let Some(panel) = self.left_pane.content_panel.active_panel_mut()
-                    && let Some(selected) = panel.selected()
-                {
-                    let collection_name = selected.text().to_string();
-                    if let Ok(Some(collection)) = self.db().get_collection_by_name(&collection_name)
-                    {
-                        // Deleting a collection also deletes its bookmarks — they're
-                        // almost always created alongside the collection. Bookmarks
-                        // shared with another collection are preserved, so only count
-                        // the ones that will actually be removed.
-                        //
-                        // Surface a count failure rather than defaulting to 0, which
-                        // would open a destructive confirmation that understates what's
-                        // about to be deleted.
-                        let bm_count =
-                            match self.db().count_exclusive_collection_bookmarks(&collection.id) {
-                                Ok(count) => count,
-                                Err(err) => {
-                                    tracing::warn!(
-                                        target: "codemark::ui",
-                                        error = %err,
-                                        "failed to count collection bookmarks before delete"
-                                    );
-                                    self.pending_notification = Some(HealNotification {
-                                        message: format!("Couldn't count bookmarks: {err}"),
-                                        success: false,
-                                    });
-                                    return Some(true);
-                                }
-                            };
-                        let bookmarks_line = match bm_count {
-                            0 => String::new(),
-                            1 => "\n1 bookmark will be deleted.".to_string(),
-                            n => format!("\n{n} bookmarks will be deleted."),
-                        };
-                        // Delete by the stable id; names are not uniquely constrained.
-                        self.request_confirmation(ConfirmDialog::new(
-                            "Delete Collection",
-                            format!("Delete collection \"{collection_name}\"?{bookmarks_line}"),
-                            DialogAction::DeleteCollection(collection.id),
-                        ));
-                        return Some(true);
-                    }
+                // Extract the selected row's name + owning repo up front, then drop
+                // the panel borrow so the db lookups below can borrow `self`.
+                let selection = self
+                    .left_pane
+                    .content_panel
+                    .active_panel()
+                    .and_then(|panel| panel.selected())
+                    .map(|selected| {
+                        (selected.text().to_string(), selected.repo_root().map(str::to_string))
+                    });
+                if let Some((collection_name, repo_root)) = selection {
+                    // Route the lookup/count to the selected row's repo (None →
+                    // focused repo). Resolve the collection + exclusive bookmark
+                    // count while the `db` borrow is live, capturing owned values so
+                    // no db borrow crosses the `&mut self` calls below.
+                    let db = self.workspace.db_for(repo_root.as_deref());
+                    let Ok(Some(collection)) = db.get_collection_by_name(&collection_name) else {
+                        return None;
+                    };
+                    // Deleting a collection also deletes its bookmarks — they're
+                    // almost always created alongside the collection. Bookmarks
+                    // shared with another collection are preserved, so only count
+                    // the ones that will actually be removed.
+                    //
+                    // Surface a count failure rather than defaulting to 0, which
+                    // would open a destructive confirmation that understates what's
+                    // about to be deleted.
+                    let bm_count = match db.count_exclusive_collection_bookmarks(&collection.id) {
+                        Ok(count) => count,
+                        Err(err) => {
+                            tracing::warn!(
+                                target: "codemark::ui",
+                                error = %err,
+                                "failed to count collection bookmarks before delete"
+                            );
+                            self.pending_notification = Some(HealNotification {
+                                message: format!("Couldn't count bookmarks: {err}"),
+                                success: false,
+                            });
+                            return Some(true);
+                        }
+                    };
+                    let collection_id = collection.id;
+                    let bookmarks_line = match bm_count {
+                        0 => String::new(),
+                        1 => "\n1 bookmark will be deleted.".to_string(),
+                        n => format!("\n{n} bookmarks will be deleted."),
+                    };
+                    // Delete by the stable id; names are not uniquely constrained.
+                    self.request_confirmation(ConfirmDialog::new(
+                        "Delete Collection",
+                        format!("Delete collection \"{collection_name}\"?{bookmarks_line}"),
+                        DialogAction::DeleteCollection { id: collection_id, repo_root },
+                    ));
+                    return Some(true);
                 }
             }
             Some(ContentTab::Bookmarks) => {
@@ -1641,10 +1660,12 @@ impl BrowserLayout {
                     && let Some(id) = selected.user_data.clone()
                 {
                     let label = selected.text().to_string();
+                    // Route the delete to the selected row's repo (None → focused).
+                    let repo_root = selected.repo_root().map(str::to_string);
                     self.request_confirmation(ConfirmDialog::new(
                         "Delete Bookmark",
                         format!("Delete bookmark \"{}\"?", label),
-                        DialogAction::DeleteBookmark(id),
+                        DialogAction::DeleteBookmark { id, repo_root },
                     ));
                     return Some(true);
                 }

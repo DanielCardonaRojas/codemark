@@ -126,6 +126,22 @@ impl RepoWorkspace {
         repo_root.and_then(|r| self.get(std::path::Path::new(r))).unwrap_or_else(|| self.focus_db())
     }
 
+    /// Mutable counterpart to [`db_for`](RepoWorkspace::db_for), for the few DB
+    /// operations that take `&mut self` (e.g. `delete_collection_recursive`).
+    /// Falls back to the focused repo when the tag is missing or doesn't match a
+    /// checked repo. Never panics: `focus_db_mut` is always valid.
+    pub fn db_for_mut(&mut self, repo_root: Option<&str>) -> &mut Database {
+        // Resolve the index first so the mutable borrow of `self.dbs` doesn't
+        // overlap the focus fallback.
+        let idx = repo_root
+            .map(std::path::Path::new)
+            .and_then(|r| self.dbs.iter().position(|(root, _)| root == r));
+        match idx {
+            Some(i) => &mut self.dbs[i].1,
+            None => self.focus_db_mut(),
+        }
+    }
+
     /// The focused repo root (always a checked repo).
     pub fn focus(&self) -> &Path {
         &self.focus
