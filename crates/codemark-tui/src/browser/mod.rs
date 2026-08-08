@@ -776,7 +776,6 @@ impl BrowserLayout {
     /// out of [`Self::execute_search`] so a refocus reconcile can re-run the
     /// bookmark search directly, independent of the selected tab.
     fn execute_bookmark_search(&mut self, request_id: u64, mode: SearchMode, query: String) {
-        let db_path = self.db().path().to_path_buf();
         let event_handler = self.event_handler.clone();
 
         match mode {
@@ -800,74 +799,100 @@ impl BrowserLayout {
             // unreachable; keep it as a no-op that drops the captured values.
             #[cfg(not(feature = "semantic"))]
             SearchMode::Semantic => {
-                let _ = (db_path, request_id, query);
+                let _ = (request_id, query);
             }
             #[cfg(feature = "semantic")]
             SearchMode::Semantic => {
-                // Load config to get semantic settings
+                // Model/metric/threshold are resolved once from the FOCUS repo's
+                // config and applied to every checked repo (v1 assumes a shared
+                // embedding model across repos — see the design's known limits).
                 let Some(codemark_dir) = self.db().path().parent() else {
                     return;
                 };
                 let config = Config::load_layered(codemark_dir);
 
-                // Semantic is still single-db in this task; tag every hit with
-                // the focus repo so the payload type matches FTS. (Task 5.2 fans
-                // this out.)
-                let (focus_name, focus_root) = self.focus_repo_tag();
+                // Capture every checked repo's (name, root, db path) before the
+                // spawn; Database isn't Send, so the task reopens by path.
+                let repos = self.semantic_repo_targets();
 
                 tokio::task::spawn_blocking(move || {
-                    // Open a new DB connection for the background task to avoid !Send issues
-                    let Ok(db) = Database::open(&db_path) else {
-                        let _ = event_handler.send(Event::SearchError {
-                            request_id,
-                            msg: "Failed to open database for search".to_string(),
-                        });
-                        return;
-                    };
-
                     let model = config
                         .semantic
                         .model
                         .as_deref()
                         .and_then(|m| m.parse::<EmbeddingModel>().ok())
                         .unwrap_or(EmbeddingModel::AllMiniLmL6V2);
-
                     let distance_metric = config.semantic.get_distance_metric();
                     let threshold = config.semantic.effective_threshold();
                     let models_dir = config.semantic.get_models_dir();
-
                     let semantic_repo =
                         SemanticRepo::with_config(models_dir, model, distance_metric, threshold);
 
                     let handle = tokio::runtime::Handle::current();
-                    match tokio::task::block_in_place(|| {
-                        handle.block_on(semantic_repo.search(
-                            db.conn(),
-                            &query,
-                            SEARCH_RESULT_LIMIT,
-                        ))
+                    // Embed the query ONCE (loads the model), then search each
+                    // repo's db with the same vector — no per-repo model reload.
+                    let embedding = match tokio::task::block_in_place(|| {
+                        handle.block_on(semantic_repo.embed_query(&query))
                     }) {
-                        Ok(results) => {
-                            let mut hits = Vec::new();
-                            for result in results {
-                                if let Ok(Some(bookmark)) = db.get_bookmark(&result.id) {
-                                    hits.push(crate::event::BookmarkHit {
-                                        repo_name: focus_name.clone(),
-                                        repo_root: focus_root.clone(),
-                                        bookmark,
-                                    });
-                                }
-                            }
-                            let _ = event_handler.send(Event::SearchResults { request_id, hits });
-                        }
+                        Ok(e) => e,
                         Err(e) => {
                             let _ = event_handler
                                 .send(Event::SearchError { request_id, msg: e.to_string() });
+                            return;
+                        }
+                    };
+
+                    // Score hits across all checked repos, resolving each to its
+                    // full bookmark from its own db (open once per repo).
+                    let mut scored: Vec<(f64, crate::event::BookmarkHit)> = Vec::new();
+                    for (repo_name, repo_root, db_path) in &repos {
+                        let Ok(db) = Database::open(db_path) else { continue };
+                        // A repo with no vec index / a dimension mismatch simply
+                        // contributes nothing rather than failing the whole query.
+                        let Ok(results) = semantic_repo.search_prepared(
+                            db.conn(),
+                            &embedding,
+                            SEARCH_RESULT_LIMIT,
+                            threshold,
+                        ) else {
+                            continue;
+                        };
+                        for r in results {
+                            if let Ok(Some(bookmark)) = db.get_bookmark(&r.id) {
+                                scored.push((
+                                    r.distance,
+                                    crate::event::BookmarkHit {
+                                        repo_name: repo_name.clone(),
+                                        repo_root: repo_root.clone(),
+                                        bookmark,
+                                    },
+                                ));
+                            }
                         }
                     }
+                    // Global rank by ascending distance, cap at the limit.
+                    scored.sort_by(|a, b| {
+                        a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal)
+                    });
+                    scored.truncate(SEARCH_RESULT_LIMIT);
+                    let hits = scored.into_iter().map(|(_, hit)| hit).collect();
+                    let _ = event_handler.send(Event::SearchResults { request_id, hits });
                 });
             }
         }
+    }
+
+    /// The (repo_name, repo_root, db_path) of every checked repo, for capturing
+    /// before a `spawn_blocking` semantic search (Database isn't Send, so the
+    /// task reopens each db by path). In single-repo mode this is one entry.
+    fn semantic_repo_targets(&self) -> Vec<(String, String, std::path::PathBuf)> {
+        self.workspace
+            .dbs()
+            .map(|(root, db)| {
+                let name = crate::browser::tabbed_panel::repo_display_name(root);
+                (name, root.to_string_lossy().into_owned(), db.path().to_path_buf())
+            })
+            .collect()
     }
 
     /// Execute a search over collections (name/description/tags) for the current
@@ -922,85 +947,84 @@ impl BrowserLayout {
             }
             #[cfg(feature = "semantic")]
             SearchMode::Semantic => {
+                // Model/metric/threshold resolved once from the focus repo's
+                // config, applied to every checked repo (v1 shared-model assumption).
                 let Some(codemark_dir) = self.db().path().parent() else {
                     return;
                 };
                 let config = Config::load_layered(codemark_dir);
-                let db_path = self.db().path().to_path_buf();
-
-                // Single-db in this task; tag every hit with the focus repo so
-                // the payload type matches FTS. (Task 5.2 fans this out.)
-                let (focus_name, focus_root) = self.focus_repo_tag();
+                let repos = self.semantic_repo_targets();
 
                 tokio::task::spawn_blocking(move || {
-                    let Ok(db) = Database::open(&db_path) else {
-                        let _ = event_handler.send(Event::SearchError {
-                            request_id,
-                            msg: "Failed to open database for search".to_string(),
-                        });
-                        return;
-                    };
-
                     let model = config
                         .semantic
                         .model
                         .as_deref()
                         .and_then(|m| m.parse::<EmbeddingModel>().ok())
                         .unwrap_or(EmbeddingModel::AllMiniLmL6V2);
-
                     let distance_metric = config.semantic.get_distance_metric();
                     let threshold = config.semantic.effective_threshold();
                     let models_dir = config.semantic.get_models_dir();
-
                     let semantic_repo =
                         SemanticRepo::with_config(models_dir, model, distance_metric, threshold);
 
                     let handle = tokio::runtime::Handle::current();
-                    match tokio::task::block_in_place(|| {
-                        handle.block_on(semantic_repo.search_collections(
-                            db.conn(),
-                            &query,
-                            SEARCH_RESULT_LIMIT,
-                        ))
+                    // Embed once, then search each repo's collection index with
+                    // the same vector.
+                    let embedding = match tokio::task::block_in_place(|| {
+                        handle.block_on(semantic_repo.embed_query(&query))
                     }) {
-                        Ok(results) => {
-                            let mut hits = Vec::new();
-                            for result in results {
-                                if let Ok(Some(collection)) = db.get_collection_by_id(&result.id) {
-                                    let count = db
-                                        .list_bookmarks_in_collection(&collection.id)
-                                        .map(|b| b.len())
-                                        .unwrap_or(0);
-                                    hits.push(crate::event::CollectionHit {
-                                        repo_name: focus_name.clone(),
-                                        repo_root: focus_root.clone(),
-                                        collection,
-                                        count,
-                                    });
-                                }
-                            }
-                            tracing::debug!(
-                                target: "codemark::ui",
-                                request_id,
-                                mode = mode_label,
-                                result_count = hits.len(),
-                                "collection search completed"
-                            );
-                            let _ = event_handler
-                                .send(Event::CollectionSearchResults { request_id, hits });
-                        }
+                        Ok(e) => e,
                         Err(e) => {
-                            tracing::debug!(
-                                target: "codemark::ui",
-                                request_id,
-                                mode = mode_label,
-                                error = %e,
-                                "collection search failed"
-                            );
                             let _ = event_handler
                                 .send(Event::SearchError { request_id, msg: e.to_string() });
+                            return;
+                        }
+                    };
+
+                    let mut scored: Vec<(f64, crate::event::CollectionHit)> = Vec::new();
+                    for (repo_name, repo_root, db_path) in &repos {
+                        let Ok(db) = Database::open(db_path) else { continue };
+                        let Ok(results) = semantic_repo.search_collections_prepared(
+                            db.conn(),
+                            &embedding,
+                            SEARCH_RESULT_LIMIT,
+                            threshold,
+                        ) else {
+                            continue;
+                        };
+                        for r in results {
+                            if let Ok(Some(collection)) = db.get_collection_by_id(&r.id) {
+                                let count = db
+                                    .list_bookmarks_in_collection(&collection.id)
+                                    .map(|b| b.len())
+                                    .unwrap_or(0);
+                                scored.push((
+                                    r.distance,
+                                    crate::event::CollectionHit {
+                                        repo_name: repo_name.clone(),
+                                        repo_root: repo_root.clone(),
+                                        collection,
+                                        count,
+                                    },
+                                ));
+                            }
                         }
                     }
+                    scored.sort_by(|a, b| {
+                        a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal)
+                    });
+                    scored.truncate(SEARCH_RESULT_LIMIT);
+                    let hits: Vec<_> = scored.into_iter().map(|(_, hit)| hit).collect();
+                    tracing::debug!(
+                        target: "codemark::ui",
+                        request_id,
+                        mode = mode_label,
+                        result_count = hits.len(),
+                        "collection search completed"
+                    );
+                    let _ =
+                        event_handler.send(Event::CollectionSearchResults { request_id, hits });
                 });
             }
         }
