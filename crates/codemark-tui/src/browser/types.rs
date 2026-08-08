@@ -77,12 +77,17 @@ impl DialogButton {
 #[derive(Debug, Clone)]
 pub enum DialogAction {
     /// Delete the bookmark with the given id.
-    DeleteBookmark(String),
+    ///
+    /// `repo_root` is the owning repo of the selected row (from its
+    /// `PanelItem::repo_root()`), so the delete is routed to that repo's
+    /// database. `None` resolves to the focused repo.
+    DeleteBookmark { id: String, repo_root: Option<String> },
     /// Delete the collection with the given id.
     ///
     /// Collection names are not uniquely constrained, so deletion is keyed on
-    /// the stable id rather than the display name.
-    DeleteCollection(String),
+    /// the stable id rather than the display name. `repo_root` routes the delete
+    /// to the owning repo's database (`None` → focused repo).
+    DeleteCollection { id: String, repo_root: Option<String> },
 }
 
 /// Target for healing operation.

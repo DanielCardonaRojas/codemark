@@ -79,13 +79,16 @@ impl BrowserLayout {
     /// action succeeded when it did not.
     fn perform_dialog_action(&mut self, action: DialogAction) {
         let result = match &action {
-            DialogAction::DeleteBookmark(id) => {
+            DialogAction::DeleteBookmark { id, repo_root } => {
                 tracing::debug!(target: "codemark::ui", %id, "deleting bookmark");
-                self.db().delete_bookmark(id).map(|_| ())
+                self.workspace.db_for(repo_root.as_deref()).delete_bookmark(id).map(|_| ())
             }
-            DialogAction::DeleteCollection(id) => {
+            DialogAction::DeleteCollection { id, repo_root } => {
                 tracing::debug!(target: "codemark::ui", %id, "deleting collection and its bookmarks");
-                self.db_mut().delete_collection_recursive(id).map(|_| ())
+                self.workspace
+                    .db_for_mut(repo_root.as_deref())
+                    .delete_collection_recursive(id)
+                    .map(|_| ())
             }
         };
 
@@ -136,7 +139,7 @@ mod tests {
         ConfirmDialog::new(
             "Delete Bookmark",
             "Delete bookmark \"foo\"?",
-            DialogAction::DeleteBookmark("missing-id".to_string()),
+            DialogAction::DeleteBookmark { id: "missing-id".to_string(), repo_root: None },
         )
     }
 

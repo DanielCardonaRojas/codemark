@@ -373,20 +373,6 @@ impl BrowserLayout {
         self.workspace.focus_db()
     }
 
-    /// Mutable access to the focused repo's database, for the few DB operations
-    /// that require `&mut self` (e.g. `delete_collection_recursive`).
-    fn db_mut(&mut self) -> &mut codemark_core::storage::db::Database {
-        self.workspace.focus_db_mut()
-    }
-
-    /// The database owning a given row, resolved from its repo tag.
-    // Not wired into any call site yet — Task 3.2 routes preview/heal/delete
-    // through this, so it is `allow(dead_code)` until then to stay clippy-clean.
-    #[allow(dead_code)]
-    fn db_for_item(&self, item: &PanelItem) -> &codemark_core::storage::db::Database {
-        self.workspace.db_for(item.repo_root())
-    }
-
     /// Load a collection overview and override its health label with the cached
     /// worst-case *live* status of the collection's bookmarks, so the preview
     /// border label reflects the current on-disk state instead of the persisted
@@ -980,13 +966,25 @@ impl BrowserLayout {
     /// This spawns an async background task to perform the heal operation.
     /// When complete, a HealComplete event will be sent with the result.
     pub fn start_heal_selection(&mut self) {
-        let db_path = self.db().path().to_path_buf();
         let event_handler = self.event_handler.clone();
 
-        // Determine the heal target and the item to show a spinner on.
+        // Determine the heal target and the item to show a spinner on, plus the
+        // owning repo of the selection so the heal runs against that repo's db.
         // heal_item is (user_data_key, panel_tab_index) for spinner animation.
-        let (target, heal_item): (Option<HealTarget>, Option<(String, usize)>) = match self.focus {
+        let (target, heal_item, selected_repo_root): (
+            Option<HealTarget>,
+            Option<(String, usize)>,
+            Option<String>,
+        ) = match self.focus {
             FocusArea::ContentPanel => {
+                // Capture the selected row's owning repo up front (owned) so the
+                // db-path resolution below doesn't overlap the panel borrow.
+                let selected_repo_root = self
+                    .left_pane
+                    .content_panel
+                    .active_panel()
+                    .and_then(|panel| panel.selected())
+                    .and_then(|s| s.repo_root().map(str::to_string));
                 if let Some(panel) = self.left_pane.content_panel.active_panel() {
                     let tab = tabs::ContentTab::from_index(
                         self.left_pane.content_panel.tabs.selected_index(),
@@ -999,6 +997,7 @@ impl BrowserLayout {
                             (
                                 user_data.clone().map(HealTarget::Bookmark),
                                 user_data.map(|ud| (ud, tabs::ContentTab::Bookmarks.index())),
+                                selected_repo_root,
                             )
                         }
                         Some(tab @ tabs::ContentTab::Collections)
@@ -1012,31 +1011,39 @@ impl BrowserLayout {
                                         (id.clone(), tab.index()),
                                     ))
                                 } else {
-                                    // Fallback to name lookup if user_data is missing
+                                    // Fallback to name lookup if user_data is missing.
+                                    // Resolve against the selected row's repo db.
                                     let name = s.text().to_string();
-                                    self.db().get_collection_by_name(&name).ok().flatten().map(
-                                        |c| {
+                                    self.workspace
+                                        .db_for(selected_repo_root.as_deref())
+                                        .get_collection_by_name(&name)
+                                        .ok()
+                                        .flatten()
+                                        .map(|c| {
                                             (
                                                 HealTarget::Collection(c.id.clone()),
                                                 (c.id, tab.index()),
                                             )
-                                        },
-                                    )
+                                        })
                                 }
                             });
                             match result {
-                                Some((target, item)) => (Some(target), Some(item)),
-                                None => (None, None),
+                                Some((target, item)) => {
+                                    (Some(target), Some(item), selected_repo_root)
+                                }
+                                None => (None, None, None),
                             }
                         }
-                        None => (None, None),
+                        None => (None, None, None),
                     }
                 } else {
-                    (None, None)
+                    (None, None, None)
                 }
             }
             FocusArea::Main => {
-                // Heal the currently displayed bookmark in preview
+                // Heal the currently displayed bookmark in preview. Its owning repo
+                // is the active preview's repo (tracked on the right pane).
+                let repo_root = self.right_pane.active_repo_root.clone();
                 let result =
                     self.right_pane.steps_data.get(self.right_pane.pager_current).map(|step| {
                         let id = step.bookmark.id.clone();
@@ -1046,12 +1053,15 @@ impl BrowserLayout {
                         )
                     });
                 match result {
-                    Some((target, item)) => (Some(target), Some(item)),
-                    None => (None, None),
+                    Some((target, item)) => (Some(target), Some(item), repo_root),
+                    None => (None, None, None),
                 }
             }
-            _ => (None, None),
+            _ => (None, None, None),
         };
+
+        // Resolve the db path from the selected item's repo (None → focused repo).
+        let db_path = self.workspace.db_for(selected_repo_root.as_deref()).path().to_path_buf();
 
         let Some(target) = target else {
             // No valid target - show error directly (don't send an event that
@@ -1724,23 +1734,26 @@ impl BrowserLayout {
 
         // 4. Update Step previews (Right Pane) using live resolution
         let current_step = self.right_pane.pager_current;
+        // Restore the active preview from its own repo (tracked when it was
+        // loaded); `None` falls back to the focused repo.
+        let active_root = self.right_pane.active_repo_root.clone();
         if let Some(tour_name) = self.right_pane.active_tour_name.clone() {
             self.right_pane.load_tour_live(
-                self.workspace.focus_db(),
+                self.workspace.db_for(active_root.as_deref()),
                 &tour_name,
                 &mut self.session_cache,
             );
             // Restore step if possible
             if current_step < self.right_pane.pager_total {
                 self.right_pane.pager_current = current_step;
-                self.right_pane.update_preview(self.workspace.focus_db());
+                self.right_pane.update_preview(self.workspace.db_for(active_root.as_deref()));
             }
             // load_tour_live resolves only the first step live; resolve the rest
             // (including the restored current step) off the UI thread.
             self.spawn_collection_live_resolve();
         } else if let Some(bm_id) = self.right_pane.active_bookmark_id.clone() {
             self.right_pane.load_bookmark_live(
-                self.workspace.focus_db(),
+                self.workspace.db_for(active_root.as_deref()),
                 &bm_id,
                 &mut self.session_cache,
             );
