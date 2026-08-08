@@ -460,7 +460,7 @@ impl BrowserLayout {
                 });
                 Some(true)
             }
-            Event::LiveHealthBatch { generation, batch } => {
+            Event::LiveHealthBatch { generation, repo_root, batch } => {
                 // Drop results from a superseded epoch: a grammar refresh on
                 // FocusGained bumps `health_generation`, so a batch computed with
                 // the old grammar must not overwrite the freshly-refreshed panels.
@@ -471,8 +471,11 @@ impl BrowserLayout {
                     let health = HealthStatus::from(*status);
                     // Cache so subsequent panel rebuilds (e.g. a tag/branch filter)
                     // render the resolved dot instead of flashing back to Unknown
-                    // and re-resolving the bookmark against the file.
-                    self.bookmark_live_health.insert(bookmark_id.clone(), health);
+                    // and re-resolving the bookmark against the file. Keyed by
+                    // (repo_root, id) so two checked repos with the same bookmark
+                    // id keep their own dot (the batch carries its repo's root).
+                    self.bookmark_live_health
+                        .insert(super::health_key(repo_root.as_deref(), bookmark_id), health);
                     if let Some(panel) = self.left_pane.content_panel.get_list_panel_mut(0) {
                         panel.update_item_health(bookmark_id, health);
                     }
@@ -486,7 +489,7 @@ impl BrowserLayout {
                 }
                 Some(true)
             }
-            Event::CollectionHealthBatch { generation, batch } => {
+            Event::CollectionHealthBatch { generation, repo_root, batch } => {
                 if *generation != self.health_generation {
                     return Some(false);
                 }
@@ -500,8 +503,11 @@ impl BrowserLayout {
                         None => HealthStatus::Unknown,
                     };
                     // Cache so subsequent panel rebuilds render the live status
-                    // instead of flashing back to the persisted snapshot.
-                    self.collection_live_health.insert(collection_id.clone(), health);
+                    // instead of flashing back to the persisted snapshot. Keyed by
+                    // (repo_root, id) so two checked repos with the same collection
+                    // id keep their own dot (the batch carries its repo's root).
+                    self.collection_live_health
+                        .insert(super::health_key(repo_root.as_deref(), collection_id), health);
                     // A collection appears in both the Collections and Tours tabs,
                     // so update both dots (no-op where the panel/item is absent).
                     for idx in [ContentTab::Collections.index(), ContentTab::Tours.index()] {
@@ -576,6 +582,7 @@ impl BrowserLayout {
     pub(super) fn build_bookmark_search_items(
         bookmarks: &[codemark_core::engine::bookmark::Bookmark],
         live: &std::collections::HashMap<String, HealthStatus>,
+        repo_root: Option<&str>,
     ) -> Vec<PanelItem> {
         bookmarks
             .iter()
@@ -600,7 +607,10 @@ impl BrowserLayout {
                 // Seed from the live-health cache so a reconcile/refocus rebuild
                 // keeps the resolved dot instead of flashing grey; the caller's
                 // background task refreshes it if the code has since drifted.
-                let health = live.get(&bm.id).copied().unwrap_or(HealthStatus::Unknown);
+                let health = live
+                    .get(&super::health_key(repo_root, &bm.id))
+                    .copied()
+                    .unwrap_or(HealthStatus::Unknown);
                 let mut item = PanelItem::new(short_path)
                     .metadata(bm.created_by.clone().unwrap_or_default())
                     .health(health)
@@ -633,7 +643,13 @@ impl BrowserLayout {
         // The search finished, so stop the loading spinner.
         self.left_pane.search.set_loading(false);
 
-        let items = Self::build_bookmark_search_items(bookmarks, &self.bookmark_live_health);
+        // Search runs against the focus db, so key by the focus repo root.
+        let focus_root = super::db_repo_root(self.db());
+        let items = Self::build_bookmark_search_items(
+            bookmarks,
+            &self.bookmark_live_health,
+            focus_root.as_deref(),
+        );
 
         // A reconcile re-run refreshes an already-visible narrowed list in place,
         // keeping the user's focus and selection instead of jumping onto the
@@ -667,11 +683,15 @@ impl BrowserLayout {
     pub(super) fn build_collection_search_items(
         collections: &[(codemark_core::engine::bookmark::Collection, usize)],
         live: &std::collections::HashMap<String, HealthStatus>,
+        repo_root: Option<&str>,
     ) -> Vec<PanelItem> {
         collections
             .iter()
             .map(|(c, count)| {
-                let health = super::collection_health_status(c.health, live.get(&c.id).copied());
+                let health = super::collection_health_status(
+                    c.health,
+                    live.get(&super::health_key(repo_root, &c.id)).copied(),
+                );
                 let branch = c.created_branch.clone().unwrap_or_else(|| "main".to_string());
 
                 PanelItem::new(&c.name)
@@ -698,7 +718,13 @@ impl BrowserLayout {
         // The search finished, so stop the loading spinner.
         self.left_pane.search.set_loading(false);
 
-        let items = Self::build_collection_search_items(collections, &self.collection_live_health);
+        // Search runs against the focus db, so key by the focus repo root.
+        let focus_root = super::db_repo_root(self.db());
+        let items = Self::build_collection_search_items(
+            collections,
+            &self.collection_live_health,
+            focus_root.as_deref(),
+        );
 
         // A reconcile re-run refreshes the Collections panel in place, keeping
         // focus and selection. It applies even when Collections isn't the active
@@ -734,17 +760,55 @@ impl BrowserLayout {
         self.update_content_live_preview();
     }
 
-    /// Spawn a background task that resolves all bookmarks and sends
-    /// `LiveHealthBatch` events to update the list health dots progressively.
+    /// Spawn a background task that resolves the focused repo's bookmarks and
+    /// sends `LiveHealthBatch` events, tagged with the focused repo's root, to
+    /// update the list health dots progressively. Convenience wrapper for the
+    /// callers that operate on a focus-db bookmark subset (search/filter paths);
+    /// the merged panel rebuild uses [`Self::spawn_live_health_all_repos`].
     pub(super) fn spawn_live_health_task(
         &self,
+        bookmarks: Vec<codemark_core::engine::bookmark::Bookmark>,
+    ) {
+        self.spawn_live_health_task_for(
+            super::db_repo_root(self.db()),
+            self.db().path().to_path_buf(),
+            bookmarks,
+        );
+    }
+
+    /// Spawn a live-health pass for *every* checked repo, tagging each batch with
+    /// that repo's root so the `(repo_root, id)` cache keys never collide across
+    /// repos. In single-repo mode this is exactly one pass over the focus repo,
+    /// identical to the pre-multi-repo behavior.
+    pub(super) fn spawn_live_health_all_repos(&self) {
+        for (root, db) in self.workspace.dbs() {
+            let bookmarks = match db
+                .list_bookmarks(&codemark_core::engine::bookmark::BookmarkFilter::default())
+            {
+                Ok(b) => b,
+                Err(_) => continue,
+            };
+            self.spawn_live_health_task_for(
+                Some(root.to_string_lossy().to_string()),
+                db.path().to_path_buf(),
+                bookmarks,
+            );
+        }
+    }
+
+    /// Spawn a background task that resolves `bookmarks` against the db at
+    /// `db_path` and sends `LiveHealthBatch` events tagged with `repo_root` to
+    /// update the list health dots progressively.
+    fn spawn_live_health_task_for(
+        &self,
+        repo_root: Option<String>,
+        db_path: std::path::PathBuf,
         bookmarks: Vec<codemark_core::engine::bookmark::Bookmark>,
     ) {
         if bookmarks.is_empty() {
             return;
         }
 
-        let db_path = self.db().path().to_path_buf();
         let event_handler = self.event_handler.clone();
         // Stamp the current health epoch; results are discarded on apply if the
         // epoch has since advanced (e.g. a grammar refresh on FocusGained).
@@ -801,6 +865,7 @@ impl BrowserLayout {
                 if batch.len() >= 10 {
                     let _ = event_handler.send(Event::LiveHealthBatch {
                         generation,
+                        repo_root: repo_root.clone(),
                         batch: std::mem::take(&mut batch),
                     });
                 }
@@ -808,7 +873,7 @@ impl BrowserLayout {
 
             // Send remaining items
             if !batch.is_empty() {
-                let _ = event_handler.send(Event::LiveHealthBatch { generation, batch });
+                let _ = event_handler.send(Event::LiveHealthBatch { generation, repo_root, batch });
             }
         });
     }
@@ -825,19 +890,39 @@ impl BrowserLayout {
     /// [`spawn_live_health_task`](Self::spawn_live_health_task): reopens the DB by
     /// path, reuses parse caches across collections, and posts in small batches.
     pub(super) fn spawn_collection_health_task(&self) {
+        // Fan out per checked repo so each batch is tagged with its own repo
+        // root; the `(repo_root, id)` cache keys then never collide across repos.
+        // In single-repo mode this is one pass over the focus repo, identical to
+        // the pre-multi-repo behavior.
+        for (root, db) in self.workspace.dbs() {
+            self.spawn_collection_health_task_for(
+                Some(root.to_string_lossy().to_string()),
+                db.path().to_path_buf(),
+            );
+        }
+    }
+
+    /// Per-repo body of [`Self::spawn_collection_health_task`]: resolve the
+    /// collections in the db at `db_path` and send `CollectionHealthBatch` events
+    /// tagged with `repo_root`.
+    fn spawn_collection_health_task_for(
+        &self,
+        repo_root: Option<String>,
+        db_path: std::path::PathBuf,
+    ) {
         use codemark_core::storage::db::Database;
 
         // Probe on the UI thread so we skip the `spawn_blocking` (which needs a
         // Tokio runtime) entirely when there are no collections — mirroring
         // [`spawn_live_health_task`](Self::spawn_live_health_task)'s empty-set
         // guard, which keeps the unit tests (no runtime) from panicking in
-        // `BrowserLayout::new`.
-        let collections = match self.db().list_collections() {
+        // `BrowserLayout::new`. Probe the repo's own db (not the focus db) so a
+        // repo with collections still spawns even when the focus repo has none.
+        let collections = match Database::open(&db_path).and_then(|db| db.list_collections()) {
             Ok(c) if !c.is_empty() => c,
             _ => return,
         };
 
-        let db_path = self.db().path().to_path_buf();
         let event_handler = self.event_handler.clone();
         let generation = self.health_generation;
 
@@ -930,13 +1015,18 @@ impl BrowserLayout {
                 if batch.len() >= 5 {
                     let _ = event_handler.send(Event::CollectionHealthBatch {
                         generation,
+                        repo_root: repo_root.clone(),
                         batch: std::mem::take(&mut batch),
                     });
                 }
             }
 
             if !batch.is_empty() {
-                let _ = event_handler.send(Event::CollectionHealthBatch { generation, batch });
+                let _ = event_handler.send(Event::CollectionHealthBatch {
+                    generation,
+                    repo_root,
+                    batch,
+                });
             }
 
             tracing::debug!(
