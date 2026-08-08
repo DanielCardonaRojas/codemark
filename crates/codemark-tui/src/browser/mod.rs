@@ -468,9 +468,14 @@ impl BrowserLayout {
     /// the third tab (index 2); hiding it leaves Bookmarks + Collections. If the
     /// Tours tab was selected when hidden, the selection clamps back to
     /// Collections, so the right-pane preview is refreshed to match.
+    ///
+    /// Tours are also hidden whenever more than one repo is checked: they are backed
+    /// by per-repo local collections and a remote server scoped to a single repo set,
+    /// and merging tours across repos is out of scope. With exactly one repo checked
+    /// Tours behave exactly as before.
     pub(super) fn update_tours_tab_visibility(&mut self) {
         self.logged_in = self.is_logged_in();
-        let visible_count = if self.logged_in { 3 } else { 2 };
+        let visible_count = if self.logged_in && !self.workspace.is_multi() { 3 } else { 2 };
         let previous = self.left_pane.content_panel.tabs.selected_index();
         self.left_pane.content_panel.tabs.set_visible_count(visible_count);
         let current = self.left_pane.content_panel.tabs.selected_index();
@@ -2674,6 +2679,27 @@ mod tests {
         BrowserLayout::new(db, handler)
     }
 
+    /// Create a temp repo directory with an initialized `<root>/.codemark/codemark.db`,
+    /// mirroring the on-disk layout `RepoWorkspace` opens against (see
+    /// `RepoWorkspace::db_path`). The tempdir is leaked so it outlives the returned
+    /// root; the OS reclaims it at process exit.
+    fn temp_repo_root() -> std::path::PathBuf {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = dir.path().to_path_buf();
+        Database::create(&root.join(".codemark").join("codemark.db")).expect("init db");
+        std::mem::forget(dir);
+        root
+    }
+
+    /// A layout whose focus db is a real on-disk repo (so `RepoWorkspace::set_scope`
+    /// can add sibling repos), plus the repo roots for driving scope changes.
+    fn repo_layout() -> (BrowserLayout, std::path::PathBuf) {
+        let root = temp_repo_root();
+        let db = Database::open(&root.join(".codemark").join("codemark.db")).expect("open db");
+        let handler = EventHandler::new(EventHandlerConfig::default()).expect("event handler");
+        (BrowserLayout::new(db, handler), root)
+    }
+
     #[test]
     fn extract_remote_tour_id_normalizes_url() {
         let id = "5efea669-1234";
@@ -2800,5 +2826,63 @@ mod tests {
         layout.set_left_pane_size(LeftPaneSize::Full);
         layout.set_focus(FocusArea::FiltersPanel);
         assert_eq!(layout.left_pane_size(), LeftPaneSize::Full);
+    }
+
+    /// Number of currently-selectable Content tabs, probed through the public tab
+    /// API: a trailing (hidden) tab can never be selected, so `set_selected(idx)`
+    /// followed by reading `selected_index()` reveals whether `idx` is visible.
+    fn tours_tab_visible(layout: &mut BrowserLayout) -> bool {
+        let tabs = &mut layout.left_pane.content_panel.tabs;
+        let restore = tabs.selected_index();
+        tabs.set_selected(ContentTab::Tours.index());
+        let visible = tabs.selected_index() == ContentTab::Tours.index();
+        tabs.set_selected(restore);
+        visible
+    }
+
+    #[test]
+    fn tours_tab_single_repo_follows_login_state_parity() {
+        // Parity: with exactly one repo checked, Tours visibility is governed
+        // solely by login state (as before this change) — the new multi-repo gate
+        // must not touch the single-repo path. We assert the visibility tracks
+        // `logged_in` rather than hard-coding a token-dependent expectation, so the
+        // test is stable regardless of the ambient sync config.
+        let (mut layout, _root) = repo_layout();
+        assert!(!layout.workspace.is_multi());
+        layout.update_tours_tab_visibility();
+        assert_eq!(
+            tours_tab_visible(&mut layout),
+            layout.logged_in,
+            "single-repo Tours visibility must equal login state",
+        );
+    }
+
+    #[test]
+    fn tours_tab_hidden_in_multi_repo_even_if_selected() {
+        let (mut layout, root_a) = repo_layout();
+        let root_b = temp_repo_root();
+
+        // Pretend Tours is the selected tab (as it would be for a logged-in user
+        // browsing tours) so we exercise the graceful-fallback path when it hides.
+        {
+            let tabs = &mut layout.left_pane.content_panel.tabs;
+            tabs.set_visible_count(3);
+            tabs.set_selected(ContentTab::Tours.index());
+            assert_eq!(tabs.selected_index(), ContentTab::Tours.index());
+        }
+
+        // Check a second repo: the workspace is now multi.
+        layout.workspace.set_scope(&[root_a, root_b]).expect("set scope");
+        assert!(layout.workspace.is_multi());
+
+        layout.update_tours_tab_visibility();
+
+        // Tours is hidden regardless of login state, and the selection has fallen
+        // back off the now-hidden tab (reusing `set_visible_count`'s clamp).
+        assert!(!tours_tab_visible(&mut layout), "multi-repo hides Tours");
+        assert!(
+            layout.left_pane.content_panel.tabs.selected_index() < ContentTab::Tours.index(),
+            "selection fell back off the hidden Tours tab",
+        );
     }
 }
