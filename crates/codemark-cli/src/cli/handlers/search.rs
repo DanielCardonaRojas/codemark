@@ -128,25 +128,22 @@ pub async fn handle_search(cli: &Cli, mode: &OutputMode, args: &SearchArgs) -> R
             || args.line_format.as_deref().is_some_and(output::template_needs_line);
 
         if needs_line {
-            // Pre-resolve line numbers, keyed by (source_label, short_id) to unambiguously
-            // handle bookmarks that share an 8-character ID prefix across repositories.
-            let mut line_cache: std::collections::HashMap<(String, String), usize> =
+            // Pre-resolve line numbers, keyed by full bookmark ID to avoid collisions
+            // on short_id prefixes.
+            let mut line_cache: std::collections::HashMap<String, usize> =
                 std::collections::HashMap::new();
             for (label, bm) in &all {
-                let sid = short_id(&bm.id).to_string();
-                let key = (label.clone(), sid);
-                if !line_cache.contains_key(&key) {
+                if !line_cache.contains_key(&bm.id) {
                     if let Some(db) = db_map.get(label) {
                         if let Some(line) = get_bookmark_line(db, &bm.id, &bm.file_path) {
-                            line_cache.insert(key, line);
+                            line_cache.insert(bm.id.clone(), line);
                         }
                     }
                 }
             }
-            let get_line_fn = |label: &str, short_id: &str| -> Option<usize> {
-                line_cache.get(&(label.to_string(), short_id.to_string())).copied()
+            let get_line_fn = |_label: &str, full_id: &str| -> Option<usize> {
+                line_cache.get(full_id).copied()
             };
-
             output::write_annotated_bookmarks(
                 mode,
                 &annotated,
@@ -321,25 +318,22 @@ async fn handle_semantic_search(
             || args.line_format.as_deref().is_some_and(output::template_needs_line);
 
         if needs_line {
-            // Pre-resolve line numbers, keyed by (source_label, short_id) to unambiguously
-            // handle bookmarks that share an 8-character ID prefix across repositories.
-            let mut line_cache: std::collections::HashMap<(String, String), usize> =
+            // Pre-resolve line numbers, keyed by full bookmark ID to avoid collisions
+            // on short_id prefixes.
+            let mut line_cache: std::collections::HashMap<String, usize> =
                 std::collections::HashMap::new();
             for (_, label, bm) in &bookmarks {
-                let sid = short_id(&bm.id).to_string();
-                let key = (label.clone(), sid);
-                if !line_cache.contains_key(&key) {
+                if !line_cache.contains_key(&bm.id) {
                     if let Some(db) = db_map.get(label.as_str()) {
                         if let Some(line) = get_bookmark_line(db, &bm.id, &bm.file_path) {
-                            line_cache.insert(key, line);
+                            line_cache.insert(bm.id.clone(), line);
                         }
                     }
                 }
             }
-            let get_line_fn = |label: &str, short_id: &str| -> Option<usize> {
-                line_cache.get(&(label.to_string(), short_id.to_string())).copied()
+            let get_line_fn = |_label: &str, full_id: &str| -> Option<usize> {
+                line_cache.get(full_id).copied()
             };
-
             output::write_annotated_bookmarks(
                 mode,
                 &annotated,
