@@ -1672,8 +1672,8 @@ pub async fn handle_list(cli: &Cli, mode: &OutputMode, args: &ListArgs) -> Resul
                 })
                 .collect();
 
-            let get_line_fn = |short_id: &str| -> Option<usize> {
-                let (label, full_id, file_path) = bookmark_data.get(short_id)?;
+            let get_line_fn = |label: &str, short_id: &str| -> Option<usize> {
+                let (_, full_id, file_path) = bookmark_data.get(short_id)?;
                 let db = db_map.get(label)?;
                 get_bookmark_line(db, full_id, file_path)
             };
@@ -1690,7 +1690,7 @@ pub async fn handle_list(cli: &Cli, mode: &OutputMode, args: &ListArgs) -> Resul
                 mode,
                 &annotated,
                 args.line_format.as_deref(),
-                None as Option<&fn(&str) -> Option<usize>>,
+                None as Option<&fn(&str, &str) -> Option<usize>>,
                 Some(&all_ui_statuses),
             )?;
         }

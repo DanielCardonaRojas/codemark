@@ -233,20 +233,24 @@ impl Workspace {
         dbs: &'a [(String, Database)],
         id: &str,
     ) -> Result<(Bookmark, &'a Database)> {
-        // Preserve the CLI's original extract_id behavior (strip tab-delimited
-        // line-format suffix), and also tolerate a leading '#'.
+        tracing::debug!(target: "codemark::storage", id, "cross-database bookmark lookup started");
+        // The TUI tab completion can append the file path and line number after a
+        // tab character. The CLI must strip it to recover the bare id.
         let id = id.split('\t').next().unwrap_or(id);
         let id = id.strip_prefix('#').unwrap_or(id);
-        for (_label, db) in dbs {
+        for (label, db) in dbs {
             if let Some(bm) = db.get_bookmark(id)? {
+                tracing::debug!(target: "codemark::storage", id, "found full id match in '{}'", label);
                 return Ok((bm, db));
             }
             if id.len() >= 4
                 && let Ok(Some(bm)) = db.get_bookmark_by_prefix(id)
             {
+                tracing::debug!(target: "codemark::storage", id, full_id = bm.id, "found prefix match in '{}'", label);
                 return Ok((bm, db));
             }
         }
+        tracing::debug!(target: "codemark::storage", id, "bookmark not found across any database");
         Err(Error::Input(format!("bookmark not found: {id}")))
     }
 }

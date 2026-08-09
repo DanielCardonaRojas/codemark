@@ -431,7 +431,7 @@ fn write_annotated_line_format<F>(
     ui_statuses: Option<&HashMap<String, String>>,
 ) -> io::Result<()>
 where
-    F: Fn(&str) -> Option<usize>,
+    F: Fn(&str, &str) -> Option<usize>,
 {
     let mut stdout = io::stdout().lock();
     for ab in bookmarks {
@@ -442,7 +442,7 @@ where
         let note = get_first_note(bm);
         let context = get_first_context(bm);
         let line =
-            if let Some(ref fn_line) = get_line_fn { fn_line(short).unwrap_or(0) } else { 0 };
+            if let Some(fn_line) = &get_line_fn { fn_line(ab.source, short).unwrap_or(0) } else { 0 };
         let health = bm.health.to_string();
         let ui_status =
             ui_statuses.and_then(|m| m.get(&bm.id)).map(|s| s.as_str()).unwrap_or(&health);
@@ -478,7 +478,7 @@ pub fn write_annotated_bookmarks<F>(
     ui_statuses: Option<&HashMap<String, String>>,
 ) -> io::Result<()>
 where
-    F: Fn(&str) -> Option<usize>,
+    F: Fn(&str, &str) -> Option<usize>,
 {
     match mode {
         OutputMode::Json => {

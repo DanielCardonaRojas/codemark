@@ -128,22 +128,23 @@ pub async fn handle_search(cli: &Cli, mode: &OutputMode, args: &SearchArgs) -> R
             || args.line_format.as_deref().is_some_and(output::template_needs_line);
 
         if needs_line {
-            // Pre-resolve line numbers with first-wins on short_id collisions
-            // (same rationale as the semantic path — see below).
-            let mut line_cache: std::collections::HashMap<String, usize> =
+            // Pre-resolve line numbers, keyed by (source_label, short_id) to unambiguously
+            // handle bookmarks that share an 8-character ID prefix across repositories.
+            let mut line_cache: std::collections::HashMap<(String, String), usize> =
                 std::collections::HashMap::new();
             for (label, bm) in &all {
                 let sid = short_id(&bm.id).to_string();
-                if !line_cache.contains_key(&sid) {
+                let key = (label.clone(), sid);
+                if !line_cache.contains_key(&key) {
                     if let Some(db) = db_map.get(label) {
                         if let Some(line) = get_bookmark_line(db, &bm.id, &bm.file_path) {
-                            line_cache.insert(sid, line);
+                            line_cache.insert(key, line);
                         }
                     }
                 }
             }
-            let get_line_fn = |short_id: &str| -> Option<usize> {
-                line_cache.get(short_id).copied()
+            let get_line_fn = |label: &str, short_id: &str| -> Option<usize> {
+                line_cache.get(&(label.to_string(), short_id.to_string())).copied()
             };
 
             output::write_annotated_bookmarks(
@@ -158,7 +159,7 @@ pub async fn handle_search(cli: &Cli, mode: &OutputMode, args: &SearchArgs) -> R
                 mode,
                 &annotated,
                 args.line_format.as_deref(),
-                None as Option<&fn(&str) -> Option<usize>>,
+                None as Option<&fn(&str, &str) -> Option<usize>>,
                 None,
             )?;
         }
@@ -320,25 +321,23 @@ async fn handle_semantic_search(
             || args.line_format.as_deref().is_some_and(output::template_needs_line);
 
         if needs_line {
-            // Pre-resolve line numbers, keyed by short_id. First-wins: if two
-            // bookmarks from different repos share a short_id, only the first
-            // (by distance order) gets a line — overwriting (as a HashMap
-            // .collect() would do) would resolve the line against the wrong
-            // repo's file and show an incorrect line number.
-            let mut line_cache: std::collections::HashMap<String, usize> =
+            // Pre-resolve line numbers, keyed by (source_label, short_id) to unambiguously
+            // handle bookmarks that share an 8-character ID prefix across repositories.
+            let mut line_cache: std::collections::HashMap<(String, String), usize> =
                 std::collections::HashMap::new();
             for (_, label, bm) in &bookmarks {
                 let sid = short_id(&bm.id).to_string();
-                if !line_cache.contains_key(&sid) {
+                let key = (label.clone(), sid);
+                if !line_cache.contains_key(&key) {
                     if let Some(db) = db_map.get(label.as_str()) {
                         if let Some(line) = get_bookmark_line(db, &bm.id, &bm.file_path) {
-                            line_cache.insert(sid, line);
+                            line_cache.insert(key, line);
                         }
                     }
                 }
             }
-            let get_line_fn = |short_id: &str| -> Option<usize> {
-                line_cache.get(short_id).copied()
+            let get_line_fn = |label: &str, short_id: &str| -> Option<usize> {
+                line_cache.get(&(label.to_string(), short_id.to_string())).copied()
             };
 
             output::write_annotated_bookmarks(
@@ -353,7 +352,7 @@ async fn handle_semantic_search(
                 mode,
                 &annotated,
                 args.line_format.as_deref(),
-                None as Option<&fn(&str) -> Option<usize>>,
+                None as Option<&fn(&str, &str) -> Option<usize>>,
                 None,
             )?;
         }
@@ -377,18 +376,71 @@ async fn handle_collection_search(
     {
         collection_semantic_search(cli, args, config).await?
     } else {
-        let db = open_db(cli)?;
-        let mut collections = db.search_collections(args.query.as_deref(), args.tag.as_deref())?;
-        collections.truncate(args.limit);
-        collections.into_iter().map(|(c, count)| (None, c, count)).collect()
+        let dbs = open_all_dbs_with_extra_and_repos(cli, &args.add_db, &args.repo)?;
+        let dbs = filter_dbs_by_user_email(dbs, args.user_email.as_deref());
+        let dbs = filter_dbs_by_repo_owner(dbs, args.repo_owner.as_deref());
+        let single_db = dbs.len() == 1;
+
+        let mut out: Vec<(Option<String>, codemark_core::engine::bookmark::Collection, usize)> = Vec::new();
+        let mut any_ok = false;
+        let mut last_err: Option<Error> = None;
+
+        for (label, db) in &dbs {
+            match db.search_collections(args.query.as_deref(), args.tag.as_deref()) {
+                Ok(mut collections) => {
+                    any_ok = true;
+                    collections.truncate(args.limit);
+                    for (c, count) in collections {
+                        let source = if single_db { None } else { Some(label.clone()) };
+                        out.push((source, c, count));
+                    }
+                }
+                Err(e) => {
+                    eprintln!("warning: skipping '{label}' (collection search failed: {e})");
+                    last_err = Some(e);
+                }
+            }
+        }
+        if !any_ok && let Some(e) = last_err {
+            return Err(e);
+        }
+        out.truncate(args.limit);
+        out
     };
+
     #[cfg(not(feature = "semantic"))]
     let results: Vec<(Option<String>, codemark_core::engine::bookmark::Collection, usize)> = {
         let _ = config; // only the semantic branch reads config
-        let db = open_db(cli)?;
-        let mut collections = db.search_collections(args.query.as_deref(), args.tag.as_deref())?;
-        collections.truncate(args.limit);
-        collections.into_iter().map(|(c, count)| (None, c, count)).collect()
+        let dbs = open_all_dbs_with_extra_and_repos(cli, &args.add_db, &args.repo)?;
+        let dbs = filter_dbs_by_user_email(dbs, args.user_email.as_deref());
+        let dbs = filter_dbs_by_repo_owner(dbs, args.repo_owner.as_deref());
+        let single_db = dbs.len() == 1;
+
+        let mut out: Vec<(Option<String>, codemark_core::engine::bookmark::Collection, usize)> = Vec::new();
+        let mut any_ok = false;
+        let mut last_err: Option<Error> = None;
+
+        for (label, db) in &dbs {
+            match db.search_collections(args.query.as_deref(), args.tag.as_deref()) {
+                Ok(mut collections) => {
+                    any_ok = true;
+                    collections.truncate(args.limit);
+                    for (c, count) in collections {
+                        let source = if single_db { None } else { Some(label.clone()) };
+                        out.push((source, c, count));
+                    }
+                }
+                Err(e) => {
+                    eprintln!("warning: skipping '{label}' (collection search failed: {e})");
+                    last_err = Some(e);
+                }
+            }
+        }
+        if !any_ok && let Some(e) = last_err {
+            return Err(e);
+        }
+        out.truncate(args.limit);
+        out
     };
 
     write_collection_results(mode, &results)?;
