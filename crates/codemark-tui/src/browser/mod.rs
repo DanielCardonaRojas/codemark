@@ -329,10 +329,11 @@ impl BrowserLayout {
         let left_pane = LeftPane::new(&db, &registry);
         let right_pane = RightPane::new(&db);
 
-        // Derive the repo root from the db path the same way `switch_database`
-        // and `build_repo_items` do: `<root>/.codemark/codemark.db`. In-memory
-        // (`:memory:`) paths have no parent, so fall back to the db path itself
-        // as the lookup key — `focus_db()` returns the single db regardless.
+        // Derive the repo root from the db path the same way `build_repo_items`
+        // does: `<root>/.codemark/codemark.db`.
+        // In-memory (`:memory:`) paths have no parent, so fall back to the db
+        // path itself as the lookup key — `focus_db()` returns the single db
+        // regardless.
         let root = db
             .path()
             .parent()
@@ -881,6 +882,7 @@ impl BrowserLayout {
         }
     }
 
+    #[cfg(feature = "semantic")]
     /// The (repo_name, repo_root, db_path) of every checked repo, for capturing
     /// before a `spawn_blocking` semantic search (Database isn't Send, so the
     /// task reopens each db by path). In single-repo mode this is one entry.
@@ -1027,26 +1029,14 @@ impl BrowserLayout {
         }
     }
 
-    /// Switch the active database to a specific repository root.
-    pub fn switch_database(&mut self, repo_root: &str) -> codemark_core::error::Result<()> {
-        let db_path = std::path::Path::new(repo_root).join(".codemark").join("codemark.db");
-        if db_path.exists() {
-            let root = std::path::PathBuf::from(repo_root);
-            self.workspace.set_scope(std::slice::from_ref(&root))?;
-            self.workspace.set_focus(root);
-            self.after_scope_change();
-        }
-        Ok(())
-    }
-
     /// Reset the caches and derived state that become stale after the workspace
     /// scope (or focus) changes, then rebuild every panel.
     ///
-    /// Shared by [`switch_database`](Self::switch_database) and the multi-select
-    /// Repos toggle so both take the same clears: the live-health caches, the
-    /// health epoch bump (so an in-flight task for a dropped repo can't
-    /// repopulate a freshly-cleared cache or panel dot with a stale status), the
-    /// remote-tour caches, and the head commit.
+    /// Called by the multi-select Repos toggle so it takes the same clears as
+    /// any scope change: the live-health caches, the health epoch bump (so an
+    /// in-flight task for a dropped repo can't repopulate a freshly-cleared
+    /// cache or panel dot with a stale status), the remote-tour caches, and the
+    /// head commit.
     pub(super) fn after_scope_change(&mut self) {
         self.right_pane.refresh_head_commit(self.workspace.focus_db());
         self.collection_live_health.clear();
@@ -1404,7 +1394,7 @@ impl BrowserLayout {
             self.pending_remote_repos = None;
             self.cached_remote_tours.clear();
             // A remote overview can no longer be backed by the now-empty cache, so
-            // clear it (mirrors switch_database) instead of leaving stale markdown.
+            // clear it (mirrors after_scope_change) instead of leaving stale markdown.
             if self.right_pane.active_remote_tour_id.is_some() {
                 self.right_pane.clear_preview_state(self.workspace.focus_db());
             }
@@ -3035,14 +3025,13 @@ mod tests {
     // These live in-crate (not in `tests/browser_e2e.rs`) on purpose: the
     // external e2e crate only sees the public API, and scoping *two* repos plus
     // reading a row's repo tag / Tours visibility / the owning db has no public
-    // surface (`switch_database` is single-repo; `workspace`/`left_pane` are
-    // private). Rather than add permanent public accessors purely for a test,
-    // the test runs in-crate where it can drive real key events, render into a
-    // `TestBackend`, and assert on the *real* merged panel items, the workspace
-    // scope, and each repo's db — exercising the actual multi-repo path
-    // (`set_scope` -> `after_scope_change` -> `refresh_all_panels`) with no new
-    // production surface. The seed/scope helpers mirror what the multi-select
-    // Repos panel does at runtime.
+    // surface (`workspace`/`left_pane` are private). Rather than add permanent
+    // public accessors purely for a test, the test runs in-crate where it can
+    // drive real key events, render into a `TestBackend`, and assert on the
+    // *real* merged panel items, the workspace scope, and each repo's db — exercising
+    // the actual multi-repo path (`set_scope` -> `after_scope_change` ->
+    // `refresh_all_panels`) with no new production surface. The seed/scope helpers
+    // mirror what the multi-select Repos panel does at runtime.
     // ---------------------------------------------------------------------
 
     use codemark_core::engine::bookmark::{Bookmark, BookmarkHealth, Collection, Visibility};
