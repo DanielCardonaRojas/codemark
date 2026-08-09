@@ -4,7 +4,7 @@
 //! [`RepoWorkspace`] holds the open DB connections for the checked set, keyed by
 //! repo root (insertion-ordered), plus a `focus` repo that single-repo
 //! operations act on. A repo root is a directory; its DB lives at
-//! `<root>/.codemark/codemark.db` (matching `BrowserLayout::switch_database`).
+//! `<root>/.codemark/codemark.db` (matching the TUI's repo-root convention).
 
 use codemark_core::error::Result;
 use codemark_core::storage::db::Database;
