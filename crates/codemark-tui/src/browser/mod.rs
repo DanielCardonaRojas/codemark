@@ -780,6 +780,7 @@ impl BrowserLayout {
                                 .send(Event::SearchError { request_id, msg: e.to_string() });
                         }
                     }
+
                 });
             }
         }
@@ -907,6 +908,7 @@ impl BrowserLayout {
                                 .send(Event::SearchError { request_id, msg: e.to_string() });
                         }
                     }
+
                 });
             }
         }
@@ -2883,6 +2885,243 @@ mod tests {
         assert!(
             layout.left_pane.content_panel.tabs.selected_index() < ContentTab::Tours.index(),
             "selection fell back off the hidden Tours tab",
+        );
+    }
+
+    // ---------------------------------------------------------------------
+    // End-to-end multi-repo browse / select / delete (Task 6.2)
+    //
+    // These live in-crate (not in `tests/browser_e2e.rs`) on purpose: the
+    // external e2e crate only sees the public API, and scoping *two* repos plus
+    // reading a row's repo tag / Tours visibility / the owning db has no public
+    // surface (`switch_database` is single-repo; `workspace`/`left_pane` are
+    // private). Rather than add permanent public accessors purely for a test,
+    // the test runs in-crate where it can drive real key events, render into a
+    // `TestBackend`, and assert on the *real* merged panel items, the workspace
+    // scope, and each repo's db — exercising the actual multi-repo path
+    // (`set_scope` -> `after_scope_change` -> `refresh_all_panels`) with no new
+    // production surface. The seed/scope helpers mirror what the multi-select
+    // Repos panel does at runtime.
+    // ---------------------------------------------------------------------
+
+    use codemark_core::engine::bookmark::{Bookmark, BookmarkHealth, Collection, Visibility};
+
+    /// A minimal valid bookmark for seeding (mirrors the e2e harness's builder).
+    fn e2e_bookmark(id: &str, query: &str, file_path: &str) -> Bookmark {
+        Bookmark {
+            id: id.to_string(),
+            query: query.to_string(),
+            language: "rust".to_string(),
+            file_path: file_path.to_string(),
+            content_hash: None,
+            commit_hash: None,
+            health: BookmarkHealth::Active,
+            resolution_method: None,
+            last_resolved_at: None,
+            stale_since: None,
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+            created_by: None,
+            current_resolution_id: None,
+            repo_id: None,
+            tags: Vec::new(),
+            annotations: Vec::new(),
+            comments: Vec::new(),
+        }
+    }
+
+    /// A minimal private collection for seeding.
+    fn e2e_collection(id: &str, name: &str) -> Collection {
+        Collection {
+            id: id.to_string(),
+            name: name.to_string(),
+            description: None,
+            visibility: Visibility::Private,
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+            created_by: None,
+            created_branch: None,
+            published_at: None,
+            published_commit_sha: None,
+            repo_url: None,
+            repo_id: None,
+            status: None,
+            health: None,
+            health_computed_at: None,
+            updated_at: None,
+            imported_from_url: None,
+        }
+    }
+
+    /// Build a temp repo on disk with an initialized db, seed one bookmark (+ a
+    /// collection containing it), and write the bookmark's source file so live
+    /// resolution succeeds and the preview renders real code. Returns the repo
+    /// root (its tempdir is leaked so it outlives the test).
+    fn seeded_repo(
+        bookmark_id: &str,
+        query: &str,
+        rel_path: &str,
+        source: &str,
+        collection_id: &str,
+        collection_name: &str,
+    ) -> std::path::PathBuf {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let root = dir.path().to_path_buf();
+        let db = Database::create(&root.join(".codemark").join("codemark.db")).expect("init db");
+        db.insert_bookmark(&e2e_bookmark(bookmark_id, query, rel_path)).expect("seed bookmark");
+        db.insert_collection(&e2e_collection(collection_id, collection_name))
+            .expect("seed collection");
+        db.add_to_collection(collection_id, &[bookmark_id.to_string()])
+            .expect("populate collection");
+        // Seed the real source so live resolution succeeds (preview shows code,
+        // not a machine-specific "could not load file" error).
+        let full = root.join(rel_path);
+        std::fs::create_dir_all(full.parent().unwrap()).expect("create source dir");
+        std::fs::write(full, source).expect("write source file");
+        std::mem::forget(dir);
+        root
+    }
+
+    /// Render the layout into a fixed-size `TestBackend` and return the screen as
+    /// a newline-joined string, matching the external e2e harness's helper.
+    fn render_layout(layout: &BrowserLayout, width: u16, height: u16) -> String {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+        let backend = TestBackend::new(width, height);
+        let mut terminal = Terminal::new(backend).expect("test terminal");
+        terminal.draw(|f| Component::render(layout, f.area(), f.buffer_mut())).expect("draw");
+        let buffer = terminal.backend().buffer();
+        let mut out = String::new();
+        for y in 0..height {
+            for x in 0..width {
+                out.push_str(buffer[(x, y)].symbol());
+            }
+            out.push('\n');
+        }
+        out
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn multi_repo_browse_select_and_delete_end_to_end() {
+        use crate::event::{Event, EventHandler, EventHandlerConfig};
+        use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+        // Two repos on disk, each with a distinct bookmark + collection.
+        let root_a = seeded_repo(
+            "bm-alpha",
+            "fn alpha",
+            "src/a.rs",
+            "fn alpha() -> u8 { 1 }\n",
+            "col-a",
+            "AlphaTour",
+        );
+        let root_b = seeded_repo(
+            "bm-beta",
+            "fn beta",
+            "src/b.rs",
+            "fn beta() -> u8 { 2 }\n",
+            "col-b",
+            "BetaTour",
+        );
+
+        // Build the layout seeded on repo A via its normal constructor, then check
+        // repo B too — the exact `set_scope` + `after_scope_change` the multi-select
+        // Repos toggle drives at runtime (see `activate_context_selection`).
+        let db_a = Database::open(&root_a.join(".codemark").join("codemark.db")).expect("open A");
+        let handler = EventHandler::new(EventHandlerConfig::default()).expect("event handler");
+        let mut layout = BrowserLayout::new(db_a, handler);
+        layout.workspace.set_scope(&[root_a.clone(), root_b.clone()]).expect("scope both repos");
+        layout.after_scope_change();
+
+        // -- Assertion 2: multi-repo mode is active. --
+        assert!(layout.workspace.is_multi(), "both repos checked => is_multi");
+
+        // -- Assertion 1: the merged Bookmarks panel holds BOTH repos' bookmarks, --
+        // -- each tagged with its owning repo (real panel items, not just pixels). --
+        let bookmarks: Vec<(String, Option<String>, Option<String>)> = layout
+            .left_pane
+            .content_panel
+            .get_list_panel_mut(ContentTab::Bookmarks.index())
+            .expect("bookmarks panel")
+            .all_items()
+            .iter()
+            .map(|i| {
+                (
+                    i.text().to_string(),
+                    i.repo_name().map(str::to_string),
+                    i.repo_root().map(str::to_string),
+                )
+            })
+            .collect();
+        let a_row = bookmarks
+            .iter()
+            .find(|(_, _, root)| root.as_deref() == Some(&*root_a.to_string_lossy()))
+            .expect("repo A's bookmark is in the merged list");
+        let b_row = bookmarks
+            .iter()
+            .find(|(_, _, root)| root.as_deref() == Some(&*root_b.to_string_lossy()))
+            .expect("repo B's bookmark is in the merged list");
+        // Each row is tagged with its repo's display name (dir file_name).
+        assert_eq!(a_row.1.as_deref(), root_a.file_name().and_then(|n| n.to_str()));
+        assert_eq!(b_row.1.as_deref(), root_b.file_name().and_then(|n| n.to_str()));
+
+        // Both repo names surface in the rendered list too (multi-repo replaces the
+        // author metadata with the bare repo name on each row).
+        let name_a = root_a.file_name().unwrap().to_string_lossy().to_string();
+        let name_b = root_b.file_name().unwrap().to_string_lossy().to_string();
+        let screen = render_layout(&layout, 120, 32);
+        assert!(
+            screen.contains(&name_a) && screen.contains(&name_b),
+            "both repo names should be visible in the merged list; got:\n{screen}"
+        );
+
+        // -- Assertion 3: selecting repo B's bookmark resolves against repo B's db. --
+        // Pin the selection to B's row by its stable id and enter the Content panel,
+        // then drive the synchronous preview the real focus-enter path uses.
+        layout.set_focus(FocusArea::ContentPanel);
+        assert!(
+            layout
+                .left_pane
+                .content_panel
+                .get_list_panel_mut(ContentTab::Bookmarks.index())
+                .expect("bookmarks panel")
+                .select_by_user_data("bm-beta"),
+            "repo B's bookmark row must be selectable by id"
+        );
+        layout.preview_content_item(ContentTab::Bookmarks, "bm-beta");
+        let preview = render_layout(&layout, 120, 32);
+        assert!(
+            preview.contains("src/b.rs") && preview.contains("fn beta"),
+            "selecting repo B's bookmark should preview B's file/code; got:\n{preview}"
+        );
+
+        // -- Assertion 4: the Tours tab is hidden in multi-repo mode. --
+        // (Independent of login state — see `update_tours_tab_visibility`.)
+        assert!(!tours_tab_visible(&mut layout), "multi-repo hides the Tours tab");
+
+        // -- Assertion 5: delete targets the OWNING repo (B), leaving A untouched. --
+        // Drive the real key flow: 'd' opens the confirm dialog, → selects Confirm,
+        // Enter performs the delete against the selected row's db (repo B).
+        assert_eq!(
+            layout.handle_event(&Event::Key(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::NONE))),
+            true,
+            "'d' on a bookmark opens the delete-confirm dialog"
+        );
+        // The dialog captures input; move focus onto Confirm, then press Enter.
+        layout.handle_event(&Event::Key(KeyEvent::new(KeyCode::Right, KeyModifiers::NONE)));
+        layout.handle_event(&Event::Key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)));
+        assert!(!layout.has_active_dialog(), "dialog closes after confirming the delete");
+
+        // Repo B lost its bookmark; repo A's is untouched — proving the delete was
+        // routed to the selected row's owning db, not the focus repo.
+        let db_b = Database::open(&root_b.join(".codemark").join("codemark.db")).expect("reopen B");
+        let db_a2 =
+            Database::open(&root_a.join(".codemark").join("codemark.db")).expect("reopen A");
+        assert!(
+            db_b.get_bookmark("bm-beta").expect("query B").is_none(),
+            "repo B's bookmark should be deleted"
+        );
+        assert!(
+            db_a2.get_bookmark("bm-alpha").expect("query A").is_some(),
+            "repo A's bookmark must be untouched by a delete targeting repo B"
         );
     }
 }
