@@ -128,20 +128,22 @@ pub async fn handle_search(cli: &Cli, mode: &OutputMode, args: &SearchArgs) -> R
             || args.line_format.as_deref().is_some_and(output::template_needs_line);
 
         if needs_line {
-            let bookmark_data: std::collections::HashMap<String, (String, String, String)> = all
-                .iter()
-                .map(|(label, bm)| {
-                    (
-                        short_id(&bm.id).to_string(),
-                        (label.clone(), bm.id.clone(), bm.file_path.clone()),
-                    )
-                })
-                .collect();
-
+            // Pre-resolve line numbers with first-wins on short_id collisions
+            // (same rationale as the semantic path — see below).
+            let mut line_cache: std::collections::HashMap<String, usize> =
+                std::collections::HashMap::new();
+            for (label, bm) in &all {
+                let sid = short_id(&bm.id).to_string();
+                if !line_cache.contains_key(&sid) {
+                    if let Some(db) = db_map.get(label) {
+                        if let Some(line) = get_bookmark_line(db, &bm.id, &bm.file_path) {
+                            line_cache.insert(sid, line);
+                        }
+                    }
+                }
+            }
             let get_line_fn = |short_id: &str| -> Option<usize> {
-                let (label, full_id, file_path) = bookmark_data.get(short_id)?;
-                let db = db_map.get(label)?;
-                get_bookmark_line(db, full_id, file_path)
+                line_cache.get(short_id).copied()
             };
 
             output::write_annotated_bookmarks(
@@ -228,7 +230,10 @@ async fn handle_semantic_search(
                     }
                 }
             }
-            Err(e) => last_err = Some(e),
+            Err(e) => {
+                eprintln!("warning: skipping '{label}' (semantic search failed: {e})");
+                last_err = Some(e);
+            }
         }
     }
 
@@ -315,21 +320,25 @@ async fn handle_semantic_search(
             || args.line_format.as_deref().is_some_and(output::template_needs_line);
 
         if needs_line {
-            let bookmark_data: std::collections::HashMap<String, (String, String, String)> =
-                bookmarks
-                    .iter()
-                    .map(|(_, label, bm)| {
-                        (
-                            short_id(&bm.id).to_string(),
-                            (label.clone(), bm.id.clone(), bm.file_path.clone()),
-                        )
-                    })
-                    .collect();
-
+            // Pre-resolve line numbers, keyed by short_id. First-wins: if two
+            // bookmarks from different repos share a short_id, only the first
+            // (by distance order) gets a line — overwriting (as a HashMap
+            // .collect() would do) would resolve the line against the wrong
+            // repo's file and show an incorrect line number.
+            let mut line_cache: std::collections::HashMap<String, usize> =
+                std::collections::HashMap::new();
+            for (_, label, bm) in &bookmarks {
+                let sid = short_id(&bm.id).to_string();
+                if !line_cache.contains_key(&sid) {
+                    if let Some(db) = db_map.get(label.as_str()) {
+                        if let Some(line) = get_bookmark_line(db, &bm.id, &bm.file_path) {
+                            line_cache.insert(sid, line);
+                        }
+                    }
+                }
+            }
             let get_line_fn = |short_id: &str| -> Option<usize> {
-                let (label, full_id, file_path) = bookmark_data.get(short_id)?;
-                let db = db_map.get(label.as_str())?;
-                get_bookmark_line(db, full_id, file_path)
+                line_cache.get(short_id).copied()
             };
 
             output::write_annotated_bookmarks(
@@ -443,23 +452,30 @@ async fn collection_semantic_search(
         ) {
             Ok(hits) => hits,
             Err(e) => {
+                eprintln!("warning: skipping '{label}' (collection semantic search failed: {e})");
                 last_err = Some(e);
                 continue;
             }
         };
         any_ok = true;
         for hit in hits {
-            if let Some(c) = db.get_collection_by_id(&hit.id)? {
-                if let Some(tag) = args.tag.as_deref() {
-                    let has_tag = db.list_tags_for_collection(&c.id)?.iter().any(|t| t.tag == tag);
-                    if !has_tag {
-                        continue;
-                    }
+            // Use match-and-continue instead of `?` so a single DB failure
+            // doesn't abort the entire multi-repo command.
+            let Some(c) = db.get_collection_by_id(&hit.id).ok().flatten() else {
+                continue;
+            };
+            if let Some(tag) = args.tag.as_deref() {
+                let has_tag = db
+                    .list_tags_for_collection(&c.id)
+                    .map(|tags| tags.iter().any(|t| t.tag == tag))
+                    .unwrap_or(false);
+                if !has_tag {
+                    continue;
                 }
-                let count = db.list_bookmarks_in_collection(&c.id).map(|b| b.len()).unwrap_or(0);
-                let source = if single_db { None } else { Some(label.clone()) };
-                out.push((hit.distance, source, c, count));
             }
+            let count = db.list_bookmarks_in_collection(&c.id).map(|b| b.len()).unwrap_or(0);
+            let source = if single_db { None } else { Some(label.clone()) };
+            out.push((hit.distance, source, c, count));
         }
     }
 
