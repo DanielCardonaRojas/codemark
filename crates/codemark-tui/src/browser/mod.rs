@@ -780,7 +780,6 @@ impl BrowserLayout {
                                 .send(Event::SearchError { request_id, msg: e.to_string() });
                         }
                     }
-
                 });
             }
         }
@@ -908,7 +907,6 @@ impl BrowserLayout {
                                 .send(Event::SearchError { request_id, msg: e.to_string() });
                         }
                     }
-
                 });
             }
         }
@@ -921,21 +919,33 @@ impl BrowserLayout {
             let root = std::path::PathBuf::from(repo_root);
             self.workspace.set_scope(std::slice::from_ref(&root))?;
             self.workspace.set_focus(root);
-            self.right_pane.refresh_head_commit(self.workspace.focus_db());
-            self.collection_live_health.clear();
-            self.bookmark_live_health.clear();
-            // Advance the health epoch so any live-health task still in flight for
-            // the previous database fails the generation guard on apply and can't
-            // repopulate the freshly-cleared caches (or a panel dot) with a status
-            // from the old repo — which, on a colliding bookmark/collection id,
-            // would show the wrong health for the new repo.
-            self.health_generation = self.health_generation.wrapping_add(1);
-            self.cached_remote_tours.clear();
-            self.pending_remote_repos = None;
-            self.right_pane.active_remote_tour_id = None;
-            self.refresh_all_panels();
+            self.after_scope_change();
         }
         Ok(())
+    }
+
+    /// Reset the caches and derived state that become stale after the workspace
+    /// scope (or focus) changes, then rebuild every panel.
+    ///
+    /// Shared by `switch_database` and the multi-select Repos toggle so both
+    /// take the same clears: the live-health caches, the health epoch bump
+    /// (so an in-flight task for a dropped repo can't repopulate a
+    /// freshly-cleared cache or panel dot with a stale status), the
+    /// remote-tour caches, and the head commit.
+    pub(super) fn after_scope_change(&mut self) {
+        self.right_pane.refresh_head_commit(self.workspace.focus_db());
+        self.collection_live_health.clear();
+        self.bookmark_live_health.clear();
+        // Advance the health epoch so any live-health task still in flight for
+        // the previous database fails the generation guard on apply and can't
+        // repopulate the freshly-cleared caches (or a panel dot) with a status
+        // from the old repo — which, on a colliding bookmark/collection id,
+        // would show the wrong health for the new repo.
+        self.health_generation = self.health_generation.wrapping_add(1);
+        self.cached_remote_tours.clear();
+        self.pending_remote_repos = None;
+        self.right_pane.active_remote_tour_id = None;
+        self.refresh_all_panels();
     }
 
     /// Minimum number of ticks a spinner must run before clearing (one visual cycle).
@@ -1734,7 +1744,9 @@ impl BrowserLayout {
         } else {
             self.update_repos_by_owner();
         }
-
+        // Re-activate every checked repo (build_repo_items only marks the focus
+        // repo, so a rebuild would drop the multi-select checkmarks).
+        self.restore_active_repos();
         // 2. Update Tags/Branches (in-place)
         self.refresh_tags();
 
@@ -2328,7 +2340,23 @@ impl BrowserLayout {
         self.spawn_collection_health_task();
     }
 
-    /// Update the Repos panel (Context panel, Repos tab) based on active owner filters.
+    /// Re-activate every checked repo in the Repos panel after a rebuild.
+    ///
+    /// `build_repo_items` marks only the focus repo `.active(true)`, so a panel
+    /// rebuild via `set_items` wipes the multi-select state of every other
+    /// checked repo. This restores the checkmarks from the workspace's checked
+    /// roots so every in-scope repo shows its checkmark.
+    fn restore_active_repos(&mut self) {
+        let checked_roots: Vec<String> =
+            self.workspace.dbs().map(|(root, _)| root.to_string_lossy().into_owned()).collect();
+        if let Some(p) = self.left_pane.context_panel.get_list_panel_mut(ContextTab::Repos.index())
+        {
+            for root in &checked_roots {
+                p.activate_by_user_data(root);
+            }
+        }
+    }
+
     ///
     /// Follows the same pattern as `update_tours_collections()`:
     /// reads active owners from the Owners panel, re-queries repos from the registry,
@@ -2363,6 +2391,7 @@ impl BrowserLayout {
         {
             p.set_items(repo_items);
         }
+        self.restore_active_repos();
     }
 
     /// Set the focus area.
@@ -3123,5 +3152,93 @@ mod tests {
             db_a2.get_bookmark("bm-alpha").expect("query A").is_some(),
             "repo A's bookmark must be untouched by a delete targeting repo B"
         );
+    }
+
+    #[test]
+    fn checked_repos_keep_checkmark_after_panel_refresh() {
+        // Regression: build_repo_items only marks the focus repo `.active(true)`,
+        // so a panel rebuild via set_items wiped every other checked repo's
+        // checkmark. restore_active_repos re-activates all checked repos after
+        // every rebuild so the multi-select state survives refresh.
+        let root_a = temp_repo_root();
+        let root_b = temp_repo_root();
+
+        // Register both repos in the layout's registry so they appear in the
+        // Repos panel (build_repo_items reads from the registry).
+        let db = Database::open(&root_a.join(".codemark").join("codemark.db")).expect("open A");
+        let handler = EventHandler::new(EventHandlerConfig::default()).expect("handler");
+        let mut layout = BrowserLayout::new(db, handler);
+        for root in [&root_a, &root_b] {
+            codemark_core::storage::registry::upsert_repo(
+                &layout.registry,
+                &codemark_core::storage::registry::RepoUpsert {
+                    id: &format!("test-cm-{}", root.file_name().unwrap().to_string_lossy()),
+                    repo_owner: "owner",
+                    repo_name: root.file_name().unwrap().to_str().unwrap(),
+                    origin_url: None,
+                    repo_root: &root.to_string_lossy(),
+                    db_owner_email: "test@example.com",
+                    db_owner_name: None,
+                    server_url: None,
+                    default_username: None,
+                },
+            )
+            .expect("register repo");
+        }
+
+        // Check both repos — the exact set_scope + after_scope_change path the
+        // multi-select Repos toggle drives at runtime.
+        layout.workspace.set_scope(&[root_a.clone(), root_b.clone()]).expect("scope both");
+        layout.after_scope_change();
+
+        // Both test repos must show as active (checked) in the Repos panel.
+        // (The global registry may hold many repos from the dev machine —
+        // filter to just the two we registered by their root path.)
+        let root_a_str = root_a.to_string_lossy().to_string();
+        let root_b_str = root_b.to_string_lossy().to_string();
+        let panel = layout
+            .left_pane
+            .context_panel
+            .get_list_panel_mut(ContextTab::Repos.index())
+            .expect("repos panel");
+        let active_a = panel
+            .all_items()
+            .iter()
+            .find(|i| i.user_data.as_deref() == Some(&root_a_str))
+            .expect("repo A row exists")
+            .is_active();
+        let active_b = panel
+            .all_items()
+            .iter()
+            .find(|i| i.user_data.as_deref() == Some(&root_b_str))
+            .expect("repo B row exists")
+            .is_active();
+        assert!(active_a, "repo A (focus) must be checked after refresh");
+        assert!(active_b, "repo B must be checked after refresh — this is the regression");
+
+        // Uncheck repo B — only repo A should be active after refresh.
+        layout.workspace.set_scope(&[root_a.clone()]).expect("scope A only");
+        layout.after_scope_change();
+
+        let active_b = layout
+            .left_pane
+            .context_panel
+            .get_list_panel_mut(ContextTab::Repos.index())
+            .expect("repos panel")
+            .all_items()
+            .iter()
+            .find(|i| i.user_data.as_deref() == Some(&root_b.to_string_lossy()))
+            .expect("repo B row exists")
+            .is_active();
+
+        assert!(!active_b, "unchecking repo B must clear its checkmark after refresh");
+        // Clean up the global registry so this test doesn't pollute it for
+        // other tests or the user's real registry.
+        for root in [&root_a, &root_b] {
+            let _ = layout.registry.execute(
+                "DELETE FROM known_repos WHERE repo_root = ?1",
+                rusqlite::params![root.to_string_lossy()],
+            );
+        }
     }
 }
