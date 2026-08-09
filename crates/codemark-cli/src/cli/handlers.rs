@@ -1662,19 +1662,19 @@ pub async fn handle_list(cli: &Cli, mode: &OutputMode, args: &ListArgs) -> Resul
             .collect();
 
         if needs_line {
-            let mut line_cache: std::collections::HashMap<String, usize> =
+            let mut line_cache: std::collections::HashMap<(String, String), usize> =
                 std::collections::HashMap::new();
             for (label, bm) in &all {
-                if !line_cache.contains_key(&bm.id) {
-                    if let Some(db) = db_map.get(label.as_str()) {
-                        if let Some(line) = get_bookmark_line(db, &bm.id, &bm.file_path) {
-                            line_cache.insert(bm.id.clone(), line);
-                        }
-                    }
+                let key = (label.clone(), bm.id.clone());
+                if !line_cache.contains_key(&key)
+                    && let Some(db) = db_map.get(label.as_str())
+                    && let Some(line) = get_bookmark_line(db, &bm.id, &bm.file_path)
+                {
+                    line_cache.insert(key, line);
                 }
             }
-            let get_line_fn = |_label: &str, full_id: &str| -> Option<usize> {
-                line_cache.get(full_id).copied()
+            let get_line_fn = |label: &str, full_id: &str| -> Option<usize> {
+                line_cache.get(&(label.to_string(), full_id.to_string())).copied()
             };
 
             crate::cli::output::write_annotated_bookmarks(
