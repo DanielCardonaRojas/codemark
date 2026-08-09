@@ -1,5 +1,6 @@
 //! Workspace database discovery and resolution.
 
+use crate::engine::bookmark::Bookmark;
 use crate::error::{Error, Result};
 use crate::storage::db::Database;
 use std::path::{Path, PathBuf};
@@ -224,5 +225,104 @@ impl Workspace {
         }
 
         Ok(dbs)
+    }
+
+    /// Search for a bookmark by id or short (>=4 char) prefix across multiple databases.
+    /// Returns the bookmark and a reference to the database it was found in.
+    pub fn find_bookmark_across<'a>(
+        dbs: &'a [(String, Database)],
+        id: &str,
+    ) -> Result<(Bookmark, &'a Database)> {
+        tracing::debug!(target: "codemark::storage", id, "cross-database bookmark lookup started");
+        // The TUI tab completion can append the file path and line number after a
+        // tab character. The CLI must strip it to recover the bare id.
+        let id = id.split('\t').next().unwrap_or(id);
+        let id = id.strip_prefix('#').unwrap_or(id);
+        for (label, db) in dbs {
+            if let Some(bm) = db.get_bookmark(id)? {
+                tracing::debug!(target: "codemark::storage", id, "found full id match in '{}'", label);
+                return Ok((bm, db));
+            }
+            if id.len() >= 4
+                && let Ok(Some(bm)) = db.get_bookmark_by_prefix(id)
+            {
+                tracing::debug!(target: "codemark::storage", id, full_id = bm.id, "found prefix match in '{}'", label);
+                return Ok((bm, db));
+            }
+        }
+        tracing::debug!(target: "codemark::storage", id, "bookmark not found across any database");
+        Err(Error::Input(format!("bookmark not found: {id}")))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::engine::bookmark::{BookmarkHealth, ResolutionMethod};
+
+    fn test_bookmark(id: &str) -> Bookmark {
+        Bookmark {
+            id: id.to_string(),
+            query: format!("(function_declaration) @{} /* {} */", "target", id),
+            language: "swift".to_string(),
+            file_path: format!("src/main_{}.swift", id),
+            content_hash: Some("sha256:abcd1234abcd1234".to_string()),
+            commit_hash: Some("abc123".to_string()),
+            health: BookmarkHealth::Active,
+            resolution_method: Some(ResolutionMethod::Exact),
+            last_resolved_at: None,
+            stale_since: None,
+            created_at: "2024-01-01T00:00:00Z".to_string(),
+            created_by: None,
+            current_resolution_id: None,
+            repo_id: None,
+            tags: Vec::new(),
+            annotations: Vec::new(),
+            comments: vec![],
+        }
+    }
+
+    #[test]
+    fn find_bookmark_across_finds_by_prefix_in_second_db() {
+        let db1 = Database::open_in_memory().unwrap();
+        let db2 = Database::open_in_memory().unwrap();
+        // Insert a distinct bookmark into each DB so we can prove *which* DB was
+        // selected by asserting on the returned bookmark id.
+        db1.insert_bookmark(&test_bookmark("aaaa-1111-2222-3333")).unwrap();
+        db2.insert_bookmark(&test_bookmark("beef-1111-2222-3333")).unwrap();
+
+        let dbs = vec![("first".to_string(), db1), ("second".to_string(), db2)];
+
+        // Prefix in the second DB resolves to db2's bookmark.
+        let (bm, _db) = Workspace::find_bookmark_across(&dbs, "beef").unwrap();
+        assert_eq!(bm.id, "beef-1111-2222-3333");
+
+        // Prefix in the first DB resolves to db1's bookmark, confirming the
+        // search actually selects the correct database rather than a fixed one.
+        let (bm, _db) = Workspace::find_bookmark_across(&dbs, "aaaa").unwrap();
+        assert_eq!(bm.id, "aaaa-1111-2222-3333");
+    }
+
+    #[test]
+    fn find_bookmark_across_strips_leading_hash() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_bookmark(&test_bookmark("beef-1111-2222-3333")).unwrap();
+
+        let dbs = vec![("only".to_string(), db)];
+
+        let (bm, _db) = Workspace::find_bookmark_across(&dbs, "#beef-1111-2222-3333").unwrap();
+        assert_eq!(bm.id, "beef-1111-2222-3333");
+    }
+
+    #[test]
+    fn find_bookmark_across_strips_tab_line_format_suffix() {
+        let db = Database::open_in_memory().unwrap();
+        db.insert_bookmark(&test_bookmark("beef-1111-2222-3333")).unwrap();
+
+        let dbs = vec![("only".to_string(), db)];
+
+        let (bm, _db) =
+            Workspace::find_bookmark_across(&dbs, "beef-1111-2222-3333\tsrc/foo.rs:12").unwrap();
+        assert_eq!(bm.id, "beef-1111-2222-3333");
     }
 }
