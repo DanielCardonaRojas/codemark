@@ -419,6 +419,7 @@ where
 /// A bookmark annotated with its source database label.
 pub struct AnnotatedBookmark<'a> {
     pub source: &'a str,
+    pub db_idx: usize,
     pub bookmark: &'a Bookmark,
 }
 
@@ -431,7 +432,7 @@ fn write_annotated_line_format<F>(
     ui_statuses: Option<&HashMap<String, String>>,
 ) -> io::Result<()>
 where
-    F: Fn(&str, &str) -> Option<usize>,
+    F: Fn(usize, &str) -> Option<usize>,
 {
     let mut stdout = io::stdout().lock();
     for ab in bookmarks {
@@ -442,7 +443,7 @@ where
         let note = get_first_note(bm);
         let context = get_first_context(bm);
         let line = if let Some(fn_line) = &get_line_fn {
-            fn_line(ab.source, &bm.id).unwrap_or(0)
+            fn_line(ab.db_idx, &bm.id).unwrap_or(0)
         } else {
             0
         };
@@ -481,7 +482,7 @@ pub fn write_annotated_bookmarks<F>(
     ui_statuses: Option<&HashMap<String, String>>,
 ) -> io::Result<()>
 where
-    F: Fn(&str, &str) -> Option<usize>,
+    F: Fn(usize, &str) -> Option<usize>,
 {
     match mode {
         OutputMode::Json => {

@@ -1640,41 +1640,36 @@ pub async fn handle_list(cli: &Cli, mode: &OutputMode, args: &ListArgs) -> Resul
     } else {
         // Multi-database case with line number support
         let mut all = Vec::new();
-        // Keep track of which database each bookmark belongs to
-        let mut db_map: HashMap<String, &Database> = HashMap::new();
         let mut all_ui_statuses: HashMap<String, String> = HashMap::new();
-        for (label, db) in &dbs {
-            db_map.insert(label.clone(), db);
+        for (idx, (_label, db)) in dbs.iter().enumerate() {
             let bookmarks = db.list_bookmarks(&filter)?;
-            // Compute UI statuses at the presentation boundary
             let statuses = compute_ui_statuses(db, &bookmarks, args.current_head.as_deref());
             all_ui_statuses.extend(statuses);
             for bm in bookmarks {
-                all.push((label.clone(), bm));
+                all.push((idx, bm));
             }
         }
         let annotated: Vec<crate::cli::output::AnnotatedBookmark> = all
             .iter()
-            .map(|(label, bm)| crate::cli::output::AnnotatedBookmark {
-                source: label,
+            .map(|(idx, bm)| crate::cli::output::AnnotatedBookmark {
+                source: &dbs[*idx].0,
+                db_idx: *idx,
                 bookmark: bm,
             })
             .collect();
 
         if needs_line {
-            let mut line_cache: std::collections::HashMap<(String, String), usize> =
+            let mut line_cache: std::collections::HashMap<(usize, String), usize> =
                 std::collections::HashMap::new();
-            for (label, bm) in &all {
-                let key = (label.clone(), bm.id.clone());
-                if !line_cache.contains_key(&key)
-                    && let Some(db) = db_map.get(label.as_str())
-                    && let Some(line) = get_bookmark_line(db, &bm.id, &bm.file_path)
-                {
-                    line_cache.insert(key, line);
+            for (idx, bm) in &all {
+                let db = &dbs[*idx].1;
+                let key = (*idx, bm.id.clone());
+                if let Some(line) = get_bookmark_line(db, &bm.id, &bm.file_path) {
+                    line_cache.entry(key).or_insert(line);
                 }
             }
-            let get_line_fn = |label: &str, full_id: &str| -> Option<usize> {
-                line_cache.get(&(label.to_string(), full_id.to_string())).copied()
+            let get_line_fn = |idx: usize, full_id: &str| -> Option<usize> {
+                line_cache.get(&(idx, full_id.to_string())).copied()
             };
 
             crate::cli::output::write_annotated_bookmarks(
@@ -1689,7 +1684,7 @@ pub async fn handle_list(cli: &Cli, mode: &OutputMode, args: &ListArgs) -> Resul
                 mode,
                 &annotated,
                 args.line_format.as_deref(),
-                None as Option<&fn(&str, &str) -> Option<usize>>,
+                None as Option<&fn(usize, &str) -> Option<usize>>,
                 Some(&all_ui_statuses),
             )?;
         }
