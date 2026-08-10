@@ -13,7 +13,6 @@ use codemark_core::engine::bookmark::{Bookmark, BookmarkFilter};
 use codemark_core::error::{Error, Result};
 #[cfg(feature = "semantic")]
 use codemark_core::storage::SemanticRepo;
-use codemark_core::storage::db::Database;
 
 use super::{
     filter_dbs_by_repo_owner, filter_dbs_by_user_email, get_bookmark_line, load_config,
@@ -99,12 +98,8 @@ pub async fn handle_search(cli: &Cli, mode: &OutputMode, args: &SearchArgs) -> R
         }
     } else {
         let mut all = Vec::new();
-        // Keep track of which database each bookmark belongs to for line resolution
-        let mut db_map: std::collections::HashMap<String, &Database> =
-            std::collections::HashMap::new();
 
-        for (label, db) in &dbs {
-            db_map.insert(label.clone(), db);
+        for (idx, (_label, db)) in dbs.iter().enumerate() {
             let bookmarks = db.search_bookmarks(
                 args.query.as_deref(),
                 args.note.as_deref(),
@@ -115,12 +110,12 @@ pub async fn handle_search(cli: &Cli, mode: &OutputMode, args: &SearchArgs) -> R
                 health_filter.clone(),
             )?;
             for bm in bookmarks {
-                all.push((label.clone(), bm));
+                all.push((idx, bm));
             }
         }
         let annotated: Vec<output::AnnotatedBookmark> = all
             .iter()
-            .map(|(label, bm)| output::AnnotatedBookmark { source: label, bookmark: bm })
+            .map(|(idx, bm)| output::AnnotatedBookmark { source: &dbs[*idx].0, bookmark: bm })
             .collect();
 
         // Check if we need line numbers
@@ -132,17 +127,18 @@ pub async fn handle_search(cli: &Cli, mode: &OutputMode, args: &SearchArgs) -> R
             // on short_id prefixes.
             let mut line_cache: std::collections::HashMap<(String, String), usize> =
                 std::collections::HashMap::new();
-            for (label, bm) in &all {
+            for (idx, bm) in &all {
+                let label = &dbs[*idx].0;
+                let db = &dbs[*idx].1;
                 let key = (label.clone(), bm.id.clone());
                 if !line_cache.contains_key(&key)
-                    && let Some(db) = db_map.get(label.as_str())
                     && let Some(line) = get_bookmark_line(db, &bm.id, &bm.file_path)
                 {
                     line_cache.insert(key, line);
                 }
             }
-            let get_line_fn = |label: &str, full_id: &str| -> Option<usize> {
-                line_cache.get(&(label.to_string(), full_id.to_string())).copied()
+            let get_line_fn = |_label: &str, full_id: &str| -> Option<usize> {
+                line_cache.get(&(_label.to_string(), full_id.to_string())).copied()
             };
             output::write_annotated_bookmarks(
                 mode,
@@ -209,10 +205,10 @@ async fn handle_semantic_search(
     // A db whose vec index errors (missing/dimension mismatch) is skipped so
     // one bad repo doesn't abort the whole command; if EVERY db errors we
     // surface the last error below.
-    let mut bookmarks: Vec<(f64, String, Bookmark)> = Vec::new();
+    let mut bookmarks: Vec<(f64, usize, Bookmark)> = Vec::new();
     let mut any_ok = false;
     let mut last_err: Option<Error> = None;
-    for (label, db) in &dbs {
+    for (idx, (label, db)) in dbs.iter().enumerate() {
         match semantic_repo.search_prepared(db.conn(), &embedding, args.limit, threshold) {
             Ok(results) => {
                 any_ok = true;
@@ -224,7 +220,7 @@ async fn handle_semantic_search(
                         {
                             continue;
                         }
-                        bookmarks.push((result.distance, label.clone(), bm));
+                        bookmarks.push((result.distance, idx, bm));
                     }
                 }
             }
@@ -248,7 +244,8 @@ async fn handle_semantic_search(
     if matches!(mode, OutputMode::Json) {
         let data: Vec<serde_json::Value> = bookmarks
             .into_iter()
-            .map(|(distance, label, bm)| {
+            .map(|(distance, idx, bm)| {
+                let label = &dbs[idx].0;
                 // Collect all annotations for JSON output
                 let annotations: Vec<_> = bm.annotations.iter().collect();
                 let mut obj = serde_json::json!({
@@ -306,12 +303,9 @@ async fn handle_semantic_search(
     } else {
         // Multi-db non-JSON: annotate each hit with its source repo label,
         // mirroring the FTS multi-db branch.
-        let db_map: std::collections::HashMap<&str, &Database> =
-            dbs.iter().map(|(label, db)| (label.as_str(), db)).collect();
-
         let annotated: Vec<output::AnnotatedBookmark> = bookmarks
             .iter()
-            .map(|(_, label, bm)| output::AnnotatedBookmark { source: label, bookmark: bm })
+            .map(|(_, idx, bm)| output::AnnotatedBookmark { source: &dbs[*idx].0, bookmark: bm })
             .collect();
 
         let needs_line = mode.needs_line()
@@ -322,10 +316,11 @@ async fn handle_semantic_search(
             // on short_id prefixes.
             let mut line_cache: std::collections::HashMap<(String, String), usize> =
                 std::collections::HashMap::new();
-            for (_, label, bm) in &bookmarks {
+            for (_, idx, bm) in &bookmarks {
+                let label = &dbs[*idx].0;
+                let db = &dbs[*idx].1;
                 let key = (label.clone(), bm.id.clone());
                 if !line_cache.contains_key(&key)
-                    && let Some(db) = db_map.get(label.as_str())
                     && let Some(line) = get_bookmark_line(db, &bm.id, &bm.file_path)
                 {
                     line_cache.insert(key, line);
