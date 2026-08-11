@@ -52,7 +52,14 @@ pub enum Event {
     /// Each entry is (bookmark_id, live_status). `generation` is the health epoch
     /// the task was spawned in; a batch from a stale epoch (e.g. computed before a
     /// grammar refresh on `FocusGained`) is dropped rather than applied.
-    LiveHealthBatch { generation: u64, batch: Vec<(String, LiveUIStatus)> },
+    /// `repo_root` tags the batch with the repo it was computed for, so the
+    /// handler keys the cache by `(repo_root, id)` and two checked repos holding
+    /// the same id don't cross-contaminate each other's dot.
+    LiveHealthBatch {
+        generation: u64,
+        repo_root: Option<String>,
+        batch: Vec<(String, LiveUIStatus)>,
+    },
     /// Background worst-case live health for a batch of collections, so
     /// collection dots and the overview label reflect the worst bookmark status
     /// rather than the stale persisted snapshot. Each entry is (collection_id,
@@ -61,8 +68,15 @@ pub enum Event {
     /// the handler clears any cached value and shows Unknown so a previously
     /// cached status doesn't linger. `generation` is the health epoch; a batch
     /// from a stale epoch (e.g. computed before a grammar refresh on
-    /// `FocusGained`) is dropped rather than applied.
-    CollectionHealthBatch { generation: u64, batch: Vec<(String, Option<LiveUIStatus>)> },
+    /// `FocusGained`) is dropped rather than applied. `repo_root` tags the batch
+    /// with the repo it was computed for, so the handler keys the cache by
+    /// `(repo_root, id)` and two checked repos holding the same collection id
+    /// don't cross-contaminate each other's dot.
+    CollectionHealthBatch {
+        generation: u64,
+        repo_root: Option<String>,
+        batch: Vec<(String, Option<LiveUIStatus>)>,
+    },
     /// A bookmark preview finished resolving on a background task.
     /// `request_id` guards against applying stale results after the selection moved.
     PreviewReady {

@@ -46,7 +46,7 @@ impl BrowserLayout {
     /// `<unavailable>` rather than being omitted, so the set of rows is stable.
     /// Paths under the home directory are abbreviated with `~`.
     pub fn config_info(&self) -> Vec<(&'static str, String, Option<String>)> {
-        let db_path = self.db.path();
+        let db_path = self.db().path();
         let codemark_dir = db_path.parent();
         let config = codemark_dir.map(Config::load_layered).unwrap_or_default();
 

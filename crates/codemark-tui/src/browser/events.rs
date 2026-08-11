@@ -91,7 +91,11 @@ impl BrowserLayout {
                 %tour_name,
                 "entering collection overview -> bookmarks flow"
             );
-            self.right_pane.load_tour_live(&self.db, &tour_name, &mut self.session_cache);
+            self.right_pane.load_tour_live(
+                self.workspace.db_for(self.right_pane.active_repo_root.as_deref()),
+                &tour_name,
+                &mut self.session_cache,
+            );
             // Only the first step was resolved live; resolve the rest off the UI
             // thread so entering the collection stays snappy.
             self.spawn_collection_live_resolve();
@@ -182,12 +186,12 @@ impl BrowserLayout {
     /// If a debounced preview request is due, spawn the background resolve.
     /// Returns true if a task was spawned (so the frame is marked dirty).
     fn maybe_spawn_pending_preview(&mut self) -> bool {
-        let due = matches!(&self.pending_preview, Some((_, _, due)) if self.tick_count >= *due);
+        let due = matches!(&self.pending_preview, Some((_, _, _, due)) if self.tick_count >= *due);
         if !due {
             return false;
         }
-        if let Some((bookmark_id, label, _)) = self.pending_preview.take() {
-            self.spawn_preview_task(bookmark_id);
+        if let Some((bookmark_id, label, repo_root, _)) = self.pending_preview.take() {
+            self.spawn_preview_task(bookmark_id, repo_root);
             // Track when the resolve started so the loading indicator can be
             // deferred past the grace period.
             self.inflight_preview = Some((label, self.tick_count));
@@ -251,7 +255,8 @@ impl BrowserLayout {
         // Take a fresh render id so a result from an earlier task (same bookmark,
         // older state) is superseded and dropped on arrival.
         let request_id = self.right_pane.next_step_preview_request();
-        let repo_path = self.db.path().parent().unwrap_or_else(|| self.db.path()).to_path_buf();
+        let db = self.workspace.db_for(self.right_pane.active_repo_root.as_deref());
+        let repo_path = db.path().parent().unwrap_or_else(|| db.path()).to_path_buf();
         let head = self.right_pane.head_commit().map(|s| s.to_string());
         let (show_tpl, details_tpl, comments_tpl) = self.right_pane.markdown_templates();
         let event_handler = self.event_handler.clone();
@@ -382,7 +387,7 @@ impl BrowserLayout {
                 // current checkout. Paging itself no longer refreshes HEAD (that
                 // subprocess was the source of the navigation lag), so this is
                 // where a branch change gets reflected in the pager dots.
-                self.right_pane.refresh_head_commit(&self.db);
+                self.right_pane.refresh_head_commit(self.workspace.focus_db());
 
                 // A plain `refresh_all_panels` rebuilds the Bookmarks/Collections
                 // lists from the full DB set, which would drop any active search
@@ -408,8 +413,8 @@ impl BrowserLayout {
                 // runs regardless of `success`: a partial heal reports failure yet
                 // still mutated the bookmarks that did resolve. It no-ops when no
                 // collection is open.
-                self.right_pane.refresh_step_health(&self.db);
-                self.right_pane.refresh_overview_health(&self.db);
+                self.right_pane.refresh_step_health(self.workspace.focus_db());
+                self.right_pane.refresh_overview_health(self.workspace.focus_db());
                 Some(true)
             }
             Event::SyncComplete(msg, success) => {
@@ -424,8 +429,8 @@ impl BrowserLayout {
                 // A pull can update bookmark records for an open collection (and a
                 // partial pull reports failure yet still writes some), so refresh
                 // its pager dots unconditionally; no-ops when no collection is open.
-                self.right_pane.refresh_step_health(&self.db);
-                self.right_pane.refresh_overview_health(&self.db);
+                self.right_pane.refresh_step_health(self.workspace.focus_db());
+                self.right_pane.refresh_overview_health(self.workspace.focus_db());
                 Some(true)
             }
             Event::TourPullFinished(tour_id) => {
@@ -456,7 +461,7 @@ impl BrowserLayout {
                 });
                 Some(true)
             }
-            Event::LiveHealthBatch { generation, batch } => {
+            Event::LiveHealthBatch { generation, repo_root, batch } => {
                 // Drop results from a superseded epoch: a grammar refresh on
                 // FocusGained bumps `health_generation`, so a batch computed with
                 // the old grammar must not overwrite the freshly-refreshed panels.
@@ -467,22 +472,29 @@ impl BrowserLayout {
                     let health = HealthStatus::from(*status);
                     // Cache so subsequent panel rebuilds (e.g. a tag/branch filter)
                     // render the resolved dot instead of flashing back to Unknown
-                    // and re-resolving the bookmark against the file.
-                    self.bookmark_live_health.insert(bookmark_id.clone(), health);
+                    // and re-resolving the bookmark against the file. Keyed by
+                    // (repo_root, id) so two checked repos with the same bookmark
+                    // id keep their own dot (the batch carries its repo's root).
+                    self.bookmark_live_health
+                        .insert(super::health_key(repo_root.as_deref(), bookmark_id), health);
                     if let Some(panel) = self.left_pane.content_panel.get_list_panel_mut(0) {
-                        panel.update_item_health(bookmark_id, health);
+                        panel.update_item_health(repo_root.as_deref(), bookmark_id, health);
                     }
                     // Mirror the live status into the open step so the preview
                     // border label and pager dots stay in sync with the list dots.
                     for step in &mut self.right_pane.steps_data {
-                        if step.bookmark.id == *bookmark_id {
+                        // Only update if the active preview matches the repo (tours are single-repo)
+                        let active_repo = self.right_pane.active_repo_root.as_deref();
+                        let match_repo =
+                            repo_root.as_deref() == active_repo || active_repo.is_none();
+                        if step.bookmark.id == *bookmark_id && match_repo {
                             step.health = health;
                         }
                     }
                 }
                 Some(true)
             }
-            Event::CollectionHealthBatch { generation, batch } => {
+            Event::CollectionHealthBatch { generation, repo_root, batch } => {
                 if *generation != self.health_generation {
                     return Some(false);
                 }
@@ -496,19 +508,25 @@ impl BrowserLayout {
                         None => HealthStatus::Unknown,
                     };
                     // Cache so subsequent panel rebuilds render the live status
-                    // instead of flashing back to the persisted snapshot.
-                    self.collection_live_health.insert(collection_id.clone(), health);
+                    // instead of flashing back to the persisted snapshot. Keyed by
+                    // (repo_root, id) so two checked repos with the same collection
+                    // id keep their own dot (the batch carries its repo's root).
+                    self.collection_live_health
+                        .insert(super::health_key(repo_root.as_deref(), collection_id), health);
                     // A collection appears in both the Collections and Tours tabs,
                     // so update both dots (no-op where the panel/item is absent).
                     for idx in [ContentTab::Collections.index(), ContentTab::Tours.index()] {
                         if let Some(panel) = self.left_pane.content_panel.get_list_panel_mut(idx) {
-                            panel.update_item_health(collection_id, health);
+                            panel.update_item_health(repo_root.as_deref(), collection_id, health);
                         }
                     }
                     // Keep the open overview's border label in sync. An empty
                     // collection has no health signal, so it shows no label.
+                    let active_repo = self.right_pane.active_repo_root.as_deref();
+                    let match_repo = repo_root.as_deref() == active_repo || active_repo.is_none();
                     if self.right_pane.overview_active
                         && self.right_pane.active_collection_id.as_deref() == Some(collection_id)
+                        && match_repo
                     {
                         self.right_pane.overview_health = status.map(HealthStatus::from);
                     }
@@ -533,7 +551,7 @@ impl BrowserLayout {
                     // operational failures (Error).
                     let health =
                         if *unresolved { HealthStatus::Broken } else { HealthStatus::Unknown };
-                    self.right_pane.load_bookmark(&self.db, bookmark_id, health);
+                    self.right_pane.load_bookmark(self.workspace.focus_db(), bookmark_id, health);
                     self.right_pane.finish_loading();
                 }
                 Some(true)
@@ -572,6 +590,7 @@ impl BrowserLayout {
     pub(super) fn build_bookmark_search_items(
         bookmarks: &[codemark_core::engine::bookmark::Bookmark],
         live: &std::collections::HashMap<String, HealthStatus>,
+        repo_root: Option<&str>,
     ) -> Vec<PanelItem> {
         bookmarks
             .iter()
@@ -596,7 +615,10 @@ impl BrowserLayout {
                 // Seed from the live-health cache so a reconcile/refocus rebuild
                 // keeps the resolved dot instead of flashing grey; the caller's
                 // background task refreshes it if the code has since drifted.
-                let health = live.get(&bm.id).copied().unwrap_or(HealthStatus::Unknown);
+                let health = live
+                    .get(&super::health_key(repo_root, &bm.id))
+                    .copied()
+                    .unwrap_or(HealthStatus::Unknown);
                 let mut item = PanelItem::new(short_path)
                     .metadata(bm.created_by.clone().unwrap_or_default())
                     .health(health)
@@ -629,7 +651,13 @@ impl BrowserLayout {
         // The search finished, so stop the loading spinner.
         self.left_pane.search.set_loading(false);
 
-        let items = Self::build_bookmark_search_items(bookmarks, &self.bookmark_live_health);
+        // Search runs against the focus db, so key by the focus repo root.
+        let focus_root = super::db_repo_root(self.db());
+        let items = Self::build_bookmark_search_items(
+            bookmarks,
+            &self.bookmark_live_health,
+            focus_root.as_deref(),
+        );
 
         // A reconcile re-run refreshes an already-visible narrowed list in place,
         // keeping the user's focus and selection instead of jumping onto the
@@ -663,11 +691,15 @@ impl BrowserLayout {
     pub(super) fn build_collection_search_items(
         collections: &[(codemark_core::engine::bookmark::Collection, usize)],
         live: &std::collections::HashMap<String, HealthStatus>,
+        repo_root: Option<&str>,
     ) -> Vec<PanelItem> {
         collections
             .iter()
             .map(|(c, count)| {
-                let health = super::collection_health_status(c.health, live.get(&c.id).copied());
+                let health = super::collection_health_status(
+                    c.health,
+                    live.get(&super::health_key(repo_root, &c.id)).copied(),
+                );
                 let branch = c.created_branch.clone().unwrap_or_else(|| "main".to_string());
 
                 PanelItem::new(&c.name)
@@ -694,7 +726,13 @@ impl BrowserLayout {
         // The search finished, so stop the loading spinner.
         self.left_pane.search.set_loading(false);
 
-        let items = Self::build_collection_search_items(collections, &self.collection_live_health);
+        // Search runs against the focus db, so key by the focus repo root.
+        let focus_root = super::db_repo_root(self.db());
+        let items = Self::build_collection_search_items(
+            collections,
+            &self.collection_live_health,
+            focus_root.as_deref(),
+        );
 
         // A reconcile re-run refreshes the Collections panel in place, keeping
         // focus and selection. It applies even when Collections isn't the active
@@ -730,17 +768,55 @@ impl BrowserLayout {
         self.update_content_live_preview();
     }
 
-    /// Spawn a background task that resolves all bookmarks and sends
-    /// `LiveHealthBatch` events to update the list health dots progressively.
+    /// Spawn a background task that resolves the focused repo's bookmarks and
+    /// sends `LiveHealthBatch` events, tagged with the focused repo's root, to
+    /// update the list health dots progressively. Convenience wrapper for the
+    /// callers that operate on a focus-db bookmark subset (search/filter paths);
+    /// the merged panel rebuild uses [`Self::spawn_live_health_all_repos`].
     pub(super) fn spawn_live_health_task(
         &self,
+        bookmarks: Vec<codemark_core::engine::bookmark::Bookmark>,
+    ) {
+        self.spawn_live_health_task_for(
+            super::db_repo_root(self.db()),
+            self.db().path().to_path_buf(),
+            bookmarks,
+        );
+    }
+
+    /// Spawn a live-health pass for *every* checked repo, tagging each batch with
+    /// that repo's root so the `(repo_root, id)` cache keys never collide across
+    /// repos. In single-repo mode this is exactly one pass over the focus repo,
+    /// identical to the pre-multi-repo behavior.
+    pub(super) fn spawn_live_health_all_repos(&self) {
+        for (root, db) in self.workspace.dbs() {
+            let bookmarks = match db
+                .list_bookmarks(&codemark_core::engine::bookmark::BookmarkFilter::default())
+            {
+                Ok(b) => b,
+                Err(_) => continue,
+            };
+            self.spawn_live_health_task_for(
+                Some(root.to_string_lossy().to_string()),
+                db.path().to_path_buf(),
+                bookmarks,
+            );
+        }
+    }
+
+    /// Spawn a background task that resolves `bookmarks` against the db at
+    /// `db_path` and sends `LiveHealthBatch` events tagged with `repo_root` to
+    /// update the list health dots progressively.
+    fn spawn_live_health_task_for(
+        &self,
+        repo_root: Option<String>,
+        db_path: std::path::PathBuf,
         bookmarks: Vec<codemark_core::engine::bookmark::Bookmark>,
     ) {
         if bookmarks.is_empty() {
             return;
         }
 
-        let db_path = self.db.path().to_path_buf();
         let event_handler = self.event_handler.clone();
         // Stamp the current health epoch; results are discarded on apply if the
         // epoch has since advanced (e.g. a grammar refresh on FocusGained).
@@ -797,6 +873,7 @@ impl BrowserLayout {
                 if batch.len() >= 10 {
                     let _ = event_handler.send(Event::LiveHealthBatch {
                         generation,
+                        repo_root: repo_root.clone(),
                         batch: std::mem::take(&mut batch),
                     });
                 }
@@ -804,7 +881,7 @@ impl BrowserLayout {
 
             // Send remaining items
             if !batch.is_empty() {
-                let _ = event_handler.send(Event::LiveHealthBatch { generation, batch });
+                let _ = event_handler.send(Event::LiveHealthBatch { generation, repo_root, batch });
             }
         });
     }
@@ -821,19 +898,39 @@ impl BrowserLayout {
     /// [`spawn_live_health_task`](Self::spawn_live_health_task): reopens the DB by
     /// path, reuses parse caches across collections, and posts in small batches.
     pub(super) fn spawn_collection_health_task(&self) {
+        // Fan out per checked repo so each batch is tagged with its own repo
+        // root; the `(repo_root, id)` cache keys then never collide across repos.
+        // In single-repo mode this is one pass over the focus repo, identical to
+        // the pre-multi-repo behavior.
+        for (root, db) in self.workspace.dbs() {
+            self.spawn_collection_health_task_for(
+                Some(root.to_string_lossy().to_string()),
+                db.path().to_path_buf(),
+            );
+        }
+    }
+
+    /// Per-repo body of [`Self::spawn_collection_health_task`]: resolve the
+    /// collections in the db at `db_path` and send `CollectionHealthBatch` events
+    /// tagged with `repo_root`.
+    fn spawn_collection_health_task_for(
+        &self,
+        repo_root: Option<String>,
+        db_path: std::path::PathBuf,
+    ) {
         use codemark_core::storage::db::Database;
 
         // Probe on the UI thread so we skip the `spawn_blocking` (which needs a
         // Tokio runtime) entirely when there are no collections — mirroring
         // [`spawn_live_health_task`](Self::spawn_live_health_task)'s empty-set
         // guard, which keeps the unit tests (no runtime) from panicking in
-        // `BrowserLayout::new`.
-        let collections = match self.db.list_collections() {
+        // `BrowserLayout::new`. Probe the repo's own db (not the focus db) so a
+        // repo with collections still spawns even when the focus repo has none.
+        let collections = match Database::open(&db_path).and_then(|db| db.list_collections()) {
             Ok(c) if !c.is_empty() => c,
             _ => return,
         };
 
-        let db_path = self.db.path().to_path_buf();
         let event_handler = self.event_handler.clone();
         let generation = self.health_generation;
 
@@ -926,13 +1023,18 @@ impl BrowserLayout {
                 if batch.len() >= 5 {
                     let _ = event_handler.send(Event::CollectionHealthBatch {
                         generation,
+                        repo_root: repo_root.clone(),
                         batch: std::mem::take(&mut batch),
                     });
                 }
             }
 
             if !batch.is_empty() {
-                let _ = event_handler.send(Event::CollectionHealthBatch { generation, batch });
+                let _ = event_handler.send(Event::CollectionHealthBatch {
+                    generation,
+                    repo_root,
+                    batch,
+                });
             }
 
             tracing::debug!(
@@ -963,7 +1065,7 @@ impl BrowserLayout {
             return;
         }
         let generation = self.right_pane.collection_generation();
-        let db_path = self.db.path().to_path_buf();
+        let db_path = self.db().path().to_path_buf();
         let event_handler = self.event_handler.clone();
 
         tokio::task::spawn_blocking(move || {
@@ -1042,11 +1144,11 @@ impl BrowserLayout {
     /// `preview_cache` across tasks so repeat visits to the same file reuse the
     /// parse tree. Debounce serializes these tasks, so the lock is effectively
     /// uncontended.
-    fn spawn_preview_task(&self, bookmark_id: String) {
+    fn spawn_preview_task(&self, bookmark_id: String, repo_root: Option<String>) {
         use codemark_core::storage::db::Database;
 
         let request_id = self.active_preview_request;
-        let db_path = self.db.path().to_path_buf();
+        let db_path = self.workspace.db_for(repo_root.as_deref()).path().to_path_buf();
         let head = self.right_pane.head_commit().map(|s| s.to_string());
         let event_handler = self.event_handler.clone();
         let preview_cache = Arc::clone(&self.preview_cache);
@@ -1391,9 +1493,16 @@ impl BrowserLayout {
                         self.start_pull_tour(remote_id);
                         return Some(true);
                     }
+                    // Capture the owning repo (owned) before dropping the panel
+                    // borrow so the preview loads from the selected row's repo.
+                    let repo_root = selected.repo_root().map(str::to_string);
                     let tour_name = selected.text().to_string();
                     panel.activate_selected();
-                    self.right_pane.load_tour_live(&self.db, &tour_name, &mut self.session_cache);
+                    self.right_pane.load_tour_live(
+                        self.workspace.db_for(repo_root.as_deref()),
+                        &tour_name,
+                        &mut self.session_cache,
+                    );
                     // Only the first step was resolved live; resolve the rest off
                     // the UI thread so entering the tour stays snappy.
                     self.spawn_collection_live_resolve();
@@ -1405,9 +1514,16 @@ impl BrowserLayout {
                 if let Some(panel) = self.left_pane.content_panel.active_panel_mut()
                     && let Some(selected) = panel.selected()
                 {
+                    // Capture the owning repo (owned) before dropping the panel
+                    // borrow so the preview loads from the selected row's repo.
+                    let repo_root = selected.repo_root().map(str::to_string);
                     let tour_name = selected.text().to_string();
                     panel.activate_selected();
-                    self.right_pane.load_tour_live(&self.db, &tour_name, &mut self.session_cache);
+                    self.right_pane.load_tour_live(
+                        self.workspace.db_for(repo_root.as_deref()),
+                        &tour_name,
+                        &mut self.session_cache,
+                    );
                     // Only the first step was resolved live; resolve the rest off
                     // the UI thread so entering the collection stays snappy.
                     self.spawn_collection_live_resolve();
@@ -1420,8 +1536,13 @@ impl BrowserLayout {
                     && let Some(selected) = panel.selected()
                     && let Some(id) = selected.user_data.clone()
                 {
+                    let repo_root = selected.repo_root().map(str::to_string);
                     panel.activate_selected();
-                    self.right_pane.load_bookmark_live(&self.db, &id, &mut self.session_cache);
+                    self.right_pane.load_bookmark_live(
+                        self.workspace.db_for(repo_root.as_deref()),
+                        &id,
+                        &mut self.session_cache,
+                    );
                     self.set_focus(FocusArea::Main);
                     return Some(true);
                 }
@@ -1574,48 +1695,61 @@ impl BrowserLayout {
     fn handle_delete_key(&mut self) -> Option<bool> {
         match ContentTab::from_index(self.left_pane.content_panel.tabs.selected_index()) {
             Some(ContentTab::Collections) => {
-                if let Some(panel) = self.left_pane.content_panel.active_panel_mut()
-                    && let Some(selected) = panel.selected()
-                {
-                    let collection_name = selected.text().to_string();
-                    if let Ok(Some(collection)) = self.db.get_collection_by_name(&collection_name) {
-                        // Deleting a collection also deletes its bookmarks — they're
-                        // almost always created alongside the collection. Bookmarks
-                        // shared with another collection are preserved, so only count
-                        // the ones that will actually be removed.
-                        //
-                        // Surface a count failure rather than defaulting to 0, which
-                        // would open a destructive confirmation that understates what's
-                        // about to be deleted.
-                        let bm_count =
-                            match self.db.count_exclusive_collection_bookmarks(&collection.id) {
-                                Ok(count) => count,
-                                Err(err) => {
-                                    tracing::warn!(
-                                        target: "codemark::ui",
-                                        error = %err,
-                                        "failed to count collection bookmarks before delete"
-                                    );
-                                    self.pending_notification = Some(HealNotification {
-                                        message: format!("Couldn't count bookmarks: {err}"),
-                                        success: false,
-                                    });
-                                    return Some(true);
-                                }
-                            };
-                        let bookmarks_line = match bm_count {
-                            0 => String::new(),
-                            1 => "\n1 bookmark will be deleted.".to_string(),
-                            n => format!("\n{n} bookmarks will be deleted."),
-                        };
-                        // Delete by the stable id; names are not uniquely constrained.
-                        self.request_confirmation(ConfirmDialog::new(
-                            "Delete Collection",
-                            format!("Delete collection \"{collection_name}\"?{bookmarks_line}"),
-                            DialogAction::DeleteCollection(collection.id),
-                        ));
-                        return Some(true);
-                    }
+                // Extract the selected row's name + owning repo up front, then drop
+                // the panel borrow so the db lookups below can borrow `self`.
+                let selection = self
+                    .left_pane
+                    .content_panel
+                    .active_panel()
+                    .and_then(|panel| panel.selected())
+                    .map(|selected| {
+                        (selected.text().to_string(), selected.repo_root().map(str::to_string))
+                    });
+                if let Some((collection_name, repo_root)) = selection {
+                    // Route the lookup/count to the selected row's repo (None →
+                    // focused repo). Resolve the collection + exclusive bookmark
+                    // count while the `db` borrow is live, capturing owned values so
+                    // no db borrow crosses the `&mut self` calls below.
+                    let db = self.workspace.db_for(repo_root.as_deref());
+                    let Ok(Some(collection)) = db.get_collection_by_name(&collection_name) else {
+                        return None;
+                    };
+                    // Deleting a collection also deletes its bookmarks — they're
+                    // almost always created alongside the collection. Bookmarks
+                    // shared with another collection are preserved, so only count
+                    // the ones that will actually be removed.
+                    //
+                    // Surface a count failure rather than defaulting to 0, which
+                    // would open a destructive confirmation that understates what's
+                    // about to be deleted.
+                    let bm_count = match db.count_exclusive_collection_bookmarks(&collection.id) {
+                        Ok(count) => count,
+                        Err(err) => {
+                            tracing::warn!(
+                                target: "codemark::ui",
+                                error = %err,
+                                "failed to count collection bookmarks before delete"
+                            );
+                            self.pending_notification = Some(HealNotification {
+                                message: format!("Couldn't count bookmarks: {err}"),
+                                success: false,
+                            });
+                            return Some(true);
+                        }
+                    };
+                    let collection_id = collection.id;
+                    let bookmarks_line = match bm_count {
+                        0 => String::new(),
+                        1 => "\n1 bookmark will be deleted.".to_string(),
+                        n => format!("\n{n} bookmarks will be deleted."),
+                    };
+                    // Delete by the stable id; names are not uniquely constrained.
+                    self.request_confirmation(ConfirmDialog::new(
+                        "Delete Collection",
+                        format!("Delete collection \"{collection_name}\"?{bookmarks_line}"),
+                        DialogAction::DeleteCollection { id: collection_id, repo_root },
+                    ));
+                    return Some(true);
                 }
             }
             Some(ContentTab::Bookmarks) => {
@@ -1624,10 +1758,12 @@ impl BrowserLayout {
                     && let Some(id) = selected.user_data.clone()
                 {
                     let label = selected.text().to_string();
+                    // Route the delete to the selected row's repo (None → focused).
+                    let repo_root = selected.repo_root().map(str::to_string);
                     self.request_confirmation(ConfirmDialog::new(
                         "Delete Bookmark",
                         format!("Delete bookmark \"{}\"?", label),
-                        DialogAction::DeleteBookmark(id),
+                        DialogAction::DeleteBookmark { id, repo_root },
                     ));
                     return Some(true);
                 }

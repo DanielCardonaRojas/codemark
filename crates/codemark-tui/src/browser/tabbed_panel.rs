@@ -158,6 +158,7 @@ pub fn bookmark_to_panel_item(
 fn bookmark_to_panel_item_cached(
     bookmark: &Bookmark,
     live: &std::collections::HashMap<String, HealthStatus>,
+    repo_root: Option<&str>,
 ) -> PanelItem {
     let summary_info = bookmark
         .language
@@ -172,7 +173,10 @@ fn bookmark_to_panel_item_cached(
 
     let icon = summary_info.as_ref().map(|s| get_node_icon(&s.label)).unwrap_or("");
 
-    let health = live.get(&bookmark.id).copied().unwrap_or(HealthStatus::Unknown);
+    let health = live
+        .get(&super::health_key(repo_root, &bookmark.id))
+        .copied()
+        .unwrap_or(HealthStatus::Unknown);
     let mut item = PanelItem::new(&bookmark.file_path)
         .compressible_path()
         .metadata(bookmark.created_by.clone().unwrap_or_default())
@@ -186,6 +190,74 @@ fn bookmark_to_panel_item_cached(
     }
 
     item
+}
+
+/// Display name for a repo root: its last path component (e.g.
+/// `/home/u/codemark` -> `codemark`), falling back to the full string.
+pub(crate) fn repo_display_name(root: &std::path::Path) -> String {
+    root.file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| root.to_string_lossy().to_string())
+}
+
+/// Build merged collection + bookmark rows across the given repos.
+///
+/// `multi` (derived from the repo count) controls whether the repo name is
+/// surfaced on each row: for bookmarks the author (metadata) is replaced with
+/// the repo name, and for collections the branch (secondary_text) is replaced
+/// with the repo name. With a single repo, rows are byte-for-byte identical to
+/// [`TabbedPanel::build_content_items`] output (parity) — the only added state
+/// is the repo tag, which does not affect rendering.
+///
+/// When multi, rows are interleaved across repos by `created_at` descending so
+/// the most recent items surface first; single-repo order is preserved exactly.
+pub fn build_merged_content<'a>(
+    repos: impl Iterator<Item = (&'a std::path::Path, &'a Database)>,
+    live: &std::collections::HashMap<String, HealthStatus>,
+    bookmark_live: &std::collections::HashMap<String, HealthStatus>,
+) -> (Vec<PanelItem>, Vec<PanelItem>) {
+    let repos: Vec<(&std::path::Path, &Database)> = repos.collect();
+    let multi = repos.len() > 1;
+
+    let mut collections: Vec<PanelItem> = Vec::new();
+    let mut bookmarks: Vec<PanelItem> = Vec::new();
+
+    for (root, db) in repos {
+        let name = repo_display_name(root);
+        let root_key = root.to_string_lossy();
+
+        // Key the live-health lookups by this repo's root so a shared id across
+        // repos reads each repo's own cached dot.
+        let (_tours, repo_collections, repo_bookmarks) =
+            TabbedPanel::build_content_items(db, live, bookmark_live, Some(&root_key));
+
+        for mut item in repo_collections {
+            item = item.repo(name.clone(), root_key.clone());
+            // Multi-repo replaces the branch with the bare repo name.
+            if multi {
+                item.set_secondary_text(name.clone());
+            }
+            collections.push(item);
+        }
+
+        for mut item in repo_bookmarks {
+            item = item.repo(name.clone(), root_key.clone());
+            // Multi-repo replaces the author with the bare repo name.
+            if multi {
+                item.set_metadata(name.clone());
+            }
+            bookmarks.push(item);
+        }
+    }
+
+    // Interleave by recency only in multi mode; single-repo output must keep the
+    // db's native order to stay identical to `build_content_items`.
+    if multi {
+        collections.sort_by(|a, b| b.created_at_str().cmp(&a.created_at_str()));
+        bookmarks.sort_by(|a, b| b.created_at_str().cmp(&a.created_at_str()));
+    }
+
+    (collections, bookmarks)
 }
 
 impl TabbedPanel {
@@ -373,51 +445,70 @@ impl TabbedPanel {
         }
     }
 
-    /// Build tags and branches items.
-    pub fn build_tags_branches_items(
-        db: &Database,
+    /// Build merged tags and branches items across multiple databases.
+    pub fn build_tags_branches_items<'a>(
+        dbs: impl Iterator<Item = &'a Database>,
         active_tab: ContentTab,
     ) -> (Vec<PanelItem>, Vec<PanelItem>) {
-        let tags_result = match active_tab {
-            ContentTab::Bookmarks => db.list_bookmark_tags(),
-            ContentTab::Collections | ContentTab::Tours => db.list_collection_tags(),
-        };
+        let mut all_tags = std::collections::HashSet::new();
+        let mut all_branches = std::collections::HashSet::new();
+        let mut tag_errors = Vec::new();
+        let mut branch_errors = Vec::new();
 
-        let tags = match tags_result {
-            Ok(tags) if !tags.is_empty() => tags
+        for db in dbs {
+            match active_tab {
+                ContentTab::Bookmarks => match db.list_bookmark_tags() {
+                    Ok(tags) => all_tags.extend(tags),
+                    Err(e) => tag_errors.push(e.to_string()),
+                },
+                ContentTab::Collections | ContentTab::Tours => match db.list_collection_tags() {
+                    Ok(tags) => all_tags.extend(tags),
+                    Err(e) => tag_errors.push(e.to_string()),
+                },
+            }
+            match db.list_all_branches() {
+                Ok(branches) => all_branches.extend(branches),
+                Err(e) => branch_errors.push(e.to_string()),
+            }
+        }
+
+        let tags = if !tag_errors.is_empty() && all_tags.is_empty() {
+            vec![
+                PanelItem::new(format!("Error: {}", tag_errors.join(", ")))
+                    .no_health()
+                    .color(crate::theme::palette().error),
+            ]
+        } else if all_tags.is_empty() {
+            vec![PanelItem::new("No tags found").no_health().color(crate::theme::palette().dim)]
+        } else {
+            let mut sorted_tags: Vec<_> = all_tags.into_iter().collect();
+            sorted_tags.sort();
+            sorted_tags
                 .into_iter()
                 .map(|tag| {
-                    // `marker` is the keyword hue (base0E) — the same color the
-                    // code preview uses to highlight keywords.
                     PanelItem::new(format!("#{tag}"))
                         .user_data(tag)
                         .no_health()
                         .color(crate::theme::palette().marker)
                 })
-                .collect(),
-            Ok(_) => {
-                vec![PanelItem::new("No tags found").no_health().color(crate::theme::palette().dim)]
-            }
-            Err(e) => vec![
-                PanelItem::new(format!("Error: {e}"))
-                    .no_health()
-                    .color(crate::theme::palette().error),
-            ],
+                .collect()
         };
 
-        let branches = match db.list_all_branches() {
-            Ok(branches) if !branches.is_empty() => branches
-                .into_iter()
-                .map(|branch| PanelItem::new(branch).no_health().icon(""))
-                .collect(),
-            Ok(_) => vec![
-                PanelItem::new("No branches found").no_health().color(crate::theme::palette().dim),
-            ],
-            Err(e) => vec![
-                PanelItem::new(format!("Error: {e}"))
+        let branches = if !branch_errors.is_empty() && all_branches.is_empty() {
+            vec![
+                PanelItem::new(format!("Error: {}", branch_errors.join(", ")))
                     .no_health()
                     .color(crate::theme::palette().error),
-            ],
+            ]
+        } else if all_branches.is_empty() {
+            vec![PanelItem::new("No branches found").no_health().color(crate::theme::palette().dim)]
+        } else {
+            let mut sorted_branches: Vec<_> = all_branches.into_iter().collect();
+            sorted_branches.sort();
+            sorted_branches
+                .into_iter()
+                .map(|branch| PanelItem::new(branch).no_health().icon(""))
+                .collect()
         };
 
         (tags, branches)
@@ -428,13 +519,17 @@ impl TabbedPanel {
         db: &Database,
         live: &std::collections::HashMap<String, HealthStatus>,
         bookmark_live: &std::collections::HashMap<String, HealthStatus>,
+        repo_root: Option<&str>,
     ) -> (Vec<PanelItem>, Vec<PanelItem>, Vec<PanelItem>) {
         let mut collections_items = Vec::new();
         let mut tours_items = Vec::new();
 
         if let Ok(collections) = db.list_collections() {
             for (c, count) in collections {
-                let health = super::collection_health_status(c.health, live.get(&c.id).copied());
+                let health = super::collection_health_status(
+                    c.health,
+                    live.get(&super::health_key(repo_root, &c.id)).copied(),
+                );
 
                 let is_published = c.published_at.is_some();
                 let branch = c.created_branch.clone().unwrap_or_else(|| "main".to_string());
@@ -468,7 +563,7 @@ impl TabbedPanel {
         let bookmarks = match db.list_bookmarks(&BookmarkFilter::default()) {
             Ok(bookmarks) => bookmarks
                 .iter()
-                .map(|bm| bookmark_to_panel_item_cached(bm, bookmark_live))
+                .map(|bm| bookmark_to_panel_item_cached(bm, bookmark_live, repo_root))
                 .collect(),
             Err(_) => Vec::new(),
         };
@@ -525,7 +620,8 @@ impl TabbedPanel {
 
     /// Create panel 2 with Tags/Branches tabs.
     pub fn new_tags_branches(db: &Database, active_tab: ContentTab) -> Self {
-        let (tags_items, branches_items) = TabbedPanel::build_tags_branches_items(db, active_tab);
+        let (tags_items, branches_items) =
+            TabbedPanel::build_tags_branches_items(std::iter::once(db), active_tab);
         let tags_panel = Panel::new("").bordered(false).multi_select(true).items(tags_items);
         let branches_panel =
             Panel::new("").bordered(false).multi_select(true).items(branches_items);
@@ -570,10 +666,13 @@ impl TabbedPanel {
 
     /// Create panel 3 with Bookmarks/Collections/Tours tabs.
     pub fn new_tours_collections_bookmarks(db: &Database) -> Self {
+        // Empty caches here (nothing resolved yet), so the health-key repo_root
+        // is immaterial; pass the db's own root for consistency.
         let (tours_items, collections_items, bookmarks_items) = TabbedPanel::build_content_items(
             db,
             &std::collections::HashMap::new(),
             &std::collections::HashMap::new(),
+            super::db_repo_root(db).as_deref(),
         );
         // Bookmarks and Collections expose the `S` sort cycle, so they start with
         // an explicit order (most recent first). Tours keep insertion order.
@@ -977,9 +1076,230 @@ impl TabbedPanel {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use codemark_core::engine::bookmark::{Collection, Visibility};
     use ratatui::crossterm::event::{
         KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
     };
+    use std::path::Path;
+    use tempfile::TempDir;
+
+    /// A bookmark with a distinct id/query/path/author/timestamp for merge tests.
+    fn sample_bookmark(
+        id: &str,
+        file_path: &str,
+        author: Option<&str>,
+        created_at: &str,
+    ) -> Bookmark {
+        Bookmark {
+            id: id.to_string(),
+            query: format!("(function_item name: (identifier) @name (#eq? @name \"{id}\"))"),
+            language: "rust".to_string(),
+            file_path: file_path.to_string(),
+            content_hash: None,
+            commit_hash: None,
+            health: BookmarkHealth::Active,
+            resolution_method: None,
+            last_resolved_at: None,
+            stale_since: None,
+            created_at: created_at.to_string(),
+            created_by: author.map(|a| a.to_string()),
+            current_resolution_id: None,
+            repo_id: None,
+            tags: Vec::new(),
+            annotations: Vec::new(),
+            comments: Vec::new(),
+        }
+    }
+
+    fn sample_collection(id: &str, name: &str, created_at: &str) -> Collection {
+        Collection {
+            id: id.to_string(),
+            name: name.to_string(),
+            description: None,
+            visibility: Visibility::Private,
+            created_at: created_at.to_string(),
+            created_by: None,
+            created_branch: Some("feature-x".to_string()),
+            published_at: None,
+            published_commit_sha: None,
+            repo_url: None,
+            repo_id: None,
+            status: None,
+            health: None,
+            health_computed_at: None,
+            updated_at: None,
+            imported_from_url: None,
+        }
+    }
+
+    /// Create a temp repo directory named `name` with a db seeded via `seed`.
+    /// Returns the tempdir (keep alive), the repo root, and the open db.
+    fn temp_repo(
+        name: &str,
+        seed: impl FnOnce(&Database),
+    ) -> (TempDir, std::path::PathBuf, Database) {
+        let tmp = TempDir::new().expect("tempdir");
+        let root = tmp.path().join(name);
+        let db_path = root.join(".codemark").join("codemark.db");
+        let db = Database::create(&db_path).expect("create db");
+        seed(&db);
+        (tmp, root, db)
+    }
+
+    #[test]
+    fn merged_single_repo_matches_build_content_items() {
+        let live = std::collections::HashMap::new();
+        let bookmark_live = std::collections::HashMap::new();
+        let (_tmp, root, db) = temp_repo("codemark", |db| {
+            db.insert_bookmark(&sample_bookmark(
+                "bm-1",
+                "src/main.rs",
+                Some("alice"),
+                "2026-01-01T00:00:00Z",
+            ))
+            .unwrap();
+            db.insert_bookmark(&sample_bookmark(
+                "bm-2",
+                "src/config.rs",
+                Some("bob"),
+                "2026-01-02T00:00:00Z",
+            ))
+            .unwrap();
+            db.insert_collection(&sample_collection("col-1", "Tour", "2026-01-03T00:00:00Z"))
+                .unwrap();
+        });
+
+        let (_tours, want_collections, want_bookmarks) = TabbedPanel::build_content_items(
+            &db,
+            &live,
+            &bookmark_live,
+            Some(root.to_string_lossy().as_ref()),
+        );
+        let (got_collections, got_bookmarks) =
+            build_merged_content(std::iter::once((root.as_path(), &db)), &live, &bookmark_live);
+
+        // Same order and count.
+        assert_eq!(got_bookmarks.len(), want_bookmarks.len());
+        assert_eq!(got_collections.len(), want_collections.len());
+
+        // Visible fields identical (the only added state is the repo tag).
+        for (got, want) in got_bookmarks.iter().zip(&want_bookmarks) {
+            assert_eq!(got.text(), want.text());
+            assert_eq!(got.get_emphasis(), want.get_emphasis());
+            assert_eq!(got.get_metadata(), want.get_metadata());
+            assert_eq!(got.get_secondary_text(), want.get_secondary_text());
+            assert_eq!(got.user_data, want.user_data);
+            assert_eq!(got.created_at_str(), want.created_at_str());
+        }
+        for (got, want) in got_collections.iter().zip(&want_collections) {
+            assert_eq!(got.text(), want.text());
+            assert_eq!(got.get_emphasis(), want.get_emphasis());
+            assert_eq!(got.get_metadata(), want.get_metadata());
+            assert_eq!(got.get_secondary_text(), want.get_secondary_text());
+            assert_eq!(got.user_data, want.user_data);
+            assert_eq!(got.created_at_str(), want.created_at_str());
+        }
+
+        // Repo tag is set even for a single repo (for per-item db resolution).
+        assert!(got_bookmarks.iter().all(|i| i.repo_name() == Some("codemark")));
+        assert!(got_collections.iter().all(|i| i.repo_name() == Some("codemark")));
+    }
+
+    #[test]
+    fn merged_multi_repo_tags_and_swaps_author() {
+        let live = std::collections::HashMap::new();
+        let bookmark_live = std::collections::HashMap::new();
+
+        let (_a, root_a, db_a) = temp_repo("repo_a", |db| {
+            db.insert_bookmark(&sample_bookmark(
+                "a-bm",
+                "src/a.rs",
+                Some("alice"),
+                "2026-01-01T00:00:00Z",
+            ))
+            .unwrap();
+            db.insert_collection(&sample_collection("a-col", "ACol", "2026-01-01T00:00:00Z"))
+                .unwrap();
+        });
+        let (_b, root_b, db_b) = temp_repo("repo_b", |db| {
+            db.insert_bookmark(&sample_bookmark(
+                "b-bm",
+                "src/b.rs",
+                Some("bob"),
+                "2026-01-02T00:00:00Z",
+            ))
+            .unwrap();
+            db.insert_collection(&sample_collection("b-col", "BCol", "2026-01-02T00:00:00Z"))
+                .unwrap();
+        });
+
+        let repos: Vec<(&Path, &Database)> =
+            vec![(root_a.as_path(), &db_a), (root_b.as_path(), &db_b)];
+        let (collections, bookmarks) =
+            build_merged_content(repos.into_iter(), &live, &bookmark_live);
+
+        // Each bookmark is tagged with its repo, and in multi mode the metadata
+        // is the repo name (not the author).
+        for bm in &bookmarks {
+            let repo = bm.repo_name().expect("repo tag");
+            assert!(repo == "repo_a" || repo == "repo_b");
+            assert_eq!(bm.get_metadata(), Some(repo));
+            assert_ne!(bm.get_metadata(), Some("alice"));
+            assert_ne!(bm.get_metadata(), Some("bob"));
+        }
+
+        // Collections' secondary_text is the repo name (not the branch) in multi.
+        for col in &collections {
+            let repo = col.repo_name().expect("repo tag");
+            assert_eq!(col.get_secondary_text(), Some(repo));
+            assert_ne!(col.get_secondary_text(), Some("feature-x"));
+        }
+    }
+
+    #[test]
+    fn merged_multi_repo_sorted_by_created_at_desc() {
+        let live = std::collections::HashMap::new();
+        let bookmark_live = std::collections::HashMap::new();
+
+        // repo_a holds the oldest and newest; repo_b holds the middle one, so a
+        // correct descending sort must interleave across repos.
+        let (_a, root_a, db_a) = temp_repo("repo_a", |db| {
+            db.insert_bookmark(&sample_bookmark(
+                "a-old",
+                "src/old.rs",
+                Some("alice"),
+                "2026-01-01T00:00:00Z",
+            ))
+            .unwrap();
+            db.insert_bookmark(&sample_bookmark(
+                "a-new",
+                "src/new.rs",
+                Some("alice"),
+                "2026-01-03T00:00:00Z",
+            ))
+            .unwrap();
+        });
+        let (_b, root_b, db_b) = temp_repo("repo_b", |db| {
+            db.insert_bookmark(&sample_bookmark(
+                "b-mid",
+                "src/mid.rs",
+                Some("bob"),
+                "2026-01-02T00:00:00Z",
+            ))
+            .unwrap();
+        });
+
+        let repos: Vec<(&Path, &Database)> =
+            vec![(root_a.as_path(), &db_a), (root_b.as_path(), &db_b)];
+        let (_collections, bookmarks) =
+            build_merged_content(repos.into_iter(), &live, &bookmark_live);
+
+        let order: Vec<&str> = bookmarks.iter().filter_map(|b| b.created_at_str()).collect();
+        assert_eq!(
+            order,
+            vec!["2026-01-03T00:00:00Z", "2026-01-02T00:00:00Z", "2026-01-01T00:00:00Z"]
+        );
+    }
 
     fn two_tab_panel() -> TabbedPanel {
         let p1 = Panel::new("").items(vec![PanelItem::new("alpha"), PanelItem::new("beta")]);

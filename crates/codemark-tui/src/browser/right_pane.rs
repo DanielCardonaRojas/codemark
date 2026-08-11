@@ -83,6 +83,15 @@ pub struct RightPane {
     /// id here lets `refresh_all_panels` re-render the overview after a refresh
     /// instead of falling back to the first local collection.
     pub active_remote_tour_id: Option<String>,
+    /// Owning repo root of the active preview item (bookmark/collection/tour),
+    /// derived from the database a preview was loaded from (equivalent to the
+    /// selected `PanelItem::repo_root()`, since both are `<root>` from the db path).
+    /// Lets the refresh-restore path in `refresh_all_panels` re-load the active
+    /// item from the correct repo's database rather than blindly from the focused
+    /// repo. `None` means the item belongs to (or is resolved via) the focused
+    /// repo. Set by the `load_*` methods; cleared alongside the other `active_*`
+    /// fields in [`clear_preview_state`].
+    pub active_repo_root: Option<String>,
     /// Cached show template content to avoid repeated disk reads
     cached_show_template: String,
     /// Cached details template content to avoid repeated disk reads
@@ -187,6 +196,7 @@ impl RightPane {
             active_tour_name: None,
             active_bookmark_id: None,
             active_remote_tour_id: None,
+            active_repo_root: None,
             needs_preview_update: false,
             cached_show_template,
             cached_details_template,
@@ -588,6 +598,7 @@ impl RightPane {
                 self.active_bookmark_id = Some(bookmark_id.to_string());
                 self.active_tour_name = None;
                 self.active_remote_tour_id = None;
+                self.active_repo_root = Self::repo_root_of(db);
                 self.overview_active = false;
                 self.overview_health = None;
                 self.active_collection_id = None;
@@ -627,7 +638,12 @@ impl RightPane {
             // Synchronous path runs on the UI runtime worker thread.
             true,
         ) {
-            Ok(Some(payload)) => self.apply_preview(*payload),
+            Ok(Some(payload)) => {
+                self.apply_preview(*payload);
+                // apply_preview has no db; record the owning repo here so the
+                // refresh-restore path reloads from the right repo.
+                self.active_repo_root = Self::repo_root_of(db);
+            }
             Ok(None) => self.clear_preview_state(db),
             Err(e) => {
                 // Distinguish query-not-resolving (Unmatched) from operational
@@ -827,6 +843,7 @@ impl RightPane {
         self.active_tour_name = Some(tour_name.to_string());
         self.active_bookmark_id = None;
         self.active_remote_tour_id = None;
+        self.active_repo_root = Self::repo_root_of(db);
         self.overview_active = false;
         self.overview_health = None;
         self.active_collection_id = None;
@@ -1057,6 +1074,13 @@ impl RightPane {
     ///
     /// Also clears rendered panels so stale content from a previous bookmark
     /// does not remain visible.
+    /// Repo root of a database (the parent of its `.codemark` dir) as a string
+    /// matching `PanelItem::repo_root()`. `None` for in-memory or degenerate paths
+    /// (which resolve to the focused repo).
+    fn repo_root_of(db: &Database) -> Option<String> {
+        db.path().parent().and_then(|p| p.parent()).map(|p| p.to_string_lossy().to_string())
+    }
+
     pub fn clear_preview_state(&mut self, db: &Database) {
         self.steps_data.clear();
         self.pager_total = 0;
@@ -1064,6 +1088,7 @@ impl RightPane {
         self.active_bookmark_id = None;
         self.active_tour_name = None;
         self.active_remote_tour_id = None;
+        self.active_repo_root = None;
         self.overview_active = false;
         self.overview_health = None;
         self.active_collection_id = None;
@@ -1148,6 +1173,7 @@ impl RightPane {
         self.active_tour_name = Some(collection.name.clone());
         self.active_bookmark_id = None;
         self.active_remote_tour_id = None;
+        self.active_repo_root = Self::repo_root_of(db);
     }
 
     /// Load an overview for a remote (not-yet-pulled) tour into the overview
@@ -1175,6 +1201,8 @@ impl RightPane {
         self.invalidate_pending_step_resolution();
         self.active_tour_name = None;
         self.active_bookmark_id = None;
+        // A remote overview has no local repo db; resolve via the focused repo.
+        self.active_repo_root = None;
         // Remember which remote tour is shown so a later refresh can restore this
         // overview instead of falling back to the first local collection.
         self.active_remote_tour_id = Some(tour.tour_id.clone());
@@ -1255,6 +1283,7 @@ impl RightPane {
                 self.active_tour_name = Some(tour_name.to_string());
                 self.active_bookmark_id = None;
                 self.active_remote_tour_id = None;
+                self.active_repo_root = Self::repo_root_of(db);
                 self.overview_active = false;
                 self.overview_health = None;
                 self.active_collection_id = None;

@@ -680,6 +680,9 @@ async fn collection_overview_label_reflects_live_bookmark_health() {
     // Persisted collection health = Active (worst of the bookmark resolutions),
     // so without a live batch the overview label is "Exact".
     sandbox.db.recompute_collection_health("col-1").expect("recompute health");
+    // The batch must be tagged with the focus repo's root so the overview
+    // lookup (keyed by (repo_root, id)) finds it.
+    let repo_root = sandbox.repo_root().to_string_lossy().to_string();
     let (mut layout, _sandbox) = make_layout(sandbox);
 
     assert_eq!(layout.focus(), FocusArea::ContentPanel);
@@ -695,6 +698,7 @@ async fn collection_overview_label_reflects_live_bookmark_health() {
     // is 0 for a fresh layout (no FocusGained has bumped health_generation).
     layout.handle_event(&Event::CollectionHealthBatch {
         generation: 0,
+        repo_root: Some(repo_root.clone()),
         batch: vec![("col-1".to_string(), Some(LiveUIStatus::Drifted))],
     });
     let live = render_to_string(&layout, 140, 40);
@@ -708,6 +712,7 @@ async fn collection_overview_label_reflects_live_bookmark_health() {
     // clears (and the dot would go gray).
     layout.handle_event(&Event::CollectionHealthBatch {
         generation: 0,
+        repo_root: Some(repo_root),
         batch: vec![("col-1".to_string(), None)],
     });
     let emptied = render_to_string(&layout, 140, 40);
