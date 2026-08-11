@@ -408,9 +408,10 @@ impl BrowserLayout {
     /// snapshot. When no live pass has run yet, the persisted value (set by
     /// [`RightPane::load_collection_overview`]) stands until the background task
     /// arrives and the handler corrects it.
-    fn load_collection_overview_live(&mut self, id: &str) {
-        self.right_pane.load_collection_overview(self.workspace.focus_db(), id);
-        let key = health_key(db_repo_root(self.workspace.focus_db()).as_deref(), id);
+    fn load_collection_overview_live(&mut self, id: &str, repo_root: Option<&str>) {
+        let db = self.workspace.db_for(repo_root);
+        self.right_pane.load_collection_overview(db, id);
+        let key = health_key(db_repo_root(db).as_deref(), id);
         match self.collection_live_health.get(&key).copied() {
             // A real live status overrides the persisted snapshot.
             Some(h) if h != HealthStatus::Unknown => self.right_pane.overview_health = Some(h),
@@ -535,7 +536,13 @@ impl BrowserLayout {
                 );
             }
             ContentTab::Collections => {
-                self.load_collection_overview_live(id);
+                let repo_root = self
+                    .left_pane
+                    .content_panel
+                    .active_panel()
+                    .and_then(|panel| panel.selected())
+                    .and_then(|s| s.repo_root().map(str::to_string));
+                self.load_collection_overview_live(id, repo_root.as_deref());
             }
             ContentTab::Tours => self.preview_tour_item(id),
         }
@@ -553,7 +560,7 @@ impl BrowserLayout {
                 None => self.right_pane.clear_preview_state(self.workspace.focus_db()),
             }
         } else {
-            self.load_collection_overview_live(id);
+            self.load_collection_overview_live(id, None);
         }
     }
 
@@ -567,7 +574,15 @@ impl BrowserLayout {
     pub(super) fn on_content_selection_changed(&mut self, tab: ContentTab, id: &str) {
         match tab {
             ContentTab::Bookmarks => self.request_bookmark_preview(id),
-            ContentTab::Collections => self.load_collection_overview_live(id),
+            ContentTab::Collections => {
+                let repo_root = self
+                    .left_pane
+                    .content_panel
+                    .active_panel()
+                    .and_then(|panel| panel.selected())
+                    .and_then(|s| s.repo_root().map(str::to_string));
+                self.load_collection_overview_live(id, repo_root.as_deref());
+            }
             ContentTab::Tours => self.preview_tour_item(id),
         }
     }
@@ -1726,10 +1741,12 @@ impl BrowserLayout {
         let Some(p) = self.left_pane.content_panel.get_list_panel_mut(idx) else {
             return false;
         };
-        let selected_id = p.selected().and_then(|i| i.user_data.clone());
+        let selected_identity = p
+            .selected()
+            .and_then(|i| i.user_data.clone().map(|id| (id, i.repo_root().map(str::to_string))));
         p.set_search_items(items);
-        if let Some(id) = selected_id {
-            p.select_by_user_data(&id);
+        if let Some((id, repo_root)) = selected_identity {
+            p.select_by_identity(&id, repo_root.as_deref());
         }
         true
     }
@@ -1963,7 +1980,7 @@ impl BrowserLayout {
             });
             if let Some(local_id) = pulled_local {
                 // load_collection_overview clears active_remote_tour_id.
-                self.load_collection_overview_live(&local_id);
+                self.load_collection_overview_live(&local_id, None);
                 // The remote:<id> row is gone, so move the Tours selection to the
                 // pulled local collection — otherwise the list could stay on a
                 // same-titled sibling while the right pane shows the pulled tour.
@@ -2380,7 +2397,7 @@ impl BrowserLayout {
                             .health(health)
                             .published(is_published)
                             .user_data(c.id.clone());
-                        
+
                         if multi {
                             item = item.repo(&repo_name, &root_key);
                         }
@@ -2406,8 +2423,8 @@ impl BrowserLayout {
                     .into_iter()
                     .filter(|bm| {
                         let branch_match = active_branches.is_empty();
-                        let tag_match =
-                            active_tags.is_empty() || bm.tags.iter().any(|t| active_tags.contains(t));
+                        let tag_match = active_tags.is_empty()
+                            || bm.tags.iter().any(|t| active_tags.contains(t));
                         branch_match && tag_match
                     })
                     .collect();
@@ -2420,8 +2437,11 @@ impl BrowserLayout {
                             .parse::<codemark_core::parser::languages::Language>()
                             .ok()
                             .and_then(|lang| {
-                                codemark_core::query::summarizer::summarize_query(&bm.query, Some(lang))
-                                    .ok()
+                                codemark_core::query::summarizer::summarize_query(
+                                    &bm.query,
+                                    Some(lang),
+                                )
+                                .ok()
                             });
                         let summary = summary_info
                             .as_ref()
@@ -2444,7 +2464,7 @@ impl BrowserLayout {
                             .health(health)
                             .icon(icon)
                             .user_data(bm.id.clone());
-                        
+
                         if !summary.is_empty() {
                             item = item.emphasis(summary);
                         }
@@ -2454,7 +2474,7 @@ impl BrowserLayout {
                         item
                     })
                     .collect();
-                
+
                 bookmark_items.extend(filtered_items);
                 all_filtered_bookmarks.extend(filtered_bookmarks);
             }
