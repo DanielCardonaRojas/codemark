@@ -92,7 +92,7 @@ impl BrowserLayout {
                 "entering collection overview -> bookmarks flow"
             );
             self.right_pane.load_tour_live(
-                self.workspace.focus_db(),
+                self.workspace.db_for(self.right_pane.active_repo_root.as_deref()),
                 &tour_name,
                 &mut self.session_cache,
             );
@@ -186,12 +186,12 @@ impl BrowserLayout {
     /// If a debounced preview request is due, spawn the background resolve.
     /// Returns true if a task was spawned (so the frame is marked dirty).
     fn maybe_spawn_pending_preview(&mut self) -> bool {
-        let due = matches!(&self.pending_preview, Some((_, _, due)) if self.tick_count >= *due);
+        let due = matches!(&self.pending_preview, Some((_, _, _, due)) if self.tick_count >= *due);
         if !due {
             return false;
         }
-        if let Some((bookmark_id, label, _)) = self.pending_preview.take() {
-            self.spawn_preview_task(bookmark_id);
+        if let Some((bookmark_id, label, repo_root, _)) = self.pending_preview.take() {
+            self.spawn_preview_task(bookmark_id, repo_root);
             // Track when the resolve started so the loading indicator can be
             // deferred past the grace period.
             self.inflight_preview = Some((label, self.tick_count));
@@ -255,7 +255,8 @@ impl BrowserLayout {
         // Take a fresh render id so a result from an earlier task (same bookmark,
         // older state) is superseded and dropped on arrival.
         let request_id = self.right_pane.next_step_preview_request();
-        let repo_path = self.db().path().parent().unwrap_or_else(|| self.db().path()).to_path_buf();
+        let db = self.workspace.db_for(self.right_pane.active_repo_root.as_deref());
+        let repo_path = db.path().parent().unwrap_or_else(|| db.path()).to_path_buf();
         let head = self.right_pane.head_commit().map(|s| s.to_string());
         let (show_tpl, details_tpl, comments_tpl) = self.right_pane.markdown_templates();
         let event_handler = self.event_handler.clone();
@@ -477,12 +478,16 @@ impl BrowserLayout {
                     self.bookmark_live_health
                         .insert(super::health_key(repo_root.as_deref(), bookmark_id), health);
                     if let Some(panel) = self.left_pane.content_panel.get_list_panel_mut(0) {
-                        panel.update_item_health(bookmark_id, health);
+                        panel.update_item_health(repo_root.as_deref(), bookmark_id, health);
                     }
                     // Mirror the live status into the open step so the preview
                     // border label and pager dots stay in sync with the list dots.
                     for step in &mut self.right_pane.steps_data {
-                        if step.bookmark.id == *bookmark_id {
+                        // Only update if the active preview matches the repo (tours are single-repo)
+                        let active_repo = self.right_pane.active_repo_root.as_deref();
+                        let match_repo =
+                            repo_root.as_deref() == active_repo || active_repo.is_none();
+                        if step.bookmark.id == *bookmark_id && match_repo {
                             step.health = health;
                         }
                     }
@@ -512,13 +517,16 @@ impl BrowserLayout {
                     // so update both dots (no-op where the panel/item is absent).
                     for idx in [ContentTab::Collections.index(), ContentTab::Tours.index()] {
                         if let Some(panel) = self.left_pane.content_panel.get_list_panel_mut(idx) {
-                            panel.update_item_health(collection_id, health);
+                            panel.update_item_health(repo_root.as_deref(), collection_id, health);
                         }
                     }
                     // Keep the open overview's border label in sync. An empty
                     // collection has no health signal, so it shows no label.
+                    let active_repo = self.right_pane.active_repo_root.as_deref();
+                    let match_repo = repo_root.as_deref() == active_repo || active_repo.is_none();
                     if self.right_pane.overview_active
                         && self.right_pane.active_collection_id.as_deref() == Some(collection_id)
+                        && match_repo
                     {
                         self.right_pane.overview_health = status.map(HealthStatus::from);
                     }
@@ -1136,11 +1144,11 @@ impl BrowserLayout {
     /// `preview_cache` across tasks so repeat visits to the same file reuse the
     /// parse tree. Debounce serializes these tasks, so the lock is effectively
     /// uncontended.
-    fn spawn_preview_task(&self, bookmark_id: String) {
+    fn spawn_preview_task(&self, bookmark_id: String, repo_root: Option<String>) {
         use codemark_core::storage::db::Database;
 
         let request_id = self.active_preview_request;
-        let db_path = self.db().path().to_path_buf();
+        let db_path = self.workspace.db_for(repo_root.as_deref()).path().to_path_buf();
         let head = self.right_pane.head_commit().map(|s| s.to_string());
         let event_handler = self.event_handler.clone();
         let preview_cache = Arc::clone(&self.preview_cache);

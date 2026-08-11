@@ -194,7 +194,7 @@ fn bookmark_to_panel_item_cached(
 
 /// Display name for a repo root: its last path component (e.g.
 /// `/home/u/codemark` -> `codemark`), falling back to the full string.
-fn repo_display_name(root: &std::path::Path) -> String {
+pub(crate) fn repo_display_name(root: &std::path::Path) -> String {
     root.file_name()
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_else(|| root.to_string_lossy().to_string())
@@ -445,51 +445,70 @@ impl TabbedPanel {
         }
     }
 
-    /// Build tags and branches items.
-    pub fn build_tags_branches_items(
-        db: &Database,
+    /// Build merged tags and branches items across multiple databases.
+    pub fn build_tags_branches_items<'a>(
+        dbs: impl Iterator<Item = &'a Database>,
         active_tab: ContentTab,
     ) -> (Vec<PanelItem>, Vec<PanelItem>) {
-        let tags_result = match active_tab {
-            ContentTab::Bookmarks => db.list_bookmark_tags(),
-            ContentTab::Collections | ContentTab::Tours => db.list_collection_tags(),
-        };
+        let mut all_tags = std::collections::HashSet::new();
+        let mut all_branches = std::collections::HashSet::new();
+        let mut tag_errors = Vec::new();
+        let mut branch_errors = Vec::new();
 
-        let tags = match tags_result {
-            Ok(tags) if !tags.is_empty() => tags
+        for db in dbs {
+            match active_tab {
+                ContentTab::Bookmarks => match db.list_bookmark_tags() {
+                    Ok(tags) => all_tags.extend(tags),
+                    Err(e) => tag_errors.push(e.to_string()),
+                },
+                ContentTab::Collections | ContentTab::Tours => match db.list_collection_tags() {
+                    Ok(tags) => all_tags.extend(tags),
+                    Err(e) => tag_errors.push(e.to_string()),
+                },
+            }
+            match db.list_all_branches() {
+                Ok(branches) => all_branches.extend(branches),
+                Err(e) => branch_errors.push(e.to_string()),
+            }
+        }
+
+        let tags = if !tag_errors.is_empty() && all_tags.is_empty() {
+            vec![
+                PanelItem::new(format!("Error: {}", tag_errors.join(", ")))
+                    .no_health()
+                    .color(crate::theme::palette().error),
+            ]
+        } else if all_tags.is_empty() {
+            vec![PanelItem::new("No tags found").no_health().color(crate::theme::palette().dim)]
+        } else {
+            let mut sorted_tags: Vec<_> = all_tags.into_iter().collect();
+            sorted_tags.sort();
+            sorted_tags
                 .into_iter()
                 .map(|tag| {
-                    // `marker` is the keyword hue (base0E) — the same color the
-                    // code preview uses to highlight keywords.
                     PanelItem::new(format!("#{tag}"))
                         .user_data(tag)
                         .no_health()
                         .color(crate::theme::palette().marker)
                 })
-                .collect(),
-            Ok(_) => {
-                vec![PanelItem::new("No tags found").no_health().color(crate::theme::palette().dim)]
-            }
-            Err(e) => vec![
-                PanelItem::new(format!("Error: {e}"))
-                    .no_health()
-                    .color(crate::theme::palette().error),
-            ],
+                .collect()
         };
 
-        let branches = match db.list_all_branches() {
-            Ok(branches) if !branches.is_empty() => branches
-                .into_iter()
-                .map(|branch| PanelItem::new(branch).no_health().icon(""))
-                .collect(),
-            Ok(_) => vec![
-                PanelItem::new("No branches found").no_health().color(crate::theme::palette().dim),
-            ],
-            Err(e) => vec![
-                PanelItem::new(format!("Error: {e}"))
+        let branches = if !branch_errors.is_empty() && all_branches.is_empty() {
+            vec![
+                PanelItem::new(format!("Error: {}", branch_errors.join(", ")))
                     .no_health()
                     .color(crate::theme::palette().error),
-            ],
+            ]
+        } else if all_branches.is_empty() {
+            vec![PanelItem::new("No branches found").no_health().color(crate::theme::palette().dim)]
+        } else {
+            let mut sorted_branches: Vec<_> = all_branches.into_iter().collect();
+            sorted_branches.sort();
+            sorted_branches
+                .into_iter()
+                .map(|branch| PanelItem::new(branch).no_health().icon(""))
+                .collect()
         };
 
         (tags, branches)
@@ -601,7 +620,8 @@ impl TabbedPanel {
 
     /// Create panel 2 with Tags/Branches tabs.
     pub fn new_tags_branches(db: &Database, active_tab: ContentTab) -> Self {
-        let (tags_items, branches_items) = TabbedPanel::build_tags_branches_items(db, active_tab);
+        let (tags_items, branches_items) =
+            TabbedPanel::build_tags_branches_items(std::iter::once(db), active_tab);
         let tags_panel = Panel::new("").bordered(false).multi_select(true).items(tags_items);
         let branches_panel =
             Panel::new("").bordered(false).multi_select(true).items(branches_items);

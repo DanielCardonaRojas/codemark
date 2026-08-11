@@ -228,8 +228,8 @@ pub struct BrowserLayout {
     /// and Collections panels concurrently without one superseding the other.
     reconcile_search_requests: std::collections::HashMap<u64, usize>,
     /// A debounced, not-yet-spawned preview request: (bookmark_id, label, due tick).
-    /// Coalesces rapid scrolling into a single resolve once movement settles.
-    pending_preview: Option<(String, Option<String>, usize)>,
+    /// (bookmark_id, ui_label, repo_root, due_tick)
+    pending_preview: Option<(String, Option<String>, Option<String>, usize)>,
     /// A spawned-but-not-yet-resolved preview: (label, spawn tick). Used to defer
     /// the loading indicator — the previous preview stays visible and the spinner
     /// only appears if the resolve outlives a short grace period, so fast/cached
@@ -594,16 +594,20 @@ impl BrowserLayout {
 
         // Label the (eventual) loading indicator with the selected row's path —
         // cheap, read from the already-rendered list item.
-        let label = self
+        let (label, repo_root) = self
             .left_pane
             .content_panel
             .active_panel()
             .and_then(|panel| panel.selected())
-            .map(|selected| selected.text().to_string());
+            .map(|selected| (
+                Some(selected.text().to_string()),
+                selected.repo_root().map(|s| s.to_string())
+            ))
+            .unwrap_or((None, None));
 
         // Debounce: fire one tick from now; rapid moves keep resetting this.
         self.pending_preview =
-            Some((id.to_string(), label, self.tick_count + PREVIEW_DEBOUNCE_TICKS));
+            Some((id.to_string(), label, repo_root, self.tick_count + PREVIEW_DEBOUNCE_TICKS));
     }
 
     /// Invalidate any pending or in-flight bookmark preview so a stale async
@@ -1897,7 +1901,10 @@ impl BrowserLayout {
     pub fn refresh_tags(&mut self) {
         let active_tab = ContentTab::from_index(self.left_pane.content_panel.tabs.selected_index())
             .unwrap_or(ContentTab::Bookmarks);
-        let (tags, branches) = TabbedPanel::build_tags_branches_items(self.db(), active_tab);
+        let (tags, branches) = TabbedPanel::build_tags_branches_items(
+            self.workspace.dbs().map(|(_, db)| db),
+            active_tab,
+        );
         if let Some(p) = self.left_pane.filters_panel.get_list_panel_mut(0) {
             p.set_items(tags);
         }
@@ -2211,129 +2218,142 @@ impl BrowserLayout {
                 _ => None,
             })
             .unwrap_or_default();
+        let dbs: Vec<_> = self.workspace.dbs().collect();
+        let multi = dbs.len() > 1;
 
-        // The filter path is focus-repo scoped, so key live health by the focus
-        // repo root for both the collection and bookmark lookups below.
-        let focus_root = db_repo_root(self.db());
+        let mut collection_items = Vec::new();
+        let mut tour_items = Vec::new();
+        let mut bookmark_items = Vec::new();
+        let mut all_filtered_bookmarks = Vec::new();
 
-        // 1. Update Tours/Collections (Content panel, tabs 0 and 1)
-        if let Ok(collections) = self.db().list_collections() {
-            let mut collection_items = Vec::new();
-            let mut tour_items = Vec::new();
+        for (root, db) in dbs {
+            let repo_name = tabbed_panel::repo_display_name(root);
+            let root_key = root.to_string_lossy().into_owned();
 
-            for (c, count) in collections {
-                // Filter by branch if any are active
-                let branch_match = active_branches.is_empty()
-                    || c.created_branch.as_ref().is_some_and(|b| active_branches.contains(b));
+            // 1. Update Tours/Collections
+            if let Ok(collections) = db.list_collections() {
+                for (c, count) in collections {
+                    // Filter by branch if any are active
+                    let branch_match = active_branches.is_empty()
+                        || c.created_branch.as_ref().is_some_and(|b| active_branches.contains(b));
 
-                // Filter by tags if any are active
-                let tag_match = active_tags.is_empty() || {
-                    if let Ok(c_tags) = self.db().list_tags_for_collection(&c.id) {
-                        c_tags.iter().any(|t| active_tags.contains(&t.tag))
-                    } else {
-                        false
-                    }
-                };
+                    // Filter by tags if any are active
+                    let tag_match = active_tags.is_empty() || {
+                        if let Ok(c_tags) = db.list_tags_for_collection(&c.id) {
+                            c_tags.iter().any(|t| active_tags.contains(&t.tag))
+                        } else {
+                            false
+                        }
+                    };
 
-                if branch_match && tag_match {
-                    let health = collection_health_status(
-                        c.health,
-                        self.collection_live_health
-                            .get(&health_key(focus_root.as_deref(), &c.id))
-                            .copied(),
-                    );
+                    if branch_match && tag_match {
+                        let health = collection_health_status(
+                            c.health,
+                            self.collection_live_health
+                                .get(&health_key(Some(&root_key), &c.id))
+                                .copied(),
+                        );
 
-                    let is_published = c.published_at.is_some();
-                    let is_tour = is_published || c.imported_from_url.is_some();
-                    let branch = c.created_branch.unwrap_or_else(|| "main".to_string());
-                    let item = PanelItem::new(&c.name)
-                        .secondary_text(&branch)
-                        .metadata(format!("{count} steps"))
-                        .health(health)
-                        .published(is_published)
-                        .user_data(c.id.clone());
-
-                    collection_items.push(item);
-                    if is_tour {
-                        let tour_item = PanelItem::new(c.name)
-                            .secondary_text(branch)
+                        let is_published = c.published_at.is_some();
+                        let is_tour = is_published || c.imported_from_url.is_some();
+                        let branch = c.created_branch.unwrap_or_else(|| "main".to_string());
+                        let mut item = PanelItem::new(&c.name)
+                            .secondary_text(&branch)
                             .metadata(format!("{count} steps"))
                             .health(health)
-                            .checkmark(true)
-                            .user_data(c.id);
-                        tour_items.push(tour_item);
+                            .published(is_published)
+                            .user_data(c.id.clone());
+                        
+                        if multi {
+                            item = item.repo(&repo_name, &root_key);
+                        }
+
+                        collection_items.push(item);
+                        if is_tour {
+                            // Tours are strictly single-repo, no multi-tag needed
+                            let tour_item = PanelItem::new(c.name)
+                                .secondary_text(branch)
+                                .metadata(format!("{count} steps"))
+                                .health(health)
+                                .checkmark(true)
+                                .user_data(c.id);
+                            tour_items.push(tour_item);
+                        }
                     }
                 }
             }
 
-            if let Some(TabContent::List(p)) = self.left_pane.content_panel.panels.get_mut(2) {
-                p.set_items(tour_items);
-            }
-            if let Some(TabContent::List(p)) = self.left_pane.content_panel.panels.get_mut(1) {
-                p.set_items(collection_items);
+            // 2. Update Bookmarks
+            if let Ok(bookmarks) = db.list_bookmarks(&BookmarkFilter::default()) {
+                let filtered_bookmarks: Vec<_> = bookmarks
+                    .into_iter()
+                    .filter(|bm| {
+                        let branch_match = active_branches.is_empty();
+                        let tag_match =
+                            active_tags.is_empty() || bm.tags.iter().any(|t| active_tags.contains(t));
+                        branch_match && tag_match
+                    })
+                    .collect();
+
+                let filtered_items: Vec<PanelItem> = filtered_bookmarks
+                    .iter()
+                    .map(|bm| {
+                        let summary_info = bm
+                            .language
+                            .parse::<codemark_core::parser::languages::Language>()
+                            .ok()
+                            .and_then(|lang| {
+                                codemark_core::query::summarizer::summarize_query(&bm.query, Some(lang))
+                                    .ok()
+                            });
+                        let summary = summary_info
+                            .as_ref()
+                            .and_then(|s| s.identifier.clone())
+                            .unwrap_or_else(|| bm.query.clone());
+                        let icon = summary_info
+                            .as_ref()
+                            .map(|s| codemark_core::query::classifier::get_node_icon(&s.label))
+                            .unwrap_or("");
+                        let short_path = shorten_path(&bm.file_path, 25);
+
+                        // Seed the dot from the live-health cache
+                        let health = self
+                            .bookmark_live_health
+                            .get(&health_key(Some(&root_key), &bm.id))
+                            .copied()
+                            .unwrap_or(HealthStatus::Unknown);
+                        let mut item = PanelItem::new(&short_path)
+                            .metadata(bm.created_by.clone().unwrap_or_default())
+                            .health(health)
+                            .icon(icon)
+                            .user_data(bm.id.clone());
+                        
+                        if !summary.is_empty() {
+                            item = item.emphasis(summary);
+                        }
+                        if multi {
+                            item = item.repo(&repo_name, &root_key);
+                        }
+                        item
+                    })
+                    .collect();
+                
+                bookmark_items.extend(filtered_items);
+                all_filtered_bookmarks.extend(filtered_bookmarks);
             }
         }
 
-        // 2. Update Bookmarks (Content panel, tab 0)
-        if let Ok(bookmarks) = self.db().list_bookmarks(&BookmarkFilter::default()) {
-            let filtered_bookmarks: Vec<_> = bookmarks
-                .into_iter()
-                .filter(|bm| {
-                    let branch_match = active_branches.is_empty();
-                    let tag_match =
-                        active_tags.is_empty() || bm.tags.iter().any(|t| active_tags.contains(t));
-                    branch_match && tag_match
-                })
-                .collect();
-
-            let filtered_items: Vec<PanelItem> = filtered_bookmarks
-                .iter()
-                .map(|bm| {
-                    let summary_info = bm
-                        .language
-                        .parse::<codemark_core::parser::languages::Language>()
-                        .ok()
-                        .and_then(|lang| {
-                            codemark_core::query::summarizer::summarize_query(&bm.query, Some(lang))
-                                .ok()
-                        });
-                    let summary = summary_info
-                        .as_ref()
-                        .and_then(|s| s.identifier.clone())
-                        .unwrap_or_else(|| bm.query.clone());
-                    let icon = summary_info
-                        .as_ref()
-                        .map(|s| codemark_core::query::classifier::get_node_icon(&s.label))
-                        .unwrap_or("");
-                    let short_path = shorten_path(&bm.file_path, 25);
-
-                    // Seed the dot from the live-health cache so a tag/branch
-                    // filter shows the resolved status instead of flashing grey;
-                    // the spawned task below refreshes it if code has since drifted.
-                    let health = self
-                        .bookmark_live_health
-                        .get(&health_key(focus_root.as_deref(), &bm.id))
-                        .copied()
-                        .unwrap_or(HealthStatus::Unknown);
-                    let mut item = PanelItem::new(&short_path)
-                        .metadata(bm.created_by.clone().unwrap_or_default())
-                        .health(health)
-                        .icon(icon)
-                        .user_data(bm.id.clone());
-                    if !summary.is_empty() {
-                        item = item.emphasis(summary);
-                    }
-                    item
-                })
-                .collect();
-
-            if let Some(TabContent::List(p)) = self.left_pane.content_panel.panels.get_mut(0) {
-                p.set_items(filtered_items);
-            }
-
-            // Spawn background live health resolution for filtered bookmarks
-            self.spawn_live_health_task(filtered_bookmarks);
+        if let Some(TabContent::List(p)) = self.left_pane.content_panel.panels.get_mut(2) {
+            p.set_items(tour_items);
         }
+        if let Some(TabContent::List(p)) = self.left_pane.content_panel.panels.get_mut(1) {
+            p.set_items(collection_items);
+        }
+        if let Some(TabContent::List(p)) = self.left_pane.content_panel.panels.get_mut(0) {
+            p.set_items(bookmark_items);
+        }
+        // Spawn background live health resolution for filtered bookmarks
+        self.spawn_live_health_task(all_filtered_bookmarks);
 
         // A tag/branch toggle rebuilds the collection rows from the (cached) live
         // health; refresh the cache so newly-relevant collections are current.
@@ -3153,6 +3173,20 @@ mod tests {
             "repo A's bookmark must be untouched by a delete targeting repo B"
         );
     }
+    struct CleanupGuard {
+        registry: rusqlite::Connection,
+        roots: Vec<String>,
+    }
+    impl Drop for CleanupGuard {
+        fn drop(&mut self) {
+            for root in &self.roots {
+                let _ = self.registry.execute(
+                    "DELETE FROM known_repos WHERE repo_root = ?1",
+                    rusqlite::params![root],
+                );
+            }
+        }
+    }
 
     #[test]
     fn checked_repos_keep_checkmark_after_panel_refresh() {
@@ -3168,6 +3202,16 @@ mod tests {
         let db = Database::open(&root_a.join(".codemark").join("codemark.db")).expect("open A");
         let handler = EventHandler::new(EventHandlerConfig::default()).expect("handler");
         let mut layout = BrowserLayout::new(db, handler);
+
+        // Guard ensures cleanup runs even if assertions below panic.
+        let _guard = CleanupGuard {
+            registry: codemark_core::storage::registry::open_registry().expect("open registry"),
+            roots: vec![
+                root_a.to_string_lossy().into_owned(),
+                root_b.to_string_lossy().into_owned(),
+            ],
+        };
+
         for root in [&root_a, &root_b] {
             codemark_core::storage::registry::upsert_repo(
                 &layout.registry,
@@ -3232,13 +3276,5 @@ mod tests {
             .is_active();
 
         assert!(!active_b, "unchecking repo B must clear its checkmark after refresh");
-        // Clean up the global registry so this test doesn't pollute it for
-        // other tests or the user's real registry.
-        for root in [&root_a, &root_b] {
-            let _ = layout.registry.execute(
-                "DELETE FROM known_repos WHERE repo_root = ?1",
-                rusqlite::params![root.to_string_lossy()],
-            );
-        }
     }
 }

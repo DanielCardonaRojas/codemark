@@ -535,10 +535,21 @@ impl Panel {
 
     /// Update the health status of an item identified by its user_data value.
     /// Same pattern as `update_item_spinner()`: mutates both `all_items` and `items`.
-    pub fn update_item_health(&mut self, user_data: &str, health: HealthStatus) {
+    pub fn update_item_health(
+        &mut self,
+        repo_root: Option<&str>,
+        user_data: &str,
+        health: HealthStatus,
+    ) {
         let mut changed = false;
         for item in &mut self.all_items {
-            if item.user_data.as_deref() == Some(user_data) {
+            let match_id = item.user_data.as_deref() == Some(user_data);
+            let match_repo = match (item.repo_root(), repo_root) {
+                (Some(item_root), Some(ev_root)) => item_root == ev_root,
+                _ => true,
+            };
+
+            if match_id && match_repo {
                 item.set_health(Some(health));
                 changed = true;
                 break;
@@ -546,7 +557,12 @@ impl Panel {
         }
         if changed {
             for item in &mut self.items {
-                if item.user_data.as_deref() == Some(user_data) {
+                let match_id = item.user_data.as_deref() == Some(user_data);
+                let match_repo = match (item.repo_root(), repo_root) {
+                    (Some(item_root), Some(ev_root)) => item_root == ev_root,
+                    _ => true,
+                };
+                if match_id && match_repo {
                     item.set_health(Some(health));
                     break;
                 }
