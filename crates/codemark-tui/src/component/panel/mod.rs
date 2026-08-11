@@ -480,6 +480,21 @@ impl Panel {
             false
         }
     }
+    /// Like [`select_by_user_data`](Self::select_by_user_data) but additionally
+    /// matches `repo_root`, so that a reconcile re-pins the selection to the
+    /// exact row it had before — not a cross-repo sibling that happens to share
+    /// an id. Returns true if a matching item was found and selected.
+    pub fn select_by_identity(&mut self, data: &str, repo_root: Option<&str>) -> bool {
+        if let Some(idx) = self.items.iter().position(|i| {
+            i.user_data.as_deref() == Some(data) && i.repo_root().as_deref() == repo_root
+        }) {
+            self.list_state.borrow_mut().select(Some(idx));
+            self.scroll_to_view(idx);
+            true
+        } else {
+            false
+        }
+    }
 
     /// Clear all items from the panel.
     pub fn clear(&mut self) {
@@ -1019,6 +1034,42 @@ mod tests {
         assert_eq!(panel.len(), 3);
         // Should preserve selection based on text match
         assert_eq!(panel.selected_index(), Some(1));
+    }
+
+    #[test]
+    fn multi_select_toggle_tracks_active_items_and_reveals_uncheck_last() {
+        // The multi-select Repos panel drives the query scope: `activate_selected`
+        // toggles the selected item, and `active_items()` reports the checked set
+        // by `user_data`. This is exactly the API `activate_context_selection`
+        // relies on, including its uncheck-last guard, which triggers when
+        // toggling off the sole checked item leaves `active_items()` empty.
+        let mut panel = Panel::new("").multi_select(true).items(vec![
+            PanelItem::new("repo-a").user_data("/repos/a").active(true),
+            PanelItem::new("repo-b").user_data("/repos/b"),
+        ]);
+
+        // Startup: exactly one repo checked (mirrors the focus repo).
+        assert_eq!(panel.active_items(), vec!["/repos/a".to_string()]);
+
+        // Toggle the second repo on → both checked (scope fans out).
+        panel.set_selected(1);
+        panel.activate_selected();
+        let mut checked = panel.active_items();
+        checked.sort();
+        assert_eq!(checked, vec!["/repos/a".to_string(), "/repos/b".to_string()]);
+
+        // Toggle the second repo back off → single repo again.
+        panel.activate_selected();
+        assert_eq!(panel.active_items(), vec!["/repos/a".to_string()]);
+
+        // Uncheck-last: toggling off the sole remaining checked repo leaves the
+        // panel with zero checkmarks — the condition the guard detects. Re-toggling
+        // (the guard's revert) restores the single checkmark.
+        panel.set_selected(0);
+        panel.activate_selected();
+        assert!(panel.active_items().is_empty(), "expected zero checkmarks after uncheck-last");
+        panel.activate_selected();
+        assert_eq!(panel.active_items(), vec!["/repos/a".to_string()]);
     }
 
     #[test]

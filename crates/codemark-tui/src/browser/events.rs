@@ -312,22 +312,22 @@ impl BrowserLayout {
     /// Returns `Some(true)` if the event was handled, `None` if not matched.
     fn handle_app_event(&mut self, event: &Event) -> Option<bool> {
         match event {
-            Event::SearchResults { request_id, bookmarks } => {
+            Event::SearchResults { request_id, hits } => {
                 // Apply the latest user search, or any in-flight reconcile re-run
                 // (which may not be the newest request when two panels reconcile
                 // at once).
                 if *request_id == self.active_search_request
                     || self.is_reconcile_request(*request_id)
                 {
-                    self.apply_search_results(*request_id, bookmarks);
+                    self.apply_search_results(*request_id, hits);
                 }
                 Some(true)
             }
-            Event::CollectionSearchResults { request_id, collections } => {
+            Event::CollectionSearchResults { request_id, hits } => {
                 if *request_id == self.active_search_request
                     || self.is_reconcile_request(*request_id)
                 {
-                    self.apply_collection_search_results(*request_id, collections);
+                    self.apply_collection_search_results(*request_id, hits);
                 }
                 Some(true)
             }
@@ -542,16 +542,21 @@ impl BrowserLayout {
                 }
                 Some(true)
             }
-            Event::PreviewFailed { request_id, bookmark_id, unresolved } => {
+            Event::PreviewFailed { request_id, bookmark_id, repo_root, unresolved } => {
                 if *request_id == self.active_preview_request {
                     self.inflight_preview = None;
                     // Live resolution failed; fall back to the persisted snapshot
                     // synchronously (no tree-sitter parse, so it's cheap). The
                     // health distinguishes query-not-resolving (Unmatched) from
-                    // operational failures (Error).
+                    // operational failures (Error). Load from the failed bookmark's
+                    // owning repo (None → focused repo) under multi-select.
                     let health =
                         if *unresolved { HealthStatus::Broken } else { HealthStatus::Unknown };
-                    self.right_pane.load_bookmark(self.workspace.focus_db(), bookmark_id, health);
+                    self.right_pane.load_bookmark(
+                        self.workspace.db_for(repo_root.as_deref()),
+                        bookmark_id,
+                        health,
+                    );
                     self.right_pane.finish_loading();
                 }
                 Some(true)
@@ -588,13 +593,12 @@ impl BrowserLayout {
     /// `Unknown` on a miss; callers refresh it via a background live-health task.
     /// Shared by the search-apply and refocus reconcile paths.
     pub(super) fn build_bookmark_search_items(
-        bookmarks: &[codemark_core::engine::bookmark::Bookmark],
+        hits: &[crate::event::BookmarkHit],
         live: &std::collections::HashMap<String, HealthStatus>,
-        repo_root: Option<&str>,
     ) -> Vec<PanelItem> {
-        bookmarks
-            .iter()
-            .map(|bm| {
+        hits.iter()
+            .map(|hit| {
+                let bm = &hit.bookmark;
                 let summary_info = bm
                     .language
                     .parse::<Language>()
@@ -615,8 +619,10 @@ impl BrowserLayout {
                 // Seed from the live-health cache so a reconcile/refocus rebuild
                 // keeps the resolved dot instead of flashing grey; the caller's
                 // background task refreshes it if the code has since drifted.
+                // Key by the hit's owning repo so two checked repos holding the
+                // same id don't cross-contaminate each other's dot.
                 let health = live
-                    .get(&super::health_key(repo_root, &bm.id))
+                    .get(&super::health_key(Some(&hit.repo_root), &bm.id))
                     .copied()
                     .unwrap_or(HealthStatus::Unknown);
                 let mut item = PanelItem::new(short_path)
@@ -624,7 +630,8 @@ impl BrowserLayout {
                     .health(health)
                     .icon(icon)
                     .created_at(bm.created_at.clone())
-                    .user_data(bm.id.clone());
+                    .user_data(bm.id.clone())
+                    .repo(hit.repo_name.clone(), hit.repo_root.clone());
 
                 // Render the symbol summary as bold emphasis, matching the
                 // non-search bookmark list so styling is consistent across both.
@@ -643,21 +650,13 @@ impl BrowserLayout {
     /// (falling back to `Unknown` on a miss), then spawns a background task to
     /// re-resolve all bookmarks and send `LiveHealthBatch` events that refresh
     /// the dots.
-    fn apply_search_results(
-        &mut self,
-        request_id: u64,
-        bookmarks: &[codemark_core::engine::bookmark::Bookmark],
-    ) {
+    fn apply_search_results(&mut self, request_id: u64, hits: &[crate::event::BookmarkHit]) {
         // The search finished, so stop the loading spinner.
         self.left_pane.search.set_loading(false);
 
-        // Search runs against the focus db, so key by the focus repo root.
-        let focus_root = super::db_repo_root(self.db());
-        let items = Self::build_bookmark_search_items(
-            bookmarks,
-            &self.bookmark_live_health,
-            focus_root.as_deref(),
-        );
+        // Each hit is tagged with its owning repo, so the builder keys health by
+        // that repo's root.
+        let items = Self::build_bookmark_search_items(hits, &self.bookmark_live_health);
 
         // A reconcile re-run refreshes an already-visible narrowed list in place,
         // keeping the user's focus and selection instead of jumping onto the
@@ -665,7 +664,7 @@ impl BrowserLayout {
         if let Some(idx) = self.take_reconcile_target(request_id) {
             self.apply_reconciled_search_items(idx, items);
             self.update_content_live_preview();
-            self.spawn_live_health_task(bookmarks.to_vec());
+            self.spawn_search_live_health(hits);
             return;
         }
 
@@ -681,24 +680,41 @@ impl BrowserLayout {
         self.set_focus(FocusArea::ContentPanel);
         self.update_content_live_preview();
 
-        // Spawn background task to resolve health for all bookmarks
-        self.spawn_live_health_task(bookmarks.to_vec());
+        // Spawn background health resolution, grouped by each hit's owning repo.
+        self.spawn_search_live_health(hits);
+    }
+
+    /// Spawn live-health resolution for a set of search hits, grouped by owning
+    /// repo so each batch is tagged with its repo root (matching the
+    /// `(repo_root, id)` cache keys). In single-repo mode this is one group over
+    /// the focus repo, identical to the pre-fan-out behavior.
+    fn spawn_search_live_health(&self, hits: &[crate::event::BookmarkHit]) {
+        use std::collections::HashMap;
+        let mut by_repo: HashMap<String, Vec<codemark_core::engine::bookmark::Bookmark>> =
+            HashMap::new();
+        for hit in hits {
+            by_repo.entry(hit.repo_root.clone()).or_default().push(hit.bookmark.clone());
+        }
+        for (root, bookmarks) in by_repo {
+            let db_path = self.workspace.db_for(Some(&root)).path().to_path_buf();
+            self.spawn_live_health_task_for(Some(root), db_path, bookmarks);
+        }
     }
 
     /// Build the collection-search list rows (name, branch, step count, health)
     /// consistent with the normal collection list. Shared by the search-apply
     /// and refocus reconcile paths.
     pub(super) fn build_collection_search_items(
-        collections: &[(codemark_core::engine::bookmark::Collection, usize)],
+        hits: &[crate::event::CollectionHit],
         live: &std::collections::HashMap<String, HealthStatus>,
-        repo_root: Option<&str>,
     ) -> Vec<PanelItem> {
-        collections
-            .iter()
-            .map(|(c, count)| {
+        hits.iter()
+            .map(|hit| {
+                let c = &hit.collection;
+                let count = hit.count;
                 let health = super::collection_health_status(
                     c.health,
-                    live.get(&super::health_key(repo_root, &c.id)).copied(),
+                    live.get(&super::health_key(Some(&hit.repo_root), &c.id)).copied(),
                 );
                 let branch = c.created_branch.clone().unwrap_or_else(|| "main".to_string());
 
@@ -709,6 +725,7 @@ impl BrowserLayout {
                     .published(c.published_at.is_some())
                     .created_at(c.created_at.clone())
                     .user_data(c.id.clone())
+                    .repo(hit.repo_name.clone(), hit.repo_root.clone())
             })
             .collect()
     }
@@ -721,18 +738,14 @@ impl BrowserLayout {
     fn apply_collection_search_results(
         &mut self,
         request_id: u64,
-        collections: &[(codemark_core::engine::bookmark::Collection, usize)],
+        hits: &[crate::event::CollectionHit],
     ) {
         // The search finished, so stop the loading spinner.
         self.left_pane.search.set_loading(false);
 
-        // Search runs against the focus db, so key by the focus repo root.
-        let focus_root = super::db_repo_root(self.db());
-        let items = Self::build_collection_search_items(
-            collections,
-            &self.collection_live_health,
-            focus_root.as_deref(),
-        );
+        // Each hit is tagged with its owning repo, so the builder keys health by
+        // that repo's root.
+        let items = Self::build_collection_search_items(hits, &self.collection_live_health);
 
         // A reconcile re-run refreshes the Collections panel in place, keeping
         // focus and selection. It applies even when Collections isn't the active
@@ -1148,6 +1161,8 @@ impl BrowserLayout {
         use codemark_core::storage::db::Database;
 
         let request_id = self.active_preview_request;
+        // Resolve the db from the selected row's repo (None → focused repo) so
+        // the preview reads from the right db under multi-select.
         let db_path = self.workspace.db_for(repo_root.as_deref()).path().to_path_buf();
         let head = self.right_pane.head_commit().map(|s| s.to_string());
         let event_handler = self.event_handler.clone();
@@ -1158,6 +1173,7 @@ impl BrowserLayout {
                 let _ = event_handler.send(Event::PreviewFailed {
                     request_id,
                     bookmark_id,
+                    repo_root,
                     unresolved: false,
                 });
                 return;
@@ -1196,6 +1212,7 @@ impl BrowserLayout {
                     let _ = event_handler.send(Event::PreviewFailed {
                         request_id,
                         bookmark_id,
+                        repo_root,
                         unresolved: false,
                     });
                 }
@@ -1204,6 +1221,7 @@ impl BrowserLayout {
                     let _ = event_handler.send(Event::PreviewFailed {
                         request_id,
                         bookmark_id,
+                        repo_root,
                         unresolved,
                     });
                 }
@@ -1460,19 +1478,43 @@ impl BrowserLayout {
             }
             _ => {}
         }
+        // Repos tab: multi-select. Toggling a repo adds/removes it from the
+        // query scope (`RepoWorkspace::set_scope`), which the merged panels then
+        // span. The last checked repo can't be unchecked (the scope never empties
+        // and the panel never shows zero checkmarks).
         if let Some(panel) = self.left_pane.context_panel.active_panel_mut()
             && let Some(selected) = panel.selected()
             && let Some(root) = selected.user_data.as_ref()
         {
-            // Repos tab: switch database
-            let root = root.clone();
+            // Owned copy of the toggled repo's root before mutating the panel.
+            let toggled_root = root.clone();
             panel.activate_selected();
+
+            // Uncheck-last guard: if toggling off left zero checkmarks, revert
+            // it so at least one repo stays checked, then bail without touching
+            // scope. `set_scope` already no-ops on empty, but the panel must not
+            // display zero checkmarks either.
+            if panel.active_items().is_empty() {
+                panel.activate_selected();
+                return true;
+            }
+
+            // Collect all checked repo roots (owned) before the &mut self calls.
+            let checked_roots: Vec<std::path::PathBuf> =
+                panel.active_items().into_iter().map(std::path::PathBuf::from).collect();
+            // Was the toggled repo just checked (in scope) or unchecked?
+            let toggled_in_scope =
+                checked_roots.iter().any(|r| r.as_os_str() == toggled_root.as_str());
+
+            let _ = self.workspace.set_scope(&checked_roots);
+            // If the toggled repo is now checked, focus it. If the user just
+            // UNchecked the selected repo, leave focus to set_scope's fallback.
+            if toggled_in_scope {
+                self.workspace.set_focus(std::path::PathBuf::from(&toggled_root));
+            }
+            self.after_scope_change();
             if move_focus {
-                if self.switch_database(&root).is_ok() {
-                    self.set_focus(FocusArea::ContentPanel);
-                }
-            } else {
-                let _ = self.switch_database(&root);
+                self.set_focus(FocusArea::ContentPanel);
             }
             return true;
         }

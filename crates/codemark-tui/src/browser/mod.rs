@@ -227,8 +227,11 @@ pub struct BrowserLayout {
     /// search. A map (not a single id) so a refocus can reconcile the Bookmarks
     /// and Collections panels concurrently without one superseding the other.
     reconcile_search_requests: std::collections::HashMap<u64, usize>,
-    /// A debounced, not-yet-spawned preview request: (bookmark_id, label, due tick).
-    /// (bookmark_id, ui_label, repo_root, due_tick)
+    /// A debounced, not-yet-spawned preview request:
+    /// (bookmark_id, label, repo_root, due tick). `repo_root` is the selected
+    /// row's owning repo tag (None → focused repo) so the resolve reads from the
+    /// right db under multi-select. Coalesces rapid scrolling into a single
+    /// resolve once movement settles.
     pending_preview: Option<(String, Option<String>, Option<String>, usize)>,
     /// A spawned-but-not-yet-resolved preview: (label, spawn tick). Used to defer
     /// the loading indicator — the previous preview stays visible and the spinner
@@ -326,10 +329,11 @@ impl BrowserLayout {
         let left_pane = LeftPane::new(&db, &registry);
         let right_pane = RightPane::new(&db);
 
-        // Derive the repo root from the db path the same way `switch_database`
-        // and `build_repo_items` do: `<root>/.codemark/codemark.db`. In-memory
-        // (`:memory:`) paths have no parent, so fall back to the db path itself
-        // as the lookup key — `focus_db()` returns the single db regardless.
+        // Derive the repo root from the db path the same way `build_repo_items`
+        // does: `<root>/.codemark/codemark.db`.
+        // In-memory (`:memory:`) paths have no parent, so fall back to the db
+        // path itself as the lookup key — `focus_db()` returns the single db
+        // regardless.
         let root = db
             .path()
             .parent()
@@ -404,9 +408,10 @@ impl BrowserLayout {
     /// snapshot. When no live pass has run yet, the persisted value (set by
     /// [`RightPane::load_collection_overview`]) stands until the background task
     /// arrives and the handler corrects it.
-    fn load_collection_overview_live(&mut self, id: &str) {
-        self.right_pane.load_collection_overview(self.workspace.focus_db(), id);
-        let key = health_key(db_repo_root(self.workspace.focus_db()).as_deref(), id);
+    fn load_collection_overview_live(&mut self, id: &str, repo_root: Option<&str>) {
+        let db = self.workspace.db_for(repo_root);
+        self.right_pane.load_collection_overview(db, id);
+        let key = health_key(db_repo_root(db).as_deref(), id);
         match self.collection_live_health.get(&key).copied() {
             // A real live status overrides the persisted snapshot.
             Some(h) if h != HealthStatus::Unknown => self.right_pane.overview_health = Some(h),
@@ -515,14 +520,29 @@ impl BrowserLayout {
     pub(super) fn preview_content_item(&mut self, tab: ContentTab, id: &str) {
         match tab {
             ContentTab::Bookmarks => {
+                // Resolve from the selected row's owning repo (owned copy before
+                // the &mut borrow of the right pane), so the preview loads from
+                // the right db under multi-select.
+                let repo_root = self
+                    .left_pane
+                    .content_panel
+                    .active_panel()
+                    .and_then(|panel| panel.selected())
+                    .and_then(|s| s.repo_root().map(str::to_string));
                 self.right_pane.load_bookmark_live(
-                    self.workspace.focus_db(),
+                    self.workspace.db_for(repo_root.as_deref()),
                     id,
                     &mut self.session_cache,
                 );
             }
             ContentTab::Collections => {
-                self.load_collection_overview_live(id);
+                let repo_root = self
+                    .left_pane
+                    .content_panel
+                    .active_panel()
+                    .and_then(|panel| panel.selected())
+                    .and_then(|s| s.repo_root().map(str::to_string));
+                self.load_collection_overview_live(id, repo_root.as_deref());
             }
             ContentTab::Tours => self.preview_tour_item(id),
         }
@@ -540,7 +560,7 @@ impl BrowserLayout {
                 None => self.right_pane.clear_preview_state(self.workspace.focus_db()),
             }
         } else {
-            self.load_collection_overview_live(id);
+            self.load_collection_overview_live(id, None);
         }
     }
 
@@ -554,7 +574,15 @@ impl BrowserLayout {
     pub(super) fn on_content_selection_changed(&mut self, tab: ContentTab, id: &str) {
         match tab {
             ContentTab::Bookmarks => self.request_bookmark_preview(id),
-            ContentTab::Collections => self.load_collection_overview_live(id),
+            ContentTab::Collections => {
+                let repo_root = self
+                    .left_pane
+                    .content_panel
+                    .active_panel()
+                    .and_then(|panel| panel.selected())
+                    .and_then(|s| s.repo_root().map(str::to_string));
+                self.load_collection_overview_live(id, repo_root.as_deref());
+            }
             ContentTab::Tours => self.preview_tour_item(id),
         }
     }
@@ -592,17 +620,17 @@ impl BrowserLayout {
             self.right_pane.finish_loading();
         }
 
-        // Label the (eventual) loading indicator with the selected row's path —
-        // cheap, read from the already-rendered list item.
+        // Label the (eventual) loading indicator with the selected row's path,
+        // and capture its owning repo tag (both cheap, read from the
+        // already-rendered list item) so the resolve targets the right db.
         let (label, repo_root) = self
             .left_pane
             .content_panel
             .active_panel()
             .and_then(|panel| panel.selected())
-            .map(|selected| (
-                Some(selected.text().to_string()),
-                selected.repo_root().map(|s| s.to_string())
-            ))
+            .map(|selected| {
+                (Some(selected.text().to_string()), selected.repo_root().map(str::to_string))
+            })
             .unwrap_or((None, None));
 
         // Debounce: fire one tick from now; rapid moves keep resetting this.
@@ -697,24 +725,84 @@ impl BrowserLayout {
         self.execute_bookmark_search(request_id, mode, query);
     }
 
+    /// The focus repo's `(display_name, root)` tag, matching what a merged row
+    /// and the live-health cache use. `root` is the empty string for
+    /// in-memory/degenerate db paths (mirrors [`db_repo_root`] folding `None` to
+    /// the empty prefix), so a focus-tagged hit's health key agrees with the
+    /// focus keying used before fan-out.
+    fn focus_repo_tag(&self) -> (String, String) {
+        let root = db_repo_root(self.db()).unwrap_or_default();
+        let name = crate::browser::tabbed_panel::repo_display_name(std::path::Path::new(&root));
+        (name, root)
+    }
+
+    /// Run an FTS bookmark search across every checked repo, tagging each hit
+    /// with its owning repo. Returns the first db error encountered. In
+    /// single-repo mode this is exactly one `search_bookmarks` call, identical to
+    /// the pre-fan-out behavior.
+    fn fts_bookmark_hits(
+        workspace: &RepoWorkspace,
+        query: &str,
+    ) -> codemark_core::error::Result<Vec<crate::event::BookmarkHit>> {
+        let mut hits = Vec::new();
+        for (root, db) in workspace.dbs() {
+            let bookmarks = db.search_bookmarks(Some(query), None, None, None, None, None, None)?;
+            let repo_name = crate::browser::tabbed_panel::repo_display_name(root);
+            let repo_root = root.to_string_lossy().into_owned();
+            for bookmark in bookmarks {
+                hits.push(crate::event::BookmarkHit {
+                    repo_name: repo_name.clone(),
+                    repo_root: repo_root.clone(),
+                    bookmark,
+                });
+            }
+        }
+        Ok(hits)
+    }
+
+    /// Run an FTS collection search across every checked repo, tagging each hit
+    /// with its owning repo and carrying the collection's bookmark count. Each
+    /// repo's results are truncated to [`SEARCH_RESULT_LIMIT`], matching the
+    /// single-repo behavior. Returns the first db error encountered.
+    fn fts_collection_hits(
+        workspace: &RepoWorkspace,
+        query: &str,
+    ) -> codemark_core::error::Result<Vec<crate::event::CollectionHit>> {
+        let mut hits = Vec::new();
+        for (root, db) in workspace.dbs() {
+            let mut collections = db.search_collections(Some(query), None)?;
+            collections.truncate(SEARCH_RESULT_LIMIT);
+            let repo_name = crate::browser::tabbed_panel::repo_display_name(root);
+            let repo_root = root.to_string_lossy().into_owned();
+            for (collection, count) in collections {
+                hits.push(crate::event::CollectionHit {
+                    repo_name: repo_name.clone(),
+                    repo_root: repo_root.clone(),
+                    collection,
+                    count,
+                });
+            }
+        }
+        Ok(hits)
+    }
+
     /// Execute a bookmark search for `query`, emitting `SearchResults` (or
     /// `SearchError`). FTS runs synchronously (a fast `LIKE` scan); semantic
     /// search runs on a blocking task since it loads an embedding model. Split
     /// out of [`Self::execute_search`] so a refocus reconcile can re-run the
     /// bookmark search directly, independent of the selected tab.
     fn execute_bookmark_search(&mut self, request_id: u64, mode: SearchMode, query: String) {
-        let db_path = self.db().path().to_path_buf();
         let event_handler = self.event_handler.clone();
 
         match mode {
             SearchMode::Fts => {
-                // FTS search can be done synchronously as it's usually fast
-                let bookmarks =
-                    self.db().search_bookmarks(Some(&query), None, None, None, None, None, None);
-                match bookmarks {
-                    Ok(bm) => {
-                        let _ =
-                            event_handler.send(Event::SearchResults { request_id, bookmarks: bm });
+                // FTS search can be done synchronously as it's usually fast.
+                // Fan out across every checked repo and tag each hit with its
+                // owning repo so selection/preview/health resolve per repo. In
+                // single-repo mode this is exactly one db, identical to before.
+                match Self::fts_bookmark_hits(&self.workspace, &query) {
+                    Ok(hits) => {
+                        let _ = event_handler.send(Event::SearchResults { request_id, hits });
                     }
                     Err(e) => {
                         let _ = event_handler
@@ -727,66 +815,100 @@ impl BrowserLayout {
             // unreachable; keep it as a no-op that drops the captured values.
             #[cfg(not(feature = "semantic"))]
             SearchMode::Semantic => {
-                let _ = (db_path, request_id, query);
+                let _ = (request_id, query);
             }
             #[cfg(feature = "semantic")]
             SearchMode::Semantic => {
-                // Load config to get semantic settings
+                // Model/metric/threshold are resolved once from the FOCUS repo's
+                // config and applied to every checked repo (v1 assumes a shared
+                // embedding model across repos — see the design's known limits).
                 let Some(codemark_dir) = self.db().path().parent() else {
                     return;
                 };
                 let config = Config::load_layered(codemark_dir);
 
-                tokio::task::spawn_blocking(move || {
-                    // Open a new DB connection for the background task to avoid !Send issues
-                    let Ok(db) = Database::open(&db_path) else {
-                        let _ = event_handler.send(Event::SearchError {
-                            request_id,
-                            msg: "Failed to open database for search".to_string(),
-                        });
-                        return;
-                    };
+                // Capture every checked repo's (name, root, db path) before the
+                // spawn; Database isn't Send, so the task reopens by path.
+                let repos = self.semantic_repo_targets();
 
+                tokio::task::spawn_blocking(move || {
                     let model = config
                         .semantic
                         .model
                         .as_deref()
                         .and_then(|m| m.parse::<EmbeddingModel>().ok())
                         .unwrap_or(EmbeddingModel::AllMiniLmL6V2);
-
                     let distance_metric = config.semantic.get_distance_metric();
                     let threshold = config.semantic.effective_threshold();
                     let models_dir = config.semantic.get_models_dir();
-
                     let semantic_repo =
                         SemanticRepo::with_config(models_dir, model, distance_metric, threshold);
 
                     let handle = tokio::runtime::Handle::current();
-                    match tokio::task::block_in_place(|| {
-                        handle.block_on(semantic_repo.search(
-                            db.conn(),
-                            &query,
-                            SEARCH_RESULT_LIMIT,
-                        ))
+                    // Embed the query ONCE (loads the model), then search each
+                    // repo's db with the same vector — no per-repo model reload.
+                    let embedding = match tokio::task::block_in_place(|| {
+                        handle.block_on(semantic_repo.embed_query(&query))
                     }) {
-                        Ok(results) => {
-                            let mut bookmarks = Vec::new();
-                            for result in results {
-                                if let Ok(Some(bm)) = db.get_bookmark(&result.id) {
-                                    bookmarks.push(bm);
-                                }
-                            }
-                            let _ =
-                                event_handler.send(Event::SearchResults { request_id, bookmarks });
-                        }
+                        Ok(e) => e,
                         Err(e) => {
                             let _ = event_handler
                                 .send(Event::SearchError { request_id, msg: e.to_string() });
+                            return;
+                        }
+                    };
+
+                    // Score hits across all checked repos, resolving each to its
+                    // full bookmark from its own db (open once per repo).
+                    let mut scored: Vec<(f64, crate::event::BookmarkHit)> = Vec::new();
+                    for (repo_name, repo_root, db_path) in &repos {
+                        let Ok(db) = Database::open(db_path) else { continue };
+                        // A repo with no vec index / a dimension mismatch simply
+                        // contributes nothing rather than failing the whole query.
+                        let Ok(results) = semantic_repo.search_prepared(
+                            db.conn(),
+                            &embedding,
+                            SEARCH_RESULT_LIMIT,
+                            threshold,
+                        ) else {
+                            continue;
+                        };
+                        for r in results {
+                            if let Ok(Some(bookmark)) = db.get_bookmark(&r.id) {
+                                scored.push((
+                                    r.distance,
+                                    crate::event::BookmarkHit {
+                                        repo_name: repo_name.clone(),
+                                        repo_root: repo_root.clone(),
+                                        bookmark,
+                                    },
+                                ));
+                            }
                         }
                     }
+                    // Global rank by ascending distance, cap at the limit.
+                    scored
+                        .sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+                    scored.truncate(SEARCH_RESULT_LIMIT);
+                    let hits = scored.into_iter().map(|(_, hit)| hit).collect();
+                    let _ = event_handler.send(Event::SearchResults { request_id, hits });
                 });
             }
         }
+    }
+
+    #[cfg(feature = "semantic")]
+    /// The (repo_name, repo_root, db_path) of every checked repo, for capturing
+    /// before a `spawn_blocking` semantic search (Database isn't Send, so the
+    /// task reopens each db by path). In single-repo mode this is one entry.
+    fn semantic_repo_targets(&self) -> Vec<(String, String, std::path::PathBuf)> {
+        self.workspace
+            .dbs()
+            .map(|(root, db)| {
+                let name = crate::browser::tabbed_panel::repo_display_name(root);
+                (name, root.to_string_lossy().into_owned(), db.path().to_path_buf())
+            })
+            .collect()
     }
 
     /// Execute a search over collections (name/description/tags) for the current
@@ -809,18 +931,18 @@ impl BrowserLayout {
         );
 
         match mode {
-            SearchMode::Fts => match self.db().search_collections(Some(&query), None) {
-                Ok(mut collections) => {
-                    collections.truncate(SEARCH_RESULT_LIMIT);
+            // Fan out across every checked repo, tagging each hit with its
+            // owning repo; single-repo mode is exactly one db as before.
+            SearchMode::Fts => match Self::fts_collection_hits(&self.workspace, &query) {
+                Ok(hits) => {
                     tracing::debug!(
                         target: "codemark::ui",
                         request_id,
                         mode = mode_label,
-                        result_count = collections.len(),
+                        result_count = hits.len(),
                         "collection search completed"
                     );
-                    let _ = event_handler
-                        .send(Event::CollectionSearchResults { request_id, collections });
+                    let _ = event_handler.send(Event::CollectionSearchResults { request_id, hits });
                 }
                 Err(e) => {
                     tracing::debug!(
@@ -841,110 +963,99 @@ impl BrowserLayout {
             }
             #[cfg(feature = "semantic")]
             SearchMode::Semantic => {
+                // Model/metric/threshold resolved once from the focus repo's
+                // config, applied to every checked repo (v1 shared-model assumption).
                 let Some(codemark_dir) = self.db().path().parent() else {
                     return;
                 };
                 let config = Config::load_layered(codemark_dir);
-                let db_path = self.db().path().to_path_buf();
+                let repos = self.semantic_repo_targets();
 
                 tokio::task::spawn_blocking(move || {
-                    let Ok(db) = Database::open(&db_path) else {
-                        let _ = event_handler.send(Event::SearchError {
-                            request_id,
-                            msg: "Failed to open database for search".to_string(),
-                        });
-                        return;
-                    };
-
                     let model = config
                         .semantic
                         .model
                         .as_deref()
                         .and_then(|m| m.parse::<EmbeddingModel>().ok())
                         .unwrap_or(EmbeddingModel::AllMiniLmL6V2);
-
                     let distance_metric = config.semantic.get_distance_metric();
                     let threshold = config.semantic.effective_threshold();
                     let models_dir = config.semantic.get_models_dir();
-
                     let semantic_repo =
                         SemanticRepo::with_config(models_dir, model, distance_metric, threshold);
 
                     let handle = tokio::runtime::Handle::current();
-                    match tokio::task::block_in_place(|| {
-                        handle.block_on(semantic_repo.search_collections(
-                            db.conn(),
-                            &query,
-                            SEARCH_RESULT_LIMIT,
-                        ))
+                    // Embed once, then search each repo's collection index with
+                    // the same vector.
+                    let embedding = match tokio::task::block_in_place(|| {
+                        handle.block_on(semantic_repo.embed_query(&query))
                     }) {
-                        Ok(results) => {
-                            let mut collections = Vec::new();
-                            for result in results {
-                                if let Ok(Some(c)) = db.get_collection_by_id(&result.id) {
-                                    let count = db
-                                        .list_bookmarks_in_collection(&c.id)
-                                        .map(|b| b.len())
-                                        .unwrap_or(0);
-                                    collections.push((c, count));
-                                }
-                            }
-                            tracing::debug!(
-                                target: "codemark::ui",
-                                request_id,
-                                mode = mode_label,
-                                result_count = collections.len(),
-                                "collection search completed"
-                            );
-                            let _ = event_handler
-                                .send(Event::CollectionSearchResults { request_id, collections });
-                        }
+                        Ok(e) => e,
                         Err(e) => {
-                            tracing::debug!(
-                                target: "codemark::ui",
-                                request_id,
-                                mode = mode_label,
-                                error = %e,
-                                "collection search failed"
-                            );
                             let _ = event_handler
                                 .send(Event::SearchError { request_id, msg: e.to_string() });
+                            return;
+                        }
+                    };
+
+                    let mut scored: Vec<(f64, crate::event::CollectionHit)> = Vec::new();
+                    for (repo_name, repo_root, db_path) in &repos {
+                        let Ok(db) = Database::open(db_path) else { continue };
+                        let Ok(results) = semantic_repo.search_collections_prepared(
+                            db.conn(),
+                            &embedding,
+                            SEARCH_RESULT_LIMIT,
+                            threshold,
+                        ) else {
+                            continue;
+                        };
+                        for r in results {
+                            if let Ok(Some(collection)) = db.get_collection_by_id(&r.id) {
+                                let count = db
+                                    .list_bookmarks_in_collection(&collection.id)
+                                    .map(|b| b.len())
+                                    .unwrap_or(0);
+                                scored.push((
+                                    r.distance,
+                                    crate::event::CollectionHit {
+                                        repo_name: repo_name.clone(),
+                                        repo_root: repo_root.clone(),
+                                        collection,
+                                        count,
+                                    },
+                                ));
+                            }
                         }
                     }
+                    scored
+                        .sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+                    scored.truncate(SEARCH_RESULT_LIMIT);
+                    let hits: Vec<_> = scored.into_iter().map(|(_, hit)| hit).collect();
+                    tracing::debug!(
+                        target: "codemark::ui",
+                        request_id,
+                        mode = mode_label,
+                        result_count = hits.len(),
+                        "collection search completed"
+                    );
+                    let _ = event_handler.send(Event::CollectionSearchResults { request_id, hits });
                 });
             }
         }
     }
 
-    /// Switch the active database to a specific repository root.
-    pub fn switch_database(&mut self, repo_root: &str) -> codemark_core::error::Result<()> {
-        let db_path = std::path::Path::new(repo_root).join(".codemark").join("codemark.db");
-        if db_path.exists() {
-            let root = std::path::PathBuf::from(repo_root);
-            self.workspace.set_scope(std::slice::from_ref(&root))?;
-            self.workspace.set_focus(root);
-            self.after_scope_change();
-        }
-        Ok(())
-    }
-
     /// Reset the caches and derived state that become stale after the workspace
     /// scope (or focus) changes, then rebuild every panel.
     ///
-    /// Shared by `switch_database` and the multi-select Repos toggle so both
-    /// take the same clears: the live-health caches, the health epoch bump
-    /// (so an in-flight task for a dropped repo can't repopulate a
-    /// freshly-cleared cache or panel dot with a stale status), the
-    /// remote-tour caches, and the head commit.
+    /// Called by the multi-select Repos toggle so it takes the same clears as
+    /// any scope change: the live-health caches, the health epoch bump (so an
+    /// in-flight task for a dropped repo can't repopulate a freshly-cleared
+    /// cache or panel dot with a stale status), the remote-tour caches, and the
+    /// head commit.
     pub(super) fn after_scope_change(&mut self) {
         self.right_pane.refresh_head_commit(self.workspace.focus_db());
         self.collection_live_health.clear();
         self.bookmark_live_health.clear();
-        // Advance the health epoch so any live-health task still in flight for
-        // the previous database fails the generation guard on apply and can't
-        // repopulate the freshly-cleared caches (or a panel dot) with a status
-        // from the old repo — which, on a colliding bookmark/collection id,
-        // would show the wrong health for the new repo.
         self.health_generation = self.health_generation.wrapping_add(1);
         self.cached_remote_tours.clear();
         self.pending_remote_repos = None;
@@ -1298,7 +1409,7 @@ impl BrowserLayout {
             self.pending_remote_repos = None;
             self.cached_remote_tours.clear();
             // A remote overview can no longer be backed by the now-empty cache, so
-            // clear it (mirrors switch_database) instead of leaving stale markdown.
+            // clear it (mirrors after_scope_change) instead of leaving stale markdown.
             if self.right_pane.active_remote_tour_id.is_some() {
                 self.right_pane.clear_preview_state(self.workspace.focus_db());
             }
@@ -1565,26 +1676,18 @@ impl BrowserLayout {
                 // FTS is cheap to re-run, so refresh the whole result set.
                 Some((query, SearchMode::Fts)) => {
                     let query = query.clone();
-                    // Search runs against the focus db, so key by the focus root.
-                    let focus_root = db_repo_root(self.db());
+                    // Re-run the FTS fan-out across every checked repo so the
+                    // reconciled set stays multi-repo and each row keeps its tag.
                     let items = match tab {
-                        ContentTab::Bookmarks => self
-                            .db()
-                            .search_bookmarks(Some(&query), None, None, None, None, None, None)
-                            .map(|bms| {
-                                Self::build_bookmark_search_items(
-                                    &bms,
-                                    &self.bookmark_live_health,
-                                    focus_root.as_deref(),
-                                )
+                        ContentTab::Bookmarks => Self::fts_bookmark_hits(&self.workspace, &query)
+                            .map(|hits| {
+                                Self::build_bookmark_search_items(&hits, &self.bookmark_live_health)
                             }),
                         ContentTab::Collections => {
-                            self.db().search_collections(Some(&query), None).map(|mut cols| {
-                                cols.truncate(SEARCH_RESULT_LIMIT);
+                            Self::fts_collection_hits(&self.workspace, &query).map(|hits| {
                                 Self::build_collection_search_items(
-                                    &cols,
+                                    &hits,
                                     &self.collection_live_health,
-                                    focus_root.as_deref(),
                                 )
                             })
                         }
@@ -1638,10 +1741,12 @@ impl BrowserLayout {
         let Some(p) = self.left_pane.content_panel.get_list_panel_mut(idx) else {
             return false;
         };
-        let selected_id = p.selected().and_then(|i| i.user_data.clone());
+        let selected_identity = p
+            .selected()
+            .and_then(|i| i.user_data.clone().map(|id| (id, i.repo_root().map(str::to_string))));
         p.set_search_items(items);
-        if let Some(id) = selected_id {
-            p.select_by_user_data(&id);
+        if let Some((id, repo_root)) = selected_identity {
+            p.select_by_identity(&id, repo_root.as_deref());
         }
         true
     }
@@ -1652,38 +1757,67 @@ impl BrowserLayout {
     /// removes deleted rows — the best available reconcile when a semantic re-run
     /// isn't run or fails. Returns whether the panel existed.
     fn refresh_search_panel_by_id(&mut self, idx: usize) -> bool {
-        let row_ids: Vec<String> = self
+        // Each row carries its owning repo (name + root); resolve each id against
+        // that repo's db so a multi-repo result set reconciles correctly. Rows
+        // without a tag (shouldn't happen for search rows) fall back to focus.
+        let (focus_name, focus_root) = self.focus_repo_tag();
+        let rows: Vec<(String, String, String)> = self
             .left_pane
             .content_panel
             .get_list_panel_mut(idx)
-            .map(|p| p.all_items().iter().filter_map(|i| i.user_data.clone()).collect())
+            .map(|p| {
+                p.all_items()
+                    .iter()
+                    .filter_map(|i| {
+                        i.user_data.clone().map(|id| {
+                            (
+                                i.repo_name()
+                                    .map(str::to_string)
+                                    .unwrap_or_else(|| focus_name.clone()),
+                                i.repo_root()
+                                    .map(str::to_string)
+                                    .unwrap_or_else(|| focus_root.clone()),
+                                id,
+                            )
+                        })
+                    })
+                    .collect()
+            })
             .unwrap_or_default();
 
-        // These rows come from the focus db, so key by the focus repo root.
-        let focus_root = db_repo_root(self.db());
         let items = if idx == ContentTab::Collections.index() {
-            let cols: Vec<_> = row_ids
+            let hits: Vec<crate::event::CollectionHit> = rows
                 .iter()
-                .filter_map(|id| {
-                    let c = self.db().get_collection_by_id(id).ok().flatten()?;
-                    let count =
-                        self.db().list_bookmarks_in_collection(&c.id).map(|b| b.len()).unwrap_or(0);
-                    Some((c, count))
+                .filter_map(|(repo_name, repo_root, id)| {
+                    let db = self.workspace.db_for(Some(repo_root));
+                    let collection = db.get_collection_by_id(id).ok().flatten()?;
+                    let count = db
+                        .list_bookmarks_in_collection(&collection.id)
+                        .map(|b| b.len())
+                        .unwrap_or(0);
+                    Some(crate::event::CollectionHit {
+                        repo_name: repo_name.clone(),
+                        repo_root: repo_root.clone(),
+                        collection,
+                        count,
+                    })
                 })
                 .collect();
-            Self::build_collection_search_items(
-                &cols,
-                &self.collection_live_health,
-                focus_root.as_deref(),
-            )
+            Self::build_collection_search_items(&hits, &self.collection_live_health)
         } else {
-            let bms: Vec<_> =
-                row_ids.iter().filter_map(|id| self.db().get_bookmark(id).ok().flatten()).collect();
-            Self::build_bookmark_search_items(
-                &bms,
-                &self.bookmark_live_health,
-                focus_root.as_deref(),
-            )
+            let hits: Vec<crate::event::BookmarkHit> = rows
+                .iter()
+                .filter_map(|(repo_name, repo_root, id)| {
+                    let bookmark =
+                        self.workspace.db_for(Some(repo_root)).get_bookmark(id).ok().flatten()?;
+                    Some(crate::event::BookmarkHit {
+                        repo_name: repo_name.clone(),
+                        repo_root: repo_root.clone(),
+                        bookmark,
+                    })
+                })
+                .collect();
+            Self::build_bookmark_search_items(&hits, &self.bookmark_live_health)
         };
 
         self.apply_reconciled_search_items(idx, items)
@@ -1846,7 +1980,7 @@ impl BrowserLayout {
             });
             if let Some(local_id) = pulled_local {
                 // load_collection_overview clears active_remote_tour_id.
-                self.load_collection_overview_live(&local_id);
+                self.load_collection_overview_live(&local_id, None);
                 // The remote:<id> row is gone, so move the Tours selection to the
                 // pulled local collection — otherwise the list could stay on a
                 // same-titled sibling while the right pane shows the pulled tour.
@@ -2263,7 +2397,7 @@ impl BrowserLayout {
                             .health(health)
                             .published(is_published)
                             .user_data(c.id.clone());
-                        
+
                         if multi {
                             item = item.repo(&repo_name, &root_key);
                         }
@@ -2289,8 +2423,8 @@ impl BrowserLayout {
                     .into_iter()
                     .filter(|bm| {
                         let branch_match = active_branches.is_empty();
-                        let tag_match =
-                            active_tags.is_empty() || bm.tags.iter().any(|t| active_tags.contains(t));
+                        let tag_match = active_tags.is_empty()
+                            || bm.tags.iter().any(|t| active_tags.contains(t));
                         branch_match && tag_match
                     })
                     .collect();
@@ -2303,8 +2437,11 @@ impl BrowserLayout {
                             .parse::<codemark_core::parser::languages::Language>()
                             .ok()
                             .and_then(|lang| {
-                                codemark_core::query::summarizer::summarize_query(&bm.query, Some(lang))
-                                    .ok()
+                                codemark_core::query::summarizer::summarize_query(
+                                    &bm.query,
+                                    Some(lang),
+                                )
+                                .ok()
                             });
                         let summary = summary_info
                             .as_ref()
@@ -2327,7 +2464,7 @@ impl BrowserLayout {
                             .health(health)
                             .icon(icon)
                             .user_data(bm.id.clone());
-                        
+
                         if !summary.is_empty() {
                             item = item.emphasis(summary);
                         }
@@ -2337,7 +2474,7 @@ impl BrowserLayout {
                         item
                     })
                     .collect();
-                
+
                 bookmark_items.extend(filtered_items);
                 all_filtered_bookmarks.extend(filtered_bookmarks);
             }
@@ -2943,14 +3080,13 @@ mod tests {
     // These live in-crate (not in `tests/browser_e2e.rs`) on purpose: the
     // external e2e crate only sees the public API, and scoping *two* repos plus
     // reading a row's repo tag / Tours visibility / the owning db has no public
-    // surface (`switch_database` is single-repo; `workspace`/`left_pane` are
-    // private). Rather than add permanent public accessors purely for a test,
-    // the test runs in-crate where it can drive real key events, render into a
-    // `TestBackend`, and assert on the *real* merged panel items, the workspace
-    // scope, and each repo's db — exercising the actual multi-repo path
-    // (`set_scope` -> `after_scope_change` -> `refresh_all_panels`) with no new
-    // production surface. The seed/scope helpers mirror what the multi-select
-    // Repos panel does at runtime.
+    // surface (`workspace`/`left_pane` are private). Rather than add permanent
+    // public accessors purely for a test, the test runs in-crate where it can
+    // drive real key events, render into a `TestBackend`, and assert on the
+    // *real* merged panel items, the workspace scope, and each repo's db — exercising
+    // the actual multi-repo path (`set_scope` -> `after_scope_change` ->
+    // `refresh_all_panels`) with no new production surface. The seed/scope helpers
+    // mirror what the multi-select Repos panel does at runtime.
     // ---------------------------------------------------------------------
 
     use codemark_core::engine::bookmark::{Bookmark, BookmarkHealth, Collection, Visibility};
