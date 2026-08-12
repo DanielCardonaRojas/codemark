@@ -485,9 +485,11 @@ impl Panel {
     /// exact row it had before — not a cross-repo sibling that happens to share
     /// an id. Returns true if a matching item was found and selected.
     pub fn select_by_identity(&mut self, data: &str, repo_root: Option<&str>) -> bool {
-        if let Some(idx) = self.items.iter().position(|i| {
-            i.user_data.as_deref() == Some(data) && i.repo_root() == repo_root
-        }) {
+        if let Some(idx) = self
+            .items
+            .iter()
+            .position(|i| i.user_data.as_deref() == Some(data) && i.repo_root() == repo_root)
+        {
             self.list_state.borrow_mut().select(Some(idx));
             self.scroll_to_view(idx);
             true
