@@ -472,6 +472,17 @@ impl BrowserLayout {
             return;
         };
 
+        // A background Bookmarks preview spawned on a prior tab must not land on
+        // top of another tab's content. The Bookmarks arm re-bumps the request id
+        // itself (via `request_bookmark_preview_now`); for the synchronously
+        // rendered overview tabs, invalidate any in-flight/pending bookmark
+        // preview up front so a late `PreviewReady` is dropped — even when the new
+        // tab has no selection to render below (the early return would otherwise
+        // leave the stale request active).
+        if tab != ContentTab::Bookmarks {
+            self.cancel_inflight_preview();
+        }
+
         let selected_id = self
             .left_pane
             .content_panel
