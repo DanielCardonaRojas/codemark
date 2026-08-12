@@ -2081,20 +2081,19 @@ impl BrowserLayout {
 
     /// Get current filters/metadata for the status bar.
     pub fn get_status_metadata(&self) -> Line<'_> {
-        let repo_name = self
-            .db()
-            .list_repos()
-            .ok()
-            .and_then(|repos| repos.first().map(|r| r.repo_name.clone()))
-            .unwrap_or_else(|| {
-                self.db()
-                    .path()
-                    .parent()
-                    .and_then(|p| p.parent())
-                    .and_then(|p| p.file_name())
-                    .map(|n| n.to_string_lossy().to_string())
-                    .unwrap_or_else(|| "unknown".to_string())
-            });
+        // List every checked repo's display name, so a multi-repo selection
+        // shows all of them instead of just the focused one.
+        let repo_label = self
+            .workspace
+            .dbs()
+            .map(|(root, db)| {
+                db.list_repos()
+                    .ok()
+                    .and_then(|repos| repos.first().map(|r| r.repo_name.clone()))
+                    .unwrap_or_else(|| tabbed_panel::repo_display_name(root))
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
 
         let active_branches = self
             .left_pane
@@ -2107,9 +2106,10 @@ impl BrowserLayout {
             })
             .unwrap_or_default();
 
+        let repo_prefix = if self.workspace.is_multi() { "Repos: " } else { "Repo: " };
         let mut spans = vec![
-            Span::styled("Repo: ", Style::default().fg(crate::theme::palette().dim)),
-            Span::styled(repo_name, Style::default().fg(crate::theme::palette().accent)),
+            Span::styled(repo_prefix, Style::default().fg(crate::theme::palette().dim)),
+            Span::styled(repo_label, Style::default().fg(crate::theme::palette().accent)),
         ];
 
         if !active_branches.is_empty() {
@@ -3071,6 +3071,39 @@ mod tests {
         assert!(
             layout.left_pane.content_panel.tabs.selected_index() < ContentTab::Tours.index(),
             "selection fell back off the hidden Tours tab",
+        );
+    }
+
+    #[test]
+    fn status_bar_lists_all_repos_in_multi_repo_mode() {
+        let (mut layout, root_a) = repo_layout();
+
+        // Single repo: prefix is "Repo:" and the label is a single name.
+        let single = layout.get_status_metadata();
+        assert_eq!(single.spans[0].content.as_ref(), "Repo: ");
+        let single_label = single.spans[1].content.as_ref();
+        assert!(
+            !single_label.contains(", "),
+            "single repo must not show a separator, got: {single_label}"
+        );
+
+        // Check a second repo: the label now joins both display names.
+        let root_b = temp_repo_root();
+        layout.workspace.set_scope(&[root_a.clone(), root_b.clone()]).expect("set scope");
+        assert!(layout.workspace.is_multi());
+
+        let multi = layout.get_status_metadata();
+        assert_eq!(multi.spans[0].content.as_ref(), "Repos: ");
+        let multi_label = multi.spans[1].content.as_ref();
+        let name_a = tabbed_panel::repo_display_name(&root_a);
+        let name_b = tabbed_panel::repo_display_name(&root_b);
+        assert!(
+            multi_label.contains(&name_a) && multi_label.contains(&name_b),
+            "multi-repo label must list both repos, got: {multi_label}"
+        );
+        assert!(
+            multi_label.contains(", "),
+            "multi-repo label must join names with ', ', got: {multi_label}"
         );
     }
 
