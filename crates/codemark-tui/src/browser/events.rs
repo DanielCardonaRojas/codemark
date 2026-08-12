@@ -1157,7 +1157,7 @@ impl BrowserLayout {
     /// `preview_cache` across tasks so repeat visits to the same file reuse the
     /// parse tree. Debounce serializes these tasks, so the lock is effectively
     /// uncontended.
-    fn spawn_preview_task(&self, bookmark_id: String, repo_root: Option<String>) {
+    pub(super) fn spawn_preview_task(&self, bookmark_id: String, repo_root: Option<String>) {
         use codemark_core::storage::db::Database;
 
         let request_id = self.active_preview_request;
@@ -1915,8 +1915,11 @@ impl BrowserLayout {
                         self.fetch_remote_tours();
                     }
                     // Refresh the preview for the newly active tab so it doesn't
-                    // linger on content from the previous tab.
-                    self.update_content_live_preview();
+                    // linger on content from the previous tab. Bookmarks resolve
+                    // in the background so a slow live resolve (e.g. under CPU
+                    // contention from a concurrent semantic search) can't freeze
+                    // the switch.
+                    self.preview_after_tab_change();
                 }
 
                 // A click on the sort glyph reordered the list; refresh the
@@ -1976,8 +1979,11 @@ impl BrowserLayout {
                         self.fetch_remote_tours();
                     }
                     // Refresh the preview for the newly active tab so it doesn't
-                    // linger on content from the previous tab.
-                    self.update_content_live_preview();
+                    // linger on content from the previous tab. Bookmarks resolve
+                    // in the background so a slow live resolve (e.g. under CPU
+                    // contention from a concurrent semantic search) can't freeze
+                    // the switch.
+                    self.preview_after_tab_change();
                 }
 
                 handled
