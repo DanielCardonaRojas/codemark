@@ -2081,20 +2081,20 @@ impl BrowserLayout {
 
     /// Get current filters/metadata for the status bar.
     pub fn get_status_metadata(&self) -> Line<'_> {
-        let repo_name = self
-            .db()
-            .list_repos()
-            .ok()
-            .and_then(|repos| repos.first().map(|r| r.repo_name.clone()))
-            .unwrap_or_else(|| {
-                self.db()
-                    .path()
-                    .parent()
-                    .and_then(|p| p.parent())
-                    .and_then(|p| p.file_name())
-                    .map(|n| n.to_string_lossy().to_string())
-                    .unwrap_or_else(|| "unknown".to_string())
-            });
+        // List every checked repo's display name, so a multi-repo selection
+        // shows all of them instead of just the focused one.
+        let repo_label = self
+            .workspace
+            .dbs()
+            .map(|(root, db)| {
+                db.get_repo_by_root(&root.to_string_lossy())
+                    .ok()
+                    .flatten()
+                    .map(|r| r.repo_name)
+                    .unwrap_or_else(|| tabbed_panel::repo_display_name(root))
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
 
         let active_branches = self
             .left_pane
@@ -2107,9 +2107,10 @@ impl BrowserLayout {
             })
             .unwrap_or_default();
 
+        let repo_prefix = if self.workspace.is_multi() { "Repos: " } else { "Repo: " };
         let mut spans = vec![
-            Span::styled("Repo: ", Style::default().fg(crate::theme::palette().dim)),
-            Span::styled(repo_name, Style::default().fg(crate::theme::palette().accent)),
+            Span::styled(repo_prefix, Style::default().fg(crate::theme::palette().dim)),
+            Span::styled(repo_label, Style::default().fg(crate::theme::palette().accent)),
         ];
 
         if !active_branches.is_empty() {
@@ -3071,6 +3072,62 @@ mod tests {
         assert!(
             layout.left_pane.content_panel.tabs.selected_index() < ContentTab::Tours.index(),
             "selection fell back off the hidden Tours tab",
+        );
+    }
+
+    #[test]
+    fn status_bar_lists_all_repos_in_multi_repo_mode() {
+        use codemark_core::engine::bookmark::Repo;
+
+        let (mut layout, root_a) = repo_layout();
+        let root_b = temp_repo_root();
+
+        // Seed repo A's db with a decoy row (non-matching root) *first*, so the
+        // matching row is not the first list entry — this confirms the lookup is
+        // root-keyed, not list-position-based.
+        {
+            let db_a = layout.workspace.focus_db();
+            db_a.upsert_repo(&Repo {
+                id: "decoy".into(),
+                repo_owner: "decoy-owner".into(),
+                repo_name: "decoy-name".into(),
+                origin_url: Some("https://example.com/decoy/decoy.git".into()),
+                repo_root: "/nonexistent/decoy".into(),
+                db_owner_email: "t@t.com".into(),
+                db_owner_name: None,
+                detected_at: "2024-01-01T00:00:00Z".into(),
+            })
+            .expect("seed decoy");
+            db_a.upsert_repo(&Repo {
+                id: "repo-a".into(),
+                repo_owner: "alice".into(),
+                repo_name: "repo-a".into(),
+                origin_url: Some("https://example.com/alice/repo-a.git".into()),
+                repo_root: root_a.to_string_lossy().into_owned(),
+                db_owner_email: "t@t.com".into(),
+                db_owner_name: None,
+                detected_at: "2024-01-01T00:00:00Z".into(),
+            })
+            .expect("seed repo-a");
+        }
+
+        // Single repo: prefix is "Repo:" and the name comes from the matching
+        // metadata row — not the decoy — proving root-keyed resolution.
+        let single = layout.get_status_metadata();
+        assert_eq!(single.spans[0].content.as_ref(), "Repo: ");
+        assert_eq!(single.spans[1].content.as_ref(), "repo-a");
+
+        // Check a second repo (no metadata → path-derived fallback name).
+        layout.workspace.set_scope(&[root_a.clone(), root_b.clone()]).expect("set scope");
+        assert!(layout.workspace.is_multi());
+
+        let name_b = tabbed_panel::repo_display_name(&root_b);
+        let multi = layout.get_status_metadata();
+        assert_eq!(multi.spans[0].content.as_ref(), "Repos: ");
+        assert_eq!(
+            multi.spans[1].content.as_ref(),
+            format!("repo-a, {name_b}"),
+            "multi-repo label lists registered name then fallback name"
         );
     }
 
