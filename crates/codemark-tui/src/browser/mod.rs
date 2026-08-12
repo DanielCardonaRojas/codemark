@@ -2087,9 +2087,10 @@ impl BrowserLayout {
             .workspace
             .dbs()
             .map(|(root, db)| {
-                db.list_repos()
+                db.get_repo_by_root(&root.to_string_lossy())
                     .ok()
-                    .and_then(|repos| repos.first().map(|r| r.repo_name.clone()))
+                    .flatten()
+                    .map(|r| r.repo_name)
                     .unwrap_or_else(|| tabbed_panel::repo_display_name(root))
             })
             .collect::<Vec<_>>()
@@ -3076,34 +3077,57 @@ mod tests {
 
     #[test]
     fn status_bar_lists_all_repos_in_multi_repo_mode() {
-        let (mut layout, root_a) = repo_layout();
+        use codemark_core::engine::bookmark::Repo;
 
-        // Single repo: prefix is "Repo:" and the label is a single name.
+        let (mut layout, root_a) = repo_layout();
+        let root_b = temp_repo_root();
+
+        // Seed repo A's db with a decoy row (non-matching root) *first*, so the
+        // matching row is not the first list entry — this confirms the lookup is
+        // root-keyed, not list-position-based.
+        {
+            let db_a = layout.workspace.focus_db();
+            db_a.upsert_repo(&Repo {
+                id: "decoy".into(),
+                repo_owner: "decoy-owner".into(),
+                repo_name: "decoy-name".into(),
+                origin_url: Some("https://example.com/decoy/decoy.git".into()),
+                repo_root: "/nonexistent/decoy".into(),
+                db_owner_email: "t@t.com".into(),
+                db_owner_name: None,
+                detected_at: "2024-01-01T00:00:00Z".into(),
+            })
+            .expect("seed decoy");
+            db_a.upsert_repo(&Repo {
+                id: "repo-a".into(),
+                repo_owner: "alice".into(),
+                repo_name: "repo-a".into(),
+                origin_url: Some("https://example.com/alice/repo-a.git".into()),
+                repo_root: root_a.to_string_lossy().into_owned(),
+                db_owner_email: "t@t.com".into(),
+                db_owner_name: None,
+                detected_at: "2024-01-01T00:00:00Z".into(),
+            })
+            .expect("seed repo-a");
+        }
+
+        // Single repo: prefix is "Repo:" and the name comes from the matching
+        // metadata row — not the decoy — proving root-keyed resolution.
         let single = layout.get_status_metadata();
         assert_eq!(single.spans[0].content.as_ref(), "Repo: ");
-        let single_label = single.spans[1].content.as_ref();
-        assert!(
-            !single_label.contains(", "),
-            "single repo must not show a separator, got: {single_label}"
-        );
+        assert_eq!(single.spans[1].content.as_ref(), "repo-a");
 
-        // Check a second repo: the label now joins both display names.
-        let root_b = temp_repo_root();
+        // Check a second repo (no metadata → path-derived fallback name).
         layout.workspace.set_scope(&[root_a.clone(), root_b.clone()]).expect("set scope");
         assert!(layout.workspace.is_multi());
 
+        let name_b = tabbed_panel::repo_display_name(&root_b);
         let multi = layout.get_status_metadata();
         assert_eq!(multi.spans[0].content.as_ref(), "Repos: ");
-        let multi_label = multi.spans[1].content.as_ref();
-        let name_a = tabbed_panel::repo_display_name(&root_a);
-        let name_b = tabbed_panel::repo_display_name(&root_b);
-        assert!(
-            multi_label.contains(&name_a) && multi_label.contains(&name_b),
-            "multi-repo label must list both repos, got: {multi_label}"
-        );
-        assert!(
-            multi_label.contains(", "),
-            "multi-repo label must join names with ', ', got: {multi_label}"
+        assert_eq!(
+            multi.spans[1].content.as_ref(),
+            format!("repo-a, {name_b}"),
+            "multi-repo label lists registered name then fallback name"
         );
     }
 
