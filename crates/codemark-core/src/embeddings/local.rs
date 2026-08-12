@@ -9,8 +9,9 @@ use candle_core::{DType, Device, Result as CandleResult, Tensor};
 use candle_nn::VarBuilder;
 use candle_transformers::models::bert::{BertModel, Config as BertConfig};
 use hf_hub::{Repo, RepoType, api::sync::Api};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex, OnceLock};
 
 /// Mean pooling layer for sentence embeddings.
 struct MeanPooling;
@@ -265,6 +266,41 @@ impl LocalEmbeddingProvider {
 
         Ok((self.model_path.clone(), tokenizer_path))
     }
+}
+
+/// Process-wide cache of loaded embedding providers, keyed by model id + cache
+/// directory.
+///
+/// Loading a model reads its weights from disk and builds the BERT graph, which
+/// took seconds on *every* semantic search because each search built a fresh
+/// [`LocalEmbeddingProvider`] with an empty model slot. A provider embeds through
+/// `&self` (interior `Mutex`es over the model/tokenizer), so one instance is
+/// safely shared across threads — concurrent embeds simply serialize on the lock.
+/// Caching it keeps the model resident so only the first search in a process pays
+/// the load cost; later searches (and the tab switches that run alongside them)
+/// no longer contend with a re-load.
+static PROVIDER_CACHE: OnceLock<Mutex<HashMap<String, Arc<LocalEmbeddingProvider>>>> =
+    OnceLock::new();
+
+/// Return a shared, cached [`LocalEmbeddingProvider`] for the given model and
+/// cache directory, constructing (but not yet loading) it on first use. The model
+/// weights load lazily on the first `embed`/`embed_batch` call and then stay
+/// resident for the life of the process.
+pub fn shared_local_provider(
+    model: EmbeddingModel,
+    cache_dir: Option<PathBuf>,
+) -> EmbeddingResult<Arc<LocalEmbeddingProvider>> {
+    let key = format!("{}|{:?}", model.model_id(), cache_dir);
+    let cache = PROVIDER_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    // A poisoned lock only means a prior holder panicked while inserting; the map
+    // itself is a plain HashMap that can't be left half-updated, so recover it.
+    let mut map = cache.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(provider) = map.get(&key) {
+        return Ok(Arc::clone(provider));
+    }
+    let provider = Arc::new(LocalEmbeddingProvider::new(model, cache_dir)?);
+    map.insert(key, Arc::clone(&provider));
+    Ok(provider)
 }
 
 #[async_trait]

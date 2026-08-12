@@ -14,6 +14,6 @@ pub mod vec_store;
 
 pub use config::{DistanceMetric, EmbeddingConfig, EmbeddingModel};
 #[cfg(feature = "semantic")]
-pub use local::LocalEmbeddingProvider;
+pub use local::{LocalEmbeddingProvider, shared_local_provider};
 pub use provider::EmbeddingProvider;
 pub use vec_store::{SearchResult, VecStore, VecStoreEntry};

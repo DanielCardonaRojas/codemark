@@ -42,11 +42,20 @@ impl SemanticRepo {
         Self { cache_dir, model, distance_metric, threshold }
     }
 
-    /// Get or create the embedding provider.
-    fn provider(&self) -> Result<LocalEmbeddingProvider> {
-        LocalEmbeddingProvider::new(self.model.clone(), self.cache_dir.clone()).map_err(|e| {
-            crate::error::Error::Operation(format!("Failed to create embedding provider: {}", e))
-        })
+    /// Get the shared embedding provider.
+    ///
+    /// Returns a process-cached provider (keyed by model + cache dir) so the model
+    /// loads once and stays resident, instead of re-loading its weights on every
+    /// search. The provider embeds through `&self`, so sharing it across searches
+    /// and threads is safe.
+    fn provider(&self) -> Result<std::sync::Arc<LocalEmbeddingProvider>> {
+        crate::embeddings::shared_local_provider(self.model.clone(), self.cache_dir.clone())
+            .map_err(|e| {
+                crate::error::Error::Operation(format!(
+                    "Failed to create embedding provider: {}",
+                    e
+                ))
+            })
     }
 
     /// Generate an embedding for a bookmark's searchable text.
