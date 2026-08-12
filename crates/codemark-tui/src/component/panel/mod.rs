@@ -486,7 +486,7 @@ impl Panel {
     /// an id. Returns true if a matching item was found and selected.
     pub fn select_by_identity(&mut self, data: &str, repo_root: Option<&str>) -> bool {
         if let Some(idx) = self.items.iter().position(|i| {
-            i.user_data.as_deref() == Some(data) && i.repo_root().as_deref() == repo_root
+            i.user_data.as_deref() == Some(data) && i.repo_root() == repo_root
         }) {
             self.list_state.borrow_mut().select(Some(idx));
             self.scroll_to_view(idx);
