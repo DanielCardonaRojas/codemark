@@ -1468,9 +1468,12 @@ impl BrowserLayout {
 
     /// Activate the currently selected item in Context panel (Repos, Owners, or Auth).
     ///
-    /// When `move_focus` is true (Enter), a successful repo switch moves focus to Content panel.
-    /// When false (Space), focus stays on Context panel.
-    fn activate_context_selection(&mut self, move_focus: bool) -> bool {
+    /// `single_select` distinguishes the two activation keys on the Repos tab:
+    /// - Enter (`true`) selects that repo exclusively — it becomes the sole
+    ///   checked repo — and moves focus to the Content panel.
+    /// - Space (`false`) toggles the repo in/out of the multi-repo scope and
+    ///   keeps focus on the Context panel.
+    fn activate_context_selection(&mut self, single_select: bool) -> bool {
         let active_tab = ContextTab::from_index(self.left_pane.context_panel.tabs.selected_index());
         match active_tab {
             Some(ContextTab::Owners) => {
@@ -1487,42 +1490,54 @@ impl BrowserLayout {
             }
             _ => {}
         }
-        // Repos tab: multi-select. Toggling a repo adds/removes it from the
-        // query scope (`RepoWorkspace::set_scope`), which the merged panels then
-        // span. The last checked repo can't be unchecked (the scope never empties
-        // and the panel never shows zero checkmarks).
+        // Repos tab: the two activation keys diverge here.
+        //
+        // Space (`single_select == false`) is multi-select — toggling a repo
+        // adds/removes it from the query scope (`RepoWorkspace::set_scope`),
+        // which the merged panels then span. The last checked repo can't be
+        // unchecked (the scope never empties and the panel never shows zero
+        // checkmarks).
+        //
+        // Enter (`single_select == true`) is single-select — the selected repo
+        // becomes the sole checked one, replacing whatever scope was set, and
+        // focus moves to the Content panel.
         if let Some(panel) = self.left_pane.context_panel.active_panel_mut()
             && let Some(selected) = panel.selected()
             && let Some(root) = selected.user_data.as_ref()
         {
-            // Owned copy of the toggled repo's root before mutating the panel.
+            // Owned copy of the activated repo's root before mutating the panel.
             let toggled_root = root.clone();
-            panel.activate_selected();
 
-            // Uncheck-last guard: if toggling off left zero checkmarks, revert
-            // it so at least one repo stays checked, then bail without touching
-            // scope. `set_scope` already no-ops on empty, but the panel must not
-            // display zero checkmarks either.
-            if panel.active_items().is_empty() {
+            if single_select {
+                panel.activate_selected_exclusive();
+            } else {
                 panel.activate_selected();
-                return true;
+
+                // Uncheck-last guard: if toggling off left zero checkmarks,
+                // revert it so at least one repo stays checked, then bail without
+                // touching scope. `set_scope` already no-ops on empty, but the
+                // panel must not display zero checkmarks either.
+                if panel.active_items().is_empty() {
+                    panel.activate_selected();
+                    return true;
+                }
             }
 
             // Collect all checked repo roots (owned) before the &mut self calls.
             let checked_roots: Vec<std::path::PathBuf> =
                 panel.active_items().into_iter().map(std::path::PathBuf::from).collect();
-            // Was the toggled repo just checked (in scope) or unchecked?
+            // Was the activated repo just checked (in scope) or unchecked?
             let toggled_in_scope =
                 checked_roots.iter().any(|r| r.as_os_str() == toggled_root.as_str());
 
             let _ = self.workspace.set_scope(&checked_roots);
-            // If the toggled repo is now checked, focus it. If the user just
+            // If the activated repo is now checked, focus it. If the user just
             // UNchecked the selected repo, leave focus to set_scope's fallback.
             if toggled_in_scope {
                 self.workspace.set_focus(std::path::PathBuf::from(&toggled_root));
             }
             self.after_scope_change();
-            if move_focus {
+            if single_select {
                 self.set_focus(FocusArea::ContentPanel);
             }
             return true;

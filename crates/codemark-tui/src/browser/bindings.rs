@@ -39,7 +39,7 @@ impl BrowserLayout {
                 bindings.push(("Ctrl+S", "FTS / Sem"));
             }
             FocusArea::ContextPanel => {
-                bindings.push(("Enter", "Toggle repo"));
+                bindings.push(("Enter", "Select repo"));
                 bindings.push(("Space", "Toggle repo"));
                 bindings.push(("+", "Increase pane"));
                 bindings.push(("_", "Decrease pane"));

@@ -452,6 +452,33 @@ impl Panel {
         }
     }
 
+    /// Make the currently selected item the sole active one, deactivating all
+    /// others — regardless of `multi_select`. Unlike [`activate_selected`], this
+    /// never toggles the selected item off, so the active set is always exactly
+    /// one item. Used for single-select actions (e.g. Enter) on a multi-select
+    /// panel where the default toggle behavior would be wrong.
+    pub fn activate_selected_exclusive(&mut self) {
+        if let Some(idx) = self.selected_index()
+            && let Some(item) = self.items.get(idx)
+        {
+            let key_user_data = item.user_data.clone();
+            let key_text = item.text().to_string();
+
+            let matches = |i: &PanelItem| -> bool {
+                if let Some(ref key) = key_user_data {
+                    i.user_data.as_ref() == Some(key)
+                } else {
+                    i.text() == key_text
+                }
+            };
+
+            for item in &mut self.all_items {
+                item.set_active(matches(item));
+            }
+            self.apply_filter();
+        }
+    }
+
     /// Activate an item by its `user_data` value without changing cursor selection.
     ///
     /// Used to restore active state after rebuilding items with `set_items`.
@@ -1072,6 +1099,26 @@ mod tests {
         assert!(panel.active_items().is_empty(), "expected zero checkmarks after uncheck-last");
         panel.activate_selected();
         assert_eq!(panel.active_items(), vec!["/repos/a".to_string()]);
+    }
+
+    #[test]
+    fn activate_selected_exclusive_collapses_scope_to_the_current_item() {
+        // Single-select (Enter): the selected repo becomes the sole checked one,
+        // replacing whatever multi-select scope was set, and it never toggles
+        // off (unlike `activate_selected`), so exactly one item stays active.
+        let mut panel = Panel::new("").multi_select(true).items(vec![
+            PanelItem::new("repo-a").user_data("/repos/a").active(true),
+            PanelItem::new("repo-b").user_data("/repos/b").active(true),
+        ]);
+
+        // Two repos in scope; selecting the second exclusively drops the first.
+        panel.set_selected(1);
+        panel.activate_selected_exclusive();
+        assert_eq!(panel.active_items(), vec!["/repos/b".to_string()]);
+
+        // Re-selecting the already-sole repo keeps it checked (never toggles off).
+        panel.activate_selected_exclusive();
+        assert_eq!(panel.active_items(), vec!["/repos/b".to_string()]);
     }
 
     #[test]
