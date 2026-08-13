@@ -124,7 +124,7 @@ pub fn bookmark_to_panel_item(
     } else {
         summary_info
             .as_ref()
-            .and_then(|s| s.identifier.clone())
+            .map(|s| s.short_display())
             .unwrap_or_else(|| bookmark.query.clone())
     };
 
@@ -168,7 +168,7 @@ fn bookmark_to_panel_item_cached(
 
     let summary = summary_info
         .as_ref()
-        .and_then(|s| s.identifier.clone())
+        .map(|s| s.short_display())
         .unwrap_or_else(|| bookmark.query.clone());
 
     let icon = summary_info.as_ref().map(|s| get_node_icon(&s.label)).unwrap_or("");

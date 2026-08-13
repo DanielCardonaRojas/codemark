@@ -611,11 +611,13 @@ impl BrowserLayout {
                     .ok()
                     .and_then(|lang| summarizer::summarize_query(&bm.query, Some(lang)).ok());
 
-                // Show only the identifier (not the node type) so search results
-                // match the formatting of the normal bookmark list.
+                // Show the identifier (not the node type) so search results match
+                // the formatting of the normal bookmark list, falling back to the
+                // deepest node identifier / node-type label rather than the raw
+                // query when the target has no `#eq` name.
                 let summary = summary_info
                     .as_ref()
-                    .and_then(|s| s.identifier.clone())
+                    .map(|s| s.short_display())
                     .unwrap_or_else(|| bm.query.clone());
 
                 let icon = summary_info.as_ref().map(|s| get_node_icon(&s.label)).unwrap_or("");
