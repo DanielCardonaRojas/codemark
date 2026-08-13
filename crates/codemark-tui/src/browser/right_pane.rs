@@ -1090,7 +1090,7 @@ impl RightPane {
     /// Repo root of a database (the parent of its `.codemark` dir) as a string
     /// matching `PanelItem::repo_root()`. `None` for in-memory or degenerate paths
     /// (which resolve to the focused repo).
-    fn repo_root_of(db: &Database) -> Option<String> {
+    pub(super) fn repo_root_of(db: &Database) -> Option<String> {
         db.path().parent().and_then(|p| p.parent()).map(|p| p.to_string_lossy().to_string())
     }
 

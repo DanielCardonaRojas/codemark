@@ -116,6 +116,10 @@ pub enum Event {
     PreviewReady {
         /// Monotonic id of the preview request this result answers.
         request_id: u64,
+        /// The previewed bookmark's owning repo tag (None → focused repo), so the
+        /// right pane records the right db as active — a later refresh/action then
+        /// resolves against the correct repo under multi-select.
+        repo_root: Option<String>,
         /// Fully-computed preview, boxed to keep the enum small.
         payload: Box<crate::browser::PreviewPayload>,
     },

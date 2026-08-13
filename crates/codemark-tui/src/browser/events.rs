@@ -533,12 +533,18 @@ impl BrowserLayout {
                 }
                 Some(true)
             }
-            Event::PreviewReady { request_id, payload } => {
+            Event::PreviewReady { request_id, repo_root, payload } => {
                 // Drop stale results: the selection moved on since this resolve
                 // was spawned, so a newer request supersedes it.
                 if *request_id == self.active_preview_request {
                     self.inflight_preview = None;
                     self.right_pane.apply_preview((**payload).clone());
+                    // `apply_preview` has no db, so record the previewed bookmark's
+                    // owning repo here (mirrors the synchronous `load_bookmark_live`
+                    // path) so a later right-pane refresh/action resolves against the
+                    // right db under multi-select instead of a stale repo.
+                    self.right_pane.active_repo_root =
+                        super::RightPane::repo_root_of(self.workspace.db_for(repo_root.as_deref()));
                 }
                 Some(true)
             }
@@ -1206,7 +1212,8 @@ impl BrowserLayout {
                 false,
             ) {
                 Ok(Some(payload)) => {
-                    let _ = event_handler.send(Event::PreviewReady { request_id, payload });
+                    let _ =
+                        event_handler.send(Event::PreviewReady { request_id, repo_root, payload });
                 }
                 Ok(None) => {
                     let _ = event_handler.send(Event::PreviewFailed {
