@@ -296,8 +296,18 @@ pub fn shared_local_provider(
     // itself is a plain HashMap that can't be left half-updated, so recover it.
     let mut map = cache.lock().unwrap_or_else(|e| e.into_inner());
     if let Some(provider) = map.get(&key) {
+        tracing::debug!(
+            target: "codemark::embeddings",
+            model = %model.model_id(),
+            "reusing cached embedding provider"
+        );
         return Ok(Arc::clone(provider));
     }
+    tracing::debug!(
+        target: "codemark::embeddings",
+        model = %model.model_id(),
+        "creating embedding provider (model weights load on first embed)"
+    );
     let provider = Arc::new(LocalEmbeddingProvider::new(model, cache_dir)?);
     map.insert(key, Arc::clone(&provider));
     Ok(provider)

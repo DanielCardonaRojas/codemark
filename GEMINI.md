@@ -23,5 +23,6 @@ Available subsystem targets:
 | `codemark::http` | HTTP client, remote tour listing, pack download/upload, sync |
 | `codemark::shell` | External editor spawning (program, args, errors) |
 | `codemark::auth` | Server authorization decisions: repo read/write access checks, public-repo visibility, allow/deny outcomes |
+| `codemark::embeddings` | Embedding provider lifecycle: shared-provider cache reuse vs. creation, model loading |
 
 When adding new functionality, instrument it with `tracing::debug!` (or `info!`/`warn!`/`error!` as appropriate) using the matching subsystem target. If adding a new subsystem, define a new `codemark::` target and add a row to the table above.
