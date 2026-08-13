@@ -451,6 +451,55 @@ impl BrowserLayout {
         }
     }
 
+    /// Refresh the right-pane preview after the active Content tab changed.
+    ///
+    /// Unlike [`update_content_live_preview`](Self::update_content_live_preview)
+    /// — used for init and focus-enter, which resolve synchronously for immediate
+    /// feedback and the e2e snapshots — a tab switch routes the *Bookmarks*
+    /// preview through the background resolve. Its live tree-sitter resolve can be
+    /// slow (a cold/large file, or CPU contention from a concurrent semantic
+    /// search still loading its model / resolving list health), and doing it
+    /// synchronously here blocked the event loop, so switching back to Bookmarks
+    /// after a search felt like a freeze. Collections/Tours overviews are DB-only
+    /// (no parse) and stay synchronous.
+    fn preview_after_tab_change(&mut self) {
+        if self.focus != FocusArea::ContentPanel {
+            return;
+        }
+
+        let Some(tab) = ContentTab::from_index(self.left_pane.content_panel.tabs.selected_index())
+        else {
+            return;
+        };
+
+        // A background Bookmarks preview spawned on a prior tab must not land on
+        // top of another tab's content. The Bookmarks arm re-bumps the request id
+        // itself (via `request_bookmark_preview_now`); for the synchronously
+        // rendered overview tabs, invalidate any in-flight/pending bookmark
+        // preview up front so a late `PreviewReady` is dropped — even when the new
+        // tab has no selection to render below (the early return would otherwise
+        // leave the stale request active).
+        if tab != ContentTab::Bookmarks {
+            self.cancel_inflight_preview();
+        }
+
+        let selected_id = self
+            .left_pane
+            .content_panel
+            .active_panel()
+            .and_then(|panel| panel.selected())
+            .and_then(|selected| selected.user_data.clone());
+
+        let Some(id) = selected_id else {
+            return;
+        };
+
+        match tab {
+            ContentTab::Bookmarks => self.request_bookmark_preview_now(&id),
+            ContentTab::Collections | ContentTab::Tours => self.preview_content_item(tab, &id),
+        }
+    }
+
     /// Whether the user has usable sync credentials (a resolvable server *and* a
     /// token). Drives whether the Tours tab — which lists remote tours — is shown.
     ///
@@ -636,6 +685,41 @@ impl BrowserLayout {
         // Debounce: fire one tick from now; rapid moves keep resetting this.
         self.pending_preview =
             Some((id.to_string(), label, repo_root, self.tick_count + PREVIEW_DEBOUNCE_TICKS));
+    }
+
+    /// Resolve the selected bookmark's preview on a background task *immediately*,
+    /// without the [`request_bookmark_preview`](Self::request_bookmark_preview)
+    /// debounce.
+    ///
+    /// Used for discrete actions (a tab switch) where there's no fast scroll to
+    /// coalesce, so the resolve should start at once — but still off the event
+    /// loop, so a slow live resolve or CPU contention from a concurrent search
+    /// can't freeze the UI the way the old synchronous preview path did. The
+    /// loading indicator shows right away (replacing any overview from the tab we
+    /// left) so the pane doesn't linger on stale content while the resolve runs.
+    fn request_bookmark_preview_now(&mut self, id: &str) {
+        // Bump the request id so any in-flight/older result is treated as stale,
+        // and drop any queued debounced request for a prior selection.
+        self.preview_seq = self.preview_seq.wrapping_add(1);
+        self.active_preview_request = self.preview_seq;
+        self.pending_preview = None;
+
+        let (label, repo_root) = self
+            .left_pane
+            .content_panel
+            .active_panel()
+            .and_then(|panel| panel.selected())
+            .map(|selected| {
+                (Some(selected.text().to_string()), selected.repo_root().map(str::to_string))
+            })
+            .unwrap_or((None, None));
+
+        // Show the loading indicator immediately (a tab switch is discrete, not a
+        // scroll, so nothing flashes on rapid moves), then resolve in the
+        // background; the result arrives via `PreviewReady`.
+        self.right_pane.begin_bookmark_loading(label.clone());
+        self.inflight_preview = Some((label, self.tick_count));
+        self.spawn_preview_task(id.to_string(), repo_root);
     }
 
     /// Invalidate any pending or in-flight bookmark preview so a stale async

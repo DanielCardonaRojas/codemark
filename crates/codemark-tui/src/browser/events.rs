@@ -533,12 +533,18 @@ impl BrowserLayout {
                 }
                 Some(true)
             }
-            Event::PreviewReady { request_id, payload } => {
+            Event::PreviewReady { request_id, repo_root, payload } => {
                 // Drop stale results: the selection moved on since this resolve
                 // was spawned, so a newer request supersedes it.
                 if *request_id == self.active_preview_request {
                     self.inflight_preview = None;
                     self.right_pane.apply_preview((**payload).clone());
+                    // `apply_preview` has no db, so record the previewed bookmark's
+                    // owning repo here (mirrors the synchronous `load_bookmark_live`
+                    // path) so a later right-pane refresh/action resolves against the
+                    // right db under multi-select instead of a stale repo.
+                    self.right_pane.active_repo_root =
+                        super::RightPane::repo_root_of(self.workspace.db_for(repo_root.as_deref()));
                 }
                 Some(true)
             }
@@ -1157,7 +1163,7 @@ impl BrowserLayout {
     /// `preview_cache` across tasks so repeat visits to the same file reuse the
     /// parse tree. Debounce serializes these tasks, so the lock is effectively
     /// uncontended.
-    fn spawn_preview_task(&self, bookmark_id: String, repo_root: Option<String>) {
+    pub(super) fn spawn_preview_task(&self, bookmark_id: String, repo_root: Option<String>) {
         use codemark_core::storage::db::Database;
 
         let request_id = self.active_preview_request;
@@ -1206,7 +1212,8 @@ impl BrowserLayout {
                 false,
             ) {
                 Ok(Some(payload)) => {
-                    let _ = event_handler.send(Event::PreviewReady { request_id, payload });
+                    let _ =
+                        event_handler.send(Event::PreviewReady { request_id, repo_root, payload });
                 }
                 Ok(None) => {
                     let _ = event_handler.send(Event::PreviewFailed {
@@ -1915,8 +1922,11 @@ impl BrowserLayout {
                         self.fetch_remote_tours();
                     }
                     // Refresh the preview for the newly active tab so it doesn't
-                    // linger on content from the previous tab.
-                    self.update_content_live_preview();
+                    // linger on content from the previous tab. Bookmarks resolve
+                    // in the background so a slow live resolve (e.g. under CPU
+                    // contention from a concurrent semantic search) can't freeze
+                    // the switch.
+                    self.preview_after_tab_change();
                 }
 
                 // A click on the sort glyph reordered the list; refresh the
@@ -1976,8 +1986,11 @@ impl BrowserLayout {
                         self.fetch_remote_tours();
                     }
                     // Refresh the preview for the newly active tab so it doesn't
-                    // linger on content from the previous tab.
-                    self.update_content_live_preview();
+                    // linger on content from the previous tab. Bookmarks resolve
+                    // in the background so a slow live resolve (e.g. under CPU
+                    // contention from a concurrent semantic search) can't freeze
+                    // the switch.
+                    self.preview_after_tab_change();
                 }
 
                 handled

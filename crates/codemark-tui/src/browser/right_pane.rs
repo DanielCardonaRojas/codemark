@@ -322,6 +322,19 @@ impl RightPane {
         self.loading_label = label;
     }
 
+    /// Enter the loading state for a single-bookmark preview, replacing any active
+    /// collection/tour overview.
+    ///
+    /// A bare [`begin_loading`](Self::begin_loading) keeps `overview_active` set,
+    /// so the render path (which shows the overview *instead of* the loading
+    /// block while it's active) would leave the previous tab's overview on screen.
+    /// Clearing it here makes the loading indicator show immediately when a tab
+    /// switch hands a bookmark resolve to the background.
+    pub fn begin_bookmark_loading(&mut self, label: Option<String>) {
+        self.overview_active = false;
+        self.begin_loading(label);
+    }
+
     /// Leave the loading state without applying a preview (e.g. on failure).
     pub fn finish_loading(&mut self) {
         self.loading = false;
@@ -1077,7 +1090,7 @@ impl RightPane {
     /// Repo root of a database (the parent of its `.codemark` dir) as a string
     /// matching `PanelItem::repo_root()`. `None` for in-memory or degenerate paths
     /// (which resolve to the focused repo).
-    fn repo_root_of(db: &Database) -> Option<String> {
+    pub(super) fn repo_root_of(db: &Database) -> Option<String> {
         db.path().parent().and_then(|p| p.parent()).map(|p| p.to_string_lossy().to_string())
     }
 
