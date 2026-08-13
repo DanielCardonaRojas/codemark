@@ -27,6 +27,13 @@ pub struct QuerySummary {
     pub identifier: Option<String>,
     /// The language this query belongs to.
     pub language: Option<Language>,
+    /// Best-effort identifier of the deepest labelled node in the query, used as
+    /// a display fallback when the target itself carries no `#eq` name (e.g. a
+    /// bare statement anchored only by its enclosing named landmarks). This is
+    /// purely for display via [`Self::short_display`]; it is intentionally kept
+    /// out of [`Self::format`] and semantic-enrichment text so those stay
+    /// scoped to the target node.
+    fallback_identifier: Option<String>,
 }
 
 impl QuerySummary {
@@ -43,14 +50,26 @@ impl QuerySummary {
         }
     }
 
+    /// A concise display string for list rows.
+    ///
+    /// Prefers the target's own `#eq` identifier, then the deepest labelled
+    /// node's identifier (usually the enclosing declaration), and finally the
+    /// humanized node-type label. Never returns the raw query text.
+    pub fn short_display(&self) -> String {
+        self.identifier
+            .clone()
+            .or_else(|| self.fallback_identifier.clone())
+            .unwrap_or_else(|| self.label.clone())
+    }
+
     /// Create a new QuerySummary with the given label and identifier.
     pub fn new(label: String, identifier: Option<String>, language: Option<Language>) -> Self {
-        Self { label, identifier, language }
+        Self { label, identifier, language, fallback_identifier: None }
     }
 
     /// Create a QuerySummary with only a label (no identifier).
     pub fn label_only(label: String, language: Option<Language>) -> Self {
-        Self { label, identifier: None, language }
+        Self { label, identifier: None, language, fallback_identifier: None }
     }
 }
 
@@ -108,11 +127,17 @@ pub fn summarize_query(
     // 4. Extract identifier from predicates that reference target captures
     let identifier = extract_identifier(root, query_str, &target_captures);
 
+    // When the target has no name of its own, fall back (for display only) to
+    // the deepest labelled node's identifier so a list row shows the nearest
+    // enclosing name instead of the whole query string.
+    let fallback_identifier =
+        if identifier.is_none() { deepest_predicate_identifier(root, query_str) } else { None };
+
     let profile = language.as_ref().map(|lang| lang.profile());
     let label =
         classify_node_type(&node_type, profile).unwrap_or_else(|| node_type.replace('_', " "));
 
-    Ok(QuerySummary::new(label, identifier, language))
+    Ok(QuerySummary { label, identifier, language, fallback_identifier })
 }
 
 /// Recursively find all capture names inside a node.
@@ -178,45 +203,11 @@ fn find_identifier_in_predicates(
     target_captures: &[String],
     identifier: &mut Option<String>,
 ) {
-    if node.kind() == "predicate" {
-        let text = node.utf8_text(source.as_bytes()).unwrap_or("");
-
-        if text.contains("eq?") || text.contains("match?") {
-            // Find the capture name and string literal in the parameters
-            if let Some(params) = node.child_by_field_name("parameters") {
-                let mut pred_capture = None;
-                let mut pred_string = None;
-
-                for i in 0..params.child_count() {
-                    let child = params.child(i).unwrap();
-                    if child.kind() == "capture" {
-                        pred_capture = child.utf8_text(source.as_bytes()).ok();
-                    } else if child.kind() == "string" {
-                        // Find string_content inside string
-                        for j in 0..child.child_count() {
-                            let content = child.child(j).unwrap();
-                            if content.kind() == "string_content" {
-                                pred_string = content.utf8_text(source.as_bytes()).ok();
-                                break;
-                            }
-                        }
-                        if pred_string.is_none() {
-                            pred_string = child
-                                .utf8_text(source.as_bytes())
-                                .ok()
-                                .map(|s| s.trim_matches('"'));
-                        }
-                    }
-                }
-
-                if let (Some(cap), Some(val)) = (pred_capture, pred_string)
-                    && target_captures.contains(&cap.to_string())
-                {
-                    *identifier = Some(val.to_string());
-                    return;
-                }
-            }
-        }
+    if let Some((cap, val)) = predicate_capture_and_value(node, source)
+        && target_captures.contains(&cap)
+    {
+        *identifier = Some(val);
+        return;
     }
 
     for i in 0..node.child_count() {
@@ -225,6 +216,67 @@ fn find_identifier_in_predicates(
             return;
         }
     }
+}
+
+/// Find the `#eq?`/`#match?` string bound to the *deepest* (most nested) node in
+/// the query, ignoring which capture it targets.
+///
+/// Used as a display fallback when the target node itself carries no name
+/// predicate: the deepest predicate is the one closest to the target, i.e. the
+/// nearest enclosing named landmark (typically the containing declaration).
+fn deepest_predicate_identifier(node: Node, source: &str) -> Option<String> {
+    fn walk(node: Node, source: &str, depth: usize, best: &mut Option<(usize, String)>) {
+        if let Some((_, val)) = predicate_capture_and_value(node, source)
+            && best.as_ref().is_none_or(|(d, _)| depth >= *d)
+        {
+            *best = Some((depth, val));
+        }
+        for i in 0..node.child_count() {
+            walk(node.child(i).unwrap(), source, depth + 1, best);
+        }
+    }
+
+    let mut best = None;
+    walk(node, source, 0, &mut best);
+    best.map(|(_, val)| val)
+}
+
+/// If `node` is an `#eq?`/`#match?` predicate, return the `(capture, string)`
+/// literal it binds, e.g. `(#eq? @fn_name "cycle_mode")` -> `("@fn_name", "cycle_mode")`.
+fn predicate_capture_and_value(node: Node, source: &str) -> Option<(String, String)> {
+    if node.kind() != "predicate" {
+        return None;
+    }
+    let text = node.utf8_text(source.as_bytes()).unwrap_or("");
+    if !(text.contains("eq?") || text.contains("match?")) {
+        return None;
+    }
+
+    let params = node.child_by_field_name("parameters")?;
+    let mut capture = None;
+    let mut value = None;
+    for i in 0..params.child_count() {
+        let child = params.child(i).unwrap();
+        match child.kind() {
+            "capture" => capture = child.utf8_text(source.as_bytes()).ok().map(str::to_string),
+            "string" => value = string_literal_content(child, source),
+            _ => {}
+        }
+    }
+
+    Some((capture?, value?))
+}
+
+/// Extract the inner text of a tree-sitter query `string` node, unwrapping the
+/// `string_content` child when present and stripping surrounding quotes otherwise.
+fn string_literal_content(string_node: Node, source: &str) -> Option<String> {
+    for j in 0..string_node.child_count() {
+        let content = string_node.child(j).unwrap();
+        if content.kind() == "string_content" {
+            return content.utf8_text(source.as_bytes()).ok().map(str::to_string);
+        }
+    }
+    string_node.utf8_text(source.as_bytes()).ok().map(|s| s.trim_matches('"').to_string())
 }
 
 #[cfg(test)]
@@ -277,6 +329,63 @@ mod tests {
         let summary = summarize_query(query, None);
 
         assert!(summary.is_err());
+    }
+
+    #[test]
+    fn test_short_display_prefers_target_identifier() {
+        let query =
+            r#"(function_item name: (identifier) @fn_name (#eq? @fn_name "cycle_mode")) @target"#;
+        let summary = summarize_query(query, Some(Language::Rust)).unwrap();
+
+        assert_eq!(summary.short_display(), "cycle_mode");
+    }
+
+    // A target with no name of its own, anchored only by an enclosing named
+    // landmark: `short_display` must surface the deepest labelled node's
+    // identifier (the containing function) rather than the raw query string.
+    #[test]
+    fn test_short_display_falls_back_to_deepest_node_identifier() {
+        let query = r#"(function_item
+              name: (identifier) @name0
+              (#eq? @name0 "process")
+              body: (block
+                (expression_statement) @target))"#;
+        let summary = summarize_query(query, Some(Language::Rust)).unwrap();
+
+        // No target-scoped #eq, so the strict identifier stays empty...
+        assert_eq!(summary.identifier, None);
+        // ...but the display falls back to the nearest enclosing name.
+        assert_eq!(summary.short_display(), "process");
+    }
+
+    // Nested landmarks: the *deepest* predicate (closest to the target) wins, so
+    // the method name is preferred over the enclosing class name.
+    #[test]
+    fn test_short_display_deepest_wins_over_outer_landmark() {
+        let query = r#"(class_declaration
+              name: (type_identifier) @name0
+              (#eq? @name0 "AuthService")
+              body: (class_body
+                (method_definition
+                  name: (property_identifier) @name1
+                  (#eq? @name1 "validateToken")
+                  body: (statement_block
+                    (return_statement) @target))))"#;
+        let summary = summarize_query(query, Some(Language::TypeScript)).unwrap();
+
+        assert_eq!(summary.identifier, None);
+        assert_eq!(summary.short_display(), "validateToken");
+    }
+
+    // With no predicates at all, `short_display` falls back to the humanized
+    // node-type label — still short, never the raw query.
+    #[test]
+    fn test_short_display_falls_back_to_label() {
+        let query = r#"(if_statement) @target"#;
+        let summary = summarize_query(query, Some(Language::Rust)).unwrap();
+
+        assert_eq!(summary.identifier, None);
+        assert_eq!(summary.short_display(), "if statement");
     }
 
     #[test]

@@ -2530,7 +2530,7 @@ impl BrowserLayout {
                             });
                         let summary = summary_info
                             .as_ref()
-                            .and_then(|s| s.identifier.clone())
+                            .map(|s| s.short_display())
                             .unwrap_or_else(|| bm.query.clone());
                         let icon = summary_info
                             .as_ref()

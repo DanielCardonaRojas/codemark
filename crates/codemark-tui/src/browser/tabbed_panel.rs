@@ -122,10 +122,7 @@ pub fn bookmark_to_panel_item(
     let summary = if use_full_summary {
         summary_info.as_ref().and_then(|s| s.format()).unwrap_or_else(|| bookmark.query.clone())
     } else {
-        summary_info
-            .as_ref()
-            .and_then(|s| s.identifier.clone())
-            .unwrap_or_else(|| bookmark.query.clone())
+        summary_info.as_ref().map(|s| s.short_display()).unwrap_or_else(|| bookmark.query.clone())
     };
 
     let icon = summary_info.as_ref().map(|s| get_node_icon(&s.label)).unwrap_or("");
@@ -166,10 +163,8 @@ fn bookmark_to_panel_item_cached(
         .ok()
         .and_then(|lang| summarizer::summarize_query(&bookmark.query, Some(lang)).ok());
 
-    let summary = summary_info
-        .as_ref()
-        .and_then(|s| s.identifier.clone())
-        .unwrap_or_else(|| bookmark.query.clone());
+    let summary =
+        summary_info.as_ref().map(|s| s.short_display()).unwrap_or_else(|| bookmark.query.clone());
 
     let icon = summary_info.as_ref().map(|s| get_node_icon(&s.label)).unwrap_or("");
 
