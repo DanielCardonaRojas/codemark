@@ -1,5 +1,5 @@
 use crate::browser::right_pane::INFO_TAB_INDEX;
-use crate::browser::{BrowserLayout, ContentTab, FocusArea};
+use crate::browser::{BrowserLayout, ContentTab, ContextTab, FocusArea};
 use crate::ui::{HIDDEN_BINDING_PRIORITY, KeyBinding};
 
 impl BrowserLayout {
@@ -39,8 +39,19 @@ impl BrowserLayout {
                 bindings.push(("Ctrl+S", "FTS / Sem"));
             }
             FocusArea::ContextPanel => {
-                bindings.push(("Enter", "Select repo"));
-                bindings.push(("Space", "Toggle repo"));
+                // Enter/Space act on whatever the active Context tab lists. The
+                // Auth tab is read-only, so it advertises neither.
+                match ContextTab::from_index(self.left_pane.context_panel.tabs.selected_index()) {
+                    Some(ContextTab::Repos) => {
+                        bindings.push(("Enter", "Select repo"));
+                        bindings.push(("Space", "Toggle repo"));
+                    }
+                    Some(ContextTab::Owners) => {
+                        bindings.push(("Enter", "Toggle owner"));
+                        bindings.push(("Space", "Toggle owner"));
+                    }
+                    Some(ContextTab::Auth) | None => {}
+                }
                 bindings.push(("+", "Increase pane"));
                 bindings.push(("_", "Decrease pane"));
             }
@@ -164,10 +175,27 @@ impl BrowserLayout {
                 bindings.push(KeyBinding::new("Ctrl+S", "FTS / Sem").with_priority(90));
             }
             FocusArea::ContextPanel => {
-                // Repos / Accounts
-                bindings.push(
-                    KeyBinding::new("Enter", "Select").with_priority(HIDDEN_BINDING_PRIORITY),
-                );
+                // Repos / Owners / Auth. Enter is hidden from the bar but kept for
+                // the help popup; the Auth tab is read-only so it advertises none.
+                match ContextTab::from_index(self.left_pane.context_panel.tabs.selected_index()) {
+                    Some(ContextTab::Repos) => {
+                        bindings.push(
+                            KeyBinding::new("Enter", "Select")
+                                .with_priority(HIDDEN_BINDING_PRIORITY),
+                        );
+                    }
+                    Some(ContextTab::Owners) => {
+                        // Enter is universal (hidden from the bar); Space is the
+                        // discoverable toggle affordance, so advertise it as the
+                        // primary action here.
+                        bindings.push(
+                            KeyBinding::new("Enter", "Toggle owner")
+                                .with_priority(HIDDEN_BINDING_PRIORITY),
+                        );
+                        bindings.push(KeyBinding::new("Space", "Toggle owner").with_priority(85));
+                    }
+                    Some(ContextTab::Auth) | None => {}
+                }
                 bindings.push(KeyBinding::new("+/-", "Resize").with_priority(20));
             }
             FocusArea::FiltersPanel => {

@@ -404,6 +404,80 @@ async fn search_bar_shows_esc_clear_hint() {
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn context_panel_help_labels_track_active_tab() {
+    let sandbox = Sandbox::new();
+    let (mut layout, _sandbox) = make_layout(sandbox);
+
+    // An empty database starts focused on the Context panel's Repos tab.
+    assert_eq!(layout.focus(), FocusArea::ContextPanel);
+
+    // The help popup (get_help_bindings) and the status bar (get_status_bindings,
+    // via the separate get_context_bindings path) must both track the active tab.
+    let repos = layout.get_help_bindings();
+    assert!(
+        repos.contains(&("Enter", "Select repo")) && repos.contains(&("Space", "Toggle repo")),
+        "Repos tab should describe repo actions; got: {repos:?}"
+    );
+    let repos_status = layout.get_status_bindings();
+    assert!(
+        repos_status.iter().any(|b| b.key == "Enter" && b.description == "Select"),
+        "Repos status bar should carry the Enter Select action; got: {repos_status:?}"
+    );
+    assert!(
+        repos_status.iter().any(|b| b.key == "+/-" && b.description == "Resize"),
+        "Repos status bar should keep the resize binding; got: {repos_status:?}"
+    );
+
+    // `]` cycles the focused panel's tab: Repos -> Owners. Now Enter/Space filter
+    // the repo list by owner, so the labels must say so.
+    key_char(&mut layout, ']');
+    let owners = layout.get_help_bindings();
+    assert!(
+        owners.contains(&("Enter", "Toggle owner")) && owners.contains(&("Space", "Toggle owner")),
+        "Owners tab should describe owner actions; got: {owners:?}"
+    );
+    assert!(
+        !owners.iter().any(|b| b.1 == "Select repo" || b.1 == "Toggle repo"),
+        "Owners tab must not advertise repo actions; got: {owners:?}"
+    );
+    let owners_status = layout.get_status_bindings();
+    // Space is the discoverable toggle affordance and must be visible on the bar.
+    assert!(
+        owners_status
+            .iter()
+            .any(|b| { b.key == "Space" && b.description == "Toggle owner" && b.priority > 0 }),
+        "Owners status bar should show a visible Space toggle; got: {owners_status:?}"
+    );
+    assert!(
+        !owners_status.iter().any(|b| b.description == "Select" || b.description == "Toggle repo"),
+        "Owners status bar must not advertise repo actions; got: {owners_status:?}"
+    );
+
+    // `]` again: Owners -> Auth. The Auth tab is read-only, so neither key acts.
+    key_char(&mut layout, ']');
+    let auth = layout.get_help_bindings();
+    assert!(
+        !auth.iter().any(|b| b.0 == "Enter" || b.0 == "Space"),
+        "Auth tab must not advertise Enter/Space bindings; got: {auth:?}"
+    );
+
+    // Resize bindings stay put regardless of tab.
+    assert!(
+        auth.contains(&("+", "Increase pane")) && auth.contains(&("_", "Decrease pane")),
+        "Resize bindings should persist across tabs; got: {auth:?}"
+    );
+    let auth_status = layout.get_status_bindings();
+    assert!(
+        !auth_status.iter().any(|b| b.key == "Enter" || b.key == "Space"),
+        "Auth status bar must not carry an Enter/Space action; got: {auth_status:?}"
+    );
+    assert!(
+        auth_status.iter().any(|b| b.key == "+/-" && b.description == "Resize"),
+        "Auth status bar should keep the resize binding; got: {auth_status:?}"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn search_results_reconcile_with_db_on_focus_regained() {
     // Two bookmarks match a "config" path search; one of them will be deleted
     // out from under the TUI (as the CLI might while the terminal is unfocused).
