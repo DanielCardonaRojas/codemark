@@ -185,10 +185,14 @@ impl BrowserLayout {
                         );
                     }
                     Some(ContextTab::Owners) => {
+                        // Enter is universal (hidden from the bar); Space is the
+                        // discoverable toggle affordance, so advertise it as the
+                        // primary action here.
                         bindings.push(
                             KeyBinding::new("Enter", "Toggle owner")
                                 .with_priority(HIDDEN_BINDING_PRIORITY),
                         );
+                        bindings.push(KeyBinding::new("Space", "Toggle owner").with_priority(85));
                     }
                     Some(ContextTab::Auth) | None => {}
                 }
