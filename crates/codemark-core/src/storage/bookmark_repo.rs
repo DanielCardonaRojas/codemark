@@ -626,6 +626,17 @@ impl Database {
         self.list_bookmarks(&filter)
     }
 
+    /// Count the bookmarks in a specific collection with a lightweight aggregate,
+    /// avoiding the cost of materializing full `Bookmark` records just to size them.
+    pub fn count_bookmarks_in_collection(&self, collection_id: &str) -> Result<usize> {
+        let count = self.conn().query_row(
+            "SELECT COUNT(*) FROM collection_bookmarks WHERE collection_id = ?1",
+            [collection_id],
+            |row| row.get(0),
+        )?;
+        Ok(count)
+    }
+
     /// List all unique tags used in bookmarks.
     pub fn list_bookmark_tags(&self) -> Result<Vec<String>> {
         let mut stmt =
@@ -1034,6 +1045,51 @@ mod tests {
             BookmarkFilter { collection_id: Some("wrong".into()), ..Default::default() };
         let results = db.list_bookmarks(&filter_wrong).unwrap();
         assert_eq!(results.len(), 0);
+    }
+
+    #[test]
+    fn count_bookmarks_in_collection_matches_list_len() {
+        init_test_env();
+        let db = Database::open_in_memory().unwrap();
+        let bm1 = test_bookmark("aaaa-0000-0000-0001");
+        let bm2 = test_bookmark("aaaa-0000-0000-0002");
+        db.insert_bookmark(&bm1).unwrap();
+        db.insert_bookmark(&bm2).unwrap();
+
+        let col = Collection {
+            id: "col-1111".to_string(),
+            name: "My Collection".to_string(),
+            description: None,
+            visibility: crate::engine::bookmark::Visibility::Private,
+            created_at: "2026-04-01T00:00:00Z".to_string(),
+            created_by: None,
+            created_branch: Some("main".to_string()),
+            published_at: None,
+            published_commit_sha: None,
+            repo_url: None,
+            repo_id: None,
+            status: None,
+            health: None,
+            health_computed_at: None,
+            updated_at: None,
+            imported_from_url: None,
+        };
+        db.insert_collection(&col).unwrap();
+
+        // Empty collection counts as zero.
+        assert_eq!(db.count_bookmarks_in_collection(&col.id).unwrap(), 0);
+
+        db.add_to_collection(&col.id, &[bm1.id.clone(), bm2.id.clone()]).unwrap();
+
+        // Count agrees with the length of the full listing but avoids loading rows.
+        assert_eq!(db.count_bookmarks_in_collection(&col.id).unwrap(), 2);
+        assert_eq!(
+            db.count_bookmarks_in_collection(&col.id).unwrap(),
+            db.list_bookmarks_in_collection(&col.id).unwrap().len()
+        );
+
+        // An unknown collection id counts as zero rather than erroring.
+        assert_eq!(db.count_bookmarks_in_collection("does-not-exist").unwrap(), 0);
     }
 
     #[test]

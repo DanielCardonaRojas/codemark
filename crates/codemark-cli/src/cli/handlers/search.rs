@@ -521,7 +521,7 @@ async fn collection_semantic_search(
                     continue;
                 }
             }
-            let count = db.list_bookmarks_in_collection(&c.id).map(|b| b.len()).unwrap_or(0);
+            let count = db.count_bookmarks_in_collection(&c.id).unwrap_or(0);
             let source = if single_db { None } else { Some(label.clone()) };
             out.push((hit.distance, source, c, count));
         }
