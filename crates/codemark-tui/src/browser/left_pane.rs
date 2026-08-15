@@ -65,6 +65,20 @@ impl LeftPane {
         self.last_resizable_focus
     }
 
+    /// Invalidate every child's cached hit-test area.
+    ///
+    /// Each panel re-records its area when (and only when) it is rendered, so
+    /// clearing them first keeps a hidden panel's stale area from capturing a
+    /// click meant for the visible one. This must also be called when the left
+    /// pane itself isn't rendered (e.g. the right pane is fullscreen), otherwise
+    /// its children keep the areas from the previous layout.
+    pub fn invalidate_areas(&self) {
+        self.search.invalidate_area();
+        self.context_panel.invalidate_area();
+        self.filters_panel.invalidate_area();
+        self.content_panel.invalidate_area();
+    }
+
     /// Render the left pane.
     pub fn render(&self, area: Rect, buf: &mut Buffer) {
         // Invalidate every child's cached hit-test area up front; each panel
@@ -72,10 +86,7 @@ impl LeftPane {
         // expanded (Half/Full) only the focused panel is drawn, so this keeps a
         // hidden panel's stale area from capturing a click meant for the visible
         // one (e.g. a bookmark click landing on the Filters panel's old tab row).
-        self.search.invalidate_area();
-        self.context_panel.invalidate_area();
-        self.filters_panel.invalidate_area();
-        self.content_panel.invalidate_area();
+        self.invalidate_areas();
 
         // In Half or Full mode, only render the focused panel and search bar
         // The focused panel takes all available height

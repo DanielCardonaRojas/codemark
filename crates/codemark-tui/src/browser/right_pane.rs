@@ -1724,6 +1724,15 @@ impl RightPane {
         self.last_area.get()
     }
 
+    /// Invalidate the cached hit-test area.
+    ///
+    /// Called when the right pane isn't rendered (e.g. the left pane is
+    /// fullscreen) so its area from the previous layout can't capture a click
+    /// meant for a visible pane.
+    pub fn invalidate_area(&self) {
+        self.last_area.set(Rect::default());
+    }
+
     /// Scroll the main preview content by `delta` lines (positive scrolls down),
     /// regardless of focus. This drives the collection overview when one is
     /// active, otherwise the steps panel's active tab (code preview or info
