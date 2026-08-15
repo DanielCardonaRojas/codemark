@@ -1360,8 +1360,20 @@ impl RightPane {
         // Hide it until the collection is entered and per-bookmark previews load.
         let hide_details = hide_details || self.overview_active;
 
+        // When the details block isn't drawn, clear its hit-test caches so a
+        // click/scroll can't reach the hidden Details panel through areas left
+        // over from a layout where it was visible. `handle_event` dispatches
+        // mouse input to `self.details` and reads `last_details_area` directly.
+        if hide_details {
+            self.last_details_area.set(Rect::default());
+            self.details.invalidate_area();
+        }
+
         if !hide_details && details_size.is_expanded() {
-            // Details takes the full right-pane area (steps/pager hidden)
+            // Details takes the full right-pane area (steps/pager hidden), so
+            // clear the Steps hit-test area or a click/scroll could still reach
+            // the now-hidden Steps panel through its stale rectangle.
+            self.steps.invalidate_area();
             self.render_details_block(area, buf);
             return;
         }
@@ -1724,6 +1736,22 @@ impl RightPane {
         self.last_area.get()
     }
 
+    /// Invalidate every cached hit-test area, including the child panels.
+    ///
+    /// Called when the right pane isn't rendered (e.g. the left pane is
+    /// fullscreen) so areas from the previous layout can't capture a click or
+    /// scroll meant for a visible pane. `handle_event` routes mouse input
+    /// through the steps/details/overview areas directly (not the outer
+    /// `last_area`), so those must be cleared too or hidden preview content
+    /// would still receive focus and scrolling.
+    pub fn invalidate_areas(&self) {
+        self.last_area.set(Rect::default());
+        self.last_details_area.set(Rect::default());
+        self.steps.invalidate_area();
+        self.details.invalidate_area();
+        self.overview.invalidate_area();
+    }
+
     /// Scroll the main preview content by `delta` lines (positive scrolls down),
     /// regardless of focus. This drives the collection overview when one is
     /// active, otherwise the steps panel's active tab (code preview or info
@@ -1868,6 +1896,67 @@ mod tests {
         db.add_to_collection("col-1", &["bm-1".to_string(), "bm-2".to_string()]).unwrap();
         let pane = RightPane::new(&db);
         (pane, db, tmp)
+    }
+
+    #[test]
+    fn hiding_details_clears_its_hit_test_caches() {
+        let (mut pane, db, _tmp) = right_pane_with_collection();
+        pane.load_tour(&db, "Tour");
+
+        let area = Rect::new(0, 0, 80, 40);
+
+        // With details visible, render records both the details area and the
+        // details TabbedPanel's own hit-test area.
+        let mut buf = Buffer::empty(area);
+        pane.render(area, &mut buf, false, DetailsPaneSize::Regular);
+        assert!(
+            !pane.last_details_area.get().is_empty(),
+            "details area should be recorded when the details block is drawn",
+        );
+        assert!(
+            !pane.details.last_area().is_empty(),
+            "details panel area should be recorded when the details block is drawn",
+        );
+
+        // Hiding details (e.g. fullscreen preview) skips the details block, so
+        // both caches must be cleared or a click/scroll would still reach the
+        // now-hidden Details panel through the stale areas.
+        let mut buf = Buffer::empty(area);
+        pane.render(area, &mut buf, true, DetailsPaneSize::Regular);
+        assert!(
+            pane.last_details_area.get().is_empty(),
+            "hidden details must clear last_details_area",
+        );
+        assert!(
+            pane.details.last_area().is_empty(),
+            "hidden details must clear the details panel's hit-test area",
+        );
+    }
+
+    #[test]
+    fn expanded_details_clears_the_steps_hit_test_cache() {
+        let (mut pane, db, _tmp) = right_pane_with_collection();
+        pane.load_tour(&db, "Tour");
+
+        let area = Rect::new(0, 0, 80, 40);
+
+        // A normal render draws the Steps panel and records its hit-test area.
+        let mut buf = Buffer::empty(area);
+        pane.render(area, &mut buf, false, DetailsPaneSize::Regular);
+        assert!(
+            !pane.steps.last_area().is_empty(),
+            "steps area should be recorded when the steps panel is drawn",
+        );
+
+        // Expanding Details takes over the full pane (steps hidden), so the Steps
+        // area must be cleared or a click/scroll would still reach the now-hidden
+        // Steps panel through its stale rectangle.
+        let mut buf = Buffer::empty(area);
+        pane.render(area, &mut buf, false, DetailsPaneSize::Half);
+        assert!(
+            pane.steps.last_area().is_empty(),
+            "expanded details must clear the steps panel's hit-test area",
+        );
     }
 
     #[test]

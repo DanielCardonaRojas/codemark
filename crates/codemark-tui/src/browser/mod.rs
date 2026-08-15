@@ -2903,9 +2903,15 @@ impl BrowserLayout {
             }
             RenderMode::LeftOnly => {
                 self.left_pane.render(chunks[0], buf);
+                // The right pane isn't drawn; clear its stale hit-test areas so a
+                // click or scroll can't reach it based on the previous layout.
+                self.right_pane.invalidate_areas();
             }
             RenderMode::RightOnly => {
                 self.right_pane.render(chunks[0], buf, hide_details, self.details_pane_size);
+                // The left pane isn't drawn; clear its children's stale hit-test
+                // areas so a click can't focus them based on the previous layout.
+                self.left_pane.invalidate_areas();
             }
         }
 
@@ -3087,6 +3093,89 @@ mod tests {
         layout.set_focus(FocusArea::ContentPanel);
         assert_eq!(layout.right_pane_size, RightPaneSize::Regular);
         assert_eq!(layout.details_pane_size, DetailsPaneSize::Regular);
+    }
+
+    #[test]
+    fn fullscreen_right_pane_invalidates_left_hit_test_areas() {
+        use ratatui::buffer::Buffer;
+        use ratatui::crossterm::event::{MouseButton, MouseEvent, MouseEventKind};
+        use ratatui::layout::Rect;
+
+        let mut layout = test_layout();
+        let area = Rect::new(0, 0, 120, 40);
+
+        // First render in the normal two-pane layout so the left panels record
+        // their hit-test areas across the left half of the screen.
+        layout.set_focus(FocusArea::ContentPanel);
+        let mut buf = Buffer::empty(area);
+        layout.render(area, &mut buf);
+        assert!(
+            !layout.left_pane.content_panel.last_area().is_empty(),
+            "content panel should have a recorded area after a normal render",
+        );
+
+        // Now the preview pane goes fullscreen: only the right pane is drawn, so
+        // the left panels' recorded areas from the previous layout are stale.
+        layout.right_pane_size = RightPaneSize::Full;
+        let mut buf = Buffer::empty(area);
+        layout.render(area, &mut buf);
+        assert!(
+            layout.left_pane.content_panel.last_area().is_empty(),
+            "hidden left panels must clear their hit-test areas when not rendered",
+        );
+
+        // A click anywhere (here the left edge, where the content panel used to
+        // live) must focus the fullscreen preview pane, not the stale panel.
+        // Assign focus directly rather than via `set_focus`, which would reset
+        // `right_pane_size` back to Regular and take us out of fullscreen.
+        layout.focus = FocusArea::ContentPanel;
+        layout.handle_event(&Event::Mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 2,
+            row: 10,
+            modifiers: ratatui::crossterm::event::KeyModifiers::empty(),
+        }));
+        assert_eq!(
+            layout.focus,
+            FocusArea::Main,
+            "click on a fullscreen preview must focus Main, not a hidden left panel",
+        );
+    }
+
+    #[test]
+    fn fullscreen_left_pane_invalidates_right_hit_test_areas() {
+        use ratatui::buffer::Buffer;
+        use ratatui::layout::Rect;
+
+        let mut layout = test_layout();
+        let area = Rect::new(0, 0, 120, 40);
+
+        // Render the two-pane layout so the right pane and its steps child record
+        // their hit-test areas across the right half of the screen.
+        layout.set_focus(FocusArea::Main);
+        let mut buf = Buffer::empty(area);
+        layout.render(area, &mut buf);
+        assert!(
+            !layout.right_pane.last_area().is_empty(),
+            "right pane should have a recorded area after a normal render",
+        );
+
+        // Expand the left pane to full width: the right pane isn't drawn. Its
+        // outer area *and* the child (steps/details/overview) areas that
+        // `RightPane::handle_event` reads for scroll/focus must all be cleared,
+        // otherwise hidden preview content keeps capturing mouse input.
+        layout.set_focus(FocusArea::ContentPanel);
+        layout.set_left_pane_size(LeftPaneSize::Full);
+        let mut buf = Buffer::empty(area);
+        layout.render(area, &mut buf);
+        assert!(
+            layout.right_pane.last_area().is_empty(),
+            "hidden right pane must clear its outer hit-test area",
+        );
+        assert!(
+            layout.right_pane.steps.last_area().is_empty(),
+            "hidden right pane must clear its child (steps) hit-test area",
+        );
     }
 
     #[test]
