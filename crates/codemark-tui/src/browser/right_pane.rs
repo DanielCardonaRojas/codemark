@@ -1370,7 +1370,10 @@ impl RightPane {
         }
 
         if !hide_details && details_size.is_expanded() {
-            // Details takes the full right-pane area (steps/pager hidden)
+            // Details takes the full right-pane area (steps/pager hidden), so
+            // clear the Steps hit-test area or a click/scroll could still reach
+            // the now-hidden Steps panel through its stale rectangle.
+            self.steps.invalidate_area();
             self.render_details_block(area, buf);
             return;
         }
@@ -1927,6 +1930,32 @@ mod tests {
         assert!(
             pane.details.last_area().is_empty(),
             "hidden details must clear the details panel's hit-test area",
+        );
+    }
+
+    #[test]
+    fn expanded_details_clears_the_steps_hit_test_cache() {
+        let (mut pane, db, _tmp) = right_pane_with_collection();
+        pane.load_tour(&db, "Tour");
+
+        let area = Rect::new(0, 0, 80, 40);
+
+        // A normal render draws the Steps panel and records its hit-test area.
+        let mut buf = Buffer::empty(area);
+        pane.render(area, &mut buf, false, DetailsPaneSize::Regular);
+        assert!(
+            !pane.steps.last_area().is_empty(),
+            "steps area should be recorded when the steps panel is drawn",
+        );
+
+        // Expanding Details takes over the full pane (steps hidden), so the Steps
+        // area must be cleared or a click/scroll would still reach the now-hidden
+        // Steps panel through its stale rectangle.
+        let mut buf = Buffer::empty(area);
+        pane.render(area, &mut buf, false, DetailsPaneSize::Half);
+        assert!(
+            pane.steps.last_area().is_empty(),
+            "expanded details must clear the steps panel's hit-test area",
         );
     }
 
