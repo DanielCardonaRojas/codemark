@@ -1360,6 +1360,15 @@ impl RightPane {
         // Hide it until the collection is entered and per-bookmark previews load.
         let hide_details = hide_details || self.overview_active;
 
+        // When the details block isn't drawn, clear its hit-test caches so a
+        // click/scroll can't reach the hidden Details panel through areas left
+        // over from a layout where it was visible. `handle_event` dispatches
+        // mouse input to `self.details` and reads `last_details_area` directly.
+        if hide_details {
+            self.last_details_area.set(Rect::default());
+            self.details.invalidate_area();
+        }
+
         if !hide_details && details_size.is_expanded() {
             // Details takes the full right-pane area (steps/pager hidden)
             self.render_details_block(area, buf);
@@ -1884,6 +1893,41 @@ mod tests {
         db.add_to_collection("col-1", &["bm-1".to_string(), "bm-2".to_string()]).unwrap();
         let pane = RightPane::new(&db);
         (pane, db, tmp)
+    }
+
+    #[test]
+    fn hiding_details_clears_its_hit_test_caches() {
+        let (mut pane, db, _tmp) = right_pane_with_collection();
+        pane.load_tour(&db, "Tour");
+
+        let area = Rect::new(0, 0, 80, 40);
+
+        // With details visible, render records both the details area and the
+        // details TabbedPanel's own hit-test area.
+        let mut buf = Buffer::empty(area);
+        pane.render(area, &mut buf, false, DetailsPaneSize::Regular);
+        assert!(
+            !pane.last_details_area.get().is_empty(),
+            "details area should be recorded when the details block is drawn",
+        );
+        assert!(
+            !pane.details.last_area().is_empty(),
+            "details panel area should be recorded when the details block is drawn",
+        );
+
+        // Hiding details (e.g. fullscreen preview) skips the details block, so
+        // both caches must be cleared or a click/scroll would still reach the
+        // now-hidden Details panel through the stale areas.
+        let mut buf = Buffer::empty(area);
+        pane.render(area, &mut buf, true, DetailsPaneSize::Regular);
+        assert!(
+            pane.last_details_area.get().is_empty(),
+            "hidden details must clear last_details_area",
+        );
+        assert!(
+            pane.details.last_area().is_empty(),
+            "hidden details must clear the details panel's hit-test area",
+        );
     }
 
     #[test]
