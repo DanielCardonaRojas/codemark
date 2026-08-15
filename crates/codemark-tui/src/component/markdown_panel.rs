@@ -97,6 +97,14 @@ impl MarkdownPanel {
         &self.content
     }
 
+    /// Invalidate the cached hit-test area.
+    ///
+    /// Mouse handling treats an empty area as "not hovered", so clearing it when
+    /// the panel isn't rendered keeps a stale area from capturing scroll input.
+    pub fn invalidate_area(&self) {
+        self.last_area.set(Rect::default());
+    }
+
     /// Move the viewport by `delta` lines (positive scrolls down, negative up),
     /// clamped to the content bounds. Returns true if the offset changed.
     ///

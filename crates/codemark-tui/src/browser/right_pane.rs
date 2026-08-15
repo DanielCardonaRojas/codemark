@@ -1724,13 +1724,20 @@ impl RightPane {
         self.last_area.get()
     }
 
-    /// Invalidate the cached hit-test area.
+    /// Invalidate every cached hit-test area, including the child panels.
     ///
     /// Called when the right pane isn't rendered (e.g. the left pane is
-    /// fullscreen) so its area from the previous layout can't capture a click
-    /// meant for a visible pane.
-    pub fn invalidate_area(&self) {
+    /// fullscreen) so areas from the previous layout can't capture a click or
+    /// scroll meant for a visible pane. `handle_event` routes mouse input
+    /// through the steps/details/overview areas directly (not the outer
+    /// `last_area`), so those must be cleared too or hidden preview content
+    /// would still receive focus and scrolling.
+    pub fn invalidate_areas(&self) {
         self.last_area.set(Rect::default());
+        self.last_details_area.set(Rect::default());
+        self.steps.invalidate_area();
+        self.details.invalidate_area();
+        self.overview.invalidate_area();
     }
 
     /// Scroll the main preview content by `delta` lines (positive scrolls down),
