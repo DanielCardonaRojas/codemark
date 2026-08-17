@@ -199,9 +199,37 @@ impl Component for Pager {
         use ratatui::text::Span;
         use ratatui::widgets::Paragraph;
 
-        let mut spans = Vec::with_capacity(self.total * 2);
-        for i in 0..self.total {
-            if i > 0 {
+        // The `n / N` index sits at the right edge. Reserve its width (plus a
+        // one-column gap) on *both* sides of the row so the dot window stays
+        // centered in the true middle of the row instead of being shoved
+        // left by the right-aligned index — otherwise a full row of dots looks
+        // longer on the left and shorter on the right. Size the reservation
+        // from the *widest* possible index (`N / N`) rather than the current
+        // page's text so the visible window size stays constant as you page —
+        // otherwise the block boundaries would shift when the current page's
+        // digit count changes.
+        let index_text = format!("{} / {}", self.current + 1, self.total);
+        let index_width = (self.total.to_string().len() * 2 + 3) as u16;
+        let reserve = index_width.saturating_add(1);
+        let dots_width = area.width.saturating_sub(reserve.saturating_mul(2)) as usize;
+
+        // Each dot occupies two columns (glyph + trailing space) except the
+        // last, so `v` dots span `2v - 1` columns. The window holds as many dots
+        // as the reserved space fits; the index already conveys the exact
+        // position within the full collection.
+        let fits = dots_width.saturating_add(1) / 2;
+        let visible = self.total.min(fits).max(1);
+
+        // Page the window in fixed blocks: the current dot moves freely from the
+        // left edge to the right edge of its block, and only when it crosses an
+        // edge does the window slide to the next/previous block. (Contrast with
+        // pinning the current dot to the middle, which slides on every move.)
+        let start = (self.current / visible) * visible;
+        let end = (start + visible).min(self.total);
+
+        let mut spans = Vec::with_capacity(visible * 2);
+        for i in start..end {
+            if i > start {
                 spans.push(Span::raw(" "));
             }
             let is_current = i == self.current;
@@ -228,10 +256,7 @@ impl Component for Pager {
         p.render(area, buf);
 
         // Show the current page index (1-based) over the total, right-aligned.
-        let index = Span::styled(
-            format!("{} / {}", self.current + 1, self.total),
-            Style::default().fg(crate::theme::palette().dim),
-        );
+        let index = Span::styled(index_text, Style::default().fg(crate::theme::palette().dim));
         Paragraph::new(Line::from(index)).alignment(Alignment::Right).render(area, buf);
     }
 
@@ -309,4 +334,79 @@ impl Component for Spacer {
     }
 
     fn set_focus(&mut self, _focused: bool) {}
+}
+
+#[cfg(test)]
+mod pager_tests {
+    use super::*;
+    use ratatui::layout::Rect;
+
+    /// Render a pager to a fresh buffer and return the single row as a string.
+    fn render_row(total: usize, current: usize, width: u16) -> String {
+        let area = Rect::new(0, 0, width, 1);
+        let mut buf = Buffer::empty(area);
+        Pager::new(total, current).render(area, &mut buf);
+        (0..width).map(|x| buf[(x, 0)].symbol()).collect()
+    }
+
+    fn is_dot(c: char) -> bool {
+        c == '●' || c == '○'
+    }
+
+    /// Zero-based position of the filled (current) dot among the visible dots.
+    fn filled_dot_position(row: &str) -> usize {
+        row.chars().filter(|c| is_dot(*c)).position(|c| c == '●').expect("a filled dot")
+    }
+
+    #[test]
+    fn window_size_is_bounded_by_available_width_and_the_index() {
+        // The window holds only as many dots as fit once the `N / N` index is
+        // reserved on both sides, not all 100 pages.
+        let row = render_row(100, 5, 80);
+        let dots = row.chars().filter(|c| is_dot(*c)).count();
+        // 80 cols - 2*(9-wide "100 / 100" reservation + gap) = 60 -> 30 dots fit.
+        assert_eq!(dots, 30, "row: {row:?}");
+
+        // A narrower row fits fewer dots.
+        let narrow = render_row(100, 5, 40);
+        let narrow_dots = narrow.chars().filter(|c| is_dot(*c)).count();
+        assert!(narrow_dots < dots, "narrow: {narrow:?}");
+        assert!(row.contains("6 / 100"), "index should show the true position; row: {row:?}");
+    }
+
+    #[test]
+    fn shows_every_dot_when_they_all_fit() {
+        let row = render_row(3, 1, 80);
+        let dots = row.chars().filter(|c| is_dot(*c)).count();
+        assert_eq!(dots, 3, "row: {row:?}");
+    }
+
+    #[test]
+    fn selection_moves_freely_within_a_block_before_the_window_slides() {
+        // Within a block the current dot advances one position per page without
+        // moving the window, so its position tracks the page.
+        let width = 80u16;
+        let visible = render_row(100, 0, width).chars().filter(|c| is_dot(*c)).count();
+
+        // First and last page of the opening block keep the same window but move
+        // the filled dot from the left edge to the right edge.
+        assert_eq!(filled_dot_position(&render_row(100, 0, width)), 0);
+        assert_eq!(filled_dot_position(&render_row(100, 3, width)), 3);
+        assert_eq!(filled_dot_position(&render_row(100, visible - 1, width)), visible - 1);
+
+        // Crossing the right edge slides to the next block, putting the current
+        // dot back at the left edge.
+        assert_eq!(filled_dot_position(&render_row(100, visible, width)), 0);
+    }
+
+    #[test]
+    fn dot_window_never_overlaps_the_index() {
+        // The rightmost dot must sit left of where the `n / N` index begins so
+        // the two never collide, even on a narrow row.
+        let width = 40u16;
+        let row = render_row(100, 50, width);
+        let last_dot_col = row.char_indices().filter(|(_, c)| is_dot(*c)).last().unwrap().0;
+        let index_col = row.find(|c: char| c.is_ascii_digit()).unwrap();
+        assert!(last_dot_col < index_col, "dots must not overrun the index; row: {row:?}");
+    }
 }
