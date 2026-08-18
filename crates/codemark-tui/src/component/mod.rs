@@ -216,44 +216,55 @@ impl Component for Pager {
         // Each dot occupies two columns (glyph + trailing space) except the
         // last, so `v` dots span `2v - 1` columns. The window holds as many dots
         // as the reserved space fits; the index already conveys the exact
-        // position within the full collection.
+        // position within the full collection. When the row is too narrow to
+        // hold even one dot we render none — forcing a lone dot would only put
+        // it under the right-aligned index, which would overwrite it and leave
+        // the current-page indicator garbled.
         let fits = dots_width.saturating_add(1) / 2;
-        let visible = self.total.min(fits).max(1);
+        let visible = self.total.min(fits);
 
-        // Page the window in fixed blocks: the current dot moves freely from the
-        // left edge to the right edge of its block, and only when it crosses an
-        // edge does the window slide to the next/previous block. (Contrast with
-        // pinning the current dot to the middle, which slides on every move.)
-        let start = (self.current / visible) * visible;
-        let end = (start + visible).min(self.total);
+        if visible > 0 {
+            // Page the window in fixed blocks: the current dot moves freely from
+            // the left edge to the right edge of its block, and only when it
+            // crosses an edge does the window slide to the next/previous block.
+            // (Contrast with pinning the current dot to the middle, which slides
+            // on every move.) The final block is anchored at `total - visible`
+            // so it stays full width and its dots line up column-for-column with
+            // every other block; otherwise centering a shorter last block would
+            // shift the whole window sideways as the user pages into it. Both
+            // subtractions are safe: `visible <= total`.
+            let start = ((self.current / visible) * visible).min(self.total - visible);
+            let end = start + visible;
 
-        let mut spans = Vec::with_capacity(visible * 2);
-        for i in start..end {
-            if i > start {
-                spans.push(Span::raw(" "));
-            }
-            let is_current = i == self.current;
-            // Every dot — filled and unfilled — is colored by its step's health.
-            // Only when no health is supplied do we fall back to accent (current)
-            // / dim (others). The current page stays a filled, bold dot so it
-            // remains distinguishable even when a neighbor shares its color.
-            let color = self.health.get(i).map(|h| h.color()).unwrap_or_else(|| {
-                if is_current {
-                    crate::theme::palette().accent
-                } else {
-                    crate::theme::palette().dim
+            let mut spans = Vec::with_capacity(visible * 2);
+            for i in start..end {
+                if i > start {
+                    spans.push(Span::raw(" "));
                 }
-            });
-            let glyph = if is_current { "●" } else { "○" };
-            let mut style = Style::default().fg(color);
-            if is_current {
-                style = style.add_modifier(Modifier::BOLD);
+                let is_current = i == self.current;
+                // Every dot — filled and unfilled — is colored by its step's
+                // health. Only when no health is supplied do we fall back to
+                // accent (current) / dim (others). The current page stays a
+                // filled, bold dot so it remains distinguishable even when a
+                // neighbor shares its color.
+                let color = self.health.get(i).map(|h| h.color()).unwrap_or_else(|| {
+                    if is_current {
+                        crate::theme::palette().accent
+                    } else {
+                        crate::theme::palette().dim
+                    }
+                });
+                let glyph = if is_current { "●" } else { "○" };
+                let mut style = Style::default().fg(color);
+                if is_current {
+                    style = style.add_modifier(Modifier::BOLD);
+                }
+                spans.push(Span::styled(glyph, style));
             }
-            spans.push(Span::styled(glyph, style));
-        }
 
-        let p = Paragraph::new(Line::from(spans)).alignment(Alignment::Center);
-        p.render(area, buf);
+            let p = Paragraph::new(Line::from(spans)).alignment(Alignment::Center);
+            p.render(area, buf);
+        }
 
         // Show the current page index (1-based) over the total, right-aligned.
         let index = Span::styled(index_text, Style::default().fg(crate::theme::palette().dim));
@@ -408,5 +419,34 @@ mod pager_tests {
         let last_dot_col = row.char_indices().filter(|(_, c)| is_dot(*c)).last().unwrap().0;
         let index_col = row.find(|c: char| c.is_ascii_digit()).unwrap();
         assert!(last_dot_col < index_col, "dots must not overrun the index; row: {row:?}");
+    }
+
+    #[test]
+    fn too_narrow_a_row_shows_the_index_but_no_dots() {
+        // With no room for dots the pager must not force a lone dot (it would be
+        // overwritten by the right-aligned index); only the index renders.
+        let row = render_row(100, 50, 12);
+        assert_eq!(row.chars().filter(|c| is_dot(*c)).count(), 0, "row: {row:?}");
+        assert!(row.contains("51 / 100"), "index should still render; row: {row:?}");
+    }
+
+    #[test]
+    fn final_partial_block_stays_full_width_and_column_aligned() {
+        // 100 pages / 30-per-window leaves a 10-page tail. The last block must
+        // keep the window full width (anchored to the end) and render its dots
+        // in the same columns as a full mid-collection block, so paging into the
+        // tail doesn't shift the whole window sideways.
+        let width = 80u16;
+        let dot_cols = |current: usize| -> Vec<usize> {
+            render_row(100, current, width)
+                .char_indices()
+                .filter(|(_, c)| is_dot(*c))
+                .map(|(i, _)| i)
+                .collect()
+        };
+        let mid = dot_cols(50);
+        let tail = dot_cols(99);
+        assert_eq!(mid.len(), 30, "mid block should be full width: {mid:?}");
+        assert_eq!(tail, mid, "tail block must align with other blocks");
     }
 }
