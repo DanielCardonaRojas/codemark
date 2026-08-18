@@ -226,15 +226,13 @@ impl Component for Pager {
         if visible > 0 {
             // Page the window in fixed blocks: the current dot moves freely from
             // the left edge to the right edge of its block, and only when it
-            // crosses an edge does the window slide to the next/previous block.
-            // (Contrast with pinning the current dot to the middle, which slides
-            // on every move.) The final block is anchored at `total - visible`
-            // so it stays full width and its dots line up column-for-column with
-            // every other block; otherwise centering a shorter last block would
-            // shift the whole window sideways as the user pages into it. Both
-            // subtractions are safe: `visible <= total`.
-            let start = ((self.current / visible) * visible).min(self.total - visible);
-            let end = start + visible;
+            // crosses an edge does the window slide to the next block, resetting
+            // the current dot to the left edge. (Contrast with pinning the dot to
+            // the middle, which slides on every move.) A short final block — when
+            // `total` isn't divisible by `visible` — keeps that reset: its dots
+            // just fill the left of the window and leave the right empty.
+            let start = (self.current / visible) * visible;
+            let end = (start + visible).min(self.total);
 
             let mut spans = Vec::with_capacity(visible * 2);
             for i in start..end {
@@ -262,8 +260,16 @@ impl Component for Pager {
                 spans.push(Span::styled(glyph, style));
             }
 
-            let p = Paragraph::new(Line::from(spans)).alignment(Alignment::Center);
-            p.render(area, buf);
+            // Left-align the dots within a centered slot sized for a *full*
+            // window (`2 * visible - 1` columns), not the current line. Centering
+            // the line itself would re-center a shorter final block and shift the
+            // whole window sideways; a fixed full-width slot instead keeps every
+            // block's dots in the same columns, with a short block simply leaving
+            // its right end empty.
+            let full_width = (visible * 2 - 1) as u16;
+            let offset = area.width.saturating_sub(full_width) / 2;
+            let dots_area = Rect { x: area.x + offset, width: full_width, ..area };
+            Paragraph::new(Line::from(spans)).alignment(Alignment::Left).render(dots_area, buf);
         }
 
         // Show the current page index (1-based) over the total, right-aligned.
@@ -431,11 +437,12 @@ mod pager_tests {
     }
 
     #[test]
-    fn final_partial_block_stays_full_width_and_column_aligned() {
-        // 100 pages / 30-per-window leaves a 10-page tail. The last block must
-        // keep the window full width (anchored to the end) and render its dots
-        // in the same columns as a full mid-collection block, so paging into the
-        // tail doesn't shift the whole window sideways.
+    fn final_partial_block_aligns_and_resets_without_jumping() {
+        // 100 pages / 30-per-window leaves a 10-page tail. The final block holds
+        // only those 10 dots, but they must render in the same leftmost columns
+        // as a full mid-collection block — so the window doesn't shift sideways —
+        // and paging into it must reset the current dot to the left edge rather
+        // than jumping backward within an overlapping window.
         let width = 80u16;
         let dot_cols = |current: usize| -> Vec<usize> {
             render_row(100, current, width)
@@ -447,6 +454,12 @@ mod pager_tests {
         let mid = dot_cols(50);
         let tail = dot_cols(99);
         assert_eq!(mid.len(), 30, "mid block should be full width: {mid:?}");
-        assert_eq!(tail, mid, "tail block must align with other blocks");
+        assert_eq!(tail.len(), 10, "final block holds the 10-page tail: {tail:?}");
+        assert_eq!(tail, mid[..tail.len()], "tail must be column-aligned with full blocks");
+
+        // Crossing from the right edge of one block into the next resets the
+        // current dot to the left edge — a forward move never jumps it backward.
+        assert_eq!(filled_dot_position(&render_row(100, 89, width)), 29, "right edge of a block");
+        assert_eq!(filled_dot_position(&render_row(100, 90, width)), 0, "left edge of final block");
     }
 }
