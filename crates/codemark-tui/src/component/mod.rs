@@ -419,13 +419,20 @@ mod pager_tests {
 
     #[test]
     fn dot_window_never_overlaps_the_index() {
-        // The rightmost dot must sit left of where the `n / N` index begins so
-        // the two never collide, even on a narrow row.
+        // Every dot must sit left of where the `n / N` index begins so the two
+        // never collide, even on a narrow row. `row` is the *post-render* buffer,
+        // so an index that overwrote a dot would drop it — assert the full count
+        // survives, using per-cell positions rather than UTF-8 byte offsets.
         let width = 40u16;
         let row = render_row(100, 50, width);
-        let last_dot_col = row.char_indices().rfind(|(_, c)| is_dot(*c)).unwrap().0;
-        let index_col = row.find(|c: char| c.is_ascii_digit()).unwrap();
-        assert!(last_dot_col < index_col, "dots must not overrun the index; row: {row:?}");
+        let dot_cols: Vec<usize> =
+            row.chars().enumerate().filter(|(_, c)| is_dot(*c)).map(|(col, _)| col).collect();
+        let index_col = row.chars().position(|c| c.is_ascii_digit()).unwrap();
+        assert_eq!(dot_cols.len(), 10, "all visible dots must remain; row: {row:?}");
+        assert!(
+            dot_cols.iter().all(|&col| col < index_col),
+            "dots must not overrun the index; row: {row:?}"
+        );
     }
 
     #[test]
