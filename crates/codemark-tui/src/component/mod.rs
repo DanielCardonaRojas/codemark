@@ -199,39 +199,82 @@ impl Component for Pager {
         use ratatui::text::Span;
         use ratatui::widgets::Paragraph;
 
-        let mut spans = Vec::with_capacity(self.total * 2);
-        for i in 0..self.total {
-            if i > 0 {
-                spans.push(Span::raw(" "));
-            }
-            let is_current = i == self.current;
-            // Every dot — filled and unfilled — is colored by its step's health.
-            // Only when no health is supplied do we fall back to accent (current)
-            // / dim (others). The current page stays a filled, bold dot so it
-            // remains distinguishable even when a neighbor shares its color.
-            let color = self.health.get(i).map(|h| h.color()).unwrap_or_else(|| {
-                if is_current {
-                    crate::theme::palette().accent
-                } else {
-                    crate::theme::palette().dim
+        // The `n / N` index sits at the right edge. Reserve its width (plus a
+        // one-column gap) on *both* sides of the row so the dot window stays
+        // centered in the true middle of the row instead of being shoved
+        // left by the right-aligned index — otherwise a full row of dots looks
+        // longer on the left and shorter on the right. Size the reservation
+        // from the *widest* possible index (`N / N`) rather than the current
+        // page's text so the visible window size stays constant as you page —
+        // otherwise the block boundaries would shift when the current page's
+        // digit count changes.
+        let index_text = format!("{} / {}", self.current + 1, self.total);
+        let index_width = (self.total.to_string().len() * 2 + 3) as u16;
+        let reserve = index_width.saturating_add(1);
+        let dots_width = area.width.saturating_sub(reserve.saturating_mul(2)) as usize;
+
+        // Each dot occupies two columns (glyph + trailing space) except the
+        // last, so `v` dots span `2v - 1` columns. The window holds as many dots
+        // as the reserved space fits; the index already conveys the exact
+        // position within the full collection. When the row is too narrow to
+        // hold even one dot we render none — forcing a lone dot would only put
+        // it under the right-aligned index, which would overwrite it and leave
+        // the current-page indicator garbled.
+        let fits = dots_width.saturating_add(1) / 2;
+        // `NonZeroUsize` (rather than a plain `> 0` guard) keeps the divisions
+        // below infallible without a `checked_div` dance.
+        if let Some(visible) = std::num::NonZeroUsize::new(self.total.min(fits)) {
+            let visible = visible.get();
+            // Page the window in fixed blocks: the current dot moves freely from
+            // the left edge to the right edge of its block, and only when it
+            // crosses an edge does the window slide to the next block, resetting
+            // the current dot to the left edge. (Contrast with pinning the dot to
+            // the middle, which slides on every move.) A short final block — when
+            // `total` isn't divisible by `visible` — keeps that reset: its dots
+            // just fill the left of the window and leave the right empty.
+            let start = (self.current / visible) * visible;
+            let end = (start + visible).min(self.total);
+
+            let mut spans = Vec::with_capacity(visible * 2);
+            for i in start..end {
+                if i > start {
+                    spans.push(Span::raw(" "));
                 }
-            });
-            let glyph = if is_current { "●" } else { "○" };
-            let mut style = Style::default().fg(color);
-            if is_current {
-                style = style.add_modifier(Modifier::BOLD);
+                let is_current = i == self.current;
+                // Every dot — filled and unfilled — is colored by its step's
+                // health. Only when no health is supplied do we fall back to
+                // accent (current) / dim (others). The current page stays a
+                // filled, bold dot so it remains distinguishable even when a
+                // neighbor shares its color.
+                let color = self.health.get(i).map(|h| h.color()).unwrap_or_else(|| {
+                    if is_current {
+                        crate::theme::palette().accent
+                    } else {
+                        crate::theme::palette().dim
+                    }
+                });
+                let glyph = if is_current { "●" } else { "○" };
+                let mut style = Style::default().fg(color);
+                if is_current {
+                    style = style.add_modifier(Modifier::BOLD);
+                }
+                spans.push(Span::styled(glyph, style));
             }
-            spans.push(Span::styled(glyph, style));
+
+            // Left-align the dots within a centered slot sized for a *full*
+            // window (`2 * visible - 1` columns), not the current line. Centering
+            // the line itself would re-center a shorter final block and shift the
+            // whole window sideways; a fixed full-width slot instead keeps every
+            // block's dots in the same columns, with a short block simply leaving
+            // its right end empty.
+            let full_width = (visible * 2 - 1) as u16;
+            let offset = area.width.saturating_sub(full_width) / 2;
+            let dots_area = Rect { x: area.x + offset, width: full_width, ..area };
+            Paragraph::new(Line::from(spans)).alignment(Alignment::Left).render(dots_area, buf);
         }
 
-        let p = Paragraph::new(Line::from(spans)).alignment(Alignment::Center);
-        p.render(area, buf);
-
         // Show the current page index (1-based) over the total, right-aligned.
-        let index = Span::styled(
-            format!("{} / {}", self.current + 1, self.total),
-            Style::default().fg(crate::theme::palette().dim),
-        );
+        let index = Span::styled(index_text, Style::default().fg(crate::theme::palette().dim));
         Paragraph::new(Line::from(index)).alignment(Alignment::Right).render(area, buf);
     }
 
@@ -309,4 +352,122 @@ impl Component for Spacer {
     }
 
     fn set_focus(&mut self, _focused: bool) {}
+}
+
+#[cfg(test)]
+mod pager_tests {
+    use super::*;
+    use ratatui::layout::Rect;
+
+    /// Render a pager to a fresh buffer and return the single row as a string.
+    fn render_row(total: usize, current: usize, width: u16) -> String {
+        let area = Rect::new(0, 0, width, 1);
+        let mut buf = Buffer::empty(area);
+        Pager::new(total, current).render(area, &mut buf);
+        (0..width).map(|x| buf[(x, 0)].symbol()).collect()
+    }
+
+    fn is_dot(c: char) -> bool {
+        c == '●' || c == '○'
+    }
+
+    /// Zero-based position of the filled (current) dot among the visible dots.
+    fn filled_dot_position(row: &str) -> usize {
+        row.chars().filter(|c| is_dot(*c)).position(|c| c == '●').expect("a filled dot")
+    }
+
+    #[test]
+    fn window_size_is_bounded_by_available_width_and_the_index() {
+        // The window holds only as many dots as fit once the `N / N` index is
+        // reserved on both sides, not all 100 pages.
+        let row = render_row(100, 5, 80);
+        let dots = row.chars().filter(|c| is_dot(*c)).count();
+        // 80 cols - 2*(9-wide "100 / 100" reservation + gap) = 60 -> 30 dots fit.
+        assert_eq!(dots, 30, "row: {row:?}");
+
+        // A narrower row fits fewer dots.
+        let narrow = render_row(100, 5, 40);
+        let narrow_dots = narrow.chars().filter(|c| is_dot(*c)).count();
+        assert!(narrow_dots < dots, "narrow: {narrow:?}");
+        assert!(row.contains("6 / 100"), "index should show the true position; row: {row:?}");
+    }
+
+    #[test]
+    fn shows_every_dot_when_they_all_fit() {
+        let row = render_row(3, 1, 80);
+        let dots = row.chars().filter(|c| is_dot(*c)).count();
+        assert_eq!(dots, 3, "row: {row:?}");
+    }
+
+    #[test]
+    fn selection_moves_freely_within_a_block_before_the_window_slides() {
+        // Within a block the current dot advances one position per page without
+        // moving the window, so its position tracks the page.
+        let width = 80u16;
+        let visible = render_row(100, 0, width).chars().filter(|c| is_dot(*c)).count();
+
+        // First and last page of the opening block keep the same window but move
+        // the filled dot from the left edge to the right edge.
+        assert_eq!(filled_dot_position(&render_row(100, 0, width)), 0);
+        assert_eq!(filled_dot_position(&render_row(100, 3, width)), 3);
+        assert_eq!(filled_dot_position(&render_row(100, visible - 1, width)), visible - 1);
+
+        // Crossing the right edge slides to the next block, putting the current
+        // dot back at the left edge.
+        assert_eq!(filled_dot_position(&render_row(100, visible, width)), 0);
+    }
+
+    #[test]
+    fn dot_window_never_overlaps_the_index() {
+        // Every dot must sit left of where the `n / N` index begins so the two
+        // never collide, even on a narrow row. `row` is the *post-render* buffer,
+        // so an index that overwrote a dot would drop it — assert the full count
+        // survives, using per-cell positions rather than UTF-8 byte offsets.
+        let width = 40u16;
+        let row = render_row(100, 50, width);
+        let dot_cols: Vec<usize> =
+            row.chars().enumerate().filter(|(_, c)| is_dot(*c)).map(|(col, _)| col).collect();
+        let index_col = row.chars().position(|c| c.is_ascii_digit()).unwrap();
+        assert_eq!(dot_cols.len(), 10, "all visible dots must remain; row: {row:?}");
+        assert!(
+            dot_cols.iter().all(|&col| col < index_col),
+            "dots must not overrun the index; row: {row:?}"
+        );
+    }
+
+    #[test]
+    fn too_narrow_a_row_shows_the_index_but_no_dots() {
+        // With no room for dots the pager must not force a lone dot (it would be
+        // overwritten by the right-aligned index); only the index renders.
+        let row = render_row(100, 50, 12);
+        assert_eq!(row.chars().filter(|c| is_dot(*c)).count(), 0, "row: {row:?}");
+        assert!(row.contains("51 / 100"), "index should still render; row: {row:?}");
+    }
+
+    #[test]
+    fn final_partial_block_aligns_and_resets_without_jumping() {
+        // 100 pages / 30-per-window leaves a 10-page tail. The final block holds
+        // only those 10 dots, but they must render in the same leftmost columns
+        // as a full mid-collection block — so the window doesn't shift sideways —
+        // and paging into it must reset the current dot to the left edge rather
+        // than jumping backward within an overlapping window.
+        let width = 80u16;
+        let dot_cols = |current: usize| -> Vec<usize> {
+            render_row(100, current, width)
+                .char_indices()
+                .filter(|(_, c)| is_dot(*c))
+                .map(|(i, _)| i)
+                .collect()
+        };
+        let mid = dot_cols(50);
+        let tail = dot_cols(99);
+        assert_eq!(mid.len(), 30, "mid block should be full width: {mid:?}");
+        assert_eq!(tail.len(), 10, "final block holds the 10-page tail: {tail:?}");
+        assert_eq!(tail, mid[..tail.len()], "tail must be column-aligned with full blocks");
+
+        // Crossing from the right edge of one block into the next resets the
+        // current dot to the left edge — a forward move never jumps it backward.
+        assert_eq!(filled_dot_position(&render_row(100, 89, width)), 29, "right edge of a block");
+        assert_eq!(filled_dot_position(&render_row(100, 90, width)), 0, "left edge of final block");
+    }
 }
