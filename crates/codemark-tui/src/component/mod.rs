@@ -221,9 +221,10 @@ impl Component for Pager {
         // it under the right-aligned index, which would overwrite it and leave
         // the current-page indicator garbled.
         let fits = dots_width.saturating_add(1) / 2;
-        let visible = self.total.min(fits);
-
-        if visible > 0 {
+        // `NonZeroUsize` (rather than a plain `> 0` guard) keeps the divisions
+        // below infallible without a `checked_div` dance.
+        if let Some(visible) = std::num::NonZeroUsize::new(self.total.min(fits)) {
+            let visible = visible.get();
             // Page the window in fixed blocks: the current dot moves freely from
             // the left edge to the right edge of its block, and only when it
             // crosses an edge does the window slide to the next block, resetting
@@ -422,7 +423,7 @@ mod pager_tests {
         // the two never collide, even on a narrow row.
         let width = 40u16;
         let row = render_row(100, 50, width);
-        let last_dot_col = row.char_indices().filter(|(_, c)| is_dot(*c)).last().unwrap().0;
+        let last_dot_col = row.char_indices().rfind(|(_, c)| is_dot(*c)).unwrap().0;
         let index_col = row.find(|c: char| c.is_ascii_digit()).unwrap();
         assert!(last_dot_col < index_col, "dots must not overrun the index; row: {row:?}");
     }
