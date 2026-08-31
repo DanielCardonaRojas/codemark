@@ -275,7 +275,11 @@ async fn run_app() -> Result<Option<i32>> {
                             AppMode::Normal if show_keys => {
                                 // The keybindings cheat sheet is modal: it
                                 // swallows every key; Esc or `?` closes it.
-                                if matches!(
+                                // `q` still quits (global escape hatch) so the
+                                // overlay doesn't trap the user.
+                                if key.code == event::KeyCode::Char('q') {
+                                    state.quit();
+                                } else if matches!(
                                     key.code,
                                     event::KeyCode::Esc | event::KeyCode::Char('?')
                                 ) {
@@ -284,27 +288,33 @@ async fn run_app() -> Result<Option<i32>> {
                                 handled = true;
                             }
                             AppMode::Normal if settings.is_visible() => {
-                                // The settings overlay is modal: it swallows
-                                // every key (tab switching, Esc/`,` to close).
-                                let config = layout.config_info();
-                                match settings.handle_key(key.code, &config) {
-                                    crate::settings::SettingsAction::ThemeChanged => {
-                                        // Re-highlight existing previews with the
-                                        // newly applied theme (the chrome updates
-                                        // automatically on the next render).
-                                        layout.reapply_preview_theme();
-                                        handled = true;
-                                    }
-                                    crate::settings::SettingsAction::Notify(msg) => {
-                                        notification =
-                                            Some((msg, NotificationType::Error, Instant::now()));
-                                        handled = true;
-                                    }
-                                    crate::settings::SettingsAction::Handled
-                                    | crate::settings::SettingsAction::Unhandled => {
-                                        handled = true; // Still modal, so swallow
+                                // The settings overlay is modal, but `q` still
+                                // quits (global escape hatch) so it doesn't trap
+                                // the user; every other key is swallowed (tab
+                                // switching, Esc/`,` to close).
+                                if key.code == event::KeyCode::Char('q') {
+                                    state.quit();
+                                } else {
+                                    let config = layout.config_info();
+                                    match settings.handle_key(key.code, &config) {
+                                        crate::settings::SettingsAction::ThemeChanged => {
+                                            // Re-highlight existing previews with the
+                                            // newly applied theme (the chrome updates
+                                            // automatically on the next render).
+                                            layout.reapply_preview_theme();
+                                        }
+                                        crate::settings::SettingsAction::Notify(msg) => {
+                                            notification = Some((
+                                                msg,
+                                                NotificationType::Error,
+                                                Instant::now(),
+                                            ));
+                                        }
+                                        crate::settings::SettingsAction::Handled
+                                        | crate::settings::SettingsAction::Unhandled => {}
                                     }
                                 }
+                                handled = true;
                             }
                             AppMode::Normal => {
                                 // Handle global key bindings (disabled when Search is focused).
