@@ -221,8 +221,7 @@ impl VecStore {
 
             // Parse as f32 array
             let mut embedding = Vec::with_capacity(blob.len() / 4);
-            for chunk in blob.chunks_exact(4) {
-                let bytes: [u8; 4] = [chunk[0], chunk[1], chunk[2], chunk[3]];
+            for &bytes in blob.as_chunks::<4>().0 {
                 embedding.push(f32::from_le_bytes(bytes));
             }
             Ok(embedding)
