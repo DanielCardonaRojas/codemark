@@ -54,7 +54,8 @@ codemark heal --validate-only --collection request-lifecycle
 
 `--range 1-3` is a line range. Byte ranges require the `b` prefix, such as
 `b1024-1280`. Validation uses `heal --validate-only`, not a `validate` command;
-it skips resolution-history writes but still updates bookmark status.
+it reports computed bookmark health without saving resolutions or changing saved
+bookmark or collection health. Use ordinary `heal` to persist the result.
 
 ## Session 2: Resume from saved context
 
@@ -88,12 +89,17 @@ mv src/main.rs.tmp src/main.rs
 
 codemark resolve "$ID" --format json
 codemark collection resolve request-lifecycle --format json
-codemark diff --since HEAD --format json
+# diff compares committed trees, not uncommitted working-file edits.
+git add src/main.rs
+git -c user.name=Example -c user.email=example@example.com commit -m "Move authentication lines"
+codemark diff --since HEAD~1 --format json
 codemark heal --collection request-lifecycle --format json
 ```
 
 The function now starts on line 3 instead of line 1. Its structural query still
-matches, so the bookmark resolves at its new line range. This example keeps the
+matches, so the bookmark resolves at its new line range. After the edit is
+committed, `diff --since HEAD~1` reports the affected bookmark at line 3 by
+comparing the initial and current commits. This example keeps the
 file path unchanged: it does not promise automatic relocation to a renamed file
 or a different file after a function is extracted.
 
