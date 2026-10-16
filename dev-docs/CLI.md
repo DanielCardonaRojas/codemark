@@ -5,17 +5,16 @@ Full list of subcommands and flags for `codemark`.
 ## Global Options
 
 ```
-codemark [--db <path>]... [--repo <owner/name>]... [--format <fmt>] [--verbose] <subcommand>
+codemark [--db <path>]... [--repo <owner/name>]... [--format <fmt>] <subcommand>
 
 --db <path>          Database location (repeatable for multi-repo queries)
 --repo <owner/name>  Repository reference for identity-based discovery (repeatable)
 --format <fmt>       Output format: json (default), table, line, tv, markdown
---verbose            Enable debug-level logging to stderr
 ```
 
 ### Identity-Based Discovery
 
-The `--repo` flag enables querying repositories by their identity (e.g., `facebook/react`) instead of their filesystem path. This uses the global registry at `~/.config/codemark/registry.db` to resolve repository references to their local paths.
+The `--repo` flag enables querying repositories by their identity (e.g., `facebook/react`) instead of their filesystem path. This uses the global registry at `$CODEMARK_DATA_DIR/registry.db`, `$XDG_DATA_HOME/codemark/registry.db`, or (when neither override is set) `~/.local/share/codemark/registry.db` to resolve repository references to their local paths.
 
 ```bash
 # List bookmarks from multiple repositories by identity
