@@ -515,7 +515,10 @@ impl BrowserLayout {
                         .insert(super::health_key(repo_root.as_deref(), collection_id), health);
                     // A collection appears in both the Collections and Tours tabs,
                     // so update both dots (no-op where the panel/item is absent).
-                    for idx in [ContentTab::Collections.index(), ContentTab::Tours.index()] {
+                    for idx in [
+                        self.tab_position(ContentTab::Collections),
+                        self.tab_position(ContentTab::Tours),
+                    ] {
                         if let Some(panel) = self.left_pane.content_panel.get_list_panel_mut(idx) {
                             panel.update_item_health(repo_root.as_deref(), collection_id, health);
                         }
@@ -769,13 +772,11 @@ impl BrowserLayout {
         // user may have switched away from the Collections tab. Applying now
         // would yank them back, so discard results unless Collections is still
         // the active Content tab. (request_id only guards superseded searches.)
-        if ContentTab::from_index(self.left_pane.content_panel.tabs.selected_index())
-            != Some(ContentTab::Collections)
-        {
+        if self.active_content_tab() != Some(ContentTab::Collections) {
             return;
         }
 
-        let idx = ContentTab::Collections.index();
+        let idx = self.tab_position(ContentTab::Collections);
         if let Some(TabContent::List(p)) = self.left_pane.content_panel.panels.get_mut(idx) {
             p.set_search_items(items);
             p.set_selected(0);
@@ -1372,9 +1373,7 @@ impl BrowserLayout {
                     // logged out, so treat the key as a no-op to match.
                     && self.logged_in =>
             {
-                if let Some(ContentTab::Collections) =
-                    ContentTab::from_index(self.left_pane.content_panel.tabs.selected_index())
-                {
+                if let Some(ContentTab::Collections) = self.active_content_tab() {
                     self.start_push_collection();
                     return Some(true);
                 }
@@ -1547,7 +1546,7 @@ impl BrowserLayout {
 
     /// Activate the currently selected item in Content panel (Bookmarks, Tours, Collections).
     fn activate_content_selection(&mut self) -> Option<bool> {
-        match ContentTab::from_index(self.left_pane.content_panel.tabs.selected_index()) {
+        match self.active_content_tab() {
             Some(ContentTab::Tours) => {
                 if let Some(panel) = self.left_pane.content_panel.active_panel_mut()
                     && let Some(selected) = panel.selected()
@@ -1624,7 +1623,7 @@ impl BrowserLayout {
     /// caller can let the key fall through. On success the right-pane preview is
     /// refreshed since the selection may now point at a different item.
     fn cycle_content_sort(&mut self) -> bool {
-        let tab = ContentTab::from_index(self.left_pane.content_panel.tabs.selected_index());
+        let tab = self.active_content_tab();
         if !matches!(tab, Some(ContentTab::Bookmarks) | Some(ContentTab::Collections)) {
             return false;
         }
@@ -1693,7 +1692,7 @@ impl BrowserLayout {
         }
 
         if self.focus == FocusArea::ContentPanel {
-            match ContentTab::from_index(self.left_pane.content_panel.tabs.selected_index()) {
+            match self.active_content_tab() {
                 Some(ContentTab::Bookmarks) | Some(ContentTab::Collections) => {
                     if let Some(panel) = self.left_pane.content_panel.active_panel_mut()
                         && let Some(selected) = panel.selected()
@@ -1759,7 +1758,7 @@ impl BrowserLayout {
     /// This opens a modal confirmation dialog; the actual deletion happens only
     /// once the user confirms (see [`BrowserLayout::handle_dialog_key`]).
     fn handle_delete_key(&mut self) -> Option<bool> {
-        match ContentTab::from_index(self.left_pane.content_panel.tabs.selected_index()) {
+        match self.active_content_tab() {
             Some(ContentTab::Collections) => {
                 // Extract the selected row's name + owning repo up front, then drop
                 // the panel borrow so the db lookups below can borrow `self`.
@@ -1841,9 +1840,7 @@ impl BrowserLayout {
 
     /// Handle 'p' key — pull a remote tour or refresh the remote listing.
     fn handle_pull_key(&mut self) -> Option<bool> {
-        if let Some(ContentTab::Tours) =
-            ContentTab::from_index(self.left_pane.content_panel.tabs.selected_index())
-        {
+        if let Some(ContentTab::Tours) = self.active_content_tab() {
             let should_pull = self
                 .left_pane
                 .content_panel
@@ -1977,9 +1974,7 @@ impl BrowserLayout {
                     FocusArea::ContentPanel => {
                         let handled = self.left_pane.content_panel.handle_event(event);
                         if let Some(id) = self.left_pane.content_panel.take_selection_change()
-                            && let Some(tab) = ContentTab::from_index(
-                                self.left_pane.content_panel.tabs.selected_index(),
-                            )
+                            && let Some(tab) = self.active_content_tab()
                         {
                             self.on_content_selection_changed(tab, &id);
                         }

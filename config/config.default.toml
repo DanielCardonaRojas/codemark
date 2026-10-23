@@ -148,3 +148,14 @@ enabled = true
 #   - `.yaml`/`.yml` base16/base24 schemes (preview + chrome).
 # A user theme that shares a bundled name takes precedence.
 # theme = "Catppuccin Mocha"
+
+# Left-to-right order of the Content panel tabs. The first entry is the tab
+# selected when the TUI opens.
+#
+# Valid names: "bookmarks", "collections", "tours". You may list only some of
+# them — any tab you leave out keeps its relative position after the ones you
+# name, so `tab_order = ["collections"]` is enough to open on Collections.
+#
+# Commenting this out (or deleting it) restores the original layout:
+#   ["bookmarks", "collections", "tours"]
+tab_order = ["collections", "bookmarks", "tours"]

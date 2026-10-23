@@ -134,6 +134,89 @@ pub struct TuiConfig {
     /// `~/.config/codemark/themes`. When unset, the TUI uses its built-in
     /// fallback theme.
     pub theme: Option<String>,
+
+    /// Left-to-right order of the Content panel tabs.
+    ///
+    /// Accepts the names `bookmarks`, `collections` and `tours` (case- and
+    /// separator-insensitive); the first entry becomes the tab selected at
+    /// startup. Names may be partially listed — any tab left out keeps its
+    /// relative position after the ones named. Unknown names are ignored.
+    ///
+    /// When unset, the TUI keeps the historical `Bookmarks, Collections, Tours`
+    /// order so an existing config file never changes layout on upgrade. The
+    /// shipped default config sets `["collections", "bookmarks", "tours"]`, so
+    /// fresh installs open on Collections. See [`TabOrder`].
+    pub tab_order: Option<Vec<String>>,
+}
+
+/// A Content panel tab, used to configure tab order independently of the TUI.
+///
+/// Mirrors the TUI's `ContentTab` without depending on it, so the core crate
+/// can parse and validate [`TuiConfig::tab_order`]. The variant order here is
+/// the historical (pre-`tab_order`) layout, which is also the fallback.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum TabOrder {
+    /// Individual code bookmarks.
+    Bookmarks,
+    /// Local collections of bookmarks.
+    Collections,
+    /// Published/imported tours.
+    Tours,
+}
+
+impl TabOrder {
+    /// Every tab in the historical default order.
+    pub const ALL: &'static [TabOrder] =
+        &[TabOrder::Bookmarks, TabOrder::Collections, TabOrder::Tours];
+
+    /// Parse a configured tab name. Case- and separator-insensitive; returns
+    /// `None` for names that don't match a known tab.
+    pub fn parse(name: &str) -> Option<Self> {
+        match name.trim().trim_matches(['-', '_']).to_ascii_lowercase().as_str() {
+            "bookmarks" | "bookmark" => Some(TabOrder::Bookmarks),
+            "collections" | "collection" => Some(TabOrder::Collections),
+            "tours" | "tour" => Some(TabOrder::Tours),
+            _ => None,
+        }
+    }
+
+    /// The config name for this tab, as accepted by [`TabOrder::parse`].
+    pub fn name(self) -> &'static str {
+        match self {
+            TabOrder::Bookmarks => "bookmarks",
+            TabOrder::Collections => "collections",
+            TabOrder::Tours => "tours",
+        }
+    }
+}
+
+impl TuiConfig {
+    /// Resolve the configured Content panel tab order.
+    ///
+    /// Always returns every tab exactly once: configured names come first in
+    /// the order given, then any tab the user didn't name, in historical order.
+    /// Unknown and duplicate names are dropped. With no `tab_order` set this is
+    /// [`TabOrder::ALL`] — the historical layout — so an existing config file
+    /// keeps its current layout after an upgrade.
+    pub fn tab_order(&self) -> Vec<TabOrder> {
+        let Some(names) = self.tab_order.as_ref() else {
+            return TabOrder::ALL.to_vec();
+        };
+
+        let mut order: Vec<TabOrder> = Vec::with_capacity(TabOrder::ALL.len());
+        for name in names {
+            if let Some(tab) = TabOrder::parse(name)
+                && !order.contains(&tab)
+            {
+                order.push(tab);
+            }
+        }
+        // Backfill anything unnamed so the result is always a full permutation.
+        let missing: Vec<TabOrder> =
+            TabOrder::ALL.iter().copied().filter(|tab| !order.contains(tab)).collect();
+        order.extend(missing);
+        order
+    }
 }
 
 /// Publishing configuration.
@@ -704,6 +787,9 @@ impl Config {
         if other.tui.theme.is_some() {
             self.tui.theme = other.tui.theme;
         }
+        if other.tui.tab_order.is_some() {
+            self.tui.tab_order = other.tui.tab_order;
+        }
     }
 
     /// Write the default config file to the global config directory.
@@ -786,6 +872,83 @@ auto_archive_after_days = 14
         let config: Config = toml::from_str(toml).unwrap();
         assert_eq!(config.storage.max_resolutions(), 10);
         assert_eq!(config.health.auto_archive_days(), 14);
+    }
+
+    // @lat: [[tests#Content Tab Order#Unset Order Keeps Historical Layout]]
+    #[test]
+    fn tab_order_unset_keeps_historical_layout() {
+        // An existing config with no `tab_order` must not change layout on upgrade.
+        let config: Config = toml::from_str("[tui]\ntheme = \"Nord\"\n").unwrap();
+        assert!(config.tui.tab_order.is_none());
+        assert_eq!(config.tui.tab_order(), TabOrder::ALL);
+        // Same for a config file with no [tui] section at all.
+        assert_eq!(Config::default().tui.tab_order(), TabOrder::ALL);
+    }
+
+    // @lat: [[tests#Content Tab Order#Configured Order Is Respected]]
+    #[test]
+    fn tab_order_configured_is_respected() {
+        let toml = r#"
+[tui]
+tab_order = ["collections", "bookmarks", "tours"]
+"#;
+        let config: Config = toml::from_str(toml).unwrap();
+        assert_eq!(
+            config.tui.tab_order(),
+            vec![TabOrder::Collections, TabOrder::Bookmarks, TabOrder::Tours],
+        );
+    }
+
+    // @lat: [[tests#Content Tab Order#Shipped Default Opens On Collections]]
+    #[test]
+    fn shipped_default_config_opens_on_collections() {
+        // A fresh install writes config.default.toml verbatim, so the template
+        // itself must put Collections first.
+        let default_content = include_str!("../../../config/config.default.toml");
+        let config: Config = toml::from_str(default_content).expect("default config parses");
+        assert_eq!(
+            config.tui.tab_order().first(),
+            Some(&TabOrder::Collections),
+            "shipped default must open on Collections"
+        );
+    }
+
+    // @lat: [[tests#Content Tab Order#Partial And Invalid Names Backfill]]
+    #[test]
+    fn tab_order_partial_and_invalid_names_backfill() {
+        // Naming one tab is enough; the rest keep their relative order after it.
+        let partial: Config = toml::from_str("[tui]\ntab_order = [\"collections\"]\n").unwrap();
+        assert_eq!(
+            partial.tui.tab_order(),
+            vec![TabOrder::Collections, TabOrder::Bookmarks, TabOrder::Tours],
+        );
+
+        // Unknown and duplicate names are dropped, and the result stays a full
+        // permutation rather than losing a tab.
+        let messy: Config =
+            toml::from_str("[tui]\ntab_order = [\"Tours\", \"nope\", \"tours\"]\n").unwrap();
+        assert_eq!(
+            messy.tui.tab_order(),
+            vec![TabOrder::Tours, TabOrder::Bookmarks, TabOrder::Collections],
+        );
+
+        // An empty list is not a way to hide tabs.
+        let empty: Config = toml::from_str("[tui]\ntab_order = []\n").unwrap();
+        assert_eq!(empty.tui.tab_order(), TabOrder::ALL);
+    }
+
+    // @lat: [[tests#Content Tab Order#Local Config Overrides Global Order]]
+    #[test]
+    fn tab_order_local_overrides_global() {
+        let mut global: Config = toml::from_str("[tui]\ntab_order = [\"collections\"]\n").unwrap();
+        let local: Config = toml::from_str("[tui]\ntab_order = [\"tours\"]\n").unwrap();
+        global.merge(local);
+        assert_eq!(global.tui.tab_order().first(), Some(&TabOrder::Tours));
+
+        // A local config that says nothing about tabs leaves the global order.
+        let mut global: Config = toml::from_str("[tui]\ntab_order = [\"collections\"]\n").unwrap();
+        global.merge(toml::from_str("[tui]\ntheme = \"Nord\"\n").unwrap());
+        assert_eq!(global.tui.tab_order().first(), Some(&TabOrder::Collections));
     }
 
     #[test]

@@ -93,6 +93,17 @@ impl BrowserLayout {
         }
 
         rows.push(("TUI theme", theme, None));
+
+        // Report the order the panel actually renders, not the raw config list,
+        // so backfilled names and the forced-last Tours tab are reflected here
+        // rather than showing a layout that disagrees with the screen.
+        let tab_order = crate::browser::ContentTabOrder::from_config(&config.tui)
+            .tabs()
+            .iter()
+            .map(|tab| tab.label())
+            .collect::<Vec<_>>()
+            .join(", ");
+        rows.push(("Tab order", tab_order, None));
         rows
     }
 }

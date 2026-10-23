@@ -250,20 +250,27 @@ pub fn truncate_line_to_width(line: Line<'static>, max_width: usize) -> Line<'st
 }
 
 /// Content panel tabs (Bookmarks/Collections/Tours).
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+///
+/// The discriminants are a *stable identity*, not a display position: they index
+/// the content panel's `panels` vector, the per-tab search contexts and the live
+/// health caches. Display order is configurable and lives in
+/// [`ContentTabOrder`] — never derive on-screen position from `index()`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum ContentTab {
+    #[default]
     Bookmarks = 0,
     Collections = 1,
     Tours = 2,
 }
 
 impl ContentTab {
-    /// Get the index of this tab.
+    /// This tab's stable storage index (its position in the `panels` vector),
+    /// independent of where it is displayed. See the type-level note.
     pub fn index(self) -> usize {
         self as usize
     }
 
-    /// Get all tabs in order.
+    /// All tabs in stable storage order (not display order).
     pub fn all() -> &'static [ContentTab] {
         &[ContentTab::Bookmarks, ContentTab::Collections, ContentTab::Tours]
     }
@@ -277,7 +284,8 @@ impl ContentTab {
         }
     }
 
-    /// Try to convert an index to a ContentTab.
+    /// Convert a stable storage index back to a tab. For on-screen positions use
+    /// [`ContentTabOrder::tab_at`] instead.
     pub fn from_index(index: usize) -> Option<Self> {
         match index {
             0 => Some(ContentTab::Bookmarks),
@@ -285,6 +293,79 @@ impl ContentTab {
             2 => Some(ContentTab::Tours),
             _ => None,
         }
+    }
+
+    /// Map a [`config::TabOrder`] name onto its tab.
+    fn from_config(tab: codemark_core::config::TabOrder) -> Self {
+        use codemark_core::config::TabOrder;
+        match tab {
+            TabOrder::Bookmarks => ContentTab::Bookmarks,
+            TabOrder::Collections => ContentTab::Collections,
+            TabOrder::Tours => ContentTab::Tours,
+        }
+    }
+}
+
+/// The configured left-to-right display order of the Content panel tabs.
+///
+/// Translates between on-screen position and [`ContentTab`] identity so the tabs
+/// can be reordered without disturbing the stable indices used for panel storage.
+/// Built from `[tui].tab_order`; see [`codemark_core::config::TuiConfig::tab_order`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContentTabOrder {
+    /// Tabs in display order. Always a full permutation of [`ContentTab::all`].
+    order: Vec<ContentTab>,
+}
+
+impl Default for ContentTabOrder {
+    /// The historical layout: Bookmarks, Collections, Tours.
+    fn default() -> Self {
+        Self { order: ContentTab::all().to_vec() }
+    }
+}
+
+impl ContentTabOrder {
+    /// Resolve the display order from the TUI config.
+    ///
+    /// Tours is forced last regardless of configuration: it is hidden by
+    /// trimming the *trailing* tab when logged out or multi-repo (see
+    /// `update_tours_tab_visibility`), so moving it would hide the wrong tab.
+    pub fn from_config(tui: &codemark_core::config::TuiConfig) -> Self {
+        let mut order: Vec<ContentTab> =
+            tui.tab_order().into_iter().map(ContentTab::from_config).collect();
+        order.retain(|tab| *tab != ContentTab::Tours);
+        order.push(ContentTab::Tours);
+
+        if order.len() != ContentTab::all().len() {
+            // `TuiConfig::tab_order` guarantees a full permutation; a mismatch
+            // means the two lists drifted apart. Fall back rather than render a
+            // panel with missing tabs.
+            tracing::warn!(
+                target: "codemark::ui",
+                ?order,
+                "configured tab order is not a full permutation; using default order"
+            );
+            return Self::default();
+        }
+
+        tracing::debug!(target: "codemark::ui", ?order, "resolved content tab display order");
+        Self { order }
+    }
+
+    /// Tabs in display order.
+    pub fn tabs(&self) -> &[ContentTab] {
+        &self.order
+    }
+
+    /// The tab shown at display position `position`.
+    pub fn tab_at(&self, position: usize) -> Option<ContentTab> {
+        self.order.get(position).copied()
+    }
+
+    /// The display position of `tab`.
+    pub fn position_of(&self, tab: ContentTab) -> usize {
+        // Always present: `order` is a full permutation of `ContentTab::all`.
+        self.order.iter().position(|t| *t == tab).unwrap_or(0)
     }
 }
 
@@ -440,7 +521,7 @@ impl TabSelection {
     }
 
     /// Number of currently visible (selectable) leading tabs.
-    fn visible_len(&self) -> usize {
+    pub(crate) fn visible_len(&self) -> usize {
         self.visible_count.map_or(self.tabs.len(), |n| n.min(self.tabs.len()))
     }
 
@@ -634,6 +715,76 @@ impl Default for TabSelection {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Build a `TuiConfig` with the given `tab_order` names.
+    fn tui_config(order: Option<&[&str]>) -> codemark_core::config::TuiConfig {
+        codemark_core::config::TuiConfig {
+            theme: None,
+            tab_order: order.map(|names| names.iter().map(|s| s.to_string()).collect()),
+        }
+    }
+
+    // @lat: [[tests#Content Tab Order#Default Order Preserves Stable Indices]]
+    #[test]
+    fn test_default_tab_order_matches_stable_indices() {
+        // With no configuration, display position and stable index coincide —
+        // this is what keeps an existing install's layout unchanged.
+        let order = ContentTabOrder::from_config(&tui_config(None));
+        assert_eq!(order.tabs(), ContentTab::all());
+        for tab in ContentTab::all() {
+            assert_eq!(order.position_of(*tab), tab.index());
+            assert_eq!(order.tab_at(tab.index()), Some(*tab));
+        }
+    }
+
+    // @lat: [[tests#Content Tab Order#Collections First Remaps Positions Only]]
+    #[test]
+    fn test_collections_first_remaps_positions_not_identities() {
+        let order = ContentTabOrder::from_config(&tui_config(Some(&["collections", "bookmarks"])));
+
+        // Collections is displayed first, so it is the tab selected at startup.
+        assert_eq!(order.tab_at(0), Some(ContentTab::Collections));
+        assert_eq!(order.position_of(ContentTab::Collections), 0);
+        assert_eq!(order.position_of(ContentTab::Bookmarks), 1);
+
+        // Stable indices are untouched: they still address panel storage and the
+        // per-tab search contexts.
+        assert_eq!(ContentTab::Bookmarks.index(), 0);
+        assert_eq!(ContentTab::Collections.index(), 1);
+    }
+
+    // @lat: [[tests#Content Tab Order#Tours Stays Last]]
+    #[test]
+    fn test_tours_is_forced_last_regardless_of_config() {
+        // Tours is hidden by trimming the trailing tab when logged out or
+        // multi-repo, so it must stay last even if configured first.
+        for names in [&["tours", "bookmarks", "collections"][..], &["tours"][..]] {
+            let order = ContentTabOrder::from_config(&tui_config(Some(names)));
+            assert_eq!(
+                order.tab_at(2),
+                Some(ContentTab::Tours),
+                "Tours must stay last for {names:?}"
+            );
+            assert_eq!(order.position_of(ContentTab::Tours), 2);
+        }
+    }
+
+    // @lat: [[tests#Content Tab Order#Order Is Always A Full Permutation]]
+    #[test]
+    fn test_tab_order_is_always_a_full_permutation() {
+        for names in [
+            &[][..],
+            &["collections"][..],
+            &["bogus"][..],
+            &["tours", "tours", "collections"][..],
+            &["collections", "bookmarks", "tours"][..],
+        ] {
+            let order = ContentTabOrder::from_config(&tui_config(Some(names)));
+            let mut seen: Vec<ContentTab> = order.tabs().to_vec();
+            seen.sort_by_key(|t| t.index());
+            assert_eq!(seen, ContentTab::all(), "every tab must appear exactly once for {names:?}");
+        }
+    }
 
     #[test]
     fn test_each_sort_method_has_a_distinct_icon() {

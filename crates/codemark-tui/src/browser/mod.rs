@@ -20,7 +20,7 @@ pub use left_pane::LeftPane;
 pub use right_pane::{RightPane, RightPaneFocus};
 pub use search::{SearchBar, SearchMode};
 pub use tabbed_panel::{TabbedPanel, bookmark_to_panel_item};
-pub use tabs::{ContentTab, ContextTab, FiltersTab, Tab, TabSelection};
+pub use tabs::{ContentTab, ContentTabOrder, ContextTab, FiltersTab, Tab, TabSelection};
 pub use types::{
     ConfirmDialog, DetailsPaneSize, DialogAction, DialogButton, ExternalCommand, FocusArea,
     HealNotification, HealTarget, LeftPaneSize, PreviewPayload, RightPaneSize, SectionConfig,
@@ -140,6 +140,10 @@ pub struct BrowserLayout {
     left_pane: LeftPane,
     /// Right main content area
     right_pane: RightPane,
+    /// Display order of the Content panel tabs, from `[tui].tab_order`. Maps
+    /// on-screen tab positions to [`ContentTab`] identities; fixed for the
+    /// session so panel positions stay valid for in-flight requests.
+    tab_order: ContentTabOrder,
     /// Current focus area
     focus: FocusArea,
     /// Previous focus area before entering filter mode
@@ -214,7 +218,10 @@ pub struct BrowserLayout {
     /// ID of the most recent search request, used to discard stale background results.
     pub active_search_request: u64,
     /// The query and mode that produced the search results currently shown in
-    /// each content panel, indexed by [`ContentTab`] (`Bookmarks`, `Collections`).
+    /// each searchable content panel, keyed by the *stable* [`ContentTab`] index
+    /// — [`ContentTab::index`], not the configurable display position — so a
+    /// reordered tab layout can't shift a recorded context onto another tab.
+    /// Only `Bookmarks` and `Collections` are searchable, hence the two slots.
     /// Recorded when a search is dispatched so a refocus reconcile can re-run the
     /// originating search against the current DB, refreshing rows whose record
     /// changed while unfocused — not just dropping ones that were deleted. Only
@@ -326,7 +333,16 @@ impl BrowserLayout {
             FocusArea::ContextPanel
         };
 
-        let left_pane = LeftPane::new(&db, &registry);
+        // Content panel tab layout comes from `[tui].tab_order`. Resolved once at
+        // construction: reordering tabs mid-session would invalidate the panel
+        // positions held by in-flight search/reconcile requests.
+        let tab_order = db
+            .path()
+            .parent()
+            .map(|dir| ContentTabOrder::from_config(&Config::load_layered(dir).tui))
+            .unwrap_or_default();
+
+        let left_pane = LeftPane::new(&db, &registry, &tab_order);
         let right_pane = RightPane::new(&db);
 
         // Derive the repo root from the db path the same way `build_repo_items`
@@ -345,6 +361,7 @@ impl BrowserLayout {
         let mut layout = Self {
             left_pane,
             right_pane,
+            tab_order,
             focus: initial_focus,
             previous_focus: None,
             workspace,
@@ -423,6 +440,26 @@ impl BrowserLayout {
         }
     }
 
+    /// `search_contexts` slot for the Bookmarks tab (stable, not display, index).
+    const SEARCH_CTX_BOOKMARKS: usize = ContentTab::Bookmarks as usize;
+    /// `search_contexts` slot for the Collections tab.
+    const SEARCH_CTX_COLLECTIONS: usize = ContentTab::Collections as usize;
+
+    /// The Content panel tab currently selected, resolved through the configured
+    /// display order.
+    ///
+    /// `None` only if the selected position is out of range, which the order's
+    /// full-permutation guarantee makes unreachable in practice.
+    pub(super) fn active_content_tab(&self) -> Option<ContentTab> {
+        self.tab_order.tab_at(self.left_pane.content_panel.tabs.selected_index())
+    }
+
+    /// The content panel position holding `tab`, for the position-indexed panel
+    /// accessors ([`TabbedPanel::get_list_panel_mut`]) and search bookkeeping.
+    pub(super) fn tab_position(&self, tab: ContentTab) -> usize {
+        self.tab_order.position_of(tab)
+    }
+
     /// Update the right-pane live preview for the active Content panel tab + selection.
     ///
     /// Bookmarks show the bookmark's code content; Collections show a live
@@ -434,8 +471,7 @@ impl BrowserLayout {
             return;
         }
 
-        let Some(tab) = ContentTab::from_index(self.left_pane.content_panel.tabs.selected_index())
-        else {
+        let Some(tab) = self.active_content_tab() else {
             return;
         };
 
@@ -467,8 +503,7 @@ impl BrowserLayout {
             return;
         }
 
-        let Some(tab) = ContentTab::from_index(self.left_pane.content_panel.tabs.selected_index())
-        else {
+        let Some(tab) = self.active_content_tab() else {
             return;
         };
 
@@ -746,8 +781,7 @@ impl BrowserLayout {
     /// Sync the right pane's first tab label based on the active Content panel tab.
     /// Shows "Content" when on Bookmarks (single items), "Steps" otherwise (collections/tours).
     fn sync_steps_tab_label(&mut self) {
-        let content_tab =
-            ContentTab::from_index(self.left_pane.content_panel.tabs.selected_index());
+        let content_tab = self.active_content_tab();
         let label = match content_tab {
             Some(ContentTab::Bookmarks) => "Content",
             _ => "Steps",
@@ -798,14 +832,12 @@ impl BrowserLayout {
         // Collections tab searches collections (name/description/tags), every
         // other tab searches bookmarks. Record the query+mode against the target
         // panel so a later refocus reconcile can re-run this exact search.
-        if let Some(ContentTab::Collections) =
-            ContentTab::from_index(self.left_pane.content_panel.tabs.selected_index())
-        {
-            self.search_contexts[ContentTab::Collections.index()] = Some((query.clone(), mode));
+        if let Some(ContentTab::Collections) = self.active_content_tab() {
+            self.search_contexts[Self::SEARCH_CTX_COLLECTIONS] = Some((query.clone(), mode));
             self.execute_collection_search(request_id, mode, query);
             return;
         }
-        self.search_contexts[ContentTab::Bookmarks.index()] = Some((query.clone(), mode));
+        self.search_contexts[Self::SEARCH_CTX_BOOKMARKS] = Some((query.clone(), mode));
         self.execute_bookmark_search(request_id, mode, query);
     }
 
@@ -1210,6 +1242,12 @@ impl BrowserLayout {
     pub fn start_heal_selection(&mut self) {
         let event_handler = self.event_handler.clone();
 
+        // Spinner positions, resolved before the panel borrow below (they come
+        // from `self`, which that borrow freezes).
+        let bookmarks_pos = self.tab_position(ContentTab::Bookmarks);
+        let active_pos = self.left_pane.content_panel.tabs.selected_index();
+        let active_tab = self.active_content_tab();
+
         // Determine the heal target and the item to show a spinner on, plus the
         // owning repo of the selection so the heal runs against that repo's db.
         // heal_item is (user_data_key, panel_tab_index) for spinner animation.
@@ -1228,9 +1266,7 @@ impl BrowserLayout {
                     .and_then(|panel| panel.selected())
                     .and_then(|s| s.repo_root().map(str::to_string));
                 if let Some(panel) = self.left_pane.content_panel.active_panel() {
-                    let tab = tabs::ContentTab::from_index(
-                        self.left_pane.content_panel.tabs.selected_index(),
-                    );
+                    let tab = active_tab;
                     match tab {
                         Some(tabs::ContentTab::Bookmarks) => {
                             // Heal selected bookmark
@@ -1238,19 +1274,18 @@ impl BrowserLayout {
                             let user_data = selected.and_then(|s| s.user_data.clone());
                             (
                                 user_data.clone().map(HealTarget::Bookmark),
-                                user_data.map(|ud| (ud, tabs::ContentTab::Bookmarks.index())),
+                                user_data.map(|ud| (ud, bookmarks_pos)),
                                 selected_repo_root,
                             )
                         }
-                        Some(tab @ tabs::ContentTab::Collections)
-                        | Some(tab @ tabs::ContentTab::Tours) => {
+                        Some(tabs::ContentTab::Collections) | Some(tabs::ContentTab::Tours) => {
                             // Heal all bookmarks in collection/tour
                             let selected = panel.selected();
                             let result = selected.and_then(|s| {
                                 if let Some(id) = &s.user_data {
                                     Some((
                                         HealTarget::Collection(id.clone()),
-                                        (id.clone(), tab.index()),
+                                        (id.clone(), active_pos),
                                     ))
                                 } else {
                                     // Fallback to name lookup if user_data is missing.
@@ -1264,7 +1299,7 @@ impl BrowserLayout {
                                         .map(|c| {
                                             (
                                                 HealTarget::Collection(c.id.clone()),
-                                                (c.id, tab.index()),
+                                                (c.id, active_pos),
                                             )
                                         })
                                 }
@@ -1289,10 +1324,7 @@ impl BrowserLayout {
                 let result =
                     self.right_pane.steps_data.get(self.right_pane.pager_current).map(|step| {
                         let id = step.bookmark.id.clone();
-                        (
-                            HealTarget::Bookmark(id.clone()),
-                            (id, tabs::ContentTab::Bookmarks.index()),
-                        )
+                        (HealTarget::Bookmark(id.clone()), (id, bookmarks_pos))
                     });
                 match result {
                     Some((target, item)) => (Some(target), Some(item), repo_root),
@@ -1340,9 +1372,7 @@ impl BrowserLayout {
         // Get the selected collection
         let target = if self.focus == FocusArea::ContentPanel {
             if let Some(panel) = self.left_pane.content_panel.active_panel() {
-                if let Some(ContentTab::Collections) =
-                    ContentTab::from_index(self.left_pane.content_panel.tabs.selected_index())
-                {
+                if let Some(ContentTab::Collections) = self.active_content_tab() {
                     panel.selected().and_then(|s| {
                         if let Some(id) = &s.user_data {
                             Some(id.clone())
@@ -1370,7 +1400,7 @@ impl BrowserLayout {
 
         // Show a spinner on the collection item being pushed. The spinner is
         // cleared when the SyncComplete event triggers schedule_clear_spinners().
-        self.add_spinner(&collection_id, ContentTab::Collections.index());
+        self.add_spinner(&collection_id, self.tab_position(ContentTab::Collections));
 
         // Get config for the push operation
         let codemark_dir = match self.db().path().parent() {
@@ -1535,7 +1565,7 @@ impl BrowserLayout {
         }
         // Mark the item as pulling (spinner will be shown on tick)
         self.is_pulling_tour = true;
-        self.add_spinner(&user_data_key, tabs::ContentTab::Tours.index());
+        self.add_spinner(&user_data_key, self.tab_position(tabs::ContentTab::Tours));
 
         let db_path = self.db().path().to_path_buf();
         let event_handler = self.event_handler.clone();
@@ -1630,6 +1660,7 @@ impl BrowserLayout {
     }
 
     fn rebuild_tours_panel(&mut self) {
+        let tours_pos = self.tab_position(ContentTab::Tours);
         // Capture the selected item's stable id so it can be re-pinned after the
         // rebuild. `set_items` only restores selection by display text, which can
         // drift to a sibling that shares a title (e.g. a remote tour with the same
@@ -1637,7 +1668,7 @@ impl BrowserLayout {
         let prev_selected = self
             .left_pane
             .content_panel
-            .get_list_panel_mut(ContentTab::Tours.index())
+            .get_list_panel_mut(tours_pos)
             .and_then(|p| p.selected().and_then(|i| i.user_data.clone()));
 
         let mut local_items = Vec::new();
@@ -1699,7 +1730,7 @@ impl BrowserLayout {
         let mut all_items = local_items;
         all_items.extend(remote_items);
 
-        if let Some(panel) = self.left_pane.content_panel.get_list_panel_mut(2) {
+        if let Some(panel) = self.left_pane.content_panel.get_list_panel_mut(tours_pos) {
             panel.set_items(all_items);
             // Re-pin the selection by stable user_data so it survives the rebuild
             // (no-op if that item is gone, e.g. a pulled remote tour was removed).
@@ -1746,7 +1777,9 @@ impl BrowserLayout {
     pub fn reconcile_preserved_search_rows(&mut self) {
         let mut changed = false;
         for tab in [ContentTab::Bookmarks, ContentTab::Collections] {
-            let idx = tab.index();
+            // Panels are addressed by display position; `search_contexts` by the
+            // tab's stable index. The two differ under a custom `tab_order`.
+            let idx = self.tab_position(tab);
             let search_active = self
                 .left_pane
                 .content_panel
@@ -1756,7 +1789,7 @@ impl BrowserLayout {
                 continue;
             }
 
-            match &self.search_contexts[idx] {
+            match &self.search_contexts[tab.index()] {
                 // FTS is cheap to re-run, so refresh the whole result set.
                 Some((query, SearchMode::Fts)) => {
                     let query = query.clone();
@@ -1869,7 +1902,7 @@ impl BrowserLayout {
             })
             .unwrap_or_default();
 
-        let items = if idx == ContentTab::Collections.index() {
+        let items = if idx == self.tab_position(ContentTab::Collections) {
             let hits: Vec<crate::event::CollectionHit> = rows
                 .iter()
                 .filter_map(|(repo_name, repo_root, id)| {
@@ -1994,17 +2027,22 @@ impl BrowserLayout {
             &self.bookmark_live_health,
             focus_root.as_deref(),
         );
-        if let Some(p) = self.left_pane.content_panel.get_list_panel_mut(0)
+        let (bookmarks_pos, collections_pos, tours_pos) = (
+            self.tab_position(ContentTab::Bookmarks),
+            self.tab_position(ContentTab::Collections),
+            self.tab_position(ContentTab::Tours),
+        );
+        if let Some(p) = self.left_pane.content_panel.get_list_panel_mut(bookmarks_pos)
             && !(preserve_search && p.is_search_active())
         {
             p.set_items(bookmarks);
         }
-        if let Some(p) = self.left_pane.content_panel.get_list_panel_mut(1)
+        if let Some(p) = self.left_pane.content_panel.get_list_panel_mut(collections_pos)
             && !(preserve_search && p.is_search_active())
         {
             p.set_items(collections);
         }
-        if let Some(p) = self.left_pane.content_panel.get_list_panel_mut(2) {
+        if let Some(p) = self.left_pane.content_panel.get_list_panel_mut(tours_pos) {
             p.set_items(tours);
         }
 
@@ -2068,9 +2106,7 @@ impl BrowserLayout {
                 // The remote:<id> row is gone, so move the Tours selection to the
                 // pulled local collection — otherwise the list could stay on a
                 // same-titled sibling while the right pane shows the pulled tour.
-                if let Some(panel) =
-                    self.left_pane.content_panel.get_list_panel_mut(ContentTab::Tours.index())
-                {
+                if let Some(panel) = self.left_pane.content_panel.get_list_panel_mut(tours_pos) {
                     panel.select_by_user_data(&local_id);
                 }
             } else {
@@ -2086,10 +2122,8 @@ impl BrowserLayout {
                         // tour sharing a title with a local one, or a reorder).
                         // Re-pin the Tours selection to this remote id so the next
                         // keypress doesn't jump the preview to a different item.
-                        if let Some(panel) = self
-                            .left_pane
-                            .content_panel
-                            .get_list_panel_mut(ContentTab::Tours.index())
+                        if let Some(panel) =
+                            self.left_pane.content_panel.get_list_panel_mut(tours_pos)
                         {
                             panel.select_by_user_data(&format!("remote:{remote_id}"));
                         }
@@ -2117,8 +2151,7 @@ impl BrowserLayout {
 
     /// Refresh tags in Filters panel based on the active tab in Content panel.
     pub fn refresh_tags(&mut self) {
-        let active_tab = ContentTab::from_index(self.left_pane.content_panel.tabs.selected_index())
-            .unwrap_or(ContentTab::Bookmarks);
+        let active_tab = self.active_content_tab().unwrap_or(ContentTab::Bookmarks);
         let (tags, branches) = TabbedPanel::build_tags_branches_items(
             self.workspace.dbs().map(|(_, db)| db),
             active_tab,
@@ -2137,6 +2170,31 @@ impl BrowserLayout {
     /// Get the current focus area.
     pub fn focus(&self) -> FocusArea {
         self.focus
+    }
+
+    /// The Content panel tab currently on screen.
+    ///
+    /// Exposed so tests and callers can assert on the active tab by identity
+    /// rather than by display position, which `[tui].tab_order` can change.
+    pub fn content_tab(&self) -> Option<ContentTab> {
+        self.active_content_tab()
+    }
+
+    /// Number of `]` presses that move the Content panel from the active tab to
+    /// `target`, wrapping within the currently visible tabs.
+    ///
+    /// Lets callers reach a tab by identity under any configured
+    /// [`ContentTabOrder`] while still driving the real keybinding path (rather
+    /// than setting the selection directly and skipping the tab-change side
+    /// effects). Returns 0 if `target` is already active or is hidden.
+    pub fn content_tab_steps_to(&self, target: ContentTab) -> usize {
+        let visible = self.left_pane.content_panel.tabs.visible_len();
+        let target_pos = self.tab_position(target);
+        if visible == 0 || target_pos >= visible {
+            return 0;
+        }
+        let current = self.left_pane.content_panel.tabs.selected_index();
+        (target_pos + visible - current) % visible
     }
 
     /// Drain the tab-change flags from every tabbed panel, returning the
@@ -2565,14 +2623,15 @@ impl BrowserLayout {
             }
         }
 
-        if let Some(TabContent::List(p)) = self.left_pane.content_panel.panels.get_mut(2) {
-            p.set_items(tour_items);
-        }
-        if let Some(TabContent::List(p)) = self.left_pane.content_panel.panels.get_mut(1) {
-            p.set_items(collection_items);
-        }
-        if let Some(TabContent::List(p)) = self.left_pane.content_panel.panels.get_mut(0) {
-            p.set_items(bookmark_items);
+        for (tab, items) in [
+            (ContentTab::Tours, tour_items),
+            (ContentTab::Collections, collection_items),
+            (ContentTab::Bookmarks, bookmark_items),
+        ] {
+            let pos = self.tab_position(tab);
+            if let Some(TabContent::List(p)) = self.left_pane.content_panel.panels.get_mut(pos) {
+                p.set_items(items);
+            }
         }
         // Spawn background live health resolution for filtered bookmarks
         self.spawn_live_health_task(all_filtered_bookmarks);
@@ -3451,10 +3510,11 @@ mod tests {
 
         // -- Assertion 1: the merged Bookmarks panel holds BOTH repos' bookmarks, --
         // -- each tagged with its owning repo (real panel items, not just pixels). --
+        let bookmarks_pos = layout.tab_position(ContentTab::Bookmarks);
         let bookmarks: Vec<(String, Option<String>, Option<String>)> = layout
             .left_pane
             .content_panel
-            .get_list_panel_mut(ContentTab::Bookmarks.index())
+            .get_list_panel_mut(bookmarks_pos)
             .expect("bookmarks panel")
             .all_items()
             .iter()
@@ -3496,7 +3556,7 @@ mod tests {
             layout
                 .left_pane
                 .content_panel
-                .get_list_panel_mut(ContentTab::Bookmarks.index())
+                .get_list_panel_mut(bookmarks_pos)
                 .expect("bookmarks panel")
                 .select_by_user_data("bm-beta"),
             "repo B's bookmark row must be selectable by id"

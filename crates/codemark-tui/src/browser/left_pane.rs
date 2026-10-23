@@ -1,4 +1,6 @@
-use crate::browser::{ContentTab, FocusArea, LeftPaneSize, SearchBar, SectionConfig, TabbedPanel};
+use crate::browser::{
+    ContentTabOrder, FocusArea, LeftPaneSize, SearchBar, SectionConfig, TabbedPanel,
+};
 use crate::component::Component;
 use crate::event::Event;
 use codemark_core::storage::db::Database;
@@ -27,13 +29,16 @@ pub struct LeftPane {
 }
 
 impl LeftPane {
-    /// Create a new left pane.
-    pub fn new(db: &Database, registry: &rusqlite::Connection) -> Self {
+    /// Create a new left pane with the Content panel tabs in display `order`.
+    pub fn new(db: &Database, registry: &rusqlite::Connection, order: &ContentTabOrder) -> Self {
+        // The Content panel opens on its first displayed tab, so the Filters
+        // panel's Tags/Branches visibility is seeded from that same tab.
+        let initial_tab = order.tab_at(0).unwrap_or_default();
         Self {
             search: SearchBar::new(),
             context_panel: TabbedPanel::new_repos_accounts(db, registry),
-            filters_panel: TabbedPanel::new_tags_branches(db, ContentTab::Bookmarks),
-            content_panel: TabbedPanel::new_tours_collections_bookmarks(db),
+            filters_panel: TabbedPanel::new_tags_branches(db, initial_tab),
+            content_panel: TabbedPanel::new_tours_collections_bookmarks(db, order),
             context_config: SectionConfig::new(7, 9),
             filters_config: SectionConfig::new(7, 9),
             resize_mode: LeftPaneSize::Regular,
