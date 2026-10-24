@@ -140,7 +140,7 @@ pub struct BrowserLayout {
     left_pane: LeftPane,
     /// Right main content area
     right_pane: RightPane,
-    /// Display order of the Content panel tabs, from `[tui].tab_order`. Maps
+    /// Display order of the Content panel tabs, from `[tui].content_tab_order`. Maps
     /// on-screen tab positions to [`ContentTab`] identities; fixed for the
     /// session so panel positions stay valid for in-flight requests.
     tab_order: ContentTabOrder,
@@ -333,7 +333,7 @@ impl BrowserLayout {
             FocusArea::ContextPanel
         };
 
-        // Content panel tab layout comes from `[tui].tab_order`. Resolved once at
+        // Content panel tab layout comes from `[tui].content_tab_order`. Resolved once at
         // construction: reordering tabs mid-session would invalidate the panel
         // positions held by in-flight search/reconcile requests.
         let tab_order = db
@@ -582,7 +582,8 @@ impl BrowserLayout {
         }
 
         // Then refresh the preview for the clamped-to tab's current selection.
-        let Some(tab) = ContentTab::from_index(current) else {
+        // `current` is a display position, so it resolves through the order.
+        let Some(tab) = self.tab_order.tab_at(current) else {
             return;
         };
         let selected_id = self
@@ -1778,7 +1779,7 @@ impl BrowserLayout {
         let mut changed = false;
         for tab in [ContentTab::Bookmarks, ContentTab::Collections] {
             // Panels are addressed by display position; `search_contexts` by the
-            // tab's stable index. The two differ under a custom `tab_order`.
+            // tab's stable index. The two differ under a custom `content_tab_order`.
             let idx = self.tab_position(tab);
             let search_active = self
                 .left_pane
@@ -2175,7 +2176,7 @@ impl BrowserLayout {
     /// The Content panel tab currently on screen.
     ///
     /// Exposed so tests and callers can assert on the active tab by identity
-    /// rather than by display position, which `[tui].tab_order` can change.
+    /// rather than by display position, which `[tui].content_tab_order` can change.
     pub fn content_tab(&self) -> Option<ContentTab> {
         self.active_content_tab()
     }

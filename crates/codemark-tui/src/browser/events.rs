@@ -477,7 +477,10 @@ impl BrowserLayout {
                     // id keep their own dot (the batch carries its repo's root).
                     self.bookmark_live_health
                         .insert(super::health_key(repo_root.as_deref(), bookmark_id), health);
-                    if let Some(panel) = self.left_pane.content_panel.get_list_panel_mut(0) {
+                    let bookmarks_pos = self.tab_position(ContentTab::Bookmarks);
+                    if let Some(panel) =
+                        self.left_pane.content_panel.get_list_panel_mut(bookmarks_pos)
+                    {
                         panel.update_item_health(repo_root.as_deref(), bookmark_id, health);
                     }
                     // Mirror the live status into the open step so the preview
@@ -679,10 +682,15 @@ impl BrowserLayout {
             return;
         }
 
-        if let Some(TabContent::List(p)) = self.left_pane.content_panel.panels.get_mut(0) {
+        // Bookmark hits belong in the Bookmarks panel, which is not position 0
+        // under a custom tab order.
+        let bookmarks_pos = self.tab_position(ContentTab::Bookmarks);
+        if let Some(TabContent::List(p)) =
+            self.left_pane.content_panel.panels.get_mut(bookmarks_pos)
+        {
             p.set_search_items(items);
             p.set_selected(0);
-            self.left_pane.content_panel.tabs.set_selected(0);
+            self.left_pane.content_panel.tabs.set_selected(bookmarks_pos);
         }
 
         // Move focus off the search bar onto the results list and refresh the
@@ -1932,7 +1940,7 @@ impl BrowserLayout {
                 if new_tab != old_tab {
                     self.refresh_tags();
                     self.sync_steps_tab_label();
-                    if ContentTab::from_index(new_tab) == Some(ContentTab::Tours) {
+                    if self.tab_order.tab_at(new_tab) == Some(ContentTab::Tours) {
                         self.fetch_remote_tours();
                     }
                     // Refresh the preview for the newly active tab so it doesn't
@@ -1955,7 +1963,7 @@ impl BrowserLayout {
 
                 if self.focus == FocusArea::ContentPanel
                     && let Some(id) = self.left_pane.content_panel.take_selection_change()
-                    && let Some(tab) = ContentTab::from_index(new_tab)
+                    && let Some(tab) = self.tab_order.tab_at(new_tab)
                 {
                     self.on_content_selection_changed(tab, &id);
                 }
@@ -1994,7 +2002,7 @@ impl BrowserLayout {
                 if new_tab != old_tab {
                     self.refresh_tags();
                     self.sync_steps_tab_label();
-                    if ContentTab::from_index(new_tab) == Some(ContentTab::Tours) {
+                    if self.tab_order.tab_at(new_tab) == Some(ContentTab::Tours) {
                         self.fetch_remote_tours();
                     }
                     // Refresh the preview for the newly active tab so it doesn't

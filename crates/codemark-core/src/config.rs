@@ -145,17 +145,17 @@ pub struct TuiConfig {
     /// When unset, the TUI keeps the historical `Bookmarks, Collections, Tours`
     /// order so an existing config file never changes layout on upgrade. The
     /// shipped default config sets `["collections", "bookmarks", "tours"]`, so
-    /// fresh installs open on Collections. See [`TabOrder`].
-    pub tab_order: Option<Vec<String>>,
+    /// fresh installs open on Collections. See [`ContentTabName`].
+    pub content_tab_order: Option<Vec<String>>,
 }
 
 /// A Content panel tab, used to configure tab order independently of the TUI.
 ///
 /// Mirrors the TUI's `ContentTab` without depending on it, so the core crate
-/// can parse and validate [`TuiConfig::tab_order`]. The variant order here is
-/// the historical (pre-`tab_order`) layout, which is also the fallback.
+/// can parse and validate [`TuiConfig::content_tab_order`]. The variant order here is
+/// the historical (pre-`content_tab_order`) layout, which is also the fallback.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub enum TabOrder {
+pub enum ContentTabName {
     /// Individual code bookmarks.
     Bookmarks,
     /// Local collections of bookmarks.
@@ -164,28 +164,28 @@ pub enum TabOrder {
     Tours,
 }
 
-impl TabOrder {
+impl ContentTabName {
     /// Every tab in the historical default order.
-    pub const ALL: &'static [TabOrder] =
-        &[TabOrder::Bookmarks, TabOrder::Collections, TabOrder::Tours];
+    pub const ALL: &'static [ContentTabName] =
+        &[ContentTabName::Bookmarks, ContentTabName::Collections, ContentTabName::Tours];
 
     /// Parse a configured tab name. Case- and separator-insensitive; returns
     /// `None` for names that don't match a known tab.
     pub fn parse(name: &str) -> Option<Self> {
         match name.trim().trim_matches(['-', '_']).to_ascii_lowercase().as_str() {
-            "bookmarks" | "bookmark" => Some(TabOrder::Bookmarks),
-            "collections" | "collection" => Some(TabOrder::Collections),
-            "tours" | "tour" => Some(TabOrder::Tours),
+            "bookmarks" | "bookmark" => Some(ContentTabName::Bookmarks),
+            "collections" | "collection" => Some(ContentTabName::Collections),
+            "tours" | "tour" => Some(ContentTabName::Tours),
             _ => None,
         }
     }
 
-    /// The config name for this tab, as accepted by [`TabOrder::parse`].
+    /// The config name for this tab, as accepted by [`ContentTabName::parse`].
     pub fn name(self) -> &'static str {
         match self {
-            TabOrder::Bookmarks => "bookmarks",
-            TabOrder::Collections => "collections",
-            TabOrder::Tours => "tours",
+            ContentTabName::Bookmarks => "bookmarks",
+            ContentTabName::Collections => "collections",
+            ContentTabName::Tours => "tours",
         }
     }
 }
@@ -195,25 +195,25 @@ impl TuiConfig {
     ///
     /// Always returns every tab exactly once: configured names come first in
     /// the order given, then any tab the user didn't name, in historical order.
-    /// Unknown and duplicate names are dropped. With no `tab_order` set this is
-    /// [`TabOrder::ALL`] — the historical layout — so an existing config file
+    /// Unknown and duplicate names are dropped. With no `content_tab_order` set this is
+    /// [`ContentTabName::ALL`] — the historical layout — so an existing config file
     /// keeps its current layout after an upgrade.
-    pub fn tab_order(&self) -> Vec<TabOrder> {
-        let Some(names) = self.tab_order.as_ref() else {
-            return TabOrder::ALL.to_vec();
+    pub fn content_tab_order(&self) -> Vec<ContentTabName> {
+        let Some(names) = self.content_tab_order.as_ref() else {
+            return ContentTabName::ALL.to_vec();
         };
 
-        let mut order: Vec<TabOrder> = Vec::with_capacity(TabOrder::ALL.len());
+        let mut order: Vec<ContentTabName> = Vec::with_capacity(ContentTabName::ALL.len());
         for name in names {
-            if let Some(tab) = TabOrder::parse(name)
+            if let Some(tab) = ContentTabName::parse(name)
                 && !order.contains(&tab)
             {
                 order.push(tab);
             }
         }
         // Backfill anything unnamed so the result is always a full permutation.
-        let missing: Vec<TabOrder> =
-            TabOrder::ALL.iter().copied().filter(|tab| !order.contains(tab)).collect();
+        let missing: Vec<ContentTabName> =
+            ContentTabName::ALL.iter().copied().filter(|tab| !order.contains(tab)).collect();
         order.extend(missing);
         order
     }
@@ -787,8 +787,8 @@ impl Config {
         if other.tui.theme.is_some() {
             self.tui.theme = other.tui.theme;
         }
-        if other.tui.tab_order.is_some() {
-            self.tui.tab_order = other.tui.tab_order;
+        if other.tui.content_tab_order.is_some() {
+            self.tui.content_tab_order = other.tui.content_tab_order;
         }
     }
 
@@ -877,12 +877,12 @@ auto_archive_after_days = 14
     // @lat: [[tests#Content Tab Order#Unset Order Keeps Historical Layout]]
     #[test]
     fn tab_order_unset_keeps_historical_layout() {
-        // An existing config with no `tab_order` must not change layout on upgrade.
+        // An existing config with no `content_tab_order` must not change layout on upgrade.
         let config: Config = toml::from_str("[tui]\ntheme = \"Nord\"\n").unwrap();
-        assert!(config.tui.tab_order.is_none());
-        assert_eq!(config.tui.tab_order(), TabOrder::ALL);
+        assert!(config.tui.content_tab_order.is_none());
+        assert_eq!(config.tui.content_tab_order(), ContentTabName::ALL);
         // Same for a config file with no [tui] section at all.
-        assert_eq!(Config::default().tui.tab_order(), TabOrder::ALL);
+        assert_eq!(Config::default().tui.content_tab_order(), ContentTabName::ALL);
     }
 
     // @lat: [[tests#Content Tab Order#Configured Order Is Respected]]
@@ -890,12 +890,12 @@ auto_archive_after_days = 14
     fn tab_order_configured_is_respected() {
         let toml = r#"
 [tui]
-tab_order = ["collections", "bookmarks", "tours"]
+content_tab_order = ["collections", "bookmarks", "tours"]
 "#;
         let config: Config = toml::from_str(toml).unwrap();
         assert_eq!(
-            config.tui.tab_order(),
-            vec![TabOrder::Collections, TabOrder::Bookmarks, TabOrder::Tours],
+            config.tui.content_tab_order(),
+            vec![ContentTabName::Collections, ContentTabName::Bookmarks, ContentTabName::Tours],
         );
     }
 
@@ -907,8 +907,8 @@ tab_order = ["collections", "bookmarks", "tours"]
         let default_content = include_str!("../../../config/config.default.toml");
         let config: Config = toml::from_str(default_content).expect("default config parses");
         assert_eq!(
-            config.tui.tab_order().first(),
-            Some(&TabOrder::Collections),
+            config.tui.content_tab_order().first(),
+            Some(&ContentTabName::Collections),
             "shipped default must open on Collections"
         );
     }
@@ -917,38 +917,42 @@ tab_order = ["collections", "bookmarks", "tours"]
     #[test]
     fn tab_order_partial_and_invalid_names_backfill() {
         // Naming one tab is enough; the rest keep their relative order after it.
-        let partial: Config = toml::from_str("[tui]\ntab_order = [\"collections\"]\n").unwrap();
+        let partial: Config =
+            toml::from_str("[tui]\ncontent_tab_order = [\"collections\"]\n").unwrap();
         assert_eq!(
-            partial.tui.tab_order(),
-            vec![TabOrder::Collections, TabOrder::Bookmarks, TabOrder::Tours],
+            partial.tui.content_tab_order(),
+            vec![ContentTabName::Collections, ContentTabName::Bookmarks, ContentTabName::Tours],
         );
 
         // Unknown and duplicate names are dropped, and the result stays a full
         // permutation rather than losing a tab.
         let messy: Config =
-            toml::from_str("[tui]\ntab_order = [\"Tours\", \"nope\", \"tours\"]\n").unwrap();
+            toml::from_str("[tui]\ncontent_tab_order = [\"Tours\", \"nope\", \"tours\"]\n")
+                .unwrap();
         assert_eq!(
-            messy.tui.tab_order(),
-            vec![TabOrder::Tours, TabOrder::Bookmarks, TabOrder::Collections],
+            messy.tui.content_tab_order(),
+            vec![ContentTabName::Tours, ContentTabName::Bookmarks, ContentTabName::Collections],
         );
 
         // An empty list is not a way to hide tabs.
-        let empty: Config = toml::from_str("[tui]\ntab_order = []\n").unwrap();
-        assert_eq!(empty.tui.tab_order(), TabOrder::ALL);
+        let empty: Config = toml::from_str("[tui]\ncontent_tab_order = []\n").unwrap();
+        assert_eq!(empty.tui.content_tab_order(), ContentTabName::ALL);
     }
 
     // @lat: [[tests#Content Tab Order#Local Config Overrides Global Order]]
     #[test]
     fn tab_order_local_overrides_global() {
-        let mut global: Config = toml::from_str("[tui]\ntab_order = [\"collections\"]\n").unwrap();
-        let local: Config = toml::from_str("[tui]\ntab_order = [\"tours\"]\n").unwrap();
+        let mut global: Config =
+            toml::from_str("[tui]\ncontent_tab_order = [\"collections\"]\n").unwrap();
+        let local: Config = toml::from_str("[tui]\ncontent_tab_order = [\"tours\"]\n").unwrap();
         global.merge(local);
-        assert_eq!(global.tui.tab_order().first(), Some(&TabOrder::Tours));
+        assert_eq!(global.tui.content_tab_order().first(), Some(&ContentTabName::Tours));
 
         // A local config that says nothing about tabs leaves the global order.
-        let mut global: Config = toml::from_str("[tui]\ntab_order = [\"collections\"]\n").unwrap();
+        let mut global: Config =
+            toml::from_str("[tui]\ncontent_tab_order = [\"collections\"]\n").unwrap();
         global.merge(toml::from_str("[tui]\ntheme = \"Nord\"\n").unwrap());
-        assert_eq!(global.tui.tab_order().first(), Some(&TabOrder::Collections));
+        assert_eq!(global.tui.content_tab_order().first(), Some(&ContentTabName::Collections));
     }
 
     #[test]

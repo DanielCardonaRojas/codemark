@@ -154,8 +154,8 @@ enabled = true
 #
 # Valid names: "bookmarks", "collections", "tours". You may list only some of
 # them — any tab you leave out keeps its relative position after the ones you
-# name, so `tab_order = ["collections"]` is enough to open on Collections.
+# name, so `content_tab_order = ["collections"]` is enough to open on Collections.
 #
 # Commenting this out (or deleting it) restores the original layout:
 #   ["bookmarks", "collections", "tours"]
-tab_order = ["collections", "bookmarks", "tours"]
+content_tab_order = ["collections", "bookmarks", "tours"]

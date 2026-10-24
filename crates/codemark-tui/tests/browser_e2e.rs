@@ -113,13 +113,13 @@ impl Sandbox {
     /// so its preview resolves synchronously — switching tabs afterwards goes
     /// through the async path and renders a loading spinner instead of code.
     /// This also exercises the upgrade path, where an existing config without
-    /// `tab_order` keeps the original layout.
+    /// `content_tab_order` keeps the original layout.
     fn write_legacy_tab_order_config(&self) {
         let codemark_dir = self.repo_root().join(".codemark");
         std::fs::create_dir_all(&codemark_dir).expect("create .codemark dir");
         std::fs::write(
             codemark_dir.join("config.toml"),
-            "[tui]\ntab_order = [\"bookmarks\", \"collections\", \"tours\"]\n",
+            "[tui]\ncontent_tab_order = [\"bookmarks\", \"collections\", \"tours\"]\n",
         )
         .expect("write config.toml");
     }
@@ -230,7 +230,7 @@ fn key_char(layout: &mut BrowserLayout, c: char) -> bool {
 /// times for the configured tab order.
 ///
 /// Tests address tabs by identity, not by a fixed number of keypresses, because
-/// `[tui].tab_order` decides where each tab sits — the sandbox gets the shipped
+/// `[tui].content_tab_order` decides where each tab sits — the sandbox gets the shipped
 /// default config, which opens on Collections. Driving the real keybinding keeps
 /// the tab-change side effects (preview refresh, tag reload) in play.
 fn select_content_tab(layout: &mut BrowserLayout, target: ContentTab) {
@@ -262,6 +262,18 @@ fn type_str(layout: &mut BrowserLayout, s: &str) {
 
 /// Render the layout into a fixed-size `TestBackend` and return the screen as a
 /// newline-joined string of trimmed rows — stable input for snapshotting.
+/// Render only the left sidebar's columns, dropping the right preview pane.
+///
+/// Lets a test assert that a row is *absent* from the lists without the right
+/// pane's preview of the same file producing a false match.
+fn left_pane_text(layout: &BrowserLayout, width: u16, height: u16) -> String {
+    render_to_string(layout, width, height)
+        .lines()
+        .map(|line| line.chars().take(40).collect::<String>())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 fn render_to_string(layout: &BrowserLayout, width: u16, height: u16) -> String {
     let backend = TestBackend::new(width, height);
     let mut terminal = Terminal::new(backend).expect("test terminal");
@@ -341,6 +353,65 @@ async fn filtering_narrows_the_bookmark_list() {
     layout.apply_filter("config");
 
     insta::assert_snapshot!(render_to_string(&layout, 100, 30));
+}
+
+// @lat: [[tests#Content Tab Order#Bookmark Search Targets Bookmarks Under A Reordered Layout]]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn bookmark_search_targets_bookmarks_panel_under_reordered_tabs() {
+    // Regression: with Collections displayed first (the shipped default), a
+    // bookmark search must still land in the Bookmarks panel. Writing results to
+    // display position 0 replaced the Collections list with bookmark rows and
+    // then treated their ids as collection ids.
+    let sandbox = Sandbox::with_bookmarks([
+        sample_bookmark("bm-1", "fn main", "src/main.rs"),
+        sample_bookmark("bm-2", "struct Config", "src/config.rs"),
+    ]);
+    sandbox.write_repo_file("src/main.rs", "fn main() {\n    println!(\"hi\");\n}\n");
+    sandbox.write_repo_file("src/config.rs", "struct Config {\n    name: String,\n}\n");
+    // Deliberately NOT pinning the legacy order: this exercises the default
+    // (Collections-first) layout.
+    let (mut layout, _sandbox, mut rx) = make_layout_with_rx(sandbox);
+    assert_eq!(
+        layout.content_tab(),
+        Some(ContentTab::Collections),
+        "sandbox should get the shipped Collections-first default"
+    );
+
+    // Select Bookmarks (display position 1 here, not 0) and search. The results
+    // must be written to and selected on the Bookmarks panel; using display
+    // position 0 would put the rows in Collections and select that tab instead.
+    select_content_tab(&mut layout, ContentTab::Bookmarks);
+    key_char(&mut layout, 's');
+    type_str(&mut layout, "config");
+    key_code(&mut layout, KeyCode::Enter);
+    pump_pending_events(&mut layout, &mut rx).await;
+
+    assert_eq!(
+        layout.content_tab(),
+        Some(ContentTab::Bookmarks),
+        "the search must leave Bookmarks selected, not display position 0"
+    );
+    // Assert on the left list pane only: the right pane keeps a preview of the
+    // previously selected bookmark, so a whole-screen match would be misleading.
+    let filtered = left_pane_text(&layout, 100, 30);
+    assert!(
+        filtered.contains("config.rs") && !filtered.contains("main.rs"),
+        "the Bookmarks panel should hold only the narrowed results; got:\n{filtered}"
+    );
+
+    // Collections must still render as empty after switching to it.
+    //
+    // Note this does not pin down *which* panel the search wrote to: the tab
+    // switch runs `refresh_all_panels_preserving_search`, which rebuilds the
+    // (non-search-active) Collections panel from the DB and would erase stray
+    // rows before they could render. Asserting on panel contents directly would
+    // need `left_pane` to be reachable from an integration test.
+    select_content_tab(&mut layout, ContentTab::Collections);
+    let collections = left_pane_text(&layout, 100, 30);
+    assert!(
+        !collections.contains("config.rs"),
+        "the Collections list must not show bookmark rows; got:\n{collections}"
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -584,6 +655,10 @@ async fn search_reconcile_prunes_results_on_an_inactive_tab() {
     sandbox.write_repo_file("src/config_helper.rs", "fn helper() {}\n");
     let (mut layout, sandbox, mut rx) = make_layout_with_rx(sandbox);
 
+    // The search must run against Bookmarks, so select that tab first rather
+    // than relying on it being the one the TUI opens on.
+    select_content_tab(&mut layout, ContentTab::Bookmarks);
+
     // Search bookmarks (both config paths match), which leaves focus on the
     // Content panel with the Bookmarks tab narrowed.
     key_char(&mut layout, 's');
@@ -601,7 +676,7 @@ async fn search_reconcile_prunes_results_on_an_inactive_tab() {
     // was the selected tab when focus returned.
     assert!(sandbox.db.delete_bookmark("bm-3").expect("delete bookmark"));
     layout.handle_event(&Event::FocusGained);
-    key_char(&mut layout, '[');
+    select_content_tab(&mut layout, ContentTab::Bookmarks);
 
     let after = render_to_string(&layout, 100, 30);
     assert!(

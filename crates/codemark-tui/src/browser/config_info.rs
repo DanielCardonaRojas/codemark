@@ -103,7 +103,7 @@ impl BrowserLayout {
             .map(|tab| tab.label())
             .collect::<Vec<_>>()
             .join(", ");
-        rows.push(("Tab order", tab_order, None));
+        rows.push(("Content tab order", tab_order, None));
         rows
     }
 }

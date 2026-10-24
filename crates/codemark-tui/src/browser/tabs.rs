@@ -251,10 +251,15 @@ pub fn truncate_line_to_width(line: Line<'static>, max_width: usize) -> Line<'st
 
 /// Content panel tabs (Bookmarks/Collections/Tours).
 ///
-/// The discriminants are a *stable identity*, not a display position: they index
-/// the content panel's `panels` vector, the per-tab search contexts and the live
-/// health caches. Display order is configurable and lives in
-/// [`ContentTabOrder`] — never derive on-screen position from `index()`.
+/// The discriminants are a *stable identity*, not a display position. They key
+/// state that must survive a layout change — the per-tab search contexts and the
+/// live health caches — and are deliberately independent of where each tab sits
+/// on screen.
+///
+/// They do **not** index the content panel's `panels` vector: that is built in
+/// display order, so reaching a tab's panel requires translating the identity to
+/// a position via [`ContentTabOrder::position_of`] (or `BrowserLayout::tab_position`).
+/// Display order is configurable; see [`ContentTabOrder`].
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum ContentTab {
     #[default]
@@ -264,13 +269,15 @@ pub enum ContentTab {
 }
 
 impl ContentTab {
-    /// This tab's stable storage index (its position in the `panels` vector),
-    /// independent of where it is displayed. See the type-level note.
+    /// This tab's stable identity index, independent of where it is displayed.
+    ///
+    /// Use it to key per-tab state (search contexts, health caches) — not to
+    /// index `panels`, which is ordered by display position. See the type-level note.
     pub fn index(self) -> usize {
         self as usize
     }
 
-    /// All tabs in stable storage order (not display order).
+    /// All tabs in stable identity order (not display order).
     pub fn all() -> &'static [ContentTab] {
         &[ContentTab::Bookmarks, ContentTab::Collections, ContentTab::Tours]
     }
@@ -295,13 +302,13 @@ impl ContentTab {
         }
     }
 
-    /// Map a [`config::TabOrder`] name onto its tab.
-    fn from_config(tab: codemark_core::config::TabOrder) -> Self {
-        use codemark_core::config::TabOrder;
+    /// Map a [`config::ContentTabName`] name onto its tab.
+    fn from_config(tab: codemark_core::config::ContentTabName) -> Self {
+        use codemark_core::config::ContentTabName;
         match tab {
-            TabOrder::Bookmarks => ContentTab::Bookmarks,
-            TabOrder::Collections => ContentTab::Collections,
-            TabOrder::Tours => ContentTab::Tours,
+            ContentTabName::Bookmarks => ContentTab::Bookmarks,
+            ContentTabName::Collections => ContentTab::Collections,
+            ContentTabName::Tours => ContentTab::Tours,
         }
     }
 }
@@ -310,7 +317,7 @@ impl ContentTab {
 ///
 /// Translates between on-screen position and [`ContentTab`] identity so the tabs
 /// can be reordered without disturbing the stable indices used for panel storage.
-/// Built from `[tui].tab_order`; see [`codemark_core::config::TuiConfig::tab_order`].
+/// Built from `[tui].content_tab_order`; see [`codemark_core::config::TuiConfig::content_tab_order`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ContentTabOrder {
     /// Tabs in display order. Always a full permutation of [`ContentTab::all`].
@@ -332,7 +339,7 @@ impl ContentTabOrder {
     /// `update_tours_tab_visibility`), so moving it would hide the wrong tab.
     pub fn from_config(tui: &codemark_core::config::TuiConfig) -> Self {
         let mut order: Vec<ContentTab> =
-            tui.tab_order().into_iter().map(ContentTab::from_config).collect();
+            tui.content_tab_order().into_iter().map(ContentTab::from_config).collect();
         order.retain(|tab| *tab != ContentTab::Tours);
         order.push(ContentTab::Tours);
 
@@ -716,11 +723,11 @@ impl Default for TabSelection {
 mod tests {
     use super::*;
 
-    /// Build a `TuiConfig` with the given `tab_order` names.
+    /// Build a `TuiConfig` with the given `content_tab_order` names.
     fn tui_config(order: Option<&[&str]>) -> codemark_core::config::TuiConfig {
         codemark_core::config::TuiConfig {
             theme: None,
-            tab_order: order.map(|names| names.iter().map(|s| s.to_string()).collect()),
+            content_tab_order: order.map(|names| names.iter().map(|s| s.to_string()).collect()),
         }
     }
 
