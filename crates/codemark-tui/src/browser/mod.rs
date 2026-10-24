@@ -3560,6 +3560,12 @@ mod tests {
         // Pin the selection to B's row by its stable id and enter the Content panel,
         // then drive the synchronous preview the real focus-enter path uses.
         layout.set_focus(FocusArea::ContentPanel);
+        // Select the Bookmarks *tab*, not just its panel: the right pane renders
+        // the active tab, so under a Collections-first order (the shipped default,
+        // which this test picks up when no sandboxed config overrides it) the
+        // bookmark preview would otherwise never be shown.
+        layout.left_pane.content_panel.tabs.set_selected(bookmarks_pos);
+        layout.sync_steps_tab_label();
         assert!(
             layout
                 .left_pane
