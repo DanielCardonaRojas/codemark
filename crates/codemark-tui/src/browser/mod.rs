@@ -581,6 +581,13 @@ impl BrowserLayout {
             self.right_pane.clear_preview_state(self.workspace.focus_db());
         }
 
+        // The active tab changed, so bring the tab-dependent chrome along with
+        // it: the Filters panel's Branches tab and the right pane's first-tab
+        // label. Without this the clamped-to tab can keep showing Branches (which
+        // Bookmarks don't have) and a "Steps" label until the next manual switch.
+        self.refresh_tags();
+        self.sync_steps_tab_label();
+
         // Then refresh the preview for the clamped-to tab's current selection.
         // `current` is a display position, so it resolves through the order.
         let Some(tab) = self.tab_order.tab_at(current) else {

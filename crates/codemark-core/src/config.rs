@@ -137,10 +137,10 @@ pub struct TuiConfig {
 
     /// Left-to-right order of the Content panel tabs.
     ///
-    /// Accepts the names `bookmarks`, `collections` and `tours` (case- and
-    /// separator-insensitive); the first entry becomes the tab selected at
-    /// startup. Names may be partially listed — any tab left out keeps its
-    /// relative position after the ones named. Unknown names are ignored.
+    /// Accepts the names `bookmarks`, `collections` and `tours`
+    /// (case-insensitive); the first entry becomes the tab selected at startup.
+    /// Names may be partially listed — any tab left out keeps its relative
+    /// position after the ones named. Unknown names are ignored.
     ///
     /// When unset, the TUI keeps the historical `Bookmarks, Collections, Tours`
     /// order so an existing config file never changes layout on upgrade. The
@@ -169,8 +169,12 @@ impl ContentTabName {
     pub const ALL: &'static [ContentTabName] =
         &[ContentTabName::Bookmarks, ContentTabName::Collections, ContentTabName::Tours];
 
-    /// Parse a configured tab name. Case- and separator-insensitive; returns
-    /// `None` for names that don't match a known tab.
+    /// Parse a configured tab name.
+    ///
+    /// Case-insensitive, and tolerant of surrounding whitespace and `-`/`_`
+    /// padding; the singular form is accepted too. Every tab name is a single
+    /// word, so there are no internal separators to normalize. Returns `None`
+    /// for anything else.
     pub fn parse(name: &str) -> Option<Self> {
         match name.trim().trim_matches(['-', '_']).to_ascii_lowercase().as_str() {
             "bookmarks" | "bookmark" => Some(ContentTabName::Bookmarks),
