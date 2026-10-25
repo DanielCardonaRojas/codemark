@@ -1025,8 +1025,7 @@ threshold = 0.4
 
     #[test]
     fn effective_threshold_respects_explicit_value() {
-        let mut cfg = SemanticConfig::default();
-        cfg.threshold = Some(0.5);
+        let mut cfg = SemanticConfig { threshold: Some(0.5), ..Default::default() };
         assert_eq!(cfg.effective_threshold(), Some(0.5));
         // Explicit value wins even when the metric would imply a different default.
         cfg.distance_metric = Some("cosine".into());

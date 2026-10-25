@@ -1008,11 +1008,11 @@ mod tests {
         // bg = fill color (the box), fg = palette.inverse (text subtracted).
         let mut found = None;
         for x in 0..area.width {
-            if let Some(cell) = buf.cell((x, 0)) {
-                if cell.symbol().contains('E') {
-                    found = Some(cell);
-                    break;
-                }
+            if let Some(cell) = buf.cell((x, 0))
+                && cell.symbol().contains('E')
+            {
+                found = Some(cell);
+                break;
             }
         }
         let target = found.expect("'E' cell should exist");

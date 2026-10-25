@@ -3589,9 +3589,8 @@ mod tests {
         // -- Assertion 5: delete targets the OWNING repo (B), leaving A untouched. --
         // Drive the real key flow: 'd' opens the confirm dialog, → selects Confirm,
         // Enter performs the delete against the selected row's db (repo B).
-        assert_eq!(
+        assert!(
             layout.handle_event(&Event::Key(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::NONE))),
-            true,
             "'d' on a bookmark opens the delete-confirm dialog"
         );
         // The dialog captures input; move focus onto Confirm, then press Enter.
@@ -3701,7 +3700,7 @@ mod tests {
         assert!(active_b, "repo B must be checked after refresh — this is the regression");
 
         // Uncheck repo B — only repo A should be active after refresh.
-        layout.workspace.set_scope(&[root_a.clone()]).expect("scope A only");
+        layout.workspace.set_scope(std::slice::from_ref(&root_a)).expect("scope A only");
         layout.after_scope_change();
 
         let active_b = layout
