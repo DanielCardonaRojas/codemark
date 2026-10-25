@@ -1,5 +1,6 @@
 use crate::browser::{
-    ContentTab, ContextTab, FiltersTab, Tab, TabContent, TabSelection, tabs::BORDER_EXTENSION,
+    ContentTab, ContentTabOrder, ContextTab, FiltersTab, Tab, TabContent, TabSelection,
+    tabs::BORDER_EXTENSION,
 };
 use crate::component::{CodePreview, HealthStatus, MarkdownPanel, Panel, PanelItem};
 use crate::event::Event;
@@ -662,8 +663,9 @@ impl TabbedPanel {
         self.tabs.set_visible_count(Self::filters_visible_tab_count(active_tab));
     }
 
-    /// Create panel 3 with Bookmarks/Collections/Tours tabs.
-    pub fn new_tours_collections_bookmarks(db: &Database) -> Self {
+    /// Create panel 3 with the Bookmarks/Collections/Tours tabs, laid out in the
+    /// configured display `order`.
+    pub fn new_tours_collections_bookmarks(db: &Database, order: &ContentTabOrder) -> Self {
         // Empty caches here (nothing resolved yet), so the health-key repo_root
         // is immaterial; pass the db's own root for consistency.
         let (tours_items, collections_items, bookmarks_items) = TabbedPanel::build_content_items(
@@ -684,19 +686,28 @@ impl TabbedPanel {
             .sort(crate::component::SortMethod::DateNewest)
             .items(bookmarks_items);
 
-        let tabs = TabSelection::new(vec![
-            Tab::new("Bookmarks"),
-            Tab::new("Collections"),
-            Tab::new("Tours"),
-        ]);
+        // `panels` runs parallel to the displayed tabs, so both are built in
+        // the configured display order. Callers that address a panel by tab
+        // identity go through `ContentTabOrder::position_of`.
+        let mut by_identity = [
+            Some(TabContent::List(bookmarks_panel)),
+            Some(TabContent::List(collections_panel)),
+            Some(TabContent::List(tours_panel)),
+        ];
+        let mut tab_labels = Vec::with_capacity(order.tabs().len());
+        let mut panels = Vec::with_capacity(order.tabs().len());
+        for tab in order.tabs() {
+            tab_labels.push(Tab::new(tab.label()));
+            // Each tab appears exactly once in a permutation, so the slot is
+            // always still occupied here.
+            if let Some(panel) = by_identity[tab.index()].take() {
+                panels.push(panel);
+            }
+        }
 
         Self {
-            tabs,
-            panels: vec![
-                TabContent::List(bookmarks_panel),
-                TabContent::List(collections_panel),
-                TabContent::List(tours_panel),
-            ],
+            tabs: TabSelection::new(tab_labels),
+            panels,
             focused: false,
             last_area: std::cell::Cell::new(Rect::default()),
             pending_selection_change: std::cell::Cell::new(None),
