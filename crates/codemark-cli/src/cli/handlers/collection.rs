@@ -832,6 +832,17 @@ pub async fn handle_collection_annotate(
     args: &CollectionAnnotateArgs,
 ) -> Result<()> {
     let mut db = open_db_for_write(cli)?;
+
+    // Validate before writing anything: the tag/link inserts below aren't part
+    // of one transaction, so bailing out partway would persist them while
+    // reporting failure — and a retry with a corrected prompt would then add
+    // the same tags and links a second time.
+    if args.prompt.as_ref().is_some_and(|p| p.trim().is_empty()) {
+        return Err(Error::Input(
+            "--prompt cannot be empty; use --clear-prompt to remove the recorded prompt".into(),
+        ));
+    }
+
     let collection = db
         .get_collection_by_name(&args.name)?
         .ok_or_else(|| Error::Input(format!("collection '{}' not found", args.name)))?;
@@ -880,15 +891,11 @@ pub async fn handle_collection_annotate(
     // The prompt is single-valued, so setting it replaces rather than appends.
     // Omitting --prompt leaves the existing value alone; clearing it needs the
     // explicit --clear-prompt, since an empty string would otherwise be stored
-    // as a blank prompt rather than removing the record.
+    // as a blank prompt rather than removing the record. The empty case is
+    // rejected above, before any write lands.
     if args.clear_prompt {
         db.update_collection_prompt(&collection.id, None)?;
     } else if let Some(prompt) = &args.prompt {
-        if prompt.trim().is_empty() {
-            return Err(Error::Input(
-                "--prompt cannot be empty; use --clear-prompt to remove the recorded prompt".into(),
-            ));
-        }
         db.update_collection_prompt(&collection.id, Some(prompt))?;
     }
 

@@ -600,6 +600,33 @@ mod tests {
         assert_eq!(db.get_collection_by_id(&col.id).unwrap().unwrap().prompt, None);
     }
 
+    // @lat: [[tests#Collection Creation Prompt#Clearing Is Distinct From A Blank Value]]
+    #[test]
+    fn clearing_the_prompt_differs_from_storing_a_blank_one() {
+        init_test_env();
+        let db = Database::open_in_memory().unwrap();
+
+        let mut col = test_collection("blank-vs-cleared");
+        col.prompt = Some("Original intent.".to_string());
+        db.insert_collection(&col).unwrap();
+
+        // Clearing stores SQL NULL, which reads back as None — the state that
+        // means "no prompt recorded".
+        db.update_collection_prompt(&col.id, None).unwrap();
+        assert_eq!(db.get_collection_by_id(&col.id).unwrap().unwrap().prompt, None);
+
+        // A blank string is a *different*, non-null state. The CLI rejects it so
+        // it can't be reached there, but the storage layer stays faithful: it
+        // must not silently coerce "" into NULL, or callers lose the ability to
+        // tell "cleared" from "stored something useless".
+        db.update_collection_prompt(&col.id, Some("")).unwrap();
+        assert_eq!(
+            db.get_collection_by_id(&col.id).unwrap().unwrap().prompt.as_deref(),
+            Some(""),
+            "storage must not coerce an empty prompt into NULL"
+        );
+    }
+
     // @lat: [[tests#Collection Creation Prompt#Prompt Does Not Shift The Bookmark Count]]
     #[test]
     fn collection_prompt_does_not_shift_aggregate_bookmark_count() {
