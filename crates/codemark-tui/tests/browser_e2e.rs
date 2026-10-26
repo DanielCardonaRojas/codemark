@@ -26,7 +26,7 @@ use std::time::Duration;
 
 use codemark_core::engine::bookmark::{Bookmark, BookmarkHealth};
 use codemark_core::storage::db::Database;
-use codemark_tui::browser::{BrowserLayout, FocusArea};
+use codemark_tui::browser::{BrowserLayout, ContentTab, FocusArea};
 use codemark_tui::event::{Event, EventHandler, EventHandlerConfig};
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
@@ -103,6 +103,25 @@ impl Sandbox {
             std::fs::create_dir_all(parent).expect("create source dir");
         }
         std::fs::write(full, contents).expect("write source file");
+    }
+
+    /// Pin the Content panel to the historical `Bookmarks, Collections, Tours`
+    /// order via a repo-local config.
+    ///
+    /// The shipped default config opens on Collections, but tests that snapshot
+    /// the *Bookmarks* startup screen need Bookmarks selected by `BrowserLayout::new`
+    /// so its preview resolves synchronously — switching tabs afterwards goes
+    /// through the async path and renders a loading spinner instead of code.
+    /// This also exercises the upgrade path, where an existing config without
+    /// `content_tab_order` keeps the original layout.
+    fn write_legacy_tab_order_config(&self) {
+        let codemark_dir = self.repo_root().join(".codemark");
+        std::fs::create_dir_all(&codemark_dir).expect("create .codemark dir");
+        std::fs::write(
+            codemark_dir.join("config.toml"),
+            "[tui]\ncontent_tab_order = [\"bookmarks\", \"collections\", \"tours\"]\n",
+        )
+        .expect("write config.toml");
     }
 
     /// Write a layered config that makes the layout consider itself "logged in"
@@ -207,6 +226,24 @@ fn key_char(layout: &mut BrowserLayout, c: char) -> bool {
     layout.handle_event(&Event::Key(KeyEvent::new(KeyCode::Char(c), KeyModifiers::NONE)))
 }
 
+/// Switch the Content panel to `target` by pressing `]` the right number of
+/// times for the configured tab order.
+///
+/// Tests address tabs by identity, not by a fixed number of keypresses, because
+/// `[tui].content_tab_order` decides where each tab sits — the sandbox gets the shipped
+/// default config, which opens on Collections. Driving the real keybinding keeps
+/// the tab-change side effects (preview refresh, tag reload) in play.
+fn select_content_tab(layout: &mut BrowserLayout, target: ContentTab) {
+    for _ in 0..layout.content_tab_steps_to(target) {
+        key_char(layout, ']');
+    }
+    assert_eq!(
+        layout.content_tab(),
+        Some(target),
+        "failed to switch the Content panel to {target:?}"
+    );
+}
+
 /// Feed an arbitrary key code (e.g. `KeyCode::Down`, `KeyCode::Enter`).
 /// Part of the harness toolkit; not every test uses it yet.
 #[allow(dead_code)]
@@ -225,6 +262,18 @@ fn type_str(layout: &mut BrowserLayout, s: &str) {
 
 /// Render the layout into a fixed-size `TestBackend` and return the screen as a
 /// newline-joined string of trimmed rows — stable input for snapshotting.
+/// Render only the left sidebar's columns, dropping the right preview pane.
+///
+/// Lets a test assert that a row is *absent* from the lists without the right
+/// pane's preview of the same file producing a false match.
+fn left_pane_text(layout: &BrowserLayout, width: u16, height: u16) -> String {
+    render_to_string(layout, width, height)
+        .lines()
+        .map(|line| line.chars().take(40).collect::<String>())
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 fn render_to_string(layout: &BrowserLayout, width: u16, height: u16) -> String {
     let backend = TestBackend::new(width, height);
     let mut terminal = Terminal::new(backend).expect("test terminal");
@@ -268,10 +317,13 @@ async fn seeded_bookmarks_render_in_list() {
     // deterministic (no absolute temp path leaking into the snapshot).
     sandbox.write_repo_file("src/main.rs", "fn main() {\n    println!(\"hi\");\n}\n");
     sandbox.write_repo_file("src/config.rs", "struct Config {\n    name: String,\n}\n");
+    // This test snapshots the Bookmarks startup screen, so pin Bookmarks first.
+    sandbox.write_legacy_tab_order_config();
     let (layout, _sandbox) = make_layout(sandbox);
 
-    // A non-empty database focuses the bookmarks pane on startup.
+    // A non-empty database focuses the content pane on startup.
     assert_eq!(layout.focus(), FocusArea::ContentPanel);
+    assert_eq!(layout.content_tab(), Some(ContentTab::Bookmarks));
 
     insta::assert_snapshot!(render_to_string(&layout, 100, 30));
 }
@@ -284,7 +336,10 @@ async fn filtering_narrows_the_bookmark_list() {
     ]);
     sandbox.write_repo_file("src/main.rs", "fn main() {\n    println!(\"hi\");\n}\n");
     sandbox.write_repo_file("src/config.rs", "struct Config {\n    name: String,\n}\n");
+    // Filtering is exercised against the Bookmarks list, so pin it first.
+    sandbox.write_legacy_tab_order_config();
     let (mut layout, _sandbox) = make_layout(sandbox);
+    assert_eq!(layout.content_tab(), Some(ContentTab::Bookmarks));
 
     // `apply_filter` is exactly what the real event loop calls each keystroke
     // (main.rs computes the focused panel's active filter and applies it). With
@@ -300,6 +355,65 @@ async fn filtering_narrows_the_bookmark_list() {
     insta::assert_snapshot!(render_to_string(&layout, 100, 30));
 }
 
+// @lat: [[tests#Content Tab Order#Bookmark Search Targets Bookmarks Under A Reordered Layout]]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn bookmark_search_targets_bookmarks_panel_under_reordered_tabs() {
+    // Regression: with Collections displayed first (the shipped default), a
+    // bookmark search must still land in the Bookmarks panel. Writing results to
+    // display position 0 replaced the Collections list with bookmark rows and
+    // then treated their ids as collection ids.
+    let sandbox = Sandbox::with_bookmarks([
+        sample_bookmark("bm-1", "fn main", "src/main.rs"),
+        sample_bookmark("bm-2", "struct Config", "src/config.rs"),
+    ]);
+    sandbox.write_repo_file("src/main.rs", "fn main() {\n    println!(\"hi\");\n}\n");
+    sandbox.write_repo_file("src/config.rs", "struct Config {\n    name: String,\n}\n");
+    // Deliberately NOT pinning the legacy order: this exercises the default
+    // (Collections-first) layout.
+    let (mut layout, _sandbox, mut rx) = make_layout_with_rx(sandbox);
+    assert_eq!(
+        layout.content_tab(),
+        Some(ContentTab::Collections),
+        "sandbox should get the shipped Collections-first default"
+    );
+
+    // Select Bookmarks (display position 1 here, not 0) and search. The results
+    // must be written to and selected on the Bookmarks panel; using display
+    // position 0 would put the rows in Collections and select that tab instead.
+    select_content_tab(&mut layout, ContentTab::Bookmarks);
+    key_char(&mut layout, 's');
+    type_str(&mut layout, "config");
+    key_code(&mut layout, KeyCode::Enter);
+    pump_pending_events(&mut layout, &mut rx).await;
+
+    assert_eq!(
+        layout.content_tab(),
+        Some(ContentTab::Bookmarks),
+        "the search must leave Bookmarks selected, not display position 0"
+    );
+    // Assert on the left list pane only: the right pane keeps a preview of the
+    // previously selected bookmark, so a whole-screen match would be misleading.
+    let filtered = left_pane_text(&layout, 100, 30);
+    assert!(
+        filtered.contains("config.rs") && !filtered.contains("main.rs"),
+        "the Bookmarks panel should hold only the narrowed results; got:\n{filtered}"
+    );
+
+    // Collections must still render as empty after switching to it.
+    //
+    // Note this does not pin down *which* panel the search wrote to: the tab
+    // switch runs `refresh_all_panels_preserving_search`, which rebuilds the
+    // (non-search-active) Collections panel from the DB and would erase stray
+    // rows before they could render. Asserting on panel contents directly would
+    // need `left_pane` to be reachable from an integration test.
+    select_content_tab(&mut layout, ContentTab::Collections);
+    let collections = left_pane_text(&layout, 100, 30);
+    assert!(
+        !collections.contains("config.rs"),
+        "the Collections list must not show bookmark rows; got:\n{collections}"
+    );
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn search_filter_survives_focus_regained() {
     let sandbox = Sandbox::with_bookmarks([
@@ -308,6 +422,9 @@ async fn search_filter_survives_focus_regained() {
     ]);
     sandbox.write_repo_file("src/main.rs", "fn main() {\n    println!(\"hi\");\n}\n");
     sandbox.write_repo_file("src/config.rs", "struct Config {\n    name: String,\n}\n");
+    // These assertions are about the Bookmarks search results, so pin
+    // Bookmarks as the opening tab.
+    sandbox.write_legacy_tab_order_config();
     let (mut layout, _sandbox, mut rx) = make_layout_with_rx(sandbox);
 
     // Focus the search bar ('s'), type a query, and run it (Enter). The default
@@ -347,6 +464,9 @@ async fn empty_search_query_restores_full_list() {
     ]);
     sandbox.write_repo_file("src/main.rs", "fn main() {\n    println!(\"hi\");\n}\n");
     sandbox.write_repo_file("src/config.rs", "struct Config {\n    name: String,\n}\n");
+    // These assertions are about the Bookmarks search results, so pin
+    // Bookmarks as the opening tab.
+    sandbox.write_legacy_tab_order_config();
     let (mut layout, _sandbox, mut rx) = make_layout_with_rx(sandbox);
 
     // Focus the search bar, type a query, and run it. The list narrows to the
@@ -489,6 +609,9 @@ async fn search_results_reconcile_with_db_on_focus_regained() {
     sandbox.write_repo_file("src/main.rs", "fn main() {\n    println!(\"hi\");\n}\n");
     sandbox.write_repo_file("src/config.rs", "struct Config {\n    name: String,\n}\n");
     sandbox.write_repo_file("src/config_helper.rs", "fn helper() {}\n");
+    // These assertions are about the Bookmarks search results, so pin
+    // Bookmarks as the opening tab.
+    sandbox.write_legacy_tab_order_config();
     let (mut layout, sandbox, mut rx) = make_layout_with_rx(sandbox);
 
     // Run the search; both config paths match (FTS matches on file_path).
@@ -532,6 +655,10 @@ async fn search_reconcile_prunes_results_on_an_inactive_tab() {
     sandbox.write_repo_file("src/config_helper.rs", "fn helper() {}\n");
     let (mut layout, sandbox, mut rx) = make_layout_with_rx(sandbox);
 
+    // The search must run against Bookmarks, so select that tab first rather
+    // than relying on it being the one the TUI opens on.
+    select_content_tab(&mut layout, ContentTab::Bookmarks);
+
     // Search bookmarks (both config paths match), which leaves focus on the
     // Content panel with the Bookmarks tab narrowed.
     key_char(&mut layout, 's');
@@ -541,7 +668,7 @@ async fn search_reconcile_prunes_results_on_an_inactive_tab() {
 
     // Switch to the Collections tab: the narrowed Bookmarks panel is now hidden
     // but still search-active.
-    key_char(&mut layout, ']');
+    select_content_tab(&mut layout, ContentTab::Collections);
 
     // Delete one bookmark match while unfocused, regain focus, then switch back
     // to the (previously hidden) Bookmarks tab. The stale row must be gone: the
@@ -549,7 +676,7 @@ async fn search_reconcile_prunes_results_on_an_inactive_tab() {
     // was the selected tab when focus returned.
     assert!(sandbox.db.delete_bookmark("bm-3").expect("delete bookmark"));
     layout.handle_event(&Event::FocusGained);
-    key_char(&mut layout, '[');
+    select_content_tab(&mut layout, ContentTab::Bookmarks);
 
     let after = render_to_string(&layout, 100, 30);
     assert!(
@@ -569,6 +696,9 @@ async fn search_reconcile_drops_rows_that_no_longer_match() {
     ]);
     sandbox.write_repo_file("src/main.rs", "fn main() {\n    println!(\"hi\");\n}\n");
     sandbox.write_repo_file("src/config.rs", "struct Config {\n    name: String,\n}\n");
+    // These assertions are about the Bookmarks search results, so pin
+    // Bookmarks as the opening tab.
+    sandbox.write_legacy_tab_order_config();
     let (mut layout, sandbox, mut rx) = make_layout_with_rx(sandbox);
 
     key_char(&mut layout, 's');
@@ -636,9 +766,9 @@ async fn collection_semantic_search_preserves_relevance_order() {
     sandbox.db.insert_collection(&mk("c-old", "Charlie", "2024-01-01T00:00:00Z")).unwrap();
     let (mut layout, _sandbox) = make_layout(sandbox);
 
-    // Seeded content focuses the Content panel (Bookmarks). Move to Collections.
+    // Seeded content focuses the Content panel. Move to Collections.
     assert_eq!(layout.focus(), FocusArea::ContentPanel);
-    key_char(&mut layout, ']');
+    select_content_tab(&mut layout, ContentTab::Collections);
 
     // Simulate a semantic search ranking: deliver the oldest collection first,
     // the newest last (the reverse of DateNewest order). request_id 0 matches
@@ -709,7 +839,7 @@ async fn enter_on_focused_collection_overview_opens_the_bookmarks_flow() {
     // Seeded content => focus starts on Content panel (Bookmarks). Move to the
     // Collections tab, which renders the collection overview in the right pane.
     assert_eq!(layout.focus(), FocusArea::ContentPanel);
-    key_char(&mut layout, ']'); // Bookmarks -> Collections
+    select_content_tab(&mut layout, ContentTab::Collections);
 
     // Focus the right pane (pane 4) so keys route to the overview markdown panel,
     // matching the reported scenario. The overview is shown before Enter.
@@ -766,7 +896,7 @@ async fn collection_overview_label_reflects_live_bookmark_health() {
     let (mut layout, _sandbox) = make_layout(sandbox);
 
     assert_eq!(layout.focus(), FocusArea::ContentPanel);
-    key_char(&mut layout, ']'); // Bookmarks -> Collections (renders the overview)
+    select_content_tab(&mut layout, ContentTab::Collections); // renders the overview
 
     let persisted = render_to_string(&layout, 140, 40);
     assert!(
@@ -827,7 +957,7 @@ async fn all_archived_collection_shows_no_live_health_label() {
     pump_pending_events(&mut layout, &mut rx).await;
     pump_pending_events(&mut layout, &mut rx).await;
 
-    key_char(&mut layout, ']'); // Bookmarks -> Collections (shows col-arch overview)
+    select_content_tab(&mut layout, ContentTab::Collections); // shows col-arch overview
     let rendered = render_to_string(&layout, 140, 40);
     assert!(
         !rendered.contains("Exact"),
@@ -847,8 +977,7 @@ async fn remote_tour_overview_survives_a_panel_refresh() {
 
     // Seeded bookmark => focus starts on Content panel. Cycle to the Tours tab.
     assert_eq!(layout.focus(), FocusArea::ContentPanel);
-    key_char(&mut layout, ']'); // Bookmarks -> Collections
-    key_char(&mut layout, ']'); // Collections -> Tours
+    select_content_tab(&mut layout, ContentTab::Tours);
 
     // Deliver a remote tour for the unscoped (no active repos) fetch. The default
     // `pending_remote_repos` is `None`, so a `None` scope is accepted.

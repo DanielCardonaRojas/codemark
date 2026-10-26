@@ -64,7 +64,7 @@ impl BrowserLayout {
             FocusArea::ContentPanel => {
                 bindings.push(("+", "Increase pane"));
                 bindings.push(("_", "Decrease pane"));
-                match ContentTab::from_index(self.left_pane.content_panel.tabs.selected_index()) {
+                match self.active_content_tab() {
                     Some(ContentTab::Tours) => {
                         bindings.push(("Enter", "Open tour"));
                         bindings.push(("p", "Pull tour"));
@@ -207,7 +207,7 @@ impl BrowserLayout {
             }
             FocusArea::ContentPanel => {
                 // Tours / Collections / Bookmarks
-                match ContentTab::from_index(self.left_pane.content_panel.tabs.selected_index()) {
+                match self.active_content_tab() {
                     Some(ContentTab::Tours) => {
                         bindings.push(KeyBinding::new("p", "Pull").with_priority(90));
                         bindings.push(KeyBinding::new("P", "Push").with_priority(85));
