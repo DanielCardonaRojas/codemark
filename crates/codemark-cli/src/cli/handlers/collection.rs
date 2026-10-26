@@ -893,15 +893,21 @@ pub async fn handle_collection_annotate(
     // explicit --clear-prompt, since an empty string would otherwise be stored
     // as a blank prompt rather than removing the record. The empty case is
     // rejected above, before any write lands.
-    if args.clear_prompt {
+    // Reported separately from the added-annotation count below: replacing or
+    // removing a prompt isn't an addition, so folding it into that tally would
+    // claim "Added 1 annotations" for what was actually a removal.
+    let prompt_change = if args.clear_prompt {
         db.update_collection_prompt(&collection.id, None)?;
+        Some("prompt cleared")
     } else if let Some(prompt) = &args.prompt {
         db.update_collection_prompt(&collection.id, Some(prompt))?;
-    }
+        Some("prompt updated")
+    } else {
+        None
+    };
 
     // Notes are not currently stored on collections - warn user
-    let added_count =
-        args.tag.len() + args.link.len() + usize::from(args.prompt.is_some() || args.clear_prompt);
+    let added_count = args.tag.len() + args.link.len();
     if !args.note.is_empty() {
         eprintln!(
             "codemark: warning: --note is not yet persisted on collections; {} note(s) ignored",
@@ -915,6 +921,13 @@ pub async fn handle_collection_annotate(
         let _ = generate_embedding_for_collection(&config, &mut db, &collection).await;
     }
 
-    write_success(mode, &format!("Added {added_count} annotations to collection '{}'", args.name))?;
+    let summary = match prompt_change {
+        Some(change) if added_count > 0 => {
+            format!("Added {added_count} annotations to collection '{}' ({change})", args.name)
+        }
+        Some(change) => format!("Collection '{}' {change}", args.name),
+        None => format!("Added {added_count} annotations to collection '{}'", args.name),
+    };
+    write_success(mode, &summary)?;
     Ok(())
 }
