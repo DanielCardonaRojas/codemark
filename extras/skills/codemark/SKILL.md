@@ -159,6 +159,13 @@ rather than letting it go stale:
 codemark tour annotate <name> --prompt "<updated polished intent>"
 ```
 
+Omitting `--prompt` leaves any existing prompt untouched. An empty string is
+rejected — to remove a prompt entirely, say so explicitly:
+
+```bash
+codemark tour annotate <name> --clear-prompt
+```
+
 The prompt is distinct from the description:
 - **`--prompt`** — *why this collection was asked for* (the request/intent).
 - **`--description`** — *what this collection contains* (a summary of the tour).
@@ -478,6 +485,9 @@ codemark tour create auth-flow \
 
 # Set or replace the prompt on an existing tour (single-valued: overwrites)
 codemark tour annotate login-flow --prompt "Map login, including the 2FA branch."
+
+# Remove a recorded prompt (an empty --prompt is rejected, so clearing is explicit)
+codemark tour annotate login-flow --clear-prompt
 
 # Tag an existing collection (repeatable)
 codemark tour tag add login-flow feature:auth area:security

@@ -26,6 +26,12 @@ pub async fn handle_collection_create(
 ) -> Result<()> {
     let mut db = open_db_for_write(cli)?;
 
+    // A blank prompt is a mistake rather than an intent to store nothing: the
+    // field is optional, so omitting the flag already records "no prompt".
+    if args.prompt.as_ref().is_some_and(|p| p.trim().is_empty()) {
+        return Err(Error::Input("--prompt cannot be empty; omit it instead".into()));
+    }
+
     let cwd = std::env::current_dir()?;
     let git_ctx = codemark_core::git::context::detect_context(&cwd);
     let created_branch = git_ctx.as_ref().and_then(|ctx| ctx.branch_name.clone());
@@ -872,12 +878,23 @@ pub async fn handle_collection_annotate(
     }
 
     // The prompt is single-valued, so setting it replaces rather than appends.
-    if let Some(prompt) = &args.prompt {
+    // Omitting --prompt leaves the existing value alone; clearing it needs the
+    // explicit --clear-prompt, since an empty string would otherwise be stored
+    // as a blank prompt rather than removing the record.
+    if args.clear_prompt {
+        db.update_collection_prompt(&collection.id, None)?;
+    } else if let Some(prompt) = &args.prompt {
+        if prompt.trim().is_empty() {
+            return Err(Error::Input(
+                "--prompt cannot be empty; use --clear-prompt to remove the recorded prompt".into(),
+            ));
+        }
         db.update_collection_prompt(&collection.id, Some(prompt))?;
     }
 
     // Notes are not currently stored on collections - warn user
-    let added_count = args.tag.len() + args.link.len() + usize::from(args.prompt.is_some());
+    let added_count =
+        args.tag.len() + args.link.len() + usize::from(args.prompt.is_some() || args.clear_prompt);
     if !args.note.is_empty() {
         eprintln!(
             "codemark: warning: --note is not yet persisted on collections; {} note(s) ignored",

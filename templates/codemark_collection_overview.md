@@ -26,10 +26,10 @@
 | **Repo** | [{{repo_url}}]({{repo_url}}) |
 {{/if}}
 
-{{#if prompt}}
+{{#if prompt_quoted}}
 ## Prompt
 
-> {{prompt}}
+{{prompt_quoted}}
 {{/if}}
 
 {{#if tags}}

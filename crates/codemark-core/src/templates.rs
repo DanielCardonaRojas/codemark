@@ -305,6 +305,13 @@ pub struct CollectionTemplateContext {
     /// The request this collection answers, kept so it can be recreated (optional)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub prompt: Option<String>,
+    /// `prompt` with a `>` prefix on every line, ready to drop into a markdown
+    /// block quote. Pre-rendered here rather than in the template because a
+    /// single `>` only quotes the first line: a prompt containing a blank line
+    /// would push its later paragraphs out of the quote and make them read as
+    /// separate collection content.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prompt_quoted: Option<String>,
     /// Visibility as string
     pub visibility: String,
     /// Health status as string (optional)
@@ -371,6 +378,19 @@ pub struct CollectionStepTemplateContext {
     pub note: Option<String>,
 }
 
+/// Prefix every line of `text` with `>` so a multi-paragraph string renders as
+/// one continuous markdown block quote.
+///
+/// Blank lines get a bare `>` rather than being left empty: an empty line
+/// terminates a block quote, so the text after it would escape the quote and
+/// render as ordinary body content.
+fn quote_markdown_block(text: &str) -> String {
+    text.lines()
+        .map(|line| if line.is_empty() { ">".to_string() } else { format!("> {line}") })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
 impl CollectionTemplateContext {
     /// Create a template context from a collection, its bookmarks, tags, and links.
     pub fn from_collection(
@@ -389,6 +409,7 @@ impl CollectionTemplateContext {
             name: collection.name.clone(),
             description: collection.description.clone(),
             prompt: collection.prompt.clone(),
+            prompt_quoted: collection.prompt.as_deref().map(quote_markdown_block),
             visibility: collection.visibility.to_string(),
             health: collection.health.map(|h| h.to_string()),
             created_at: collection.created_at.clone(),
@@ -881,6 +902,71 @@ mod tests {
             output.contains("— identifier"),
             "step should show the query summary; got:\n{output}"
         );
+    }
+
+    // @lat: [[tests#Collection Creation Prompt#Multi-Paragraph Prompt Stays Quoted]]
+    #[test]
+    fn multiline_prompt_renders_as_one_block_quote() {
+        use crate::engine::bookmark::{Collection, Visibility};
+
+        let collection = Collection {
+            id: "col-1".to_string(),
+            name: "Auth Flow".to_string(),
+            description: None,
+            visibility: Visibility::Private,
+            created_at: "2024-01-01T00:00:00Z".to_string(),
+            created_by: None,
+            created_branch: None,
+            published_at: None,
+            published_commit_sha: None,
+            repo_url: None,
+            repo_id: None,
+            status: None,
+            health: None,
+            health_computed_at: None,
+            updated_at: None,
+            imported_from_url: None,
+            // A blank line between paragraphs is the case that breaks a single
+            // `>` prefix: the second paragraph would escape the quote.
+            prompt: Some(
+                "Trace the login path.\n\nFocus on the 2FA branch added in ENG-42.".to_string(),
+            ),
+        };
+
+        let output = render_collection_overview_with_template(
+            default_collection_overview_template(),
+            &collection,
+            &[],
+            vec![],
+            &[],
+        )
+        .expect("overview renders");
+
+        assert!(output.contains("## Prompt"), "prompt section present; got:\n{output}");
+        // Every line of the prompt is inside the quote, blank line included.
+        assert!(output.contains("> Trace the login path."), "first paragraph; got:\n{output}");
+        assert!(
+            output.contains("> Focus on the 2FA branch added in ENG-42."),
+            "second paragraph must stay quoted; got:\n{output}"
+        );
+        assert!(
+            output.contains("> Trace the login path.\n>\n> Focus on the 2FA branch"),
+            "paragraphs must form one continuous quote; got:\n{output}"
+        );
+        // No unquoted copy of the later paragraph leaked into the body.
+        assert!(
+            !output.contains("\nFocus on the 2FA branch"),
+            "prompt text must not appear outside the quote; got:\n{output}"
+        );
+    }
+
+    #[test]
+    fn quote_markdown_block_prefixes_every_line() {
+        assert_eq!(quote_markdown_block("one"), "> one");
+        assert_eq!(quote_markdown_block("one\ntwo"), "> one\n> two");
+        // Blank lines become a bare `>` so the quote isn't terminated.
+        assert_eq!(quote_markdown_block("one\n\ntwo"), "> one\n>\n> two");
+        assert_eq!(quote_markdown_block(""), "");
     }
 
     #[test]
