@@ -302,6 +302,9 @@ pub struct CollectionTemplateContext {
     /// Description (optional)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
+    /// The request this collection answers, kept so it can be recreated (optional)
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prompt: Option<String>,
     /// Visibility as string
     pub visibility: String,
     /// Health status as string (optional)
@@ -385,6 +388,7 @@ impl CollectionTemplateContext {
         CollectionTemplateContext {
             name: collection.name.clone(),
             description: collection.description.clone(),
+            prompt: collection.prompt.clone(),
             visibility: collection.visibility.to_string(),
             health: collection.health.map(|h| h.to_string()),
             created_at: collection.created_at.clone(),
@@ -805,6 +809,7 @@ mod tests {
             health_computed_at: None,
             updated_at: None,
             imported_from_url: None,
+            prompt: None,
         };
 
         let bm = Bookmark {

@@ -297,6 +297,11 @@ pub struct Collection {
     pub health_computed_at: Option<String>,
     pub updated_at: Option<String>,
     pub imported_from_url: Option<String>,
+    /// The prompt that motivated this collection, as a polished restatement of
+    /// what the author asked for. Kept so a collection whose bookmarks have all
+    /// drifted beyond repair can be recreated from the original intent.
+    #[serde(default)]
+    pub prompt: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

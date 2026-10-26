@@ -69,6 +69,7 @@ async fn test_cli_publish_pull_roundtrip() {
         health_computed_at: None,
         updated_at: None,
         imported_from_url: None,
+        prompt: None,
     };
     db.insert_collection(&collection).unwrap();
 

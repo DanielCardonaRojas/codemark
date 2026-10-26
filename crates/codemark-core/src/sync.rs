@@ -709,6 +709,7 @@ mod tests {
                 health_computed_at: None,
                 updated_at: None,
                 imported_from_url: None,
+                prompt: None,
             };
             db.insert_collection(&collection).unwrap();
 
@@ -810,6 +811,7 @@ mod tests {
             health_computed_at: None,
             updated_at: None,
             imported_from_url: Some(source_url.clone()),
+            prompt: None,
         };
         db.insert_collection(&legacy_dup).unwrap();
         assert_eq!(db.list_collections().unwrap().len(), 2);
@@ -894,6 +896,7 @@ mod tests {
             health_computed_at: None,
             updated_at: None,
             imported_from_url: None,
+            prompt: None,
         };
         db.insert_collection(&user_collection).unwrap();
         db.add_to_collection(&user_collection.id, std::slice::from_ref(&imported_bm_id)).unwrap();

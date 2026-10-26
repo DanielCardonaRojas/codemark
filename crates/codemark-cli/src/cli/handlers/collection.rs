@@ -66,6 +66,7 @@ pub async fn handle_collection_create(
         health_computed_at: None,
         updated_at: None,
         imported_from_url: None,
+        prompt: args.prompt.clone(),
     };
     db.insert_collection(&collection)?;
 
@@ -191,6 +192,7 @@ pub async fn handle_collection_add(
                 health_computed_at: None,
                 updated_at: None,
                 imported_from_url: None,
+                prompt: None,
             };
             db.insert_collection(&c)?;
             (c, true)
@@ -869,8 +871,13 @@ pub async fn handle_collection_annotate(
         }
     }
 
+    // The prompt is single-valued, so setting it replaces rather than appends.
+    if let Some(prompt) = &args.prompt {
+        db.update_collection_prompt(&collection.id, Some(prompt))?;
+    }
+
     // Notes are not currently stored on collections - warn user
-    let added_count = args.tag.len() + args.link.len();
+    let added_count = args.tag.len() + args.link.len() + usize::from(args.prompt.is_some());
     if !args.note.is_empty() {
         eprintln!(
             "codemark: warning: --note is not yet persisted on collections; {} note(s) ignored",

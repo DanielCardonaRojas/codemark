@@ -81,8 +81,8 @@ impl Packer {
         // 1. Insert collection
         let c = &payload.collection;
         conn.execute(
-            "INSERT INTO collections (id, name, description, visibility, created_at, created_by, created_branch, published_at, published_commit_sha, repo_url, status, health, health_computed_at, updated_at, imported_from_url) 
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+            "INSERT INTO collections (id, name, description, visibility, created_at, created_by, created_branch, published_at, published_commit_sha, repo_url, status, health, health_computed_at, updated_at, imported_from_url, prompt) 
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
             params![
                 c.id,
                 c.name,
@@ -98,7 +98,8 @@ impl Packer {
                 c.health.as_ref().map(|h| h.to_string()),
                 c.health_computed_at,
                 c.updated_at,
-                c.imported_from_url
+                c.imported_from_url,
+                c.prompt
             ],
         )?;
 

@@ -754,6 +754,7 @@ async fn collection_semantic_search_preserves_relevance_order() {
         health_computed_at: None,
         updated_at: None,
         imported_from_url: None,
+        prompt: None,
     };
 
     let sandbox = Sandbox::with_bookmarks([sample_bookmark("bm-1", "fn main", "src/main.rs")]);
@@ -818,6 +819,7 @@ fn sample_collection(id: &str, name: &str) -> codemark_core::engine::bookmark::C
         health_computed_at: None,
         updated_at: None,
         imported_from_url: None,
+        prompt: None,
     }
 }
 

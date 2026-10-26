@@ -763,6 +763,11 @@ pub struct CollectionCreateArgs {
     #[arg(long)]
     pub description: Option<String>,
 
+    /// The request this collection answers, as a polished restatement of what
+    /// was asked for; kept so the collection can be recreated later
+    #[arg(long)]
+    pub prompt: Option<String>,
+
     /// Tag labels to add; repeatable
     #[arg(long)]
     pub tag: Vec<String>,
@@ -1283,6 +1288,11 @@ pub struct CollectionAnnotateArgs {
     /// Notes to add
     #[arg(long)]
     pub note: Vec<String>,
+
+    /// Replace the collection's recorded creation prompt (there is only one,
+    /// so this overwrites any previous value)
+    #[arg(long)]
+    pub prompt: Option<String>,
 }
 
 // === Health Namespace ===

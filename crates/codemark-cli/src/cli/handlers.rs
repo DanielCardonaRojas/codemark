@@ -1269,6 +1269,7 @@ pub fn add_bookmark_to_collection(
                 health_computed_at: None,
                 updated_at: None,
                 imported_from_url: None,
+                prompt: None,
             };
             db.insert_collection(&c)?;
             c

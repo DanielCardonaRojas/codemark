@@ -110,13 +110,58 @@ codemark search "middleware" --health active --collection auth-flow
 
 - **Bookmarks** store a tree-sitter query that identifies code by AST structure, not line numbers.
 - **Resolution** re-finds bookmarked code even after edits (exact → relaxed → hash fallback).
-- **Tours/Collections** group related bookmarks (one per feature, bugfix, or investigation).
+- **Tours/Collections** group related bookmarks (one per feature, bugfix, or investigation). Each carries a **prompt** — the polished restatement of the request that motivated it, so the tour can be recreated if its bookmarks drift beyond repair. See **Recording the Prompt**.
 - **Health**: active (healthy), drifted (found but moved), stale (lost), archived (cleaned up).
 - **Author**: bookmarks track who created them. Set `--created-by` to your specific agent slug (`claude`, `codex`, `copilot`, `pi`) — not the generic `agent`; the default `user` is reserved for the human. See **Author Identity** above.
 - **Notes vs. Comments** (two distinct, durable-vs-ephemeral channels):
   - **Notes** (`--note`) — durable explanations of *what the code is and why it matters*. Context-independent, reusable across any session. Use multiple `--note` flags to capture different aspects. Rendered as plain prose (keep them clean and self-contained).
   - **Comments** (`--comment`) — **markdown** discussion tied to a *task, ticket, PR, or debugging session*. Ephemeral and session-scoped. Rendered as markdown, so they may contain links, lists, and code blocks. Use these for "investigating X for TICKET-42" rather than polluting notes.
 - **Annotations**: each `--note`/`--context` becomes an annotation with provenance (author, timestamp, source), so multiple agents can layer context over time.
+
+## Recording the Prompt (collections)
+
+Every collection you create should record **the request that motivated it** via
+`--prompt`. This is the collection's seed of intent: if its bookmarks later drift
+beyond repair, the prompt is what lets a future agent rebuild an equivalent tour
+from scratch rather than guessing from the wreckage.
+
+**Write a polished restatement, not a transcript.** Real prompts arrive rushed —
+typos, missing words, broken grammar, non-native English, stream-of-consciousness.
+Your job is to capture the *idea* in clean, well-formed English:
+
+- Fix spelling, grammar, and punctuation; expand obvious abbreviations.
+- Keep the user's actual intent and scope — don't add goals they never asked for,
+  and don't narrow what they wanted.
+- Preserve concrete specifics they supplied (file names, symbols, tickets, repos).
+- Write it standalone: it must make sense with no conversation context. Resolve
+  "this", "that file", "here" into real names.
+- One to three sentences, imperative or declarative. No preamble like "The user
+  asked me to".
+- Keep technical terms the user used, even if informal — don't over-formalize
+  into jargon they didn't use.
+
+| User's raw prompt | `--prompt` value to record |
+|---|---|
+| `can u rember where the the auth stuf is i keep loosing it` | `Bookmark the authentication code so it can be found again quickly.` |
+| `bookmark this` (while viewing `src/db/pool.rs`) | `Bookmark the connection pool setup in src/db/pool.rs.` |
+| `i need to understan how a req goes from the api to the db for ENG-42` | `Trace how a request flows from the API layer down to the database, for ENG-42.` |
+| `mark all the places we validate input, theres like 5 of them i think` | `Bookmark every input-validation site in the codebase.` |
+
+**Do not** paste the user's text verbatim when it contains errors, and do not
+invent a prompt when you created the collection on your own initiative — in that
+case state your own reason plainly: `--prompt "Bookmark the error-handling
+boundaries discovered while debugging the retry loop."`
+
+If the user's request genuinely changes scope mid-session, replace the prompt
+rather than letting it go stale:
+
+```bash
+codemark tour annotate <name> --prompt "<updated polished intent>"
+```
+
+The prompt is distinct from the description:
+- **`--prompt`** — *why this collection was asked for* (the request/intent).
+- **`--description`** — *what this collection contains* (a summary of the tour).
 
 ## Tag Taxonomy
 
@@ -349,6 +394,7 @@ For common query patterns across languages, see:
 - Use `--collection <name>` when creating bookmarks to add them directly to a tour (tours are auto-created if they don't exist).
 - **Notes are durable, comments are ephemeral**: explain the code with `--note`; record task/ticket/debugging chatter with `--comment`. This keeps notes reusable in any future context instead of coupled to one agentic session.
 - **Link out generously**: attach related PRs, issues, design docs, dashboards, and external references to the *collection* with `codemark tour link add --kind ...`, and embed inline links inside `--comment` markdown. This turns a collection into a self-contained briefing.
+- **Always record the prompt on a collection**: pass `--prompt` with a cleaned-up, standalone restatement of the request that motivated the tour (fix the user's typos/grammar, keep their intent). It's the one field that lets the tour be rebuilt from intent later. See **Recording the Prompt**.
 - **Tag collections, not just bookmarks**: `codemark tour tag add` (or `--tag` at create time) makes collections discoverable and gives the markdown overview useful metadata.
 - **Gather context fast**: `codemark tour show <name> --format markdown` renders the description, tags, links, and every step's ID + note in one shot — use it when restoring context from a previous session.
 - **Iterative enhancement**: When working with an existing bookmark and discover new context, use `edit` to add notes without re-parsing the file. Multiple agents can edit the same bookmark over time.
@@ -418,13 +464,20 @@ Tag and link your collections — not just individual bookmarks. A well-tagged c
 ```bash
 # Tours are auto-created when using --collection, or create explicitly.
 # Use --description for the collection's prose summary (collections have no --note).
-codemark tour create login-flow --description "Step-by-step login execution path"
+# Use --prompt to record the request that motivated the tour (see Recording the Prompt).
+codemark tour create login-flow \
+  --description "Step-by-step login execution path" \
+  --prompt "Trace the login execution path from the HTTP handler to the session write."
 
-# Create with description, tags, and links in one command
+# Create with description, prompt, tags, and links in one command
 codemark tour create auth-flow \
   --description "End-to-end authentication flow" \
+  --prompt "Map the full authentication flow so we can audit it for the security review." \
   --tag feature:auth --tag area:security \
   --link "https://github.com/org/repo/pull/116,Auth refactor PR"
+
+# Set or replace the prompt on an existing tour (single-valued: overwrites)
+codemark tour annotate login-flow --prompt "Map login, including the 2FA branch."
 
 # Tag an existing collection (repeatable)
 codemark tour tag add login-flow feature:auth area:security
@@ -443,7 +496,7 @@ codemark tour list
 # Add existing bookmarks to a tour
 codemark tour add login-flow <bookmark-id-1> <bookmark-id-2>
 
-# Annotate a tour with tags/links (note: --note is NOT persisted on collections)
+# Annotate a tour with tags/links/prompt (note: --note is NOT persisted on collections)
 codemark tour annotate login-flow --tag phase:2 --link "https://example.com/runbook,Runbook"
 
 # Publish / pull from Codetours

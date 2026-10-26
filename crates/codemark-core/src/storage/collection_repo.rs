@@ -6,8 +6,8 @@ impl Database {
     pub fn insert_collection(&self, collection: &Collection) -> Result<()> {
         tracing::debug!(target: "codemark::db", id = %collection.id, name = %collection.name, "inserting collection");
         self.conn().execute(
-            "INSERT INTO collections (id, name, description, visibility, created_at, created_by, created_branch, published_at, published_commit_sha, repo_url, repo_id, status, health, health_computed_at, updated_at, imported_from_url)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+            "INSERT INTO collections (id, name, description, visibility, created_at, created_by, created_branch, published_at, published_commit_sha, repo_url, repo_id, status, health, health_computed_at, updated_at, imported_from_url, prompt)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17)",
             rusqlite::params![
                 collection.id,
                 collection.name,
@@ -25,6 +25,7 @@ impl Database {
                 collection.health_computed_at,
                 collection.updated_at,
                 collection.imported_from_url,
+                collection.prompt,
             ],
         )?;
         Ok(())
@@ -33,7 +34,7 @@ impl Database {
     /// Get a collection by its exact name.
     pub fn get_collection_by_name(&self, name: &str) -> Result<Option<Collection>> {
         let mut stmt = self.conn().prepare(
-            "SELECT id, name, description, visibility, created_at, created_by, created_branch, published_at, published_commit_sha, repo_url, repo_id, status, health, health_computed_at, updated_at, imported_from_url
+            "SELECT id, name, description, visibility, created_at, created_by, created_branch, published_at, published_commit_sha, repo_url, repo_id, status, health, health_computed_at, updated_at, imported_from_url, prompt
              FROM collections WHERE name = ?1",
         )?;
         let mut rows = stmt.query_map([name], row_to_collection)?;
@@ -55,7 +56,7 @@ impl Database {
     /// re-pull rather than one copy at a time.
     pub fn get_collections_by_imported_url(&self, url: &str) -> Result<Vec<Collection>> {
         let mut stmt = self.conn().prepare(
-            "SELECT id, name, description, visibility, created_at, created_by, created_branch, published_at, published_commit_sha, repo_url, repo_id, status, health, health_computed_at, updated_at, imported_from_url
+            "SELECT id, name, description, visibility, created_at, created_by, created_branch, published_at, published_commit_sha, repo_url, repo_id, status, health, health_computed_at, updated_at, imported_from_url, prompt
              FROM collections WHERE imported_from_url = ?1
              ORDER BY created_at ASC",
         )?;
@@ -66,7 +67,7 @@ impl Database {
     /// Get a collection by its unique ID.
     pub fn get_collection_by_id(&self, id: &str) -> Result<Option<Collection>> {
         let mut stmt = self.conn().prepare(
-            "SELECT id, name, description, visibility, created_at, created_by, created_branch, published_at, published_commit_sha, repo_url, repo_id, status, health, health_computed_at, updated_at, imported_from_url
+            "SELECT id, name, description, visibility, created_at, created_by, created_branch, published_at, published_commit_sha, repo_url, repo_id, status, health, health_computed_at, updated_at, imported_from_url, prompt
              FROM collections WHERE id = ?1",
         )?;
         let mut rows = stmt.query_map([id], row_to_collection)?;
@@ -84,7 +85,7 @@ impl Database {
             ));
         }
         let mut stmt = self.conn().prepare(
-            "SELECT id, name, description, visibility, created_at, created_by, created_branch, published_at, published_commit_sha, repo_url, repo_id, status, health, health_computed_at, updated_at, imported_from_url
+            "SELECT id, name, description, visibility, created_at, created_by, created_branch, published_at, published_commit_sha, repo_url, repo_id, status, health, health_computed_at, updated_at, imported_from_url, prompt
              FROM collections WHERE id LIKE ?1",
         )?;
         let pattern = format!("{prefix}%");
@@ -105,7 +106,7 @@ impl Database {
     pub fn list_collections(&self) -> Result<Vec<(Collection, usize)>> {
         let mut stmt = self.conn().prepare(
             "SELECT c.id, c.name, c.description, c.visibility, c.created_at, c.created_by, c.created_branch,
-             c.published_at, c.published_commit_sha, c.repo_url, c.repo_id, c.status, c.health, c.health_computed_at, c.updated_at, c.imported_from_url,
+             c.published_at, c.published_commit_sha, c.repo_url, c.repo_id, c.status, c.health, c.health_computed_at, c.updated_at, c.imported_from_url, c.prompt,
              COUNT(cb.bookmark_id) AS bookmark_count
              FROM collections c
              LEFT JOIN collection_bookmarks cb ON c.id = cb.collection_id
@@ -136,8 +137,9 @@ impl Database {
                 health_computed_at: row.get(13)?,
                 updated_at: row.get(14)?,
                 imported_from_url: row.get(15)?,
+                prompt: row.get(16)?,
             };
-            let count: usize = row.get(16)?;
+            let count: usize = row.get(17)?;
             Ok((collection, count))
         })?;
 
@@ -158,7 +160,7 @@ impl Database {
     ) -> Result<Vec<(Collection, usize)>> {
         let mut sql = String::from(
             "SELECT c.id, c.name, c.description, c.visibility, c.created_at, c.created_by, c.created_branch,
-             c.published_at, c.published_commit_sha, c.repo_url, c.repo_id, c.status, c.health, c.health_computed_at, c.updated_at, c.imported_from_url,
+             c.published_at, c.published_commit_sha, c.repo_url, c.repo_id, c.status, c.health, c.health_computed_at, c.updated_at, c.imported_from_url, c.prompt,
              COUNT(DISTINCT cb.bookmark_id) AS bookmark_count
              FROM collections c
              LEFT JOIN collection_bookmarks cb ON c.id = cb.collection_id
@@ -201,7 +203,7 @@ impl Database {
         let mut stmt = self.conn().prepare(&sql)?;
         let rows = stmt.query_map(param_refs.as_slice(), |row| {
             let collection = row_to_collection(row)?;
-            let count: usize = row.get(16)?;
+            let count: usize = row.get(17)?;
             Ok((collection, count))
         })?;
 
@@ -390,7 +392,7 @@ impl Database {
     pub fn list_collections_for_bookmark(&self, bookmark_id: &str) -> Result<Vec<Collection>> {
         let mut stmt = self.conn().prepare(
             "SELECT c.id, c.name, c.description, c.visibility, c.created_at, c.created_by, c.created_branch,
-             c.published_at, c.published_commit_sha, c.repo_url, c.repo_id, c.status, c.health, c.health_computed_at, c.updated_at, c.imported_from_url
+             c.published_at, c.published_commit_sha, c.repo_url, c.repo_id, c.status, c.health, c.health_computed_at, c.updated_at, c.imported_from_url, c.prompt
              FROM collections c
              JOIN collection_bookmarks cb ON c.id = cb.collection_id
              WHERE cb.bookmark_id = ?1
@@ -399,6 +401,20 @@ impl Database {
         let rows = stmt.query_map([bookmark_id], row_to_collection)?;
         let results: Vec<Collection> = rows.filter_map(|r| r.ok()).collect();
         Ok(results)
+    }
+
+    /// Replace the recorded creation prompt for a collection.
+    ///
+    /// The prompt is the author's polished intent, kept so the collection can be
+    /// recreated from scratch if its bookmarks drift beyond repair. Overwrites
+    /// any previous value (unlike tags/links, there is only ever one prompt).
+    pub fn update_collection_prompt(&self, id: &str, prompt: Option<&str>) -> Result<()> {
+        tracing::debug!(target: "codemark::db", id = %id, "updating collection prompt");
+        self.conn().execute(
+            "UPDATE collections SET prompt = ?1 WHERE id = ?2",
+            rusqlite::params![prompt, id],
+        )?;
+        Ok(())
     }
 
     pub fn update_collection_health(
@@ -488,6 +504,7 @@ fn row_to_collection(row: &rusqlite::Row) -> rusqlite::Result<Collection> {
         health_computed_at: row.get(13)?,
         updated_at: row.get(14)?,
         imported_from_url: row.get(15)?,
+        prompt: row.get(16)?,
     })
 }
 
@@ -539,6 +556,7 @@ mod tests {
             health_computed_at: None,
             updated_at: None,
             imported_from_url: None,
+            prompt: None,
         }
     }
 
@@ -555,6 +573,59 @@ mod tests {
         let fetched = db.get_collection_by_name("bugfix-auth").unwrap().unwrap();
         assert_eq!(fetched.name, "bugfix-auth");
         assert_eq!(fetched.description, Some("Test collection bugfix-auth".to_string()));
+    }
+
+    // @lat: [[tests#Collection Creation Prompt#Prompt Survives A Round Trip]]
+    #[test]
+    fn collection_prompt_round_trips_and_updates() {
+        init_test_env();
+        let db = Database::open_in_memory().unwrap();
+
+        let mut col = test_collection("auth-rewrite");
+        col.prompt = Some("Map the login path from the HTTP handler to the DB.".to_string());
+        db.insert_collection(&col).unwrap();
+
+        // The prompt reads back through every lookup path, not just by name.
+        let by_name = db.get_collection_by_name("auth-rewrite").unwrap().unwrap();
+        assert_eq!(by_name.prompt, col.prompt);
+        let by_id = db.get_collection_by_id(&col.id).unwrap().unwrap();
+        assert_eq!(by_id.prompt, col.prompt);
+
+        // The prompt is single-valued: updating replaces rather than appends.
+        db.update_collection_prompt(&col.id, Some("Map the login path, including 2FA.")).unwrap();
+        let updated = db.get_collection_by_id(&col.id).unwrap().unwrap();
+        assert_eq!(updated.prompt.as_deref(), Some("Map the login path, including 2FA."));
+
+        db.update_collection_prompt(&col.id, None).unwrap();
+        assert_eq!(db.get_collection_by_id(&col.id).unwrap().unwrap().prompt, None);
+    }
+
+    // @lat: [[tests#Collection Creation Prompt#Prompt Does Not Shift The Bookmark Count]]
+    #[test]
+    fn collection_prompt_does_not_shift_aggregate_bookmark_count() {
+        init_test_env();
+        let db = Database::open_in_memory().unwrap();
+        db.insert_bookmark(&test_bookmark("bm-9001")).unwrap();
+
+        // `prompt` sits immediately before the aggregated count in both
+        // list/search projections, so a stale column index would silently read
+        // the prompt text as the count.
+        let mut col = test_collection("counted");
+        col.prompt = Some("Why this tour exists.".to_string());
+        db.insert_collection(&col).unwrap();
+        db.add_to_collection(&col.id, &["bm-9001".to_string()]).unwrap();
+
+        let listed = db.list_collections().unwrap();
+        let (listed_col, listed_count) =
+            listed.iter().find(|(c, _)| c.id == col.id).expect("collection listed");
+        assert_eq!(listed_col.prompt, col.prompt);
+        assert_eq!(*listed_count, 1);
+
+        let found = db.search_collections(Some("counted"), None).unwrap();
+        let (found_col, found_count) =
+            found.iter().find(|(c, _)| c.id == col.id).expect("collection found");
+        assert_eq!(found_col.prompt, col.prompt);
+        assert_eq!(*found_count, 1);
     }
 
     #[test]
