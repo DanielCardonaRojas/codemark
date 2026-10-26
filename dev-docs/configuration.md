@@ -55,10 +55,7 @@ Configure how vector embeddings are generated for semantic search.
 ```toml
 [semantic]
 enabled = true
-model = "local"  # "local" or "openai"
-local_model = "all-MiniLM-L6-v2"
-# openai_model = "text-embedding-3-small"
-# openai_api_key = "sk-..."
+model = "all-MiniLM-L6-v2"  # or "bge-small-en-v1.5"
 batch_size = 32
 ```
 
@@ -71,4 +68,4 @@ batch_size = 32
 | `CODEMARK_COLLECTION_FILTER` | Default collection to filter by for list, search, resolve, heal, and reindex commands. |
 | `CODEMARK_LOG` | Log level (error, warn, info, debug, trace). |
 | `NO_COLOR` | Disable colored output. |
-| `OPENAI_API_KEY` | Key for OpenAI embedding provider. |
+| `CODMARK_MODELS_DIR` | Override the local embedding-model cache directory (note the spelling). |
