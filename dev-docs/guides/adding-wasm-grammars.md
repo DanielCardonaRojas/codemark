@@ -123,10 +123,47 @@ The cache lives at the platform cache dir (override with `$CODEMARK_GRAMMARS_DIR
 
 See the committed reference: [`tests/fixtures/grammars/lua/manifest.json`](../../tests/fixtures/grammars/lua/manifest.json).
 
-### Discovering the right node kinds
+### Generating a profile (recommended)
 
-Parse a sample file with the Tree-sitter CLI and read the AST to learn the node
-names for `landmark_kinds` / `node_labels` / `containers`:
+Rather than hand-authoring the profile, let codemark propose one by parsing real
+sample files with the grammar:
+
+```bash
+# Requires a build with the authoring feature:
+#   cargo build -p codemark-cli --features profile-authoring
+codemark languages profile init ./tree-sitter-ruby.wasm \
+  --sample sample.rb --name ruby --extensions rb,rake
+```
+
+It prints the proposed manifest plus an **evidence table** showing every node
+kind it saw, how often, whether it became a landmark, which field held its name,
+and why:
+
+```
+┌──────────────────────┬──────┬──────────┬────────────┬──────────────────────────────────────┐
+│ Node kind            ┆ Seen ┆ Landmark ┆ Name field ┆ Why                                  │
+╞══════════════════════╪══════╪══════════╪════════════╪══════════════════════════════════════╡
+│ function_declaration ┆ 2    ┆ yes      ┆ name       ┆ name in field 'name', has a body,    │
+│                      ┆      ┆          ┆            ┆ nests other declarations             │
+│ if_statement         ┆ 1    ┆ -        ┆ -          ┆ control flow or expression —         │
+│                      ┆      ┆          ┆            ┆ labelled but not a landmark          │
+└──────────────────────┴──────┴──────────┴────────────┴──────────────────────────────────────┘
+```
+
+Review it, then install. `--out <file>` writes the manifest instead of printing
+it; nothing is ever written to the grammar cache, so proposing and installing
+stay separate steps.
+
+The proposal is derived from **observed structure**, which is why samples matter
+more than their length: cover the constructs you care about (nested classes,
+methods, anonymous functions) and the container fields are read off the real
+parse instead of assumed. More samples give a better proposal.
+
+### Discovering the right node kinds by hand
+
+If you'd rather write the profile yourself, parse a sample file with the
+Tree-sitter CLI and read the AST to learn the node names for `landmark_kinds` /
+`node_labels` / `containers`:
 
 ```bash
 tree-sitter parse example.rb        # prints the full AST with node kinds

@@ -199,6 +199,10 @@ fn merge_globals(cli: &mut Cli) {
             Some(crate::cli::LanguagesCommand::Add(a)) => g_output(&a.output),
             Some(crate::cli::LanguagesCommand::List(a)) => g_output(&a.output),
             Some(crate::cli::LanguagesCommand::Validate(a)) => g_output(&a.output),
+            #[cfg(feature = "profile-authoring")]
+            Some(crate::cli::LanguagesCommand::Profile(crate::cli::ProfileCommand::Init(a))) => {
+                g_output(&a.output)
+            }
             None => g_none(),
         },
         Command::InstallSkill(a) => g_output(&a.output),

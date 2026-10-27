@@ -99,7 +99,31 @@ installed grammars appear without a restart.
 |---------|--------|
 | `codemark languages add <file>` | Install a grammar (see above). |
 | `codemark languages list` | List all supported languages (built-ins + dynamic). |
-| `codemark languages validate` | Scan the cache and verify each grammar loads. |
+| `codemark languages validate` | Verify each grammar loads **and lint its profile** (see below). |
+
+## Validating a profile
+
+A profile is a set of node kinds and field names, and they're grammar-specific —
+Lua has `function_call`, not `call_expression`. A kind the grammar doesn't define
+parses fine as a string and then never matches anything, so
+`codemark languages validate` checks every one against the loaded grammar:
+
+```
+$ codemark languages validate
+Found issues with installed grammars:
+  - .../grammars/ruby: error: profile.landmark_kinds[1]: node kind 'function_item'
+    is not defined by this grammar, so it can never match (did you mean 'method'?)
+
+Warnings (these grammars still work):
+  - .../grammars/ruby: warning: profile.containers: no containers, so this
+    language produces no breadcrumbs
+```
+
+**Errors** mean that part of the profile is dead — it can never match. They also
+block an install, so a bad profile can't replace a working grammar.
+**Warnings** are advisory and don't affect `valid`. Note that `containers` has no
+fallback: an empty one means breadcrumbs are silently blank, which is why it's
+called out.
 
 ::: tip Non-WASM builds
 If you compiled the CLI yourself with `--no-default-features` (dropping the

@@ -40,6 +40,12 @@ wasm = ["codemark-core/wasm", "codemark-tui?/wasm"]
 # `codemark-tui` on PATH.
 bundled-tui = ["dep:codemark-tui"]
 man-pages = ["clap_mangen"]
+# Profile-authoring commands (`languages profile init`), used by people
+# contributing profiles to the grammar registry rather than installing a
+# language. Off by default so the shipped binary carries only the consumer path;
+# the generator needs no extra dependencies, so enabling it costs just its own
+# code. Build with `--features profile-authoring`.
+profile-authoring = []
 
 [dev-dependencies]
 tempfile = { workspace = true }

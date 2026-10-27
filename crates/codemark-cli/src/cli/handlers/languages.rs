@@ -11,8 +11,119 @@ pub async fn handle_languages(
     match &args.command {
         Some(LanguagesCommand::Add(add_args)) => handle_add(cli, mode, add_args).await,
         Some(LanguagesCommand::Validate(_)) => handle_validate(cli, mode).await,
+        #[cfg(feature = "profile-authoring")]
+        Some(LanguagesCommand::Profile(crate::cli::ProfileCommand::Init(a))) => {
+            handle_profile_init(mode, a).await
+        }
         Some(LanguagesCommand::List(_)) | None => handle_list(cli, mode).await,
     }
+}
+
+/// Propose a profile by parsing sample files with the given grammar.
+///
+/// Deliberately writes nothing to the grammar cache: the proposal is a draft for
+/// a human to review (that's what the evidence table is for), and installing is
+/// a separate explicit step.
+#[cfg(feature = "profile-authoring")]
+async fn handle_profile_init(mode: &OutputMode, args: &crate::cli::ProfileInitArgs) -> Result<()> {
+    use codemark_core::grammar::profile_gen;
+    use codemark_core::parser::languages::{DynamicLanguage, Language};
+
+    let name = args.name.clone().unwrap_or_else(|| {
+        args.wasm_file
+            .file_stem()
+            .map(|s| s.to_string_lossy().trim_start_matches("tree-sitter-").to_string())
+            .unwrap_or_else(|| "unknown".to_string())
+    });
+
+    let mut samples = Vec::new();
+    for path in &args.sample {
+        let source = std::fs::read_to_string(path)
+            .map_err(|e| Error::Input(format!("could not read sample {}: {e}", path.display())))?;
+        samples.push((path.display().to_string(), source));
+    }
+
+    // Load the grammar through the same path the runtime uses, so an
+    // ABI-incompatible .wasm fails here rather than producing a silent
+    // half-proposal.
+    let language = Language::Dynamic(std::sync::Arc::new(DynamicLanguage {
+        name: name.clone(),
+        extensions: Vec::new(),
+        wasm_path: args.wasm_file.clone(),
+        profile: Default::default(),
+    }));
+
+    let proposal = profile_gen::propose_profile(&language, &samples)?;
+
+    let extensions: Vec<String> = args
+        .extensions
+        .as_deref()
+        .unwrap_or_default()
+        .split(',')
+        .map(|s| s.trim().trim_start_matches('.').to_lowercase())
+        .filter(|s| !s.is_empty())
+        .collect();
+
+    let manifest = serde_json::json!({
+        "name": name,
+        "version": "0.1.0",
+        "extensions": extensions,
+        "profile": proposal.profile,
+    });
+
+    if let Some(out) = &args.out {
+        let text = serde_json::to_string_pretty(&manifest).unwrap();
+        std::fs::write(out, format!("{text}\n"))
+            .map_err(|e| Error::Operation(format!("could not write {}: {e}", out.display())))?;
+    }
+
+    if matches!(mode, OutputMode::Json) {
+        output::write_json_success(&serde_json::json!({
+            "manifest": manifest,
+            "evidence": proposal.evidence,
+            "samples_with_errors": proposal.samples_with_errors,
+            "written_to": args.out,
+        }))?;
+        return Ok(());
+    }
+
+    if !proposal.samples_with_errors.is_empty() {
+        eprintln!(
+            "Warning: these samples did not parse cleanly, so the proposal may be incomplete:"
+        );
+        for s in &proposal.samples_with_errors {
+            eprintln!("  - {s}");
+        }
+        eprintln!("Check that they are source files for this grammar.\n");
+    }
+
+    let mut table = comfy_table::Table::new();
+    table
+        .load_preset(comfy_table::presets::UTF8_FULL)
+        .set_content_arrangement(comfy_table::ContentArrangement::Dynamic)
+        .set_header(vec!["Node kind", "Seen", "Landmark", "Name field", "Why"]);
+    for e in &proposal.evidence {
+        table.add_row(vec![
+            e.kind.clone(),
+            e.occurrences.to_string(),
+            if e.landmark { "yes" } else { "-" }.to_string(),
+            e.name_field.clone().unwrap_or_else(|| "-".to_string()),
+            e.reason.clone(),
+        ]);
+    }
+    println!("{table}");
+    println!();
+
+    match &args.out {
+        Some(out) => println!("Wrote the proposed manifest to {}", out.display()),
+        None => println!("{}", serde_json::to_string_pretty(&manifest).unwrap()),
+    }
+    println!(
+        "\nReview the profile above, then install it with:\n  codemark languages add {} --name {name} --extensions <exts>",
+        args.wasm_file.display()
+    );
+
+    Ok(())
 }
 
 async fn handle_add(
@@ -61,8 +172,10 @@ fn print_install_outcome(mode: &OutputMode, outcome: &InstallOutcome) -> Result<
             );
         }
         println!(
-            "The grammar has an empty profile — parsing works now, but for better breadcrumbs \
-             and query summaries fill in `profile` in {}/manifest.json (see the adding-wasm-grammars guide).",
+            "The grammar has an empty profile — parsing works now, but breadcrumbs and query \
+             summaries need one. Generate a profile from sample files rather than hand-writing \
+             it:\n  codemark languages profile init <grammar.wasm> --sample <file>\nThen put the \
+             result in {}/manifest.json and run `codemark languages validate`.",
             directory.display()
         );
     }

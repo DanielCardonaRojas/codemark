@@ -1513,6 +1513,51 @@ pub enum LanguagesCommand {
 
     /// Validate installed dynamic WASM grammars
     Validate(LanguagesValidateArgs),
+
+    /// Author a language profile (registry contributors)
+    #[cfg(feature = "profile-authoring")]
+    #[command(subcommand)]
+    Profile(ProfileCommand),
+}
+
+/// Profile-authoring subcommands.
+///
+/// Gated behind the off-by-default `profile-authoring` feature: these are needed
+/// by people contributing profiles to the grammar registry, not by people
+/// installing a language. Consumers get `languages add`, `list` and `validate`.
+#[cfg(feature = "profile-authoring")]
+#[derive(Debug, Subcommand)]
+pub enum ProfileCommand {
+    /// Propose a profile by parsing sample files with a grammar
+    Init(ProfileInitArgs),
+}
+
+#[cfg(feature = "profile-authoring")]
+#[derive(Debug, clap::Args)]
+pub struct ProfileInitArgs {
+    #[command(flatten)]
+    pub output: OutputArgs,
+
+    /// Path to the compiled .wasm grammar file
+    pub wasm_file: std::path::PathBuf,
+
+    /// Sample source file to learn the grammar's structure from (repeatable).
+    /// More samples covering more constructs give a better proposal.
+    #[arg(long, short, required = true)]
+    pub sample: Vec<std::path::PathBuf>,
+
+    /// The language name to write into the manifest
+    #[arg(long, short)]
+    pub name: Option<String>,
+
+    /// Comma-separated file extensions to write into the manifest
+    #[arg(long, short)]
+    pub extensions: Option<String>,
+
+    /// Write the proposed manifest here instead of printing it. Never writes to
+    /// the grammar cache — installing stays a separate, explicit step.
+    #[arg(long, short)]
+    pub out: Option<std::path::PathBuf>,
 }
 
 #[derive(Debug, clap::Args)]

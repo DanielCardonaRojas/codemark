@@ -14,6 +14,7 @@
 //! formatting) stays in the caller — this module returns a value, it does not
 //! print.
 
+pub mod profile_gen;
 pub mod protocol;
 pub mod source;
 
