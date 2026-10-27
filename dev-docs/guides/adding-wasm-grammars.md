@@ -98,24 +98,28 @@ The cache lives at the platform cache dir (override with `$CODEMARK_GRAMMARS_DIR
   "profile": {
     // Node kinds that anchor a structural query (replaces the built-in
     // DECLARATION_TYPES set for this language).
-    "landmark_kinds": ["function_declaration", "local_function_declaration"],
+    "landmark_kinds": ["function_declaration", "function_definition"],
 
     // node kind → human-readable label shown in query summaries / TUI icons.
     "node_labels": {
       "function_declaration": "function",
       "if_statement": "if statement",
-      "call_expression": "call"
+      "function_call": "call"
     },
 
     // [container node kind, name-field] pairs — the ancestors that make useful
     // breadcrumbs, and which child field holds their name.
-    "containers": [["function_definition_statement", "name"]],
-
-    // Optional: node kind → field to summarize (e.g. an if statement's condition).
-    "semantic_fields": { "if_statement": "condition" }
+    "containers": [["function_declaration", "name"]]
   }
 }
 ```
+
+> **Every node kind above is grammar-specific.** The kinds in this example are
+> real kinds from `tree-sitter-lua` — Lua has `function_call`, not
+> `call_expression`, and no `local_function_declaration` at all. Copying kinds
+> from another language's profile produces a manifest that loads without error
+> and silently does nothing. Run `codemark languages validate` after editing: it
+> checks every kind against the grammar and reports the ones that don't exist.
 
 See the committed reference: [`tests/fixtures/grammars/lua/manifest.json`](../../tests/fixtures/grammars/lua/manifest.json).
 
@@ -128,7 +132,20 @@ names for `landmark_kinds` / `node_labels` / `containers`:
 tree-sitter parse example.rb        # prints the full AST with node kinds
 ```
 
-Then edit the manifest in the cache dir and re-run `codemark languages validate`.
+Then edit the manifest in the cache dir and re-run `codemark languages validate`,
+which checks each kind and container field against the loaded grammar:
+
+```
+$ codemark languages validate
+Found issues with installed grammars:
+  - ~/Library/Caches/codemark/grammars/ruby: profile.landmark_kinds[1]: node kind
+    'function_item' is not defined by the 'ruby' grammar
+  - ~/Library/Caches/codemark/grammars/ruby: profile.containers[0]: 'method' has no
+    field 'label' (available: name, parameters, body)
+```
+
+A kind that doesn't exist is an **error** — it can never match, so that part of
+the profile is dead. Validate before you trust a profile you hand-wrote.
 
 ---
 

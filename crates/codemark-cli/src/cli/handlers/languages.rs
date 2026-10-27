@@ -124,7 +124,11 @@ async fn handle_validate(_cli: &crate::cli::Cli, mode: &OutputMode) -> Result<()
         return Err(Error::Operation("Could not determine global grammars directory".to_string()));
     };
 
+    // `issues` are blocking (a grammar that can't load, or a profile entry that
+    // can never match); `warnings` are advisory and deliberately don't flip
+    // `valid`, so a profile that merely lacks containers still reports valid.
     let mut issues = Vec::new();
+    let mut warnings: Vec<String> = Vec::new();
 
     // A missing cache dir just means no grammars installed; any other read error
     // (permissions, etc.) must be surfaced, not silently reported as "all valid".
@@ -193,14 +197,33 @@ async fn handle_validate(_cli: &crate::cli::Cli, mode: &OutputMode) -> Result<()
                     // on wasm builds; a non-wasm build can't load any dynamic
                     // grammar and would report a misleading feature error.
                     #[cfg(feature = "wasm")]
-                    if let (Some(name), true) = (name, wasm_path.exists())
-                        && let Err(e) = grammar::load_dynamic_grammar(name, &wasm_path, &val)
-                    {
-                        issues.push(format!(
-                            "{}: grammar.wasm failed to load: {}",
-                            entry.path().display(),
-                            e
-                        ));
+                    if let (Some(name), true) = (name, wasm_path.exists()) {
+                        match grammar::load_dynamic_grammar(name, &wasm_path, &val) {
+                            // Loading proves the .wasm is usable but says nothing
+                            // about the profile: a node kind borrowed from another
+                            // language parses as a string and then never matches.
+                            // Lint it against the grammar we just loaded.
+                            Ok(loaded) => {
+                                use codemark_core::parser::profile::{LintSeverity, lint};
+                                let profile =
+                                    val.get("profile").cloned().unwrap_or(serde_json::json!({}));
+                                for finding in lint(&profile, &loaded) {
+                                    let line = format!("{}: {finding}", entry.path().display());
+                                    // A warning (no containers, an unknown key) is
+                                    // advisory — the grammar still works — so it
+                                    // must not flip `valid` to false.
+                                    match finding.severity {
+                                        LintSeverity::Error => issues.push(line),
+                                        LintSeverity::Warning => warnings.push(line),
+                                    }
+                                }
+                            }
+                            Err(e) => issues.push(format!(
+                                "{}: grammar.wasm failed to load: {}",
+                                entry.path().display(),
+                                e
+                            )),
+                        }
                     }
                 }
                 Err(e) => issues.push(format!("{}: invalid JSON: {}", manifest_path.display(), e)),
@@ -212,16 +235,28 @@ async fn handle_validate(_cli: &crate::cli::Cli, mode: &OutputMode) -> Result<()
         output::write_json_success(&serde_json::json!({
             "valid": issues.is_empty(),
             "issues": issues,
+            "warnings": warnings,
         }))?;
         return Ok(());
     }
 
-    if issues.is_empty() {
+    if issues.is_empty() && warnings.is_empty() {
         println!("All installed grammars are valid.");
     } else {
-        println!("Found issues with installed grammars:");
-        for issue in issues {
-            println!("  - {}", issue);
+        if !issues.is_empty() {
+            println!("Found issues with installed grammars:");
+            for issue in &issues {
+                println!("  - {}", issue);
+            }
+        }
+        if !warnings.is_empty() {
+            if !issues.is_empty() {
+                println!();
+            }
+            println!("Warnings (these grammars still work):");
+            for warning in &warnings {
+                println!("  - {}", warning);
+            }
         }
     }
 

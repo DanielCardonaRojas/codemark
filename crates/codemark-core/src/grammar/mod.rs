@@ -317,9 +317,28 @@ fn install_staged(
         {
             let manifest: serde_json::Value = serde_json::from_slice(manifest_bytes)
                 .map_err(|e| Error::Operation(format!("staged manifest not JSON: {e}")))?;
-            load_dynamic_grammar(name, &staged_wasm, &manifest).map_err(|e| {
+            let grammar = load_dynamic_grammar(name, &staged_wasm, &manifest).map_err(|e| {
                 Error::Input(format!("'{}' is not a loadable WASM grammar: {e}", name))
             })?;
+
+            // The grammar loads, but a profile naming kinds it doesn't define is
+            // dead weight that fails silently at runtime. Refuse the install
+            // rather than report success for a profile that can never match.
+            // (Warnings — unknown keys, missing containers — don't block.)
+            if let Some(profile) = manifest.get("profile") {
+                let findings = crate::parser::profile::lint(profile, &grammar);
+                let errors: Vec<_> = findings
+                    .iter()
+                    .filter(|f| f.severity == crate::parser::profile::LintSeverity::Error)
+                    .map(|f| format!("  - {f}"))
+                    .collect();
+                if !errors.is_empty() {
+                    return Err(Error::Input(format!(
+                        "grammar '{name}' has an invalid profile:\n{}",
+                        errors.join("\n")
+                    )));
+                }
+            }
         }
 
         // Serialize the swap against another `languages add` replacing the same
@@ -470,6 +489,10 @@ fn write_no_follow(path: &std::path::Path, contents: &[u8], name: &str) -> Resul
 /// `grammar.wasm` that mere existence checks would accept is detected. The
 /// `profile` is not needed to prove loadability, so it's left at default.
 ///
+/// Returns the loaded `tree_sitter::Language` so the caller can lint a profile
+/// against it ([`crate::parser::profile::lint`]) without paying for a second
+/// load — valid node kinds and field names are properties of this value.
+///
 /// Used both to validate a *staged* grammar before committing it (so an
 /// unloadable download can't replace a working install) and by
 /// `codemark languages validate` to check already-installed grammars.
@@ -478,7 +501,7 @@ pub fn load_dynamic_grammar(
     name: &str,
     wasm_path: &std::path::Path,
     manifest: &serde_json::Value,
-) -> Result<()> {
+) -> Result<tree_sitter::Language> {
     use crate::parser::languages::{DynamicLanguage, Language, Parser};
 
     let extensions = manifest
@@ -496,7 +519,7 @@ pub fn load_dynamic_grammar(
 
     // Constructing the parser reads the .wasm and calls `set_language`, which is
     // exactly what fails for an empty or malformed grammar.
-    Parser::new(Language::Dynamic(dl)).map(|_| ())
+    Parser::new(Language::Dynamic(dl)).map(|p| p.language().clone())
 }
 
 #[cfg(test)]

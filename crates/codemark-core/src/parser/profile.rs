@@ -12,16 +12,277 @@
 //! `manifest.json` (Phase 2).
 
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::sync::LazyLock;
 
 use crate::parser::languages::Language;
+
+/// How much a [`LintFinding`] matters.
+///
+/// [`LintSeverity::Error`] means the profile entry can never match, so that part
+/// of it is dead weight — a registry install refuses on one. A
+/// [`LintSeverity::Warning`] still works but probably isn't what the author
+/// meant.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum LintSeverity {
+    Error,
+    Warning,
+}
+
+/// One problem found in a profile, located by a JSON-ish path so the author can
+/// find it in their `manifest.json`.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct LintFinding {
+    pub severity: LintSeverity,
+    /// Where it is, e.g. `profile.containers[2].0`.
+    pub path: String,
+    pub message: String,
+}
+
+impl std::fmt::Display for LintFinding {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let level = match self.severity {
+            LintSeverity::Error => "error",
+            LintSeverity::Warning => "warning",
+        };
+        write!(f, "{level}: {}: {}", self.path, self.message)
+    }
+}
+
+/// Profile keys this build understands. A key outside this set deserializes to
+/// nothing (every field is `#[serde(default)]`), so it is reported rather than
+/// silently dropped — the failure that let a documented-but-unimplemented
+/// `semantic_fields` sit in a committed fixture unnoticed.
+const KNOWN_PROFILE_KEYS: &[&str] = &["landmark_kinds", "node_labels", "containers"];
+
+/// Labels the built-in profiles use. `get_node_icon` keys off the label, so a
+/// novel label parses fine but silently loses its icon.
+static KNOWN_LABELS: LazyLock<HashSet<&'static str>> = LazyLock::new(|| {
+    [
+        "function",
+        "method",
+        "class",
+        "interface",
+        "enum",
+        "impl",
+        "module",
+        "namespace",
+        "type",
+        "variable",
+        "macro",
+        "constructor",
+        "init",
+        "deinit",
+        "subscript",
+        "if statement",
+        "for loop",
+        "while loop",
+        "match",
+        "return",
+        "assignment",
+        "call",
+        "expression",
+    ]
+    .into_iter()
+    .collect()
+});
+
+/// Check a raw `profile` value against the grammar it targets.
+///
+/// Deserializing a [`Profile`] cannot catch any of this: every field defaults,
+/// unknown keys are ignored (deliberately — see `ignores_unknown_profile_keys`),
+/// and a node kind is just a string until something tries to match it. Valid
+/// kinds and field names are properties of the *loaded grammar*, so this takes
+/// the `tree_sitter::Language` and asks it.
+///
+/// `value` is the `profile` object itself, not the whole manifest.
+pub fn lint(value: &serde_json::Value, grammar: &tree_sitter::Language) -> Vec<LintFinding> {
+    let mut findings = Vec::new();
+
+    let Some(obj) = value.as_object() else {
+        findings.push(LintFinding {
+            severity: LintSeverity::Error,
+            path: "profile".to_string(),
+            message: format!("expected a JSON object, found {}", json_type_name(value)),
+        });
+        return findings;
+    };
+
+    for key in obj.keys() {
+        if !KNOWN_PROFILE_KEYS.contains(&key.as_str()) {
+            findings.push(LintFinding {
+                severity: LintSeverity::Warning,
+                path: format!("profile.{key}"),
+                message: format!(
+                    "unknown profile key — it is ignored at load time (known keys: {})",
+                    KNOWN_PROFILE_KEYS.join(", ")
+                ),
+            });
+        }
+    }
+
+    let named_kinds = named_node_kinds(grammar);
+    let check_kind = |kind: &str, path: String, findings: &mut Vec<LintFinding>| {
+        if !named_kinds.contains(kind) {
+            findings.push(LintFinding {
+                severity: LintSeverity::Error,
+                path,
+                message: format!(
+                    "node kind '{kind}' is not defined by this grammar, so it can never match{}",
+                    suggest(kind, &named_kinds)
+                ),
+            });
+        }
+    };
+
+    if let Some(kinds) = obj.get("landmark_kinds").and_then(|v| v.as_array()) {
+        for (i, k) in kinds.iter().enumerate() {
+            if let Some(k) = k.as_str() {
+                check_kind(k, format!("profile.landmark_kinds[{i}]"), &mut findings);
+            }
+        }
+    }
+
+    if let Some(labels) = obj.get("node_labels").and_then(|v| v.as_object()) {
+        for (kind, label) in labels {
+            check_kind(kind, format!("profile.node_labels.{kind}"), &mut findings);
+            if let Some(label) = label.as_str()
+                && !KNOWN_LABELS.contains(label)
+            {
+                findings.push(LintFinding {
+                    severity: LintSeverity::Warning,
+                    path: format!("profile.node_labels.{kind}"),
+                    message: format!(
+                        "label '{label}' is outside the set the built-in profiles use, so it will \
+                         not get an icon"
+                    ),
+                });
+            }
+        }
+    }
+
+    match obj.get("containers").and_then(|v| v.as_array()) {
+        Some(containers) if !containers.is_empty() => {
+            let fields = grammar_field_names(grammar);
+            for (i, pair) in containers.iter().enumerate() {
+                let Some(pair) = pair.as_array() else { continue };
+                let (Some(kind), Some(field)) =
+                    (pair.first().and_then(|v| v.as_str()), pair.get(1).and_then(|v| v.as_str()))
+                else {
+                    continue;
+                };
+                check_kind(kind, format!("profile.containers[{i}].0"), &mut findings);
+                // Tree-sitter field names are global to the grammar, not
+                // per-kind, so this catches a field the grammar has never heard
+                // of — the `("impl_item", "type")` vs `"name"` class of mistake.
+                if !fields.contains(field) {
+                    findings.push(LintFinding {
+                        severity: LintSeverity::Error,
+                        path: format!("profile.containers[{i}].1"),
+                        message: format!(
+                            "'{field}' is not a field in this grammar, so '{kind}' would produce no \
+                             breadcrumb{}",
+                            suggest(field, &fields)
+                        ),
+                    });
+                }
+            }
+        }
+        _ => {
+            // Unlike `landmark_kinds`, which falls back to the built-in
+            // DECLARATION_TYPES union, `containers` has no fallback at all:
+            // `extract_breadcrumbs` builds its whitelist purely from this, so an
+            // empty list means breadcrumbs are silently blank.
+            findings.push(LintFinding {
+                severity: LintSeverity::Warning,
+                path: "profile.containers".to_string(),
+                message: "no containers, so this language produces no breadcrumbs".to_string(),
+            });
+        }
+    }
+
+    findings
+}
+
+/// Every *named* node kind the grammar defines. Anonymous kinds (punctuation and
+/// keywords) are excluded: a profile naming one would be a mistake too, but
+/// listing them in a suggestion would be noise.
+fn named_node_kinds(grammar: &tree_sitter::Language) -> HashSet<String> {
+    (0..grammar.node_kind_count())
+        .filter_map(|id| {
+            let id = u16::try_from(id).ok()?;
+            grammar.node_kind_is_named(id).then(|| grammar.node_kind_for_id(id))?
+        })
+        .filter(|k| !k.is_empty())
+        .map(String::from)
+        .collect()
+}
+
+/// Every field name the grammar defines. Field ids are 1-based.
+fn grammar_field_names(grammar: &tree_sitter::Language) -> HashSet<String> {
+    (1..=grammar.field_count())
+        .filter_map(|id| grammar.field_name_for_id(u16::try_from(id).ok()?))
+        .map(String::from)
+        .collect()
+}
+
+/// `" (did you mean 'x'?)"` when something close exists, else empty.
+///
+/// Profile mistakes are overwhelmingly near-misses — a kind borrowed from a
+/// sibling language (`call_expression` where the grammar says `function_call`),
+/// or a plural/singular slip — so naming the near neighbor usually resolves the
+/// finding without a trip to `tree-sitter parse`.
+fn suggest(needle: &str, haystack: &HashSet<String>) -> String {
+    let mut best: Option<(usize, &str)> = None;
+    for candidate in haystack {
+        let d = edit_distance(needle, candidate);
+        // Allow roughly a quarter of the word to differ, at least 2 edits, so
+        // short names don't match everything.
+        let budget = (needle.len() / 4).max(2);
+        if d <= budget && best.is_none_or(|(bd, _)| d < bd) {
+            best = Some((d, candidate));
+        }
+    }
+    match best {
+        Some((_, c)) => format!(" (did you mean '{c}'?)"),
+        None => String::new(),
+    }
+}
+
+/// Levenshtein distance, two rows at a time.
+fn edit_distance(a: &str, b: &str) -> usize {
+    let b_chars: Vec<char> = b.chars().collect();
+    let mut prev: Vec<usize> = (0..=b_chars.len()).collect();
+    let mut curr = vec![0usize; b_chars.len() + 1];
+    for (i, ca) in a.chars().enumerate() {
+        curr[0] = i + 1;
+        for (j, cb) in b_chars.iter().enumerate() {
+            let cost = usize::from(ca != *cb);
+            curr[j + 1] = (prev[j] + cost).min(prev[j + 1] + 1).min(curr[j] + 1);
+        }
+        std::mem::swap(&mut prev, &mut curr);
+    }
+    prev[b_chars.len()]
+}
+
+fn json_type_name(v: &serde_json::Value) -> &'static str {
+    match v {
+        serde_json::Value::Null => "null",
+        serde_json::Value::Bool(_) => "a boolean",
+        serde_json::Value::Number(_) => "a number",
+        serde_json::Value::String(_) => "a string",
+        serde_json::Value::Array(_) => "an array",
+        serde_json::Value::Object(_) => "an object",
+    }
+}
 
 /// Language-specific structural metadata.
 ///
 /// All fields are optional with graceful fallbacks so a partial manifest still
 /// works — an empty `landmark_kinds` means no structural anchoring, a missing
 /// `node_labels` entry falls back to `node_type.replace('_', " ")`.
-#[derive(Debug, Clone, Default, serde::Deserialize)]
+#[derive(Debug, Clone, Default, serde::Deserialize, serde::Serialize)]
 #[serde(default)]
 pub struct Profile {
     /// Node types that act as structural anchors for the query generator.
@@ -381,5 +642,128 @@ mod tests {
             r#"{ "landmark_kinds": ["x"], "semantic_fields": { "if_statement": "condition" } }"#;
         let profile: Profile = serde_json::from_str(json).unwrap();
         assert_eq!(profile.landmark_kinds, vec!["x".to_string()]);
+    }
+
+    // `Profile` round-trips so the generator can emit one and the CLI can show it.
+    #[test]
+    fn serializes_round_trip() {
+        let profile = Profile {
+            landmark_kinds: vec!["function_item".into()],
+            node_labels: HashMap::from([("function_item".into(), "function".into())]),
+            containers: vec![("impl_item".into(), "type".into())],
+        };
+        let json = serde_json::to_string(&profile).unwrap();
+        let back: Profile = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.landmark_kinds, profile.landmark_kinds);
+        assert_eq!(back.containers, profile.containers);
+        assert_eq!(back.node_labels.get("function_item").map(String::as_str), Some("function"));
+    }
+
+    // --- lint ---------------------------------------------------------------
+    //
+    // Linted against the real built-in Rust grammar, so these assert against the
+    // kinds and fields tree-sitter actually defines rather than a stub.
+
+    fn rust_grammar() -> tree_sitter::Language {
+        Language::Rust.tree_sitter_language()
+    }
+
+    fn errors(findings: &[LintFinding]) -> Vec<&LintFinding> {
+        findings.iter().filter(|f| f.severity == LintSeverity::Error).collect()
+    }
+
+    #[test]
+    fn lint_accepts_a_correct_profile() {
+        let value = serde_json::json!({
+            "landmark_kinds": ["function_item", "struct_item"],
+            "node_labels": { "function_item": "function" },
+            "containers": [["impl_item", "type"]],
+        });
+        assert!(errors(&lint(&value, &rust_grammar())).is_empty());
+    }
+
+    #[test]
+    fn lint_flags_a_node_kind_the_grammar_does_not_define() {
+        // `function_declaration` is Swift/TS; Rust says `function_item`. This is
+        // the most common real mistake: a kind borrowed from another language.
+        let value = serde_json::json!({ "landmark_kinds": ["function_declaration"] });
+        let findings = lint(&value, &rust_grammar());
+        let errs = errors(&findings);
+        assert_eq!(errs.len(), 1, "{findings:?}");
+        assert_eq!(errs[0].path, "profile.landmark_kinds[0]");
+        assert!(errs[0].message.contains("not defined by this grammar"));
+    }
+
+    #[test]
+    fn lint_suggests_a_near_miss_kind() {
+        // A one-character slip should name the intended kind.
+        let value = serde_json::json!({ "landmark_kinds": ["function_itm"] });
+        let findings = lint(&value, &rust_grammar());
+        assert!(
+            errors(&findings)[0].message.contains("did you mean 'function_item'?"),
+            "{findings:?}"
+        );
+    }
+
+    #[test]
+    fn lint_flags_a_container_field_the_grammar_does_not_have() {
+        // The kind is real but the name-field isn't, so the container would
+        // silently produce no breadcrumb.
+        let value = serde_json::json!({ "containers": [["impl_item", "nombre"]] });
+        let findings = lint(&value, &rust_grammar());
+        let errs = errors(&findings);
+        assert_eq!(errs.len(), 1, "{findings:?}");
+        assert_eq!(errs[0].path, "profile.containers[0].1");
+    }
+
+    #[test]
+    fn lint_warns_on_unknown_profile_key() {
+        // The exact drift that shipped in the Lua fixture: a key that
+        // deserialization silently discards.
+        let value = serde_json::json!({
+            "containers": [["impl_item", "type"]],
+            "semantic_fields": { "if_statement": "condition" },
+        });
+        let findings = lint(&value, &rust_grammar());
+        assert!(errors(&findings).is_empty(), "unknown keys are a warning, not an error");
+        assert!(
+            findings.iter().any(|f| f.path == "profile.semantic_fields"
+                && f.severity == LintSeverity::Warning),
+            "{findings:?}"
+        );
+    }
+
+    #[test]
+    fn lint_warns_when_containers_is_empty_or_absent() {
+        // No fallback exists for containers, so blank breadcrumbs are silent.
+        for value in [serde_json::json!({}), serde_json::json!({ "containers": [] })] {
+            let findings = lint(&value, &rust_grammar());
+            assert!(
+                findings
+                    .iter()
+                    .any(|f| f.path == "profile.containers" && f.severity == LintSeverity::Warning),
+                "{findings:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn lint_warns_on_a_label_outside_the_known_vocabulary() {
+        let value = serde_json::json!({
+            "node_labels": { "function_item": "subroutine" },
+            "containers": [["impl_item", "type"]],
+        });
+        let findings = lint(&value, &rust_grammar());
+        assert!(errors(&findings).is_empty());
+        assert!(
+            findings.iter().any(|f| f.message.contains("will not get an icon")),
+            "{findings:?}"
+        );
+    }
+
+    #[test]
+    fn lint_rejects_a_profile_that_is_not_an_object() {
+        let findings = lint(&serde_json::json!("landmark_kinds"), &rust_grammar());
+        assert_eq!(errors(&findings).len(), 1);
     }
 }
