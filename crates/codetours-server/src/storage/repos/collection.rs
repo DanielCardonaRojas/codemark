@@ -16,7 +16,7 @@ impl CollectionRepo {
         conn.interact(move |conn| {
             let mut stmt = conn.prepare(
                 "SELECT id, name, description, visibility, created_at, created_by, created_branch,
-                        published_at, published_commit_sha, repo_url, repo_id, status, health, health_computed_at, updated_at, imported_from_url
+                        published_at, published_commit_sha, repo_url, repo_id, status, health, health_computed_at, updated_at, imported_from_url, prompt
                  FROM collections WHERE id = ?1",
             )?;
             let rows = stmt.query_map([id], row_to_collection)?;
@@ -36,7 +36,7 @@ impl CollectionRepo {
         conn.interact(move |conn| {
             let mut stmt = conn.prepare(
                 "SELECT id, name, description, visibility, created_at, created_by, created_branch,
-                        published_at, published_commit_sha, repo_url, repo_id, status, health, health_computed_at, updated_at, imported_from_url
+                        published_at, published_commit_sha, repo_url, repo_id, status, health, health_computed_at, updated_at, imported_from_url, prompt
                  FROM collections WHERE name = ?1",
             )?;
             let rows = stmt.query_map([name], row_to_collection)?;
@@ -53,7 +53,7 @@ impl CollectionRepo {
         conn.interact(move |conn| {
             let mut stmt = conn.prepare(
                 "SELECT id, name, description, visibility, created_at, created_by, created_branch,
-                        published_at, published_commit_sha, repo_url, repo_id, status, health, health_computed_at, updated_at, imported_from_url
+                        published_at, published_commit_sha, repo_url, repo_id, status, health, health_computed_at, updated_at, imported_from_url, prompt
                  FROM collections
                  WHERE visibility IS NOT NULL AND visibility != 'private'
                    AND published_at IS NOT NULL
@@ -115,5 +115,6 @@ fn row_to_collection(row: &rusqlite::Row) -> rusqlite::Result<Collection> {
         health_computed_at: row.get(13)?,
         updated_at: row.get(14)?,
         imported_from_url: row.get(15)?,
+        prompt: row.get(16)?,
     })
 }

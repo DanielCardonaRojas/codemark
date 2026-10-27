@@ -26,6 +26,12 @@
 | **Repo** | [{{repo_url}}]({{repo_url}}) |
 {{/if}}
 
+{{#if prompt_quoted}}
+## Prompt
+
+{{prompt_quoted}}
+{{/if}}
+
 {{#if tags}}
 ## Tags
 

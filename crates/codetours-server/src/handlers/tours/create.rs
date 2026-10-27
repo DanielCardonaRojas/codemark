@@ -557,13 +557,13 @@ pub async fn handler(
 
             tx.execute(
                 "INSERT INTO main.collections (
-                    id, name, description, visibility,
+                    id, name, description, prompt, visibility,
                     repo_url, created_branch, published_commit_sha,
                     status, health, health_computed_at, published_at, created_at, updated_at,
                     created_by
                 )
                 SELECT
-                    p.id, p.name, p.description, p.visibility,
+                    p.id, p.name, p.description, p.prompt, p.visibility,
                     p.repo_url, p.created_branch, p.published_commit_sha,
                     'ready', p.health, p.health_computed_at, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
                     COALESCE(p.created_at, strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),

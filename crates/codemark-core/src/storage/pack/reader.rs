@@ -24,7 +24,7 @@ impl PackReader {
 
     pub fn tours(&self) -> Result<Vec<Collection>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, name, description, visibility, created_at, created_by, created_branch, published_at, published_commit_sha, repo_url, repo_id, status, health, health_computed_at, updated_at, imported_from_url
+            "SELECT id, name, description, visibility, created_at, created_by, created_branch, published_at, published_commit_sha, repo_url, repo_id, status, health, health_computed_at, updated_at, imported_from_url, prompt
              FROM collections WHERE visibility IS NOT NULL"
         )?;
         let rows = stmt.query_map([], |row| {
@@ -59,6 +59,7 @@ impl PackReader {
                 health_computed_at: row.get(13)?,
                 updated_at: row.get(14)?,
                 imported_from_url: row.get(15)?,
+                prompt: row.get(16)?,
             })
         })?;
 

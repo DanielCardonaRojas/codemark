@@ -3430,6 +3430,7 @@ mod tests {
             health_computed_at: None,
             updated_at: None,
             imported_from_url: None,
+            prompt: None,
         }
     }
 

@@ -69,6 +69,7 @@ async fn test_cli_publish_pull_roundtrip() {
         health_computed_at: None,
         updated_at: None,
         imported_from_url: None,
+        prompt: Some("Trace the main entry point for the publish round trip.".to_string()),
     };
     db.insert_collection(&collection).unwrap();
 
@@ -142,6 +143,24 @@ async fn test_cli_publish_pull_roundtrip() {
     };
     handlers::dispatch(list_cli).await.unwrap();
 
+    // 4b. The server's own row carries the prompt, not just the cached pack.
+    // Publishing merges `pack.collections` into `main.collections` column by
+    // column, so a column missing from that INSERT leaves NULL here while the
+    // downloadable pack still looks correct — the pull assertion below would
+    // pass regardless. Read the server DB directly to pin the merge down.
+    {
+        let server_db = server_dir.path().join("tenants").join("default").join("codetours.sqlite");
+        let conn = rusqlite::Connection::open(&server_db).unwrap();
+        let stored: Option<String> = conn
+            .query_row("SELECT prompt FROM collections WHERE id = ?1", [&col_id], |row| row.get(0))
+            .unwrap();
+        assert_eq!(
+            stored.as_deref(),
+            Some("Trace the main entry point for the publish round trip."),
+            "server merge must persist the prompt into main.collections"
+        );
+    }
+
     // 5. Run Pull (now persistent by default, with custom name)
     let pull_cli = Cli {
         db: vec![db_path.clone()],
@@ -163,6 +182,14 @@ async fn test_cli_publish_pull_roundtrip() {
         .unwrap()
         .expect("pulled collection not found");
     assert!(pulled_col.imported_from_url.is_some());
+    // The prompt survives the whole round trip: pack write → server merge into
+    // main.collections → pack download → import. A merge that dropped the
+    // column would land here as None.
+    assert_eq!(
+        pulled_col.prompt.as_deref(),
+        Some("Trace the main entry point for the publish round trip."),
+        "prompt must survive publish and pull"
+    );
 
     let bookmarks = db.list_bookmarks_in_collection(&pulled_col.id).unwrap();
     assert_eq!(bookmarks.len(), 1);

@@ -763,6 +763,11 @@ pub struct CollectionCreateArgs {
     #[arg(long)]
     pub description: Option<String>,
 
+    /// The request this collection answers, as a polished restatement of what
+    /// was asked for; kept so the collection can be recreated later
+    #[arg(long)]
+    pub prompt: Option<String>,
+
     /// Tag labels to add; repeatable
     #[arg(long)]
     pub tag: Vec<String>,
@@ -1283,6 +1288,16 @@ pub struct CollectionAnnotateArgs {
     /// Notes to add
     #[arg(long)]
     pub note: Vec<String>,
+
+    /// Replace the collection's recorded creation prompt (there is only one,
+    /// so this overwrites any previous value). Omitting this leaves the
+    /// existing prompt unchanged; use --clear-prompt to remove it.
+    #[arg(long)]
+    pub prompt: Option<String>,
+
+    /// Remove the collection's recorded creation prompt
+    #[arg(long, conflicts_with = "prompt")]
+    pub clear_prompt: bool,
 }
 
 // === Health Namespace ===
@@ -1564,4 +1579,46 @@ pub struct LanguagesListArgs {
 pub struct LanguagesValidateArgs {
     #[command(flatten)]
     pub output: OutputArgs,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // @lat: [[tests#Collection Creation Prompt#Clearing The Prompt Is Explicit]]
+    #[test]
+    fn clear_prompt_is_explicit_and_exclusive() {
+        // Omitting --prompt must stay distinguishable from clearing it, so the
+        // handler can leave an existing prompt untouched.
+        let cli = Cli::try_parse_from(["codemark", "tour", "annotate", "t1"]).unwrap();
+        let Command::Tour(TourArgs { command: TourCommand::Annotate(a) }) = cli.command else {
+            panic!("expected tour annotate");
+        };
+        assert_eq!(a.prompt, None);
+        assert!(!a.clear_prompt);
+
+        let cli =
+            Cli::try_parse_from(["codemark", "tour", "annotate", "t1", "--clear-prompt"]).unwrap();
+        let Command::Tour(TourArgs { command: TourCommand::Annotate(a) }) = cli.command else {
+            panic!("expected tour annotate");
+        };
+        assert_eq!(a.prompt, None);
+        assert!(a.clear_prompt, "--clear-prompt must be the explicit removal signal");
+
+        // Setting and clearing in one invocation is contradictory, so clap rejects it
+        // rather than letting the handler pick a winner.
+        assert!(
+            Cli::try_parse_from([
+                "codemark",
+                "tour",
+                "annotate",
+                "t1",
+                "--prompt",
+                "x",
+                "--clear-prompt",
+            ])
+            .is_err(),
+            "--prompt and --clear-prompt must conflict"
+        );
+    }
 }

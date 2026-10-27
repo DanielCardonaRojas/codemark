@@ -26,6 +26,12 @@ pub async fn handle_collection_create(
 ) -> Result<()> {
     let mut db = open_db_for_write(cli)?;
 
+    // A blank prompt is a mistake rather than an intent to store nothing: the
+    // field is optional, so omitting the flag already records "no prompt".
+    if args.prompt.as_ref().is_some_and(|p| p.trim().is_empty()) {
+        return Err(Error::Input("--prompt cannot be empty; omit it instead".into()));
+    }
+
     let cwd = std::env::current_dir()?;
     let git_ctx = codemark_core::git::context::detect_context(&cwd);
     let created_branch = git_ctx.as_ref().and_then(|ctx| ctx.branch_name.clone());
@@ -66,6 +72,7 @@ pub async fn handle_collection_create(
         health_computed_at: None,
         updated_at: None,
         imported_from_url: None,
+        prompt: args.prompt.clone(),
     };
     db.insert_collection(&collection)?;
 
@@ -191,6 +198,7 @@ pub async fn handle_collection_add(
                 health_computed_at: None,
                 updated_at: None,
                 imported_from_url: None,
+                prompt: None,
             };
             db.insert_collection(&c)?;
             (c, true)
@@ -824,6 +832,17 @@ pub async fn handle_collection_annotate(
     args: &CollectionAnnotateArgs,
 ) -> Result<()> {
     let mut db = open_db_for_write(cli)?;
+
+    // Validate before writing anything: the tag/link inserts below aren't part
+    // of one transaction, so bailing out partway would persist them while
+    // reporting failure — and a retry with a corrected prompt would then add
+    // the same tags and links a second time.
+    if args.prompt.as_ref().is_some_and(|p| p.trim().is_empty()) {
+        return Err(Error::Input(
+            "--prompt cannot be empty; use --clear-prompt to remove the recorded prompt".into(),
+        ));
+    }
+
     let collection = db
         .get_collection_by_name(&args.name)?
         .ok_or_else(|| Error::Input(format!("collection '{}' not found", args.name)))?;
@@ -869,6 +888,24 @@ pub async fn handle_collection_annotate(
         }
     }
 
+    // The prompt is single-valued, so setting it replaces rather than appends.
+    // Omitting --prompt leaves the existing value alone; clearing it needs the
+    // explicit --clear-prompt, since an empty string would otherwise be stored
+    // as a blank prompt rather than removing the record. The empty case is
+    // rejected above, before any write lands.
+    // Reported separately from the added-annotation count below: replacing or
+    // removing a prompt isn't an addition, so folding it into that tally would
+    // claim "Added 1 annotations" for what was actually a removal.
+    let prompt_change = if args.clear_prompt {
+        db.update_collection_prompt(&collection.id, None)?;
+        Some("prompt cleared")
+    } else if let Some(prompt) = &args.prompt {
+        db.update_collection_prompt(&collection.id, Some(prompt))?;
+        Some("prompt updated")
+    } else {
+        None
+    };
+
     // Notes are not currently stored on collections - warn user
     let added_count = args.tag.len() + args.link.len();
     if !args.note.is_empty() {
@@ -884,6 +921,13 @@ pub async fn handle_collection_annotate(
         let _ = generate_embedding_for_collection(&config, &mut db, &collection).await;
     }
 
-    write_success(mode, &format!("Added {added_count} annotations to collection '{}'", args.name))?;
+    let summary = match prompt_change {
+        Some(change) if added_count > 0 => {
+            format!("Added {added_count} annotations to collection '{}' ({change})", args.name)
+        }
+        Some(change) => format!("Collection '{}' {change}", args.name),
+        None => format!("Added {added_count} annotations to collection '{}'", args.name),
+    };
+    write_success(mode, &summary)?;
     Ok(())
 }

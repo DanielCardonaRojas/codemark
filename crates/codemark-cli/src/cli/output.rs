@@ -25,6 +25,9 @@ pub struct CollectionWithCount {
     pub created_by: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub created_branch: Option<String>,
+    /// The request that motivated the collection, so scripts can read it back.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub prompt: Option<String>,
     pub bookmark_count: usize,
 }
 
@@ -37,6 +40,7 @@ impl From<&(Collection, usize)> for CollectionWithCount {
             created_at: collection.created_at.clone(),
             created_by: collection.created_by.clone(),
             created_branch: collection.created_branch.clone(),
+            prompt: collection.prompt.clone(),
             bookmark_count: *count,
         }
     }
@@ -51,6 +55,7 @@ impl From<(Collection, usize)> for CollectionWithCount {
             created_at: collection.created_at,
             created_by: collection.created_by,
             created_branch: collection.created_branch,
+            prompt: collection.prompt,
             bookmark_count: count,
         }
     }
@@ -856,6 +861,78 @@ fn escape_markdown(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // @lat: [[tests#Collection Creation Prompt#Prompt Is Exposed In Collection JSON]]
+    #[test]
+    fn collection_json_exposes_a_nonempty_prompt() {
+        use codemark_core::engine::bookmark::Visibility;
+
+        let collection = Collection {
+            id: "col-1".to_string(),
+            name: "auth-flow".to_string(),
+            description: None,
+            visibility: Visibility::Private,
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+            created_by: None,
+            created_branch: None,
+            published_at: None,
+            published_commit_sha: None,
+            repo_url: None,
+            repo_id: None,
+            status: None,
+            health: None,
+            health_computed_at: None,
+            updated_at: None,
+            imported_from_url: None,
+            prompt: Some("Trace the login path end to end.".to_string()),
+        };
+
+        // `tour list --format json` serializes through CollectionWithCount, so a
+        // field missing there is invisible to scripts even though it's on
+        // `Collection`. Assert the rendered JSON, not just the struct field.
+        let json = serde_json::to_value(CollectionWithCount::from((collection.clone(), 3usize)))
+            .expect("serializes");
+        assert_eq!(json["prompt"], "Trace the login path end to end.");
+        assert_eq!(json["bookmark_count"], 3);
+
+        // The borrowing conversion must agree with the owning one.
+        let json_ref = serde_json::to_value(CollectionWithCount::from(&(collection, 3usize)))
+            .expect("serializes");
+        assert_eq!(json_ref["prompt"], "Trace the login path end to end.");
+
+        // A collection with no prompt omits the key rather than emitting null.
+        let mut bare = test_collection_without_prompt();
+        bare.prompt = None;
+        let bare_json =
+            serde_json::to_value(CollectionWithCount::from((bare, 0usize))).expect("serializes");
+        assert!(
+            bare_json.get("prompt").is_none(),
+            "absent prompt should be omitted; got {bare_json}"
+        );
+    }
+
+    fn test_collection_without_prompt() -> Collection {
+        use codemark_core::engine::bookmark::Visibility;
+        Collection {
+            id: "col-2".to_string(),
+            name: "bare".to_string(),
+            description: None,
+            visibility: Visibility::Private,
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+            created_by: None,
+            created_branch: None,
+            published_at: None,
+            published_commit_sha: None,
+            repo_url: None,
+            repo_id: None,
+            status: None,
+            health: None,
+            health_computed_at: None,
+            updated_at: None,
+            imported_from_url: None,
+            prompt: None,
+        }
+    }
 
     #[test]
     fn test_format_line_with_ui_status() {
