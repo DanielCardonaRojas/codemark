@@ -286,7 +286,11 @@ impl Parser {
     }
 
     /// [`Parser::new`] without the built-in fallback.
-    fn new_exact(language: Language) -> Result<Self> {
+    ///
+    /// Installation and `languages validate` must use this: the fallback exists
+    /// so a *running* session degrades gracefully, but it would make a broken
+    /// grammar look installable and report it as valid.
+    pub fn new_exact(language: Language) -> Result<Self> {
         let mut inner = tree_sitter::Parser::new();
         let ts_language = match &language {
             Language::Swift
@@ -404,29 +408,6 @@ impl ParseCache {
     /// state before the override was installed. Falling back keeps the built-in
     /// as a floor.
     pub fn new(language: Language) -> Result<Self> {
-        let fallback = match &language {
-            Language::Dynamic(dl) => Language::static_from_name(&dl.name)
-                .or_else(|| dl.extensions.iter().find_map(|e| Language::static_from_extension(e))),
-            _ => None,
-        };
-        match Self::new_exact(language) {
-            Ok(p) => Ok(p),
-            Err(e) => match fallback {
-                Some(builtin) => {
-                    eprintln!(
-                        "codemark: dynamic grammar failed to load ({e}); falling back to the \
-                         built-in {} parser",
-                        builtin.name()
-                    );
-                    Self::new_exact(builtin)
-                }
-                None => Err(e),
-            },
-        }
-    }
-
-    /// [`Parser::new`] without the built-in fallback.
-    fn new_exact(language: Language) -> Result<Self> {
         Ok(ParseCache { trees: HashMap::new(), parser: Parser::new(language.clone())? })
     }
 

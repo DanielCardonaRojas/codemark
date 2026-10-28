@@ -665,7 +665,9 @@ pub fn load_dynamic_grammar(
 
     // Constructing the parser reads the .wasm and calls `set_language`, which is
     // exactly what fails for an empty or malformed grammar.
-    Parser::new(Language::Dynamic(dl)).map(|p| p.language().clone())
+    // Strict: the built-in fallback in `Parser::new` would let an empty or
+    // corrupt grammar install cleanly and report as valid.
+    Parser::new_exact(Language::Dynamic(dl)).map(|p| p.language().clone())
 }
 
 #[cfg(test)]
