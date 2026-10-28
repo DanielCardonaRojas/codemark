@@ -605,6 +605,15 @@ fn f() {
         let want_c: BTreeSet<(&str, &str)> =
             committed.containers.iter().map(|(k, f)| (k.as_str(), f.as_str())).collect();
         assert_eq!(got_c, want_c, "containers differ from the committed profile");
+
+        // Labels are the generator's third output and feed `@sticky` captures
+        // and icon selection, so leaving them unchecked would let query labels
+        // drift from the curated fixture while this test stayed green.
+        let got_l: BTreeSet<(&str, &str)> =
+            proposal.profile.node_labels.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+        let want_l: BTreeSet<(&str, &str)> =
+            committed.node_labels.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+        assert_eq!(got_l, want_l, "node_labels differ from the committed profile");
     }
 
     // A generated profile must satisfy the Phase 0 lint — otherwise the

@@ -843,6 +843,15 @@ impl Config {
         if other.tui.content_tab_order.is_some() {
             self.tui.content_tab_order = other.tui.content_tab_order;
         }
+
+        // Grammars config - override only if explicitly set in local, so a repo
+        // can point at an internal or air-gapped registry.
+        if other.grammars.registry_url.is_some() {
+            self.grammars.registry_url = other.grammars.registry_url;
+        }
+        if other.grammars.index_ttl_secs.is_some() {
+            self.grammars.index_ttl_secs = other.grammars.index_ttl_secs;
+        }
     }
 
     /// Write the default config file to the global config directory.
@@ -1043,6 +1052,30 @@ theme = "Dracula"
         let local = Config::default();
         global.merge(local);
         assert_eq!(global.tui.theme.as_deref(), Some("Nord"));
+    }
+
+    #[test]
+    fn merge_overrides_grammar_registry() {
+        // A repo pointing at an internal or air-gapped registry must win over
+        // the global setting; `merge` enumerates fields explicitly, so a new
+        // section is silently dropped until it's listed there.
+        let mut global: Config =
+            toml::from_str("[grammars]\nregistry_url = \"https://example.com/global\"\n").unwrap();
+        let local: Config = toml::from_str(
+            "[grammars]\nregistry_url = \"file:///srv/mirror\"\nindex_ttl_secs = 60\n",
+        )
+        .unwrap();
+        global.merge(local);
+        assert_eq!(global.grammars.registry_url.as_deref(), Some("file:///srv/mirror"));
+        assert_eq!(global.grammars.index_ttl_secs, Some(60));
+    }
+
+    #[test]
+    fn merge_preserves_grammar_registry_when_local_unset() {
+        let mut global: Config =
+            toml::from_str("[grammars]\nregistry_url = \"https://example.com/global\"\n").unwrap();
+        global.merge(Config::default());
+        assert_eq!(global.grammars.registry_url.as_deref(), Some("https://example.com/global"));
     }
 
     #[test]

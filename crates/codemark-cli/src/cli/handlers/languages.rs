@@ -121,8 +121,19 @@ async fn handle_profile_init(mode: &OutputMode, args: &crate::cli::ProfileInitAr
         Some(out) => println!("Wrote the proposed manifest to {}", out.display()),
         None => println!("{}", serde_json::to_string_pretty(&manifest).unwrap()),
     }
+    // `languages add` on a local file always writes an empty profile — it reads
+    // only the .wasm. So saying "install it with add" would quietly throw the
+    // proposal away. Spell out the copy step instead.
+    let manifest_hint = match &args.out {
+        Some(out) => out.display().to_string(),
+        None => "the profile above".to_string(),
+    };
     println!(
-        "\nReview the profile above, then install it with:\n  codemark languages add {} --name {name} --extensions <exts>",
+        "\nReview the proposal, then install the grammar and apply the profile:\n  \
+         codemark languages add {} --name {name} --extensions <exts>\n  \
+         # `add` writes an empty profile, so copy {manifest_hint} over the\n  \
+         # `profile` field of the installed manifest (its path is printed above), then:\n  \
+         codemark languages validate",
         args.wasm_file.display()
     );
 
@@ -249,13 +260,24 @@ fn print_install_outcome(
                  summaries work out of the box."
             );
         } else {
+            // `profile init` only exists on a `profile-authoring` build, so
+            // recommending it unconditionally sends most users to an
+            // unknown-command error.
+            let generate_hint = if cfg!(feature = "profile-authoring") {
+                "Otherwise generate one from sample files rather than hand-writing it:\n  \
+                 codemark languages profile init <grammar.wasm> --sample <file>\n"
+                    .to_string()
+            } else {
+                "Otherwise write one by hand (see the adding-wasm-grammars guide), or build \
+                 codemark with `--features profile-authoring` to generate one from sample \
+                 files.\n"
+                    .to_string()
+            };
             println!(
                 "The grammar has an empty profile — parsing works now, but breadcrumbs and query \
                  summaries need one. Check whether the registry already has one:\n  codemark \
-                 languages registry list\nOtherwise generate one from sample files rather than \
-                 hand-writing it:\n  codemark languages profile init <grammar.wasm> --sample \
-                 <file>\nThen put the result in {}/manifest.json and run `codemark languages \
-                 validate`.",
+                 languages registry list\n{generate_hint}Put the result in {}/manifest.json and \
+                 run `codemark languages validate`.",
                 directory.display()
             );
         }

@@ -109,6 +109,20 @@ pub fn lint(value: &serde_json::Value, grammar: &tree_sitter::Language) -> Vec<L
         return findings;
     };
 
+    // Check the shape before the contents. A field of the wrong type (a bare
+    // string where `landmark_kinds` wants an array) makes the whole profile
+    // fail to deserialize at discovery, but the per-field walks below just skip
+    // it — so without this, `validate` would report a clean bill of health for
+    // a manifest the registry reader rejects outright.
+    if let Err(e) = serde_json::from_value::<Profile>(value.clone()) {
+        findings.push(LintFinding {
+            severity: LintSeverity::Error,
+            path: "profile".to_string(),
+            message: format!("does not match the profile schema, so it will not load: {e}"),
+        });
+        return findings;
+    }
+
     for key in obj.keys() {
         if !KNOWN_PROFILE_KEYS.contains(&key.as_str()) {
             findings.push(LintFinding {
@@ -765,5 +779,28 @@ mod tests {
     fn lint_rejects_a_profile_that_is_not_an_object() {
         let findings = lint(&serde_json::json!("landmark_kinds"), &rust_grammar());
         assert_eq!(errors(&findings).len(), 1);
+    }
+
+    #[test]
+    fn lint_rejects_a_field_of_the_wrong_type() {
+        // A bare string where an array belongs makes the whole profile fail to
+        // deserialize at discovery. Walking the fields individually would just
+        // skip it, so `validate` would call a manifest valid that the registry
+        // reader refuses to load.
+        for bad in [
+            serde_json::json!({ "landmark_kinds": "function_item" }),
+            serde_json::json!({ "node_labels": ["function_item"] }),
+            serde_json::json!({ "containers": { "impl_item": "type" } }),
+        ] {
+            assert!(
+                serde_json::from_value::<Profile>(bad.clone()).is_err(),
+                "fixture should be undeserializable: {bad}"
+            );
+            let findings = lint(&bad, &rust_grammar());
+            assert!(
+                errors(&findings).iter().any(|f| f.message.contains("profile schema")),
+                "{bad} produced {findings:?}"
+            );
+        }
     }
 }

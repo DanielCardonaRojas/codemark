@@ -67,10 +67,11 @@ still win as overrides. The registry ships **profiles, not binaries**: you build
 the `.wasm` yourself, which is why there's no ABI or licensing surprise in what
 you download.
 
-The index is cached under `<cache>/.registry/`, so listing and installing keep
-working offline once you've fetched it; `--refresh` forces a re-fetch. Point
-`registry_url` at a fork, an internal mirror, or a `file://` path for air-gapped
-use:
+The **index** is cached under `<cache>/.registry/` (keyed by registry URL), so
+`registry list` keeps working offline once you've fetched it; `--refresh` forces
+a re-fetch. Profile manifests are *not* cached — installing a language needs the
+registry reachable. Point `registry_url` at a fork, an internal mirror, or a
+`file://` path for air-gapped use:
 
 ```toml
 # ~/.config/codemark/config.toml

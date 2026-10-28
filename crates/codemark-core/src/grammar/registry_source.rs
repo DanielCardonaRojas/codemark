@@ -99,8 +99,15 @@ impl RegistryClient {
         &self.base_url
     }
 
+    /// Where this registry's index is cached.
+    ///
+    /// Keyed by a hash of the base URL, so switching `registry_url` (or
+    /// `CODEMARK_GRAMMAR_REGISTRY`) doesn't serve the previous registry's
+    /// entries for the rest of the TTL — which would both list the wrong
+    /// languages and join the old registry's `profile_url` paths onto the new
+    /// base URL.
     fn index_cache_path(&self) -> PathBuf {
-        self.cache_dir.join("index.json")
+        self.cache_dir.join(format!("index-{}.json", url_key(&self.base_url)))
     }
 
     /// Fetch the registry index, using the on-disk cache when it is fresh.
@@ -229,6 +236,15 @@ async fn fetch_text(url: &str, cap: u64) -> Result<String> {
              localhost)"
         )));
     }
+    // Credentials in the URL would be sent to the host; nothing here needs them,
+    // and allowing them invites `http://localhost@evil.com` style confusion.
+    if let Ok(parsed) = reqwest::Url::parse(url)
+        && (!parsed.username().is_empty() || parsed.password().is_some())
+    {
+        return Err(Error::Input(format!(
+            "refusing to fetch a registry URL containing credentials: {url}"
+        )));
+    }
 
     let client = crate::sync::build_sync_http_client()?;
     tracing::debug!(target: "codemark::http", %url, "fetching from the grammar registry");
@@ -264,6 +280,22 @@ async fn fetch_text(url: &str, cap: u64) -> Result<String> {
     String::from_utf8(bytes).map_err(|_| Error::Operation(format!("{url} is not valid UTF-8")))
 }
 
+/// A short, filesystem-safe key identifying a registry URL.
+///
+/// Only needs to separate one registry's cache from another's, so a
+/// non-cryptographic hash is enough — this guards against staleness, not an
+/// adversary. Spelled out (FNV-1a) rather than using `DefaultHasher`, whose
+/// output is explicitly not stable across Rust releases: a changed hash would
+/// silently orphan every cached index on upgrade.
+fn url_key(base_url: &str) -> String {
+    let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
+    for byte in base_url.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x1000_0000_01b3);
+    }
+    format!("{hash:016x}")
+}
+
 /// The filesystem path for a `file://` URL or a bare path, else `None`.
 fn local_path(url: &str) -> Option<PathBuf> {
     if let Some(rest) = url.strip_prefix("file://") {
@@ -276,10 +308,29 @@ fn local_path(url: &str) -> Option<PathBuf> {
     Some(PathBuf::from(url))
 }
 
+/// Whether `url`'s **host** is loopback.
+///
+/// Parsed rather than string-scanned: splitting on the first `:` or `/` reads
+/// the userinfo as the host, so `http://localhost:80@example.com` would look
+/// like loopback while the request actually goes to `example.com` in the clear.
 fn is_loopback(url: &str) -> bool {
-    let rest = url.strip_prefix("http://").unwrap_or(url);
-    let host = rest.split(['/', ':']).next().unwrap_or("");
-    matches!(host, "localhost" | "127.0.0.1" | "::1" | "[::1]")
+    let Ok(parsed) = reqwest::Url::parse(url) else {
+        return false;
+    };
+    // Credentials are rejected separately in `fetch_text`; treating a URL that
+    // carries them as non-loopback here keeps this function safe on its own.
+    if !parsed.username().is_empty() || parsed.password().is_some() {
+        return false;
+    }
+    let Some(host) = parsed.host_str() else {
+        return false;
+    };
+    if host.eq_ignore_ascii_case("localhost") {
+        return true;
+    }
+    // `host_str` keeps IPv6 in bracketed form; strip them before parsing.
+    let bare = host.strip_prefix('[').and_then(|h| h.strip_suffix(']')).unwrap_or(host);
+    bare.parse::<std::net::IpAddr>().is_ok_and(|ip| ip.is_loopback())
 }
 
 /// Read a local file, bounded to `cap` bytes and requiring a regular file —
@@ -412,6 +463,42 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn switching_registry_does_not_serve_the_previous_cache() {
+        // Two registries, one cache directory. Before the cache was keyed by
+        // URL, the second client would serve the first's entries for the rest
+        // of the TTL — listing the wrong languages and joining the old
+        // registry's profile paths onto the new base URL.
+        let tmp = tempfile::tempdir().unwrap();
+        let cache = tmp.path().join("cache");
+
+        let first = fixture_registry(tmp.path());
+        first.fetch_index(false).await.unwrap();
+
+        let other = tmp.path().join("other");
+        std::fs::create_dir_all(&other).unwrap();
+        std::fs::write(
+            other.join("index.json"),
+            r#"{"schema_version":1,"grammars":[
+               {"name":"ruby","extensions":["rb"],"profile_url":"grammars/ruby/manifest.json"}
+            ]}"#,
+        )
+        .unwrap();
+        let second = RegistryClient::with_base_url(
+            other.display().to_string(),
+            cache,
+            Duration::from_secs(3600),
+        );
+
+        let index = second.fetch_index(false).await.unwrap();
+        assert_eq!(index.grammars.len(), 1);
+        assert_eq!(index.grammars[0].name, "ruby", "must not serve the other registry's cache");
+        // Both caches coexist rather than overwriting each other.
+        assert!(first.index_cache_path().exists());
+        assert!(second.index_cache_path().exists());
+        assert_ne!(first.index_cache_path(), second.index_cache_path());
+    }
+
+    #[tokio::test]
     async fn fetches_a_profile_manifest() {
         let tmp = tempfile::tempdir().unwrap();
         let client = fixture_registry(tmp.path());
@@ -467,9 +554,39 @@ mod tests {
     fn loopback_detection_covers_the_usual_spellings() {
         assert!(is_loopback("http://localhost:8080/index.json"));
         assert!(is_loopback("http://127.0.0.1/index.json"));
+        assert!(is_loopback("http://127.0.0.2/index.json")); // all of 127/8
+        assert!(is_loopback("http://[::1]:9000/index.json"));
         assert!(!is_loopback("http://example.com/index.json"));
         // A host that merely starts with "localhost" is not loopback.
         assert!(!is_loopback("http://localhost.evil.com/index.json"));
+    }
+
+    #[test]
+    fn userinfo_cannot_pose_as_a_loopback_host() {
+        // The host here is example.com; `localhost:80` is userinfo. A scan that
+        // stops at the first ':' or '/' reads it as the host and would send the
+        // request to example.com in the clear.
+        assert!(!is_loopback("http://localhost:80@example.com/index.json"));
+        assert!(!is_loopback("http://localhost@evil.com/index.json"));
+        assert!(!is_loopback("http://127.0.0.1@evil.com/index.json"));
+    }
+
+    #[tokio::test]
+    async fn refuses_a_url_carrying_credentials() {
+        // Even over https: nothing here needs credentials, and allowing them
+        // invites exactly the confusion the test above describes.
+        let err = fetch_text("https://user:pw@example.com/index.json", MAX_INDEX_BYTES)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("credentials"), "{err}");
+
+        // And the loopback exception must not be reachable through userinfo.
+        let err = fetch_text("http://localhost:80@example.com/index.json", MAX_INDEX_BYTES)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("plain HTTP"), "{err}");
     }
 
     #[tokio::test]
