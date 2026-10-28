@@ -27,6 +27,11 @@ use crate::error::{Error, Result};
 pub struct InstallOverrides {
     pub name: Option<String>,
     pub extensions: Option<String>,
+    /// Allow this grammar to take over a built-in's name or extensions.
+    ///
+    /// Off by default: a dynamic grammar wins resolution, so shadowing must be
+    /// deliberate rather than the accidental result of a name collision.
+    pub override_builtin: bool,
 }
 
 /// Install a grammar from a local `.wasm` file on disk (`codemark languages
@@ -42,6 +47,7 @@ pub async fn install_from_path(
     overrides: InstallOverrides,
 ) -> Result<InstallOutcome> {
     let resolved = source::LocalFileSource.resolve_path(path)?;
+    let override_builtin = overrides.override_builtin;
 
     // Overrides win over the source's reported metadata.
     let name = overrides.name.or(resolved.name).ok_or_else(|| {
@@ -56,7 +62,7 @@ pub async fn install_from_path(
     })?;
 
     // Reject built-in collisions before any file write.
-    let extensions = validate_name_and_extensions(&name, &raw_extensions)?;
+    let extensions = validate_name_and_extensions_opt(&name, &raw_extensions, override_builtin)?;
 
     let wasm_bytes = resolved.wasm.into_bytes().await?;
     install_grammar(&name, &extensions, resolved.profile, wasm_bytes)
@@ -82,6 +88,7 @@ pub async fn install_from_registry(
 ) -> Result<InstallOutcome> {
     let entry = client.find(registry_name, refresh).await?;
     let manifest = client.fetch_profile(&entry).await?;
+    let override_builtin = overrides.override_builtin;
 
     // Caller's flags beat the registry, which beats the manifest's own fields.
     let name = overrides
@@ -100,7 +107,7 @@ pub async fn install_from_registry(
 
     // A registry entry gets no special trust: it must not claim `rs` or shadow a
     // built-in any more than a hand-typed `--name` could.
-    let extensions = validate_name_and_extensions(&name, &raw_extensions)?;
+    let extensions = validate_name_and_extensions_opt(&name, &raw_extensions, override_builtin)?;
 
     let profile = manifest.get("profile").cloned();
     let wasm_bytes = source::LocalFileSource.resolve_path(path)?.wasm.into_bytes().await?;
@@ -146,6 +153,7 @@ pub async fn install_from_registry_download(
     };
 
     let manifest = client.fetch_profile(&entry).await?;
+    let override_builtin = overrides.override_builtin;
 
     let name = overrides
         .name
@@ -163,7 +171,7 @@ pub async fn install_from_registry_download(
 
     // Same validation a hand-typed `--name` gets: a registry entry earns no
     // right to claim `rs` or shadow a built-in.
-    let extensions = validate_name_and_extensions(&name, &raw_extensions)?;
+    let extensions = validate_name_and_extensions_opt(&name, &raw_extensions, override_builtin)?;
 
     let wasm_bytes = registry_source::download_wasm(&remote).await?;
 
@@ -291,11 +299,29 @@ fn build_manifest(
 /// that are all empty/dotted or owned by a built-in — is rejected instead of
 /// truncating an existing same-named install.
 pub fn validate_name_and_extensions(name: &str, raw_extensions: &str) -> Result<Vec<String>> {
+    validate_name_and_extensions_opt(name, raw_extensions, false)
+}
+
+/// As [`validate_name_and_extensions`], but `override_builtin` permits a
+/// grammar to take over a built-in's name or extensions.
+///
+/// Shadowing is opt-in rather than the default. A dynamic grammar now *wins*
+/// resolution (see [`Language::from_extension`]), so silently accepting a name
+/// like `rust` would let a stray install change how every `.rs` file is parsed.
+/// Requiring the flag keeps that a decision rather than an accident — while
+/// still making it possible, which is what lets a bundled grammar be replaced
+/// by a registry one.
+pub fn validate_name_and_extensions_opt(
+    name: &str,
+    raw_extensions: &str,
+    override_builtin: bool,
+) -> Result<Vec<String>> {
     use crate::parser::languages::Language;
 
-    if Language::static_from_name(name).is_some() {
+    if !override_builtin && Language::static_from_name(name).is_some() {
         return Err(Error::Input(format!(
-            "Invalid grammar name '{name}': it is (or aliases) a built-in language and would never resolve"
+            "Invalid grammar name '{name}': it is (or aliases) a built-in language.\nPass \
+             --override-builtin to install a grammar that replaces the built-in for this name."
         )));
     }
 
@@ -312,10 +338,13 @@ pub fn validate_name_and_extensions(name: &str, raw_extensions: &str) -> Result<
             "No valid extensions given: provide a comma-separated list like `lua,luau`".to_string(),
         ));
     }
-    if let Some(builtin) = extensions.iter().find(|e| Language::static_from_extension(e).is_some())
+    if !override_builtin
+        && let Some(builtin) =
+            extensions.iter().find(|e| Language::static_from_extension(e).is_some())
     {
         return Err(Error::Input(format!(
-            "Extension '.{builtin}' is owned by a built-in language and can't be claimed by a dynamic grammar"
+            "Extension '.{builtin}' is owned by a built-in language.\nPass --override-builtin to \
+             let this grammar handle it instead."
         )));
     }
 
@@ -636,7 +665,9 @@ pub fn load_dynamic_grammar(
 
     // Constructing the parser reads the .wasm and calls `set_language`, which is
     // exactly what fails for an empty or malformed grammar.
-    Parser::new(Language::Dynamic(dl)).map(|p| p.language().clone())
+    // Strict: the built-in fallback in `Parser::new` would let an empty or
+    // corrupt grammar install cleanly and report as valid.
+    Parser::new_exact(Language::Dynamic(dl)).map(|p| p.language().clone())
 }
 
 #[cfg(test)]
@@ -647,6 +678,24 @@ mod tests {
     fn normalizes_extensions_stripping_dots_empties_and_case() {
         let exts = validate_name_and_extensions("lua", " .Lua, luau ,, ").unwrap();
         assert_eq!(exts, vec!["lua".to_string(), "luau".to_string()]);
+    }
+
+    #[test]
+    fn override_builtin_permits_shadowing_a_builtin_name_and_extension() {
+        // The whole point of the flag: a grammar may take over `rust`/`.rs` so
+        // a bundled language can be replaced by a registry one. Without it the
+        // same call is refused, which keeps shadowing deliberate.
+        assert!(validate_name_and_extensions("rust", "rs").is_err());
+        let exts = validate_name_and_extensions_opt("rust", "rs", true).unwrap();
+        assert_eq!(exts, vec!["rs".to_string()]);
+    }
+
+    #[test]
+    fn override_builtin_still_enforces_the_other_rules() {
+        // The flag relaxes the built-in checks only — it is not a bypass for
+        // malformed input.
+        assert!(validate_name_and_extensions_opt("rust", "", true).is_err());
+        assert!(validate_name_and_extensions_opt("rust", " , . , ", true).is_err());
     }
 
     #[test]

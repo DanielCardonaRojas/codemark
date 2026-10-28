@@ -10,8 +10,16 @@ no recompilation needed. This page covers how it works in
 Built-in languages are statically compiled into the binary. Dynamic languages
 are WASM grammars loaded at runtime from a cache directory. A single
 process-global [wasmtime](https://wasmtime.dev/) `Engine` backs all WASM stores.
-Built-ins **always win**: the registry refuses to register a name or extension
-already claimed by a built-in.
+
+**A dynamic grammar wins resolution over a built-in of the same name or
+extension.** An installed grammar is something you went out of your way to add,
+so it reads as the more specific intent — and it makes a built-in *replaceable*,
+which is what allows a bundled language to be dropped from the binary and picked
+up from the registry without its extension becoming unresolvable.
+
+Shadowing is never accidental: installing a grammar that claims a built-in's
+name or extension requires `--override-builtin`, and discovery prints a line
+when one takes effect.
 
 ## Cache location
 
@@ -98,7 +106,9 @@ index_ttl_secs = 86400
 
 A registry profile gets no special trust: it is schema-checked, linted against
 the grammar, and run through the same name/extension validation as a hand-typed
-`--name`, so a registry entry can't claim `.rs` or shadow a built-in. Fetches
+`--name` — so claiming `.rs` or shadowing a built-in requires
+`--override-builtin` from a registry entry exactly as it does from the command
+line. Fetches
 require HTTPS (except localhost) and are size-capped.
 
 `--name` and `--extensions` let you override what the manifest declares. The
@@ -108,7 +118,7 @@ one:
 ```mermaid
 flowchart TD
   A["languages add file.wasm\n--name --exts"] --> B["read bytes ≤ 32 MiB\n(rejects FIFOs/devices)"]
-  B --> C["validate name + extensions\nreject builtin collisions"]
+  B --> C["validate name + extensions\nbuiltin collision needs --override-builtin"]
   C --> D["stage into .staging-name-pid"]
   D --> E["wasm build: load staged grammar\nto confirm it's valid"]
   E --> F["acquire per-name lock .lock-name"]

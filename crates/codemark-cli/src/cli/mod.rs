@@ -1591,6 +1591,11 @@ pub struct LanguagesAddArgs {
     /// Bypass the cached registry index and re-fetch it
     #[arg(long, requires = "from_registry")]
     pub refresh: bool,
+
+    /// Let this grammar replace a built-in language of the same name or
+    /// extension. Without it, such an install is refused.
+    #[arg(long)]
+    pub override_builtin: bool,
 }
 
 #[derive(Debug, clap::Args)]
@@ -1612,6 +1617,11 @@ pub struct LanguagesInstallArgs {
     /// Bypass the cached registry index and re-fetch it
     #[arg(long)]
     pub refresh: bool,
+
+    /// Let this grammar replace a built-in language of the same name or
+    /// extension. Without it, such an install is refused.
+    #[arg(long)]
+    pub override_builtin: bool,
 }
 
 #[derive(Debug, clap::Args)]

@@ -107,15 +107,6 @@ impl LanguageRegistry {
 
             match serde_json::from_str::<Manifest>(&manifest_text) {
                 Ok(manifest) => {
-                    // Skip if name collides with a built-in static language.
-                    if is_static_language_name(&manifest.name) {
-                        eprintln!(
-                            "codemark: skipping dynamic grammar '{}' — name conflicts with a built-in language",
-                            manifest.name
-                        );
-                        continue;
-                    }
-
                     if !wasm_path.exists() {
                         eprintln!(
                             "codemark: skipping dynamic grammar '{}' — grammar.wasm not found",
@@ -152,18 +143,21 @@ impl LanguageRegistry {
                     }
                     registry.by_name.insert(name_key, lang.clone());
 
+                    // Announce the override only now that the grammar is
+                    // actually registered — reporting it before the checks
+                    // above would claim an override for a grammar discovery
+                    // then skips. Worth saying once, since silently changing
+                    // how a built-in language parses is a poor thing to
+                    // discover later.
+                    if is_static_language_name(&manifest.name) {
+                        eprintln!(
+                            "codemark: dynamic grammar '{}' overrides the built-in language of the same name",
+                            manifest.name
+                        );
+                    }
+
                     for ext in &manifest.extensions {
                         let key = ext.to_lowercase();
-                        // A built-in owns this extension, so `from_extension`
-                        // would resolve to the built-in and never reach this
-                        // grammar. Skip it rather than register a dead mapping.
-                        if is_static_extension(&key) {
-                            eprintln!(
-                                "codemark: extension '.{key}' is owned by a built-in language — ignoring it for grammar '{}'",
-                                manifest.name
-                            );
-                            continue;
-                        }
                         // Keep the first grammar to claim an extension (entries
                         // are sorted, so this is deterministic) and warn rather
                         // than silently overwriting with a nondeterministic winner.
@@ -174,6 +168,18 @@ impl LanguageRegistry {
                                 manifest.name
                             );
                             continue;
+                        }
+                        // A built-in claims this extension too. Registering it
+                        // is no longer a dead mapping: `from_extension` prefers
+                        // the dynamic grammar, which is what lets a registry
+                        // grammar take over for an unbundled built-in. Reported
+                        // after the conflict checks, so a mapping that is
+                        // ignored isn't announced as taking effect.
+                        if is_static_extension(&key) {
+                            eprintln!(
+                                "codemark: grammar '{}' now handles '.{key}' instead of the built-in",
+                                manifest.name
+                            );
                         }
                         registry.by_extension.insert(key, lang.clone());
                     }
@@ -254,9 +260,12 @@ impl LanguageRegistry {
             self.by_name.insert(name_key.clone(), lang.clone());
             for ext in &dl.extensions {
                 let key = ext.to_lowercase();
-                // Preserve resolution rules: don't shadow a built-in or a grammar
-                // that already won this extension in the fresh scan.
-                if is_static_extension(&key) || self.by_extension.contains_key(&key) {
+                // Preserve resolution rules: don't displace a grammar that
+                // already won this extension in the fresh scan. A built-in is
+                // no longer a blocker — carrying the override forward is the
+                // point, otherwise a transient manifest read would hand the
+                // extension back to the built-in mid-session.
+                if self.by_extension.contains_key(&key) {
                     continue;
                 }
                 self.by_extension.insert(key, lang.clone());
@@ -511,10 +520,13 @@ mod tests {
         assert!(!reg.by_extension.contains_key("old"));
     }
 
+    // A grammar may now deliberately replace a built-in — that is how a
+    // bundled language gets unbundled — so it registers rather than being
+    // skipped. Installing one requires `--override-builtin`; by the time a
+    // manifest is on disk the decision has been made.
     #[test]
-    fn discover_skips_name_colliding_with_builtin() {
+    fn discover_registers_a_grammar_overriding_a_builtin() {
         let tmp = tempfile::tempdir().unwrap();
-        // "Rust" (any case) collides with a built-in and must be skipped.
         write_grammar(
             tmp.path(),
             "rust",
@@ -523,8 +535,8 @@ mod tests {
         );
 
         let reg = LanguageRegistry::discover_in(tmp.path()).unwrap();
-        assert!(reg.by_name.is_empty());
-        assert!(reg.by_extension.is_empty());
+        assert_eq!(reg.by_name.get("rust").map(|l| l.name()), Some("Rust"));
+        assert!(reg.by_extension.contains_key("rs"));
     }
 
     #[test]
@@ -740,9 +752,9 @@ mod tests {
     }
 
     #[test]
-    fn discover_skips_name_colliding_with_builtin_alias() {
-        // A manifest named `rs` would be shadowed by built-in Rust at resolution
-        // time, so discovery must reject it rather than list a dead grammar.
+    fn discover_registers_a_grammar_named_after_a_builtin_alias() {
+        // `rs` aliases built-in Rust. It used to be dropped as unresolvable;
+        // now `Language::from_str` prefers the dynamic grammar, so it resolves.
         let tmp = tempfile::tempdir().unwrap();
         write_grammar(
             tmp.path(),
@@ -752,15 +764,15 @@ mod tests {
         );
 
         let reg = LanguageRegistry::discover_in(tmp.path()).unwrap();
-        assert!(reg.by_name.is_empty());
-        assert!(reg.by_extension.is_empty());
+        assert_eq!(reg.by_name.get("rs").map(|l| l.name()), Some("rs"));
+        assert!(reg.by_extension.contains_key("myrs"));
     }
 
     #[test]
-    fn discover_skips_extension_owned_by_builtin() {
-        // A dynamic grammar claiming `.rs` would never resolve (built-in Rust
-        // wins in `from_extension`), so that extension is dropped — but the
-        // grammar's other, free extensions still register.
+    fn discover_registers_an_extension_owned_by_a_builtin() {
+        // Claiming `.rs` is no longer a dead mapping: `from_extension` prefers
+        // the dynamic grammar, which is what lets a registry grammar take over
+        // for a built-in that has been unbundled.
         let tmp = tempfile::tempdir().unwrap();
         write_grammar(
             tmp.path(),
@@ -771,7 +783,7 @@ mod tests {
 
         let reg = LanguageRegistry::discover_in(tmp.path()).unwrap();
         assert!(reg.by_name.contains_key("rusty"));
-        assert!(!reg.by_extension.contains_key("rs"));
+        assert_eq!(reg.by_extension.get("rs").map(|l| l.name()), Some("rusty"));
         assert!(reg.by_extension.contains_key("rusty"));
     }
 }

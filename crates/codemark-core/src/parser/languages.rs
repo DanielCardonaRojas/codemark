@@ -111,11 +111,32 @@ impl Language {
         }
     }
 
-    /// Infer language from a file extension. Checks static languages first,
-    /// then the dynamic grammar registry.
+    /// Resolve a file extension to a language, **preferring a dynamic grammar**
+    /// over the built-in that would otherwise claim it.
+    ///
+    /// An installed grammar is something the user went out of their way to add,
+    /// so it reads as the more specific intent. It also makes a built-in
+    /// *replaceable*: a language can be dropped from the binary and picked up
+    /// from the registry without the extension becoming unresolvable, which is
+    /// how the eight bundled grammars can be unbundled one at a time.
+    ///
+    /// Nothing is shadowed by accident — installing over a built-in takes an
+    /// explicit `--override-builtin` (see
+    /// [`validate_name_and_extensions`](crate::grammar::validate_name_and_extensions)).
+    ///
+    /// **Without the `wasm` feature the built-in wins instead.** `Parser::new`
+    /// cannot load a dynamic grammar in that build, so preferring one would
+    /// route `.rs` to a grammar that then fails to parse — breaking a language
+    /// that worked before the override was installed. A grammar that can't be
+    /// loaded is not a usable override.
     pub fn from_extension(ext: &str) -> Option<Self> {
-        Self::static_from_extension(ext)
-            .or_else(|| crate::parser::registry::LanguageRegistry::from_extension(ext))
+        if cfg!(feature = "wasm") {
+            crate::parser::registry::LanguageRegistry::from_extension(ext)
+                .or_else(|| Self::static_from_extension(ext))
+        } else {
+            Self::static_from_extension(ext)
+                .or_else(|| crate::parser::registry::LanguageRegistry::from_extension(ext))
+        }
     }
 
     /// Resolve a file extension (without the dot) to a *built-in* language,
@@ -167,12 +188,34 @@ impl fmt::Display for Language {
 impl FromStr for Language {
     type Err = Error;
 
+    /// Resolve a language name, preferring a dynamic grammar over a built-in of
+    /// the same name — matching [`Language::from_extension`], so a stored
+    /// bookmark and a fresh one agree on which grammar a name refers to.
+    ///
+    /// Falls back to built-in-first without the `wasm` feature, for the same
+    /// reason: an unloadable grammar is not a usable override.
+    ///
+    /// # Known gap
+    ///
+    /// A bookmark records only the language *name*, so the two lookups can
+    /// disagree for an extension the override doesn't claim. A dynamic
+    /// `typescript` claiming only `.ts` leaves a `.tsx` file resolving to the
+    /// built-in — which stores `"typescript"`, and that name later resolves to
+    /// the dynamic grammar.
+    ///
+    /// Closing it properly means recording grammar identity on the bookmark,
+    /// which is a schema change. Until then the narrower mitigation is to claim
+    /// every extension of the built-in you override, which
+    /// `--override-builtin` makes visible at install time.
     fn from_str(s: &str) -> Result<Self> {
-        if let Some(lang) = Language::static_from_name(s) {
-            return Ok(lang);
-        }
-        crate::parser::registry::LanguageRegistry::from_name(s)
-            .ok_or_else(|| Error::Input(format!("unsupported language: {s}")))
+        let resolved = if cfg!(feature = "wasm") {
+            crate::parser::registry::LanguageRegistry::from_name(s)
+                .or_else(|| Language::static_from_name(s))
+        } else {
+            Language::static_from_name(s)
+                .or_else(|| crate::parser::registry::LanguageRegistry::from_name(s))
+        };
+        resolved.ok_or_else(|| Error::Input(format!("unsupported language: {s}")))
     }
 }
 
@@ -211,7 +254,43 @@ pub struct Parser {
 }
 
 impl Parser {
+    /// Build a parser, falling back to the built-in when a dynamic grammar
+    /// that *overrides* one fails to load.
+    ///
+    /// Discovery registers a grammar on the strength of a readable manifest and
+    /// an existing `grammar.wasm`; it does not prove the module loads. Since a
+    /// dynamic grammar now wins resolution, a corrupt or ABI-incompatible
+    /// override would otherwise make its extension unparseable — worse than the
+    /// state before the override was installed. Falling back keeps the built-in
+    /// as a floor.
     pub fn new(language: Language) -> Result<Self> {
+        let fallback = match &language {
+            Language::Dynamic(dl) => Language::static_from_name(&dl.name)
+                .or_else(|| dl.extensions.iter().find_map(|e| Language::static_from_extension(e))),
+            _ => None,
+        };
+        match Self::new_exact(language) {
+            Ok(p) => Ok(p),
+            Err(e) => match fallback {
+                Some(builtin) => {
+                    eprintln!(
+                        "codemark: dynamic grammar failed to load ({e}); falling back to the \
+                         built-in {} parser",
+                        builtin.name()
+                    );
+                    Self::new_exact(builtin)
+                }
+                None => Err(e),
+            },
+        }
+    }
+
+    /// [`Parser::new`] without the built-in fallback.
+    ///
+    /// Installation and `languages validate` must use this: the fallback exists
+    /// so a *running* session degrades gracefully, but it would make a broken
+    /// grammar look installable and report it as valid.
+    pub fn new_exact(language: Language) -> Result<Self> {
         let mut inner = tree_sitter::Parser::new();
         let ts_language = match &language {
             Language::Swift
@@ -319,6 +398,15 @@ pub struct ParseCache {
 }
 
 impl ParseCache {
+    /// Build a parser, falling back to the built-in when a dynamic grammar
+    /// that *overrides* one fails to load.
+    ///
+    /// Discovery registers a grammar on the strength of a readable manifest and
+    /// an existing `grammar.wasm`; it does not prove the module loads. Since a
+    /// dynamic grammar now wins resolution, a corrupt or ABI-incompatible
+    /// override would otherwise make its extension unparseable — worse than the
+    /// state before the override was installed. Falling back keeps the built-in
+    /// as a floor.
     pub fn new(language: Language) -> Result<Self> {
         Ok(ParseCache { trees: HashMap::new(), parser: Parser::new(language.clone())? })
     }
@@ -375,6 +463,35 @@ impl ParseCache {
 
 #[cfg(test)]
 mod tests {
+    /// Precedence must follow what the build can actually load.
+    ///
+    /// With `wasm`, a dynamic grammar wins — that is what lets a bundled
+    /// language be replaced by a registry one. Without it, `Parser::new`
+    /// rejects every dynamic grammar, so preferring one would route `.rs` to a
+    /// grammar that cannot parse and break a language that worked before the
+    /// override was installed.
+    #[test]
+    fn builtin_resolution_survives_without_the_wasm_feature() {
+        use super::Language;
+        use std::str::FromStr;
+
+        // Deliberately the *static* helpers: `from_extension` / `from_str`
+        // consult the user's real grammar cache, so a `rust` override on the
+        // machine running the tests would fail these. What matters here is
+        // that the built-in arm still maps correctly.
+        assert!(matches!(Language::static_from_extension("rs"), Some(Language::Rust)));
+        assert!(matches!(Language::static_from_name("rust"), Some(Language::Rust)));
+        assert!(matches!(Language::static_from_name("rs"), Some(Language::Rust)));
+
+        // And the built-in remains reachable through the public lookups when
+        // nothing overrides it — true in CI, and the no-default-features build
+        // covers the other ordering.
+        if crate::parser::registry::LanguageRegistry::from_extension("rs").is_none() {
+            assert!(matches!(Language::from_extension("rs"), Some(Language::Rust)));
+            assert!(matches!(Language::from_str("rust"), Ok(Language::Rust)));
+        }
+    }
+
     use super::*;
 
     #[test]
