@@ -178,6 +178,11 @@ block an install, so a bad profile can't replace a working grammar.
 fallback: an empty one means breadcrumbs are silently blank, which is why it's
 called out.
 
+The two error kinds cost you different things. An unknown **node kind** is dead
+weight — nothing can ever match it, and a wrong `containers[].0` is the usual
+cause of blank breadcrumbs. An unknown **container field** blocks the install but
+doesn't affect matching, since breadcrumb extraction reads only the kind.
+
 One limit of the lint: tree-sitter exposes field names globally rather than per
 node kind, so a container field that is real *somewhere* in the grammar passes
 validation even if its paired kind doesn't carry it. Today that is cosmetic —

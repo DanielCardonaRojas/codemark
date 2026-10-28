@@ -302,10 +302,19 @@ Warnings (these grammars still work):
     produces no breadcrumbs
 ```
 
-**Errors** mean that entry can never match; they also block an install, so a bad
-profile can't replace a working grammar. **Warnings** are advisory. Close misses
-get a suggestion (`'local_function_declaration' … did you mean
-'function_declaration'?`).
+**Errors** block an install, so a bad profile can't replace a working grammar.
+**Warnings** are advisory. Close misses get a suggestion
+(`'local_function_declaration' … did you mean 'function_declaration'?`).
+
+The two error kinds differ in what they cost you, which matters when debugging
+missing breadcrumbs:
+
+- **An unknown node kind** (`landmark_kinds[i]`, `containers[i].0`) is dead
+  weight — nothing in the grammar can ever match it. A wrong `containers[i].0`
+  is the usual cause of blank breadcrumbs.
+- **An unknown container field** (`containers[i].1`) blocks the install but does
+  *not* affect matching, because breadcrumb extraction reads only the kind. If
+  your breadcrumbs are missing, this error is not the reason.
 
 **What `validate` can't check:** Tree-sitter exposes field names globally rather
 than per node kind, so `["mod_item", "value"]` — a real field, but not one

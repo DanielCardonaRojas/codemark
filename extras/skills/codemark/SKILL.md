@@ -701,19 +701,22 @@ front, so there's no risk in attempting it. Otherwise build from source:
 
 ```bash
 npm install -g tree-sitter-cli@0.25   # or cargo install tree-sitter-cli --version ^0.25
-git clone --depth 1 https://github.com/tree-sitter/tree-sitter-ruby && cd tree-sitter-ruby
+# Check out the pinned revision, not the default branch — node kinds change
+# between grammar versions, so an unpinned build may not match the profile.
+git clone --depth 1 --branch v0.23.1 https://github.com/tree-sitter/tree-sitter-ruby
+cd tree-sitter-ruby
 tree-sitter build --wasm              # needs Docker or emscripten; emits tree-sitter-ruby.wasm
 codemark languages add --name ruby --extensions rb,rake ./tree-sitter-ruby.wasm
 ```
 
-`add` validates the `.wasm` by loading it through the 0.25 `WasmStore`,
-rejecting an incompatible module, then writes the manifest and installs
-atomically. A prebuilt release `.wasm` works too **only if it was built with the
-0.25 CLI** (check the repo's `package.json` `tree-sitter-cli` at that tag —
-**not** `tree-sitter.json`'s `metadata.version`, which is the grammar's own
-semver). WASM grammar loading is enabled in the default build; only a
-`--no-default-features` build lacks it (the CLI then warns the grammar installs
-but is ignored at runtime).
+(For a revision that's a commit rather than a tag, `git clone` then
+`git checkout <sha>` — `--branch` only accepts refs.)
+
+`add` validates the `.wasm` by loading it through the `WasmStore`, rejecting an
+incompatible module, then writes the manifest and installs atomically. WASM
+grammar loading is enabled in the default build; only a `--no-default-features`
+build lacks it (the CLI then warns the grammar installs but is ignored at
+runtime).
 
 ### 3. Get the profile — try these in order
 
@@ -783,13 +786,24 @@ to its paired kind — tree-sitter exposes field names globally — so
 node kind alone and never read the field.
 
 What does matter is `containers[].0`. Get the kind wrong and the ancestor never
-matches, so breadcrumbs go blank with no error. After validating, confirm with
-`codemark show` on a bookmark nested inside the container.
+matches, so breadcrumbs go blank with no error.
+
+So after validating, create a **new** bookmark nested inside the container and
+inspect it. `codemark show` renders breadcrumbs stored at resolution time, so an
+existing bookmark reports what the *old* profile produced, and `--dry-run`
+saves nothing to show:
 
 ```bash
 codemark languages validate
-codemark add --file example.rb --range 3-5 --dry-run   # check node_type + breadcrumb
+
+# A line inside a method inside a class — not a top-level one, which
+# exercises nothing.
+codemark add --file example.rb --range 14 --created-by claude
+codemark show <id> --format table | grep Context
 ```
+
+A blank `Context` on a line that really is nested means a `containers` entry
+isn't matching.
 
 ```
 Found issues with installed grammars:
@@ -803,8 +817,13 @@ Found issues with installed grammars:
 Close misses get a suggestion (`'local_function_declaration' … did you mean
 'function_declaration'?`).
 
-An **error** means that part of the profile is dead. A **warning** (unknown key,
-no containers) still works but is probably not what you meant.
+An **error** blocks the install. A **warning** (unknown key, no containers)
+still works but is probably not what you meant.
+
+The error kinds differ: an unknown **node kind** can never match, and a wrong
+`containers[].0` is the usual cause of blank breadcrumbs. An unknown **container
+field** blocks installation but doesn't affect matching — breadcrumb extraction
+reads only the kind — so it's never the reason breadcrumbs are missing.
 
 Never copy node kinds from another language. Ruby says `method`, Rust
 `function_item`, Python `function_definition`, Lua `function_declaration` — and

@@ -548,15 +548,47 @@ mod auth {
         assert!(names.contains(&"impl_item"), "{:?}", p.profile.containers);
     }
 
+    /// Nesting must be judged by observed shape, not by the kind's spelling.
+    ///
+    /// Found while seeding Ruby: its declarations are bare words — `class`,
+    /// `module`, `method` — and the old check asked whether the kind *name*
+    /// contained a marker like `declaration` or `_item`. `module` contains
+    /// none, so it registered as nesting nothing, never became a container, and
+    /// bookmarks inside it lost the outermost breadcrumb.
+    ///
+    /// Asserted on the predicate rather than through `propose_profile`, because
+    /// no grammar available to this test suite can express the bug: every
+    /// declaration kind in Rust (`mod_item`, `struct_item`) and in the Lua
+    /// fixture (`function_declaration`, `variable_declaration`) happens to
+    /// contain a marker word, so an end-to-end version passes with the old
+    /// check restored — verified by reverting it. Ruby, which does express it,
+    /// is a registry grammar and not committed here.
     #[test]
     fn nesting_is_detected_by_shape_not_by_kind_name() {
-        // Found while seeding Ruby: its declarations are bare words (`class`,
-        // `module`, `method`), so a kind-name test saw `module` as nesting
-        // nothing and never proposed it as a container. Rust's `mod_item`
-        // carries a marker word, so this stands in for the same shape — what
-        // must drive the decision is the observed name+body, not the spelling.
-        let src = "mod outer { mod inner { fn f() {} } }";
-        let p = propose(Language::Rust, src);
+        // Ruby's declaration kinds — the ones that exposed the bug — carry none
+        // of the marker words the old check looked for. Pin that, so the case
+        // below is understood to be unreachable by a spelling test.
+        for bare in ["module", "class", "method"] {
+            let markers: Vec<_> =
+                DECLARATION_MARKERS.iter().filter(|m| bare.contains(**m)).collect();
+            if bare == "module" {
+                assert!(markers.is_empty(), "`module` is the marker-free case: {markers:?}");
+            }
+        }
+
+        // Walk a real tree and assert the predicate fires on a node chosen by
+        // its *fields*, not its name. `mod_item` has a name and a body; what
+        // matters is that `node_has_declaration_shape` reaches its decision
+        // from those fields, which is what lets Ruby's `module` work too.
+        let mut parser = Parser::new(Language::Rust).unwrap();
+        let tree = parser.parse(b"mod outer { mod inner { fn f() {} } }").unwrap();
+        let outer = tree.root_node().child(0).unwrap();
+        assert_eq!(outer.kind(), "mod_item");
+        assert!(node_has_declaration_shape(outer), "name + body must read as a declaration");
+        assert!(has_declaration_descendant(outer), "outer wraps inner");
+
+        // And end to end, it becomes a container.
+        let p = propose(Language::Rust, "mod outer { mod inner { fn f() {} } }");
         let names: Vec<&str> = p.profile.containers.iter().map(|(k, _)| k.as_str()).collect();
         assert!(names.contains(&"mod_item"), "{:?}", p.profile.containers);
     }
