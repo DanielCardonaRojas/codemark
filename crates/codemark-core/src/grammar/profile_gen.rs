@@ -143,6 +143,16 @@ pub fn propose_profile(
         ));
     }
 
+    if !samples_with_errors.is_empty() {
+        // A proposal built on a broken parse is unreliable, so make it visible
+        // in the log as well as in the returned value.
+        tracing::warn!(
+            target: "codemark::languages",
+            count = samples_with_errors.len(),
+            "some samples did not parse cleanly; the proposal may be incomplete"
+        );
+    }
+
     // Pass 1: decide landmarks from each kind's own shape.
     let landmarks: BTreeSet<String> =
         stats.iter().filter(|(k, s)| is_landmark(k, s)).map(|(k, _)| k.clone()).collect();
@@ -184,6 +194,16 @@ pub fn propose_profile(
         .collect();
     // Most frequent first; ties broken by name so the output is deterministic.
     evidence.sort_by(|a, b| b.occurrences.cmp(&a.occurrences).then(a.kind.cmp(&b.kind)));
+
+    tracing::debug!(
+        target: "codemark::languages",
+        language = %language.name(),
+        samples = samples.len(),
+        kinds_seen = stats.len(),
+        landmarks = landmarks.len(),
+        containers = containers.len(),
+        "proposed a grammar profile"
+    );
 
     Ok(ProfileProposal {
         profile: Profile {
@@ -286,8 +306,20 @@ fn looks_like_declaration(kind: &str) -> bool {
     !is_control_flow(kind) && DECLARATION_MARKERS.iter().any(|m| kind.contains(m))
 }
 
+/// Whether `kind` names a statement/expression rather than a declaration.
+///
+/// Matched on whole underscore-separated segments, not substrings: a plain
+/// `contains` makes `callback_declaration` match `call` and
+/// `entry_declaration` match `try_`, which would drop real declarations from
+/// `landmark_kinds` and label them as control flow.
 fn is_control_flow(kind: &str) -> bool {
-    CONTROL_FLOW_MARKERS.iter().any(|m| kind.starts_with(m) || kind.contains(m))
+    let segments: Vec<&str> = kind.split('_').filter(|s| !s.is_empty()).collect();
+    CONTROL_FLOW_MARKERS.iter().any(|m| {
+        // Markers are written with a trailing `_` where they prefix a
+        // construct (`if_`, `for_`); compare on the bare word either way.
+        let word = m.trim_end_matches('_');
+        segments.contains(&word)
+    })
 }
 
 /// A landmark is a node that introduces a named or callable construct.
@@ -371,12 +403,15 @@ fn label_for(kind: &str, landmark: bool) -> Option<&'static str> {
         ("return_", "return"),
         ("assignment", "assignment"),
     ];
+    // Whole-segment matching, same reason as `is_control_flow`: a substring
+    // test labels `callback_declaration` a "call".
+    let segments: Vec<&str> = kind.split('_').filter(|s| !s.is_empty()).collect();
     for (needle, label) in control {
-        if kind.starts_with(needle) || kind.contains(needle) {
+        if segments.contains(&needle.trim_end_matches('_')) {
             return Some(label);
         }
     }
-    if kind.contains("call") {
+    if segments.contains(&"call") {
         return Some("call");
     }
 
@@ -519,6 +554,26 @@ fn f() {
         assert_eq!(label_for("else_clause", false), None);
         // The construct itself still gets its label.
         assert_eq!(label_for("for_statement", false), Some("for loop"));
+    }
+
+    #[test]
+    fn control_flow_matches_whole_segments_not_substrings() {
+        // `callback_declaration` contains "call" and `entry_declaration`
+        // contains "try_", but both are declarations. Substring matching would
+        // drop them from landmarks and mislabel them.
+        assert!(!is_control_flow("callback_declaration"));
+        assert!(!is_control_flow("entry_declaration"));
+        assert!(!is_control_flow("pseudo_class_selector"));
+        // The point is that it is no longer labelled "call"; it has no
+        // declaration keyword either, so it gets no label rather than a wrong one.
+        assert_ne!(label_for("callback_declaration", true), Some("call"));
+
+        // Real control flow still matches, with or without the trailing `_`.
+        assert!(is_control_flow("if_statement"));
+        assert!(is_control_flow("for_statement"));
+        assert!(is_control_flow("do_block"));
+        assert!(is_control_flow("call_expression"));
+        assert_eq!(label_for("call_expression", false), Some("call"));
     }
 
     #[test]

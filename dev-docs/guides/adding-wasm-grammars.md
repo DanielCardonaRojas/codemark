@@ -187,14 +187,25 @@ which checks each kind and container field against the loaded grammar:
 ```
 $ codemark languages validate
 Found issues with installed grammars:
-  - ~/Library/Caches/codemark/grammars/ruby: profile.landmark_kinds[1]: node kind
-    'function_item' is not defined by the 'ruby' grammar
-  - ~/Library/Caches/codemark/grammars/ruby: profile.containers[0]: 'method' has no
-    field 'label' (available: name, parameters, body)
+  - ~/Library/Caches/codemark/grammars/ruby: error: profile.landmark_kinds[1]: node
+    kind 'function_item' is not defined by this grammar, so it can never match
+  - ~/Library/Caches/codemark/grammars/ruby: error: profile.containers[0].1: 'label'
+    is not a field in this grammar, so 'method' would produce no breadcrumb
+
+Warnings (these grammars still work):
+  - ~/Library/Caches/codemark/grammars/ruby: warning: profile.semantic_fields: unknown
+    profile key — it is ignored at load time (known keys: landmark_kinds, node_labels,
+    containers)
 ```
 
-A kind that doesn't exist is an **error** — it can never match, so that part of
-the profile is dead. Validate before you trust a profile you hand-wrote.
+A near miss gets a suggestion — `'local_function_declaration' … (did you mean
+'function_declaration'?)`.
+
+An **error** means that part of the profile is dead: it can never match, and an
+install is refused rather than committing it. A **warning** still works but is
+probably not what you meant — note that `containers` has no fallback, so an
+empty one silently produces no breadcrumbs at all. Validate before you trust a
+profile you hand-wrote.
 
 ---
 

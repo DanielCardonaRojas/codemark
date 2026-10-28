@@ -246,7 +246,7 @@ async fn fetch_text(url: &str, cap: u64) -> Result<String> {
         )));
     }
 
-    let client = crate::sync::build_sync_http_client()?;
+    let client = build_registry_http_client()?;
     tracing::debug!(target: "codemark::http", %url, "fetching from the grammar registry");
     let response = client
         .get(url)
@@ -278,6 +278,35 @@ async fn fetch_text(url: &str, cap: u64) -> Result<String> {
     }
 
     String::from_utf8(bytes).map_err(|_| Error::Operation(format!("{url} is not valid UTF-8")))
+}
+
+/// HTTP client for registry fetches.
+///
+/// Mirrors [`crate::sync::build_sync_http_client`]'s timeouts (and its
+/// rustls-only TLS) but adds a redirect policy: reqwest follows up to 10
+/// redirects by default, so an `https://` registry could 302 to plain `http://`
+/// and slip past the scheme check in [`fetch_text`], which only ever sees the
+/// *initial* URL. Each hop is re-checked here, and a downgrade to non-loopback
+/// HTTP stops the chain.
+fn build_registry_http_client() -> Result<reqwest::Client> {
+    let policy = reqwest::redirect::Policy::custom(|attempt| {
+        if attempt.previous().len() >= 10 {
+            return attempt.error("too many redirects");
+        }
+        let url = attempt.url();
+        let downgraded = url.scheme() == "http" && !url.host_str().is_some_and(host_is_loopback);
+        if downgraded {
+            return attempt.error("registry redirected to plain HTTP");
+        }
+        attempt.follow()
+    });
+
+    reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(10))
+        .timeout(Duration::from_secs(30))
+        .redirect(policy)
+        .build()
+        .map_err(|e| Error::Operation(format!("failed to build HTTP client: {e}")))
 }
 
 /// A short, filesystem-safe key identifying a registry URL.
@@ -322,9 +351,14 @@ fn is_loopback(url: &str) -> bool {
     if !parsed.username().is_empty() || parsed.password().is_some() {
         return false;
     }
-    let Some(host) = parsed.host_str() else {
-        return false;
-    };
+    parsed.host_str().is_some_and(host_is_loopback)
+}
+
+/// Whether a bare host string names the loopback interface.
+///
+/// Shared by [`is_loopback`] and the redirect policy so the initial check and
+/// each redirect hop can't drift apart.
+fn host_is_loopback(host: &str) -> bool {
     if host.eq_ignore_ascii_case("localhost") {
         return true;
     }
