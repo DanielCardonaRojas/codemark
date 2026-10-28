@@ -1514,6 +1514,9 @@ pub enum LanguagesCommand {
     /// Validate installed dynamic WASM grammars
     Validate(LanguagesValidateArgs),
 
+    /// Browse the grammar-profile registry
+    Registry(LanguagesRegistryArgs),
+
     /// Author a language profile (registry contributors)
     #[cfg(feature = "profile-authoring")]
     #[command(subcommand)]
@@ -1567,13 +1570,47 @@ pub struct LanguagesAddArgs {
     /// Path to the compiled .wasm grammar file
     pub wasm_file: std::path::PathBuf,
 
-    /// The language name (e.g., "ruby", "lua")
-    #[arg(long, short)]
-    pub name: String,
+    /// The language name (e.g., "ruby", "lua").
+    /// Required unless --from-registry supplies it.
+    #[arg(long, short, required_unless_present = "from_registry")]
+    pub name: Option<String>,
 
-    /// Comma-separated list of file extensions (e.g., "rb,ru")
-    #[arg(long, short)]
-    pub extensions: String,
+    /// Comma-separated list of file extensions (e.g., "rb,ru").
+    /// Required unless --from-registry supplies them.
+    #[arg(long, short, required_unless_present = "from_registry")]
+    pub extensions: Option<String>,
+
+    /// Install with the curated profile for this language from the grammar
+    /// registry, instead of an empty profile. --name/--extensions still win.
+    #[arg(long, value_name = "LANGUAGE")]
+    pub from_registry: Option<String>,
+
+    /// Bypass the cached registry index and re-fetch it
+    #[arg(long, requires = "from_registry")]
+    pub refresh: bool,
+}
+
+#[derive(Debug, clap::Args)]
+pub struct LanguagesRegistryArgs {
+    #[command(subcommand)]
+    pub command: RegistryCommand,
+}
+
+/// Browse the grammar-profile registry.
+#[derive(Debug, Subcommand)]
+pub enum RegistryCommand {
+    /// List the languages with a curated profile available
+    List(RegistryListArgs),
+}
+
+#[derive(Debug, clap::Args)]
+pub struct RegistryListArgs {
+    #[command(flatten)]
+    pub output: OutputArgs,
+
+    /// Bypass the cached index and re-fetch it
+    #[arg(long)]
+    pub refresh: bool,
 }
 
 // --- Args structs for formerly unit-variant subcommands ---

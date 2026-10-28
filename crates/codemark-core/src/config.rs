@@ -122,6 +122,55 @@ pub struct Config {
     pub publish: PublishConfig,
     #[serde(default)]
     pub tui: TuiConfig,
+    #[serde(default)]
+    pub grammars: GrammarsConfig,
+}
+
+/// The default grammar-profile registry.
+///
+/// Profiles only — the registry ships curated `manifest.json` files, never
+/// `.wasm` binaries, so there is no ABI build pipeline or grammar licensing to
+/// host. Users still build the grammar themselves.
+pub const DEFAULT_GRAMMAR_REGISTRY: &str =
+    "https://raw.githubusercontent.com/codemark-dev/codemark-grammars/main";
+
+/// How long a cached registry index stays fresh.
+const DEFAULT_INDEX_TTL_SECS: u64 = 60 * 60 * 24;
+
+/// Grammar registry configuration.
+#[derive(Debug, Default, Deserialize, Serialize)]
+#[serde(default)]
+pub struct GrammarsConfig {
+    /// Base URL of the grammar-profile registry. Point this at a fork, an
+    /// internal mirror, or a `file://` path for air-gapped use.
+    ///
+    /// Resolution order: `CODEMARK_GRAMMAR_REGISTRY` → this setting →
+    /// [`DEFAULT_GRAMMAR_REGISTRY`]. Use [`Self::registry_url`].
+    pub registry_url: Option<String>,
+
+    /// Seconds a cached registry index is considered fresh. Use
+    /// [`Self::index_ttl`].
+    pub index_ttl_secs: Option<u64>,
+}
+
+impl GrammarsConfig {
+    /// The registry base URL, env var winning over config so a one-off run can
+    /// retarget without editing a file (matching `CODEMARK_GRAMMARS_DIR`).
+    ///
+    /// The trailing slash is trimmed so callers can join paths uniformly.
+    pub fn registry_url(&self) -> String {
+        let raw = std::env::var("CODEMARK_GRAMMAR_REGISTRY")
+            .ok()
+            .filter(|s| !s.trim().is_empty())
+            .or_else(|| self.registry_url.clone())
+            .unwrap_or_else(|| DEFAULT_GRAMMAR_REGISTRY.to_string());
+        raw.trim_end_matches('/').to_string()
+    }
+
+    /// How long a cached index stays fresh (default: 24h).
+    pub fn index_ttl(&self) -> std::time::Duration {
+        std::time::Duration::from_secs(self.index_ttl_secs.unwrap_or(DEFAULT_INDEX_TTL_SECS))
+    }
 }
 
 /// Terminal UI configuration.

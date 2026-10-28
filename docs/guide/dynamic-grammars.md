@@ -51,6 +51,41 @@ See [Query Generation](./query-generation) for what landmarks do.
 codemark languages add path/to/grammar.wasm --name lua --extensions lua,luau
 ```
 
+### With a curated profile from the registry
+
+A grammar installed on its own gets an **empty profile**, so breadcrumbs and
+query summaries don't work until someone writes one. The grammar registry ships
+curated profiles — check whether yours is already there:
+
+```bash
+codemark languages registry list
+codemark languages add ./tree-sitter-lua.wasm --from-registry lua
+```
+
+`--name` and `--extensions` become optional (the registry supplies them) and
+still win as overrides. The registry ships **profiles, not binaries**: you build
+the `.wasm` yourself, which is why there's no ABI or licensing surprise in what
+you download.
+
+The index is cached under `<cache>/.registry/`, so listing and installing keep
+working offline once you've fetched it; `--refresh` forces a re-fetch. Point
+`registry_url` at a fork, an internal mirror, or a `file://` path for air-gapped
+use:
+
+```toml
+# ~/.config/codemark/config.toml
+[grammars]
+registry_url = "file:///srv/codemark-grammars"
+index_ttl_secs = 86400
+```
+
+`CODEMARK_GRAMMAR_REGISTRY` overrides it for a single run.
+
+A registry profile gets no special trust: it is schema-checked, linted against
+the grammar, and run through the same name/extension validation as a hand-typed
+`--name`, so a registry entry can't claim `.rs` or shadow a built-in. Fetches
+require HTTPS (except localhost) and are size-capped.
+
 `--name` and `--extensions` let you override what the manifest declares. The
 install is **hardened** — it never lets an unloadable grammar replace a working
 one:
@@ -98,6 +133,8 @@ installed grammars appear without a restart.
 | Command | Effect |
 |---------|--------|
 | `codemark languages add <file>` | Install a grammar (see above). |
+| `codemark languages add <file> --from-registry <lang>` | Install with a curated profile. |
+| `codemark languages registry list` | List languages with a curated profile available. |
 | `codemark languages list` | List all supported languages (built-ins + dynamic). |
 | `codemark languages validate` | Verify each grammar loads **and lint its profile** (see below). |
 

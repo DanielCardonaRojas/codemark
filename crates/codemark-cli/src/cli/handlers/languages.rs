@@ -11,6 +11,9 @@ pub async fn handle_languages(
     match &args.command {
         Some(LanguagesCommand::Add(add_args)) => handle_add(cli, mode, add_args).await,
         Some(LanguagesCommand::Validate(_)) => handle_validate(cli, mode).await,
+        Some(LanguagesCommand::Registry(r)) => match &r.command {
+            crate::cli::RegistryCommand::List(a) => handle_registry_list(cli, mode, a).await,
+        },
         #[cfg(feature = "profile-authoring")]
         Some(LanguagesCommand::Profile(crate::cli::ProfileCommand::Init(a))) => {
             handle_profile_init(mode, a).await
@@ -127,26 +130,94 @@ async fn handle_profile_init(mode: &OutputMode, args: &crate::cli::ProfileInitAr
 }
 
 async fn handle_add(
-    _cli: &crate::cli::Cli,
+    cli: &crate::cli::Cli,
     mode: &OutputMode,
     args: &LanguagesAddArgs,
 ) -> Result<()> {
-    // A local .wasm carries no metadata, so name + extensions are required
-    // overrides; the source layer reads the bytes and the shared pipeline
-    // validates, stages, and swaps them in.
-    let overrides = InstallOverrides {
-        name: Some(args.name.clone()),
-        extensions: Some(args.extensions.clone()),
-    };
+    // A local .wasm carries no metadata, so name + extensions come from the
+    // caller — or, with --from-registry, from the curated entry. Either way the
+    // source layer reads the bytes and the shared pipeline validates, stages,
+    // and swaps them in.
+    let overrides =
+        InstallOverrides { name: args.name.clone(), extensions: args.extensions.clone() };
+
     // Pass the PathBuf straight through (not a lossy string) so a non-UTF-8 path
     // isn't mangled.
-    let outcome = grammar::install_from_path(&args.wasm_file, overrides).await?;
-    print_install_outcome(mode, &outcome)
+    let outcome = match &args.from_registry {
+        Some(language) => {
+            let config = crate::cli::handlers::load_config(cli);
+            let client = codemark_core::grammar::registry_source::RegistryClient::from_config(
+                &config.grammars,
+            )?;
+            grammar::install_from_registry(
+                &args.wasm_file,
+                language,
+                overrides,
+                &client,
+                args.refresh,
+            )
+            .await?
+        }
+        None => grammar::install_from_path(&args.wasm_file, overrides).await?,
+    };
+    print_install_outcome(mode, &outcome, args.from_registry.is_some())
+}
+
+async fn handle_registry_list(
+    cli: &crate::cli::Cli,
+    mode: &OutputMode,
+    args: &crate::cli::RegistryListArgs,
+) -> Result<()> {
+    use codemark_core::grammar::registry_source::RegistryClient;
+
+    // Layered config, falling back to defaults outside a repo — browsing the
+    // registry must not require `codemark init`.
+    let config = crate::cli::handlers::load_config(cli);
+    let client = RegistryClient::from_config(&config.grammars)?;
+    let index = client.fetch_index(args.refresh).await?;
+
+    if matches!(mode, OutputMode::Json) {
+        output::write_json_success(&serde_json::json!({
+            "registry": client.base_url(),
+            "grammars": index.grammars,
+        }))?;
+        return Ok(());
+    }
+
+    if index.grammars.is_empty() {
+        println!("The registry at {} lists no grammars.", client.base_url());
+        return Ok(());
+    }
+
+    let mut table = comfy_table::Table::new();
+    table
+        .load_preset(comfy_table::presets::UTF8_FULL)
+        .set_content_arrangement(comfy_table::ContentArrangement::Dynamic)
+        .set_header(vec!["Language", "Extensions", "Profile", "Built against"]);
+    for e in &index.grammars {
+        table.add_row(vec![
+            e.name.clone(),
+            e.extensions.join(", "),
+            e.profile_version.clone().unwrap_or_else(|| "-".to_string()),
+            e.grammar_rev.clone().unwrap_or_else(|| "-".to_string()),
+        ]);
+    }
+    println!("{table}");
+    println!("\nRegistry: {}", client.base_url());
+    println!(
+        "The registry ships profiles, not grammars — build the .wasm yourself, then:\n  codemark \
+         languages add <grammar.wasm> --from-registry <language>"
+    );
+    Ok(())
 }
 
 /// Render a successful grammar install for the active [`OutputMode`]. Kept in the
 /// CLI so `core::grammar` stays presentation-free.
-fn print_install_outcome(mode: &OutputMode, outcome: &InstallOutcome) -> Result<()> {
+fn print_install_outcome(
+    mode: &OutputMode,
+    outcome: &InstallOutcome,
+    curated_profile: bool,
+) -> Result<()> {
     let InstallOutcome { name, directory, extensions, runtime_enabled } = outcome;
     let ext_list = extensions.join(", ");
 
@@ -157,6 +228,7 @@ fn print_install_outcome(mode: &OutputMode, outcome: &InstallOutcome) -> Result<
             "directory": directory,
             "extensions": extensions,
             "runtime_enabled": runtime_enabled,
+            "curated_profile": curated_profile,
         }))?;
     } else {
         println!("Successfully added grammar for '{name}' to {}", directory.display());
@@ -171,13 +243,22 @@ fn print_install_outcome(mode: &OutputMode, outcome: &InstallOutcome) -> Result<
                  for the following extensions: {ext_list}"
             );
         }
-        println!(
-            "The grammar has an empty profile — parsing works now, but breadcrumbs and query \
-             summaries need one. Generate a profile from sample files rather than hand-writing \
-             it:\n  codemark languages profile init <grammar.wasm> --sample <file>\nThen put the \
-             result in {}/manifest.json and run `codemark languages validate`.",
-            directory.display()
-        );
+        if curated_profile {
+            println!(
+                "Installed with a curated profile from the registry, so breadcrumbs and query \
+                 summaries work out of the box."
+            );
+        } else {
+            println!(
+                "The grammar has an empty profile — parsing works now, but breadcrumbs and query \
+                 summaries need one. Check whether the registry already has one:\n  codemark \
+                 languages registry list\nOtherwise generate one from sample files rather than \
+                 hand-writing it:\n  codemark languages profile init <grammar.wasm> --sample \
+                 <file>\nThen put the result in {}/manifest.json and run `codemark languages \
+                 validate`.",
+                directory.display()
+            );
+        }
     }
 
     Ok(())

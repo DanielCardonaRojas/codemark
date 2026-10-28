@@ -16,6 +16,7 @@
 
 pub mod profile_gen;
 pub mod protocol;
+pub mod registry_source;
 pub mod source;
 
 use crate::error::{Error, Result};
@@ -59,6 +60,60 @@ pub async fn install_from_path(
 
     let wasm_bytes = resolved.wasm.into_bytes().await?;
     install_grammar(&name, &extensions, resolved.profile, wasm_bytes)
+}
+
+/// Install a local `.wasm` using a **curated profile** fetched from the grammar
+/// registry (`codemark languages add <wasm> --from-registry <name>`).
+///
+/// Composed rather than implemented as a [`source::GrammarSource`]: the registry
+/// serves a *profile*, not wasm bytes, so a remote `WasmPayload` variant would
+/// model a payload it never carries. Instead the bytes come from
+/// [`source::LocalFileSource`] and the name/extensions/profile from the
+/// registry, and both meet at the existing [`install_grammar`] — the hardened
+/// stage-then-swap is untouched.
+///
+/// `overrides` still win over the registry, matching `add`'s precedence.
+pub async fn install_from_registry(
+    path: &std::path::Path,
+    registry_name: &str,
+    overrides: InstallOverrides,
+    client: &registry_source::RegistryClient,
+    refresh: bool,
+) -> Result<InstallOutcome> {
+    let entry = client.find(registry_name, refresh).await?;
+    let manifest = client.fetch_profile(&entry).await?;
+
+    // Caller's flags beat the registry, which beats the manifest's own fields.
+    let name = overrides
+        .name
+        .or_else(|| manifest.get("name").and_then(|v| v.as_str()).map(String::from))
+        .unwrap_or_else(|| entry.name.clone());
+
+    let raw_extensions = overrides.extensions.unwrap_or_else(|| {
+        let from_manifest = manifest
+            .get("extensions")
+            .and_then(|v| v.as_array())
+            .map(|a| a.iter().filter_map(|e| e.as_str()).collect::<Vec<_>>().join(","))
+            .unwrap_or_default();
+        if from_manifest.is_empty() { entry.extensions.join(",") } else { from_manifest }
+    });
+
+    // A registry entry gets no special trust: it must not claim `rs` or shadow a
+    // built-in any more than a hand-typed `--name` could.
+    let extensions = validate_name_and_extensions(&name, &raw_extensions)?;
+
+    let profile = manifest.get("profile").cloned();
+    let wasm_bytes = source::LocalFileSource.resolve_path(path)?.wasm.into_bytes().await?;
+
+    tracing::debug!(
+        target: "codemark::languages",
+        %name,
+        registry = %client.base_url(),
+        profile_version = ?entry.profile_version,
+        "installing with a registry profile"
+    );
+
+    install_grammar(&name, &extensions, profile, wasm_bytes)
 }
 
 /// The outcome of a successful [`install_grammar`], returned so the caller can

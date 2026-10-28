@@ -80,6 +80,18 @@ grammar cache. It starts with an **empty profile**, which is enough for parsing
 and structural resolution to work — you only need to fill the profile to get good
 **breadcrumbs** and **query summaries**.
 
+> **Check the registry first.** If someone has already curated a profile for your
+> language, don't write one:
+>
+> ```bash
+> codemark languages registry list
+> codemark languages add ./tree-sitter-ruby.wasm --from-registry ruby
+> ```
+>
+> The registry ships profiles only — you still build the `.wasm`. The rest of
+> this section is for a language the registry doesn't cover yet (and the result
+> is worth contributing back).
+
 The cache lives at the platform cache dir (override with `$CODEMARK_GRAMMARS_DIR`):
 
 | Platform | Default location |
