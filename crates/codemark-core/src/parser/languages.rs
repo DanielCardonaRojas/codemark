@@ -111,8 +111,6 @@ impl Language {
         }
     }
 
-    /// Infer language from a file extension. Checks static languages first,
-    /// then the dynamic grammar registry.
     /// Resolve a file extension to a language, **preferring a dynamic grammar**
     /// over the built-in that would otherwise claim it.
     ///
@@ -125,9 +123,20 @@ impl Language {
     /// Nothing is shadowed by accident — installing over a built-in takes an
     /// explicit `--override-builtin` (see
     /// [`validate_name_and_extensions`](crate::grammar::validate_name_and_extensions)).
+    ///
+    /// **Without the `wasm` feature the built-in wins instead.** `Parser::new`
+    /// cannot load a dynamic grammar in that build, so preferring one would
+    /// route `.rs` to a grammar that then fails to parse — breaking a language
+    /// that worked before the override was installed. A grammar that can't be
+    /// loaded is not a usable override.
     pub fn from_extension(ext: &str) -> Option<Self> {
-        crate::parser::registry::LanguageRegistry::from_extension(ext)
-            .or_else(|| Self::static_from_extension(ext))
+        if cfg!(feature = "wasm") {
+            crate::parser::registry::LanguageRegistry::from_extension(ext)
+                .or_else(|| Self::static_from_extension(ext))
+        } else {
+            Self::static_from_extension(ext)
+                .or_else(|| crate::parser::registry::LanguageRegistry::from_extension(ext))
+        }
     }
 
     /// Resolve a file extension (without the dot) to a *built-in* language,
@@ -182,12 +191,18 @@ impl FromStr for Language {
     /// Resolve a language name, preferring a dynamic grammar over a built-in of
     /// the same name — matching [`Language::from_extension`], so a stored
     /// bookmark and a fresh one agree on which grammar a name refers to.
+    ///
+    /// Falls back to built-in-first without the `wasm` feature, for the same
+    /// reason: an unloadable grammar is not a usable override.
     fn from_str(s: &str) -> Result<Self> {
-        if let Some(lang) = crate::parser::registry::LanguageRegistry::from_name(s) {
-            return Ok(lang);
-        }
-        Language::static_from_name(s)
-            .ok_or_else(|| Error::Input(format!("unsupported language: {s}")))
+        let resolved = if cfg!(feature = "wasm") {
+            crate::parser::registry::LanguageRegistry::from_name(s)
+                .or_else(|| Language::static_from_name(s))
+        } else {
+            Language::static_from_name(s)
+                .or_else(|| crate::parser::registry::LanguageRegistry::from_name(s))
+        };
+        resolved.ok_or_else(|| Error::Input(format!("unsupported language: {s}")))
     }
 }
 
@@ -390,6 +405,29 @@ impl ParseCache {
 
 #[cfg(test)]
 mod tests {
+    /// Precedence must follow what the build can actually load.
+    ///
+    /// With `wasm`, a dynamic grammar wins — that is what lets a bundled
+    /// language be replaced by a registry one. Without it, `Parser::new`
+    /// rejects every dynamic grammar, so preferring one would route `.rs` to a
+    /// grammar that cannot parse and break a language that worked before the
+    /// override was installed.
+    #[test]
+    fn builtin_resolution_survives_without_the_wasm_feature() {
+        use super::Language;
+        use std::str::FromStr;
+
+        // No dynamic grammar is installed in the test environment, so these
+        // assert the fallback arm of each lookup is wired up at all — the
+        // ordering itself is `cfg!(feature = "wasm")` and is covered by the
+        // doc comment plus the no-default-features CI build.
+        assert!(matches!(Language::from_extension("rs"), Some(Language::Rust)));
+        assert!(matches!(Language::from_str("rust"), Ok(Language::Rust)));
+
+        // And a built-in stays reachable by alias either way.
+        assert!(matches!(Language::from_str("rs"), Ok(Language::Rust)));
+    }
+
     use super::*;
 
     #[test]

@@ -107,21 +107,6 @@ impl LanguageRegistry {
 
             match serde_json::from_str::<Manifest>(&manifest_text) {
                 Ok(manifest) => {
-                    // A grammar may deliberately replace a built-in — that is
-                    // how a bundled language gets unbundled — so this is no
-                    // longer skipped. Installing one takes an explicit
-                    // `--override-builtin`, and `Language::from_name` prefers
-                    // the dynamic grammar, so registering it is what makes the
-                    // override take effect. Say so once, since silently
-                    // changing how a built-in language parses would be a
-                    // surprising thing to discover later.
-                    if is_static_language_name(&manifest.name) {
-                        eprintln!(
-                            "codemark: dynamic grammar '{}' overrides the built-in language of the same name",
-                            manifest.name
-                        );
-                    }
-
                     if !wasm_path.exists() {
                         eprintln!(
                             "codemark: skipping dynamic grammar '{}' — grammar.wasm not found",
@@ -158,18 +143,21 @@ impl LanguageRegistry {
                     }
                     registry.by_name.insert(name_key, lang.clone());
 
+                    // Announce the override only now that the grammar is
+                    // actually registered — reporting it before the checks
+                    // above would claim an override for a grammar discovery
+                    // then skips. Worth saying once, since silently changing
+                    // how a built-in language parses is a poor thing to
+                    // discover later.
+                    if is_static_language_name(&manifest.name) {
+                        eprintln!(
+                            "codemark: dynamic grammar '{}' overrides the built-in language of the same name",
+                            manifest.name
+                        );
+                    }
+
                     for ext in &manifest.extensions {
                         let key = ext.to_lowercase();
-                        // A built-in claims this extension too. Registering it
-                        // is no longer a dead mapping: `from_extension` prefers
-                        // the dynamic grammar, which is what lets a registry
-                        // grammar take over for an unbundled built-in.
-                        if is_static_extension(&key) {
-                            eprintln!(
-                                "codemark: grammar '{}' now handles '.{key}' instead of the built-in",
-                                manifest.name
-                            );
-                        }
                         // Keep the first grammar to claim an extension (entries
                         // are sorted, so this is deterministic) and warn rather
                         // than silently overwriting with a nondeterministic winner.
@@ -180,6 +168,18 @@ impl LanguageRegistry {
                                 manifest.name
                             );
                             continue;
+                        }
+                        // A built-in claims this extension too. Registering it
+                        // is no longer a dead mapping: `from_extension` prefers
+                        // the dynamic grammar, which is what lets a registry
+                        // grammar take over for an unbundled built-in. Reported
+                        // after the conflict checks, so a mapping that is
+                        // ignored isn't announced as taking effect.
+                        if is_static_extension(&key) {
+                            eprintln!(
+                                "codemark: grammar '{}' now handles '.{key}' instead of the built-in",
+                                manifest.name
+                            );
                         }
                         registry.by_extension.insert(key, lang.clone());
                     }

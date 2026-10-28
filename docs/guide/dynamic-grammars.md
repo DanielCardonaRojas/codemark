@@ -106,7 +106,9 @@ index_ttl_secs = 86400
 
 A registry profile gets no special trust: it is schema-checked, linted against
 the grammar, and run through the same name/extension validation as a hand-typed
-`--name`, so a registry entry can't claim `.rs` or shadow a built-in. Fetches
+`--name` — so claiming `.rs` or shadowing a built-in requires
+`--override-builtin` from a registry entry exactly as it does from the command
+line. Fetches
 require HTTPS (except localhost) and are size-capped.
 
 `--name` and `--extensions` let you override what the manifest declares. The
@@ -116,7 +118,7 @@ one:
 ```mermaid
 flowchart TD
   A["languages add file.wasm\n--name --exts"] --> B["read bytes ≤ 32 MiB\n(rejects FIFOs/devices)"]
-  B --> C["validate name + extensions\nreject builtin collisions"]
+  B --> C["validate name + extensions\nbuiltin collision needs --override-builtin"]
   C --> D["stage into .staging-name-pid"]
   D --> E["wasm build: load staged grammar\nto confirm it's valid"]
   E --> F["acquire per-name lock .lock-name"]
