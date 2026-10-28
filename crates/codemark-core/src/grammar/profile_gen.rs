@@ -246,10 +246,15 @@ fn collect(node: Node, stats: &mut BTreeMap<String, KindStats>) {
             entry.has_nested_name = true;
         }
 
-        // Does this node wrap another declaration candidate? Checked against the
-        // shape test rather than the final landmark set, since that set isn't
-        // known until every sample is walked.
-        if looks_like_declaration(&kind) && has_declaration_descendant(node) {
+        // Does this node wrap another declaration? Judged by observed *shape*
+        // (a name and a body) rather than by the kind's name, because plenty of
+        // grammars name declarations with no telltale word in them — Ruby's
+        // `module` and `class` are bare. A name-based test made `module` look
+        // like it nested nothing, so it never became a container.
+        //
+        // The final landmark set isn't known until every sample is walked, so
+        // this uses the same per-node test `is_landmark` applies later.
+        if node_has_declaration_shape(node) && has_declaration_descendant(node) {
             entry.nests_landmarks = true;
         }
     }
@@ -290,7 +295,7 @@ fn nested_name_within(node: Node, depth: usize) -> bool {
 fn has_declaration_descendant(node: Node) -> bool {
     let mut cursor = node.walk();
     for child in node.children(&mut cursor) {
-        if child.is_named() && looks_like_declaration(child.kind()) {
+        if child.is_named() && node_has_declaration_shape(child) {
             return true;
         }
         if has_declaration_descendant(child) {
@@ -300,10 +305,41 @@ fn has_declaration_descendant(node: Node) -> bool {
     false
 }
 
-/// Name-only test for "this kind reads like a declaration", used while walking,
-/// before per-kind stats are complete.
-fn looks_like_declaration(kind: &str) -> bool {
-    !is_control_flow(kind) && DECLARATION_MARKERS.iter().any(|m| kind.contains(m))
+/// Whether this *node* has the shape of a declaration: a name field and a body.
+///
+/// Shape rather than kind name, because grammars don't agree on naming — Ruby
+/// calls them `class`/`module`/`method`, Rust `*_item`, Lua `*_declaration`.
+/// A kind whose name carries a declaration word counts too, so an anonymous
+/// `function_definition` with a body still registers.
+///
+/// Mirrors the per-node half of [`is_landmark`]; that one additionally consults
+/// accumulated stats, which aren't available mid-walk.
+fn node_has_declaration_shape(node: Node) -> bool {
+    let kind = node.kind();
+    if is_control_flow(kind) {
+        return false;
+    }
+    let mut has_name = false;
+    let mut has_body = false;
+    for i in 0..node.child_count() {
+        let Some(field) = node.field_name_for_child(i as u32) else { continue };
+        if NAME_FIELDS.contains(&field) {
+            has_name = true;
+        }
+        if BODY_FIELDS.contains(&field) {
+            has_body = true;
+        }
+    }
+    if has_name && has_body {
+        return true;
+    }
+    // Mirrors `is_landmark`'s remaining tiers: a declaration-shaped kind with a
+    // body but no name of its own (an anonymous function expression), with a
+    // name but no body (a type alias, a const), or with its name nested in a
+    // wrapper (Lua's `variable_declaration`, whose name sits under
+    // `assignment_statement > variable_list`).
+    let declaration_word = DECLARATION_MARKERS.iter().any(|m| kind.contains(m));
+    declaration_word && (has_body || has_name || nested_name_within(node, 2))
 }
 
 /// Whether `kind` names a statement/expression rather than a declaration.
@@ -510,6 +546,19 @@ mod auth {
         let names: Vec<&str> = p.profile.containers.iter().map(|(k, _)| k.as_str()).collect();
         assert!(names.contains(&"mod_item"), "{:?}", p.profile.containers);
         assert!(names.contains(&"impl_item"), "{:?}", p.profile.containers);
+    }
+
+    #[test]
+    fn nesting_is_detected_by_shape_not_by_kind_name() {
+        // Found while seeding Ruby: its declarations are bare words (`class`,
+        // `module`, `method`), so a kind-name test saw `module` as nesting
+        // nothing and never proposed it as a container. Rust's `mod_item`
+        // carries a marker word, so this stands in for the same shape — what
+        // must drive the decision is the observed name+body, not the spelling.
+        let src = "mod outer { mod inner { fn f() {} } }";
+        let p = propose(Language::Rust, src);
+        let names: Vec<&str> = p.profile.containers.iter().map(|(k, _)| k.as_str()).collect();
+        assert!(names.contains(&"mod_item"), "{:?}", p.profile.containers);
     }
 
     #[test]
