@@ -190,7 +190,8 @@ Found issues with installed grammars:
   - ~/Library/Caches/codemark/grammars/ruby: error: profile.landmark_kinds[1]: node
     kind 'function_item' is not defined by this grammar, so it can never match
   - ~/Library/Caches/codemark/grammars/ruby: error: profile.containers[0].1: 'label'
-    is not a field in this grammar, so 'method' would produce no breadcrumb
+    is not a field in this grammar, so the container entry for 'method' names
+    something that doesn't exist
 
 Warnings (these grammars still work):
   - ~/Library/Caches/codemark/grammars/ruby: warning: profile.semantic_fields: unknown
@@ -209,10 +210,15 @@ profile you hand-wrote.
 
 What `validate` **can't** check: tree-sitter's `Language` exposes field names
 globally, not per node kind, so a container like `["mod_item", "value"]` — where
-`value` is a real field but not one `mod_item` has — passes cleanly and still
-produces no breadcrumb. Confirm each container by bookmarking a line nested
-inside it, or use [the generator](#generating-a-profile-recommended), which reads
-the field off a real parse instead of guessing.
+`value` is a real field but not one `mod_item` has — passes cleanly. That gap is
+cosmetic today, because breadcrumbs match on the node kind alone and never read
+the field; it matters for the schema being correct, not for current output.
+[The generator](#generating-a-profile-recommended) reads the field off a real
+parse rather than guessing.
+
+The check that *does* affect output is the node kind: get `containers[].0` wrong
+and the ancestor never matches, so breadcrumbs go blank. Confirm by bookmarking
+a line nested inside the container and checking its context line.
 
 ---
 

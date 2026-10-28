@@ -189,18 +189,22 @@ pub fn lint(value: &serde_json::Value, grammar: &tree_sitter::Language) -> Vec<L
                 check_kind(kind, format!("profile.containers[{i}].0"), &mut findings);
                 // Tree-sitter's static `Language` exposes field names globally,
                 // not per node kind, so this only catches a field the grammar
-                // has never heard of. A field that exists on *some other* kind
-                // (`("mod_item", "value")`) passes here and still yields no
-                // breadcrumb — the generator guards that case by deriving the
-                // field from an observed parse, and `profile init` is the
-                // reliable way to get it right.
+                // has never heard of; one that exists on *some other* kind
+                // (`("mod_item", "value")`) passes.
+                //
+                // That gap is currently cosmetic: `extract_breadcrumbs` matches
+                // on the kind alone and never reads this field, so a wrong one
+                // changes nothing at runtime. It is still worth validating —
+                // the field is part of the schema, the generator derives it
+                // from an observed parse, and breadcrumbs may yet use it to
+                // extract the name rather than the whole line.
                 if !fields.contains(field) {
                     findings.push(LintFinding {
                         severity: LintSeverity::Error,
                         path: format!("profile.containers[{i}].1"),
                         message: format!(
-                            "'{field}' is not a field in this grammar, so '{kind}' would produce no \
-                             breadcrumb{}",
+                            "'{field}' is not a field in this grammar, so the container entry for \
+                             '{kind}' names something that doesn't exist{}",
                             suggest(field, &fields)
                         ),
                     });
@@ -737,9 +741,11 @@ mod tests {
     // Documents a known limit rather than asserting desirable behavior: the
     // static `Language` API exposes field names globally, not per kind, so a
     // field that is real *somewhere* in the grammar passes even when the paired
-    // kind doesn't carry it. Such a container silently yields no breadcrumb.
-    // Deriving the field from an observed parse (`profile init`) is what
-    // actually prevents this; if tree-sitter ever exposes per-kind fields, this
+    // kind doesn't carry it.
+    //
+    // Harmless today — `extract_breadcrumbs` reads only the kind, so the field
+    // can't affect output — but it would bite if breadcrumbs ever used the
+    // field to extract the name. If tree-sitter exposes per-kind fields, this
     // should become an error and the test should flip.
     #[test]
     fn lint_cannot_catch_a_field_valid_on_a_different_kind() {

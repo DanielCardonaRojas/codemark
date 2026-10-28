@@ -744,10 +744,12 @@ just stops producing breadcrumbs.
 `validate` checks that each node kind is defined by the grammar, and that each
 container field exists *somewhere* in it. It cannot check that a field belongs
 to its paired kind — tree-sitter exposes field names globally — so
-`["mod_item", "value"]` passes validation and still yields no breadcrumb. After
-validating, confirm each container actually produces one (step 3's `--dry-run`,
-or `codemark show` on a bookmark nested inside it). Generating the profile
-avoids this entirely: `profile init` reads the field off a real parse.
+`["mod_item", "value"]` passes. That gap is cosmetic: breadcrumbs match on the
+node kind alone and never read the field.
+
+What does matter is `containers[].0`. Get the kind wrong and the ancestor never
+matches, so breadcrumbs go blank with no error. After validating, confirm with
+`codemark show` on a bookmark nested inside the container.
 
 ```bash
 codemark languages validate
@@ -759,7 +761,8 @@ Found issues with installed grammars:
   - .../lua: error: profile.landmark_kinds[1]: node kind 'function_item' is not
     defined by this grammar, so it can never match
   - .../lua: error: profile.containers[0].1: 'label' is not a field in this
-    grammar, so 'function_declaration' would produce no breadcrumb
+    grammar, so the container entry for 'function_declaration' names something
+    that doesn't exist
 ```
 
 Close misses get a suggestion (`'local_function_declaration' … did you mean

@@ -163,11 +163,12 @@ block an install, so a bad profile can't replace a working grammar.
 fallback: an empty one means breadcrumbs are silently blank, which is why it's
 called out.
 
-One limit worth knowing: tree-sitter exposes field names globally rather than per
+One limit of the lint: tree-sitter exposes field names globally rather than per
 node kind, so a container field that is real *somewhere* in the grammar passes
-validation even if its paired kind doesn't carry it — and that container still
-produces no breadcrumb. Check a nested bookmark after validating, or let
-`languages profile init` derive the field from an actual parse.
+validation even if its paired kind doesn't carry it. Today that is cosmetic —
+breadcrumbs match on the node kind alone and never read the field — but it means
+a clean `validate` isn't proof the pair is right. `languages profile init`
+derives the field from an actual parse.
 
 ::: tip Non-WASM builds
 If you compiled the CLI yourself with `--no-default-features` (dropping the
