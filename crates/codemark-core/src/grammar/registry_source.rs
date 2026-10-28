@@ -55,7 +55,9 @@ pub struct RegistryEntry {
     pub profile_version: Option<String>,
     /// Path to the manifest, relative to the registry base URL.
     pub profile_url: String,
-    /// Tree-sitter ABI the profile was verified against. Codemark loads 0.25.
+    /// Tree-sitter CLI version the profile was verified against. Informational:
+    /// codemark's runtime accepts ABI 13–15 (roughly CLI 0.21–0.25), and the
+    /// real check is whether the grammar loads, so this is not a gate.
     #[serde(default)]
     pub ts_abi: Option<String>,
     /// Upstream grammar repository, so the user knows what to build.

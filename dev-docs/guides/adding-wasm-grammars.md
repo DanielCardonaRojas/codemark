@@ -13,25 +13,44 @@ get a grammar, install it, and write its profile.
 
 ## The one rule that matters: ABI compatibility
 
-Codemark loads grammars with Tree-sitter **0.25**'s `WasmStore`. A `.wasm` built
-against a different Tree-sitter version can fail to load or crash while parsing.
+Codemark loads grammars through Tree-sitter 0.25's `WasmStore`, which accepts
+**ABI versions 13 through 15**:
 
-So the single most important thing is: **the grammar's `.wasm` must be built with
-the Tree-sitter 0.25 CLI.** The reliable way to guarantee that is to build it
-yourself with a 0.25 CLI (below). Codemark does **not** download grammars for you
-— you provide the `.wasm` and install it with `codemark languages add`.
+```c
+/* tree_sitter/api.h */
+#define TREE_SITTER_LANGUAGE_VERSION             15
+#define TREE_SITTER_MIN_COMPATIBLE_LANGUAGE_VERSION 13
+```
+
+Tree-sitter is **backwards-compatible but not forwards-compatible**: a grammar
+built with an older CLI loads fine; one built with a *newer* CLI than codemark's
+runtime does not. In practice ABI 13–15 covers CLI 0.21 through 0.25 — which is
+nearly the entire published ecosystem, since the
+[wiki parser list](https://github.com/tree-sitter/tree-sitter/wiki/List-of-parsers)
+only catalogues parsers at ABI ≥ 13.
+
+So you do **not** need to match 0.25 exactly. Building with a 0.25 CLI is simply
+the safest default, because it can never be too new.
 
 > A grammar repo's `tree-sitter.json` has a `metadata.version`, but that is the
-> grammar package's **own** semver — *not* the Tree-sitter/ABI version — so don't
-> rely on it to judge compatibility. The CLI a grammar was built with is what
-> matters, and building it yourself removes the guesswork.
+> grammar package's **own** semver — *not* the ABI version — so don't rely on it
+> to judge compatibility.
+
+**You don't have to guess.** `codemark languages add` loads the `.wasm` through
+the same `WasmStore` the runtime uses before committing anything, so an
+incompatible module is rejected up front with a clear error. Try the grammar you
+have; rebuild only if it's refused.
+
+> Verified: the prebuilt `.wasm` from `tree-sitter-bash` **v0.23.3** — two minor
+> versions before 0.25 — installs and parses correctly, producing properly
+> anchored queries. Earlier revisions of this guide told you to reject it.
 
 ---
 
-## Build the `.wasm` with the 0.25 CLI, then `add` it
+## Build the `.wasm`, then `add` it
 
 ```bash
-# CLI must be 0.25 to match codemark's runtime
+# 0.25 is the safe default — it can never produce a too-new ABI for codemark.
 npm install -g tree-sitter-cli@0.25    # or: cargo install tree-sitter-cli --version ^0.25
 tree-sitter --version                  # confirm 0.25.x
 
@@ -58,10 +77,13 @@ to improve breadcrumbs.
 
 ### Using a prebuilt `.wasm` from a release
 
-Some grammar repos publish a `.wasm` in their GitHub releases. You can use one —
-but **only if it was built with the 0.25 CLI** (check the repo's `package.json`
-`tree-sitter-cli` dev-dependency at that tag; if it isn't `0.25.x`, build from
-source instead). Download it and `add` it the same way:
+Some grammar repos publish a `.wasm` in their GitHub releases, which skips the
+Docker/emcc step entirely. **Try it first** — anything built with CLI 0.21–0.25
+loads, and `add` tells you immediately if it doesn't. Only a `.wasm` from a CLI
+*newer* than codemark's runtime is rejected, since Tree-sitter isn't
+forwards-compatible.
+
+Download it and `add` it the same way:
 
 ```bash
 # -f makes curl fail on a 404/moved asset instead of saving an HTML error page
@@ -228,9 +250,9 @@ Three different version numbers are in play — don't conflate them:
 
 - **Tree-sitter CLI / ABI version** — the version of the `tree-sitter` CLI the
   grammar was **compiled with** (its `package.json` `tree-sitter-cli`
-  dev-dependency). This is what determines **ABI compatibility** and must be
-  **0.25.x** for codemark. Build the `.wasm` with a 0.25 CLI and this is
-  guaranteed.
+  dev-dependency). This determines **ABI compatibility**: codemark accepts
+  ABI 13–15, i.e. roughly CLI 0.21–0.25. Only a *newer* CLI than codemark's
+  runtime is a problem, so building with 0.25 is the safe default.
 
 - **Grammar package version** — the `metadata.version` in the grammar's
   `tree-sitter.json`. This is the grammar *package's* own semver (e.g.
@@ -255,7 +277,7 @@ overloading `version`; codemark ignores unknown manifest fields.
 | Symptom | Cause / fix |
 |---------|-------------|
 | Grammar installs but files aren't recognized | Binary built without `--features wasm`. Rebuild with the feature. |
-| `validate` reports "failed to load" | `.wasm` built for a non-0.25 Tree-sitter. Rebuild from source with CLI 0.25. |
+| `validate` reports "failed to load" | `.wasm` built with a CLI *newer* than codemark's runtime (ABI > 15), or it isn't a Tree-sitter module. Rebuild from source with CLI 0.25. |
 | `add` rejects the name | Name is (or aliases) a built-in — pick a distinct name. |
 | An extension is dropped on install | It's owned by a built-in (e.g. `rs`, `py`); built-ins win, so a dynamic grammar can't claim it. |
 | Grammar not picked up in a running TUI | Discovery refreshes on terminal focus; refocus the TUI, or restart. |

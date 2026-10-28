@@ -658,11 +658,35 @@ Two parts: the **grammar** (a `.wasm` you build) and the **profile** (the node
 kinds that make it useful). The grammar is mechanical; the profile is where
 mistakes hide, so check the registry before writing one by hand.
 
-### 1. Get a 0.25-compiled `.wasm`, then add it (mechanical)
+### 1. Find the grammar
 
-Codemark loads grammars with Tree-sitter **0.25**, so the `.wasm` must be built
-with the 0.25 CLI. Build it from source (reliable) and install with
-`codemark languages add`:
+Tree-sitter has no search command, and grammars live in many repos. In order of
+usefulness:
+
+1. **[nvim-treesitter `parsers.lua`](https://github.com/nvim-treesitter/nvim-treesitter/blob/main/lua/nvim-treesitter/parsers.lua)**
+   — ~570 parsers, machine-readable, each with a repo URL **and a pinned
+   revision**. The only source that gives you a revision, which is what you want
+   for reproducible builds (and for `grammar_rev` if contributing to the
+   registry). Entries look like:
+   ```lua
+   ruby = { install_info = { url = 'https://github.com/tree-sitter/tree-sitter-ruby',
+                             revision = 'ad907a69da0c8a4f7a943a7fe012712208da6dee' } }
+   ```
+2. **[tree-sitter wiki: List of parsers](https://github.com/tree-sitter/tree-sitter/wiki/List-of-parsers)**
+   — the canonical list, with an ABI column. No revisions.
+3. **[github.com/tree-sitter](https://github.com/tree-sitter)** — ~24 first-party
+   grammars. Best quality, narrowest coverage.
+
+### 2. Get a `.wasm`, then add it (mechanical)
+
+Codemark accepts **ABI 13–15** (roughly CLI 0.21–0.25). Tree-sitter is
+backwards- but not forwards-compatible, so only a `.wasm` from a CLI *newer*
+than codemark's runtime is rejected. Building with 0.25 is the safe default
+because it can never be too new.
+
+A prebuilt `.wasm` from the grammar's GitHub releases usually works and skips
+the Docker/emcc step — **try it first**; `add` rejects an incompatible module up
+front, so there's no risk in attempting it. Otherwise build from source:
 
 ```bash
 npm install -g tree-sitter-cli@0.25   # or cargo install tree-sitter-cli --version ^0.25
@@ -680,7 +704,7 @@ semver). WASM grammar loading is enabled in the default build; only a
 `--no-default-features` build lacks it (the CLI then warns the grammar installs
 but is ignored at runtime).
 
-### 2. Get the profile — try these in order
+### 3. Get the profile — try these in order
 
 `add` on its own writes an **empty `profile`**. Parsing works immediately, but
 breadcrumbs and query summaries stay weak until it's filled. Do **not** jump
@@ -734,7 +758,7 @@ The manifest path is printed by `add`; `codemark languages list` shows it, or
 `~/Library/Caches/codemark/grammars/<name>/manifest.json` on macOS,
 `~/.cache/...` on Linux.
 
-### 3. Verify — a wrong profile fails silently
+### 4. Verify — a wrong profile fails silently
 
 **Always run `validate` after touching a profile.** Node kinds are
 grammar-specific and a wrong one does not raise an error at runtime: a bad
