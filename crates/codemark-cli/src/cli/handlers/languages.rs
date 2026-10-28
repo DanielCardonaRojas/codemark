@@ -150,8 +150,11 @@ async fn handle_add(
     // caller — or, with --from-registry, from the curated entry. Either way the
     // source layer reads the bytes and the shared pipeline validates, stages,
     // and swaps them in.
-    let overrides =
-        InstallOverrides { name: args.name.clone(), extensions: args.extensions.clone() };
+    let overrides = InstallOverrides {
+        name: args.name.clone(),
+        extensions: args.extensions.clone(),
+        override_builtin: args.override_builtin,
+    };
 
     // Pass the PathBuf straight through (not a lossy string) so a non-UTF-8 path
     // isn't mangled.
@@ -185,8 +188,11 @@ async fn handle_install(
 
     let config = crate::cli::handlers::load_config(cli);
     let client = RegistryClient::from_config(&config.grammars)?;
-    let overrides =
-        InstallOverrides { name: args.name.clone(), extensions: args.extensions.clone() };
+    let overrides = InstallOverrides {
+        name: args.name.clone(),
+        extensions: args.extensions.clone(),
+        override_builtin: args.override_builtin,
+    };
 
     if !matches!(mode, OutputMode::Json) {
         println!("Downloading {} from {}...", args.language, client.base_url());

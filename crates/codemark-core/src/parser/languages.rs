@@ -113,9 +113,21 @@ impl Language {
 
     /// Infer language from a file extension. Checks static languages first,
     /// then the dynamic grammar registry.
+    /// Resolve a file extension to a language, **preferring a dynamic grammar**
+    /// over the built-in that would otherwise claim it.
+    ///
+    /// An installed grammar is something the user went out of their way to add,
+    /// so it reads as the more specific intent. It also makes a built-in
+    /// *replaceable*: a language can be dropped from the binary and picked up
+    /// from the registry without the extension becoming unresolvable, which is
+    /// how the eight bundled grammars can be unbundled one at a time.
+    ///
+    /// Nothing is shadowed by accident — installing over a built-in takes an
+    /// explicit `--override-builtin` (see
+    /// [`validate_name_and_extensions`](crate::grammar::validate_name_and_extensions)).
     pub fn from_extension(ext: &str) -> Option<Self> {
-        Self::static_from_extension(ext)
-            .or_else(|| crate::parser::registry::LanguageRegistry::from_extension(ext))
+        crate::parser::registry::LanguageRegistry::from_extension(ext)
+            .or_else(|| Self::static_from_extension(ext))
     }
 
     /// Resolve a file extension (without the dot) to a *built-in* language,
@@ -167,11 +179,14 @@ impl fmt::Display for Language {
 impl FromStr for Language {
     type Err = Error;
 
+    /// Resolve a language name, preferring a dynamic grammar over a built-in of
+    /// the same name — matching [`Language::from_extension`], so a stored
+    /// bookmark and a fresh one agree on which grammar a name refers to.
     fn from_str(s: &str) -> Result<Self> {
-        if let Some(lang) = Language::static_from_name(s) {
+        if let Some(lang) = crate::parser::registry::LanguageRegistry::from_name(s) {
             return Ok(lang);
         }
-        crate::parser::registry::LanguageRegistry::from_name(s)
+        Language::static_from_name(s)
             .ok_or_else(|| Error::Input(format!("unsupported language: {s}")))
     }
 }

@@ -10,8 +10,16 @@ no recompilation needed. This page covers how it works in
 Built-in languages are statically compiled into the binary. Dynamic languages
 are WASM grammars loaded at runtime from a cache directory. A single
 process-global [wasmtime](https://wasmtime.dev/) `Engine` backs all WASM stores.
-Built-ins **always win**: the registry refuses to register a name or extension
-already claimed by a built-in.
+
+**A dynamic grammar wins resolution over a built-in of the same name or
+extension.** An installed grammar is something you went out of your way to add,
+so it reads as the more specific intent — and it makes a built-in *replaceable*,
+which is what allows a bundled language to be dropped from the binary and picked
+up from the registry without its extension becoming unresolvable.
+
+Shadowing is never accidental: installing a grammar that claims a built-in's
+name or extension requires `--override-builtin`, and discovery prints a line
+when one takes effect.
 
 ## Cache location
 
