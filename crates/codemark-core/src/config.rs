@@ -122,6 +122,55 @@ pub struct Config {
     pub publish: PublishConfig,
     #[serde(default)]
     pub tui: TuiConfig,
+    #[serde(default)]
+    pub grammars: GrammarsConfig,
+}
+
+/// The default grammar-profile registry.
+///
+/// Profiles only — the registry ships curated `manifest.json` files, never
+/// `.wasm` binaries, so there is no ABI build pipeline or grammar licensing to
+/// host. Users still build the grammar themselves.
+pub const DEFAULT_GRAMMAR_REGISTRY: &str =
+    "https://raw.githubusercontent.com/DanielCardonaRojas/codemark-grammars/main";
+
+/// How long a cached registry index stays fresh.
+const DEFAULT_INDEX_TTL_SECS: u64 = 60 * 60 * 24;
+
+/// Grammar registry configuration.
+#[derive(Debug, Default, Deserialize, Serialize)]
+#[serde(default)]
+pub struct GrammarsConfig {
+    /// Base URL of the grammar-profile registry. Point this at a fork, an
+    /// internal mirror, or a `file://` path for air-gapped use.
+    ///
+    /// Resolution order: `CODEMARK_GRAMMAR_REGISTRY` → this setting →
+    /// [`DEFAULT_GRAMMAR_REGISTRY`]. Use [`Self::registry_url`].
+    pub registry_url: Option<String>,
+
+    /// Seconds a cached registry index is considered fresh. Use
+    /// [`Self::index_ttl`].
+    pub index_ttl_secs: Option<u64>,
+}
+
+impl GrammarsConfig {
+    /// The registry base URL, env var winning over config so a one-off run can
+    /// retarget without editing a file (matching `CODEMARK_GRAMMARS_DIR`).
+    ///
+    /// The trailing slash is trimmed so callers can join paths uniformly.
+    pub fn registry_url(&self) -> String {
+        let raw = std::env::var("CODEMARK_GRAMMAR_REGISTRY")
+            .ok()
+            .filter(|s| !s.trim().is_empty())
+            .or_else(|| self.registry_url.clone())
+            .unwrap_or_else(|| DEFAULT_GRAMMAR_REGISTRY.to_string());
+        raw.trim_end_matches('/').to_string()
+    }
+
+    /// How long a cached index stays fresh (default: 24h).
+    pub fn index_ttl(&self) -> std::time::Duration {
+        std::time::Duration::from_secs(self.index_ttl_secs.unwrap_or(DEFAULT_INDEX_TTL_SECS))
+    }
 }
 
 /// Terminal UI configuration.
@@ -794,6 +843,15 @@ impl Config {
         if other.tui.content_tab_order.is_some() {
             self.tui.content_tab_order = other.tui.content_tab_order;
         }
+
+        // Grammars config - override only if explicitly set in local, so a repo
+        // can point at an internal or air-gapped registry.
+        if other.grammars.registry_url.is_some() {
+            self.grammars.registry_url = other.grammars.registry_url;
+        }
+        if other.grammars.index_ttl_secs.is_some() {
+            self.grammars.index_ttl_secs = other.grammars.index_ttl_secs;
+        }
     }
 
     /// Write the default config file to the global config directory.
@@ -994,6 +1052,30 @@ theme = "Dracula"
         let local = Config::default();
         global.merge(local);
         assert_eq!(global.tui.theme.as_deref(), Some("Nord"));
+    }
+
+    #[test]
+    fn merge_overrides_grammar_registry() {
+        // A repo pointing at an internal or air-gapped registry must win over
+        // the global setting; `merge` enumerates fields explicitly, so a new
+        // section is silently dropped until it's listed there.
+        let mut global: Config =
+            toml::from_str("[grammars]\nregistry_url = \"https://example.com/global\"\n").unwrap();
+        let local: Config = toml::from_str(
+            "[grammars]\nregistry_url = \"file:///srv/mirror\"\nindex_ttl_secs = 60\n",
+        )
+        .unwrap();
+        global.merge(local);
+        assert_eq!(global.grammars.registry_url.as_deref(), Some("file:///srv/mirror"));
+        assert_eq!(global.grammars.index_ttl_secs, Some(60));
+    }
+
+    #[test]
+    fn merge_preserves_grammar_registry_when_local_unset() {
+        let mut global: Config =
+            toml::from_str("[grammars]\nregistry_url = \"https://example.com/global\"\n").unwrap();
+        global.merge(Config::default());
+        assert_eq!(global.grammars.registry_url.as_deref(), Some("https://example.com/global"));
     }
 
     #[test]

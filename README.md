@@ -194,6 +194,7 @@ variable; run `codemark-tui --list-schemes` to see what's available.
 - 🗃️ **Collections**: Group bookmarks into logical sets for specific tasks.
 - 📦 **Git Integrated**: Track bookmarks across commits and branches.
 - 🧩 **Agent Skills**: An installable skill that teaches AI coding agents to bookmark for you. Works with Claude Code, GitHub Copilot, Gemini CLI, and any agent that loads `.agents/skills`.
+- 🌍 **Any Language**: 8 languages built in; the rest load at runtime from WASM grammars. `codemark languages install ruby` fetches a verified grammar and a curated profile in one step.
 
 ---
 
@@ -272,7 +273,7 @@ See the [**Full Command Reference**](./dev-docs/CLI.md) for every subcommand and
 
 ## 🌐 Supported Languages
 
-Codemark is powered by Tree-sitter. It supports 8 built-in languages out of the box, and **any other language** via dynamic WASM grammar loading.
+Codemark is powered by Tree-sitter. It supports 8 built-in languages out of the box, plus **any other language** via WASM grammars loaded at runtime — six more are one command away from the [grammar registry](#from-the-grammar-registry-one-command).
 
 **Built-in:**
 - 🦀 **Rust**
@@ -284,11 +285,61 @@ Codemark is powered by Tree-sitter. It supports 8 built-in languages out of the 
 - 🎯 **Dart**
 - ♯ **C#**
 
-### Dynamic (WASM)
+### From the grammar registry (one command)
 
-You can add support for any language without recompiling Codemark. Drop a compiled Tree-sitter `.wasm` grammar together with a `manifest.json` into Codemark's grammar cache directory (e.g., `~/Library/Caches/codemark/grammars/<language>/` on macOS), and Codemark will discover it on the next run.
+Any other language loads at runtime from a WASM grammar — no recompile. The
+quickest route is the [**grammar profile registry**](https://github.com/DanielCardonaRojas/codemark-grammars),
+which installs the grammar *and* a curated profile in one step:
 
-The `manifest.json` isn't optional — it tells Codemark how to load and query the grammar (node kinds, symbol mappings, and metadata). For the full manifest schema and a step-by-step walkthrough, see the [**Dynamic Grammars guide**](https://danielcardonarojas.github.io/codemark/docs/guide/dynamic-grammars).
+```bash
+codemark languages registry list     # what's available
+codemark languages install ruby      # downloads, verifies, installs
+```
+
+Available today:
+
+| Language | Extensions |
+|---|---|
+| **Bash** | `sh`, `bash` |
+| **Lua** | `lua` |
+| **PHP** | `php`, `phtml` |
+| **Ruby** | `rb`, `rake`, `gemspec` |
+| **Scala** | `scala`, `sc` |
+| **Zig** | `zig`, `zon` |
+
+The registry hosts **profiles, not binaries** — each entry points at the
+prebuilt `.wasm` published by the grammar's own project, pinned by SHA-256.
+Codemark verifies the digest before installing and refuses anything else.
+Point `registry_url` at a fork or a `file://` path for air-gapped use.
+
+### Bring your own grammar
+
+For a language the registry doesn't cover, supply the `.wasm` yourself:
+
+```bash
+codemark languages add ./tree-sitter-elm.wasm --name elm --extensions elm
+codemark languages validate          # checks the profile against the grammar
+```
+
+The accompanying `manifest.json` carries the **profile** — the node kinds that
+anchor queries, a cross-language label vocabulary, and the ancestors that make
+breadcrumbs. It's what turns "parses" into "useful", and a wrong entry fails
+silently rather than erroring, so `validate` after any edit.
+
+Rather than hand-writing one, a build with `--features profile-authoring` can
+generate it from a real parse and show its reasoning:
+
+```bash
+codemark languages profile init ./tree-sitter-elm.wasm --sample Main.elm
+```
+
+See the
+[**Dynamic Grammars guide**](https://danielcardonarojas.github.io/codemark/docs/guide/dynamic-grammars)
+for the loading architecture, and
+[`dev-docs/guides/manifest-anatomy.md`](dev-docs/guides/manifest-anatomy.md)
+for what every manifest field means and how each one fails.
+
+Profiles you build are worth [contributing back](https://github.com/DanielCardonaRojas/codemark-grammars/blob/main/CONTRIBUTING.md).
 
 ## 🎨 Customizing Markdown Output
 

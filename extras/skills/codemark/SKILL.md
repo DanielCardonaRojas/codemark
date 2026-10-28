@@ -654,72 +654,181 @@ When the user wants to bookmark a language not listed above, install a Tree-sitt
 WASM grammar. **Do not** edit the `Language` enum or any Rust source — grammars
 load dynamically.
 
-### 1. Get a 0.25-compiled `.wasm`, then add it (mechanical)
+Two parts: the **grammar** (a `.wasm` you build) and the **profile** (the node
+kinds that make it useful). The grammar is mechanical; the profile is where
+mistakes hide, so check the registry before writing one by hand.
 
-Codemark loads grammars with Tree-sitter **0.25**, so the `.wasm` must be built
-with the 0.25 CLI. Build it from source (reliable) and install with
-`codemark languages add`:
+### 0. Try the registry first — it may be one command
+
+```bash
+codemark languages registry list
+codemark languages install ruby      # downloads, verifies, installs
+```
+
+If the language is listed with a prebuilt grammar, you are done: no build
+toolchain, no manual download, and the curated profile comes with it. Everything
+below is for a language the registry doesn't cover.
+
+### 1. Find the grammar
+
+Tree-sitter has no search command, and grammars live in many repos. In order of
+usefulness:
+
+1. **[nvim-treesitter `parsers.lua`](https://github.com/nvim-treesitter/nvim-treesitter/blob/main/lua/nvim-treesitter/parsers.lua)**
+   — ~570 parsers, machine-readable, each with a repo URL **and a pinned
+   revision**. The only source that gives you a revision, which is what you want
+   for reproducible builds (and for `grammar_rev` if contributing to the
+   registry). Entries look like:
+   ```lua
+   ruby = { install_info = { url = 'https://github.com/tree-sitter/tree-sitter-ruby',
+                             revision = 'ad907a69da0c8a4f7a943a7fe012712208da6dee' } }
+   ```
+2. **[tree-sitter wiki: List of parsers](https://github.com/tree-sitter/tree-sitter/wiki/List-of-parsers)**
+   — the canonical list, with an ABI column. No revisions.
+3. **[github.com/tree-sitter](https://github.com/tree-sitter)** — ~24 first-party
+   grammars. Best quality, narrowest coverage.
+
+### 2. Get a `.wasm`, then add it (mechanical)
+
+Codemark accepts **ABI 13–15** (roughly CLI 0.21–0.25). Tree-sitter is
+backwards- but not forwards-compatible, so only a `.wasm` from a CLI *newer*
+than codemark's runtime is rejected. Building with 0.25 is the safe default
+because it can never be too new.
+
+A prebuilt `.wasm` from the grammar's GitHub releases usually works and skips
+the Docker/emcc step — **try it first**; `add` rejects an incompatible module up
+front, so there's no risk in attempting it. Otherwise build from source:
 
 ```bash
 npm install -g tree-sitter-cli@0.25   # or cargo install tree-sitter-cli --version ^0.25
-git clone --depth 1 https://github.com/tree-sitter/tree-sitter-ruby && cd tree-sitter-ruby
+# Check out the pinned revision, not the default branch — node kinds change
+# between grammar versions, so an unpinned build may not match the profile.
+git clone --depth 1 --branch v0.23.1 https://github.com/tree-sitter/tree-sitter-ruby
+cd tree-sitter-ruby
 tree-sitter build --wasm              # needs Docker or emscripten; emits tree-sitter-ruby.wasm
 codemark languages add --name ruby --extensions rb,rake ./tree-sitter-ruby.wasm
 ```
 
-`add` validates the `.wasm` by loading it through the 0.25 `WasmStore`,
-rejecting an incompatible module, then writes the manifest and installs
-atomically. A prebuilt release `.wasm` works too **only if it was built with the
-0.25 CLI** (check the repo's `package.json` `tree-sitter-cli` at that tag —
-**not** `tree-sitter.json`'s `metadata.version`, which is the grammar's own
-semver). WASM grammar loading is enabled in the default build; only a
-`--no-default-features` build lacks it (the CLI then warns the grammar installs
-but is ignored at runtime).
+(For a revision that's a commit rather than a tag, `git clone` then
+`git checkout <sha>` — `--branch` only accepts refs.)
 
-### 2. Author the profile (your job — the CLI can't)
+`add` validates the `.wasm` by loading it through the `WasmStore`, rejecting an
+incompatible module, then writes the manifest and installs atomically. WASM
+grammar loading is enabled in the default build; only a `--no-default-features`
+build lacks it (the CLI then warns the grammar installs but is ignored at
+runtime).
 
-`add` writes a manifest with an **empty `profile`**. Parsing works
-immediately, but breadcrumbs and query summaries are weak until you fill the
-profile. This is the part that needs a human/agent: it depends on the grammar's
-specific node vocabulary, which you must inspect.
+### 3. Get the profile — try these in order
 
-Find the manifest (path is printed by `add`; `codemark languages list` shows it,
-or `~/Library/Caches/codemark/grammars/<name>/manifest.json` on macOS /
-`~/.cache/...` on Linux), then:
+`add` on its own writes an **empty `profile`**. Parsing works immediately, but
+breadcrumbs and query summaries stay weak until it's filled. Do **not** jump
+straight to hand-writing it; that's the last resort, not the first move.
+
+**a. Check the registry first.** Someone may have already curated and verified
+a profile for this language:
 
 ```bash
-# Inspect the AST to learn this grammar's node kinds
-tree-sitter parse example.rb        # shows node types like `method`, `call`, ...
-# or bookmark something and read node_type back:
-codemark add --file example.rb --range 3-5 --dry-run
+codemark languages registry list
+codemark languages add ./tree-sitter-ruby.wasm --from-registry ruby
 ```
 
-Edit `manifest.json`'s `profile` using what you observe:
+With `--from-registry`, `--name` and `--extensions` are optional (the registry
+supplies them) and still win as overrides. If the language is listed, you are
+done — stop here.
+
+**b. Generate one from samples.** If it isn't in the registry, derive the
+profile from a real parse instead of guessing:
+
+```bash
+# needs a build with --features profile-authoring
+codemark languages profile init ./tree-sitter-ruby.wasm \
+  --sample example.rb --name ruby --extensions rb,rake
+```
+
+This prints the proposed manifest plus an **evidence table** (each node kind,
+how often it appeared, whether it became a landmark, which field held its name,
+and why). Read the table before accepting — that's what it's for. `--out <file>`
+writes the manifest instead of printing it. Nothing is written to the grammar
+cache either way.
+
+**c. Hand-write it only if neither is available.** Inspect the AST first:
+
+```bash
+tree-sitter parse example.rb        # shows this grammar's actual node kinds
+```
 
 ```jsonc
 "profile": {
-  // node kinds that should anchor a structural query (functions, classes, types…)
+  // node kinds that anchor a structural query (functions, classes, types…)
   "landmark_kinds": ["method", "class", "module", "singleton_method"],
   // node kind → human label (drives query summaries + TUI icons)
   "node_labels": { "method": "function", "class": "class", "call": "call" },
   // [container node kind, name-field] — ancestors that make good breadcrumbs
-  "containers": [["class", "name"], ["method", "name"], ["module", "name"]],
-  // optional: node kind → field to summarize
-  "semantic_fields": { "if": "condition" }
+  "containers": [["class", "name"], ["method", "name"], ["module", "name"]]
 }
 ```
 
-Node names are **grammar-specific** — Ruby uses `method`, Python
-`function_definition`, bash `function_definition`, Lua
-`function_definition_statement`. Never assume; read them from `tree-sitter parse`.
-Reference: the committed Lua example at
-`tests/fixtures/grammars/lua/manifest.json`.
+The manifest path is printed by `add`; `codemark languages list` shows it, or
+`~/Library/Caches/codemark/grammars/<name>/manifest.json` on macOS,
+`~/.cache/...` on Linux.
 
-### 3. Verify
+### 4. Verify — a wrong profile fails silently
+
+**Always run `validate` after touching a profile.** Node kinds are
+grammar-specific and a wrong one does not raise an error at runtime: a bad
+`landmark_kinds` quietly falls back to a built-in set, and a bad `containers`
+just stops producing breadcrumbs.
+
+`validate` checks that each node kind is defined by the grammar, and that each
+container field exists *somewhere* in it. It cannot check that a field belongs
+to its paired kind — tree-sitter exposes field names globally — so
+`["mod_item", "value"]` passes. That gap is cosmetic: breadcrumbs match on the
+node kind alone and never read the field.
+
+What does matter is `containers[].0`. Get the kind wrong and the ancestor never
+matches, so breadcrumbs go blank with no error.
+
+So after validating, create a **new** bookmark nested inside the container and
+inspect it. `codemark show` renders breadcrumbs stored at resolution time, so an
+existing bookmark reports what the *old* profile produced, and `--dry-run`
+saves nothing to show:
 
 ```bash
-codemark languages validate         # confirms the grammar loads
-codemark add --file example.rb --range 3-5 --dry-run   # check node_type + breadcrumb
+codemark languages validate
+
+# A line inside a method inside a class — not a top-level one, which
+# exercises nothing.
+codemark add --file example.rb --range 14 --created-by claude
+codemark show <id> --format table | grep Context
 ```
+
+A blank `Context` on a line that really is nested means a `containers` entry
+isn't matching.
+
+```
+Found issues with installed grammars:
+  - .../lua: error: profile.landmark_kinds[1]: node kind 'function_item' is not
+    defined by this grammar, so it can never match
+  - .../lua: error: profile.containers[0].1: 'label' is not a field in this
+    grammar, so the container entry for 'function_declaration' names something
+    that doesn't exist
+```
+
+Close misses get a suggestion (`'local_function_declaration' … did you mean
+'function_declaration'?`).
+
+An **error** blocks the install. A **warning** (unknown key, no containers)
+still works but is probably not what you meant.
+
+The error kinds differ: an unknown **node kind** can never match, and a wrong
+`containers[].0` is the usual cause of blank breadcrumbs. An unknown **container
+field** blocks installation but doesn't affect matching — breadcrumb extraction
+reads only the kind — so it's never the reason breadcrumbs are missing.
+
+Never copy node kinds from another language. Ruby says `method`, Rust
+`function_item`, Python `function_definition`, Lua `function_declaration` — and
+Lua has `function_call`, not `call_expression`. A committed fixture once carried
+five kinds that did not exist in its grammar, which silently disabled Lua
+breadcrumbs entirely. Reference: `tests/fixtures/grammars/lua/manifest.json`.
 
 Full details: `dev-docs/guides/adding-wasm-grammars.md`.

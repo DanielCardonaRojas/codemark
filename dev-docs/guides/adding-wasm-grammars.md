@@ -13,25 +13,44 @@ get a grammar, install it, and write its profile.
 
 ## The one rule that matters: ABI compatibility
 
-Codemark loads grammars with Tree-sitter **0.25**'s `WasmStore`. A `.wasm` built
-against a different Tree-sitter version can fail to load or crash while parsing.
+Codemark loads grammars through Tree-sitter 0.25's `WasmStore`, which accepts
+**ABI versions 13 through 15**:
 
-So the single most important thing is: **the grammar's `.wasm` must be built with
-the Tree-sitter 0.25 CLI.** The reliable way to guarantee that is to build it
-yourself with a 0.25 CLI (below). Codemark does **not** download grammars for you
-— you provide the `.wasm` and install it with `codemark languages add`.
+```c
+/* tree_sitter/api.h */
+#define TREE_SITTER_LANGUAGE_VERSION             15
+#define TREE_SITTER_MIN_COMPATIBLE_LANGUAGE_VERSION 13
+```
+
+Tree-sitter is **backwards-compatible but not forwards-compatible**: a grammar
+built with an older CLI loads fine; one built with a *newer* CLI than codemark's
+runtime does not. In practice ABI 13–15 covers CLI 0.21 through 0.25 — which is
+nearly the entire published ecosystem, since the
+[wiki parser list](https://github.com/tree-sitter/tree-sitter/wiki/List-of-parsers)
+only catalogues parsers at ABI ≥ 13.
+
+So you do **not** need to match 0.25 exactly. Building with a 0.25 CLI is simply
+the safest default, because it can never be too new.
 
 > A grammar repo's `tree-sitter.json` has a `metadata.version`, but that is the
-> grammar package's **own** semver — *not* the Tree-sitter/ABI version — so don't
-> rely on it to judge compatibility. The CLI a grammar was built with is what
-> matters, and building it yourself removes the guesswork.
+> grammar package's **own** semver — *not* the ABI version — so don't rely on it
+> to judge compatibility.
+
+**You don't have to guess.** `codemark languages add` loads the `.wasm` through
+the same `WasmStore` the runtime uses before committing anything, so an
+incompatible module is rejected up front with a clear error. Try the grammar you
+have; rebuild only if it's refused.
+
+> Verified: the prebuilt `.wasm` from `tree-sitter-bash` **v0.23.3** — two minor
+> versions before 0.25 — installs and parses correctly, producing properly
+> anchored queries. Earlier revisions of this guide told you to reject it.
 
 ---
 
-## Build the `.wasm` with the 0.25 CLI, then `add` it
+## Build the `.wasm`, then `add` it
 
 ```bash
-# CLI must be 0.25 to match codemark's runtime
+# 0.25 is the safe default — it can never produce a too-new ABI for codemark.
 npm install -g tree-sitter-cli@0.25    # or: cargo install tree-sitter-cli --version ^0.25
 tree-sitter --version                  # confirm 0.25.x
 
@@ -58,10 +77,13 @@ to improve breadcrumbs.
 
 ### Using a prebuilt `.wasm` from a release
 
-Some grammar repos publish a `.wasm` in their GitHub releases. You can use one —
-but **only if it was built with the 0.25 CLI** (check the repo's `package.json`
-`tree-sitter-cli` dev-dependency at that tag; if it isn't `0.25.x`, build from
-source instead). Download it and `add` it the same way:
+Some grammar repos publish a `.wasm` in their GitHub releases, which skips the
+Docker/emcc step entirely. **Try it first** — anything built with CLI 0.21–0.25
+loads, and `add` tells you immediately if it doesn't. Only a `.wasm` from a CLI
+*newer* than codemark's runtime is rejected, since Tree-sitter isn't
+forwards-compatible.
+
+Download it and `add` it the same way:
 
 ```bash
 # -f makes curl fail on a 404/moved asset instead of saving an HTML error page
@@ -79,6 +101,18 @@ codemark languages add --name bash --extensions sh,bash /tmp/tree-sitter-bash.wa
 grammar cache. It starts with an **empty profile**, which is enough for parsing
 and structural resolution to work — you only need to fill the profile to get good
 **breadcrumbs** and **query summaries**.
+
+> **Check the registry first.** If someone has already curated a profile for your
+> language, don't write one:
+>
+> ```bash
+> codemark languages registry list
+> codemark languages add ./tree-sitter-ruby.wasm --from-registry ruby
+> ```
+>
+> The registry ships profiles only — you still build the `.wasm`. The rest of
+> this section is for a language the registry doesn't cover yet (and the result
+> is worth contributing back).
 
 The cache lives at the platform cache dir (override with `$CODEMARK_GRAMMARS_DIR`):
 
@@ -98,37 +132,117 @@ The cache lives at the platform cache dir (override with `$CODEMARK_GRAMMARS_DIR
   "profile": {
     // Node kinds that anchor a structural query (replaces the built-in
     // DECLARATION_TYPES set for this language).
-    "landmark_kinds": ["function_declaration", "local_function_declaration"],
+    "landmark_kinds": ["function_declaration", "function_definition"],
 
     // node kind → human-readable label shown in query summaries / TUI icons.
     "node_labels": {
       "function_declaration": "function",
       "if_statement": "if statement",
-      "call_expression": "call"
+      "function_call": "call"
     },
 
     // [container node kind, name-field] pairs — the ancestors that make useful
     // breadcrumbs, and which child field holds their name.
-    "containers": [["function_definition_statement", "name"]],
-
-    // Optional: node kind → field to summarize (e.g. an if statement's condition).
-    "semantic_fields": { "if_statement": "condition" }
+    "containers": [["function_declaration", "name"]]
   }
 }
 ```
 
-See the committed reference: [`tests/fixtures/grammars/lua/manifest.json`](../../tests/fixtures/grammars/lua/manifest.json).
+> **Every node kind above is grammar-specific.** The kinds in this example are
+> real kinds from `tree-sitter-lua` — Lua has `function_call`, not
+> `call_expression`, and no `local_function_declaration` at all. Copying kinds
+> from another language's profile produces a manifest that loads without error
+> and silently does nothing. Run `codemark languages validate` after editing: it
+> checks every kind against the grammar and reports the ones that don't exist.
 
-### Discovering the right node kinds
+See the committed reference: [`tests/fixtures/grammars/lua/manifest.json`](../../tests/fixtures/grammars/lua/manifest.json),
+and [manifest-anatomy.md](./manifest-anatomy.md) for what every field means, who
+reads it, and how each one fails.
 
-Parse a sample file with the Tree-sitter CLI and read the AST to learn the node
-names for `landmark_kinds` / `node_labels` / `containers`:
+### Generating a profile (recommended)
+
+Rather than hand-authoring the profile, let codemark propose one by parsing real
+sample files with the grammar:
+
+```bash
+# Requires a build with the authoring feature:
+#   cargo build -p codemark-cli --features profile-authoring
+codemark languages profile init ./tree-sitter-ruby.wasm \
+  --sample sample.rb --name ruby --extensions rb,rake
+```
+
+It prints the proposed manifest plus an **evidence table** showing every node
+kind it saw, how often, whether it became a landmark, which field held its name,
+and why:
+
+```
+┌──────────────────────┬──────┬──────────┬────────────┬──────────────────────────────────────┐
+│ Node kind            ┆ Seen ┆ Landmark ┆ Name field ┆ Why                                  │
+╞══════════════════════╪══════╪══════════╪════════════╪══════════════════════════════════════╡
+│ function_declaration ┆ 2    ┆ yes      ┆ name       ┆ name in field 'name', has a body,    │
+│                      ┆      ┆          ┆            ┆ nests other declarations             │
+│ if_statement         ┆ 1    ┆ -        ┆ -          ┆ control flow or expression —         │
+│                      ┆      ┆          ┆            ┆ labelled but not a landmark          │
+└──────────────────────┴──────┴──────────┴────────────┴──────────────────────────────────────┘
+```
+
+Review it, then install. `--out <file>` writes the manifest instead of printing
+it; nothing is ever written to the grammar cache, so proposing and installing
+stay separate steps.
+
+The proposal is derived from **observed structure**, which is why samples matter
+more than their length: cover the constructs you care about (nested classes,
+methods, anonymous functions) and the container fields are read off the real
+parse instead of assumed. More samples give a better proposal.
+
+### Discovering the right node kinds by hand
+
+If you'd rather write the profile yourself, parse a sample file with the
+Tree-sitter CLI and read the AST to learn the node names for `landmark_kinds` /
+`node_labels` / `containers`:
 
 ```bash
 tree-sitter parse example.rb        # prints the full AST with node kinds
 ```
 
-Then edit the manifest in the cache dir and re-run `codemark languages validate`.
+Then edit the manifest in the cache dir and re-run `codemark languages validate`,
+which checks each kind and container field against the loaded grammar:
+
+```
+$ codemark languages validate
+Found issues with installed grammars:
+  - ~/Library/Caches/codemark/grammars/ruby: error: profile.landmark_kinds[1]: node
+    kind 'function_item' is not defined by this grammar, so it can never match
+  - ~/Library/Caches/codemark/grammars/ruby: error: profile.containers[0].1: 'label'
+    is not a field in this grammar, so the container entry for 'method' names
+    something that doesn't exist
+
+Warnings (these grammars still work):
+  - ~/Library/Caches/codemark/grammars/ruby: warning: profile.semantic_fields: unknown
+    profile key — it is ignored at load time (known keys: landmark_kinds, node_labels,
+    containers)
+```
+
+A near miss gets a suggestion — `'local_function_declaration' … (did you mean
+'function_declaration'?)`.
+
+An **error** means that part of the profile is dead: it can never match, and an
+install is refused rather than committing it. A **warning** still works but is
+probably not what you meant — note that `containers` has no fallback, so an
+empty one silently produces no breadcrumbs at all. Validate before you trust a
+profile you hand-wrote.
+
+What `validate` **can't** check: tree-sitter's `Language` exposes field names
+globally, not per node kind, so a container like `["mod_item", "value"]` — where
+`value` is a real field but not one `mod_item` has — passes cleanly. That gap is
+cosmetic today, because breadcrumbs match on the node kind alone and never read
+the field; it matters for the schema being correct, not for current output.
+[The generator](#generating-a-profile-recommended) reads the field off a real
+parse rather than guessing.
+
+The check that *does* affect output is the node kind: get `containers[].0` wrong
+and the ancestor never matches, so breadcrumbs go blank. Confirm by bookmarking
+a line nested inside the container and checking its context line.
 
 ---
 
@@ -138,9 +252,9 @@ Three different version numbers are in play — don't conflate them:
 
 - **Tree-sitter CLI / ABI version** — the version of the `tree-sitter` CLI the
   grammar was **compiled with** (its `package.json` `tree-sitter-cli`
-  dev-dependency). This is what determines **ABI compatibility** and must be
-  **0.25.x** for codemark. Build the `.wasm` with a 0.25 CLI and this is
-  guaranteed.
+  dev-dependency). This determines **ABI compatibility**: codemark accepts
+  ABI 13–15, i.e. roughly CLI 0.21–0.25. Only a *newer* CLI than codemark's
+  runtime is a problem, so building with 0.25 is the safe default.
 
 - **Grammar package version** — the `metadata.version` in the grammar's
   `tree-sitter.json`. This is the grammar *package's* own semver (e.g.
@@ -165,7 +279,7 @@ overloading `version`; codemark ignores unknown manifest fields.
 | Symptom | Cause / fix |
 |---------|-------------|
 | Grammar installs but files aren't recognized | Binary built without `--features wasm`. Rebuild with the feature. |
-| `validate` reports "failed to load" | `.wasm` built for a non-0.25 Tree-sitter. Rebuild from source with CLI 0.25. |
+| `validate` reports "failed to load" | `.wasm` built with a CLI *newer* than codemark's runtime (ABI > 15), or it isn't a Tree-sitter module. Rebuild from source with CLI 0.25. |
 | `add` rejects the name | Name is (or aliases) a built-in — pick a distinct name. |
 | An extension is dropped on install | It's owned by a built-in (e.g. `rs`, `py`); built-ins win, so a dynamic grammar can't claim it. |
 | Grammar not picked up in a running TUI | Discovery refreshes on terminal focus; refocus the TUI, or restart. |

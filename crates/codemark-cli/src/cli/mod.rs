@@ -1513,6 +1513,57 @@ pub enum LanguagesCommand {
 
     /// Validate installed dynamic WASM grammars
     Validate(LanguagesValidateArgs),
+
+    /// Download and install a language from the registry
+    Install(LanguagesInstallArgs),
+
+    /// Browse the grammar-profile registry
+    Registry(LanguagesRegistryArgs),
+
+    /// Author a language profile (registry contributors)
+    #[cfg(feature = "profile-authoring")]
+    #[command(subcommand)]
+    Profile(ProfileCommand),
+}
+
+/// Profile-authoring subcommands.
+///
+/// Gated behind the off-by-default `profile-authoring` feature: these are needed
+/// by people contributing profiles to the grammar registry, not by people
+/// installing a language. Consumers get `languages add`, `list` and `validate`.
+#[cfg(feature = "profile-authoring")]
+#[derive(Debug, Subcommand)]
+pub enum ProfileCommand {
+    /// Propose a profile by parsing sample files with a grammar
+    Init(ProfileInitArgs),
+}
+
+#[cfg(feature = "profile-authoring")]
+#[derive(Debug, clap::Args)]
+pub struct ProfileInitArgs {
+    #[command(flatten)]
+    pub output: OutputArgs,
+
+    /// Path to the compiled .wasm grammar file
+    pub wasm_file: std::path::PathBuf,
+
+    /// Sample source file to learn the grammar's structure from (repeatable).
+    /// More samples covering more constructs give a better proposal.
+    #[arg(long, short, required = true)]
+    pub sample: Vec<std::path::PathBuf>,
+
+    /// The language name to write into the manifest
+    #[arg(long, short)]
+    pub name: Option<String>,
+
+    /// Comma-separated file extensions to write into the manifest
+    #[arg(long, short)]
+    pub extensions: Option<String>,
+
+    /// Write the proposed manifest here instead of printing it. Never writes to
+    /// the grammar cache — installing stays a separate, explicit step.
+    #[arg(long, short)]
+    pub out: Option<std::path::PathBuf>,
 }
 
 #[derive(Debug, clap::Args)]
@@ -1522,13 +1573,68 @@ pub struct LanguagesAddArgs {
     /// Path to the compiled .wasm grammar file
     pub wasm_file: std::path::PathBuf,
 
-    /// The language name (e.g., "ruby", "lua")
-    #[arg(long, short)]
-    pub name: String,
+    /// The language name (e.g., "ruby", "lua").
+    /// Required unless --from-registry supplies it.
+    #[arg(long, short, required_unless_present = "from_registry")]
+    pub name: Option<String>,
 
-    /// Comma-separated list of file extensions (e.g., "rb,ru")
+    /// Comma-separated list of file extensions (e.g., "rb,ru").
+    /// Required unless --from-registry supplies them.
+    #[arg(long, short, required_unless_present = "from_registry")]
+    pub extensions: Option<String>,
+
+    /// Install with the curated profile for this language from the grammar
+    /// registry, instead of an empty profile. --name/--extensions still win.
+    #[arg(long, value_name = "LANGUAGE")]
+    pub from_registry: Option<String>,
+
+    /// Bypass the cached registry index and re-fetch it
+    #[arg(long, requires = "from_registry")]
+    pub refresh: bool,
+}
+
+#[derive(Debug, clap::Args)]
+pub struct LanguagesInstallArgs {
+    #[command(flatten)]
+    pub output: OutputArgs,
+
+    /// Language to install (see `codemark languages registry list`)
+    pub language: String,
+
+    /// Override the language name written into the manifest
     #[arg(long, short)]
-    pub extensions: String,
+    pub name: Option<String>,
+
+    /// Override the comma-separated file extensions
+    #[arg(long, short)]
+    pub extensions: Option<String>,
+
+    /// Bypass the cached registry index and re-fetch it
+    #[arg(long)]
+    pub refresh: bool,
+}
+
+#[derive(Debug, clap::Args)]
+pub struct LanguagesRegistryArgs {
+    #[command(subcommand)]
+    pub command: RegistryCommand,
+}
+
+/// Browse the grammar-profile registry.
+#[derive(Debug, Subcommand)]
+pub enum RegistryCommand {
+    /// List the languages with a curated profile available
+    List(RegistryListArgs),
+}
+
+#[derive(Debug, clap::Args)]
+pub struct RegistryListArgs {
+    #[command(flatten)]
+    pub output: OutputArgs,
+
+    /// Bypass the cached index and re-fetch it
+    #[arg(long)]
+    pub refresh: bool,
 }
 
 // --- Args structs for formerly unit-variant subcommands ---

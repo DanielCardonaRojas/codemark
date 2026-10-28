@@ -14,7 +14,9 @@
 //! formatting) stays in the caller — this module returns a value, it does not
 //! print.
 
+pub mod profile_gen;
 pub mod protocol;
+pub mod registry_source;
 pub mod source;
 
 use crate::error::{Error, Result};
@@ -58,6 +60,121 @@ pub async fn install_from_path(
 
     let wasm_bytes = resolved.wasm.into_bytes().await?;
     install_grammar(&name, &extensions, resolved.profile, wasm_bytes)
+}
+
+/// Install a local `.wasm` using a **curated profile** fetched from the grammar
+/// registry (`codemark languages add <wasm> --from-registry <name>`).
+///
+/// Composed rather than implemented as a [`source::GrammarSource`]: the registry
+/// serves a *profile*, not wasm bytes, so a remote `WasmPayload` variant would
+/// model a payload it never carries. Instead the bytes come from
+/// [`source::LocalFileSource`] and the name/extensions/profile from the
+/// registry, and both meet at the existing [`install_grammar`] — the hardened
+/// stage-then-swap is untouched.
+///
+/// `overrides` still win over the registry, matching `add`'s precedence.
+pub async fn install_from_registry(
+    path: &std::path::Path,
+    registry_name: &str,
+    overrides: InstallOverrides,
+    client: &registry_source::RegistryClient,
+    refresh: bool,
+) -> Result<InstallOutcome> {
+    let entry = client.find(registry_name, refresh).await?;
+    let manifest = client.fetch_profile(&entry).await?;
+
+    // Caller's flags beat the registry, which beats the manifest's own fields.
+    let name = overrides
+        .name
+        .or_else(|| manifest.get("name").and_then(|v| v.as_str()).map(String::from))
+        .unwrap_or_else(|| entry.name.clone());
+
+    let raw_extensions = overrides.extensions.unwrap_or_else(|| {
+        let from_manifest = manifest
+            .get("extensions")
+            .and_then(|v| v.as_array())
+            .map(|a| a.iter().filter_map(|e| e.as_str()).collect::<Vec<_>>().join(","))
+            .unwrap_or_default();
+        if from_manifest.is_empty() { entry.extensions.join(",") } else { from_manifest }
+    });
+
+    // A registry entry gets no special trust: it must not claim `rs` or shadow a
+    // built-in any more than a hand-typed `--name` could.
+    let extensions = validate_name_and_extensions(&name, &raw_extensions)?;
+
+    let profile = manifest.get("profile").cloned();
+    let wasm_bytes = source::LocalFileSource.resolve_path(path)?.wasm.into_bytes().await?;
+
+    tracing::debug!(
+        target: "codemark::languages",
+        %name,
+        registry = %client.base_url(),
+        profile_version = ?entry.profile_version,
+        "installing with a registry profile"
+    );
+
+    install_grammar(&name, &extensions, profile, wasm_bytes)
+}
+
+/// Install a language end to end from the registry: download the grammar it
+/// points at, verify the checksum, and install it with the curated profile
+/// (`codemark languages install <lang>`).
+///
+/// This is the no-friction path — no Docker, no emscripten, no hunting for the
+/// right release asset. It only works for entries that publish a `wasm_url`;
+/// the error for one that doesn't names the manual route rather than failing
+/// opaquely.
+///
+/// The download is verified against the registry's pinned SHA-256 *before*
+/// [`install_grammar`] sees the bytes, so an entry can't be made to install
+/// something other than what was reviewed into the index.
+pub async fn install_from_registry_download(
+    registry_name: &str,
+    overrides: InstallOverrides,
+    client: &registry_source::RegistryClient,
+    refresh: bool,
+) -> Result<InstallOutcome> {
+    let entry = client.find(registry_name, refresh).await?;
+
+    let Some(remote) = entry.download()? else {
+        return Err(Error::Input(format!(
+            "'{}' has no prebuilt grammar in the registry, so it can't be installed \
+             automatically.\nBuild or download the .wasm yourself, then:\n  codemark languages \
+             add <grammar.wasm> --from-registry {}",
+            entry.name, entry.name
+        )));
+    };
+
+    let manifest = client.fetch_profile(&entry).await?;
+
+    let name = overrides
+        .name
+        .or_else(|| manifest.get("name").and_then(|v| v.as_str()).map(String::from))
+        .unwrap_or_else(|| entry.name.clone());
+
+    let raw_extensions = overrides.extensions.unwrap_or_else(|| {
+        let from_manifest = manifest
+            .get("extensions")
+            .and_then(|v| v.as_array())
+            .map(|a| a.iter().filter_map(|e| e.as_str()).collect::<Vec<_>>().join(","))
+            .unwrap_or_default();
+        if from_manifest.is_empty() { entry.extensions.join(",") } else { from_manifest }
+    });
+
+    // Same validation a hand-typed `--name` gets: a registry entry earns no
+    // right to claim `rs` or shadow a built-in.
+    let extensions = validate_name_and_extensions(&name, &raw_extensions)?;
+
+    let wasm_bytes = registry_source::download_wasm(&remote).await?;
+
+    tracing::debug!(
+        target: "codemark::languages",
+        %name,
+        bytes = wasm_bytes.len(),
+        "installing a downloaded grammar"
+    );
+
+    install_grammar(&name, &extensions, manifest.get("profile").cloned(), wasm_bytes)
 }
 
 /// The outcome of a successful [`install_grammar`], returned so the caller can
@@ -317,9 +434,28 @@ fn install_staged(
         {
             let manifest: serde_json::Value = serde_json::from_slice(manifest_bytes)
                 .map_err(|e| Error::Operation(format!("staged manifest not JSON: {e}")))?;
-            load_dynamic_grammar(name, &staged_wasm, &manifest).map_err(|e| {
+            let grammar = load_dynamic_grammar(name, &staged_wasm, &manifest).map_err(|e| {
                 Error::Input(format!("'{}' is not a loadable WASM grammar: {e}", name))
             })?;
+
+            // The grammar loads, but a profile naming kinds it doesn't define is
+            // dead weight that fails silently at runtime. Refuse the install
+            // rather than report success for a profile that can never match.
+            // (Warnings — unknown keys, missing containers — don't block.)
+            if let Some(profile) = manifest.get("profile") {
+                let findings = crate::parser::profile::lint(profile, &grammar);
+                let errors: Vec<_> = findings
+                    .iter()
+                    .filter(|f| f.severity == crate::parser::profile::LintSeverity::Error)
+                    .map(|f| format!("  - {f}"))
+                    .collect();
+                if !errors.is_empty() {
+                    return Err(Error::Input(format!(
+                        "grammar '{name}' has an invalid profile:\n{}",
+                        errors.join("\n")
+                    )));
+                }
+            }
         }
 
         // Serialize the swap against another `languages add` replacing the same
@@ -470,6 +606,10 @@ fn write_no_follow(path: &std::path::Path, contents: &[u8], name: &str) -> Resul
 /// `grammar.wasm` that mere existence checks would accept is detected. The
 /// `profile` is not needed to prove loadability, so it's left at default.
 ///
+/// Returns the loaded `tree_sitter::Language` so the caller can lint a profile
+/// against it ([`crate::parser::profile::lint`]) without paying for a second
+/// load — valid node kinds and field names are properties of this value.
+///
 /// Used both to validate a *staged* grammar before committing it (so an
 /// unloadable download can't replace a working install) and by
 /// `codemark languages validate` to check already-installed grammars.
@@ -478,7 +618,7 @@ pub fn load_dynamic_grammar(
     name: &str,
     wasm_path: &std::path::Path,
     manifest: &serde_json::Value,
-) -> Result<()> {
+) -> Result<tree_sitter::Language> {
     use crate::parser::languages::{DynamicLanguage, Language, Parser};
 
     let extensions = manifest
@@ -496,7 +636,7 @@ pub fn load_dynamic_grammar(
 
     // Constructing the parser reads the .wasm and calls `set_language`, which is
     // exactly what fails for an empty or malformed grammar.
-    Parser::new(Language::Dynamic(dl)).map(|_| ())
+    Parser::new(Language::Dynamic(dl)).map(|p| p.language().clone())
 }
 
 #[cfg(test)]
