@@ -187,9 +187,13 @@ pub fn lint(value: &serde_json::Value, grammar: &tree_sitter::Language) -> Vec<L
                     continue;
                 };
                 check_kind(kind, format!("profile.containers[{i}].0"), &mut findings);
-                // Tree-sitter field names are global to the grammar, not
-                // per-kind, so this catches a field the grammar has never heard
-                // of — the `("impl_item", "type")` vs `"name"` class of mistake.
+                // Tree-sitter's static `Language` exposes field names globally,
+                // not per node kind, so this only catches a field the grammar
+                // has never heard of. A field that exists on *some other* kind
+                // (`("mod_item", "value")`) passes here and still yields no
+                // breadcrumb — the generator guards that case by deriving the
+                // field from an observed parse, and `profile init` is the
+                // reliable way to get it right.
                 if !fields.contains(field) {
                     findings.push(LintFinding {
                         severity: LintSeverity::Error,
@@ -728,6 +732,21 @@ mod tests {
         let errs = errors(&findings);
         assert_eq!(errs.len(), 1, "{findings:?}");
         assert_eq!(errs[0].path, "profile.containers[0].1");
+    }
+
+    // Documents a known limit rather than asserting desirable behavior: the
+    // static `Language` API exposes field names globally, not per kind, so a
+    // field that is real *somewhere* in the grammar passes even when the paired
+    // kind doesn't carry it. Such a container silently yields no breadcrumb.
+    // Deriving the field from an observed parse (`profile init`) is what
+    // actually prevents this; if tree-sitter ever exposes per-kind fields, this
+    // should become an error and the test should flip.
+    #[test]
+    fn lint_cannot_catch_a_field_valid_on_a_different_kind() {
+        // `value` is a real Rust field, but not one `mod_item` has.
+        let value = serde_json::json!({ "containers": [["mod_item", "value"]] });
+        let findings = lint(&value, &rust_grammar());
+        assert!(errors(&findings).is_empty(), "known limit — see the comment above: {findings:?}");
     }
 
     #[test]

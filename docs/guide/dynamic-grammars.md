@@ -163,6 +163,12 @@ block an install, so a bad profile can't replace a working grammar.
 fallback: an empty one means breadcrumbs are silently blank, which is why it's
 called out.
 
+One limit worth knowing: tree-sitter exposes field names globally rather than per
+node kind, so a container field that is real *somewhere* in the grammar passes
+validation even if its paired kind doesn't carry it — and that container still
+produces no breadcrumb. Check a nested bookmark after validating, or let
+`languages profile init` derive the field from an actual parse.
+
 ::: tip Non-WASM builds
 If you compiled the CLI yourself with `--no-default-features` (dropping the
 `wasm` feature), dynamic grammars can be *installed* but won't *run* until you

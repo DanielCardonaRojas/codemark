@@ -739,8 +739,15 @@ The manifest path is printed by `add`; `codemark languages list` shows it, or
 **Always run `validate` after touching a profile.** Node kinds are
 grammar-specific and a wrong one does not raise an error at runtime: a bad
 `landmark_kinds` quietly falls back to a built-in set, and a bad `containers`
-just stops producing breadcrumbs. `validate` checks every kind and container
-field against the loaded grammar:
+just stops producing breadcrumbs.
+
+`validate` checks that each node kind is defined by the grammar, and that each
+container field exists *somewhere* in it. It cannot check that a field belongs
+to its paired kind — tree-sitter exposes field names globally — so
+`["mod_item", "value"]` passes validation and still yields no breadcrumb. After
+validating, confirm each container actually produces one (step 3's `--dry-run`,
+or `codemark show` on a bookmark nested inside it). Generating the profile
+avoids this entirely: `profile init` reads the field off a real parse.
 
 ```bash
 codemark languages validate

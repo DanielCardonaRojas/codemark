@@ -207,6 +207,13 @@ probably not what you meant — note that `containers` has no fallback, so an
 empty one silently produces no breadcrumbs at all. Validate before you trust a
 profile you hand-wrote.
 
+What `validate` **can't** check: tree-sitter's `Language` exposes field names
+globally, not per node kind, so a container like `["mod_item", "value"]` — where
+`value` is a real field but not one `mod_item` has — passes cleanly and still
+produces no breadcrumb. Confirm each container by bookmarking a line nested
+inside it, or use [the generator](#generating-a-profile-recommended), which reads
+the field off a real parse instead of guessing.
+
 ---
 
 ## Versioning convention
