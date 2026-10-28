@@ -1514,6 +1514,9 @@ pub enum LanguagesCommand {
     /// Validate installed dynamic WASM grammars
     Validate(LanguagesValidateArgs),
 
+    /// Download and install a language from the registry
+    Install(LanguagesInstallArgs),
+
     /// Browse the grammar-profile registry
     Registry(LanguagesRegistryArgs),
 
@@ -1587,6 +1590,27 @@ pub struct LanguagesAddArgs {
 
     /// Bypass the cached registry index and re-fetch it
     #[arg(long, requires = "from_registry")]
+    pub refresh: bool,
+}
+
+#[derive(Debug, clap::Args)]
+pub struct LanguagesInstallArgs {
+    #[command(flatten)]
+    pub output: OutputArgs,
+
+    /// Language to install (see `codemark languages registry list`)
+    pub language: String,
+
+    /// Override the language name written into the manifest
+    #[arg(long, short)]
+    pub name: Option<String>,
+
+    /// Override the comma-separated file extensions
+    #[arg(long, short)]
+    pub extensions: Option<String>,
+
+    /// Bypass the cached registry index and re-fetch it
+    #[arg(long)]
     pub refresh: bool,
 }
 

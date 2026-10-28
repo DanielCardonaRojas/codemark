@@ -658,6 +658,17 @@ Two parts: the **grammar** (a `.wasm` you build) and the **profile** (the node
 kinds that make it useful). The grammar is mechanical; the profile is where
 mistakes hide, so check the registry before writing one by hand.
 
+### 0. Try the registry first — it may be one command
+
+```bash
+codemark languages registry list
+codemark languages install ruby      # downloads, verifies, installs
+```
+
+If the language is listed with a prebuilt grammar, you are done: no build
+toolchain, no manual download, and the curated profile comes with it. Everything
+below is for a language the registry doesn't cover.
+
 ### 1. Find the grammar
 
 Tree-sitter has no search command, and grammars live in many repos. In order of

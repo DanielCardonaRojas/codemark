@@ -11,6 +11,7 @@ pub async fn handle_languages(
     match &args.command {
         Some(LanguagesCommand::Add(add_args)) => handle_add(cli, mode, add_args).await,
         Some(LanguagesCommand::Validate(_)) => handle_validate(cli, mode).await,
+        Some(LanguagesCommand::Install(a)) => handle_install(cli, mode, a).await,
         Some(LanguagesCommand::Registry(r)) => match &r.command {
             crate::cli::RegistryCommand::List(a) => handle_registry_list(cli, mode, a).await,
         },
@@ -172,6 +173,30 @@ async fn handle_add(
         None => grammar::install_from_path(&args.wasm_file, overrides).await?,
     };
     print_install_outcome(mode, &outcome, args.from_registry.is_some())
+}
+
+/// Download and install a language from the registry in one step.
+async fn handle_install(
+    cli: &crate::cli::Cli,
+    mode: &OutputMode,
+    args: &crate::cli::LanguagesInstallArgs,
+) -> Result<()> {
+    use codemark_core::grammar::registry_source::RegistryClient;
+
+    let config = crate::cli::handlers::load_config(cli);
+    let client = RegistryClient::from_config(&config.grammars)?;
+    let overrides =
+        InstallOverrides { name: args.name.clone(), extensions: args.extensions.clone() };
+
+    if !matches!(mode, OutputMode::Json) {
+        println!("Downloading {} from {}...", args.language, client.base_url());
+    }
+
+    let outcome =
+        grammar::install_from_registry_download(&args.language, overrides, &client, args.refresh)
+            .await?;
+
+    print_install_outcome(mode, &outcome, true)
 }
 
 async fn handle_registry_list(

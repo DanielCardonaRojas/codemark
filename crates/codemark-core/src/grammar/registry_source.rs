@@ -1,10 +1,15 @@
 //! Fetching curated profiles from the grammar registry.
 //!
-//! The registry ships **profiles, not binaries**: an `index.json` of what is
-//! available plus a `manifest.json` per language. The user still builds the
-//! `.wasm` themselves, which keeps codemark out of the ABI-pipeline and
-//! grammar-licensing business while removing the part that actually hurts —
-//! hand-authoring a profile.
+//! The registry **hosts** profiles, not binaries: an `index.json` of what is
+//! available plus a `manifest.json` per language. That keeps codemark out of
+//! the ABI-pipeline and grammar-licensing business while removing the part that
+//! actually hurts — hand-authoring a profile.
+//!
+//! An entry may additionally *point at* a prebuilt `grammar.wasm` published by
+//! the grammar's own project (`wasm_url` + `wasm_sha256`), which is what makes
+//! `codemark languages install <lang>` a single step. Codemark fetches but never
+//! serves those bytes, and verifies them against the digest pinned in the index
+//! before they reach the installer — see [`RegistryEntry::download`].
 //!
 //! The payoff lands through the seam that already exists:
 //! [`install_grammar`](super::install_grammar) takes an optional profile and
@@ -40,7 +45,7 @@ const REGISTRY_CACHE_DIR: &str = ".registry";
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct RegistryIndex {
     /// Wire-format version. Bumped only for a breaking change; new optional
-    /// fields (a future `wasm_url`) are additive and don't bump it.
+    /// fields are additive and do not bump it — `wasm_url` was added this way.
     pub schema_version: u32,
     pub grammars: Vec<RegistryEntry>,
 }
@@ -69,6 +74,92 @@ pub struct RegistryEntry {
     pub grammar_rev: Option<String>,
     #[serde(default)]
     pub description: Option<String>,
+
+    /// Direct download for a prebuilt `grammar.wasm`, enabling
+    /// `codemark languages install <lang>` instead of a manual build.
+    ///
+    /// Optional: an entry without it still works, the user just supplies the
+    /// `.wasm` themselves. It must be given explicitly rather than derived from
+    /// `grammar_repo` + `grammar_rev`, because a release can carry several wasm
+    /// assets (tree-sitter-php ships both `tree-sitter-php.wasm` and
+    /// `tree-sitter-php_only.wasm`) and only the entry knows which is wanted.
+    #[serde(default)]
+    pub wasm_url: Option<String>,
+
+    /// SHA-256 of the bytes at [`Self::wasm_url`], lowercase hex.
+    ///
+    /// **Required whenever `wasm_url` is set.** Auto-download moves fetching off
+    /// the user's desk, so the bytes codemark is about to load as a WASM module
+    /// must be pinned by this reviewed, version-controlled file rather than by
+    /// whatever the URL happens to serve today.
+    #[serde(default)]
+    pub wasm_sha256: Option<String>,
+}
+
+impl RegistryEntry {
+    /// The download for this entry, if it offers one.
+    ///
+    /// `Err` when `wasm_url` is present but unusable — a missing checksum, a
+    /// non-HTTPS URL, or a host that doesn't match `grammar_repo`. Those are
+    /// registry-authoring mistakes, and reporting them beats silently falling
+    /// back to "build it yourself".
+    pub fn download(&self) -> Result<Option<RemoteWasm>> {
+        let Some(url) = self.wasm_url.as_deref() else {
+            return Ok(None);
+        };
+
+        let sha256 = self.wasm_sha256.as_deref().ok_or_else(|| {
+            Error::Input(format!(
+                "registry entry '{}' has a wasm_url but no wasm_sha256; refusing to download \
+                 unpinned bytes",
+                self.name
+            ))
+        })?;
+        if sha256.len() != 64 || !sha256.chars().all(|c| c.is_ascii_hexdigit()) {
+            return Err(Error::Input(format!(
+                "registry entry '{}' has a malformed wasm_sha256 (want 64 hex chars)",
+                self.name
+            )));
+        }
+
+        let parsed = reqwest::Url::parse(url).map_err(|e| {
+            Error::Input(format!("registry entry '{}' has a bad wasm_url: {e}", self.name))
+        })?;
+        if parsed.scheme() != "https" {
+            return Err(Error::Input(format!(
+                "registry entry '{}' must use https for wasm_url",
+                self.name
+            )));
+        }
+
+        // Keep the binary and the repository it claims to come from on the same
+        // host, so a registry entry can't direct a download somewhere unrelated
+        // to the grammar it names.
+        if let Some(repo) = self.grammar_repo.as_deref() {
+            let repo_host =
+                reqwest::Url::parse(repo).ok().and_then(|u| u.host_str().map(String::from));
+            let wasm_host = parsed.host_str().map(String::from);
+            if let (Some(r), Some(w)) = (repo_host, wasm_host)
+                && !r.eq_ignore_ascii_case(&w)
+            {
+                return Err(Error::Input(format!(
+                    "registry entry '{}': wasm_url host '{w}' does not match grammar_repo host \
+                     '{r}'",
+                    self.name
+                )));
+            }
+        }
+
+        Ok(Some(RemoteWasm { url: url.to_string(), sha256: sha256.to_lowercase() }))
+    }
+}
+
+/// A verified-on-arrival grammar download.
+#[derive(Debug, Clone)]
+pub struct RemoteWasm {
+    pub url: String,
+    /// Lowercase hex SHA-256 the downloaded bytes must hash to.
+    pub sha256: String,
 }
 
 /// Highest `schema_version` this build understands.
@@ -229,6 +320,22 @@ async fn fetch_text(url: &str, cap: u64) -> Result<String> {
     if let Some(path) = local_path(url) {
         return read_capped(&path, cap);
     }
+    let bytes = fetch_bytes(url, cap).await?;
+    String::from_utf8(bytes).map_err(|_| Error::Operation(format!("{url} is not valid UTF-8")))
+}
+
+/// Fetch `url` as bytes, bounded to `cap`.
+///
+/// Shared by the text path (index, manifests) and the grammar download, so the
+/// HTTPS requirement, credential rejection, redirect policy and size cap are
+/// enforced in exactly one place rather than drifting between the two.
+///
+/// A `file://` or bare path is read locally, which is what lets a fixture
+/// registry serve a `.wasm` without a server.
+async fn fetch_bytes(url: &str, cap: u64) -> Result<Vec<u8>> {
+    if let Some(path) = local_path(url) {
+        return read_capped_bytes(&path, cap);
+    }
 
     // Plain HTTP would expose the profile to tampering in transit. Allow it only
     // for loopback, where it's the normal shape of a local test server.
@@ -279,8 +386,42 @@ async fn fetch_text(url: &str, cap: u64) -> Result<String> {
         }
     }
 
-    String::from_utf8(bytes).map_err(|_| Error::Operation(format!("{url} is not valid UTF-8")))
+    Ok(bytes)
 }
+
+/// Download a grammar and verify it against its expected digest.
+///
+/// The digest is checked **before** the bytes go anywhere near
+/// [`install_grammar`](super::install_grammar), so a URL that has started
+/// serving something else can't reach the grammar cache. The returned bytes are
+/// the ones that hashed correctly, not a re-read — there is no second fetch to
+/// disagree with the first.
+pub async fn download_wasm(remote: &RemoteWasm) -> Result<Vec<u8>> {
+    use sha2::{Digest, Sha256};
+
+    tracing::debug!(target: "codemark::http", url = %remote.url, "downloading grammar");
+    let bytes = fetch_bytes(&remote.url, MAX_WASM_BYTES).await?;
+
+    let actual = format!("{:x}", Sha256::digest(&bytes));
+    if actual != remote.sha256 {
+        return Err(Error::Input(format!(
+            "checksum mismatch for {}\n  expected {}\n  got      {actual}\nThe registry pins a \
+             specific build; refusing to install different bytes.",
+            remote.url, remote.sha256
+        )));
+    }
+
+    tracing::debug!(
+        target: "codemark::http",
+        bytes = bytes.len(),
+        "grammar download verified"
+    );
+    Ok(bytes)
+}
+
+/// Cap on a downloaded grammar (32 MiB), matching the local-file path in
+/// [`super::source`].
+const MAX_WASM_BYTES: u64 = 32 * 1024 * 1024;
 
 /// HTTP client for registry fetches.
 ///
@@ -372,6 +513,14 @@ fn host_is_loopback(host: &str) -> bool {
 /// Read a local file, bounded to `cap` bytes and requiring a regular file —
 /// mirroring the posture [`super::source`] uses for a local `.wasm`.
 fn read_capped(path: &Path, cap: u64) -> Result<String> {
+    let bytes = read_capped_bytes(path, cap)?;
+    String::from_utf8(bytes)
+        .map_err(|_| Error::Operation(format!("{} is not valid UTF-8", path.display())))
+}
+
+/// Byte-level counterpart to [`read_capped`], so a local fixture registry can
+/// serve a `.wasm` as well as JSON.
+fn read_capped_bytes(path: &Path, cap: u64) -> Result<Vec<u8>> {
     use std::io::Read;
 
     let file = std::fs::File::open(path)
@@ -390,14 +539,14 @@ fn read_capped(path: &Path, cap: u64) -> Result<String> {
         )));
     }
 
-    let mut text = String::new();
+    let mut bytes = Vec::new();
     file.take(cap + 1)
-        .read_to_string(&mut text)
+        .read_to_end(&mut bytes)
         .map_err(|e| Error::Operation(format!("could not read {}: {e}", path.display())))?;
-    if text.len() as u64 > cap {
+    if bytes.len() as u64 > cap {
         return Err(Error::Input(format!("{} exceeds the {cap}-byte limit", path.display())));
     }
-    Ok(text)
+    Ok(bytes)
 }
 
 #[cfg(test)]
@@ -623,6 +772,94 @@ mod tests {
             .unwrap_err()
             .to_string();
         assert!(err.contains("plain HTTP"), "{err}");
+    }
+
+    /// Build an entry carrying a download, for the `download()` guard tests.
+    fn entry_with_download(url: &str, sha: Option<&str>, repo: Option<&str>) -> RegistryEntry {
+        RegistryEntry {
+            name: "lua".into(),
+            extensions: vec!["lua".into()],
+            profile_version: None,
+            profile_url: "grammars/lua/manifest.json".into(),
+            ts_abi: None,
+            grammar_repo: repo.map(String::from),
+            grammar_rev: None,
+            description: None,
+            wasm_url: Some(url.into()),
+            wasm_sha256: sha.map(String::from),
+        }
+    }
+
+    const SHA_OK: &str = "0000000000000000000000000000000000000000000000000000000000000000";
+
+    #[test]
+    fn entry_without_a_wasm_url_offers_no_download() {
+        let mut e = entry_with_download("https://example.com/g.wasm", Some(SHA_OK), None);
+        e.wasm_url = None;
+        assert!(e.download().unwrap().is_none());
+    }
+
+    #[test]
+    fn download_requires_a_checksum() {
+        // Auto-download takes fetching off the user's desk, so unpinned bytes
+        // must be refused rather than silently trusted.
+        let e = entry_with_download("https://example.com/g.wasm", None, None);
+        let err = e.download().unwrap_err().to_string();
+        assert!(err.contains("no wasm_sha256"), "{err}");
+    }
+
+    #[test]
+    fn download_rejects_a_malformed_checksum() {
+        for bad in ["abc", &"z".repeat(64)] {
+            let e = entry_with_download("https://example.com/g.wasm", Some(bad), None);
+            assert!(e.download().is_err(), "{bad} should be rejected");
+        }
+    }
+
+    #[test]
+    fn download_requires_https() {
+        let e = entry_with_download("http://example.com/g.wasm", Some(SHA_OK), None);
+        let err = e.download().unwrap_err().to_string();
+        assert!(err.contains("https"), "{err}");
+    }
+
+    #[test]
+    fn download_host_must_match_the_grammar_repo() {
+        // A registry entry must not be able to point the download somewhere
+        // unrelated to the repository it claims to package.
+        let e = entry_with_download(
+            "https://evil.example/g.wasm",
+            Some(SHA_OK),
+            Some("https://github.com/tree-sitter/tree-sitter-lua"),
+        );
+        let err = e.download().unwrap_err().to_string();
+        assert!(err.contains("does not match grammar_repo host"), "{err}");
+
+        // Same host is fine.
+        let ok = entry_with_download(
+            "https://github.com/tree-sitter/tree-sitter-lua/releases/download/v1/g.wasm",
+            Some(SHA_OK),
+            Some("https://github.com/tree-sitter/tree-sitter-lua"),
+        );
+        assert!(ok.download().unwrap().is_some());
+    }
+
+    #[tokio::test]
+    async fn download_verifies_the_checksum() {
+        use sha2::{Digest, Sha256};
+        let tmp = tempfile::tempdir().unwrap();
+        let wasm = tmp.path().join("g.wasm");
+        std::fs::write(&wasm, b"\0asm\x01\x00\x00\x00").unwrap();
+        let real = format!("{:x}", Sha256::digest(std::fs::read(&wasm).unwrap()));
+
+        // Matching digest returns exactly the bytes that hashed.
+        let good = RemoteWasm { url: wasm.display().to_string(), sha256: real.clone() };
+        assert_eq!(download_wasm(&good).await.unwrap(), b"\0asm\x01\x00\x00\x00");
+
+        // A digest that doesn't match must stop the install, not warn.
+        let bad = RemoteWasm { url: wasm.display().to_string(), sha256: SHA_OK.into() };
+        let err = download_wasm(&bad).await.unwrap_err().to_string();
+        assert!(err.contains("checksum mismatch"), "{err}");
     }
 
     #[tokio::test]

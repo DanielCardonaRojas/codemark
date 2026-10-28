@@ -116,6 +116,67 @@ pub async fn install_from_registry(
     install_grammar(&name, &extensions, profile, wasm_bytes)
 }
 
+/// Install a language end to end from the registry: download the grammar it
+/// points at, verify the checksum, and install it with the curated profile
+/// (`codemark languages install <lang>`).
+///
+/// This is the no-friction path — no Docker, no emscripten, no hunting for the
+/// right release asset. It only works for entries that publish a `wasm_url`;
+/// the error for one that doesn't names the manual route rather than failing
+/// opaquely.
+///
+/// The download is verified against the registry's pinned SHA-256 *before*
+/// [`install_grammar`] sees the bytes, so an entry can't be made to install
+/// something other than what was reviewed into the index.
+pub async fn install_from_registry_download(
+    registry_name: &str,
+    overrides: InstallOverrides,
+    client: &registry_source::RegistryClient,
+    refresh: bool,
+) -> Result<InstallOutcome> {
+    let entry = client.find(registry_name, refresh).await?;
+
+    let Some(remote) = entry.download()? else {
+        return Err(Error::Input(format!(
+            "'{}' has no prebuilt grammar in the registry, so it can't be installed \
+             automatically.\nBuild or download the .wasm yourself, then:\n  codemark languages \
+             add <grammar.wasm> --from-registry {}",
+            entry.name, entry.name
+        )));
+    };
+
+    let manifest = client.fetch_profile(&entry).await?;
+
+    let name = overrides
+        .name
+        .or_else(|| manifest.get("name").and_then(|v| v.as_str()).map(String::from))
+        .unwrap_or_else(|| entry.name.clone());
+
+    let raw_extensions = overrides.extensions.unwrap_or_else(|| {
+        let from_manifest = manifest
+            .get("extensions")
+            .and_then(|v| v.as_array())
+            .map(|a| a.iter().filter_map(|e| e.as_str()).collect::<Vec<_>>().join(","))
+            .unwrap_or_default();
+        if from_manifest.is_empty() { entry.extensions.join(",") } else { from_manifest }
+    });
+
+    // Same validation a hand-typed `--name` gets: a registry entry earns no
+    // right to claim `rs` or shadow a built-in.
+    let extensions = validate_name_and_extensions(&name, &raw_extensions)?;
+
+    let wasm_bytes = registry_source::download_wasm(&remote).await?;
+
+    tracing::debug!(
+        target: "codemark::languages",
+        %name,
+        bytes = wasm_bytes.len(),
+        "installing a downloaded grammar"
+    );
+
+    install_grammar(&name, &extensions, manifest.get("profile").cloned(), wasm_bytes)
+}
+
 /// The outcome of a successful [`install_grammar`], returned so the caller can
 /// format it (human or JSON) without this module owning presentation.
 #[derive(Debug)]

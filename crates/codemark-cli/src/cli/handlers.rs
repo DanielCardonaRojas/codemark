@@ -199,6 +199,7 @@ fn merge_globals(cli: &mut Cli) {
             Some(crate::cli::LanguagesCommand::Add(a)) => g_output(&a.output),
             Some(crate::cli::LanguagesCommand::List(a)) => g_output(&a.output),
             Some(crate::cli::LanguagesCommand::Validate(a)) => g_output(&a.output),
+            Some(crate::cli::LanguagesCommand::Install(a)) => g_output(&a.output),
             Some(crate::cli::LanguagesCommand::Registry(r)) => match &r.command {
                 crate::cli::RegistryCommand::List(a) => g_output(&a.output),
             },

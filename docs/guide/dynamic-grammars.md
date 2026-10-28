@@ -54,14 +54,25 @@ See [Query Generation](./query-generation) for what landmarks do.
 codemark languages add path/to/grammar.wasm --name lua --extensions lua,luau
 ```
 
-### With a curated profile from the registry
+### From the registry, in one command
 
-A grammar installed on its own gets an **empty profile**, so breadcrumbs and
-query summaries don't work until someone writes one. The grammar registry ships
-curated profiles — check whether yours is already there:
+If the registry has your language, this is the whole process — no Docker, no
+emscripten, no hunting for the right release asset:
 
 ```bash
 codemark languages registry list
+codemark languages install ruby
+```
+
+It downloads the grammar the registry pins, **verifies it against a SHA-256
+recorded in the index**, and installs it with the curated profile. A checksum
+mismatch aborts before anything is written. The download URL is also required to
+share a host with the entry's `grammar_repo`, so an entry can't point at an
+unrelated binary.
+
+Entries without a prebuilt `.wasm` fall back to supplying one yourself:
+
+```bash
 codemark languages add ./tree-sitter-lua.wasm --from-registry lua
 ```
 
@@ -137,7 +148,8 @@ installed grammars appear without a restart.
 | Command | Effect |
 |---------|--------|
 | `codemark languages add <file>` | Install a grammar (see above). |
-| `codemark languages add <file> --from-registry <lang>` | Install with a curated profile. |
+| `codemark languages install <lang>` | Download + verify + install from the registry. |
+| `codemark languages add <file> --from-registry <lang>` | Install your own `.wasm` with a curated profile. |
 | `codemark languages registry list` | List languages with a curated profile available. |
 | `codemark languages list` | List all supported languages (built-ins + dynamic). |
 | `codemark languages validate` | Verify each grammar loads **and lint its profile** (see below). |
