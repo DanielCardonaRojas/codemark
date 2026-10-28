@@ -194,6 +194,19 @@ impl FromStr for Language {
     ///
     /// Falls back to built-in-first without the `wasm` feature, for the same
     /// reason: an unloadable grammar is not a usable override.
+    ///
+    /// # Known gap
+    ///
+    /// A bookmark records only the language *name*, so the two lookups can
+    /// disagree for an extension the override doesn't claim. A dynamic
+    /// `typescript` claiming only `.ts` leaves a `.tsx` file resolving to the
+    /// built-in — which stores `"typescript"`, and that name later resolves to
+    /// the dynamic grammar.
+    ///
+    /// Closing it properly means recording grammar identity on the bookmark,
+    /// which is a schema change. Until then the narrower mitigation is to claim
+    /// every extension of the built-in you override, which
+    /// `--override-builtin` makes visible at install time.
     fn from_str(s: &str) -> Result<Self> {
         let resolved = if cfg!(feature = "wasm") {
             crate::parser::registry::LanguageRegistry::from_name(s)
@@ -241,7 +254,39 @@ pub struct Parser {
 }
 
 impl Parser {
+    /// Build a parser, falling back to the built-in when a dynamic grammar
+    /// that *overrides* one fails to load.
+    ///
+    /// Discovery registers a grammar on the strength of a readable manifest and
+    /// an existing `grammar.wasm`; it does not prove the module loads. Since a
+    /// dynamic grammar now wins resolution, a corrupt or ABI-incompatible
+    /// override would otherwise make its extension unparseable — worse than the
+    /// state before the override was installed. Falling back keeps the built-in
+    /// as a floor.
     pub fn new(language: Language) -> Result<Self> {
+        let fallback = match &language {
+            Language::Dynamic(dl) => Language::static_from_name(&dl.name)
+                .or_else(|| dl.extensions.iter().find_map(|e| Language::static_from_extension(e))),
+            _ => None,
+        };
+        match Self::new_exact(language) {
+            Ok(p) => Ok(p),
+            Err(e) => match fallback {
+                Some(builtin) => {
+                    eprintln!(
+                        "codemark: dynamic grammar failed to load ({e}); falling back to the \
+                         built-in {} parser",
+                        builtin.name()
+                    );
+                    Self::new_exact(builtin)
+                }
+                None => Err(e),
+            },
+        }
+    }
+
+    /// [`Parser::new`] without the built-in fallback.
+    fn new_exact(language: Language) -> Result<Self> {
         let mut inner = tree_sitter::Parser::new();
         let ts_language = match &language {
             Language::Swift
@@ -349,7 +394,39 @@ pub struct ParseCache {
 }
 
 impl ParseCache {
+    /// Build a parser, falling back to the built-in when a dynamic grammar
+    /// that *overrides* one fails to load.
+    ///
+    /// Discovery registers a grammar on the strength of a readable manifest and
+    /// an existing `grammar.wasm`; it does not prove the module loads. Since a
+    /// dynamic grammar now wins resolution, a corrupt or ABI-incompatible
+    /// override would otherwise make its extension unparseable — worse than the
+    /// state before the override was installed. Falling back keeps the built-in
+    /// as a floor.
     pub fn new(language: Language) -> Result<Self> {
+        let fallback = match &language {
+            Language::Dynamic(dl) => Language::static_from_name(&dl.name)
+                .or_else(|| dl.extensions.iter().find_map(|e| Language::static_from_extension(e))),
+            _ => None,
+        };
+        match Self::new_exact(language) {
+            Ok(p) => Ok(p),
+            Err(e) => match fallback {
+                Some(builtin) => {
+                    eprintln!(
+                        "codemark: dynamic grammar failed to load ({e}); falling back to the \
+                         built-in {} parser",
+                        builtin.name()
+                    );
+                    Self::new_exact(builtin)
+                }
+                None => Err(e),
+            },
+        }
+    }
+
+    /// [`Parser::new`] without the built-in fallback.
+    fn new_exact(language: Language) -> Result<Self> {
         Ok(ParseCache { trees: HashMap::new(), parser: Parser::new(language.clone())? })
     }
 
@@ -417,15 +494,21 @@ mod tests {
         use super::Language;
         use std::str::FromStr;
 
-        // No dynamic grammar is installed in the test environment, so these
-        // assert the fallback arm of each lookup is wired up at all — the
-        // ordering itself is `cfg!(feature = "wasm")` and is covered by the
-        // doc comment plus the no-default-features CI build.
-        assert!(matches!(Language::from_extension("rs"), Some(Language::Rust)));
-        assert!(matches!(Language::from_str("rust"), Ok(Language::Rust)));
+        // Deliberately the *static* helpers: `from_extension` / `from_str`
+        // consult the user's real grammar cache, so a `rust` override on the
+        // machine running the tests would fail these. What matters here is
+        // that the built-in arm still maps correctly.
+        assert!(matches!(Language::static_from_extension("rs"), Some(Language::Rust)));
+        assert!(matches!(Language::static_from_name("rust"), Some(Language::Rust)));
+        assert!(matches!(Language::static_from_name("rs"), Some(Language::Rust)));
 
-        // And a built-in stays reachable by alias either way.
-        assert!(matches!(Language::from_str("rs"), Ok(Language::Rust)));
+        // And the built-in remains reachable through the public lookups when
+        // nothing overrides it — true in CI, and the no-default-features build
+        // covers the other ordering.
+        if crate::parser::registry::LanguageRegistry::from_extension("rs").is_none() {
+            assert!(matches!(Language::from_extension("rs"), Some(Language::Rust)));
+            assert!(matches!(Language::from_str("rust"), Ok(Language::Rust)));
+        }
     }
 
     use super::*;
