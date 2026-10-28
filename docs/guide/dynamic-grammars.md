@@ -40,6 +40,9 @@ Layout: `<cache>/<lang>/grammar.wasm` + `<cache>/<lang>/manifest.json`.
 }
 ```
 
+Every field is explained in detail — including who reads it and how each one
+fails — in [the manifest anatomy guide](https://github.com/DanielCardonaRojas/codemark/blob/main/dev-docs/guides/manifest-anatomy.md).
+
 The `profile` is optional (omitting it writes `{}`). Every field is
 `#[serde(default)]`, so partial profiles work — but a `landmark_kinds` with the
 right node types is what makes bookmarks anchor correctly for a new language.

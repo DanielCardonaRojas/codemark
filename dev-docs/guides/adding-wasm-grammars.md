@@ -155,7 +155,9 @@ The cache lives at the platform cache dir (override with `$CODEMARK_GRAMMARS_DIR
 > and silently does nothing. Run `codemark languages validate` after editing: it
 > checks every kind against the grammar and reports the ones that don't exist.
 
-See the committed reference: [`tests/fixtures/grammars/lua/manifest.json`](../../tests/fixtures/grammars/lua/manifest.json).
+See the committed reference: [`tests/fixtures/grammars/lua/manifest.json`](../../tests/fixtures/grammars/lua/manifest.json),
+and [manifest-anatomy.md](./manifest-anatomy.md) for what every field means, who
+reads it, and how each one fails.
 
 ### Generating a profile (recommended)
 
