@@ -132,7 +132,7 @@ pub struct Config {
 /// `.wasm` binaries, so there is no ABI build pipeline or grammar licensing to
 /// host. Users still build the grammar themselves.
 pub const DEFAULT_GRAMMAR_REGISTRY: &str =
-    "https://raw.githubusercontent.com/codemark-dev/codemark-grammars/main";
+    "https://raw.githubusercontent.com/DanielCardonaRojas/codemark-grammars/main";
 
 /// How long a cached registry index stays fresh.
 const DEFAULT_INDEX_TTL_SECS: u64 = 60 * 60 * 24;
