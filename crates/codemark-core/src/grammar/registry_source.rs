@@ -343,6 +343,10 @@ impl RegistryClient {
     /// and declares nothing, re-read the index once from the network so the
     /// declaration gets a chance to appear. An entry that genuinely doesn't
     /// declare it ends up refused either way, just after one fetch.
+    ///
+    /// The refreshed index wins when it can be read at all — including when it
+    /// has dropped the entry. Only an unreachable registry falls back to the
+    /// cached copy.
     pub async fn find_for_install(&self, name: &str, refresh: bool) -> Result<RegistryEntry> {
         let entry = self.find(name, refresh).await?;
         if refresh || entry.overrides_builtin || !entry.collides_with_builtin() {
@@ -353,9 +357,14 @@ impl RegistryClient {
             language = %name,
             "cached entry collides with a built-in and declares no override; re-reading the index"
         );
-        // Best-effort: if the refetch fails (offline), keep the cached entry and
-        // let validation report the collision as it would have.
-        Ok(self.find(name, true).await.unwrap_or(entry))
+        // Only a *failed* fetch falls back to the cached entry, so an offline
+        // user is no worse off. A refresh that succeeds is authoritative: if it
+        // no longer lists the entry, the language has been delisted and saying
+        // so beats resurrecting a copy the registry has dropped.
+        match self.fetch_index(true).await {
+            Ok(index) => Self::pick(index, name),
+            Err(_) => Ok(entry),
+        }
     }
 
     fn pick(index: RegistryIndex, name: &str) -> Result<RegistryEntry> {
@@ -1083,6 +1092,78 @@ mod tests {
         let entry = client.find_for_install("c_sharp", false).await.unwrap();
         assert!(entry.overrides_builtin, "install lookup should re-read the index");
         assert!(crate::grammar::validate_registry_install(&entry, "c_sharp", "cs", false).is_ok());
+    }
+
+    #[tokio::test]
+    async fn a_refresh_that_delists_the_entry_does_not_resurrect_it() {
+        // The refetch must not collapse "registry dropped this" into "network
+        // was down". A delisted entry kept from cache would still install under
+        // --override-builtin, resurrecting what the registry removed.
+        let tmp = tempfile::tempdir().unwrap();
+        let reg = tmp.path().join("registry");
+        let cache = tmp.path().join("cache");
+        std::fs::create_dir_all(&reg).unwrap();
+        std::fs::create_dir_all(&cache).unwrap();
+
+        // Reachable registry that no longer lists c_sharp.
+        std::fs::write(
+            reg.join("index.json"),
+            r#"{"schema_version":1,"grammars":[
+               {"name":"lua","extensions":["lua"],"profile_url":"p.json"}
+            ]}"#,
+        )
+        .unwrap();
+
+        let client = RegistryClient::with_base_url(
+            reg.display().to_string(),
+            cache,
+            Duration::from_secs(86400),
+        );
+        // Cached entry collides with a built-in and declares nothing, so the
+        // refetch path is the one under test.
+        std::fs::write(
+            client.index_cache_path(),
+            r#"{"schema_version":1,"grammars":[
+               {"name":"c_sharp","extensions":["cs"],"profile_url":"p.json"}
+            ]}"#,
+        )
+        .unwrap();
+
+        let err = client.find_for_install("c_sharp", false).await.unwrap_err();
+        assert!(err.to_string().contains("not in the grammar registry"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn an_unreachable_registry_still_falls_back_to_the_cached_entry() {
+        // The offline guarantee the fallback exists for: no index.json to
+        // fetch, so the cached entry must survive and let validation report the
+        // collision as it always would.
+        let tmp = tempfile::tempdir().unwrap();
+        let reg = tmp.path().join("registry");
+        let cache = tmp.path().join("cache");
+        std::fs::create_dir_all(&reg).unwrap();
+        std::fs::create_dir_all(&cache).unwrap();
+
+        let client = RegistryClient::with_base_url(
+            reg.display().to_string(),
+            cache,
+            Duration::from_secs(86400),
+        );
+        std::fs::write(
+            client.index_cache_path(),
+            r#"{"schema_version":1,"grammars":[
+               {"name":"c_sharp","extensions":["cs"],"profile_url":"p.json"}
+            ]}"#,
+        )
+        .unwrap();
+
+        let entry = client.find_for_install("c_sharp", false).await.unwrap();
+        assert_eq!(entry.name, "c_sharp");
+        assert!(!entry.overrides_builtin);
+        // And it is still refused without the flag.
+        let err =
+            crate::grammar::validate_registry_install(&entry, "c_sharp", "cs", false).unwrap_err();
+        assert!(err.to_string().contains("built-in"), "{err}");
     }
 
     #[tokio::test]
