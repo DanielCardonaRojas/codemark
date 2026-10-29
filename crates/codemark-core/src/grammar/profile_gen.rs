@@ -481,10 +481,22 @@ fn label_for(kind: &str, landmark: bool, has_switch_statement: bool) -> Option<&
         ("assignment", "assignment"),
     ];
 
-    // A single branch of a dispatch construct is a fragment of one, like
-    // `else_clause`: labelling it would put a spurious "match" in the summary
-    // for a node that is only part of a match.
-    if matches!(kind, "case_item" | "switch_case" | "case_block" | "case_pattern") {
+    // A single branch of a dispatch construct — or the `{ }` that wraps the
+    // branches — is a fragment of one, like `else_clause`: labelling it would
+    // put a spurious "match" in the summary for a node that is only part of a
+    // match. C# spells these `switch_body` (the braces) and `switch_section`
+    // (one branch); the `switch_` segment marker below would otherwise catch
+    // both and report three "match" nodes for a single switch.
+    if matches!(
+        kind,
+        "case_item"
+            | "switch_case"
+            | "case_block"
+            | "case_pattern"
+            | "switch_body"
+            | "switch_section"
+            | "switch_block"
+    ) {
         return None;
     }
     // `case_statement` is two different nodes depending on the grammar: in Bash
@@ -748,6 +760,17 @@ fn f() {
         // `else_clause` gets no label.
         assert_eq!(label_for("case_item", false, false), None);
         assert_eq!(label_for("switch_case", false, false), None);
+
+        // So is the `{ }` wrapping the branches. C# has `switch_body` and
+        // `switch_section`, PHP `switch_block`, TypeScript `switch_body`: the
+        // `switch_` segment marker would catch all of them and report three
+        // "match" nodes for one switch. Verified against the registry's
+        // grammars — none of these names is ever a declaration.
+        for kind in ["switch_body", "switch_section", "switch_block"] {
+            assert_eq!(label_for(kind, false, true), None, "{kind} is a fragment of a match");
+        }
+        // The dispatch itself is still labelled.
+        assert_eq!(label_for("switch_expression", false, false), Some("match"));
 
         // The collision this exists to prevent: PHP's `enum_case` and Scala's
         // `full_enum_case` are real enum-member declarations. A segment-level
