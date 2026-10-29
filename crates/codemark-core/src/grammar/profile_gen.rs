@@ -486,7 +486,13 @@ fn label_for(kind: &str, landmark: bool, has_switch_statement: bool) -> Option<&
     // put a spurious "match" in the summary for a node that is only part of a
     // match. C# spells these `switch_body` (the braces) and `switch_section`
     // (one branch); the `switch_` segment marker below would otherwise catch
-    // both and report three "match" nodes for a single switch.
+    // both and report three "match" nodes for a single switch. PHP's
+    // `match_expression` decomposes further still, into four such fragments.
+    //
+    // Only fragment names go here. Scala's `match_type` (a type-level match)
+    // and Ruby's `match_pattern` (`value => pattern`) are whole constructs and
+    // are correctly labelled by the `match_` marker — checked in grammar.js for
+    // both before adding anything to this list.
     if matches!(
         kind,
         "case_item"
@@ -496,6 +502,10 @@ fn label_for(kind: &str, landmark: bool, has_switch_statement: bool) -> Option<&
             | "switch_body"
             | "switch_section"
             | "switch_block"
+            | "match_block"
+            | "match_condition_list"
+            | "match_conditional_expression"
+            | "match_default_expression"
     ) {
         return None;
     }
@@ -771,6 +781,24 @@ fn f() {
         }
         // The dispatch itself is still labelled.
         assert_eq!(label_for("switch_expression", false, false), Some("match"));
+
+        // PHP's `match_expression` decomposes into four fragments, which would
+        // otherwise report five "match" nodes for one expression.
+        for kind in [
+            "match_block",
+            "match_condition_list",
+            "match_conditional_expression",
+            "match_default_expression",
+        ] {
+            assert_eq!(label_for(kind, false, false), None, "{kind} is a fragment of a match");
+        }
+        assert_eq!(label_for("match_expression", false, false), Some("match"));
+
+        // But not every `match_*` kind is a fragment. Scala's `match_type` is a
+        // type-level match and Ruby's `match_pattern` is a `value => pattern`
+        // expression; both are whole constructs that should keep the label.
+        assert_eq!(label_for("match_type", false, false), Some("match"));
+        assert_eq!(label_for("match_pattern", false, false), Some("match"));
 
         // The collision this exists to prevent: PHP's `enum_case` and Scala's
         // `full_enum_case` are real enum-member declarations. A segment-level
