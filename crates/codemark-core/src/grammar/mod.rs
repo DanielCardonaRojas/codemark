@@ -86,9 +86,8 @@ pub async fn install_from_registry(
     client: &registry_source::RegistryClient,
     refresh: bool,
 ) -> Result<InstallOutcome> {
-    let entry = client.find(registry_name, refresh).await?;
+    let entry = client.find_for_install(registry_name, refresh).await?;
     let manifest = client.fetch_profile(&entry).await?;
-    let override_builtin = overrides.override_builtin;
 
     // Caller's flags beat the registry, which beats the manifest's own fields.
     let name = overrides
@@ -107,7 +106,8 @@ pub async fn install_from_registry(
 
     // A registry entry gets no special trust: it must not claim `rs` or shadow a
     // built-in any more than a hand-typed `--name` could.
-    let extensions = validate_name_and_extensions_opt(&name, &raw_extensions, override_builtin)?;
+    let extensions =
+        validate_registry_install(&entry, &name, &raw_extensions, overrides.override_builtin)?;
 
     let profile = manifest.get("profile").cloned();
     let wasm_bytes = source::LocalFileSource.resolve_path(path)?.wasm.into_bytes().await?;
@@ -141,7 +141,7 @@ pub async fn install_from_registry_download(
     client: &registry_source::RegistryClient,
     refresh: bool,
 ) -> Result<InstallOutcome> {
-    let entry = client.find(registry_name, refresh).await?;
+    let entry = client.find_for_install(registry_name, refresh).await?;
 
     let Some(remote) = entry.download()? else {
         return Err(Error::Input(format!(
@@ -153,7 +153,6 @@ pub async fn install_from_registry_download(
     };
 
     let manifest = client.fetch_profile(&entry).await?;
-    let override_builtin = overrides.override_builtin;
 
     let name = overrides
         .name
@@ -171,7 +170,8 @@ pub async fn install_from_registry_download(
 
     // Same validation a hand-typed `--name` gets: a registry entry earns no
     // right to claim `rs` or shadow a built-in.
-    let extensions = validate_name_and_extensions_opt(&name, &raw_extensions, override_builtin)?;
+    let extensions =
+        validate_registry_install(&entry, &name, &raw_extensions, overrides.override_builtin)?;
 
     let wasm_bytes = registry_source::download_wasm(&remote).await?;
 
@@ -289,6 +289,31 @@ fn build_manifest(
         "profile": profile,
     });
     Ok(serde_json::to_string_pretty(&manifest_json).unwrap())
+}
+
+/// Validate a registry install, letting the entry's own `overrides_builtin`
+/// stand in for `--override-builtin` — but only for what the entry declares.
+///
+/// Shared by both registry install paths so the consent decision has one
+/// definition. `caller_override` is the user's `--override-builtin`: it still
+/// covers anything, including a name or extension the entry never mentioned.
+/// The entry's declaration covers only its own name and extensions, so a
+/// `--extensions` or manifest value that reaches past them (`c_sharp
+/// --extensions cs,rs`) falls back to needing the flag.
+fn validate_registry_install(
+    entry: &registry_source::RegistryEntry,
+    name: &str,
+    raw_extensions: &str,
+    caller_override: bool,
+) -> Result<Vec<String>> {
+    if caller_override {
+        return validate_name_and_extensions_opt(name, raw_extensions, true);
+    }
+    // Judge consent against the normalized extensions the install will actually
+    // claim, so `.CS` or ` cs ` in a manifest can't slip past the comparison.
+    let normalized = validate_name_and_extensions_opt(name, raw_extensions, true)?;
+    let consented = entry.consents_to_override(name, &normalized);
+    validate_name_and_extensions_opt(name, raw_extensions, consented)
 }
 
 /// Validate a grammar `name` and raw comma-separated `raw_extensions`, returning

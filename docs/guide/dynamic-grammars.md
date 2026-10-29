@@ -21,6 +21,16 @@ Shadowing is never accidental: installing a grammar that claims a built-in's
 name or extension requires `--override-builtin`, and discovery prints a line
 when one takes effect.
 
+A registry entry can declare the intent itself with `"overrides_builtin": true`,
+so `codemark languages install c_sharp` works without the flag — the registry
+has already made the decision, under review. An entry that *doesn't* declare it
+still fails on a collision, so an accidental one is caught.
+
+That consent is scoped to the name and extensions the entry itself declares.
+Reaching past them still needs `--override-builtin`: `languages install c_sharp
+--extensions cs,rs` is refused, because the C# entry never claimed `.rs` and a
+dynamic grammar wins resolution.
+
 ## Cache location
 
 `global_grammars_dir()`: `$CODEMARK_GRAMMARS_DIR` → `cache_dir/codemark/grammars`.
