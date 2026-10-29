@@ -1100,18 +1100,31 @@ mod tests {
             cache,
             Duration::from_secs(86400),
         );
+
+        // Source and cache disagree on a field, so the value that comes back
+        // says which one was read. A reachable source is the point: if the
+        // fetch merely *failed*, the stale-cache fallback would serve the
+        // cached entry too and this test would pass without proving anything.
+        std::fs::write(
+            reg.join("index.json"),
+            r#"{"schema_version":1,"grammars":[
+               {"name":"lua","extensions":["lua"],"profile_url":"from-source.json"}
+            ]}"#,
+        )
+        .unwrap();
         std::fs::write(
             client.index_cache_path(),
             r#"{"schema_version":1,"grammars":[
-               {"name":"lua","extensions":["lua"],"profile_url":"p.json"}
+               {"name":"lua","extensions":["lua"],"profile_url":"from-cache.json"}
             ]}"#,
         )
         .unwrap();
 
-        // No index.json on disk at all: a refetch would fail, so success here
-        // proves the cached entry was used directly.
         let entry = client.find_for_install("lua", false).await.unwrap();
-        assert_eq!(entry.name, "lua");
+        assert_eq!(
+            entry.profile_url, "from-cache.json",
+            "a non-colliding entry must not trigger a refetch"
+        );
     }
 
     #[tokio::test]
