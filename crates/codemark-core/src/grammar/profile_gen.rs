@@ -52,7 +52,6 @@ const CONTROL_FLOW_MARKERS: &[&str] = &[
     "return_",
     "assignment",
     "call",
-    "loop_",
     "try_",
     "catch_",
     "repeat_",
@@ -62,16 +61,37 @@ const CONTROL_FLOW_MARKERS: &[&str] = &[
     "break",
     "goto",
     "label",
-    "until",
 ];
 
 /// Control-flow kinds matched on the *whole* kind name rather than a segment.
 ///
-/// `case` cannot be a segment marker: PHP's `enum_case` and Scala's
-/// `full_enum_case` are real enum-member declarations, and a segment match would
-/// demote them out of `landmark_kinds` and mislabel them `match`. Only the
-/// dispatch statement itself and its branch wrapper are control flow.
-const CONTROL_FLOW_EXACT: &[&str] = &["case_statement", "case_item", "switch_case", "case_block"];
+/// `case`, `until` and `loop` cannot be segment markers: each appears as a
+/// segment of a kind that is not the construct it names.
+///
+/// | Segment | Collides with | What that kind really is |
+/// |---|---|---|
+/// | `case` | PHP `enum_case`, Scala `full_enum_case` | an enum member |
+/// | `until` | Ada `delay_until_statement` | a timed delay |
+/// | `loop` | Ada `loop_parameter_specification`, `loop_label` | a loop's header/label, not the loop |
+///
+/// For `case` the cost is worse than a bad label: a segment match would demote
+/// the enum members out of `landmark_kinds` entirely. So the dispatch statement,
+/// its branch wrapper, and the loop forms are matched on the whole kind name.
+const CONTROL_FLOW_EXACT: &[&str] = &[
+    "case_statement",
+    "case_item",
+    "switch_case",
+    "case_block",
+    // Negated while (Bash, Ruby), Rust's unconditional loop, Lua's
+    // repeat-until, Ada's bare `loop`.
+    "until",
+    "until_statement",
+    "until_modifier",
+    "loop",
+    "loop_statement",
+    "loop_expression",
+    "repeat_statement",
+];
 
 /// Why the generator classified a kind the way it did, so a human can audit the
 /// proposal instead of taking it on faith.
@@ -180,9 +200,14 @@ pub fn propose_profile(
         }
     }
 
+    // Observed once, not per kind: `case_statement` means "a branch" in grammars
+    // that also have `switch_statement`, and "the whole dispatch" in those that
+    // don't.
+    let has_switch_statement = stats.contains_key("switch_statement");
+
     let mut node_labels = HashMap::new();
     for kind in stats.keys() {
-        if let Some(label) = label_for(kind, landmarks.contains(kind)) {
+        if let Some(label) = label_for(kind, landmarks.contains(kind), has_switch_statement) {
             node_labels.insert(kind.clone(), label.to_string());
         }
     }
@@ -424,7 +449,11 @@ fn dominant_name_field(s: &KindStats) -> Option<String> {
 /// lint reports as a warning. Returning `None` leaves the kind out of
 /// `node_labels` entirely, where the caller's fallback
 /// (`kind.replace('_', " ")`) applies.
-fn label_for(kind: &str, landmark: bool) -> Option<&'static str> {
+///
+/// `has_switch_statement` reports whether the same grammar also produced a
+/// `switch_statement`; it disambiguates `case_statement`, which is a whole
+/// dispatch in some grammars and a single branch in others.
+fn label_for(kind: &str, landmark: bool, has_switch_statement: bool) -> Option<&'static str> {
     // Control flow and common expressions first: these are the labels that make
     // query summaries readable, and they are not landmarks.
     // A sub-part of a construct (`for_generic_clause`, `else_clause`) is not the
@@ -446,10 +475,6 @@ fn label_for(kind: &str, landmark: bool) -> Option<&'static str> {
         ("for_", "for loop"),
         ("while_", "while loop"),
         ("repeat_", "while loop"),
-        // `until` is Bash's and Ruby's negated while; `loop` is Rust's
-        // unconditional one. Both are while loops for summary purposes.
-        ("until", "while loop"),
-        ("loop", "while loop"),
         ("switch_", "match"),
         ("match_", "match"),
         ("return_", "return"),
@@ -458,13 +483,32 @@ fn label_for(kind: &str, landmark: bool) -> Option<&'static str> {
 
     // A single branch of a dispatch construct is a fragment of one, like
     // `else_clause`: labelling it would put a spurious "match" in the summary
-    // for a node that is only part of a match. The statement itself is labelled
-    // below.
+    // for a node that is only part of a match.
     if matches!(kind, "case_item" | "switch_case" | "case_block" | "case_pattern") {
         return None;
     }
+    // `case_statement` is two different nodes depending on the grammar: in Bash
+    // it is the whole dispatch, but in PHP and C it is a single branch of a
+    // `switch_statement`. `has_switch_statement` tells them apart — a grammar
+    // with both kinds is the PHP/C shape, where the dispatch is already labelled
+    // via the `switch_` marker and the branch must stay unlabelled.
     if kind == "case_statement" {
-        return Some("match");
+        return if has_switch_statement { None } else { Some("match") };
+    }
+    // Loop kinds matched whole, not by segment, so Ada's
+    // `delay_until_statement` and `loop_parameter_specification` — a delay and a
+    // loop header, neither a loop — keep their fallback name.
+    if matches!(
+        kind,
+        "until"
+            | "until_statement"
+            | "until_modifier"
+            | "loop"
+            | "loop_statement"
+            | "loop_expression"
+            | "repeat_statement"
+    ) {
+        return Some("while loop");
     }
     // Whole-segment matching, same reason as `is_control_flow`: a substring
     // test labels `callback_declaration` a "call".
@@ -658,10 +702,10 @@ fn f() {
         // `for_generic_clause` is part of a for loop, not a for loop. Labelling
         // it would put a spurious "for loop" in query summaries for a node that
         // only ever appears inside one.
-        assert_eq!(label_for("for_generic_clause", false), None);
-        assert_eq!(label_for("else_clause", false), None);
+        assert_eq!(label_for("for_generic_clause", false, false), None);
+        assert_eq!(label_for("else_clause", false, false), None);
         // The construct itself still gets its label.
-        assert_eq!(label_for("for_statement", false), Some("for loop"));
+        assert_eq!(label_for("for_statement", false, false), Some("for loop"));
     }
 
     #[test]
@@ -674,14 +718,14 @@ fn f() {
         assert!(!is_control_flow("pseudo_class_selector"));
         // The point is that it is no longer labelled "call"; it has no
         // declaration keyword either, so it gets no label rather than a wrong one.
-        assert_ne!(label_for("callback_declaration", true), Some("call"));
+        assert_ne!(label_for("callback_declaration", true, false), Some("call"));
 
         // Real control flow still matches, with or without the trailing `_`.
         assert!(is_control_flow("if_statement"));
         assert!(is_control_flow("for_statement"));
         assert!(is_control_flow("do_block"));
         assert!(is_control_flow("call_expression"));
-        assert_eq!(label_for("call_expression", false), Some("call"));
+        assert_eq!(label_for("call_expression", false, false), Some("call"));
     }
 
     #[test]
@@ -690,12 +734,20 @@ fn f() {
         assert!(is_control_flow("case_statement"));
         assert!(is_control_flow("case_item"));
         assert!(is_control_flow("switch_case"));
-        assert_eq!(label_for("case_statement", false), Some("match"));
+        // Bash has no `switch_statement`, so `case_statement` is the dispatch.
+        assert_eq!(label_for("case_statement", false, false), Some("match"));
+
+        // PHP and C use `case_statement` for a *single branch* of a
+        // `switch_statement`. Labelling it would put one "match" per branch in
+        // the summary, so the presence of `switch_statement` suppresses it; the
+        // dispatch itself is still labelled via the `switch_` marker.
+        assert_eq!(label_for("case_statement", false, true), None);
+        assert_eq!(label_for("switch_statement", false, true), Some("match"));
 
         // A single branch is a fragment of a match, not a match — same reason
         // `else_clause` gets no label.
-        assert_eq!(label_for("case_item", false), None);
-        assert_eq!(label_for("switch_case", false), None);
+        assert_eq!(label_for("case_item", false, false), None);
+        assert_eq!(label_for("switch_case", false, false), None);
 
         // The collision this exists to prevent: PHP's `enum_case` and Scala's
         // `full_enum_case` are real enum-member declarations. A segment-level
@@ -703,17 +755,37 @@ fn f() {
         // them "match".
         for kind in ["enum_case", "full_enum_case", "simple_enum_case"] {
             assert!(!is_control_flow(kind), "{kind} is a declaration, not control flow");
-            assert_ne!(label_for(kind, true), Some("match"), "{kind} mislabelled");
+            assert_ne!(label_for(kind, true, false), Some("match"), "{kind} mislabelled");
         }
     }
 
     #[test]
     fn until_and_loop_are_while_loops() {
-        // Bash's and Ruby's negated while, and Lua's repeat-until terminator.
+        // Bash's and Ruby's negated while, Rust's unconditional loop, and
+        // Lua's repeat-until.
         assert!(is_control_flow("until_statement"));
-        assert_eq!(label_for("until_statement", false), Some("while loop"));
-        assert_eq!(label_for("until_modifier", false), Some("while loop"));
-        assert_eq!(label_for("loop_statement", false), Some("while loop"));
+        assert_eq!(label_for("until_statement", false, false), Some("while loop"));
+        assert_eq!(label_for("until_modifier", false, false), Some("while loop"));
+        assert_eq!(label_for("until", false, false), Some("while loop"));
+        assert_eq!(label_for("loop_statement", false, false), Some("while loop"));
+        assert_eq!(label_for("loop_expression", false, false), Some("while loop"));
+        assert_eq!(label_for("repeat_statement", false, false), Some("while loop"));
+    }
+
+    #[test]
+    fn until_and_loop_match_whole_kinds_not_segments() {
+        // The collision that forces whole-kind matching. Ada's
+        // `delay_until_statement` is a timed delay and
+        // `loop_parameter_specification` is a loop's header — neither is a
+        // loop, so neither may be called one.
+        for kind in ["delay_until_statement", "loop_parameter_specification"] {
+            assert!(!is_control_flow(kind), "{kind} is not control flow");
+            assert_eq!(label_for(kind, false, false), None, "{kind} mislabelled as a loop");
+        }
+
+        // `loop_label` is control flow, but on the strength of its `label`
+        // segment, not `loop` — so it must not be called a loop either.
+        assert_ne!(label_for("loop_label", false, false), Some("while loop"));
     }
 
     #[test]
