@@ -94,6 +94,17 @@ pub struct RegistryEntry {
     /// whatever the URL happens to serve today.
     #[serde(default)]
     pub wasm_sha256: Option<String>,
+
+    /// This entry deliberately replaces a codemark built-in of the same name or
+    /// extension (C# ships bundled, for instance, and is also served here).
+    ///
+    /// Installing over a built-in normally requires `--override-builtin`;
+    /// setting this lets `languages install <lang>` do it without the flag,
+    /// because the registry has already declared the intent. A collision in an
+    /// entry that *doesn't* set it still fails, so an accidental one is still
+    /// caught.
+    #[serde(default)]
+    pub overrides_builtin: bool,
 }
 
 impl RegistryEntry {
@@ -787,6 +798,7 @@ mod tests {
             description: None,
             wasm_url: Some(url.into()),
             wasm_sha256: sha.map(String::from),
+            overrides_builtin: false,
         }
     }
 
@@ -860,6 +872,22 @@ mod tests {
         let bad = RemoteWasm { url: wasm.display().to_string(), sha256: SHA_OK.into() };
         let err = download_wasm(&bad).await.unwrap_err().to_string();
         assert!(err.contains("checksum mismatch"), "{err}");
+    }
+
+    #[test]
+    fn overrides_builtin_defaults_to_false() {
+        // An entry must opt in. A collision in an entry that doesn't declare
+        // the override is still an accident worth refusing.
+        let e: RegistryEntry =
+            serde_json::from_str(r#"{"name":"lua","extensions":["lua"],"profile_url":"p.json"}"#)
+                .unwrap();
+        assert!(!e.overrides_builtin);
+
+        let e: RegistryEntry = serde_json::from_str(
+            r#"{"name":"c_sharp","extensions":["cs"],"profile_url":"p.json","overrides_builtin":true}"#,
+        )
+        .unwrap();
+        assert!(e.overrides_builtin);
     }
 
     #[tokio::test]

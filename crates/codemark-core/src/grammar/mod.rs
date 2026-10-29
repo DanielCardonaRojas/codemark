@@ -88,7 +88,9 @@ pub async fn install_from_registry(
 ) -> Result<InstallOutcome> {
     let entry = client.find(registry_name, refresh).await?;
     let manifest = client.fetch_profile(&entry).await?;
-    let override_builtin = overrides.override_builtin;
+    // The entry's own declaration counts as consent, so a curated override
+    // installs without the flag; the caller can still force it.
+    let override_builtin = overrides.override_builtin || entry.overrides_builtin;
 
     // Caller's flags beat the registry, which beats the manifest's own fields.
     let name = overrides
@@ -153,7 +155,7 @@ pub async fn install_from_registry_download(
     };
 
     let manifest = client.fetch_profile(&entry).await?;
-    let override_builtin = overrides.override_builtin;
+    let override_builtin = overrides.override_builtin || entry.overrides_builtin;
 
     let name = overrides
         .name
