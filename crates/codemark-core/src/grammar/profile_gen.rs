@@ -62,7 +62,16 @@ const CONTROL_FLOW_MARKERS: &[&str] = &[
     "break",
     "goto",
     "label",
+    "until",
 ];
+
+/// Control-flow kinds matched on the *whole* kind name rather than a segment.
+///
+/// `case` cannot be a segment marker: PHP's `enum_case` and Scala's
+/// `full_enum_case` are real enum-member declarations, and a segment match would
+/// demote them out of `landmark_kinds` and mislabel them `match`. Only the
+/// dispatch statement itself and its branch wrapper are control flow.
+const CONTROL_FLOW_EXACT: &[&str] = &["case_statement", "case_item", "switch_case", "case_block"];
 
 /// Why the generator classified a kind the way it did, so a human can audit the
 /// proposal instead of taking it on faith.
@@ -349,6 +358,9 @@ fn node_has_declaration_shape(node: Node) -> bool {
 /// `entry_declaration` match `try_`, which would drop real declarations from
 /// `landmark_kinds` and label them as control flow.
 fn is_control_flow(kind: &str) -> bool {
+    if CONTROL_FLOW_EXACT.contains(&kind) {
+        return true;
+    }
     let segments: Vec<&str> = kind.split('_').filter(|s| !s.is_empty()).collect();
     CONTROL_FLOW_MARKERS.iter().any(|m| {
         // Markers are written with a trailing `_` where they prefix a
@@ -434,11 +446,26 @@ fn label_for(kind: &str, landmark: bool) -> Option<&'static str> {
         ("for_", "for loop"),
         ("while_", "while loop"),
         ("repeat_", "while loop"),
+        // `until` is Bash's and Ruby's negated while; `loop` is Rust's
+        // unconditional one. Both are while loops for summary purposes.
+        ("until", "while loop"),
+        ("loop", "while loop"),
         ("switch_", "match"),
         ("match_", "match"),
         ("return_", "return"),
         ("assignment", "assignment"),
     ];
+
+    // A single branch of a dispatch construct is a fragment of one, like
+    // `else_clause`: labelling it would put a spurious "match" in the summary
+    // for a node that is only part of a match. The statement itself is labelled
+    // below.
+    if matches!(kind, "case_item" | "switch_case" | "case_block" | "case_pattern") {
+        return None;
+    }
+    if kind == "case_statement" {
+        return Some("match");
+    }
     // Whole-segment matching, same reason as `is_control_flow`: a substring
     // test labels `callback_declaration` a "call".
     let segments: Vec<&str> = kind.split('_').filter(|s| !s.is_empty()).collect();
@@ -655,6 +682,38 @@ fn f() {
         assert!(is_control_flow("do_block"));
         assert!(is_control_flow("call_expression"));
         assert_eq!(label_for("call_expression", false), Some("call"));
+    }
+
+    #[test]
+    fn case_is_control_flow_only_in_its_statement_form() {
+        // Shell's dispatch construct and its branch wrapper are control flow.
+        assert!(is_control_flow("case_statement"));
+        assert!(is_control_flow("case_item"));
+        assert!(is_control_flow("switch_case"));
+        assert_eq!(label_for("case_statement", false), Some("match"));
+
+        // A single branch is a fragment of a match, not a match — same reason
+        // `else_clause` gets no label.
+        assert_eq!(label_for("case_item", false), None);
+        assert_eq!(label_for("switch_case", false), None);
+
+        // The collision this exists to prevent: PHP's `enum_case` and Scala's
+        // `full_enum_case` are real enum-member declarations. A segment-level
+        // `case` marker would demote them out of `landmark_kinds` and label
+        // them "match".
+        for kind in ["enum_case", "full_enum_case", "simple_enum_case"] {
+            assert!(!is_control_flow(kind), "{kind} is a declaration, not control flow");
+            assert_ne!(label_for(kind, true), Some("match"), "{kind} mislabelled");
+        }
+    }
+
+    #[test]
+    fn until_and_loop_are_while_loops() {
+        // Bash's and Ruby's negated while, and Lua's repeat-until terminator.
+        assert!(is_control_flow("until_statement"));
+        assert_eq!(label_for("until_statement", false), Some("while loop"));
+        assert_eq!(label_for("until_modifier", false), Some("while loop"));
+        assert_eq!(label_for("loop_statement", false), Some("while loop"));
     }
 
     #[test]
