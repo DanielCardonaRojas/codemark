@@ -103,11 +103,49 @@ pub struct RegistryEntry {
     /// because the registry has already declared the intent. A collision in an
     /// entry that *doesn't* set it still fails, so an accidental one is still
     /// caught.
+    ///
+    /// The consent is scoped to what this entry actually declares — see
+    /// [`Self::consents_to_override`].
     #[serde(default)]
     pub overrides_builtin: bool,
 }
 
 impl RegistryEntry {
+    /// Whether this entry's `overrides_builtin` covers installing under
+    /// `name` with `extensions`.
+    ///
+    /// The declaration is consent for *this* entry's grammar, not a blanket
+    /// permit: it only applies while the effective name and every effective
+    /// extension are ones the entry itself declares. Otherwise
+    /// `languages install c_sharp --extensions cs,rs` would inherit the C#
+    /// entry's consent and quietly take over `.rs` — a dynamic grammar wins
+    /// resolution, so every Rust file would then parse as C#. Anything the
+    /// entry didn't declare still needs the caller's `--override-builtin`.
+    pub fn consents_to_override(&self, name: &str, extensions: &[String]) -> bool {
+        if !self.overrides_builtin {
+            return false;
+        }
+        // Compare on the same normalization the extensions were validated
+        // under (dotless, lowercase), so a `.CS` in the index still matches.
+        let declared = |ext: &str| {
+            self.extensions
+                .iter()
+                .any(|d| d.trim().trim_start_matches('.').eq_ignore_ascii_case(ext))
+        };
+        name.eq_ignore_ascii_case(&self.name) && extensions.iter().all(|e| declared(e))
+    }
+
+    /// Whether this entry's own name or extensions are owned by a built-in, and
+    /// so would need an override to install.
+    pub fn collides_with_builtin(&self) -> bool {
+        use crate::parser::languages::Language;
+        Language::static_from_name(&self.name).is_some()
+            || self.extensions.iter().any(|e| {
+                Language::static_from_extension(&e.trim().trim_start_matches('.').to_lowercase())
+                    .is_some()
+            })
+    }
+
     /// The download for this entry, if it offers one.
     ///
     /// `Err` when `wasm_url` is present but unusable — a missing checksum, a
@@ -292,6 +330,35 @@ impl RegistryClient {
     /// Look up one language's entry (case-insensitive).
     pub async fn find(&self, name: &str, refresh: bool) -> Result<RegistryEntry> {
         let index = self.fetch_index(refresh).await?;
+        Self::pick(index, name)
+    }
+
+    /// As [`Self::find`], for an install that is about to check the entry's
+    /// `overrides_builtin` against a built-in collision.
+    ///
+    /// A cache written before `overrides_builtin` existed has no such key, so it
+    /// deserializes to `false` and the entry looks like it never declared the
+    /// override — failing the very install this field was added to enable, for
+    /// up to the index TTL. When the cached entry both collides with a built-in
+    /// and declares nothing, re-read the index once from the network so the
+    /// declaration gets a chance to appear. An entry that genuinely doesn't
+    /// declare it ends up refused either way, just after one fetch.
+    pub async fn find_for_install(&self, name: &str, refresh: bool) -> Result<RegistryEntry> {
+        let entry = self.find(name, refresh).await?;
+        if refresh || entry.overrides_builtin || !entry.collides_with_builtin() {
+            return Ok(entry);
+        }
+        tracing::debug!(
+            target: "codemark::http",
+            language = %name,
+            "cached entry collides with a built-in and declares no override; re-reading the index"
+        );
+        // Best-effort: if the refetch fails (offline), keep the cached entry and
+        // let validation report the collision as it would have.
+        Ok(self.find(name, true).await.unwrap_or(entry))
+    }
+
+    fn pick(index: RegistryIndex, name: &str) -> Result<RegistryEntry> {
         let needle = name.to_lowercase();
         index.grammars.into_iter().find(|e| e.name.to_lowercase() == needle).ok_or_else(|| {
             Error::Input(format!(
@@ -888,6 +955,163 @@ mod tests {
         )
         .unwrap();
         assert!(e.overrides_builtin);
+    }
+
+    /// A C#-shaped entry: declares the override, collides with a built-in.
+    fn overriding_entry() -> RegistryEntry {
+        RegistryEntry {
+            name: "c_sharp".into(),
+            extensions: vec!["cs".into()],
+            profile_version: None,
+            profile_url: "p.json".into(),
+            ts_abi: None,
+            grammar_repo: None,
+            grammar_rev: None,
+            description: None,
+            wasm_url: None,
+            wasm_sha256: None,
+            overrides_builtin: true,
+        }
+    }
+
+    #[test]
+    fn entry_consent_covers_what_it_declares() {
+        let e = overriding_entry();
+        assert!(e.consents_to_override("c_sharp", &["cs".to_string()]));
+        // Normalization differences in the index must still match.
+        let mut dotted = overriding_entry();
+        dotted.extensions = vec![".CS".into()];
+        assert!(dotted.consents_to_override("c_sharp", &["cs".to_string()]));
+    }
+
+    #[test]
+    fn entry_consent_stops_at_undeclared_values() {
+        let e = overriding_entry();
+        // An extension the entry never declared: `--extensions cs,rs` must not
+        // inherit C#'s consent and take over every .rs file.
+        assert!(!e.consents_to_override("c_sharp", &["cs".to_string(), "rs".to_string()]));
+        // Nor a name it never declared.
+        assert!(!e.consents_to_override("rust", &["cs".to_string()]));
+        // And an entry that declares nothing consents to nothing.
+        let mut plain = overriding_entry();
+        plain.overrides_builtin = false;
+        assert!(!plain.consents_to_override("c_sharp", &["cs".to_string()]));
+    }
+
+    /// Drive the real install-path decision (`validate_registry_install`) for
+    /// the four cases that matter. Asserting through the function the install
+    /// actually calls means dropping either check here turns red.
+    #[test]
+    fn registry_install_honors_scoped_consent() {
+        use crate::grammar::validate_registry_install;
+
+        let declaring = overriding_entry();
+        let mut silent = overriding_entry();
+        silent.overrides_builtin = false;
+
+        // 1. Entry consent, no flag: the C# install that was failing now works.
+        let exts = validate_registry_install(&declaring, "c_sharp", "cs", false).unwrap();
+        assert_eq!(exts, vec!["cs".to_string()]);
+
+        // 2. Collision with no consent anywhere: still refused.
+        let err = validate_registry_install(&silent, "c_sharp", "cs", false).unwrap_err();
+        assert!(err.to_string().contains("built-in"), "{err}");
+
+        // 3. Consent doesn't stretch to an undeclared extension.
+        let err = validate_registry_install(&declaring, "c_sharp", "cs,rs", false).unwrap_err();
+        assert!(err.to_string().contains("built-in"), "{err}");
+
+        // 4. The caller's explicit flag still wins over everything.
+        let exts = validate_registry_install(&silent, "c_sharp", "cs,rs", true).unwrap();
+        assert_eq!(exts, vec!["cs".to_string(), "rs".to_string()]);
+    }
+
+    #[test]
+    fn builtin_collision_detection_reads_name_and_extensions() {
+        assert!(overriding_entry().collides_with_builtin()); // c_sharp / cs
+        let mut free = overriding_entry();
+        free.name = "lua".into();
+        free.extensions = vec!["lua".into()];
+        assert!(!free.collides_with_builtin());
+        // Either half colliding is enough.
+        let mut by_ext = free.clone();
+        by_ext.extensions = vec!["rs".into()];
+        assert!(by_ext.collides_with_builtin());
+    }
+
+    #[tokio::test]
+    async fn an_upgrade_refetches_a_cache_written_before_overrides_builtin() {
+        // A cache from an older codemark has no `overrides_builtin` key, so the
+        // entry reads as `false` and the no-flag C# install would fail for a
+        // whole TTL. The install lookup must re-read the index to find the
+        // declaration the registry has been serving all along.
+        let tmp = tempfile::tempdir().unwrap();
+        let reg = tmp.path().join("registry");
+        let cache = tmp.path().join("cache");
+        std::fs::create_dir_all(&reg).unwrap();
+        std::fs::create_dir_all(&cache).unwrap();
+
+        // The live registry declares the override.
+        std::fs::write(
+            reg.join("index.json"),
+            r#"{"schema_version":1,"grammars":[
+               {"name":"c_sharp","extensions":["cs"],"profile_url":"p.json",
+                "overrides_builtin":true}
+            ]}"#,
+        )
+        .unwrap();
+
+        let client = RegistryClient::with_base_url(
+            reg.display().to_string(),
+            cache.clone(),
+            Duration::from_secs(86400),
+        );
+
+        // Plant a fresh pre-upgrade cache: same entry, field absent.
+        std::fs::write(
+            client.index_cache_path(),
+            r#"{"schema_version":1,"grammars":[
+               {"name":"c_sharp","extensions":["cs"],"profile_url":"p.json"}
+            ]}"#,
+        )
+        .unwrap();
+
+        // Plain `find` honors the (stale) cache and sees no declaration.
+        assert!(!client.find("c_sharp", false).await.unwrap().overrides_builtin);
+
+        // The install lookup notices the collision and refetches.
+        let entry = client.find_for_install("c_sharp", false).await.unwrap();
+        assert!(entry.overrides_builtin, "install lookup should re-read the index");
+        assert!(crate::grammar::validate_registry_install(&entry, "c_sharp", "cs", false).is_ok());
+    }
+
+    #[tokio::test]
+    async fn a_non_colliding_entry_is_served_from_cache_without_a_refetch() {
+        // The refetch must be scoped to the collision case, or every install
+        // would pay a network round trip and the cache would stop mattering.
+        let tmp = tempfile::tempdir().unwrap();
+        let reg = tmp.path().join("registry");
+        let cache = tmp.path().join("cache");
+        std::fs::create_dir_all(&reg).unwrap();
+        std::fs::create_dir_all(&cache).unwrap();
+
+        let client = RegistryClient::with_base_url(
+            reg.display().to_string(),
+            cache,
+            Duration::from_secs(86400),
+        );
+        std::fs::write(
+            client.index_cache_path(),
+            r#"{"schema_version":1,"grammars":[
+               {"name":"lua","extensions":["lua"],"profile_url":"p.json"}
+            ]}"#,
+        )
+        .unwrap();
+
+        // No index.json on disk at all: a refetch would fail, so success here
+        // proves the cached entry was used directly.
+        let entry = client.find_for_install("lua", false).await.unwrap();
+        assert_eq!(entry.name, "lua");
     }
 
     #[tokio::test]
