@@ -720,6 +720,21 @@ mod tests {
     }
 
     #[test]
+    fn generic_signatures_survive_only_inside_a_code_span() {
+        // Why breadcrumb text is wrapped in a code span: bare `<T>` parses as
+        // inline HTML, and this panel handles no Html/InlineHtml event, so the
+        // tags vanish and the signature silently loses characters.
+        assert_eq!(rendered_text("impl<T> Service<T> {"), "impl Service {");
+        // Wrapped, it comes through verbatim — angle brackets included.
+        assert_eq!(rendered_text("`impl<T> Service<T> {`"), "impl<T> Service<T> {");
+        // A breadcrumb line as the templates now emit it.
+        assert_eq!(
+            rendered_text("`6` `    async fn get<K: Key>(&self) -> Result<Vec<u8>> {`"),
+            "6     async fn get<K: Key>(&self) -> Result<Vec<u8>> {"
+        );
+    }
+
+    #[test]
     fn unescaped_formatting_still_applies() {
         // Code spans and bold/italic markers are stripped, leaving plain text.
         assert_eq!(rendered_text("see `registry.rs` now"), "see registry.rs now");
