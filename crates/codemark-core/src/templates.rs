@@ -532,6 +532,51 @@ impl HelperDef for EscapeMarkdownHelper {
     }
 }
 
+/// Wrap text in a markdown code span that renders it verbatim.
+///
+/// Source text is the wrong input for `escape_markdown`: a signature like
+/// `impl<T> Service<T> {` would come back as backslash soup, and left bare its
+/// `<T>` is parsed as inline HTML, which the TUI markdown reader drops — so the
+/// displayed signature silently loses characters. A code span preserves it
+/// exactly.
+///
+/// Per CommonMark, the fence must be longer than the longest backtick run in
+/// the content, and content that starts or ends with a backtick needs padding
+/// spaces (which the reader strips back out).
+fn code_span(text: &str) -> String {
+    let longest_run = text.split(|c| c != '`').map(str::len).max().unwrap_or(0);
+    let fence = "`".repeat(longest_run + 1);
+    // An empty span also needs the padding, or the two fences read as one
+    // four-backtick literal rather than as a span.
+    let pad =
+        if text.is_empty() || text.starts_with('`') || text.ends_with('`') { " " } else { "" };
+    format!("{fence}{pad}{text}{pad}{fence}")
+}
+
+/// Helper function for Handlebars to render text as a verbatim code span.
+#[derive(Clone)]
+struct CodeSpanHelper;
+
+impl HelperDef for CodeSpanHelper {
+    fn call<'reg: 'rc, 'rc>(
+        &self,
+        h: &handlebars::Helper<'rc>,
+        _r: &'reg Handlebars<'reg>,
+        _ctx: &'rc handlebars::Context,
+        _rc: &mut RenderContext<'reg, 'rc>,
+        out: &mut dyn Output,
+    ) -> HelperResult {
+        let param = h.param(0).ok_or_else(|| {
+            RenderErrorReason::Other("code_span helper requires exactly one parameter".into())
+        })?;
+        let value = param.value().as_str().ok_or_else(|| {
+            RenderErrorReason::Other("code_span helper parameter must be a string".into())
+        })?;
+        out.write(&code_span(value))?;
+        Ok(())
+    }
+}
+
 /// Helper function for Handlebars to truncate an ID to first 8 chars.
 #[derive(Clone)]
 struct TruncateHelper;
@@ -653,6 +698,7 @@ pub fn create_handlebars_engine() -> Handlebars<'static> {
 
     // Register custom helpers
     handlebars.register_helper("escape_markdown", Box::new(EscapeMarkdownHelper));
+    handlebars.register_helper("code_span", Box::new(CodeSpanHelper));
     handlebars.register_helper("truncate", Box::new(TruncateHelper));
     handlebars.register_helper("format_date", Box::new(FormatDateHelper));
 
@@ -1114,6 +1160,26 @@ mod tests {
         assert!(output.contains("active"));
     }
 
+    /// Breadcrumb text is source code, so it must survive the markdown round
+    /// trip verbatim. Left bare, a generic signature's `<T>` parses as inline
+    /// HTML and the TUI reader drops it; run through `escape_markdown` instead,
+    /// it comes back as backslash soup.
+    #[test]
+    fn test_code_span_preserves_source_verbatim() {
+        // The motivating case: generics must not be read as HTML tags.
+        assert_eq!(code_span("impl<T> Service<T> {"), "`impl<T> Service<T> {`");
+        // Underscores and asterisks are emphasis markers outside a code span.
+        assert_eq!(code_span("fn send_to(*ptr) {"), "`fn send_to(*ptr) {`");
+        // A backtick in the source needs a longer fence than the longest run.
+        assert_eq!(code_span("let s = \"a`b\";"), "``let s = \"a`b\";``");
+        assert_eq!(code_span("x = ``y``;"), "```x = ``y``;```");
+        // Leading/trailing backticks need padding spaces, which readers strip.
+        assert_eq!(code_span("`quoted`"), "`` `quoted` ``");
+        // Breadcrumb text is never empty in practice, but the helper must not
+        // emit a bare "``" that reads as a literal instead of a span.
+        assert_eq!(code_span(""), "`  `");
+    }
+
     /// Breadcrumbs reached the template context and stopped there: the field was
     /// populated from the resolution and referenced by none of the five shipped
     /// templates, so `containers` — the one profile field with no fallback —
@@ -1172,10 +1238,17 @@ mod tests {
         let output = handlebars.render_template(default_show_template(), &context).unwrap();
 
         assert!(output.contains("## Context"), "breadcrumbs section missing:\n{output}");
-        assert!(output.contains("mod auth {"), "outer breadcrumb missing:\n{output}");
-        assert!(output.contains("impl Service {"), "inner breadcrumb missing:\n{output}");
-        // The line number is what makes a breadcrumb navigable.
-        assert!(output.contains('1'), "breadcrumb line numbers missing:\n{output}");
+        // Assert each line number beside its own source text. Checking for a
+        // bare '1' would pass even if the template stopped rendering numbers
+        // entirely, since the bookmark ID and dates contain that digit too.
+        assert!(
+            output.contains("- `1` `mod auth {`"),
+            "outer breadcrumb missing or unnumbered:\n{output}"
+        );
+        assert!(
+            output.contains("- `6` `    impl Service {`"),
+            "inner breadcrumb missing or unnumbered:\n{output}"
+        );
     }
 
     /// A bookmark with no breadcrumbs must not render an empty section header.

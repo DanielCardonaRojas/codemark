@@ -3,7 +3,7 @@
 ## Context
 
 {{#each breadcrumbs}}
-`{{line}}` {{text}}
+- `{{line}}` {{code_span text}}
 {{/each}}
 {{/if}}
 {{#if tags}}
