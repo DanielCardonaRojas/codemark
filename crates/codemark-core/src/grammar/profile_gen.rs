@@ -465,7 +465,11 @@ fn label_for(kind: &str, landmark: bool, has_switch_statement: bool) -> Option<&
     // declaration `..._list`. Only suffixes that always mean "a fragment of an
     // enclosing construct" qualify.
     const PART_SUFFIXES: &[&str] = &["_clause", "_content", "_part"];
-    if PART_SUFFIXES.iter().any(|s| kind.ends_with(s)) {
+    // Scala spells its package declaration `package_clause`, which is a real
+    // declaration enclosing the whole file rather than a fragment of one — the
+    // only `_clause` kind in the registry that is. Exempting it keeps the suffix
+    // rule useful for `else_clause`, `throws_clause` and the rest.
+    if kind != "package_clause" && PART_SUFFIXES.iter().any(|s| kind.ends_with(s)) {
         return None;
     }
 
@@ -546,6 +550,35 @@ fn label_for(kind: &str, landmark: bool, has_switch_statement: bool) -> Option<&
 
     if !landmark {
         return None;
+    }
+
+    // Declaration words that cannot be substring markers, because the same word
+    // names an expression in other grammars. Matched on the whole kind name.
+    //
+    // | Word | Safe kind | Would also catch |
+    // |---|---|---|
+    // | `object` | Scala `object_definition` | C# `anonymous_object_creation_expression`, PHP `object_creation_expression`, TS `object_pattern`/`object_type` |
+    // | `record` | C# `record_declaration` | — but kept exact for symmetry |
+    // | `package` | Scala `package_clause` | Scala `package_identifier` (a name, not a declaration) |
+    // | `init` | Swift `init_declaration` | C# `init` (a property accessor keyword) |
+    //
+    // Without these four, the three grammars that use them leave container kinds
+    // unlabelled — which under a concept-keyed `containers` would silently drop
+    // them from the whitelist. See codemark#249.
+    let exact_declarations: &[(&str, &str)] = &[
+        ("object_definition", "module"),
+        ("package_object", "module"),
+        ("record_declaration", "class"),
+        ("record_struct_declaration", "class"),
+        ("package_clause", "namespace"),
+        ("package_declaration", "namespace"),
+        ("init_declaration", "init"),
+        ("deinit_declaration", "deinit"),
+    ];
+    for (needle, label) in exact_declarations {
+        if kind == *needle {
+            return Some(label);
+        }
     }
 
     // Landmark labels, most specific first so `method_declaration` doesn't match
@@ -808,6 +841,32 @@ fn f() {
             assert!(!is_control_flow(kind), "{kind} is a declaration, not control flow");
             assert_ne!(label_for(kind, true, false), Some("match"), "{kind} mislabelled");
         }
+    }
+
+    #[test]
+    fn declaration_words_that_also_name_expressions_match_whole_kinds() {
+        // The four that were leaving container kinds unlabelled (codemark#249).
+        assert_eq!(label_for("object_definition", true, false), Some("module"));
+        assert_eq!(label_for("record_declaration", true, false), Some("class"));
+        assert_eq!(label_for("package_clause", true, false), Some("namespace"));
+        assert_eq!(label_for("init_declaration", true, false), Some("init"));
+
+        // The collision this guards against: `object` as a substring marker
+        // would label every object literal and pattern a "module".
+        for kind in [
+            "anonymous_object_creation_expression",
+            "implicit_object_creation_expression",
+            "object_creation_expression",
+            "object_pattern",
+            "object_type",
+        ] {
+            assert_ne!(label_for(kind, true, false), Some("module"), "{kind} mislabelled");
+        }
+
+        // Scala's `package_identifier` is the name inside a package clause, not
+        // a declaration; C#'s bare `init` is a property accessor keyword.
+        assert_ne!(label_for("package_identifier", true, false), Some("namespace"));
+        assert_ne!(label_for("init", true, false), Some("init"));
     }
 
     #[test]
