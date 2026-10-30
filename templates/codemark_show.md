@@ -1,4 +1,11 @@
 # Bookmark: {{short_id}}
+{{#if breadcrumbs}}
+## Context
+
+{{#each breadcrumbs}}
+`{{line}}` {{text}}
+{{/each}}
+{{/if}}
 {{#if tags}}
 ## Tags
 

@@ -1114,6 +1114,101 @@ mod tests {
         assert!(output.contains("active"));
     }
 
+    /// Breadcrumbs reached the template context and stopped there: the field was
+    /// populated from the resolution and referenced by none of the five shipped
+    /// templates, so `containers` — the one profile field with no fallback —
+    /// rendered nowhere a user could see it. See codemark#249.
+    #[test]
+    fn test_render_show_template_includes_breadcrumbs() {
+        let bm = Bookmark {
+            id: "abcdef1234567890".to_string(),
+            query: "(function_item name: (identifier) @name)".to_string(),
+            language: "rust".to_string(),
+            file_path: "auth.rs".to_string(),
+            content_hash: None,
+            commit_hash: None,
+            health: BookmarkHealth::Active,
+            resolution_method: Some(ResolutionMethod::Exact),
+            last_resolved_at: None,
+            stale_since: None,
+            created_at: "2024-01-01T00:00:00Z".to_string(),
+            created_by: None,
+            current_resolution_id: None,
+            repo_id: None,
+            tags: vec![],
+            annotations: vec![],
+            comments: vec![],
+        };
+
+        let resolutions = vec![Resolution {
+            id: "res1".to_string(),
+            bookmark_id: bm.id.clone(),
+            resolved_at: "2024-01-01T00:00:00Z".to_string(),
+            health: BookmarkHealth::Active,
+            commit_hash: None,
+            method: ResolutionMethod::Exact,
+            match_count: Some(1),
+            file_path: Some("auth.rs".to_string()),
+            byte_range: None,
+            line_range: Some("9".to_string()),
+            content_hash: None,
+            headline: None,
+            snapshot: None,
+            breadcrumbs: Some(
+                r#"[{"line":1,"text":"mod auth {"},{"line":6,"text":"    impl Service {"}]"#
+                    .to_string(),
+            ),
+            is_dirty: false,
+        }];
+
+        // Render against the compiled-in default rather than `load_template`,
+        // which prefers a cached copy under the user's config dir. A developer
+        // with an older cache would otherwise see this pass or fail based on
+        // ambient state. The cache-shadowing problem itself is real and is
+        // handled separately — see the note in codemark#249.
+        let handlebars = create_handlebars_engine();
+        let context =
+            BookmarkTemplateContext::from_bookmark(&bm, &resolutions, Path::new("."), None);
+        let output = handlebars.render_template(default_show_template(), &context).unwrap();
+
+        assert!(output.contains("## Context"), "breadcrumbs section missing:\n{output}");
+        assert!(output.contains("mod auth {"), "outer breadcrumb missing:\n{output}");
+        assert!(output.contains("impl Service {"), "inner breadcrumb missing:\n{output}");
+        // The line number is what makes a breadcrumb navigable.
+        assert!(output.contains('1'), "breadcrumb line numbers missing:\n{output}");
+    }
+
+    /// A bookmark with no breadcrumbs must not render an empty section header.
+    /// `containers` fails silently, so an always-present "Context" heading would
+    /// make a broken profile indistinguishable from a top-level bookmark.
+    #[test]
+    fn test_render_show_template_omits_empty_breadcrumbs() {
+        let bm = Bookmark {
+            id: "abcdef1234567890".to_string(),
+            query: "(function_item) @f".to_string(),
+            language: "rust".to_string(),
+            file_path: "main.rs".to_string(),
+            content_hash: None,
+            commit_hash: None,
+            health: BookmarkHealth::Active,
+            resolution_method: Some(ResolutionMethod::Exact),
+            last_resolved_at: None,
+            stale_since: None,
+            created_at: "2024-01-01T00:00:00Z".to_string(),
+            created_by: None,
+            current_resolution_id: None,
+            repo_id: None,
+            tags: vec![],
+            annotations: vec![],
+            comments: vec![],
+        };
+
+        let handlebars = create_handlebars_engine();
+        let context = BookmarkTemplateContext::from_bookmark(&bm, &[], Path::new("."), None);
+        let output = handlebars.render_template(default_show_template(), &context).unwrap();
+        assert!(!output.contains("## Context"), "empty breadcrumbs rendered a header:\n{output}");
+    }
+
     #[test]
     fn test_render_show_template_includes_comments() {
         let bm = Bookmark {
