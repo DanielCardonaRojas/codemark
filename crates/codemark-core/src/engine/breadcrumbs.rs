@@ -21,13 +21,13 @@ pub fn extract_breadcrumbs(
     if max_count == 0 {
         return Vec::new();
     }
-    let whitelist: Vec<&str> =
-        language.profile().containers.iter().map(|(kind, _)| kind.as_str()).collect();
+    let profile = language.profile();
+    let whitelist = profile.containers.resolve_kinds(&profile.node_labels);
     let mut breadcrumbs = Vec::new();
 
     let mut current = target_node.parent();
     while let Some(node) = current {
-        if whitelist.contains(&node.kind()) {
+        if whitelist.iter().any(|k| k == node.kind()) {
             // Extract the full source line to preserve leading indentation
             let start_pos = node.start_position();
             let line_text = source.lines().nth(start_pos.row).unwrap_or("").trim_end();

@@ -23,7 +23,7 @@ use tree_sitter::Node;
 
 use crate::error::{Error, Result};
 use crate::parser::languages::{Language, Parser};
-use crate::parser::profile::Profile;
+use crate::parser::profile::{Containers, Profile};
 
 /// Field names that typically hold a declaration's identifier. Checked in order,
 /// so an explicit `name` wins over a positional fallback.
@@ -186,20 +186,6 @@ pub fn propose_profile(
     let landmarks: BTreeSet<String> =
         stats.iter().filter(|(k, s)| is_landmark(k, s)).map(|(k, _)| k.clone()).collect();
 
-    // Pass 2: a container is a landmark observed wrapping another landmark, and
-    // only if we actually saw which field held its name — a container whose name
-    // field is guessed is the exact mistake this module exists to prevent.
-    let mut containers = Vec::new();
-    for kind in &landmarks {
-        let s = &stats[kind];
-        if !s.nests_landmarks {
-            continue;
-        }
-        if let Some(field) = dominant_name_field(s) {
-            containers.push((kind.clone(), field));
-        }
-    }
-
     // Observed once, not per kind: `case_statement` means "a branch" in grammars
     // that also have `switch_statement`, and "the whole dispatch" in those that
     // don't.
@@ -211,6 +197,38 @@ pub fn propose_profile(
             node_labels.insert(kind.clone(), label.to_string());
         }
     }
+
+    // Pass 2: which *concepts* the UI should treat specially.
+    //
+    // A container is a landmark with a body. Having a body is what makes a kind
+    // worth pinning: it is something you can scroll inside, so the header stays
+    // useful as the body runs off the top of the viewport. A one-liner — a C#
+    // `field_declaration`, a TypeScript `method_signature` — has nothing to
+    // scroll past and would only add noise.
+    //
+    // Deliberately *not* required: a name field. A sticky header needs only the
+    // line, and the breadcrumb renderer skips a container it cannot name. Zig's
+    // `struct_declaration` is the case that forces this — an anonymous value
+    // bound by its enclosing `variable_declaration`, with no name of its own,
+    // that you certainly want pinned while reading its methods.
+    //
+    // Also not required: that it was *observed* nesting another landmark. The
+    // old rule needed that to learn the name field; with no field to learn, a
+    // kind that can hold a body can hold a declaration, and requiring the sample
+    // to prove it just means thin samples silently lose containers.
+    let mut container_labels: Vec<String> = Vec::new();
+    for kind in &landmarks {
+        if !stats[kind].has_body {
+            continue;
+        }
+        if let Some(label) = node_labels.get(kind)
+            && !container_labels.contains(label)
+        {
+            container_labels.push(label.clone());
+        }
+    }
+    container_labels.sort();
+    let containers = Containers::from_labels(container_labels);
 
     let mut evidence: Vec<KindEvidence> = stats
         .iter()
@@ -235,7 +253,7 @@ pub fn propose_profile(
         samples = samples.len(),
         kinds_seen = stats.len(),
         landmarks = landmarks.len(),
-        containers = containers.len(),
+        containers = containers.labels().len(),
         "proposed a grammar profile"
     );
 
@@ -589,6 +607,12 @@ fn label_for(kind: &str, landmark: bool, has_switch_statement: bool) -> Option<&
         ("package_declaration", "namespace"),
         ("init_declaration", "init"),
         ("deinit_declaration", "deinit"),
+        // Rust spells a module `mod_item`, which contains neither "module" nor
+        // any other marker in the substring table below — so without this it is
+        // a landmark with no label, and a concept-keyed `containers` would drop
+        // it. Checked against all nine registry grammars: none has `mod` as a
+        // whole segment, so this cannot collide.
+        ("mod_item", "module"),
     ];
     for (needle, label) in exact_declarations {
         if kind == *needle {
@@ -683,10 +707,11 @@ mod auth {
         // Control flow must not be a landmark even though `if` carries a body.
         assert!(!lm.iter().any(|k| k == "if_expression"), "{lm:?}");
 
-        // Containers are the kinds observed wrapping other declarations.
-        let names: Vec<&str> = p.profile.containers.iter().map(|(k, _)| k.as_str()).collect();
-        assert!(names.contains(&"mod_item"), "{:?}", p.profile.containers);
-        assert!(names.contains(&"impl_item"), "{:?}", p.profile.containers);
+        // Containers are the *concepts* of landmarks that carry a body.
+        let c = p.profile.containers.labels();
+        assert!(c.iter().any(|l| l == "module"), "{c:?}");
+        assert!(c.iter().any(|l| l == "impl"), "{c:?}");
+        assert!(c.iter().any(|l| l == "function"), "{c:?}");
     }
 
     /// Nesting must be judged by observed shape, not by the kind's spelling.
@@ -730,24 +755,34 @@ mod auth {
 
         // And end to end, it becomes a container.
         let p = propose(Language::Rust, "mod outer { mod inner { fn f() {} } }");
-        let names: Vec<&str> = p.profile.containers.iter().map(|(k, _)| k.as_str()).collect();
-        assert!(names.contains(&"mod_item"), "{:?}", p.profile.containers);
+        let c = p.profile.containers.labels();
+        assert!(c.iter().any(|l| l == "module"), "{c:?}");
     }
 
+    /// A container needs a body, not a name.
+    ///
+    /// The old rule required an observed name field, which is why Zig's
+    /// `struct_declaration` could never be one: a Zig struct is an anonymous
+    /// value bound by its enclosing `variable_declaration`. A sticky header
+    /// needs only the line, so the name is the breadcrumb renderer's problem.
     #[test]
-    fn container_name_field_is_observed_not_assumed() {
-        // Rust's `impl_item` holds its name in the `type` field, not `name`.
-        // Assuming "name" here is precisely the bug the committed Lua fixture
-        // shipped, so this asserts the field comes from the parse.
-        let src = r#"
-impl Service {
-    fn go(&self) {}
-}
-"#;
-        let p = propose(Language::Rust, src);
-        let field =
-            p.profile.containers.iter().find(|(k, _)| k == "impl_item").map(|(_, f)| f.as_str());
-        assert_eq!(field, Some("type"), "{:?}", p.profile.containers);
+    fn a_container_needs_a_body_not_a_name() {
+        // Rust's `impl_item` holds its name under `type`, never `name` — the
+        // asymmetry that made a per-kind name field error-prone in the first
+        // place. As a concept it is simply "impl".
+        let p = propose(Language::Rust, "impl Service {\n    fn go(&self) {}\n}\n");
+        let c = p.profile.containers.labels();
+        assert!(c.iter().any(|l| l == "impl"), "{c:?}");
+
+        // A kind with a body but no name of its own still qualifies. Rust has
+        // no anonymous container to test with, so this asserts the predicate
+        // directly: having a body is sufficient, a name field is not required.
+        let with_body_no_name =
+            KindStats { has_body: true, name_fields: HashMap::new(), ..Default::default() };
+        assert!(
+            is_landmark("struct_declaration", &with_body_no_name),
+            "a bodied declaration must be a landmark even with no name field"
+        );
     }
 
     #[test]
@@ -1014,11 +1049,36 @@ fn f() {
         let want: BTreeSet<&str> = committed.landmark_kinds.iter().map(String::as_str).collect();
         assert_eq!(got, want, "landmark_kinds differ from the committed profile");
 
-        let got_c: BTreeSet<(&str, &str)> =
-            proposal.profile.containers.iter().map(|(k, f)| (k.as_str(), f.as_str())).collect();
-        let want_c: BTreeSet<(&str, &str)> =
-            committed.containers.iter().map(|(k, f)| (k.as_str(), f.as_str())).collect();
-        assert_eq!(got_c, want_c, "containers differ from the committed profile");
+        // The committed fixture is deliberately left in the legacy
+        // `[kind, field]` form — it is the only committed artifact proving an
+        // older manifest still loads, so migrating it would delete the
+        // regression test.
+        //
+        // The two therefore cannot be compared directly: the generator now
+        // proposes a *concept* that covers every kind carrying that label,
+        // while the fixture names one kind. Lua labels both
+        // `function_declaration` and `function_definition` as "function", so
+        // the concept resolves to a superset. What must hold is that nothing
+        // the fixture names has been lost.
+        let got_c: BTreeSet<String> = proposal
+            .profile
+            .containers
+            .resolve_kinds(&proposal.profile.node_labels)
+            .into_iter()
+            .collect();
+        let want_c: BTreeSet<String> =
+            committed.containers.resolve_kinds(&committed.node_labels).into_iter().collect();
+        assert!(
+            want_c.is_subset(&got_c),
+            "the proposal dropped a container the committed profile has: want {want_c:?} \
+             within got {got_c:?}"
+        );
+        // And specifically: the anonymous-function kind is now included, which
+        // the old name-field rule excluded for having no name of its own.
+        assert!(
+            got_c.contains("function_definition"),
+            "an anonymous function has a body, so it should be a container: {got_c:?}"
+        );
 
         // Labels are the generator's third output and feed `@sticky` captures
         // and icon selection, so leaving them unchecked would let query labels

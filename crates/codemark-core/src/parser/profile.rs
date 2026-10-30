@@ -178,36 +178,65 @@ pub fn lint(value: &serde_json::Value, grammar: &tree_sitter::Language) -> Vec<L
 
     match obj.get("containers").and_then(|v| v.as_array()) {
         Some(containers) if !containers.is_empty() => {
-            let fields = grammar_field_names(grammar);
-            for (i, pair) in containers.iter().enumerate() {
-                let Some(pair) = pair.as_array() else { continue };
-                let (Some(kind), Some(field)) =
-                    (pair.first().and_then(|v| v.as_str()), pair.get(1).and_then(|v| v.as_str()))
-                else {
-                    continue;
-                };
-                check_kind(kind, format!("profile.containers[{i}].0"), &mut findings);
-                // Tree-sitter's static `Language` exposes field names globally,
-                // not per node kind, so this only catches a field the grammar
-                // has never heard of; one that exists on *some other* kind
-                // (`("mod_item", "value")`) passes.
-                //
-                // That gap is currently cosmetic: `extract_breadcrumbs` matches
-                // on the kind alone and never reads this field, so a wrong one
-                // changes nothing at runtime. It is still worth validating —
-                // the field is part of the schema, the generator derives it
-                // from an observed parse, and breadcrumbs may yet use it to
-                // extract the name rather than the whole line.
-                if !fields.contains(field) {
-                    findings.push(LintFinding {
-                        severity: LintSeverity::Error,
-                        path: format!("profile.containers[{i}].1"),
-                        message: format!(
-                            "'{field}' is not a field in this grammar, so the container entry for \
-                             '{kind}' names something that doesn't exist{}",
-                            suggest(field, &fields)
-                        ),
-                    });
+            // The declared labels, so a container naming a concept no kind in
+            // this profile carries can be reported. That is the concept-form
+            // equivalent of naming a node kind the grammar doesn't define: the
+            // entry can never match, and `containers` has no fallback.
+            let declared_labels: HashSet<&str> = obj
+                .get("node_labels")
+                .and_then(|v| v.as_object())
+                .map(|m| m.values().filter_map(|v| v.as_str()).collect())
+                .unwrap_or_default();
+
+            for (i, entry) in containers.iter().enumerate() {
+                match entry {
+                    // Concept form: `"class"`.
+                    serde_json::Value::String(label) => {
+                        if !declared_labels.contains(label.as_str()) {
+                            findings.push(LintFinding {
+                                severity: LintSeverity::Error,
+                                path: format!("profile.containers[{i}]"),
+                                message: format!(
+                                    "no node kind in this profile is labelled '{label}', so this \
+                                     container can never match{}",
+                                    suggest(
+                                        label,
+                                        &declared_labels
+                                            .iter()
+                                            .map(|s| s.to_string())
+                                            .collect::<HashSet<_>>()
+                                    )
+                                ),
+                            });
+                        }
+                        if !KNOWN_LABELS.contains(label.as_str()) {
+                            findings.push(LintFinding {
+                                severity: LintSeverity::Warning,
+                                path: format!("profile.containers[{i}]"),
+                                message: format!(
+                                    "label '{label}' is outside the set the built-in profiles use"
+                                ),
+                            });
+                        }
+                    }
+                    // Legacy pair form: `["class_declaration", "name"]`. Still
+                    // read so an older manifest loads, so still linted — but
+                    // only the kind, since the name field is no longer part of
+                    // the schema.
+                    serde_json::Value::Array(pair) => {
+                        if let Some(kind) = pair.first().and_then(|v| v.as_str()) {
+                            check_kind(kind, format!("profile.containers[{i}][0]"), &mut findings);
+                            findings.push(LintFinding {
+                                severity: LintSeverity::Warning,
+                                path: format!("profile.containers[{i}]"),
+                                message: format!(
+                                    "legacy [kind, field] form — '{kind}' still works, but \
+                                     `containers` now takes labels from node_labels"
+                                ),
+                            });
+                        }
+                    }
+                    _ => {}
                 }
             }
         }
@@ -237,14 +266,6 @@ fn named_node_kinds(grammar: &tree_sitter::Language) -> HashSet<String> {
             grammar.node_kind_is_named(id).then(|| grammar.node_kind_for_id(id))?
         })
         .filter(|k| !k.is_empty())
-        .map(String::from)
-        .collect()
-}
-
-/// Every field name the grammar defines. Field ids are 1-based.
-fn grammar_field_names(grammar: &tree_sitter::Language) -> HashSet<String> {
-    (1..=grammar.field_count())
-        .filter_map(|id| grammar.field_name_for_id(u16::try_from(id).ok()?))
         .map(String::from)
         .collect()
 }
@@ -319,13 +340,134 @@ pub struct Profile {
     /// Replaces `classify_node_type()`.
     pub node_labels: HashMap<String, String>,
 
-    /// Container node kinds paired with their name field, e.g. `("impl_item", "type")`.
+    /// Landmarks the UI treats specially, as **labels from [`Self::node_labels`]**.
     ///
-    /// Unlike `landmark_kinds` (which is for machine-level query stability), `containers`
-    /// is used strictly for the human-facing UI to build contextual breadcrumb paths
-    /// (e.g., `Class > Method`). Node types here are usually a strict subset of
-    /// `landmark_kinds`, limited only to nodes that nest other executable code.
-    pub containers: Vec<(String, String)>,
+    /// Drives two presentations of one idea:
+    ///
+    /// | Presentation | Needs | A container with no name |
+    /// |---|---|---|
+    /// | Sticky header | the *line*, pinned while scrolling | works |
+    /// | Breadcrumb trail | the *name*, for a path to the target | skipped |
+    ///
+    /// So a kind with no name field is still a valid container. A Zig struct is
+    /// an anonymous value bound by its enclosing `variable_declaration` — you
+    /// want it pinned while scrolling its methods, and the breadcrumb renderer
+    /// is what decides to leave it out.
+    ///
+    /// Accepts both the current form and the legacy `[kind, name_field]` pairs,
+    /// so a manifest written for an older codemark keeps working. See
+    /// [`Containers`].
+    pub containers: Containers,
+}
+
+/// `containers` in either the concept form or the legacy pair form.
+///
+/// ```json
+/// "containers": ["class", "method"]                       // concepts
+/// "containers": [["class_declaration", "name"]]           // legacy pairs
+/// ```
+///
+/// Keying on labels rather than node kinds removes a three-way repetition: a
+/// kind previously had to be listed in `landmark_kinds`, in `node_labels` and
+/// again in `containers`. It also lets one cross-language rule ("pin types and
+/// functions") be written once.
+///
+/// The legacy form is still read because `Profile` is `#[serde(default)]` with
+/// no `deny_unknown_fields` precisely so an older manifest loads on a newer
+/// binary. Its name field is dropped on the way in: nothing has ever read it
+/// (the breadcrumb walker extracts the whole source line), and under the
+/// concept form there is no per-kind slot for it.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Containers {
+    /// Labels, e.g. `["class", "method"]`.
+    labels: Vec<String>,
+    /// Node kinds from a legacy manifest, kept so breadcrumbs keep working
+    /// before that manifest is migrated.
+    legacy_kinds: Vec<String>,
+}
+
+impl Containers {
+    /// Build from labels.
+    pub fn from_labels(labels: Vec<String>) -> Self {
+        Self { labels, legacy_kinds: Vec::new() }
+    }
+
+    /// The labels this profile marks as containers.
+    pub fn labels(&self) -> &[String] {
+        &self.labels
+    }
+
+    /// Node kinds carried over from a legacy `[kind, field]` manifest.
+    pub fn legacy_kinds(&self) -> &[String] {
+        &self.legacy_kinds
+    }
+
+    /// Whether anything is listed at all. An empty `containers` means no
+    /// breadcrumbs and no sticky headers, with no fallback anywhere.
+    pub fn is_empty(&self) -> bool {
+        self.labels.is_empty() && self.legacy_kinds.is_empty()
+    }
+
+    /// Resolve to the set of node kinds this profile treats as containers.
+    ///
+    /// Labels are mapped back through `node_labels`; legacy kinds pass through
+    /// unchanged. A profile part-way through migration can carry both.
+    pub fn resolve_kinds(&self, node_labels: &HashMap<String, String>) -> Vec<String> {
+        let mut kinds: Vec<String> = self.legacy_kinds.clone();
+        for (kind, label) in node_labels {
+            if self.labels.iter().any(|l| l == label) && !kinds.iter().any(|k| k == kind) {
+                kinds.push(kind.clone());
+            }
+        }
+        kinds.sort();
+        kinds
+    }
+}
+
+impl serde::Serialize for Containers {
+    /// Always emits the concept form, so `profile init` and `profile show`
+    /// write the new shape even when the input was a legacy manifest. A legacy
+    /// kind that has no label would otherwise be lost silently, so it is kept
+    /// as a one-element pair — visible, and still readable by an older binary.
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        use serde::ser::SerializeSeq;
+        let mut seq = s.serialize_seq(Some(self.labels.len() + self.legacy_kinds.len()))?;
+        for label in &self.labels {
+            seq.serialize_element(label)?;
+        }
+        for kind in &self.legacy_kinds {
+            seq.serialize_element(&(kind,))?;
+        }
+        seq.end()
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for Containers {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        /// One entry: a bare label, or a legacy `[kind, field]` pair. A pair
+        /// with a null or absent field is accepted too — that is how a legacy
+        /// manifest spells a container with no name.
+        #[derive(serde::Deserialize)]
+        #[serde(untagged)]
+        enum Entry {
+            Label(String),
+            // The second element is the legacy name field. Read so the pair
+            // still deserializes, then discarded: nothing ever consumed it.
+            Pair(String, #[allow(dead_code)] Option<String>),
+            KindOnly((String,)),
+        }
+
+        let mut labels = Vec::new();
+        let mut legacy_kinds = Vec::new();
+        for entry in Vec::<Entry>::deserialize(d)? {
+            match entry {
+                Entry::Label(l) => labels.push(l),
+                Entry::Pair(kind, _) => legacy_kinds.push(kind),
+                Entry::KindOnly((kind,)) => legacy_kinds.push(kind),
+            }
+        }
+        Ok(Self { labels, legacy_kinds })
+    }
 }
 
 impl Language {
@@ -389,12 +531,12 @@ static RUST_PROFILE: LazyLock<Profile> = LazyLock::new(|| Profile {
         ("call_expression".into(), "call".into()),
         ("binary_expression".into(), "expression".into()),
     ]),
-    containers: vec![
-        ("impl_item".into(), "type".into()),
-        ("trait_item".into(), "name".into()),
-        ("mod_item".into(), "name".into()),
-        ("function_item".into(), "name".into()),
-    ],
+    containers: Containers::from_labels(vec![
+        "function".into(),
+        "impl".into(),
+        "interface".into(),
+        "module".into(),
+    ]),
 });
 
 static SWIFT_PROFILE: LazyLock<Profile> = LazyLock::new(|| Profile {
@@ -419,6 +561,10 @@ static SWIFT_PROFILE: LazyLock<Profile> = LazyLock::new(|| Profile {
         ("enum_entry".into(), "enum".into()),
         ("init_declaration".into(), "init".into()),
         ("deinit_declaration".into(), "deinit".into()),
+        // A Swift extension is a container, so it needs a label for
+        // `containers` to name it as a concept. `impl` is the same idea Rust's
+        // `impl_item` carries: methods attached to a type declared elsewhere.
+        ("extension_declaration".into(), "impl".into()),
         ("subscript_declaration".into(), "subscript".into()),
         ("if_statement".into(), "if statement".into()),
         ("for_statement".into(), "for loop".into()),
@@ -427,14 +573,13 @@ static SWIFT_PROFILE: LazyLock<Profile> = LazyLock::new(|| Profile {
         ("return_statement".into(), "return".into()),
         ("call_expression".into(), "call".into()),
     ]),
-    containers: vec![
-        ("class_declaration".into(), "name".into()),
-        ("extension_declaration".into(), "name".into()),
-        ("protocol_declaration".into(), "name".into()),
-        ("function_declaration".into(), "name".into()),
-        ("struct_declaration".into(), "name".into()),
-        ("enum_declaration".into(), "name".into()),
-    ],
+    containers: Containers::from_labels(vec![
+        "class".into(),
+        "enum".into(),
+        "function".into(),
+        "impl".into(),
+        "interface".into(),
+    ]),
 });
 
 static TYPESCRIPT_PROFILE: LazyLock<Profile> = LazyLock::new(|| Profile {
@@ -468,15 +613,15 @@ static TYPESCRIPT_PROFILE: LazyLock<Profile> = LazyLock::new(|| Profile {
         ("assignment_expression".into(), "assignment".into()),
         ("call_expression".into(), "call".into()),
     ]),
-    containers: vec![
-        ("namespace_declaration".into(), "name".into()),
-        ("class_declaration".into(), "name".into()),
-        ("interface_declaration".into(), "name".into()),
-        ("method_definition".into(), "key".into()),
-        ("function_declaration".into(), "name".into()),
-        ("type_alias_declaration".into(), "name".into()),
-        ("enum_declaration".into(), "name".into()),
-    ],
+    containers: Containers::from_labels(vec![
+        "class".into(),
+        "enum".into(),
+        "function".into(),
+        "interface".into(),
+        "method".into(),
+        "namespace".into(),
+        "type".into(),
+    ]),
 });
 
 static PYTHON_PROFILE: LazyLock<Profile> = LazyLock::new(|| Profile {
@@ -487,6 +632,9 @@ static PYTHON_PROFILE: LazyLock<Profile> = LazyLock::new(|| Profile {
     ],
     node_labels: HashMap::from([
         ("function_definition".into(), "function".into()),
+        // `async def` is a separate node kind in tree-sitter-python and is a
+        // container, so it needs a label for `containers` to name it.
+        ("async_function_definition".into(), "function".into()),
         ("class_definition".into(), "class".into()),
         ("if_statement".into(), "if statement".into()),
         ("for_statement".into(), "for loop".into()),
@@ -495,11 +643,7 @@ static PYTHON_PROFILE: LazyLock<Profile> = LazyLock::new(|| Profile {
         ("assignment_statement".into(), "assignment".into()),
         ("call".into(), "call".into()),
     ]),
-    containers: vec![
-        ("class_definition".into(), "name".into()),
-        ("function_definition".into(), "name".into()),
-        ("async_function_definition".into(), "name".into()),
-    ],
+    containers: Containers::from_labels(vec!["class".into(), "function".into()]),
 });
 
 static GO_PROFILE: LazyLock<Profile> = LazyLock::new(|| Profile {
@@ -521,11 +665,7 @@ static GO_PROFILE: LazyLock<Profile> = LazyLock::new(|| Profile {
         ("return_statement".into(), "return".into()),
         ("call_expression".into(), "call".into()),
     ]),
-    containers: vec![
-        ("type_declaration".into(), "type".into()),
-        ("function_declaration".into(), "name".into()),
-        ("method_declaration".into(), "name".into()),
-    ],
+    containers: Containers::from_labels(vec!["function".into(), "method".into(), "type".into()]),
 });
 
 static JAVA_PROFILE: LazyLock<Profile> = LazyLock::new(|| Profile {
@@ -550,12 +690,12 @@ static JAVA_PROFILE: LazyLock<Profile> = LazyLock::new(|| Profile {
         ("return_statement".into(), "return".into()),
         ("call_expression".into(), "call".into()),
     ]),
-    containers: vec![
-        ("class_declaration".into(), "name".into()),
-        ("interface_declaration".into(), "name".into()),
-        ("enum_declaration".into(), "name".into()),
-        ("method_declaration".into(), "name".into()),
-    ],
+    containers: Containers::from_labels(vec![
+        "class".into(),
+        "enum".into(),
+        "interface".into(),
+        "method".into(),
+    ]),
 });
 
 static CSHARP_PROFILE: LazyLock<Profile> = LazyLock::new(|| Profile {
@@ -587,14 +727,13 @@ static CSHARP_PROFILE: LazyLock<Profile> = LazyLock::new(|| Profile {
         ("return_statement".into(), "return".into()),
         ("call_expression".into(), "call".into()),
     ]),
-    containers: vec![
-        ("class_declaration".into(), "name".into()),
-        ("interface_declaration".into(), "name".into()),
-        ("struct_declaration".into(), "name".into()),
-        ("enum_declaration".into(), "name".into()),
-        ("method_declaration".into(), "name".into()),
-        ("namespace_declaration".into(), "name".into()),
-    ],
+    containers: Containers::from_labels(vec![
+        "class".into(),
+        "enum".into(),
+        "interface".into(),
+        "method".into(),
+        "namespace".into(),
+    ]),
 });
 
 static DART_PROFILE: LazyLock<Profile> = LazyLock::new(|| Profile {
@@ -622,14 +761,12 @@ static DART_PROFILE: LazyLock<Profile> = LazyLock::new(|| Profile {
         ("return_statement".into(), "return".into()),
         ("call_expression".into(), "call".into()),
     ]),
-    containers: vec![
-        ("class_definition".into(), "name".into()),
-        ("mixin_definition".into(), "name".into()),
-        ("extension_definition".into(), "name".into()),
-        ("enum_definition".into(), "name".into()),
-        ("function_signature".into(), "name".into()),
-        ("method_declaration".into(), "name".into()),
-    ],
+    containers: Containers::from_labels(vec![
+        "class".into(),
+        "enum".into(),
+        "function".into(),
+        "method".into(),
+    ]),
 });
 
 #[cfg(test)]
@@ -672,13 +809,68 @@ mod tests {
         let profile = Profile {
             landmark_kinds: vec!["function_item".into()],
             node_labels: HashMap::from([("function_item".into(), "function".into())]),
-            containers: vec![("impl_item".into(), "type".into())],
+            containers: Containers::from_labels(vec!["impl".into(), "function".into()]),
         };
         let json = serde_json::to_string(&profile).unwrap();
         let back: Profile = serde_json::from_str(&json).unwrap();
         assert_eq!(back.landmark_kinds, profile.landmark_kinds);
         assert_eq!(back.containers, profile.containers);
         assert_eq!(back.node_labels.get("function_item").map(String::as_str), Some("function"));
+    }
+
+    /// A manifest written for an older codemark must keep working. `Profile` is
+    /// `#[serde(default)]` with no `deny_unknown_fields` precisely so that an
+    /// older manifest loads on a newer binary; this covers the shape change.
+    #[test]
+    fn reads_the_legacy_container_pair_form() {
+        let json = r#"{
+            "landmark_kinds": ["impl_item"],
+            "node_labels": { "impl_item": "impl" },
+            "containers": [["impl_item", "type"], ["mod_item", "name"]]
+        }"#;
+        let profile: Profile = serde_json::from_str(json).unwrap();
+
+        // The pairs resolve to the same node kinds the old walker used, so
+        // breadcrumbs are unchanged before the manifest is migrated.
+        let kinds = profile.containers.resolve_kinds(&profile.node_labels);
+        assert!(kinds.iter().any(|k| k == "impl_item"), "{kinds:?}");
+        assert!(kinds.iter().any(|k| k == "mod_item"), "{kinds:?}");
+
+        // The name field is dropped: nothing ever read it, and the concept form
+        // has no per-kind slot for it.
+        assert!(profile.containers.labels().is_empty());
+    }
+
+    /// Both forms in one list, which is what a part-migrated manifest looks
+    /// like. A legacy kind with no label would otherwise vanish.
+    #[test]
+    fn reads_a_mixed_container_list() {
+        let json = r#"{
+            "node_labels": { "class_declaration": "class" },
+            "containers": ["class", ["weird_kind", "name"]]
+        }"#;
+        let profile: Profile = serde_json::from_str(json).unwrap();
+        let kinds = profile.containers.resolve_kinds(&profile.node_labels);
+        assert!(kinds.iter().any(|k| k == "class_declaration"), "label did not resolve: {kinds:?}");
+        assert!(kinds.iter().any(|k| k == "weird_kind"), "legacy kind was lost: {kinds:?}");
+    }
+
+    /// A concept names every kind carrying that label, which is the point of
+    /// keying on the classified vocabulary: one entry covers a grammar's
+    /// several spellings of the same idea.
+    #[test]
+    fn one_concept_resolves_to_every_kind_with_that_label() {
+        let profile = Profile {
+            node_labels: HashMap::from([
+                ("class_declaration".into(), "class".into()),
+                ("struct_declaration".into(), "class".into()),
+                ("if_statement".into(), "if statement".into()),
+            ]),
+            containers: Containers::from_labels(vec!["class".into()]),
+            ..Default::default()
+        };
+        let kinds = profile.containers.resolve_kinds(&profile.node_labels);
+        assert_eq!(kinds, vec!["class_declaration", "struct_declaration"]);
     }
 
     // --- lint ---------------------------------------------------------------
@@ -727,32 +919,40 @@ mod tests {
         );
     }
 
+    /// The concept-form equivalent of naming a node kind the grammar doesn't
+    /// define: a container label no kind in this profile carries can never
+    /// match, and `containers` has no fallback, so it must be an error.
     #[test]
-    fn lint_flags_a_container_field_the_grammar_does_not_have() {
-        // The kind is real but the name-field isn't, so the container would
-        // silently produce no breadcrumb.
-        let value = serde_json::json!({ "containers": [["impl_item", "nombre"]] });
+    fn lint_flags_a_container_label_no_kind_carries() {
+        let value = serde_json::json!({
+            "node_labels": { "impl_item": "impl" },
+            "containers": ["impl", "class"],
+        });
         let findings = lint(&value, &rust_grammar());
         let errs = errors(&findings);
         assert_eq!(errs.len(), 1, "{findings:?}");
-        assert_eq!(errs[0].path, "profile.containers[0].1");
+        assert_eq!(errs[0].path, "profile.containers[1]");
+        assert!(errs[0].message.contains("labelled 'class'"), "{:?}", errs[0]);
     }
 
-    // Documents a known limit rather than asserting desirable behavior: the
-    // static `Language` API exposes field names globally, not per kind, so a
-    // field that is real *somewhere* in the grammar passes even when the paired
-    // kind doesn't carry it.
-    //
-    // Harmless today — `extract_breadcrumbs` reads only the kind, so the field
-    // can't affect output — but it would bite if breadcrumbs ever used the
-    // field to extract the name. If tree-sitter exposes per-kind fields, this
-    // should become an error and the test should flip.
+    /// The legacy form still loads, so it is still linted for a kind the
+    /// grammar doesn't define — and it earns a warning pointing at the new
+    /// shape, so a stale manifest is visible rather than merely tolerated.
     #[test]
-    fn lint_cannot_catch_a_field_valid_on_a_different_kind() {
-        // `value` is a real Rust field, but not one `mod_item` has.
-        let value = serde_json::json!({ "containers": [["mod_item", "value"]] });
+    fn lint_accepts_the_legacy_pair_form_with_a_warning() {
+        let value = serde_json::json!({ "containers": [["impl_item", "type"]] });
         let findings = lint(&value, &rust_grammar());
-        assert!(errors(&findings).is_empty(), "known limit — see the comment above: {findings:?}");
+        assert!(errors(&findings).is_empty(), "legacy form must still load: {findings:?}");
+        assert!(
+            findings
+                .iter()
+                .any(|f| f.severity == LintSeverity::Warning && f.message.contains("legacy")),
+            "{findings:?}"
+        );
+
+        // A bogus kind in the legacy form is still an error.
+        let bad = serde_json::json!({ "containers": [["impl_itme", "type"]] });
+        assert_eq!(errors(&lint(&bad, &rust_grammar())).len(), 1);
     }
 
     #[test]
