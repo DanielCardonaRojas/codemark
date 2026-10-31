@@ -411,6 +411,13 @@ fn is_landmark(kind: &str, s: &KindStats) -> bool {
     if is_control_flow(kind) {
         return false;
     }
+    // A `{ }` wrapper is not a declaration, however declaration-shaped its name
+    // looks. `class_body` contains "class" and holds the members, so the tests
+    // below would accept it — and it would then shadow the real
+    // `class_declaration` as the nearest landmark ancestor.
+    if kind.ends_with("_body") {
+        return false;
+    }
     let named = !s.name_fields.is_empty();
     if named && s.has_body {
         return true;
@@ -464,7 +471,15 @@ fn label_for(kind: &str, landmark: bool, has_switch_statement: bool) -> Option<&
     // declarations are `function_item`/`struct_item` and some grammars name a
     // declaration `..._list`. Only suffixes that always mean "a fragment of an
     // enclosing construct" qualify.
-    const PART_SUFFIXES: &[&str] = &["_clause", "_content", "_part"];
+    //
+    // `_body` qualifies too. Surveyed across all nine registry grammars: every
+    // `_body` kind is either a `{ }` wrapper (Swift's `class_body` is literally
+    // `seq("{", members, "}")`) or a string-interpolation body (PHP's
+    // `heredoc_body`), never a declaration. Without this, Swift proposes
+    // `class_body` labelled "class" — and under a concept-keyed `containers`
+    // the "class" concept would then resolve to the declaration *and* its
+    // braces, putting every type in a breadcrumb twice.
+    const PART_SUFFIXES: &[&str] = &["_clause", "_content", "_part", "_body"];
     // Scala spells its package declaration `package_clause`, which is a real
     // declaration enclosing the whole file rather than a fragment of one — the
     // only `_clause` kind in the registry that is. Exempting it keeps the suffix
@@ -841,6 +856,28 @@ fn f() {
             assert!(!is_control_flow(kind), "{kind} is a declaration, not control flow");
             assert_ne!(label_for(kind, true, false), Some("match"), "{kind} mislabelled");
         }
+    }
+
+    #[test]
+    fn a_declarations_body_is_not_the_declaration() {
+        // `class_body` is `seq("{", members, "}")`. It contains the word
+        // "class" and holds the members, so without the `_body` rule it is
+        // proposed as a landmark labelled "class" — and under a concept-keyed
+        // `containers` the "class" concept would resolve to the declaration
+        // *and* its braces, putting every type in a breadcrumb twice.
+        for kind in ["class_body", "enum_class_body", "function_body", "interface_body"] {
+            assert_eq!(label_for(kind, true, false), None, "{kind} should get no label");
+            let bodied = KindStats { has_body: true, ..Default::default() };
+            assert!(!is_landmark(kind, &bodied), "{kind} should not be a landmark");
+        }
+
+        // The declarations themselves are untouched.
+        assert_eq!(label_for("class_declaration", true, false), Some("class"));
+        assert_eq!(label_for("function_declaration", true, false), Some("function"));
+
+        // `_item` and `_list` deliberately are NOT treated this way: Rust's
+        // declarations are `function_item`/`struct_item`.
+        assert_eq!(label_for("function_item", true, false), Some("function"));
     }
 
     #[test]
