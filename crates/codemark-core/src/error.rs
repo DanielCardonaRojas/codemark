@@ -44,8 +44,11 @@ pub enum Error {
     /// resolution failure makes a healthy collection look rotten.
     #[error(
         "no grammar installed for '{language}'. Install one with \
-         `codemark languages add <grammar.wasm> --from-registry {language}`, \
-         or see `codemark languages registry list` for what is available."
+         `codemark languages install {language}`, which downloads it from the \
+         registry. If no download is available, build the grammar and add it \
+         with `codemark languages add <grammar.wasm> --from-registry \
+         {language}`. See `codemark languages registry list` for what is \
+         available."
     )]
     GrammarNotInstalled { language: String },
 

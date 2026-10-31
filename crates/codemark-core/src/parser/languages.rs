@@ -491,8 +491,16 @@ mod tests {
         // The message has to name the fix: this is the most common first
         // encounter with a shared tour for a language you lack.
         let shown = err.to_string();
-        assert!(shown.contains("languages add"), "{shown}");
         assert!(shown.contains("not-a-real-language-xyz"), "{shown}");
+
+        // `install` is offered before `add`: it downloads the grammar, whereas
+        // `add` requires a .wasm the user must find or build first. Leading
+        // with `add` sends people off to do work the CLI can do for them.
+        assert!(shown.contains("languages install"), "{shown}");
+        assert!(shown.contains("languages add"), "{shown}");
+        let install_at = shown.find("languages install").expect("install mentioned");
+        let add_at = shown.find("languages add").expect("add mentioned");
+        assert!(install_at < add_at, "install should be recommended before add: {shown}");
     }
 
     /// Built-in languages keep resolving by every alias they advertise.

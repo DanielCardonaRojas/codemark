@@ -469,7 +469,7 @@ impl BrowserLayout {
                     return Some(false);
                 }
                 for (bookmark_id, status) in batch {
-                    let health = HealthStatus::from(*status);
+                    let health = *status;
                     // Cache so subsequent panel rebuilds (e.g. a tag/branch filter)
                     // render the resolved dot instead of flashing back to Unknown
                     // and re-resolving the bookmark against the file. Keyed by
@@ -554,20 +554,20 @@ impl BrowserLayout {
                 }
                 Some(true)
             }
-            Event::PreviewFailed { request_id, bookmark_id, repo_root, unresolved } => {
+            Event::PreviewFailed { request_id, bookmark_id, repo_root, health } => {
                 if *request_id == self.active_preview_request {
                     self.inflight_preview = None;
                     // Live resolution failed; fall back to the persisted snapshot
                     // synchronously (no tree-sitter parse, so it's cheap). The
-                    // health distinguishes query-not-resolving (Unmatched) from
-                    // operational failures (Error). Load from the failed bookmark's
-                    // owning repo (None → focused repo) under multi-select.
-                    let health =
-                        if *unresolved { HealthStatus::Broken } else { HealthStatus::Unknown };
+                    // health was classified on the worker and distinguishes a
+                    // missing grammar (No grammar) from query-not-resolving
+                    // (Unmatched) and operational failures (Error). Load from the
+                    // failed bookmark's owning repo (None → focused repo) under
+                    // multi-select.
                     self.right_pane.load_bookmark(
                         self.workspace.db_for(repo_root.as_deref()),
                         bookmark_id,
-                        health,
+                        *health,
                     );
                     self.right_pane.finish_loading();
                 }
@@ -861,7 +861,7 @@ impl BrowserLayout {
             use std::collections::HashMap;
 
             let mut caches: HashMap<CL, ParseCache> = HashMap::new();
-            let mut batch: Vec<(String, LiveUIStatus)> = Vec::new();
+            let mut batch: Vec<(String, crate::component::HealthStatus)> = Vec::new();
 
             // Open a fresh DB connection for the path (only for db_path)
             let db_path_ref = &db_path;
@@ -896,8 +896,15 @@ impl BrowserLayout {
                         Ok(result.live_status())
                     })();
 
-                let live_status = status.unwrap_or(LiveUIStatus::Broken);
-                batch.push((bm.id.clone(), live_status));
+                // A failure is classified rather than flattened to Broken: a
+                // missing grammar means the query never ran, so marking the
+                // bookmark broken (red "Unmatched") would make every bookmark
+                // in an uninstalled language look rotten.
+                let health = match status {
+                    Ok(live_status) => crate::component::HealthStatus::from(live_status),
+                    Err(e) => crate::component::HealthStatus::from_resolution_error(&e),
+                };
+                batch.push((bm.id.clone(), health));
 
                 // Send in batches of 10 for progressive rendering
                 if batch.len() >= 10 {
@@ -1128,12 +1135,7 @@ impl BrowserLayout {
                             // location (the same one the cheap build used).
                             let (file_path, line_number, line_end, _res) =
                                 super::RightPane::persisted_step_location(&db, bm);
-                            let health = if matches!(e, codemark_core::error::Error::Resolution(_))
-                            {
-                                crate::component::HealthStatus::Broken
-                            } else {
-                                crate::component::HealthStatus::Unknown
-                            };
+                            let health = crate::component::HealthStatus::from_resolution_error(&e);
                             super::StepLiveUpdate {
                                 index: *index,
                                 file_path,
@@ -1191,7 +1193,7 @@ impl BrowserLayout {
                     request_id,
                     bookmark_id,
                     repo_root,
-                    unresolved: false,
+                    health: crate::component::HealthStatus::Unknown,
                 });
                 return;
             };
@@ -1231,16 +1233,15 @@ impl BrowserLayout {
                         request_id,
                         bookmark_id,
                         repo_root,
-                        unresolved: false,
+                        health: crate::component::HealthStatus::Unknown,
                     });
                 }
                 Err(e) => {
-                    let unresolved = matches!(e, codemark_core::error::Error::Resolution(_));
                     let _ = event_handler.send(Event::PreviewFailed {
                         request_id,
                         bookmark_id,
                         repo_root,
-                        unresolved,
+                        health: crate::component::HealthStatus::from_resolution_error(&e),
                     });
                 }
             }

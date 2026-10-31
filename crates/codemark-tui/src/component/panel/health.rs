@@ -66,6 +66,32 @@ impl From<codemark_core::engine::projection::UIStatus> for HealthStatus {
 }
 
 impl HealthStatus {
+    /// Classify a live-resolution failure into the health shown for it.
+    ///
+    /// The single mapping used by every path that live-resolves a bookmark —
+    /// the synchronous preview, the background preview task, the collection
+    /// steps, and the live-health batch. Keeping it in one place is what stops
+    /// those paths from disagreeing: the same missing grammar previously showed
+    /// "No grammar" in one and "Unmatched"/"Error" in the others, and whichever
+    /// landed last won.
+    ///
+    /// - [`Error::GrammarNotInstalled`] → `GrammarMissing`: the query never
+    ///   ran, so this says nothing about the bookmark.
+    /// - [`Error::Resolution`] → `Broken`: the query ran and matched nothing.
+    /// - anything else → `Unknown`: an operational failure (missing file,
+    ///   parse error, …).
+    ///
+    /// [`Error::GrammarNotInstalled`]: codemark_core::error::Error::GrammarNotInstalled
+    /// [`Error::Resolution`]: codemark_core::error::Error::Resolution
+    pub(crate) fn from_resolution_error(err: &codemark_core::error::Error) -> Self {
+        use codemark_core::error::Error;
+        match err {
+            Error::GrammarNotInstalled { .. } => HealthStatus::GrammarMissing,
+            Error::Resolution(_) => HealthStatus::Broken,
+            _ => HealthStatus::Unknown,
+        }
+    }
+
     /// Get the color for this health status.
     pub(crate) fn color(&self) -> Color {
         match self {
@@ -160,6 +186,42 @@ mod tests {
         // Dim, not red: nothing is wrong with the bookmark.
         assert_eq!(HealthStatus::GrammarMissing.color(), HealthStatus::Unknown.color());
         assert_ne!(HealthStatus::GrammarMissing.color(), HealthStatus::Broken.color());
+    }
+
+    /// The classification every live-resolution path shares.
+    ///
+    /// Each of the four paths (synchronous preview, background preview task,
+    /// collection steps, live-health batch) used to classify failures itself,
+    /// and they disagreed: only one knew about a missing grammar, so the same
+    /// bookmark showed "No grammar" or "Unmatched" depending on which path
+    /// painted it last. Asserting the mapping once is what keeps them aligned.
+    #[test]
+    fn resolution_errors_map_to_distinct_health() {
+        use codemark_core::error::Error;
+
+        // The query never ran — says nothing about the bookmark.
+        assert_eq!(
+            HealthStatus::from_resolution_error(&Error::GrammarNotInstalled {
+                language: "ruby".to_string()
+            }),
+            HealthStatus::GrammarMissing
+        );
+
+        // The query ran and matched nothing — genuinely broken.
+        assert_eq!(
+            HealthStatus::from_resolution_error(&Error::Resolution("no match".into())),
+            HealthStatus::Broken
+        );
+
+        // Operational failures stay Unknown rather than accusing the bookmark.
+        assert_eq!(
+            HealthStatus::from_resolution_error(&Error::TreeSitter("parse failed".into())),
+            HealthStatus::Unknown
+        );
+        assert_eq!(
+            HealthStatus::from_resolution_error(&Error::Input("bad input".into())),
+            HealthStatus::Unknown
+        );
     }
 
     #[test]
