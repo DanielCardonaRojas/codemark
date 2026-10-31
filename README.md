@@ -273,7 +273,7 @@ See the [**Full Command Reference**](./dev-docs/CLI.md) for every subcommand and
 
 ## 🌐 Supported Languages
 
-Codemark is powered by Tree-sitter. It supports 8 built-in languages out of the box, plus **any other language** via WASM grammars loaded at runtime — six more are one command away from the [grammar registry](#from-the-grammar-registry-one-command).
+Codemark is powered by Tree-sitter. It supports 8 built-in languages out of the box, plus **any other language** via WASM grammars loaded at runtime — eleven more are one command away from the [grammar registry](#from-the-grammar-registry-one-command).
 
 **Built-in:**
 - 🦀 **Rust**
@@ -298,19 +298,32 @@ codemark languages install ruby      # downloads, verifies, installs
 
 Available today:
 
-| Language | Extensions |
-|---|---|
-| **Bash** | `sh`, `bash` |
-| **Lua** | `lua` |
-| **PHP** | `php`, `phtml` |
-| **Ruby** | `rb`, `rake`, `gemspec` |
-| **Scala** | `scala`, `sc` |
-| **Zig** | `zig`, `zon` |
+| Language | Extensions | |
+|---|---|---|
+| **Bash** | `sh`, `bash` |  |
+| **C#** | `cs`, `csx` | replaces the built-in |
+| **Go** | `go` | replaces the built-in |
+| **Lua** | `lua` |  |
+| **PHP** | `php`, `phtml` |  |
+| **Python** | `py`, `pyi`, `pyw` | replaces the built-in |
+| **Ruby** | `rb`, `rake`, `gemspec` |  |
+| **Scala** | `scala`, `sc` |  |
+| **Swift** | `swift` | replaces the built-in |
+| **TypeScript** | `ts` | replaces the built-in |
+| **Zig** | `zig`, `zon` |  |
 
 The registry hosts **profiles, not binaries** — each entry points at the
 prebuilt `.wasm` published by the grammar's own project, pinned by SHA-256.
 Codemark verifies the digest before installing and refuses anything else.
 Point `registry_url` at a fork or a `file://` path for air-gapped use.
+
+Each entry carries a **profile** — the per-language metadata that tells the
+query generator which node kinds anchor a bookmark and which ones belong in a
+breadcrumb. See [Profiles and Queries](https://danielcardonarojas.github.io/codemark/docs/guide/profiles-and-queries)
+for how that works, or
+[MANIFEST.md](https://github.com/DanielCardonaRojas/codemark-grammars/blob/main/MANIFEST.md)
+for the field reference. Contributions welcome — the registry verifies every
+profile against committed breadcrumb snapshots in CI.
 
 ### Bring your own grammar
 
