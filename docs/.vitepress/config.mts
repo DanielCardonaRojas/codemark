@@ -44,6 +44,7 @@ export default withMermaid(defineConfig({
         items: [
           { text: 'Tree-sitter', link: '/guide/tree-sitter' },
           { text: 'Query Generation', link: '/guide/query-generation' },
+          { text: 'Profiles and Queries', link: '/guide/profiles-and-queries' },
           { text: 'Health Status', link: '/guide/health-status' },
           { text: 'Repository Registry', link: '/guide/repository-registry' },
           { text: 'Semantic Search', link: '/guide/embeddings' },

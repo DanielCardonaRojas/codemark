@@ -646,7 +646,38 @@ Examples:
 ## Supported languages
 Swift, Rust, TypeScript, Python, Go, Java, C#, Dart (built-in).
 
-Additional languages load at runtime from WASM grammars — no recompile needed.
+Eleven more are one command away from the grammar registry: Bash, C#, Go, Lua,
+PHP, Python, Ruby, Scala, Swift, TypeScript, Zig. Anything else loads at
+runtime from a WASM grammar — no recompile needed.
+
+### When a grammar is missing, install it
+
+If a command fails with **"no grammar installed for `<lang>`"**, the bookmark is
+not broken — codemark simply cannot parse that language yet. Install it and
+retry, without asking first:
+
+```bash
+codemark languages install <lang>    # downloads, verifies the SHA-256, installs
+```
+
+This is safe to do on the user's behalf: it writes only to the grammar cache
+and verifies the published SHA-256 before installing.
+
+**Mention it when the grammar replaces a built-in.** Some registry entries —
+Python, Go, C#, Swift, TypeScript — are richer profiles for languages codemark
+already ships, and installing one takes over that extension for *every*
+bookmark in the repo. The registry entry carries its own consent, so no extra
+flag is needed and the install just succeeds; say which built-in was replaced
+so the user isn't surprised. `codemark languages list` afterwards shows both
+entries, the dynamic one owning the extension.
+
+Stop and ask if **the language isn't in the registry**. Building a grammar is a
+much larger task — see *Adding a new language* below, and confirm before
+starting.
+
+The same error appears when **opening a shared tour** for a language you lack.
+That is the common case, not an edge case: a pack travels with bookmarks, not
+grammars. Install and continue.
 
 ## Adding a new language (WASM grammar)
 
