@@ -35,6 +35,23 @@ pub enum Error {
     )]
     NotInitialized,
 
+    /// No grammar is registered for a language a bookmark refers to.
+    ///
+    /// Distinct from [`Error::Input`] because it is nearly always recoverable
+    /// by installing the grammar, and because the two look identical to a UI
+    /// otherwise: a bookmark whose grammar is missing is not broken, it is
+    /// merely unreadable until the language is installed. Reporting it as a
+    /// resolution failure makes a healthy collection look rotten.
+    #[error(
+        "no grammar installed for '{language}'. Install one with \
+         `codemark languages install {language}`, which downloads it from the \
+         registry. If no download is available, build the grammar and add it \
+         with `codemark languages add <grammar.wasm> --from-registry \
+         {language}`. See `codemark languages registry list` for what is \
+         available."
+    )]
+    GrammarNotInstalled { language: String },
+
     /// Error during tree-sitter parsing or query execution.
     #[error("tree-sitter error: {0}")]
     TreeSitter(String),
@@ -78,6 +95,10 @@ impl Error {
             Error::NotInitialized => EXIT_INPUT_ERROR,
             Error::NotImplemented(_) | Error::Operation(_) => EXIT_OPERATION_FAILED,
             Error::Input(_) | Error::Io(_) => EXIT_INPUT_ERROR,
+            // The input was fine; the environment is missing a grammar. Treated
+            // as operational so a script can tell "you asked for something
+            // impossible" from "install this and retry".
+            Error::GrammarNotInstalled { .. } => EXIT_OPERATION_FAILED,
             Error::Database(_) => EXIT_DATABASE_ERROR,
             Error::TreeSitter(_) | Error::Resolution(_) | Error::AmbiguousQuery(_) => {
                 EXIT_OPERATION_FAILED

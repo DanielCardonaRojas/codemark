@@ -215,7 +215,7 @@ impl FromStr for Language {
             Language::static_from_name(s)
                 .or_else(|| crate::parser::registry::LanguageRegistry::from_name(s))
         };
-        resolved.ok_or_else(|| Error::Input(format!("unsupported language: {s}")))
+        resolved.ok_or_else(|| Error::GrammarNotInstalled { language: s.to_string() })
     }
 }
 
@@ -463,6 +463,57 @@ impl ParseCache {
 
 #[cfg(test)]
 mod tests {
+    /// A language with no registered grammar is reported as something the user
+    /// can fix, not as bad input.
+    ///
+    /// The distinction matters because a bookmark whose grammar is missing is
+    /// not broken — it is unreadable until the language is installed. Callers
+    /// use the variant to say "No grammar" rather than "Unmatched", so
+    /// flattening it into `Error::Input` anywhere makes a healthy collection
+    /// look rotten. See #257.
+    #[test]
+    fn a_missing_grammar_is_its_own_error() {
+        use super::Language;
+        use crate::error::Error;
+        use std::str::FromStr;
+
+        // A name no built-in claims and no grammar could plausibly be
+        // installed under, so the result does not depend on what the
+        // developer running the tests happens to have in their cache.
+        let err = Language::from_str("not-a-real-language-xyz").unwrap_err();
+
+        assert!(
+            matches!(err, Error::GrammarNotInstalled { ref language }
+                     if language == "not-a-real-language-xyz"),
+            "expected GrammarNotInstalled, got {err:?}"
+        );
+
+        // The message has to name the fix: this is the most common first
+        // encounter with a shared tour for a language you lack.
+        let shown = err.to_string();
+        assert!(shown.contains("not-a-real-language-xyz"), "{shown}");
+
+        // `install` is offered before `add`: it downloads the grammar, whereas
+        // `add` requires a .wasm the user must find or build first. Leading
+        // with `add` sends people off to do work the CLI can do for them.
+        assert!(shown.contains("languages install"), "{shown}");
+        assert!(shown.contains("languages add"), "{shown}");
+        let install_at = shown.find("languages install").expect("install mentioned");
+        let add_at = shown.find("languages add").expect("add mentioned");
+        assert!(install_at < add_at, "install should be recommended before add: {shown}");
+    }
+
+    /// Built-in languages keep resolving by every alias they advertise.
+    #[test]
+    fn builtin_languages_still_resolve_by_name() {
+        use super::Language;
+        use std::str::FromStr;
+
+        for name in ["rust", "rs", "swift", "typescript", "ts", "python", "py", "go", "cs"] {
+            assert!(Language::from_str(name).is_ok(), "{name} should resolve");
+        }
+    }
+
     /// Precedence must follow what the build can actually load.
     ///
     /// With `wasm`, a dynamic grammar wins — that is what lets a bundled

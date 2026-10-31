@@ -83,16 +83,24 @@ pub enum Event {
     /// Remote tours listing failed.
     RemoteToursFetchError(String),
     /// Background live health resolution results for bookmark list dots.
-    /// Each entry is (bookmark_id, live_status). `generation` is the health epoch
+    /// Each entry is (bookmark_id, health). `generation` is the health epoch
     /// the task was spawned in; a batch from a stale epoch (e.g. computed before a
     /// grammar refresh on `FocusGained`) is dropped rather than applied.
     /// `repo_root` tags the batch with the repo it was computed for, so the
     /// handler keys the cache by `(repo_root, id)` and two checked repos holding
     /// the same id don't cross-contaminate each other's dot.
+    ///
+    /// Carries the resolved [`HealthStatus`] rather than a
+    /// [`LiveUIStatus`] so a failure that never ran the query (no grammar
+    /// installed) stays distinguishable from a genuinely broken bookmark;
+    /// `LiveUIStatus` has no variant for it, and collapsing to `Broken` here
+    /// let this batch overwrite a preview's "No grammar" with red "Unmatched".
+    ///
+    /// [`HealthStatus`]: crate::component::HealthStatus
     LiveHealthBatch {
         generation: u64,
         repo_root: Option<String>,
-        batch: Vec<(String, LiveUIStatus)>,
+        batch: Vec<(String, crate::component::HealthStatus)>,
     },
     /// Background worst-case live health for a batch of collections, so
     /// collection dots and the overview label reflect the worst bookmark status
@@ -133,9 +141,13 @@ pub enum Event {
         /// The failed bookmark's owning repo tag (None → focused repo), so the
         /// persisted-snapshot fallback loads from the right db under multi-select.
         repo_root: Option<String>,
-        /// `true` when the query does not resolve (Unmatched); `false` for
-        /// operational failures like a missing file or parse error (Error).
-        unresolved: bool,
+        /// Health to show for the failure, classified by
+        /// [`HealthStatus::from_resolution_error`]. Carried as the health rather
+        /// than a bool because a missing grammar is a third case ("No grammar")
+        /// that neither Unmatched nor Error describes.
+        ///
+        /// [`HealthStatus::from_resolution_error`]: crate::component::HealthStatus::from_resolution_error
+        health: crate::component::HealthStatus,
     },
     /// The Info/Details/Comments markdown for a collection step finished
     /// rendering on a background task. The code pane is updated inline on

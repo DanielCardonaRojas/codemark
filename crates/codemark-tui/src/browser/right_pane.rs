@@ -659,24 +659,28 @@ impl RightPane {
             }
             Ok(None) => self.clear_preview_state(db),
             Err(e) => {
-                // Distinguish query-not-resolving (Unmatched) from operational
-                // failures (Error) so the border label reflects the real cause.
-                let health = if matches!(e, codemark_core::error::Error::Resolution(_)) {
-                    tracing::warn!(
+                // Distinguish a missing grammar (No grammar) from
+                // query-not-resolving (Unmatched) and operational failures
+                // (Error) so the border label reflects the real cause.
+                let health = crate::component::HealthStatus::from_resolution_error(&e);
+                match health {
+                    crate::component::HealthStatus::GrammarMissing => tracing::info!(
+                        target: "codemark::ui",
+                        bookmark_id = %bookmark_id,
+                        "No grammar installed for this bookmark's language"
+                    ),
+                    crate::component::HealthStatus::Broken => tracing::warn!(
                         target: "codemark::ui",
                         bookmark_id = %bookmark_id,
                         "Query does not resolve, falling back to persisted path"
-                    );
-                    crate::component::HealthStatus::Broken
-                } else {
-                    tracing::warn!(
+                    ),
+                    _ => tracing::warn!(
                         target: "codemark::ui",
                         bookmark_id = %bookmark_id,
                         error = %e,
                         "Live resolution error, falling back to persisted path"
-                    );
-                    crate::component::HealthStatus::Unknown
-                };
+                    ),
+                }
                 self.load_bookmark(db, bookmark_id, health);
             }
         }
@@ -1020,12 +1024,10 @@ impl RightPane {
     > {
         use std::str::FromStr;
 
-        let language = CodemarkLanguage::from_str(&bm.language).map_err(|e| {
-            codemark_core::error::Error::Input(format!(
-                "unsupported language {}: {}",
-                bm.language, e
-            ))
-        })?;
+        // Propagated as-is rather than rewrapped: `Error::GrammarNotInstalled`
+        // is what lets the caller show "No grammar" instead of "Unmatched",
+        // and flattening it into `Error::Input` would throw that away.
+        let language = CodemarkLanguage::from_str(&bm.language)?;
 
         // Get or create a ParseCache for this language
         let cache = match session_cache.entry(language.clone()) {
