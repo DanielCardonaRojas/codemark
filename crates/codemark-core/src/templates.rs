@@ -691,7 +691,27 @@ fn write_template_stamps(dir: &std::path::Path, stamps: &HashMap<String, String>
     let mut lines: Vec<String> =
         stamps.iter().map(|(name, hash)| format!("{name} {hash}")).collect();
     lines.sort();
-    let _ = std::fs::write(dir.join(TEMPLATE_STAMP_FILE), lines.join("\n") + "\n");
+    let _ = write_atomic(&dir.join(TEMPLATE_STAMP_FILE), &(lines.join("\n") + "\n"));
+}
+
+/// Replace `path`'s contents in one step.
+///
+/// [`ensure_default_template_exists`] runs on every CLI start, so two codemark
+/// processes can write these files concurrently — and now that an upgrade
+/// *rewrites* existing templates, a plain `fs::write` lets a reader see a
+/// truncated file: a half-written template renders wrong, and a half-written
+/// stamp file makes untouched templates look edited. Writing to a sibling
+/// temporary file and renaming over the destination makes the swap atomic.
+///
+/// The temp name includes the pid so concurrent writers don't clobber each
+/// other's staging file.
+fn write_atomic(path: &std::path::Path, contents: &str) -> std::io::Result<()> {
+    let file_name = path.file_name().unwrap_or_default().to_string_lossy().into_owned();
+    let tmp = path.with_file_name(format!(".{file_name}.tmp.{}", std::process::id()));
+    std::fs::write(&tmp, contents)?;
+    std::fs::rename(&tmp, path).inspect_err(|_| {
+        let _ = std::fs::remove_file(&tmp);
+    })
 }
 
 /// Template names
@@ -792,21 +812,33 @@ pub struct StaleTemplate {
 /// | absent | write it, record the digest |
 /// | matches the recorded digest (untouched) | overwrite with the new default |
 /// | differs (user edited it) | leave it, and report it |
+/// | unreadable (not UTF-8, no permission) | leave it, and report it |
 ///
 /// A file with no recorded digest is treated as edited. That is deliberate: it
 /// is what every pre-existing install looks like, and guessing wrong in that
-/// direction loses someone's customization.
+/// direction loses someone's customization. An *unreadable* file is treated the
+/// same way and for the same reason: a failed read says nothing about whether
+/// the content is ours, so it cannot be assumed replaceable.
 pub fn ensure_default_template_exists() -> Vec<StaleTemplate> {
     let Some(templates_dir) = templates_dir() else {
         return Vec::new();
     };
+    ensure_default_templates_in(&templates_dir)
+}
 
-    if let Err(e) = std::fs::create_dir_all(&templates_dir) {
+/// [`ensure_default_template_exists`] against an explicit directory.
+///
+/// Split out so tests can drive the logic on a temp directory instead of
+/// pointing `templates_dir()` at one through `XDG_CONFIG_HOME` — that variable
+/// is process-global, so tests that set it interfere with every other test
+/// reading a template.
+fn ensure_default_templates_in(templates_dir: &std::path::Path) -> Vec<StaleTemplate> {
+    if let Err(e) = std::fs::create_dir_all(templates_dir) {
         eprintln!("Warning: Failed to create templates directory: {e}");
         return Vec::new();
     }
 
-    let mut stamps = read_template_stamps(&templates_dir);
+    let mut stamps = read_template_stamps(templates_dir);
     let mut stale = Vec::new();
     let mut stamps_changed = false;
 
@@ -815,12 +847,24 @@ pub fn ensure_default_template_exists() -> Vec<StaleTemplate> {
         let path = templates_dir.join(name);
         let shipped_digest = template_digest(shipped);
 
-        let on_disk = std::fs::read_to_string(&path).ok();
-        let write = match &on_disk {
+        // Only a missing file counts as absent. Any other read error — a
+        // non-UTF-8 edit, a permission problem — means a file *is* there and
+        // we cannot tell whose it is, so it is left alone and reported.
+        // Treating it as absent would overwrite a customization silently,
+        // which is exactly what this function exists to avoid.
+        let write = match std::fs::read_to_string(&path) {
             // Nothing there: first run, or a template added by this release.
-            None => true,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => true,
+            Err(e) => {
+                eprintln!(
+                    "Warning: Failed to read template {}: {e}\n  Leaving it as it is.",
+                    path.display()
+                );
+                stale.push(StaleTemplate { name: (*name).to_string(), path: path.clone() });
+                false
+            }
             // Already current, whether or not the user wrote it themselves.
-            Some(current) if template_digest(current) == shipped_digest => {
+            Ok(current) if template_digest(&current) == shipped_digest => {
                 if stamps.get(*name) != Some(&shipped_digest) {
                     stamps.insert((*name).to_string(), shipped_digest.clone());
                     stamps_changed = true;
@@ -830,16 +874,16 @@ pub fn ensure_default_template_exists() -> Vec<StaleTemplate> {
             // Byte-identical to what codemark last wrote, so it is ours to
             // replace: the user never touched it and would otherwise be stuck
             // on an old rendering.
-            Some(current) if stamps.get(*name) == Some(&template_digest(current)) => true,
+            Ok(current) if stamps.get(*name) == Some(&template_digest(&current)) => true,
             // Edited, or written before stamps existed. Not ours to overwrite.
-            Some(_) => {
+            Ok(_) => {
                 stale.push(StaleTemplate { name: (*name).to_string(), path: path.clone() });
                 false
             }
         };
 
         if write {
-            match std::fs::write(&path, shipped) {
+            match write_atomic(&path, shipped) {
                 Ok(()) => {
                     stamps.insert((*name).to_string(), shipped_digest);
                     stamps_changed = true;
@@ -855,7 +899,7 @@ pub fn ensure_default_template_exists() -> Vec<StaleTemplate> {
     }
 
     if stamps_changed {
-        write_template_stamps(&templates_dir, &stamps);
+        write_template_stamps(templates_dir, &stamps);
     }
 
     stale
@@ -1301,18 +1345,6 @@ mod tests {
         assert_eq!(code_span(""), "`  `");
     }
 
-    /// Breadcrumbs reached the template context and stopped there: the field was
-    /// populated from the resolution and referenced by none of the five shipped
-    /// templates, so `containers` — the one profile field with no fallback —
-    /// rendered nowhere a user could see it. See codemark#249.
-    /// Serializes the tests that set `XDG_CONFIG_HOME`.
-    ///
-    /// That variable is process-global, so two of these running in parallel
-    /// point `templates_dir()` at each other's temp directory and fail
-    /// intermittently. A mutex is more honest than requiring
-    /// `--test-threads=1`, which only holds until someone forgets.
-    static CONFIG_HOME_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
     /// Pin the digest against published FNV-1a 64-bit vectors.
     ///
     /// A hash that is merely self-consistent is not enough: the first version
@@ -1331,13 +1363,11 @@ mod tests {
     /// is invisible to every existing install. See #256.
     #[test]
     fn an_untouched_template_is_refreshed() {
-        let _guard = CONFIG_HOME_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let tmp = tempfile::tempdir().unwrap();
-        unsafe { std::env::set_var("XDG_CONFIG_HOME", tmp.path()) };
-        let dir = tmp.path().join("codemark/templates");
+        let dir = tmp.path().join("templates");
 
         // First run: writes the shipped templates and records their digests.
-        assert!(ensure_default_template_exists().is_empty());
+        assert!(ensure_default_templates_in(&dir).is_empty());
         let shipped = std::fs::read_to_string(dir.join(SHOW_TEMPLATE)).unwrap();
 
         // Age it exactly as an older codemark would have: the old content on
@@ -1348,7 +1378,7 @@ mod tests {
         stamps.insert(SHOW_TEMPLATE.to_string(), template_digest(old));
         write_template_stamps(&dir, &stamps);
 
-        let stale = ensure_default_template_exists();
+        let stale = ensure_default_templates_in(&dir);
 
         assert!(stale.is_empty(), "an untouched template should not be reported: {stale:?}");
         assert_eq!(
@@ -1364,17 +1394,15 @@ mod tests {
     /// reported instead, so the staleness is at least visible.
     #[test]
     fn an_edited_template_is_preserved_and_reported() {
-        let _guard = CONFIG_HOME_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let tmp = tempfile::tempdir().unwrap();
-        unsafe { std::env::set_var("XDG_CONFIG_HOME", tmp.path()) };
-        let dir = tmp.path().join("codemark/templates");
+        let dir = tmp.path().join("templates");
 
-        ensure_default_template_exists();
+        ensure_default_templates_in(&dir);
 
         let mine = "# My own heading {{short_id}}\n";
         std::fs::write(dir.join(SHOW_TEMPLATE), mine).unwrap();
 
-        let stale = ensure_default_template_exists();
+        let stale = ensure_default_templates_in(&dir);
 
         assert_eq!(std::fs::read_to_string(dir.join(SHOW_TEMPLATE)).unwrap(), mine);
         assert!(
@@ -1389,19 +1417,65 @@ mod tests {
     /// not.
     #[test]
     fn a_template_with_no_recorded_digest_is_left_alone() {
-        let _guard = CONFIG_HOME_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let tmp = tempfile::tempdir().unwrap();
-        unsafe { std::env::set_var("XDG_CONFIG_HOME", tmp.path()) };
-        let dir = tmp.path().join("codemark/templates");
+        let dir = tmp.path().join("templates");
         std::fs::create_dir_all(&dir).unwrap();
 
         let old = "# Bookmark: {{short_id}}\n";
         std::fs::write(dir.join(SHOW_TEMPLATE), old).unwrap();
 
-        let stale = ensure_default_template_exists();
+        let stale = ensure_default_templates_in(&dir);
 
         assert_eq!(std::fs::read_to_string(dir.join(SHOW_TEMPLATE)).unwrap(), old);
         assert!(stale.iter().any(|s| s.name == SHOW_TEMPLATE), "{stale:?}");
+    }
+
+    /// A template that exists but cannot be read must not be mistaken for an
+    /// absent one. `read_to_string` fails on a file the user edited in a
+    /// non-UTF-8 encoding; treating that failure as "nothing there" would
+    /// overwrite their customization with the shipped default — the one
+    /// outcome this whole function exists to prevent.
+    #[test]
+    fn an_unreadable_template_is_preserved_and_reported() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("templates");
+        std::fs::create_dir_all(&dir).unwrap();
+
+        // Invalid UTF-8: a lone continuation byte. Written as bytes because
+        // no `&str` can express it.
+        let mine: &[u8] = b"# My heading \xff\n";
+        std::fs::write(dir.join(SHOW_TEMPLATE), mine).unwrap();
+
+        let stale = ensure_default_templates_in(&dir);
+
+        assert_eq!(
+            std::fs::read(dir.join(SHOW_TEMPLATE)).unwrap(),
+            mine,
+            "an unreadable template must not be overwritten"
+        );
+        assert!(
+            stale.iter().any(|s| s.name == SHOW_TEMPLATE),
+            "an unreadable template should be reported: {stale:?}"
+        );
+    }
+
+    /// The stamp file and refreshed templates are swapped in whole, so a
+    /// concurrent reader never sees a truncated file. Checks the observable
+    /// consequence: no staging file is left behind after a successful write.
+    #[test]
+    fn writes_leave_no_temporary_files_behind() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("templates");
+
+        ensure_default_templates_in(&dir);
+
+        let leftovers: Vec<_> = std::fs::read_dir(&dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.contains(".tmp."))
+            .collect();
+        assert!(leftovers.is_empty(), "temporary files left behind: {leftovers:?}");
     }
 
     #[test]
