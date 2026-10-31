@@ -661,7 +661,19 @@ impl RightPane {
             Err(e) => {
                 // Distinguish query-not-resolving (Unmatched) from operational
                 // failures (Error) so the border label reflects the real cause.
-                let health = if matches!(e, codemark_core::error::Error::Resolution(_)) {
+                let health = if matches!(e, codemark_core::error::Error::GrammarNotInstalled { .. })
+                {
+                    // Not a health state of the bookmark: the query never ran,
+                    // because no grammar can parse the file. Reporting it as
+                    // Unmatched makes a healthy collection look rotten to
+                    // anyone who hasn't installed the language.
+                    tracing::info!(
+                        target: "codemark::ui",
+                        bookmark_id = %bookmark_id,
+                        "No grammar installed for this bookmark's language"
+                    );
+                    crate::component::HealthStatus::GrammarMissing
+                } else if matches!(e, codemark_core::error::Error::Resolution(_)) {
                     tracing::warn!(
                         target: "codemark::ui",
                         bookmark_id = %bookmark_id,
@@ -1020,12 +1032,10 @@ impl RightPane {
     > {
         use std::str::FromStr;
 
-        let language = CodemarkLanguage::from_str(&bm.language).map_err(|e| {
-            codemark_core::error::Error::Input(format!(
-                "unsupported language {}: {}",
-                bm.language, e
-            ))
-        })?;
+        // Propagated as-is rather than rewrapped: `Error::GrammarNotInstalled`
+        // is what lets the caller show "No grammar" instead of "Unmatched",
+        // and flattening it into `Error::Input` would throw that away.
+        let language = CodemarkLanguage::from_str(&bm.language)?;
 
         // Get or create a ParseCache for this language
         let cache = match session_cache.entry(language.clone()) {

@@ -1880,8 +1880,9 @@ async fn handle_preview_live(
 
     let lang = bm
         .language
-        .parse::<Language>()
-        .map_err(|_| Error::Input(format!("unsupported language: {}", bm.language)))?;
+        // Propagated as-is: `Error::GrammarNotInstalled` names the fix
+        // (`codemark languages add`), which `Error::Input` would discard.
+        .parse::<Language>()?;
     let mut cache = ParseCache::new(lang.clone())?;
     let provider = codemark_core::vfs::LocalFileProvider;
 
@@ -2013,10 +2014,7 @@ pub async fn handle_open(cli: &Cli, args: &OpenArgs) -> Result<()> {
     };
 
     // Resolve the bookmark to get current location
-    let lang = bookmark
-        .language
-        .parse::<Language>()
-        .map_err(|_| Error::Input(format!("unsupported language: {}", bookmark.language)))?;
+    let lang = bookmark.language.parse::<Language>()?;
     let mut cache = ParseCache::new(lang.clone())?;
     let ts_lang = cache.language().clone();
     let db_path = db.path();

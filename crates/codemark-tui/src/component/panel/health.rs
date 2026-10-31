@@ -23,6 +23,16 @@ pub enum HealthStatus {
     Outdated,
     /// 🔵 Future
     Future,
+    /// ⚪ No grammar installed for this bookmark's language.
+    ///
+    /// Not a health state of the bookmark at all: the query was never run,
+    /// because nothing can parse the file. Shown apart from `Broken` because
+    /// the two call for opposite responses — a broken bookmark may need
+    /// re-anchoring, while this one needs `codemark languages add` and is then
+    /// fine. Conflating them makes a healthy collection look rotten to anyone
+    /// who has not installed the language, which is the normal case for a
+    /// shared tour.
+    GrammarMissing,
     /// Unknown/Gray - gray
     Unknown,
 }
@@ -69,6 +79,9 @@ impl HealthStatus {
             HealthStatus::Verified => crate::theme::palette().health_good,
             HealthStatus::Outdated => crate::theme::palette().health_warn,
             HealthStatus::Unknown => crate::theme::palette().dim,
+            // Dim rather than red: nothing is wrong with the bookmark, the
+            // reader simply cannot see it yet.
+            HealthStatus::GrammarMissing => crate::theme::palette().dim,
             HealthStatus::Future => crate::theme::palette().info,
         }
     }
@@ -100,6 +113,8 @@ impl HealthStatus {
             }
             // Unmatched — the query does not resolve at all.
             HealthStatus::Broken | HealthStatus::BrokenUnanchored => "Unmatched",
+            // The language's grammar is not installed, so the query never ran.
+            HealthStatus::GrammarMissing => "No grammar",
             // Error — file missing, parse failure, or not yet resolved.
             HealthStatus::Unknown => "Error",
         }
@@ -129,6 +144,22 @@ mod tests {
         assert_eq!(HealthStatus::from(UIStatus::Verified), HealthStatus::Verified);
         assert_eq!(HealthStatus::from(UIStatus::Outdated), HealthStatus::Outdated);
         assert_eq!(HealthStatus::from(UIStatus::Future), HealthStatus::Future);
+    }
+
+    /// A missing grammar must not read as a broken bookmark.
+    ///
+    /// Receiving a shared tour for a language you have not installed is the
+    /// normal case, not an edge case — so showing "Unmatched" would tell every
+    /// such reader their bookmarks had rotted. See codemark#257.
+    #[test]
+    fn a_missing_grammar_is_labelled_apart_from_unmatched() {
+        assert_eq!(HealthStatus::GrammarMissing.label(), "No grammar");
+        assert_ne!(HealthStatus::GrammarMissing.label(), HealthStatus::Broken.label());
+        assert_ne!(HealthStatus::GrammarMissing.label(), HealthStatus::Unknown.label());
+
+        // Dim, not red: nothing is wrong with the bookmark.
+        assert_eq!(HealthStatus::GrammarMissing.color(), HealthStatus::Unknown.color());
+        assert_ne!(HealthStatus::GrammarMissing.color(), HealthStatus::Broken.color());
     }
 
     #[test]
