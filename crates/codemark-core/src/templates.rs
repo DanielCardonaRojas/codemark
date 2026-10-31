@@ -685,13 +685,31 @@ fn read_template_stamps(dir: &std::path::Path) -> HashMap<String, String> {
         .collect()
 }
 
-/// Rewrite the digest file. Best-effort: a failure here means a template is
-/// treated as user-edited next time, which is the safe direction.
+/// Rewrite the digest file.
+///
+/// A failure here fails safe — a template whose digest went unrecorded looks
+/// user-edited next time, so it is preserved rather than overwritten — but it
+/// is not harmless: that template can then never be refreshed automatically,
+/// and the user has to delete it by hand to pick up a new default. So the
+/// error is reported rather than swallowed, while the run continues.
 fn write_template_stamps(dir: &std::path::Path, stamps: &HashMap<String, String>) {
     let mut lines: Vec<String> =
         stamps.iter().map(|(name, hash)| format!("{name} {hash}")).collect();
     lines.sort();
-    let _ = write_atomic(&dir.join(TEMPLATE_STAMP_FILE), &(lines.join("\n") + "\n"));
+    let path = dir.join(TEMPLATE_STAMP_FILE);
+    if let Err(e) = write_atomic(&path, &(lines.join("\n") + "\n")) {
+        tracing::warn!(
+            target: "codemark::templates",
+            path = %path.display(),
+            error = %e,
+            "failed to record template digests"
+        );
+        eprintln!(
+            "Warning: Failed to record template versions to {}: {e}\n  \
+             Templates will be treated as customized until this is fixed.",
+            path.display()
+        );
+    }
 }
 
 /// Replace `path`'s contents in one step.
@@ -705,11 +723,24 @@ fn write_template_stamps(dir: &std::path::Path, stamps: &HashMap<String, String>
 ///
 /// The temp name includes the pid so concurrent writers don't clobber each
 /// other's staging file.
+///
+/// **Symlinks are followed, not replaced.** `rename` would swap out the link
+/// itself, so someone keeping a template symlinked into their dotfiles would
+/// find the link quietly turned into a regular file and their managed copy
+/// disconnected. `fs::write` followed the link, and that behaviour is
+/// preserved by resolving the target first. A broken link has no target to
+/// write through, so it is replaced.
 fn write_atomic(path: &std::path::Path, contents: &str) -> std::io::Result<()> {
-    let file_name = path.file_name().unwrap_or_default().to_string_lossy().into_owned();
-    let tmp = path.with_file_name(format!(".{file_name}.tmp.{}", std::process::id()));
+    let target = match std::fs::canonicalize(path) {
+        Ok(resolved) => resolved,
+        // Nothing there yet, or a dangling link: write the path as given.
+        Err(_) => path.to_path_buf(),
+    };
+
+    let file_name = target.file_name().unwrap_or_default().to_string_lossy().into_owned();
+    let tmp = target.with_file_name(format!(".{file_name}.tmp.{}", std::process::id()));
     std::fs::write(&tmp, contents)?;
-    std::fs::rename(&tmp, path).inspect_err(|_| {
+    std::fs::rename(&tmp, &target).inspect_err(|_| {
         let _ = std::fs::remove_file(&tmp);
     })
 }
@@ -834,6 +865,12 @@ pub fn ensure_default_template_exists() -> Vec<StaleTemplate> {
 /// reading a template.
 fn ensure_default_templates_in(templates_dir: &std::path::Path) -> Vec<StaleTemplate> {
     if let Err(e) = std::fs::create_dir_all(templates_dir) {
+        tracing::warn!(
+            target: "codemark::templates",
+            dir = %templates_dir.display(),
+            error = %e,
+            "failed to create templates directory"
+        );
         eprintln!("Warning: Failed to create templates directory: {e}");
         return Vec::new();
     }
@@ -854,8 +891,22 @@ fn ensure_default_templates_in(templates_dir: &std::path::Path) -> Vec<StaleTemp
         // which is exactly what this function exists to avoid.
         let write = match std::fs::read_to_string(&path) {
             // Nothing there: first run, or a template added by this release.
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => true,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                tracing::debug!(
+                    target: "codemark::templates",
+                    template = %name,
+                    "template absent, writing shipped default"
+                );
+                true
+            }
             Err(e) => {
+                tracing::warn!(
+                    target: "codemark::templates",
+                    template = %name,
+                    path = %path.display(),
+                    error = %e,
+                    "template unreadable, preserving it"
+                );
                 eprintln!(
                     "Warning: Failed to read template {}: {e}\n  Leaving it as it is.",
                     path.display()
@@ -866,6 +917,11 @@ fn ensure_default_templates_in(templates_dir: &std::path::Path) -> Vec<StaleTemp
             // Already current, whether or not the user wrote it themselves.
             Ok(current) if template_digest(&current) == shipped_digest => {
                 if stamps.get(*name) != Some(&shipped_digest) {
+                    tracing::debug!(
+                        target: "codemark::templates",
+                        template = %name,
+                        "template already current, recording digest"
+                    );
                     stamps.insert((*name).to_string(), shipped_digest.clone());
                     stamps_changed = true;
                 }
@@ -874,9 +930,23 @@ fn ensure_default_templates_in(templates_dir: &std::path::Path) -> Vec<StaleTemp
             // Byte-identical to what codemark last wrote, so it is ours to
             // replace: the user never touched it and would otherwise be stuck
             // on an old rendering.
-            Ok(current) if stamps.get(*name) == Some(&template_digest(&current)) => true,
+            Ok(current) if stamps.get(*name) == Some(&template_digest(&current)) => {
+                tracing::debug!(
+                    target: "codemark::templates",
+                    template = %name,
+                    "template untouched since codemark wrote it, refreshing"
+                );
+                true
+            }
             // Edited, or written before stamps existed. Not ours to overwrite.
             Ok(_) => {
+                tracing::debug!(
+                    target: "codemark::templates",
+                    template = %name,
+                    path = %path.display(),
+                    had_digest = stamps.contains_key(*name),
+                    "template customized, preserving it and reporting as stale"
+                );
                 stale.push(StaleTemplate { name: (*name).to_string(), path: path.clone() });
                 false
             }
@@ -889,6 +959,13 @@ fn ensure_default_templates_in(templates_dir: &std::path::Path) -> Vec<StaleTemp
                     stamps_changed = true;
                 }
                 Err(e) => {
+                    tracing::warn!(
+                        target: "codemark::templates",
+                        template = %name,
+                        path = %path.display(),
+                        error = %e,
+                        "failed to write default template"
+                    );
                     eprintln!(
                         "Warning: Failed to write default template to {}: {e}",
                         path.display()
@@ -1456,6 +1533,50 @@ mod tests {
         assert!(
             stale.iter().any(|s| s.name == SHOW_TEMPLATE),
             "an unreadable template should be reported: {stale:?}"
+        );
+    }
+
+    /// A template symlinked into the user's dotfiles must stay a symlink.
+    ///
+    /// The atomic write renames a temp file over the destination, and `rename`
+    /// replaces the *link* rather than following it — so refreshing an
+    /// untouched template would turn the link into a regular file and silently
+    /// disconnect the user's managed copy. `write_atomic` resolves the target
+    /// first to keep the plain-`fs::write` behaviour.
+    #[cfg(unix)]
+    #[test]
+    fn refreshing_an_untouched_template_preserves_a_symlink() {
+        let tmp = tempfile::tempdir().unwrap();
+        let dir = tmp.path().join("templates");
+        std::fs::create_dir_all(&dir).unwrap();
+
+        // The user's real file, living outside the templates dir.
+        let dotfiles = tmp.path().join("dotfiles");
+        std::fs::create_dir_all(&dotfiles).unwrap();
+        let real = dotfiles.join("my_show.md");
+        let old = "# Bookmark: {{short_id}}\n";
+        std::fs::write(&real, old).unwrap();
+
+        let link = dir.join(SHOW_TEMPLATE);
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+
+        // Record that codemark wrote the linked-through content, so the file
+        // counts as untouched and is due a refresh.
+        let mut stamps = read_template_stamps(&dir);
+        stamps.insert(SHOW_TEMPLATE.to_string(), template_digest(old));
+        write_template_stamps(&dir, &stamps);
+
+        let stale = ensure_default_templates_in(&dir);
+
+        assert!(stale.is_empty(), "an untouched symlinked template is not stale: {stale:?}");
+        assert!(
+            std::fs::symlink_metadata(&link).unwrap().file_type().is_symlink(),
+            "the symlink must survive a refresh"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&real).unwrap(),
+            default_show_template(),
+            "the refresh must write through the link to the user's file"
         );
     }
 
