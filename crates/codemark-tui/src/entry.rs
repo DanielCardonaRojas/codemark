@@ -56,6 +56,30 @@ pub async fn run() -> Result<Option<i32>> {
     // Initialize file-based logging before anything else
     let _log_guard = crate::logging::init_logging();
 
+    // Write the shipped templates, refreshing any that are out of date.
+    //
+    // The dashboard's preview panes render through the same on-disk templates
+    // as the CLI, but neither TUI path goes through `codemark-cli`'s `main`
+    // (the bundled subcommand returns before that check, and the standalone
+    // binary never runs it). Without this, someone who only ever launches the
+    // TUI keeps an old template forever and is never told why a new section is
+    // missing. Runs before the alternate screen is entered so the warning is
+    // actually readable, and before any template is loaded or cached.
+    for stale in codemark_core::templates::ensure_default_template_exists() {
+        tracing::warn!(
+            target: "codemark::ui",
+            template = %stale.name,
+            path = %stale.path.display(),
+            "customized template predates this release"
+        );
+        eprintln!(
+            "codemark: {} is customized and predates this release, so sections added \
+             since will not render.\n  Delete {} to take the current default.",
+            stale.name,
+            stale.path.display()
+        );
+    }
+
     // Install a panic hook that restores the terminal before delegating to the
     // hook it replaced, and reinstate that hook when the dashboard exits. The
     // guard's Drop runs on both a normal return and a caught unwind, so a host
