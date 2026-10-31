@@ -631,10 +631,9 @@ static PYTHON_PROFILE: LazyLock<Profile> = LazyLock::new(|| Profile {
         "decorated_definition".into(),
     ],
     node_labels: HashMap::from([
+        // Covers `async def` too: tree-sitter-python parses it as a
+        // `function_definition` with an `async` child, not a distinct kind.
         ("function_definition".into(), "function".into()),
-        // `async def` is a separate node kind in tree-sitter-python and is a
-        // container, so it needs a label for `containers` to name it.
-        ("async_function_definition".into(), "function".into()),
         ("class_definition".into(), "class".into()),
         ("if_statement".into(), "if statement".into()),
         ("for_statement".into(), "for loop".into()),
