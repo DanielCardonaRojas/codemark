@@ -4,6 +4,7 @@
 //! The default template is bundled into the binary at compile time from `templates/codemark_show.md`
 //! in the project root.
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 use chrono::DateTime;
@@ -645,6 +646,54 @@ pub fn templates_dir() -> Option<PathBuf> {
     global_config_dir().map(|d| d.join("templates"))
 }
 
+/// Where the hashes of codemark-written templates live.
+///
+/// One `<name> <hash>` line per template, recording what *codemark* wrote. A
+/// file whose current content still hashes to its recorded value has not been
+/// edited, so a newer default can replace it; anything else is the user's and
+/// is left alone. See [`ensure_default_template_exists`].
+const TEMPLATE_STAMP_FILE: &str = ".shipped-versions";
+
+/// Stable, short digest of a template's bytes.
+///
+/// FNV-1a rather than `DefaultHasher`, whose output is explicitly not stable
+/// across Rust releases — a stamp that changed with the toolchain would make
+/// every template look edited. Not security-sensitive: this only distinguishes
+/// "byte-identical to what we wrote" from "something else".
+fn template_digest(content: &str) -> String {
+    const FNV_OFFSET_BASIS: u64 = 0xcbf2_9ce4_8422_2325;
+    const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
+
+    let mut hash = FNV_OFFSET_BASIS;
+    for byte in content.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(FNV_PRIME);
+    }
+    format!("{hash:016x}")
+}
+
+/// Read the recorded digests, if any.
+fn read_template_stamps(dir: &std::path::Path) -> HashMap<String, String> {
+    let Ok(text) = std::fs::read_to_string(dir.join(TEMPLATE_STAMP_FILE)) else {
+        return HashMap::new();
+    };
+    text.lines()
+        .filter_map(|line| {
+            let (name, hash) = line.split_once(' ')?;
+            Some((name.to_string(), hash.trim().to_string()))
+        })
+        .collect()
+}
+
+/// Rewrite the digest file. Best-effort: a failure here means a template is
+/// treated as user-edited next time, which is the safe direction.
+fn write_template_stamps(dir: &std::path::Path, stamps: &HashMap<String, String>) {
+    let mut lines: Vec<String> =
+        stamps.iter().map(|(name, hash)| format!("{name} {hash}")).collect();
+    lines.sort();
+    let _ = std::fs::write(dir.join(TEMPLATE_STAMP_FILE), lines.join("\n") + "\n");
+}
+
 /// Template names
 pub const SHOW_TEMPLATE: &str = "codemark_show.md";
 pub const DETAILS_TEMPLATE: &str = "details_panel.md";
@@ -705,39 +754,111 @@ pub fn create_handlebars_engine() -> Handlebars<'static> {
     handlebars
 }
 
-/// Ensure default template files exist in the user's data directory.
-/// Creates the template files if they don't already exist.
-pub fn ensure_default_template_exists() {
-    let templates_dir = match templates_dir() {
-        Some(dir) => dir,
-        None => return,
+/// Every template codemark ships.
+pub const ALL_TEMPLATES: &[&str] = &[
+    SHOW_TEMPLATE,
+    DETAILS_TEMPLATE,
+    COLLECTION_OVERVIEW_TEMPLATE,
+    COMMENTS_TEMPLATE,
+    REMOTE_TOUR_OVERVIEW_TEMPLATE,
+];
+
+/// A template on disk that is older than the one this build ships, and that the
+/// user has edited — so it cannot be refreshed automatically.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StaleTemplate {
+    pub name: String,
+    pub path: PathBuf,
+}
+
+/// Write the shipped templates to the user's config directory, refreshing any
+/// that are out of date.
+///
+/// Returns the templates that are stale *and* locally modified, so the caller
+/// can tell the user rather than silently overwriting their work.
+///
+/// **Why this is not just "write if absent".** A template on disk always wins
+/// in [`load_template`], so a copy written by an older codemark shadows the
+/// compiled-in default forever. When a release adds a section — breadcrumbs,
+/// say — every existing user keeps the old rendering and sees nothing new. The
+/// file is not a cache they know about; it is a customization point they may
+/// never have touched.
+///
+/// So each file falls into one of three cases, decided by the digest recorded
+/// when codemark last wrote it:
+///
+/// | On disk | Action |
+/// |---|---|
+/// | absent | write it, record the digest |
+/// | matches the recorded digest (untouched) | overwrite with the new default |
+/// | differs (user edited it) | leave it, and report it |
+///
+/// A file with no recorded digest is treated as edited. That is deliberate: it
+/// is what every pre-existing install looks like, and guessing wrong in that
+/// direction loses someone's customization.
+pub fn ensure_default_template_exists() -> Vec<StaleTemplate> {
+    let Some(templates_dir) = templates_dir() else {
+        return Vec::new();
     };
 
-    // Create templates directory if it doesn't exist
     if let Err(e) = std::fs::create_dir_all(&templates_dir) {
-        eprintln!("Warning: Failed to create templates directory: {}", e);
-        return;
+        eprintln!("Warning: Failed to create templates directory: {e}");
+        return Vec::new();
     }
 
-    for name in [
-        SHOW_TEMPLATE,
-        DETAILS_TEMPLATE,
-        COLLECTION_OVERVIEW_TEMPLATE,
-        COMMENTS_TEMPLATE,
-        REMOTE_TOUR_OVERVIEW_TEMPLATE,
-    ] {
-        let template_path = templates_dir.join(name);
-        if !template_path.exists()
-            && let Some(content) = default_template_content(name)
-            && let Err(e) = std::fs::write(&template_path, content)
-        {
-            eprintln!(
-                "Warning: Failed to write default template to {}: {}",
-                template_path.display(),
-                e
-            );
+    let mut stamps = read_template_stamps(&templates_dir);
+    let mut stale = Vec::new();
+    let mut stamps_changed = false;
+
+    for name in ALL_TEMPLATES {
+        let Some(shipped) = default_template_content(name) else { continue };
+        let path = templates_dir.join(name);
+        let shipped_digest = template_digest(shipped);
+
+        let on_disk = std::fs::read_to_string(&path).ok();
+        let write = match &on_disk {
+            // Nothing there: first run, or a template added by this release.
+            None => true,
+            // Already current, whether or not the user wrote it themselves.
+            Some(current) if template_digest(current) == shipped_digest => {
+                if stamps.get(*name) != Some(&shipped_digest) {
+                    stamps.insert((*name).to_string(), shipped_digest.clone());
+                    stamps_changed = true;
+                }
+                false
+            }
+            // Byte-identical to what codemark last wrote, so it is ours to
+            // replace: the user never touched it and would otherwise be stuck
+            // on an old rendering.
+            Some(current) if stamps.get(*name) == Some(&template_digest(current)) => true,
+            // Edited, or written before stamps existed. Not ours to overwrite.
+            Some(_) => {
+                stale.push(StaleTemplate { name: (*name).to_string(), path: path.clone() });
+                false
+            }
+        };
+
+        if write {
+            match std::fs::write(&path, shipped) {
+                Ok(()) => {
+                    stamps.insert((*name).to_string(), shipped_digest);
+                    stamps_changed = true;
+                }
+                Err(e) => {
+                    eprintln!(
+                        "Warning: Failed to write default template to {}: {e}",
+                        path.display()
+                    )
+                }
+            }
         }
     }
+
+    if stamps_changed {
+        write_template_stamps(&templates_dir, &stamps);
+    }
+
+    stale
 }
 
 /// Load a template, falling back to the default if not found.
@@ -1184,6 +1305,105 @@ mod tests {
     /// populated from the resolution and referenced by none of the five shipped
     /// templates, so `containers` — the one profile field with no fallback —
     /// rendered nowhere a user could see it. See codemark#249.
+    /// Serializes the tests that set `XDG_CONFIG_HOME`.
+    ///
+    /// That variable is process-global, so two of these running in parallel
+    /// point `templates_dir()` at each other's temp directory and fail
+    /// intermittently. A mutex is more honest than requiring
+    /// `--test-threads=1`, which only holds until someone forgets.
+    static CONFIG_HOME_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// Pin the digest against published FNV-1a 64-bit vectors.
+    ///
+    /// A hash that is merely self-consistent is not enough: the first version
+    /// of this used `0x1000_0000_01b3` — one zero too many — and every test
+    /// still passed, because both sides of every comparison used the same
+    /// wrong constant. It only showed up against an independent implementation.
+    #[test]
+    fn template_digest_is_fnv1a_64() {
+        assert_eq!(template_digest(""), "cbf29ce484222325");
+        assert_eq!(template_digest("a"), "af63dc4c8601ec8c");
+        assert_eq!(template_digest("foobar"), "85944171f73967e8");
+    }
+
+    /// A template codemark wrote and the user never touched must be refreshed
+    /// when a release changes it — otherwise a new section (breadcrumbs, say)
+    /// is invisible to every existing install. See #256.
+    #[test]
+    fn an_untouched_template_is_refreshed() {
+        let _guard = CONFIG_HOME_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("XDG_CONFIG_HOME", tmp.path()) };
+        let dir = tmp.path().join("codemark/templates");
+
+        // First run: writes the shipped templates and records their digests.
+        assert!(ensure_default_template_exists().is_empty());
+        let shipped = std::fs::read_to_string(dir.join(SHOW_TEMPLATE)).unwrap();
+
+        // Age it exactly as an older codemark would have: the old content on
+        // disk, and a stamp recording that codemark wrote that old content.
+        let old = "# Bookmark: {{short_id}}\n\n## Metadata\n";
+        std::fs::write(dir.join(SHOW_TEMPLATE), old).unwrap();
+        let mut stamps = read_template_stamps(&dir);
+        stamps.insert(SHOW_TEMPLATE.to_string(), template_digest(old));
+        write_template_stamps(&dir, &stamps);
+
+        let stale = ensure_default_template_exists();
+
+        assert!(stale.is_empty(), "an untouched template should not be reported: {stale:?}");
+        assert_eq!(
+            std::fs::read_to_string(dir.join(SHOW_TEMPLATE)).unwrap(),
+            shipped,
+            "an untouched template must be refreshed to the shipped default"
+        );
+    }
+
+    /// A template the user edited must never be overwritten, even when it is
+    /// older than the shipped default — it is a documented customization
+    /// point, and losing someone's work is worse than an old rendering. It is
+    /// reported instead, so the staleness is at least visible.
+    #[test]
+    fn an_edited_template_is_preserved_and_reported() {
+        let _guard = CONFIG_HOME_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("XDG_CONFIG_HOME", tmp.path()) };
+        let dir = tmp.path().join("codemark/templates");
+
+        ensure_default_template_exists();
+
+        let mine = "# My own heading {{short_id}}\n";
+        std::fs::write(dir.join(SHOW_TEMPLATE), mine).unwrap();
+
+        let stale = ensure_default_template_exists();
+
+        assert_eq!(std::fs::read_to_string(dir.join(SHOW_TEMPLATE)).unwrap(), mine);
+        assert!(
+            stale.iter().any(|s| s.name == SHOW_TEMPLATE),
+            "an edited template should be reported: {stale:?}"
+        );
+    }
+
+    /// An install predating the digest file looks exactly like an edited one,
+    /// and is treated as such. That is the deliberate direction to guess
+    /// wrong in: a stale rendering is recoverable, a deleted customization is
+    /// not.
+    #[test]
+    fn a_template_with_no_recorded_digest_is_left_alone() {
+        let _guard = CONFIG_HOME_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let tmp = tempfile::tempdir().unwrap();
+        unsafe { std::env::set_var("XDG_CONFIG_HOME", tmp.path()) };
+        let dir = tmp.path().join("codemark/templates");
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let old = "# Bookmark: {{short_id}}\n";
+        std::fs::write(dir.join(SHOW_TEMPLATE), old).unwrap();
+
+        let stale = ensure_default_template_exists();
+
+        assert_eq!(std::fs::read_to_string(dir.join(SHOW_TEMPLATE)).unwrap(), old);
+        assert!(stale.iter().any(|s| s.name == SHOW_TEMPLATE), "{stale:?}");
+    }
+
     #[test]
     fn test_render_show_template_includes_breadcrumbs() {
         let bm = Bookmark {

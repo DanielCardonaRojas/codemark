@@ -32,8 +32,21 @@ async fn main() {
         std::process::exit(err.code);
     }
 
-    // Ensure default templates exist in user's data directory.
-    templates::ensure_default_template_exists();
+    // Write the shipped templates, refreshing any that are out of date.
+    //
+    // A template on disk always wins over the compiled-in default, so a copy
+    // written by an older codemark would otherwise shadow it forever — a
+    // release that adds a section renders nothing new for existing users.
+    // Untouched copies are refreshed silently; edited ones are reported here,
+    // since overwriting someone's customization is worse than an old rendering.
+    for stale in templates::ensure_default_template_exists() {
+        eprintln!(
+            "codemark: {} is customized and predates this release, so sections added \
+             since will not render.\n  Delete {} to take the current default.",
+            stale.name,
+            stale.path.display()
+        );
+    }
 
     if let Err(err) = handlers::dispatch(cli).await {
         exit_with_error(&err);
