@@ -513,8 +513,7 @@ static RUST_PROFILE: LazyLock<Profile> = LazyLock::new(|| Profile {
         ("function_item".into(), "function".into()),
         ("struct_item".into(), "class".into()),
         ("enum_item".into(), "enum".into()),
-        ("enum_entry".into(), "enum".into()),
-        ("enum_constant".into(), "enum".into()),
+        ("enum_variant".into(), "enum".into()),
         ("trait_item".into(), "interface".into()),
         ("impl_item".into(), "impl".into()),
         ("type_item".into(), "type".into()),
@@ -522,11 +521,11 @@ static RUST_PROFILE: LazyLock<Profile> = LazyLock::new(|| Profile {
         ("static_item".into(), "variable".into()),
         ("mod_item".into(), "module".into()),
         ("macro_definition".into(), "macro".into()),
-        ("if_statement".into(), "if statement".into()),
-        ("for_statement".into(), "for loop".into()),
-        ("while_statement".into(), "while loop".into()),
+        ("if_expression".into(), "if statement".into()),
+        ("for_expression".into(), "for loop".into()),
+        ("while_expression".into(), "while loop".into()),
         ("match_expression".into(), "match".into()),
-        ("return_statement".into(), "return".into()),
+        ("return_expression".into(), "return".into()),
         ("assignment_expression".into(), "assignment".into()),
         ("call_expression".into(), "call".into()),
         ("binary_expression".into(), "expression".into()),
@@ -548,36 +547,32 @@ static SWIFT_PROFILE: LazyLock<Profile> = LazyLock::new(|| Profile {
         "init_declaration".into(),
         "deinit_declaration".into(),
         "subscript_declaration".into(),
-        "enum_declaration".into(),
         "enum_entry".into(),
-        "struct_declaration".into(),
     ],
     node_labels: HashMap::from([
         ("function_declaration".into(), "function".into()),
         ("class_declaration".into(), "class".into()),
-        ("struct_declaration".into(), "class".into()),
         ("protocol_declaration".into(), "interface".into()),
-        ("enum_declaration".into(), "enum".into()),
         ("enum_entry".into(), "enum".into()),
         ("init_declaration".into(), "init".into()),
         ("deinit_declaration".into(), "deinit".into()),
         // A Swift extension is a container, so it needs a label for
         // `containers` to name it as a concept. `impl` is the same idea Rust's
         // `impl_item` carries: methods attached to a type declared elsewhere.
-        ("extension_declaration".into(), "impl".into()),
         ("subscript_declaration".into(), "subscript".into()),
         ("if_statement".into(), "if statement".into()),
         ("for_statement".into(), "for loop".into()),
         ("while_statement".into(), "while loop".into()),
         ("switch_statement".into(), "match".into()),
-        ("return_statement".into(), "return".into()),
         ("call_expression".into(), "call".into()),
     ]),
+    // No `impl`: this grammar has no extension kind — `class_declaration`
+    // covers class, struct, enum and extension alike, so an extension is
+    // already reached through `class`.
     containers: Containers::from_labels(vec![
         "class".into(),
         "enum".into(),
         "function".into(),
-        "impl".into(),
         "interface".into(),
     ]),
 });
@@ -587,7 +582,6 @@ static TYPESCRIPT_PROFILE: LazyLock<Profile> = LazyLock::new(|| Profile {
         "class_declaration".into(),
         "interface_declaration".into(),
         "enum_declaration".into(),
-        "method_declaration".into(),
         "method_definition".into(),
         "function_declaration".into(),
         "type_alias_declaration".into(),
@@ -597,15 +591,13 @@ static TYPESCRIPT_PROFILE: LazyLock<Profile> = LazyLock::new(|| Profile {
     node_labels: HashMap::from([
         ("function_declaration".into(), "function".into()),
         ("method_definition".into(), "method".into()),
-        ("method_declaration".into(), "method".into()),
-        ("constructor_declaration".into(), "constructor".into()),
         ("class_declaration".into(), "class".into()),
         ("interface_declaration".into(), "interface".into()),
         ("enum_declaration".into(), "enum".into()),
         ("type_alias_declaration".into(), "type".into()),
         ("lexical_declaration".into(), "variable".into()),
         ("variable_declaration".into(), "variable".into()),
-        ("namespace_declaration".into(), "namespace".into()),
+        ("internal_module".into(), "namespace".into()),
         ("if_statement".into(), "if statement".into()),
         ("for_statement".into(), "for loop".into()),
         ("while_statement".into(), "while loop".into()),
@@ -639,7 +631,7 @@ static PYTHON_PROFILE: LazyLock<Profile> = LazyLock::new(|| Profile {
         ("for_statement".into(), "for loop".into()),
         ("while_statement".into(), "while loop".into()),
         ("return_statement".into(), "return".into()),
-        ("assignment_statement".into(), "assignment".into()),
+        ("assignment".into(), "assignment".into()),
         ("call".into(), "call".into()),
     ]),
     containers: Containers::from_labels(vec!["class".into(), "function".into()]),
@@ -674,7 +666,6 @@ static JAVA_PROFILE: LazyLock<Profile> = LazyLock::new(|| Profile {
         "enum_declaration".into(),
         "method_declaration".into(),
         "constructor_declaration".into(),
-        "property_declaration".into(),
     ],
     node_labels: HashMap::from([
         ("method_declaration".into(), "method".into()),
@@ -682,12 +673,11 @@ static JAVA_PROFILE: LazyLock<Profile> = LazyLock::new(|| Profile {
         ("class_declaration".into(), "class".into()),
         ("interface_declaration".into(), "interface".into()),
         ("enum_declaration".into(), "enum".into()),
-        ("property_declaration".into(), "variable".into()),
         ("if_statement".into(), "if statement".into()),
         ("for_statement".into(), "for loop".into()),
         ("while_statement".into(), "while loop".into()),
         ("return_statement".into(), "return".into()),
-        ("call_expression".into(), "call".into()),
+        ("method_invocation".into(), "call".into()),
     ]),
     containers: Containers::from_labels(vec![
         "class".into(),
@@ -708,7 +698,6 @@ static CSHARP_PROFILE: LazyLock<Profile> = LazyLock::new(|| Profile {
         "namespace_declaration".into(),
         "record_declaration".into(),
         "property_declaration".into(),
-        "method_elem".into(),
     ],
     node_labels: HashMap::from([
         ("method_declaration".into(), "method".into()),
@@ -724,7 +713,7 @@ static CSHARP_PROFILE: LazyLock<Profile> = LazyLock::new(|| Profile {
         ("while_statement".into(), "while loop".into()),
         ("switch_statement".into(), "match".into()),
         ("return_statement".into(), "return".into()),
-        ("call_expression".into(), "call".into()),
+        ("invocation_expression".into(), "call".into()),
     ]),
     containers: Containers::from_labels(vec![
         "class".into(),
@@ -737,28 +726,28 @@ static CSHARP_PROFILE: LazyLock<Profile> = LazyLock::new(|| Profile {
 
 static DART_PROFILE: LazyLock<Profile> = LazyLock::new(|| Profile {
     landmark_kinds: vec![
-        "class_definition".into(),
-        "mixin_definition".into(),
-        "extension_definition".into(),
-        "enum_definition".into(),
+        "class_declaration".into(),
+        "mixin_declaration".into(),
+        "extension_declaration".into(),
+        "enum_declaration".into(),
         "function_signature".into(),
-        "method_declaration".into(),
+        "method_signature".into(),
         "initialized_identifier".into(),
         "enum_constant".into(),
     ],
     node_labels: HashMap::from([
         ("function_signature".into(), "function".into()),
-        ("method_declaration".into(), "method".into()),
-        ("class_definition".into(), "class".into()),
-        ("mixin_definition".into(), "class".into()),
-        ("extension_definition".into(), "class".into()),
-        ("enum_definition".into(), "enum".into()),
+        ("method_signature".into(), "method".into()),
+        ("class_declaration".into(), "class".into()),
+        ("mixin_declaration".into(), "class".into()),
+        ("extension_declaration".into(), "class".into()),
+        ("enum_declaration".into(), "enum".into()),
         ("enum_constant".into(), "enum".into()),
         ("if_statement".into(), "if statement".into()),
         ("for_statement".into(), "for loop".into()),
         ("while_statement".into(), "while loop".into()),
         ("return_statement".into(), "return".into()),
-        ("call_expression".into(), "call".into()),
+        ("function_expression".into(), "function".into()),
     ]),
     containers: Containers::from_labels(vec![
         "class".into(),
@@ -876,6 +865,48 @@ mod tests {
     //
     // Linted against the real built-in Rust grammar, so these assert against the
     // kinds and fields tree-sitter actually defines rather than a stub.
+
+    /// Every built-in profile must be valid against the grammar it ships with.
+    ///
+    /// Built-in profiles never pass through `lint` — only registry installs do
+    /// — so a node kind that the grammar does not define sits there unnoticed.
+    /// Runtime masks it: `classify_node_type` falls back to a global table that
+    /// happens to cover the right kinds, so output looks correct while the
+    /// profile entry is dead weight.
+    ///
+    /// Found when a Rust profile was pushed through the registry's install path
+    /// for the first time: four of its twenty labels named `*_statement` kinds
+    /// that tree-sitter-rust spells `*_expression`.
+    #[test]
+    fn builtin_profiles_are_valid_against_their_own_grammars() {
+        let languages = [
+            Language::Rust,
+            Language::Swift,
+            Language::TypeScript,
+            Language::Python,
+            Language::Go,
+            Language::Java,
+            Language::CSharp,
+            Language::Dart,
+        ];
+
+        let mut dead = Vec::new();
+        for language in languages {
+            let grammar = language.tree_sitter_language();
+            let value = serde_json::to_value(language.profile()).unwrap();
+            for finding in lint(&value, &grammar) {
+                if finding.severity == LintSeverity::Error {
+                    dead.push(format!("{language:?}: {}", finding));
+                }
+            }
+        }
+
+        assert!(
+            dead.is_empty(),
+            "built-in profiles name kinds their grammar lacks:\n  {}",
+            dead.join("\n  ")
+        );
+    }
 
     fn rust_grammar() -> tree_sitter::Language {
         Language::Rust.tree_sitter_language()
