@@ -326,6 +326,53 @@ fn a_decorated_definition_does_not_claim_the_inner_name_field() {
     );
 }
 
+/// A wrapper's nested name must reach the identifier, not stop at a declarator.
+///
+/// `export const Foo = 1` names itself through `lexical_declaration >
+/// variable_declarator > identifier`. Emitting only one level of nesting
+/// captured the declarator and compared `Foo = 1` against `Foo`, so the query
+/// **compiled and matched nothing** — invisible to every sweep here, which only
+/// checks compilation. Hence the match-count assertion.
+#[test]
+fn an_exported_const_query_matches_its_declaration() {
+    let source = "export const Foo = 1;\n";
+    let mut parser = Parser::new(Language::TypeScript).expect("parser");
+    let tree = parser.parse(source.as_bytes()).expect("parse");
+    let ts_lang = parser.language().clone();
+
+    let exported = tree.root_node().named_child(0).expect("first child");
+    assert_eq!(exported.kind(), "export_statement");
+
+    let range = exported.byte_range();
+    let query = compile_for(&tree, source, (range.start, range.end), &ts_lang)
+        .expect("bookmarking an exported const must succeed");
+
+    assert_eq!(
+        match_count(&query, &tree, source, &ts_lang),
+        1,
+        "the name capture must land on the identifier, not the declarator:\n{query}"
+    );
+}
+
+/// How many nodes `query` matches in `tree` — the check compilation cannot make.
+fn match_count(
+    query: &str,
+    tree: &tree_sitter::Tree,
+    source: &str,
+    ts_lang: &tree_sitter::Language,
+) -> usize {
+    use tree_sitter::StreamingIterator;
+
+    let compiled = tree_sitter::Query::new(ts_lang, query).expect("query must compile");
+    let mut cursor = tree_sitter::QueryCursor::new();
+    let mut matches = cursor.matches(&compiled, tree.root_node(), source.as_bytes());
+    let mut count = 0;
+    while matches.next().is_some() {
+        count += 1;
+    }
+    count
+}
+
 /// Whether no *direct* child of `node` sits under `field`.
 fn child_by_field_is_absent(node: tree_sitter::Node, field: &str) -> bool {
     let mut cursor = node.walk();

@@ -78,8 +78,15 @@ struct NameInfo {
     field: Option<String>,
     /// The direct name node type (e.g., "simple_identifier" or "user_type")
     direct_type: String,
-    /// If the name is nested (e.g., user_type > type_identifier), the inner type
-    inner_type: Option<String>,
+    /// The kinds nested inside `direct_type` on the way to the name, outermost
+    /// first — `user_type > type_identifier` is `["type_identifier"]`.
+    ///
+    /// Usually one level, but a wrapper can sit two deep: TS
+    /// `export_statement > lexical_declaration > variable_declarator >
+    /// identifier` needs `["variable_declarator", "identifier"]`, because
+    /// capturing the declarator would compare `Foo = 1` against `Foo` and match
+    /// nothing.
+    inner_types: Vec<String>,
     /// The text value to match
     text: String,
 }
@@ -500,7 +507,7 @@ fn build_structural_path(target: Node, source: &[u8], profile: &Profile) -> Vec<
         // reaches a level deeper than the lifted node would, so lifting there
         // discards the predicate rather than de-duplicating it.
         && info.field.is_some()
-        && info.inner_type.is_none()
+        && info.inner_types.is_empty()
         && let Some(name_node) = locate_name_node(parent, &info)
         && name_node.id() == current.id()
     {
@@ -536,7 +543,7 @@ fn build_structural_path(target: Node, source: &[u8], profile: &Profile) -> Vec<
             // six Dart methods apart.
             if let Some(ref info) = name_info
                 && info.field.is_some()
-                && info.inner_type.is_none()
+                && info.inner_types.is_empty()
                 && let Some(child) = child_on_path
                 && locate_name_node(current, info).is_some_and(|n| n.id() == child.id())
             {
@@ -723,7 +730,7 @@ fn child_by_own_field<'t>(node: Node<'t>, field: &str) -> Option<Node<'t>> {
 /// purely positional and break the moment a sibling statement is inserted.
 ///
 /// Returns the intermediate as `direct_type` and the identifier as
-/// `inner_type`, which [`build_tier1_query`] renders as
+/// `inner_types`, which [`build_tier1_query`] renders as
 /// `(variable_list (identifier) @cap)` — no field, so it compiles.
 ///
 /// `descendant_on_path` is the node the query is being built *towards*, when
@@ -771,7 +778,7 @@ fn recover_nested_name<'t>(
         return Some(NameInfo {
             field: None,
             direct_type: child.kind().to_string(),
-            inner_type: Some(named.kind().to_string()),
+            inner_types: vec![named.kind().to_string()],
             text: node_text(named, source),
         });
     }
@@ -804,7 +811,7 @@ fn extract_name_info_direct_toward<'t>(
         return Some(NameInfo {
             field: None,
             direct_type: node.kind().to_string(),
-            inner_type: None,
+            inner_types: Vec::new(),
             text: node_text(node, source),
         });
     }
@@ -824,7 +831,7 @@ fn extract_name_info_direct_toward<'t>(
                     return Some(NameInfo {
                         field: Some("name".to_string()),
                         direct_type: "user_type".to_string(),
-                        inner_type: Some("type_identifier".to_string()),
+                        inner_types: vec!["type_identifier".to_string()],
                         text: node_text(child, source),
                     });
                 }
@@ -833,7 +840,7 @@ fn extract_name_info_direct_toward<'t>(
         return Some(NameInfo {
             field: Some("name".to_string()),
             direct_type: name_node.kind().to_string(),
-            inner_type: None,
+            inner_types: Vec::new(),
             text: node_text(name_node, source),
         });
     }
@@ -845,7 +852,7 @@ fn extract_name_info_direct_toward<'t>(
         return Some(NameInfo {
             field: Some("type".to_string()),
             direct_type: type_node.kind().to_string(),
-            inner_type: None,
+            inner_types: Vec::new(),
             text: node_text(type_node, source),
         });
     }
@@ -861,18 +868,28 @@ fn extract_name_info_direct_toward<'t>(
     //
     // These kinds are normally skipped by `is_wrapper_node`, so this path is
     // reached only when the wrapper is itself the bookmark target.
+    //
+    // The nesting must reach the *identifier*, not just the inner declaration's
+    // name node. `export const Foo = 1` names itself through
+    // `lexical_declaration > variable_declarator > identifier`, so capturing the
+    // declarator would compare its whole text (`Foo = 1`) against `Foo` and
+    // match nothing. Such a query still compiles, which is why the
+    // impossible-pattern sweep cannot catch it.
     for field in ["declaration", "definition"] {
         if matches!(node.kind(), "export_statement" | "decorated_definition")
             && let Some(inner) = child_by_own_field(node, field)
             && let Some(info) = extract_name_info_direct(inner, source)
         {
-            let name_node = locate_name_node(inner, &info);
+            let mut inner_types = match locate_name_node(inner, &info) {
+                Some(n) => vec![n.kind().to_string()],
+                None => vec![info.direct_type.clone()],
+            };
+            // The inner name was itself nested; carry those levels through.
+            inner_types.extend(info.inner_types.iter().cloned());
             return Some(NameInfo {
                 field: None,
                 direct_type: inner.kind().to_string(),
-                inner_type: Some(
-                    name_node.map_or_else(|| info.direct_type.clone(), |n| n.kind().to_string()),
-                ),
+                inner_types,
                 text: info.text,
             });
         }
@@ -885,7 +902,7 @@ fn extract_name_info_direct_toward<'t>(
         return Some(NameInfo {
             field: Some("pattern".to_string()),
             direct_type: pattern.kind().to_string(),
-            inner_type: None,
+            inner_types: Vec::new(),
             text: node_text(pattern, source),
         });
     }
@@ -898,7 +915,7 @@ fn extract_name_info_direct_toward<'t>(
                 return Some(NameInfo {
                     field: None,
                     direct_type: "switch_pattern".to_string(),
-                    inner_type: None,
+                    inner_types: Vec::new(),
                     text: node_text(child, source),
                 });
             }
@@ -906,7 +923,7 @@ fn extract_name_info_direct_toward<'t>(
                 return Some(NameInfo {
                     field: None,
                     direct_type: "default_keyword".to_string(),
-                    inner_type: None,
+                    inner_types: Vec::new(),
                     text: "default".to_string(),
                 });
             }
@@ -928,7 +945,7 @@ fn extract_name_info_direct_toward<'t>(
     {
         eprintln!(
             "DEBUG:   recovered nested name via {} > {:?}",
-            info.direct_type, info.inner_type
+            info.direct_type, info.inner_types
         );
     }
     recovered
@@ -1062,18 +1079,25 @@ fn build_tier1_query(path: &[PathEntry]) -> String {
                 String::new()
             };
 
-            if let Some(ref inner_type) = info.inner_type {
-                // Nested name: e.g., name: (user_type (type_identifier) @capture)
+            if !info.inner_types.is_empty() {
+                // Nested name: e.g., name: (user_type (type_identifier) @capture).
+                // The capture goes on the innermost kind so the predicate
+                // compares the identifier's text, not an enclosing node's.
+                let mut nested = format!(
+                    "({}) @{capture_name}{}",
+                    info.inner_types[info.inner_types.len() - 1],
+                    sticky_suffix
+                );
+                for kind in info.inner_types[..info.inner_types.len() - 1].iter().rev() {
+                    nested = format!("({kind} {nested})");
+                }
                 if let Some(ref field_name) = info.field {
                     name_pattern.push_str(&format!(
-                        "\n{pad}  {}: ({} ({inner_type}) @{capture_name}{})",
-                        field_name, info.direct_type, sticky_suffix
+                        "\n{pad}  {}: ({} {nested})",
+                        field_name, info.direct_type
                     ));
                 } else {
-                    name_pattern.push_str(&format!(
-                        "\n{pad}  ({} ({inner_type}) @{capture_name}{})",
-                        info.direct_type, sticky_suffix
-                    ));
+                    name_pattern.push_str(&format!("\n{pad}  ({} {nested})", info.direct_type));
                 }
                 inner_predicate.push_str(&format!(
                     "\n{pad}  (#eq? @{} \"{}\")",
