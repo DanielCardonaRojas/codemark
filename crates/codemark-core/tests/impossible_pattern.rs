@@ -122,8 +122,11 @@ fn assignment_inside_a_for_loop_is_bookmarkable() {
     let query = generate_and_compile(&lang, source, range_of(source, "total = total + item"))
         .expect("bookmarking inside a Lua for loop must succeed");
 
+    // The bug was a `name:` on `assignment_statement`, which declares none.
+    // Asserting "no `name:` anywhere" would overshoot: `variable_list` *does*
+    // declare one, and constraining it is correct. Pin the kind instead.
     assert!(
-        !query.contains("name:"),
+        !constrains_field_on(&query, "assignment_statement", "name"),
         "`assignment_statement` has no `name` field; emitting one is the #239 bug:\n{query}"
     );
 }
@@ -152,8 +155,11 @@ fn a_nested_name_is_recovered_rather_than_dropped() {
 
     let query = generate_and_compile(&lang, source, range_of(source, "total = 1")).expect("query");
 
+    // `variable_list` declares `name` on its identifier, so the recovered hop
+    // states it — strictly narrower than a positional match, which would also
+    // bind an identifier sitting under another field.
     assert!(
-        query.contains("(variable_list (identifier)"),
+        query.contains("(variable_list name: (identifier)"),
         "the name should be recovered through the fieldless wrapper:\n{query}"
     );
     assert!(
@@ -197,8 +203,11 @@ fn a_field_declared_elsewhere_in_the_grammar_is_not_assumed_valid_here() {
     // implementation that checks only the grammar's global field table.
     let query = generate_and_compile(&lang, source, range_of(source, "total = 1"))
         .expect("generator must not constrain a field the kind does not declare");
+    // Specifically on `assignment_statement`. The same field *is* legal one
+    // level down on `variable_list` — the distinction this whole test is about —
+    // so a blanket "no `name:`" check would forbid the correct query too.
     assert!(
-        !query.contains("name:"),
+        !constrains_field_on(&query, "assignment_statement", "name"),
         "generator wrote a `name:` field on a kind that has none:\n{query}"
     );
 }
@@ -352,6 +361,18 @@ fn an_exported_const_query_matches_its_declaration() {
         1,
         "the name capture must land on the identifier, not the declarator:\n{query}"
     );
+
+    // Reaching the identifier is not enough: a *positional* `(identifier)` also
+    // binds the declarator's `value`, so the query would match any export whose
+    // initializer happens to be named `Foo`. The hop must re-state `name:`.
+    let collision = "export const Bar = Foo;\n";
+    let mut other = Parser::new(Language::TypeScript).expect("parser");
+    let collision_tree = other.parse(collision.as_bytes()).expect("parse");
+    assert_eq!(
+        match_count(&query, &collision_tree, collision, &ts_lang),
+        0,
+        "the name hop must constrain the `name` field, not match the initializer:\n{query}"
+    );
 }
 
 /// How many nodes `query` matches in `tree` — the check compilation cannot make.
@@ -371,6 +392,19 @@ fn match_count(
         count += 1;
     }
     count
+}
+
+/// Whether `query` writes `field:` as a direct child of `kind`'s pattern.
+///
+/// Indentation varies with nesting depth, so match the structure rather than a
+/// fixed number of spaces: the first line after `(kind` that is a field or a
+/// nested pattern decides. A field *deeper* inside is not this kind's problem.
+fn constrains_field_on(query: &str, kind: &str, field: &str) -> bool {
+    query.split(&format!("({kind}\n")).skip(1).any(|rest| {
+        rest.lines()
+            .next()
+            .is_some_and(|first| first.trim_start().starts_with(&format!("{field}:")))
+    })
 }
 
 /// Whether no *direct* child of `node` sits under `field`.
@@ -596,16 +630,13 @@ fn sweep_full_fixtures() {
         (Language::Dart, "dart/auth_service.dart", &[]),
     ];
 
-    let mut swept = 0;
+    // All four fixtures are tracked in git, so a missing one means a broken
+    // checkout rather than an optional extra. Skipping would quietly drop a
+    // language's coverage while the test still reported success.
     for (lang, rel, expected) in cases {
         let fixture = repo_root().join("tests/fixtures").join(rel);
-        if !fixture.exists() {
-            eprintln!("skipping {rel}: fixture not found");
-            continue;
-        }
+        assert!(fixture.exists(), "required fixture is missing: {}", fixture.display());
         let source = std::fs::read_to_string(&fixture).expect("read fixture");
         sweep(lang, &source, rel, expected);
-        swept += 1;
     }
-    assert!(swept > 0, "no fixtures were swept");
 }

@@ -70,6 +70,21 @@ struct PathEntry {
     name_after_child: bool,
 }
 
+/// One nesting level on the way down to a name, with the field it occupies.
+#[derive(Debug, Clone)]
+struct NameHop {
+    /// The field this node fills in its parent, when the parent declares one.
+    field: Option<String>,
+    kind: String,
+}
+
+impl NameHop {
+    /// Positional — the parent gives this child no field of its own.
+    fn positional(kind: impl Into<String>) -> Self {
+        Self { field: None, kind: kind.into() }
+    }
+}
+
 /// How to query for the "name" of a node.
 #[derive(Debug, Clone)]
 struct NameInfo {
@@ -78,15 +93,20 @@ struct NameInfo {
     field: Option<String>,
     /// The direct name node type (e.g., "simple_identifier" or "user_type")
     direct_type: String,
-    /// The kinds nested inside `direct_type` on the way to the name, outermost
-    /// first — `user_type > type_identifier` is `["type_identifier"]`.
+    /// The hops nested inside `direct_type` on the way to the name, outermost
+    /// first — `user_type > type_identifier` is one fieldless `type_identifier`.
     ///
     /// Usually one level, but a wrapper can sit two deep: TS
     /// `export_statement > lexical_declaration > variable_declarator >
-    /// identifier` needs `["variable_declarator", "identifier"]`, because
-    /// capturing the declarator would compare `Foo = 1` against `Foo` and match
-    /// nothing.
-    inner_types: Vec<String>,
+    /// identifier` needs two hops, because capturing the declarator would
+    /// compare `Foo = 1` against `Foo` and match nothing.
+    ///
+    /// Each hop keeps the field it occupies in *its own* parent, so the
+    /// identifier under a `variable_declarator` renders as `name: (identifier)`.
+    /// A bare positional `(identifier)` would also bind the declarator's
+    /// `value`, letting a query for `export const Foo = 1` match
+    /// `export const Bar = Foo`.
+    inner_types: Vec<NameHop>,
     /// The text value to match
     text: String,
 }
@@ -778,7 +798,15 @@ fn recover_nested_name<'t>(
         return Some(NameInfo {
             field: None,
             direct_type: child.kind().to_string(),
-            inner_types: vec![named.kind().to_string()],
+            // `named` was found *through* the `name` field, so the hop can
+            // assert it. A bare positional `(identifier)` would also match the
+            // intermediate's other identifier children — a TS
+            // `variable_declarator`'s `value`, letting a query for
+            // `export const Foo = 1` match `export const Bar = Foo`.
+            inner_types: vec![NameHop {
+                field: Some("name".to_string()),
+                kind: named.kind().into(),
+            }],
             text: node_text(named, source),
         });
     }
@@ -831,7 +859,7 @@ fn extract_name_info_direct_toward<'t>(
                     return Some(NameInfo {
                         field: Some("name".to_string()),
                         direct_type: "user_type".to_string(),
-                        inner_types: vec!["type_identifier".to_string()],
+                        inner_types: vec![NameHop::positional("type_identifier")],
                         text: node_text(child, source),
                     });
                 }
@@ -880,9 +908,16 @@ fn extract_name_info_direct_toward<'t>(
             && let Some(inner) = child_by_own_field(node, field)
             && let Some(info) = extract_name_info_direct(inner, source)
         {
+            // The hop keeps `info.field`: that field belongs to the *inner*
+            // declaration, which is emitted as its own pattern here, so it stays
+            // valid — only the wrapper may not claim it. Dropping it would leave
+            // a positional `(identifier)` free to bind the declarator's `value`
+            // instead of its name.
             let mut inner_types = match locate_name_node(inner, &info) {
-                Some(n) => vec![n.kind().to_string()],
-                None => vec![info.direct_type.clone()],
+                Some(n) => vec![NameHop { field: info.field.clone(), kind: n.kind().to_string() }],
+                None => {
+                    vec![NameHop { field: info.field.clone(), kind: info.direct_type.clone() }]
+                }
             };
             // The inner name was itself nested; carry those levels through.
             inner_types.extend(info.inner_types.iter().cloned());
@@ -1083,13 +1118,19 @@ fn build_tier1_query(path: &[PathEntry]) -> String {
                 // Nested name: e.g., name: (user_type (type_identifier) @capture).
                 // The capture goes on the innermost kind so the predicate
                 // compares the identifier's text, not an enclosing node's.
-                let mut nested = format!(
-                    "({}) @{capture_name}{}",
-                    info.inner_types[info.inner_types.len() - 1],
-                    sticky_suffix
-                );
-                for kind in info.inner_types[..info.inner_types.len() - 1].iter().rev() {
-                    nested = format!("({kind} {nested})");
+                // Each hop re-states the field it fills in its own parent, so a
+                // name cannot be satisfied by a sibling under another field.
+                let (last, outer) =
+                    info.inner_types.split_last().expect("inner_types is non-empty in this branch");
+                let mut nested = match last.field {
+                    Some(ref f) => format!("{f}: ({}) @{capture_name}{sticky_suffix}", last.kind),
+                    None => format!("({}) @{capture_name}{sticky_suffix}", last.kind),
+                };
+                for hop in outer.iter().rev() {
+                    nested = match hop.field {
+                        Some(ref f) => format!("{f}: ({} {nested})", hop.kind),
+                        None => format!("({} {nested})", hop.kind),
+                    };
                 }
                 if let Some(ref field_name) = info.field {
                     name_pattern.push_str(&format!(
