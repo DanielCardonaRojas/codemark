@@ -489,7 +489,9 @@ fn build_structural_path(target: Node, source: &[u8], profile: &Profile) -> Vec<
                 name_info: if is_body_node(current.kind()) {
                     None
                 } else {
-                    extract_name_info(current, source)
+                    // The target is on the path below `current`, so any
+                    // intermediate containing it is already its own entry.
+                    extract_name_info_toward(current, source, Some(target))
                 },
                 semantic_info: if is_target_node {
                     extract_semantic_info(current, source)
@@ -524,11 +526,28 @@ fn build_structural_path(target: Node, source: &[u8], profile: &Profile) -> Vec<
 }
 
 /// Extract the "name" identifier from a node if it has one.
+///
+/// For callers not building a structural path, where there is no descendant to
+/// exclude from [`recover_nested_name`].
 fn extract_name_info(node: Node, source: &[u8]) -> Option<NameInfo> {
+    extract_name_info_toward(node, source, None)
+}
+
+/// [`extract_name_info`], told which descendant the query is being built toward.
+///
+/// Only [`recover_nested_name`] uses `descendant_on_path`, to avoid naming an
+/// intermediate that the structural path will already emit as its own pattern.
+/// Passing `None` is safe — it just forgoes that de-duplication, which only
+/// matters while walking a path.
+fn extract_name_info_toward<'t>(
+    node: Node<'t>,
+    source: &[u8],
+    descendant_on_path: Option<Node<'t>>,
+) -> Option<NameInfo> {
     if node.kind() == "class_member" || node.kind() == "declaration" {
         return extract_nested_name(node, source);
     }
-    extract_name_info_direct(node, source)
+    extract_name_info_direct_toward(node, source, descendant_on_path)
 }
 
 /// Helper to recursively search for a "name" field in a node's children.
@@ -547,8 +566,111 @@ fn extract_nested_name(node: Node, source: &[u8]) -> Option<NameInfo> {
     None
 }
 
+/// The child under `field` **only if** `node` itself declares that field.
+///
+/// [`Node::child_by_field_name`] looks through hidden nodes, so it answers "is
+/// there a `name` somewhere beneath this?" rather than "does this kind have a
+/// `name` field?". Those differ, and the gap produces queries tree-sitter
+/// refuses to compile. Lua is the clean example:
+///
+/// ```text
+/// assignment_statement [ -=variable_list  operator="="  -=expression_list ]
+///   variable_list      [ name=identifier ]
+/// ```
+///
+/// `assignment_statement.child_by_field_name("name")` returns the identifier —
+/// found through the fieldless `variable_list` — but the kind has no `name`
+/// field of its own, so `(assignment_statement name: (identifier))` is an
+/// "Impossible pattern" and tree-sitter rejects the *entire* query. The
+/// bookmark is then never created.
+///
+/// Checking the grammar's global field table is not enough: Lua *does* define
+/// `name` (field id 15), just not on this kind. The question is only ever
+/// answerable per node kind, which is what walking the direct children does.
+fn child_by_own_field<'t>(node: Node<'t>, field: &str) -> Option<Node<'t>> {
+    let mut cursor = node.walk();
+    node.children(&mut cursor)
+        .enumerate()
+        .find(|(i, _)| u32::try_from(*i).is_ok_and(|i| node.field_name_for_child(i) == Some(field)))
+        .map(|(_, child)| child)
+}
+
+/// A name sitting under a fieldless direct child, expressed positionally.
+///
+/// The companion to [`child_by_own_field`]. When a kind carries no `name` field
+/// itself, the name is often one level down behind an intermediate the grammar
+/// leaves fieldless — Lua's `assignment_statement > variable_list > identifier`.
+/// Dropping the name entirely would still compile, but the query would be
+/// purely positional and break the moment a sibling statement is inserted.
+///
+/// Returns the intermediate as `direct_type` and the identifier as
+/// `inner_type`, which [`build_tier1_query`] renders as
+/// `(variable_list (identifier) @cap)` — no field, so it compiles.
+///
+/// `descendant_on_path` is the node the query is being built *towards*, when
+/// known. An intermediate that contains it is already its own entry in the
+/// structural path, so naming it here would emit a second sibling pattern for a
+/// child the node has only one of — impossible, for a different reason than the
+/// missing field. Both grammars hit this:
+///
+/// ```text
+/// method_signature [ -=function_signature ]       (Dart)
+///   function_signature [ name=identifier ]        <-- already a path entry
+///
+/// assignment_statement [ -=variable_list ... ]    (Lua, target = variable_list)
+///   variable_list [ name=identifier ]             <-- already a path entry
+/// ```
+fn recover_nested_name<'t>(
+    node: Node<'t>,
+    source: &[u8],
+    descendant_on_path: Option<Node<'t>>,
+) -> Option<NameInfo> {
+    let mut cursor = node.walk();
+    for child in node.named_children(&mut cursor) {
+        // A bare identifier child is the caller's business, not an
+        // intermediate: `extract_name_info_direct` handles that shape.
+        if child.kind().contains("identifier") {
+            continue;
+        }
+        // Would this intermediate also be emitted as its own pattern?
+        if descendant_on_path.is_some_and(|d| {
+            let mut up = Some(d);
+            while let Some(n) = up {
+                if n.id() == child.id() {
+                    return true;
+                }
+                up = n.parent();
+            }
+            false
+        }) {
+            continue;
+        }
+        let Some(named) = child_by_own_field(child, "name") else { continue };
+        if !named.kind().contains("identifier") {
+            continue;
+        }
+        return Some(NameInfo {
+            field: None,
+            direct_type: child.kind().to_string(),
+            inner_type: Some(named.kind().to_string()),
+            text: node_text(named, source),
+        });
+    }
+    None
+}
+
 /// Direct name extraction without recursion, to avoid infinite loops.
 fn extract_name_info_direct(node: Node, source: &[u8]) -> Option<NameInfo> {
+    extract_name_info_direct_toward(node, source, None)
+}
+
+/// [`extract_name_info_direct`], carrying the descendant to exclude from
+/// [`recover_nested_name`].
+fn extract_name_info_direct_toward<'t>(
+    node: Node<'t>,
+    source: &[u8],
+    descendant_on_path: Option<Node<'t>>,
+) -> Option<NameInfo> {
     if std::env::var("CODEMARK_DEBUG_QUERY").is_ok() {
         eprintln!(
             "DEBUG: extract_name_info_direct: node={} at {:?}",
@@ -568,8 +690,10 @@ fn extract_name_info_direct(node: Node, source: &[u8]) -> Option<NameInfo> {
         });
     }
 
-    // Try the "name" field first
-    if let Some(name_node) = node.child_by_field_name("name") {
+    // Try the "name" field first. `child_by_own_field` rather than
+    // `child_by_field_name`: a name reachable only through a hidden node cannot
+    // be written as `name:` against *this* kind.
+    if let Some(name_node) = child_by_own_field(node, "name") {
         if std::env::var("CODEMARK_DEBUG_QUERY").is_ok() {
             eprintln!("DEBUG:   found name field node={}", name_node.kind());
         }
@@ -597,7 +721,7 @@ fn extract_name_info_direct(node: Node, source: &[u8]) -> Option<NameInfo> {
 
     // For Rust impl_item: use "type" field as the name
     if node.kind() == "impl_item"
-        && let Some(type_node) = node.child_by_field_name("type")
+        && let Some(type_node) = child_by_own_field(node, "type")
     {
         return Some(NameInfo {
             field: Some("type".to_string()),
@@ -623,7 +747,7 @@ fn extract_name_info_direct(node: Node, source: &[u8]) -> Option<NameInfo> {
 
     // For Rust match_arm: use pattern text
     if node.kind() == "match_arm"
-        && let Some(pattern) = node.child_by_field_name("pattern")
+        && let Some(pattern) = child_by_own_field(node, "pattern")
     {
         return Some(NameInfo {
             field: Some("pattern".to_string()),
@@ -656,7 +780,25 @@ fn extract_name_info_direct(node: Node, source: &[u8]) -> Option<NameInfo> {
         }
     }
 
-    None
+    // Last resort. The kind has no `name` field of its own, but a name may
+    // still be reachable through a fieldless intermediate child. Recover it
+    // positionally — `(variable_list (identifier) @cap)` compiles where
+    // `name: (identifier) @cap` does not — so the query keeps the name
+    // predicate that makes a bookmark survive edits elsewhere in the file.
+    //
+    // Deliberately after the kind-specific branches above. Those encode a
+    // chosen name for a kind (a `match_arm`'s pattern, not its value), and a
+    // generic structural guess must not pre-empt a deliberate one.
+    let recovered = recover_nested_name(node, source, descendant_on_path);
+    if let Some(ref info) = recovered
+        && std::env::var("CODEMARK_DEBUG_QUERY").is_ok()
+    {
+        eprintln!(
+            "DEBUG:   recovered nested name via {} > {:?}",
+            info.direct_type, info.inner_type
+        );
+    }
+    recovered
 }
 
 fn node_text(node: Node, source: &[u8]) -> String {
@@ -902,11 +1044,18 @@ fn escape_query_text(text: &str) -> String {
 }
 
 /// Extract semantic information from a node for fine-grained targeting.
+///
+/// Each variant here is emitted as a *field constraint* (`condition:`, `left:`,
+/// `value:`), so these lookups use [`child_by_own_field`] for the same reason
+/// the name extraction does: a field reachable only through a hidden node
+/// cannot be written against this kind. Lua's `assignment_statement` has no
+/// `left` field — its operands sit under fieldless `variable_list` /
+/// `expression_list` children.
 fn extract_semantic_info(node: Node, source: &[u8]) -> Option<SemanticInfo> {
     match node.kind() {
         "if_statement" | "if_expression" => {
             // Extract the condition
-            if let Some(cond) = node.child_by_field_name("condition") {
+            if let Some(cond) = child_by_own_field(node, "condition") {
                 let text = node_text(cond, source);
                 return Some(SemanticInfo::IfCondition(text));
             }
@@ -921,7 +1070,7 @@ fn extract_semantic_info(node: Node, source: &[u8]) -> Option<SemanticInfo> {
         }
         "assignment_expression" | "assignment_statement" | "short_var_declaration" => {
             // Extract the variable being assigned
-            if let Some(left) = node.child_by_field_name("left") {
+            if let Some(left) = child_by_own_field(node, "left") {
                 let text = node_text(left, source);
                 return Some(SemanticInfo::AssignmentTarget(text));
             } else if node.kind() == "short_var_declaration"
@@ -933,7 +1082,7 @@ fn extract_semantic_info(node: Node, source: &[u8]) -> Option<SemanticInfo> {
         }
         "return_statement" => {
             // Extract the return value
-            if let Some(value) = node.child_by_field_name("value") {
+            if let Some(value) = child_by_own_field(node, "value") {
                 let text = node_text(value, source);
                 if !text.trim().is_empty() {
                     return Some(SemanticInfo::ReturnValue(text));
