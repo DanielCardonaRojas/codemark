@@ -54,6 +54,20 @@ struct PathEntry {
     is_landmark: bool,
     /// Sticky breadcrumb tag (e.g., Some("class"), Some("method")) for @sticky captures.
     sticky_tag: Option<String>,
+    /// Whether the name node sits *after* the child this path descends into.
+    ///
+    /// Sibling patterns in a tree-sitter query are an ordered sequence, so they
+    /// must appear in the order the grammar produces them. Rust puts the
+    /// visibility modifier before the name:
+    ///
+    /// ```text
+    /// struct_item [ -=visibility_modifier  -=struct  name=type_identifier  body=... ]
+    /// ```
+    ///
+    /// so `(struct_item name: (type_identifier) @n (visibility_modifier) @t)` is
+    /// an "Impossible pattern" while the reverse order compiles. Emitting the
+    /// name first unconditionally made every such bookmark unreachable.
+    name_after_child: bool,
 }
 
 /// How to query for the "name" of a node.
@@ -336,6 +350,8 @@ fn build_base_query(
         semantic_info,
         is_landmark: is_landmark_kind(node.kind(), profile) && !is_local_declaration(node),
         sticky_tag: get_sticky_tag(node.kind()).map(|s| s.to_string()),
+        // A single-entry path nests no child, so nothing can be mis-ordered.
+        name_after_child: false,
     };
 
     let path = vec![entry];
@@ -467,32 +483,69 @@ fn build_structural_path(target: Node, source: &[u8], profile: &Profile) -> Vec<
     let mut path = Vec::new();
     let mut current = target;
 
-    // Special case: if the target is a leaf node (like an identifier)
-    // and its parent has a name field pointing to it, we should start
-    // the path from the parent to avoid "Impossible pattern" errors
-    // where the query expects two different children for the same node.
+    // Special case: if the target is a leaf node (like an identifier) and its
+    // parent names it, start the path from the parent to avoid "Impossible
+    // pattern" errors where the query expects two different children for the
+    // same node.
+    //
+    // Asks the extractor which child it would name rather than looking only at
+    // a `name` field: Rust's `impl_item` names itself through `type`, so
+    // bookmarking the `Claims` in `impl Claims` produced
+    // `(impl_item type: (type_identifier) @n ((type_identifier) @target ...))`
+    // — the same single child demanded twice.
     if let Some(parent) = current.parent()
-        && let Some(name_node) = parent.child_by_field_name("name")
+        && let Some(info) = extract_name_info(parent, source)
+        // Only a *field-named* child is a true duplicate. A recovered name
+        // (`field: None`) renders as `(intermediate (identifier) @n)`, which
+        // reaches a level deeper than the lifted node would, so lifting there
+        // discards the predicate rather than de-duplicating it.
+        && info.field.is_some()
+        && info.inner_type.is_none()
+        && let Some(name_node) = locate_name_node(parent, &info)
         && name_node.id() == current.id()
     {
         current = parent;
     }
 
     let mut is_first = true;
+    // The node the previous iteration emitted, i.e. the child this entry will
+    // nest in the query. `None` for the target itself, which has no child.
+    let mut child_on_path: Option<Node> = None;
     loop {
         // Skip wrapper nodes that don't have structural meaning for queries
         if !is_wrapper_node(current.kind()) {
             let is_target_node = is_first;
             is_first = false;
+            let mut name_info = if is_body_node(current.kind()) {
+                None
+            } else {
+                // The target is on the path below `current`, so any
+                // intermediate containing it is already its own entry.
+                extract_name_info_toward(current, source, Some(target))
+            };
+            // Drop the name when it *is* the child the path descends into: the
+            // nested pattern already constrains that subtree, so naming it here
+            // asks for the same single child twice. Lua's
+            // `function_declaration` names a `dot_index_expression` that the
+            // path also walks through on the way to `M.compute`.
+            //
+            // Only for a field-named child. A *recovered* name (`field: None`)
+            // renders as `(function_signature (identifier) @n)`, which reaches
+            // one level deeper than the path child's own pattern and so is not
+            // a duplicate — dropping it would strip the predicate that tells
+            // six Dart methods apart.
+            if let Some(ref info) = name_info
+                && info.field.is_some()
+                && info.inner_type.is_none()
+                && let Some(child) = child_on_path
+                && locate_name_node(current, info).is_some_and(|n| n.id() == child.id())
+            {
+                name_info = None;
+            }
             let entry = PathEntry {
                 node_type: current.kind().to_string(),
-                name_info: if is_body_node(current.kind()) {
-                    None
-                } else {
-                    // The target is on the path below `current`, so any
-                    // intermediate containing it is already its own entry.
-                    extract_name_info_toward(current, source, Some(target))
-                },
+                name_after_child: name_follows_child(current, name_info.as_ref(), child_on_path),
+                name_info,
                 semantic_info: if is_target_node {
                     extract_semantic_info(current, source)
                 } else {
@@ -502,6 +555,7 @@ fn build_structural_path(target: Node, source: &[u8], profile: &Profile) -> Vec<
                     && !is_local_declaration(current),
                 sticky_tag: get_sticky_tag(current.kind()).map(|s| s.to_string()),
             };
+            child_on_path = Some(current);
             if std::env::var("CODEMARK_DEBUG_QUERY").is_ok() {
                 eprintln!(
                     "DEBUG:   entry={} has_name={} is_landmark={}",
@@ -523,6 +577,71 @@ fn build_structural_path(target: Node, source: &[u8], profile: &Profile) -> Vec<
 
     path.reverse(); // outermost first
     path
+}
+
+/// Does `node`'s name node come after the child the path descends into?
+///
+/// Sibling patterns in a tree-sitter query are an **ordered sequence**: they
+/// have to appear in the order the grammar emits the children. The generator
+/// writes the name pattern and then nests the next path entry, which is only
+/// valid when the name actually precedes that child.
+///
+/// Two grammars where it does not:
+///
+/// ```text
+/// struct_item        [ -=visibility_modifier  -=struct  name=type_identifier  body=... ]
+/// function_signature [ return_type=type_identifier  name=identifier  parameters=... ]
+/// ```
+///
+/// Bookmarking the `pub` or the return type puts the path child first, so
+/// `(struct_item name: ... (visibility_modifier) @target)` cannot match and
+/// tree-sitter rejects the whole query.
+///
+/// Compares by child index rather than byte offset: both are ordered the same
+/// way, but an index is exactly the sequence tree-sitter matches against.
+fn name_follows_child(node: Node, name_info: Option<&NameInfo>, child: Option<Node>) -> bool {
+    let (Some(info), Some(child)) = (name_info, child) else {
+        return false;
+    };
+    // A name rendered as the node's own capture is not a sibling pattern at
+    // all, so ordering cannot apply to it.
+    if info.field.is_none() && node.kind() == info.direct_type {
+        return false;
+    }
+    let Some(name_node) = locate_name_node(node, info) else {
+        return false;
+    };
+
+    let mut cursor = node.walk();
+    let mut name_idx = None;
+    let mut child_idx = None;
+    for (i, c) in node.children(&mut cursor).enumerate() {
+        if c.id() == name_node.id() {
+            name_idx = Some(i);
+        }
+        if c.id() == child.id() {
+            child_idx = Some(i);
+        }
+    }
+    match (name_idx, child_idx) {
+        (Some(n), Some(c)) => n > c,
+        _ => false,
+    }
+}
+
+/// The direct child of `node` that [`NameInfo`] was derived from.
+///
+/// Mirrors how `extract_name_info_direct` found it, so the index comparison in
+/// [`name_follows_child`] is made against the node the query will actually
+/// name.
+fn locate_name_node<'t>(node: Node<'t>, info: &NameInfo) -> Option<Node<'t>> {
+    if let Some(ref field) = info.field {
+        return child_by_own_field(node, field);
+    }
+    // Fieldless: either a recovered intermediate (`direct_type` is the
+    // intermediate kind) or a positional descendant match.
+    let mut cursor = node.walk();
+    node.named_children(&mut cursor).find(|c| c.kind() == info.direct_type)
 }
 
 /// Extract the "name" identifier from a node if it has one.
@@ -731,18 +850,32 @@ fn extract_name_info_direct_toward<'t>(
         });
     }
 
-    // For TS export_statement: get the name from the inner declaration
-    if node.kind() == "export_statement"
-        && let Some(decl) = node.child_by_field_name("declaration")
-    {
-        return extract_name_info_direct(decl, source);
-    }
-
-    // For Python decorated_definition: get the name from the inner definition
-    if node.kind() == "decorated_definition"
-        && let Some(def) = node.child_by_field_name("definition")
-    {
-        return extract_name_info_direct(def, source);
+    // For TS export_statement / Python decorated_definition: the name lives on
+    // the inner declaration.
+    //
+    // The inner `NameInfo`'s `field` is relative to *that* node, so it cannot
+    // be reused verbatim — `(decorated_definition name: (identifier))` names a
+    // field `decorated_definition` does not declare, which is an "Impossible
+    // pattern". Re-express it as a nested positional match instead:
+    // `(decorated_definition (function_definition (identifier) @n))`.
+    //
+    // These kinds are normally skipped by `is_wrapper_node`, so this path is
+    // reached only when the wrapper is itself the bookmark target.
+    for field in ["declaration", "definition"] {
+        if matches!(node.kind(), "export_statement" | "decorated_definition")
+            && let Some(inner) = child_by_own_field(node, field)
+            && let Some(info) = extract_name_info_direct(inner, source)
+        {
+            let name_node = locate_name_node(inner, &info);
+            return Some(NameInfo {
+                field: None,
+                direct_type: inner.kind().to_string(),
+                inner_type: Some(
+                    name_node.map_or_else(|| info.direct_type.clone(), |n| n.kind().to_string()),
+                ),
+                text: info.text,
+            });
+        }
     }
 
     // For Rust match_arm: use pattern text
@@ -910,6 +1043,9 @@ fn build_tier1_query(path: &[PathEntry]) -> String {
             }
         }
 
+        // Held separately so it can be placed after the nested child when the
+        // grammar orders the name later; see `PathEntry::name_after_child`.
+        let mut name_pattern = String::new();
         if let Some(ref info) = entry.name_info {
             let capture_name = if is_target {
                 "fn_name".to_string()
@@ -929,12 +1065,12 @@ fn build_tier1_query(path: &[PathEntry]) -> String {
             if let Some(ref inner_type) = info.inner_type {
                 // Nested name: e.g., name: (user_type (type_identifier) @capture)
                 if let Some(ref field_name) = info.field {
-                    s.push_str(&format!(
+                    name_pattern.push_str(&format!(
                         "\n{pad}  {}: ({} ({inner_type}) @{capture_name}{})",
                         field_name, info.direct_type, sticky_suffix
                     ));
                 } else {
-                    s.push_str(&format!(
+                    name_pattern.push_str(&format!(
                         "\n{pad}  ({} ({inner_type}) @{capture_name}{})",
                         info.direct_type, sticky_suffix
                     ));
@@ -945,7 +1081,7 @@ fn build_tier1_query(path: &[PathEntry]) -> String {
                     escape_query_text(&info.text)
                 ));
             } else if let Some(ref field_name) = info.field {
-                s.push_str(&format!(
+                name_pattern.push_str(&format!(
                     "\n{pad}  {}: ({}) @{capture_name}{}",
                     field_name, info.direct_type, sticky_suffix
                 ));
@@ -965,7 +1101,7 @@ fn build_tier1_query(path: &[PathEntry]) -> String {
                         escape_query_text(&info.text)
                     ));
                 } else {
-                    s.push_str(&format!(
+                    name_pattern.push_str(&format!(
                         "\n{pad}  ({}) @{}{}",
                         info.direct_type, capture_name, sticky_suffix
                     ));
@@ -979,6 +1115,9 @@ fn build_tier1_query(path: &[PathEntry]) -> String {
         }
 
         if is_target {
+            // No nested child, so there is nothing for the name to be ordered
+            // against.
+            s.push_str(&name_pattern);
             // Add inner predicate and close inner node
             s.push_str(&inner_predicate);
             s.push(')');
@@ -1005,11 +1144,22 @@ fn build_tier1_query(path: &[PathEntry]) -> String {
                 s.push(')');
             }
         } else {
-            // Add inner predicate, then nest the child
-            s.push_str(&inner_predicate);
+            // Sibling *node* patterns are an ordered sequence, so the name and
+            // the nested child must appear in the order the grammar emits them.
+            // Predicates are position-independent, so they stay where they were
+            // to avoid churning the text of every already-stored query.
             let child_str = build_node(path, idx + 1, depth, indent + 1, counter);
-            s.push('\n');
-            s.push_str(&child_str);
+            if entry.name_after_child {
+                s.push('\n');
+                s.push_str(&child_str);
+                s.push_str(&name_pattern);
+                s.push_str(&inner_predicate);
+            } else {
+                s.push_str(&name_pattern);
+                s.push_str(&inner_predicate);
+                s.push('\n');
+                s.push_str(&child_str);
+            }
             s.push(')');
 
             // Add name capture if it was on the node itself
