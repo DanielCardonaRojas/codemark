@@ -10,14 +10,15 @@
 //! a profile. See https://github.com/DanielCardonaRojas/codemark/issues/239
 //!
 //! The sweeps at the bottom are the part that generalizes: they bookmark
-//! *every* named node of a source file and count the queries that fail to
-//! compile. Adding a language means adding one `sweep(...)` line, and it
-//! inherits the whole check.
+//! *every* named node of a source file and collect the node kinds whose query
+//! fails to compile. Adding a language means adding one `sweep(...)` line, and
+//! it inherits the whole check.
 //!
-//! Each sweep carries a `budget` of known failures attributable to
+//! Each sweep carries the set of kinds known to fail for
 //! <https://github.com/DanielCardonaRojas/codemark/issues/263>, a distinct
-//! pre-existing bug. The budget is asserted *exactly*, so fixing #263 forces
-//! the number down rather than letting it rot upward.
+//! pre-existing bug. The set is compared exactly, so a newly broken kind cannot
+//! hide behind a newly fixed one, and fixing #263 forces the list down rather
+//! than letting it rot upward.
 
 #![cfg(feature = "wasm")]
 
@@ -182,6 +183,16 @@ fn a_field_declared_elsewhere_in_the_grammar_is_not_assumed_valid_here() {
         asg.child_by_field_name("name").is_some(),
         "precondition: child_by_field_name sees through the hidden node, which is the trap"
     );
+
+    // The preconditions above describe the trap; this is the generator refusing
+    // to fall into it. Without this the test would pass against an
+    // implementation that checks only the grammar's global field table.
+    let query = generate_and_compile(&lang, source, range_of(source, "total = 1"))
+        .expect("generator must not constrain a field the kind does not declare");
+    assert!(
+        !query.contains("name:"),
+        "generator wrote a `name:` field on a kind that has none:\n{query}"
+    );
 }
 
 /// Recovering the name must not duplicate structure the path already carries.
@@ -218,16 +229,19 @@ fn dart_method_name_is_not_recovered_twice() {
 /// turns "we fixed Lua assignments" into "no node in this file is
 /// unbookmarkable".
 ///
-/// `budget` is a ratchet, not a blessing. It is the number of targets still
-/// failing for a **separate, pre-existing** reason: the generator can name an
-/// ancestor *and* emit a positional pattern for the same single child, or emit
-/// fields in an order the grammar forbids —
-/// <https://github.com/DanielCardonaRojas/codemark/issues/263>. Those reproduce
-/// with the #239 fix reverted. A budget keeps the sweep useful now (it fails on
-/// any *new* uncompilable query) instead of being deleted for being red; lower
-/// it as #263 is fixed, and the assertion below refuses a stale budget so it
-/// cannot silently over-permit.
-fn sweep(lang: &Language, source: &str, label: &str, budget: usize) {
+/// `expected` is a ratchet, not a blessing: the node kinds still failing for a
+/// **separate, pre-existing** reason — the generator can name an ancestor *and*
+/// emit a positional pattern for the same single child, or emit fields in an
+/// order the grammar forbids
+/// (<https://github.com/DanielCardonaRojas/codemark/issues/263>). Those
+/// reproduce with the #239 fix reverted. Carrying them keeps the sweep useful
+/// now instead of being deleted for being red.
+///
+/// Compared as a **set of kinds**, not a count. A count lets a newly broken
+/// target hide behind a newly fixed one; the set makes any change in *which*
+/// kinds fail a test failure in its own right. Kinds rather than byte offsets so
+/// that editing a snippet does not invalidate the baseline.
+fn sweep(lang: &Language, source: &str, label: &str, expected: &[&str]) {
     let mut parser = Parser::new(lang.clone()).expect("parser");
     let tree = parser.parse(source.as_bytes()).expect("parse");
 
@@ -236,7 +250,7 @@ fn sweep(lang: &Language, source: &str, label: &str, budget: usize) {
     let mut stack = vec![tree.root_node()];
     while let Some(node) = stack.pop() {
         if node.is_named() && node.byte_range().len() > 1 {
-            targets.push(node.byte_range());
+            targets.push((node.kind().to_string(), node.byte_range()));
         }
         for child in node.named_children(&mut cursor) {
             stack.push(child);
@@ -245,33 +259,34 @@ fn sweep(lang: &Language, source: &str, label: &str, budget: usize) {
     assert!(!targets.is_empty(), "{label}: nothing to sweep");
 
     let ts_lang = parser.language().clone();
-    let mut failures = Vec::new();
-    for range in &targets {
+    let mut failed_kinds = std::collections::BTreeSet::new();
+    let mut detail = Vec::new();
+    for (kind, range) in &targets {
         if let Err(msg) = compile_for(&tree, source, (range.start, range.end), &ts_lang) {
             // Ambiguous / non-unique targets are expected for arbitrary ranges;
             // only compilation failures are defects.
             if !msg.starts_with("@skip") {
-                failures.push(format!("  bytes {}..{}: {msg}", range.start, range.end));
+                failed_kinds.insert(kind.clone());
+                detail.push(format!("  {kind} at {}..{}: {msg}", range.start, range.end));
             }
         }
     }
 
-    assert!(
-        failures.len() <= budget,
-        "{label}: {} of {} targets produced an uncompilable query, budget is {budget}.\n\
-         A new one means a regression — see the failures below:\n{}",
-        failures.len(),
-        targets.len(),
-        failures.join("\n")
-    );
-    assert_eq!(
-        failures.len(),
-        budget,
-        "{label}: budget is {budget} but only {} targets fail. \
-         Progress on #263 — lower the budget to {} to lock it in.",
-        failures.len(),
-        failures.len()
-    );
+    let expected: std::collections::BTreeSet<String> =
+        expected.iter().map(|s| (*s).to_string()).collect();
+    if failed_kinds != expected {
+        let new: Vec<_> = failed_kinds.difference(&expected).collect();
+        let fixed: Vec<_> = expected.difference(&failed_kinds).collect();
+        panic!(
+            "{label}: the set of kinds producing uncompilable queries changed.\n\
+             newly broken (regression): {new:?}\n\
+             newly passing (progress on #263 — remove from the expected list): {fixed:?}\n\
+             all {} failures across {} targets:\n{}",
+            detail.len(),
+            targets.len(),
+            detail.join("\n")
+        );
+    }
 }
 
 /// Lua exercises the dynamic-grammar path, where #239 was found.
@@ -304,9 +319,9 @@ end
 
 return M
 ";
-    // 1 remaining: `function M.compute` names the ancestor
-    // `name: (dot_index_expression)` and also emits it positionally (#263).
-    sweep(&lang, source, "lua", 1);
+    // `function M.compute` names the ancestor `name: (dot_index_expression)`
+    // and also emits it positionally (#263).
+    sweep(&lang, source, "lua", &["identifier"]);
 }
 
 /// The built-in languages, swept over compact snippets.
@@ -316,13 +331,13 @@ return M
 /// language took minutes. These cover the same *shapes* — nested declarations,
 /// visibility modifiers, fields, methods — in a few seconds.
 ///
-/// Python reaching zero is the load-bearing part: the sweep is not uniformly
-/// red, so the other counts are real defects rather than an artifact of
-/// sweeping every node.
+/// Python having an empty list is the load-bearing part: the sweep is not
+/// uniformly red, so the other entries are real defects rather than an artifact
+/// of sweeping every node.
 #[test]
 fn sweep_builtin_snippets() {
-    // Budgets measured against the #239 fix; every one is attributable to #263.
-    let cases: &[(Language, &str, &str, usize)] = &[
+    // Measured against the #239 fix; every entry is attributable to #263.
+    let cases: &[(Language, &str, &str, &[&str])] = &[
         (
             Language::Rust,
             "rust",
@@ -337,7 +352,9 @@ impl Claims {
     }
 }
 ",
-            3,
+            // `pub` and the struct/field name are emitted in an order the
+            // grammar forbids (#263).
+            &["type_identifier", "visibility_modifier"],
         ),
         (
             Language::Python,
@@ -352,7 +369,7 @@ class Claims:
             return True
         return False
 ",
-            0,
+            &[],
         ),
         (
             Language::Dart,
@@ -367,11 +384,13 @@ class Claims {
   }
 }
 ",
-            1,
+            // The class name is both named on the ancestor and emitted
+            // positionally (#263).
+            &["type_identifier"],
         ),
     ];
 
-    for (lang, label, source, budget) in cases {
-        sweep(lang, source, label, *budget);
+    for (lang, label, source, expected) in cases {
+        sweep(lang, source, label, expected);
     }
 }

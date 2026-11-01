@@ -719,21 +719,6 @@ fn extract_name_info_direct_toward<'t>(
         });
     }
 
-    // The kind has no `name` field of its own, but a name may still be
-    // reachable through a fieldless intermediate child. Recover it positionally
-    // — `(variable_list (identifier) @cap)` compiles where
-    // `name: (identifier) @cap` does not — so the query keeps the name
-    // predicate that makes a bookmark survive edits elsewhere in the file.
-    if let Some(info) = recover_nested_name(node, source, descendant_on_path) {
-        if std::env::var("CODEMARK_DEBUG_QUERY").is_ok() {
-            eprintln!(
-                "DEBUG:   recovered nested name via {} > {:?}",
-                info.direct_type, info.inner_type
-            );
-        }
-        return Some(info);
-    }
-
     // For Rust impl_item: use "type" field as the name
     if node.kind() == "impl_item"
         && let Some(type_node) = child_by_own_field(node, "type")
@@ -795,7 +780,25 @@ fn extract_name_info_direct_toward<'t>(
         }
     }
 
-    None
+    // Last resort. The kind has no `name` field of its own, but a name may
+    // still be reachable through a fieldless intermediate child. Recover it
+    // positionally — `(variable_list (identifier) @cap)` compiles where
+    // `name: (identifier) @cap` does not — so the query keeps the name
+    // predicate that makes a bookmark survive edits elsewhere in the file.
+    //
+    // Deliberately after the kind-specific branches above. Those encode a
+    // chosen name for a kind (a `match_arm`'s pattern, not its value), and a
+    // generic structural guess must not pre-empt a deliberate one.
+    let recovered = recover_nested_name(node, source, descendant_on_path);
+    if let Some(ref info) = recovered
+        && std::env::var("CODEMARK_DEBUG_QUERY").is_ok()
+    {
+        eprintln!(
+            "DEBUG:   recovered nested name via {} > {:?}",
+            info.direct_type, info.inner_type
+        );
+    }
+    recovered
 }
 
 fn node_text(node: Node, source: &[u8]) -> String {
