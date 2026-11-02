@@ -830,6 +830,18 @@ impl<'a> FieldProbe<'a> {
 
         let valid =
             tree_sitter::Query::new(self.language, &format!("({kind} {field}: (_))")).is_ok();
+        if !valid {
+            // Dropping the field is the intended fallback, but it leaves the
+            // query less anchored than it reads — log it so a bookmark that
+            // resolves to the wrong node can be traced back to here rather
+            // than looking like a generator bug.
+            tracing::debug!(
+                target: "codemark::query",
+                kind,
+                field,
+                "query compiler rejects field; omitting it from the generated query"
+            );
+        }
         self.cache.borrow_mut().insert(key, valid);
         valid
     }
