@@ -1,5 +1,5 @@
+use std::cell::RefCell;
 use std::collections::HashMap;
-use std::sync::{LazyLock, Mutex};
 
 use tree_sitter::{Language, Node, Tree};
 
@@ -390,7 +390,10 @@ fn build_base_query(
 
 /// Helper to ensure a query is unique and anchored by walking up parents.
 fn disambiguate_query(target_node: Node, ctx: &QueryContext<'_>) -> Result<String> {
-    let mut path = build_structural_path(target_node, ctx.source, ctx.profile, Some(ctx.language));
+    // Scoped to this call so the memoized answers cannot outlive the grammar
+    // they were measured against. See [`FieldProbe`].
+    let probe = FieldProbe::new(ctx.language);
+    let mut path = build_structural_path(target_node, ctx.source, ctx.profile, Some(&probe));
 
     if path.is_empty() {
         // Fallback to simple base query if no path can be built
@@ -506,7 +509,7 @@ fn build_structural_path(
     target: Node,
     source: &[u8],
     profile: &Profile,
-    language: Option<&Language>,
+    probe: Option<&FieldProbe<'_>>,
 ) -> Vec<PathEntry> {
     if std::env::var("CODEMARK_DEBUG_QUERY").is_ok() {
         eprintln!(
@@ -536,7 +539,7 @@ fn build_structural_path(
         // discards the predicate rather than de-duplicating it.
         && info.field.is_some()
         && info.inner_types.is_empty()
-        && let Some(name_node) = locate_name_node(parent, &info, language)
+        && let Some(name_node) = locate_name_node(parent, &info, probe)
         && name_node.id() == current.id()
     {
         current = parent;
@@ -556,7 +559,7 @@ fn build_structural_path(
             } else {
                 // The target is on the path below `current`, so any
                 // intermediate containing it is already its own entry.
-                extract_name_info_toward(current, source, Some(target), language)
+                extract_name_info_toward(current, source, Some(target), probe)
             };
             // Drop the name when it *is* the child the path descends into: the
             // nested pattern already constrains that subtree, so naming it here
@@ -573,7 +576,7 @@ fn build_structural_path(
                 && info.field.is_some()
                 && info.inner_types.is_empty()
                 && let Some(child) = child_on_path
-                && locate_name_node(current, info, language).is_some_and(|n| n.id() == child.id())
+                && locate_name_node(current, info, probe).is_some_and(|n| n.id() == child.id())
             {
                 name_info = None;
             }
@@ -583,7 +586,7 @@ fn build_structural_path(
                     current,
                     name_info.as_ref(),
                     child_on_path,
-                    language,
+                    probe,
                 ),
                 name_info,
                 semantic_info: if is_target_node {
@@ -643,7 +646,7 @@ fn name_follows_child(
     node: Node,
     name_info: Option<&NameInfo>,
     child: Option<Node>,
-    language: Option<&Language>,
+    probe: Option<&FieldProbe<'_>>,
 ) -> bool {
     let (Some(info), Some(child)) = (name_info, child) else {
         return false;
@@ -653,7 +656,7 @@ fn name_follows_child(
     if info.field.is_none() && node.kind() == info.direct_type {
         return false;
     }
-    let Some(name_node) = locate_name_node(node, info, language) else {
+    let Some(name_node) = locate_name_node(node, info, probe) else {
         return false;
     };
 
@@ -682,10 +685,10 @@ fn name_follows_child(
 fn locate_name_node<'t>(
     node: Node<'t>,
     info: &NameInfo,
-    language: Option<&Language>,
+    probe: Option<&FieldProbe<'_>>,
 ) -> Option<Node<'t>> {
     if let Some(ref field) = info.field {
-        return name_child_by_own_field(node, field, language);
+        return name_child_by_own_field(node, field, probe);
     }
     // Fieldless: either a recovered intermediate (`direct_type` is the
     // intermediate kind) or a positional descendant match.
@@ -711,12 +714,12 @@ fn extract_name_info_toward<'t>(
     node: Node<'t>,
     source: &[u8],
     descendant_on_path: Option<Node<'t>>,
-    language: Option<&Language>,
+    probe: Option<&FieldProbe<'_>>,
 ) -> Option<NameInfo> {
     if node.kind() == "class_member" || node.kind() == "declaration" {
         return extract_nested_name(node, source);
     }
-    extract_name_info_direct_toward(node, source, descendant_on_path, language)
+    extract_name_info_direct_toward(node, source, descendant_on_path, probe)
 }
 
 /// Helper to recursively search for a "name" field in a node's children.
@@ -758,22 +761,22 @@ fn extract_nested_name(node: Node, source: &[u8]) -> Option<NameInfo> {
 /// Navigation keeps using [`child_by_own_field`]: descending into an anonymous
 /// child to read its text is fine, since no node type is written out.
 ///
-/// `language` is what makes the last check possible: being present on the
+/// `probe` is what makes the last check possible: being present on the
 /// *parsed tree* does not mean a field is writable in a *query*. See
-/// [`field_is_queryable`].
+/// [`FieldProbe::field_is_queryable`].
 fn name_child_by_own_field<'t>(
     node: Node<'t>,
     field: &str,
-    language: Option<&Language>,
+    probe: Option<&FieldProbe<'_>>,
 ) -> Option<Node<'t>> {
     let child = child_by_own_field(node, field).filter(Node::is_named)?;
-    match language {
-        Some(lang) if !field_is_queryable(lang, node.kind(), field) => None,
+    match probe {
+        Some(probe) if !probe.field_is_queryable(node.kind(), field) => None,
         _ => Some(child),
     }
 }
 
-/// Whether `(kind field: (_))` compiles against this grammar.
+/// Asks a grammar whether `(kind field: (_))` compiles, and remembers the answer.
 ///
 /// The authority on query syntax is the query compiler, and it disagrees with
 /// the tree API. Swift reports a `name` field on a parsed `type_annotation`:
@@ -790,34 +793,46 @@ fn name_child_by_own_field<'t>(
 ///
 /// So the question is asked the only way that is reliable: compile a minimal
 /// probe. Walking children answers "does this *instance* have the field"
-/// (#239); this answers "may a query say so at all" (#267). Both are needed,
-/// and neither implies the other.
+/// (#239); [`Self::field_is_queryable`] answers "may a query say so at all"
+/// (#267). Both are needed, and neither implies the other.
 ///
-/// Memoized so a long-lived process (the TUI resolves on every keypress) pays
-/// for each pair once rather than per bookmark. Keyed by the grammar's
-/// [`Language::abi_version`] and node-kind count alongside the `(kind, field)`
-/// pair — two grammars in one process would otherwise share answers, and a
-/// wrong `false` silently drops a name rather than failing loudly.
+/// The cache lives **with the borrowed grammar** rather than in a `static`. A
+/// process-global cache has to name the grammar in its key, and nothing on
+/// [`Language`] identifies one: ABI version and node-kind count are shared by
+/// unrelated builds, and the pointer inside `Language` is refcounted, so a
+/// reloaded WASM grammar can land on a freed address. Codemark loads grammars
+/// dynamically and the TUI reloads them in place, so both failure modes are
+/// reachable — and a stale `false` *silently drops a name* instead of failing
+/// loudly. Borrowing sidesteps identity entirely: the cache cannot outlive the
+/// grammar it describes, so there is nothing to go stale.
 ///
-/// Measured at 4.14s for 20 CLI `add`s either way, so the uncached cost is
-/// already in the noise for one-shot runs; the cache is for the resident case.
-fn field_is_queryable(language: &Language, kind: &str, field: &str) -> bool {
-    type Cache = HashMap<(usize, usize, String, String), bool>;
-    static CACHE: LazyLock<Mutex<Cache>> = LazyLock::new(|| Mutex::new(HashMap::new()));
+/// Scoping it per generation does mean re-probing each `generate_query` call.
+/// That is the cost the measurements already cover — 20 CLI `add`s take 4.14s
+/// with and without the probe — while within a call the repeated hits (one per
+/// path entry, five extraction sites) still collapse to one compile each.
+struct FieldProbe<'a> {
+    language: &'a Language,
+    /// `(kind, field)` → whether a query may name that field on that kind.
+    cache: RefCell<HashMap<(String, String), bool>>,
+}
 
-    let key =
-        (language.abi_version(), language.node_kind_count(), kind.to_string(), field.to_string());
-    if let Ok(cache) = CACHE.lock()
-        && let Some(&known) = cache.get(&key)
-    {
-        return known;
+impl<'a> FieldProbe<'a> {
+    fn new(language: &'a Language) -> Self {
+        Self { language, cache: RefCell::new(HashMap::new()) }
     }
 
-    let valid = tree_sitter::Query::new(language, &format!("({kind} {field}: (_))")).is_ok();
-    if let Ok(mut cache) = CACHE.lock() {
-        cache.insert(key, valid);
+    /// Whether `(kind field: (_))` compiles against this grammar.
+    fn field_is_queryable(&self, kind: &str, field: &str) -> bool {
+        let key = (kind.to_string(), field.to_string());
+        if let Some(&known) = self.cache.borrow().get(&key) {
+            return known;
+        }
+
+        let valid =
+            tree_sitter::Query::new(self.language, &format!("({kind} {field}: (_))")).is_ok();
+        self.cache.borrow_mut().insert(key, valid);
+        valid
     }
-    valid
 }
 
 /// The child under `field` **only if** `node` itself declares that field.
@@ -878,7 +893,7 @@ fn recover_nested_name<'t>(
     node: Node<'t>,
     source: &[u8],
     descendant_on_path: Option<Node<'t>>,
-    language: Option<&Language>,
+    probe: Option<&FieldProbe<'_>>,
 ) -> Option<NameInfo> {
     let mut cursor = node.walk();
     for child in node.named_children(&mut cursor) {
@@ -900,7 +915,7 @@ fn recover_nested_name<'t>(
         }) {
             continue;
         }
-        let Some(named) = name_child_by_own_field(child, "name", language) else { continue };
+        let Some(named) = name_child_by_own_field(child, "name", probe) else { continue };
         if !named.kind().contains("identifier") {
             continue;
         }
@@ -933,7 +948,7 @@ fn extract_name_info_direct_toward<'t>(
     node: Node<'t>,
     source: &[u8],
     descendant_on_path: Option<Node<'t>>,
-    language: Option<&Language>,
+    probe: Option<&FieldProbe<'_>>,
 ) -> Option<NameInfo> {
     if std::env::var("CODEMARK_DEBUG_QUERY").is_ok() {
         eprintln!(
@@ -957,7 +972,7 @@ fn extract_name_info_direct_toward<'t>(
     // Try the "name" field first. `child_by_own_field` rather than
     // `child_by_field_name`: a name reachable only through a hidden node cannot
     // be written as `name:` against *this* kind.
-    if let Some(name_node) = name_child_by_own_field(node, "name", language) {
+    if let Some(name_node) = name_child_by_own_field(node, "name", probe) {
         if std::env::var("CODEMARK_DEBUG_QUERY").is_ok() {
             eprintln!("DEBUG:   found name field node={}", name_node.kind());
         }
@@ -985,7 +1000,7 @@ fn extract_name_info_direct_toward<'t>(
 
     // For Rust impl_item: use "type" field as the name
     if node.kind() == "impl_item"
-        && let Some(type_node) = name_child_by_own_field(node, "type", language)
+        && let Some(type_node) = name_child_by_own_field(node, "type", probe)
     {
         return Some(NameInfo {
             field: Some("type".to_string()),
@@ -1023,7 +1038,7 @@ fn extract_name_info_direct_toward<'t>(
             // valid — only the wrapper may not claim it. Dropping it would leave
             // a positional `(identifier)` free to bind the declarator's `value`
             // instead of its name.
-            let mut inner_types = match locate_name_node(inner, &info, language) {
+            let mut inner_types = match locate_name_node(inner, &info, probe) {
                 Some(n) => vec![NameHop { field: info.field.clone(), kind: n.kind().to_string() }],
                 None => {
                     vec![NameHop { field: info.field.clone(), kind: info.direct_type.clone() }]
@@ -1042,7 +1057,7 @@ fn extract_name_info_direct_toward<'t>(
 
     // For Rust match_arm: use pattern text
     if node.kind() == "match_arm"
-        && let Some(pattern) = name_child_by_own_field(node, "pattern", language)
+        && let Some(pattern) = name_child_by_own_field(node, "pattern", probe)
     {
         return Some(NameInfo {
             field: Some("pattern".to_string()),
@@ -1084,7 +1099,7 @@ fn extract_name_info_direct_toward<'t>(
     // Deliberately after the kind-specific branches above. Those encode a
     // chosen name for a kind (a `match_arm`'s pattern, not its value), and a
     // generic structural guess must not pre-empt a deliberate one.
-    let recovered = recover_nested_name(node, source, descendant_on_path, language);
+    let recovered = recover_nested_name(node, source, descendant_on_path, probe);
     if let Some(ref info) = recovered
         && std::env::var("CODEMARK_DEBUG_QUERY").is_ok()
     {

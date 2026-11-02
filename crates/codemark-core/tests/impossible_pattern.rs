@@ -589,19 +589,62 @@ fn an_array_type_is_bookmarkable() {
 /// A check this blunt could silently strip every name. These three compile, so
 /// they have to survive — otherwise #267 would trade uncompilable queries for
 /// unanchored ones, which resolve to the wrong node instead of failing loudly.
+///
+/// The assertion is per *enclosing kind*, not a bare `query.contains("name:")`.
+/// Swift's case nests the function in a class, and `class_declaration` emits a
+/// `name:` of its own:
+///
+/// ```scheme
+/// (class_declaration
+///   name: (type_identifier) @name0           ; <-- would satisfy "name:"
+///   (#eq? @name0 "C")
+///   (class_body
+///     (function_declaration
+///       name: (simple_identifier) @fn_name   ; <-- the one under test
+///       (#eq? @fn_name "handler")) @target))
+/// ```
+///
+/// so the loose check passes even if the function's name is dropped entirely.
+/// Pinning the field to the kind that must carry it, *and* requiring the
+/// `handler` text predicate, closes that gap: together they prove the query
+/// still distinguishes this function from a renamed one.
 #[test]
 fn valid_fields_still_reach_the_query() {
+    // (language, source, target, kind that must carry `name:`)
     let cases: &[(Language, &str, &str, &str)] = &[
-        (Language::Rust, "fn handler() {}\n", "handler", "name:"),
-        (Language::Python, "def handler():\n    pass\n", "handler", "name:"),
-        (Language::Swift, "class C {\n    func handler() {}\n}\n", "handler", "name:"),
+        (Language::Rust, "fn handler() {}\n", "handler", "function_item"),
+        (Language::Python, "def handler():\n    pass\n", "handler", "function_definition"),
+        (
+            Language::Swift,
+            "class C {\n    func handler() {}\n}\n",
+            "handler",
+            "function_declaration",
+        ),
     ];
-    for (lang, source, needle, expected) in cases {
+    for (lang, source, needle, kind) in cases {
         let query = generate_and_compile(lang, source, range_of(source, needle))
             .unwrap_or_else(|e| panic!("{lang:?}: {e}"));
+
+        // The `name:` field must sit directly under the target kind's pattern,
+        // not merely somewhere in the query.
+        let after_kind = query
+            .split_once(&format!("({kind}"))
+            .unwrap_or_else(|| panic!("{lang:?}: no `{kind}` pattern:\n{query}"))
+            .1;
+        let named_child = after_kind
+            .split_once(')')
+            .map(|(head, _)| head)
+            .unwrap_or_else(|| panic!("{lang:?}: unterminated `{kind}` pattern:\n{query}"));
         assert!(
-            query.contains(expected),
-            "{lang:?}: a valid `name` field should still be emitted:\n{query}"
+            named_child.contains("name:"),
+            "{lang:?}: `{kind}` must still be anchored by `name:`:\n{query}"
+        );
+
+        // And the name must actually be compared against `handler`, so a
+        // renamed function would no longer match.
+        assert!(
+            query.contains(&format!("\"{needle}\"")),
+            "{lang:?}: the query must still pin the name to `{needle}`:\n{query}"
         );
     }
 }
