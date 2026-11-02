@@ -5,6 +5,17 @@
 //! directory, parses manifests, and builds the extension/name → `Language`
 //! lookup tables used by [`Language::from_extension`] and
 //! [`Language::from_str`].
+//!
+//! Everything here reports through `tracing` on the `codemark::registry`
+//! target, never `println!`/`eprintln!`. Discovery is not a startup-only
+//! concern: the TUI calls [`LanguageRegistry::refresh`] on every
+//! `FocusGained`, so writing to the terminal would scribble over the
+//! alternate screen each time the user tabs back. Run with
+//! `RUST_LOG=codemark::registry=debug` to see these messages.
+//!
+//! Surfacing the user-facing ones in the TUI itself (a toast or status-bar
+//! notice) is tracked in
+//! <https://github.com/DanielCardonaRojas/codemark/issues/272>.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -97,9 +108,10 @@ impl LanguageRegistry {
                 // grammar isn't recognized. Dirs without a .wasm aren't grammars,
                 // so they're skipped quietly as before.
                 if wasm_path.exists() {
-                    eprintln!(
-                        "codemark: ignoring grammar at {} — grammar.wasm is present but manifest.json is missing or unreadable",
-                        entry.path().display()
+                    tracing::warn!(
+                        target: "codemark::registry",
+                        path = %entry.path().display(),
+                        "ignoring grammar: grammar.wasm is present but manifest.json is missing or unreadable"
                     );
                 }
                 continue;
@@ -108,9 +120,10 @@ impl LanguageRegistry {
             match serde_json::from_str::<Manifest>(&manifest_text) {
                 Ok(manifest) => {
                     if !wasm_path.exists() {
-                        eprintln!(
-                            "codemark: skipping dynamic grammar '{}' — grammar.wasm not found",
-                            manifest.name
+                        tracing::warn!(
+                            target: "codemark::registry",
+                            name = %manifest.name,
+                            "skipping dynamic grammar: grammar.wasm not found"
                         );
                         continue;
                     }
@@ -134,10 +147,11 @@ impl LanguageRegistry {
                     // dedup or missing a `--lang lua` lookup.
                     let name_key = manifest.name.to_lowercase();
                     if let Some(existing) = registry.by_name.get(&name_key) {
-                        eprintln!(
-                            "codemark: language name '{}' already registered by grammar '{}' — ignoring duplicate",
-                            manifest.name,
-                            existing.name()
+                        tracing::warn!(
+                            target: "codemark::registry",
+                            name = %manifest.name,
+                            existing = %existing.name(),
+                            "language name already registered; ignoring duplicate"
                         );
                         continue;
                     }
@@ -150,9 +164,10 @@ impl LanguageRegistry {
                     // how a built-in language parses is a poor thing to
                     // discover later.
                     if is_static_language_name(&manifest.name) {
-                        eprintln!(
-                            "codemark: dynamic grammar '{}' overrides the built-in language of the same name",
-                            manifest.name
+                        tracing::info!(
+                            target: "codemark::registry",
+                            name = %manifest.name,
+                            "dynamic grammar overrides the built-in language of the same name"
                         );
                     }
 
@@ -162,10 +177,12 @@ impl LanguageRegistry {
                         // are sorted, so this is deterministic) and warn rather
                         // than silently overwriting with a nondeterministic winner.
                         if let Some(existing) = registry.by_extension.get(&key) {
-                            eprintln!(
-                                "codemark: extension '.{key}' already claimed by grammar '{}' — ignoring '{}'",
-                                existing.name(),
-                                manifest.name
+                            tracing::warn!(
+                                target: "codemark::registry",
+                                extension = %key,
+                                existing = %existing.name(),
+                                ignored = %manifest.name,
+                                "extension already claimed by another grammar"
                             );
                             continue;
                         }
@@ -176,9 +193,11 @@ impl LanguageRegistry {
                         // after the conflict checks, so a mapping that is
                         // ignored isn't announced as taking effect.
                         if is_static_extension(&key) {
-                            eprintln!(
-                                "codemark: grammar '{}' now handles '.{key}' instead of the built-in",
-                                manifest.name
+                            tracing::info!(
+                                target: "codemark::registry",
+                                name = %manifest.name,
+                                extension = %key,
+                                "grammar now handles this extension instead of the built-in"
                             );
                         }
                         registry.by_extension.insert(key, lang.clone());
@@ -192,9 +211,11 @@ impl LanguageRegistry {
                     );
                 }
                 Err(e) => {
-                    eprintln!(
-                        "codemark: skipping invalid manifest at {}: {e}",
-                        manifest_path.display()
+                    tracing::warn!(
+                        target: "codemark::registry",
+                        path = %manifest_path.display(),
+                        error = %e,
+                        "skipping invalid manifest"
                     );
                 }
             }
@@ -215,9 +236,10 @@ impl LanguageRegistry {
             return;
         };
         let Some(mut fresh) = Self::discover_in(&dir) else {
-            eprintln!(
-                "codemark: could not re-scan grammar cache {} — keeping current registry",
-                dir.display()
+            tracing::warn!(
+                target: "codemark::registry",
+                path = %dir.display(),
+                "could not re-scan grammar cache; keeping current registry"
             );
             return;
         };
@@ -253,9 +275,10 @@ impl LanguageRegistry {
             if !dir_present {
                 continue;
             }
-            eprintln!(
-                "codemark: keeping grammar '{}' across refresh — its manifest was momentarily unreadable",
-                dl.name
+            tracing::warn!(
+                target: "codemark::registry",
+                name = %dl.name,
+                "keeping grammar across refresh: its manifest was momentarily unreadable"
             );
             self.by_name.insert(name_key.clone(), lang.clone());
             for ext in &dl.extensions {
@@ -359,7 +382,11 @@ fn recover_interrupted_installs(grammar_dir: &std::path::Path, lock_timeout: std
         } else {
             // Swap was interrupted — restore the previous install.
             if std::fs::rename(entry.path(), &target).is_ok() {
-                eprintln!("codemark: recovered grammar '{name}' from an interrupted install");
+                tracing::info!(
+                    target: "codemark::registry",
+                    name = %name,
+                    "recovered grammar from an interrupted install"
+                );
             }
         }
     }
@@ -785,5 +812,36 @@ mod tests {
         assert!(reg.by_name.contains_key("rusty"));
         assert_eq!(reg.by_extension.get("rs").map(|l| l.name()), Some("rusty"));
         assert!(reg.by_extension.contains_key("rusty"));
+    }
+}
+
+#[cfg(test)]
+mod notice_tests {
+    /// The override notices must be emitted as `tracing` events, never written
+    /// to the terminal: `refresh()` runs on every TUI `FocusGained`, so stray
+    /// output lands on the alternate screen mid-render.
+    ///
+    /// Scans this module's own source, so a future `eprintln!` added anywhere in
+    /// grammar discovery fails here rather than in someone's terminal. The
+    /// macro names are assembled at runtime so this test does not match itself.
+    #[test]
+    fn discovery_writes_nothing_to_the_terminal() {
+        let banned = ["eprint", "print"].map(|stem| format!("{stem}ln!"));
+        let offenders: Vec<_> = include_str!("registry.rs")
+            .lines()
+            .enumerate()
+            .filter(|(_, line)| {
+                let code = line.split("//").next().unwrap_or("").trim();
+                banned.iter().any(|m| code.contains(m.as_str()))
+            })
+            .map(|(i, line)| format!("  {}: {}", i + 1, line.trim()))
+            .collect();
+
+        assert!(
+            offenders.is_empty(),
+            "grammar discovery must report through `tracing` on codemark::registry, \
+             because the TUI re-scans on FocusGained:\n{}",
+            offenders.join("\n")
+        );
     }
 }
