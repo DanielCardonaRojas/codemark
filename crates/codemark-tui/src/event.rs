@@ -382,7 +382,15 @@ async fn event_loop_with_sender(tick_rate: Duration, tx: mpsc::Sender<Event>) {
         let poll_result = tokio::task::spawn_blocking(move || {
             // crossterm::event::poll and crossterm::event::read are blocking calls
             if crossterm::event::poll(timeout).unwrap_or(false) {
-                crossterm::event::read().ok()
+                match crossterm::event::read().ok() {
+                    // Windows reports Press and Release for every key; act on Press only.
+                    Some(crossterm::event::Event::Key(key))
+                        if key.kind != crossterm::event::KeyEventKind::Press =>
+                    {
+                        None
+                    }
+                    other => other,
+                }
             } else {
                 None
             }
