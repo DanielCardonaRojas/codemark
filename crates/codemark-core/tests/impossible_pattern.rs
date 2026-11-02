@@ -465,11 +465,24 @@ fn an_anonymous_keyword_is_not_used_as_a_name() {
 /// `init` is identical in every initializer, so it cannot distinguish two of
 /// them. Dropping the name lets the enclosing structure do the work — here the
 /// parameter — which is both correct and more selective.
+///
+/// Two overloads with **identical bodies** are what make that claim testable: a
+/// single initializer matches uniquely no matter what the query constrains, so
+/// it would pass with parameter recovery removed. With two, the parameter is the
+/// only thing telling them apart, and the match count has to prove it.
 #[test]
 fn an_initializer_anchors_on_structure_rather_than_the_keyword() {
-    let source = "class C {\n    init(secret: String) {\n        self.secret = secret\n    }\n}\n";
-    let query = generate_and_compile(&Language::Swift, source, range_of(source, "self.secret"))
-        .expect("query");
+    let source = "class C {\n    init(first: String) {\n        self.stored = 1\n    }\n\n    init(second: String) {\n        self.stored = 1\n    }\n}\n";
+    let mut parser = Parser::new(Language::Swift).expect("parser");
+    let tree = parser.parse(source.as_bytes()).expect("parse");
+    let ts_lang = parser.language().clone();
+
+    // The second body, so a query anchored on nothing but structure would match
+    // the first one too rather than failing to match at all.
+    let first = source.find("self.stored = 1").expect("first body");
+    let second = source[first + 1..].find("self.stored = 1").expect("second body") + first + 1;
+    let query = compile_for(&tree, source, (second, second + "self.stored = 1".len()), &ts_lang)
+        .expect("bookmarking inside a Swift initializer must succeed");
 
     assert!(
         query.contains("(init_declaration"),
@@ -478,6 +491,18 @@ fn an_initializer_anchors_on_structure_rather_than_the_keyword() {
     assert!(
         !query.contains("\"init\""),
         "the keyword carries no identifying information:\n{query}"
+    );
+
+    // The point of dropping the name: the parameter is doing the work. Both
+    // initializers are structurally identical, so anything less matches twice.
+    assert!(
+        query.contains("\"second\""),
+        "the parameter name is the only discriminator available:\n{query}"
+    );
+    assert_eq!(
+        match_count(&query, &tree, source, &ts_lang),
+        1,
+        "the query must single out the selected initializer, not match both:\n{query}"
     );
 }
 
