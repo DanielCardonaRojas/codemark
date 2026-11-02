@@ -663,7 +663,7 @@ fn name_follows_child(node: Node, name_info: Option<&NameInfo>, child: Option<No
 /// name.
 fn locate_name_node<'t>(node: Node<'t>, info: &NameInfo) -> Option<Node<'t>> {
     if let Some(ref field) = info.field {
-        return child_by_own_field(node, field);
+        return name_child_by_own_field(node, field);
     }
     // Fieldless: either a recovered intermediate (`direct_type` is the
     // intermediate kind) or a positional descendant match.
@@ -710,6 +710,32 @@ fn extract_nested_name(node: Node, source: &[u8]) -> Option<NameInfo> {
         }
     }
     None
+}
+
+/// [`child_by_own_field`], restricted to a child that can be *named* in a query.
+///
+/// A field can hold an anonymous token, and an anonymous kind is not a node
+/// type: it has to be written as a quoted literal, so `(init)` is rejected
+/// where `"init"` compiles. Swift's initializer is the case in the tree:
+///
+/// ```text
+/// init_declaration [ name=init  -=(  -=parameter  -=)  body=function_body ]
+/// ```
+///
+/// `name` really is declared here, and the child really is the `init` keyword —
+/// `is_named() == false`. Emitting `name: (init)` made *every* node inside a
+/// Swift initializer unbookmarkable, 27 targets in the committed fixture alone.
+///
+/// Quoting it instead would compile but assert nothing: a keyword is the same
+/// in every initializer, so it cannot tell two of them apart. Treating the
+/// kind as nameless is both correct and more useful — `init_declaration` then
+/// anchors on its position and parameters, exactly as it did before anyone
+/// looked for a name.
+///
+/// Navigation keeps using [`child_by_own_field`]: descending into an anonymous
+/// child to read its text is fine, since no node type is written out.
+fn name_child_by_own_field<'t>(node: Node<'t>, field: &str) -> Option<Node<'t>> {
+    child_by_own_field(node, field).filter(Node::is_named)
 }
 
 /// The child under `field` **only if** `node` itself declares that field.
@@ -791,7 +817,7 @@ fn recover_nested_name<'t>(
         }) {
             continue;
         }
-        let Some(named) = child_by_own_field(child, "name") else { continue };
+        let Some(named) = name_child_by_own_field(child, "name") else { continue };
         if !named.kind().contains("identifier") {
             continue;
         }
@@ -847,7 +873,7 @@ fn extract_name_info_direct_toward<'t>(
     // Try the "name" field first. `child_by_own_field` rather than
     // `child_by_field_name`: a name reachable only through a hidden node cannot
     // be written as `name:` against *this* kind.
-    if let Some(name_node) = child_by_own_field(node, "name") {
+    if let Some(name_node) = name_child_by_own_field(node, "name") {
         if std::env::var("CODEMARK_DEBUG_QUERY").is_ok() {
             eprintln!("DEBUG:   found name field node={}", name_node.kind());
         }
@@ -875,7 +901,7 @@ fn extract_name_info_direct_toward<'t>(
 
     // For Rust impl_item: use "type" field as the name
     if node.kind() == "impl_item"
-        && let Some(type_node) = child_by_own_field(node, "type")
+        && let Some(type_node) = name_child_by_own_field(node, "type")
     {
         return Some(NameInfo {
             field: Some("type".to_string()),
@@ -932,7 +958,7 @@ fn extract_name_info_direct_toward<'t>(
 
     // For Rust match_arm: use pattern text
     if node.kind() == "match_arm"
-        && let Some(pattern) = child_by_own_field(node, "pattern")
+        && let Some(pattern) = name_child_by_own_field(node, "pattern")
     {
         return Some(NameInfo {
             field: Some("pattern".to_string()),

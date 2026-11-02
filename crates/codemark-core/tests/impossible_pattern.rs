@@ -13,7 +13,8 @@
 //! |---|---|---|
 //! | A field named on a kind that does not declare it | [#239] | fixed |
 //! | Sibling patterns duplicated, or out of grammar order | [#263] | fixed |
-//! | `init` emitted as a Swift node kind | [#265] | open |
+//! | An anonymous keyword used as a name | [#265] | fixed |
+//! | A declared field the *query compiler* still rejects | [#267] | open |
 //!
 //! The sweeps at the bottom are the part that generalizes: they bookmark
 //! *every* named node of a source file and collect the node kinds whose query
@@ -27,6 +28,7 @@
 //! [#239]: https://github.com/DanielCardonaRojas/codemark/issues/239
 //! [#263]: https://github.com/DanielCardonaRojas/codemark/issues/263
 //! [#265]: https://github.com/DanielCardonaRojas/codemark/issues/265
+//! [#267]: https://github.com/DanielCardonaRojas/codemark/issues/267
 
 #![cfg(feature = "wasm")]
 
@@ -415,6 +417,113 @@ fn child_by_field_is_absent(node: tree_sitter::Node, field: &str) -> bool {
         .all(|(i, _)| u32::try_from(i).is_ok_and(|i| node.field_name_for_child(i) != Some(field)))
 }
 
+// --- #265: anonymous tokens are not node types -----------------------------
+
+/// A field holding an anonymous keyword is not a usable name.
+///
+/// Swift's grammar really does give the initializer a `name` field, and the
+/// child really is the `init` keyword:
+///
+/// ```text
+/// init_declaration [ name=init  -=(  -=parameter  -=)  body=function_body ]
+/// ```
+///
+/// An anonymous kind is not a node type — it has to be written `"init"`, not
+/// `(init)` — so the generated pattern was rejected and *everything* inside a
+/// Swift initializer became unbookmarkable.
+#[test]
+fn an_anonymous_keyword_is_not_used_as_a_name() {
+    let source = "class C {\n    var x: Int\n    init(x: Int) {\n        self.x = x\n    }\n}\n";
+    let mut parser = Parser::new(Language::Swift).expect("parser");
+    let tree = parser.parse(source.as_bytes()).expect("parse");
+
+    // Preconditions: the field exists, and its child is anonymous.
+    let init = tree
+        .root_node()
+        .descendant_for_byte_range(
+            source.find("init(").expect("init"),
+            source.find("init(").expect("init") + 4,
+        )
+        .and_then(|n| {
+            std::iter::successors(Some(n), |n| n.parent()).find(|n| n.kind() == "init_declaration")
+        })
+        .expect("init_declaration");
+    let name_child = init.child_by_field_name("name").expect("name field");
+    assert_eq!(name_child.kind(), "init");
+    assert!(!name_child.is_named(), "precondition: `init` is an anonymous keyword");
+
+    let query = generate_and_compile(&Language::Swift, source, range_of(source, "self.x = x"))
+        .expect("bookmarking inside a Swift initializer must succeed");
+    assert!(
+        !query.contains("(init)"),
+        "an anonymous keyword cannot be written as a node type:\n{query}"
+    );
+}
+
+/// Quoting the keyword would compile but assert nothing.
+///
+/// `init` is identical in every initializer, so it cannot distinguish two of
+/// them. Dropping the name lets the enclosing structure do the work — here the
+/// parameter — which is both correct and more selective.
+///
+/// Two overloads with **identical bodies** are what make that claim testable: a
+/// single initializer matches uniquely no matter what the query constrains, so
+/// it would pass with parameter recovery removed. With two, the parameter is the
+/// only thing telling them apart, and the match count has to prove it.
+#[test]
+fn an_initializer_anchors_on_structure_rather_than_the_keyword() {
+    let source = "class C {\n    init(first: String) {\n        self.stored = 1\n    }\n\n    init(second: String) {\n        self.stored = 1\n    }\n}\n";
+    let mut parser = Parser::new(Language::Swift).expect("parser");
+    let tree = parser.parse(source.as_bytes()).expect("parse");
+    let ts_lang = parser.language().clone();
+
+    // The second body, so a query anchored on nothing but structure would match
+    // the first one too rather than failing to match at all.
+    let first = source.find("self.stored = 1").expect("first body");
+    let second = source[first + 1..].find("self.stored = 1").expect("second body") + first + 1;
+    let query = compile_for(&tree, source, (second, second + "self.stored = 1".len()), &ts_lang)
+        .expect("bookmarking inside a Swift initializer must succeed");
+
+    assert!(
+        query.contains("(init_declaration"),
+        "the initializer should still anchor the query:\n{query}"
+    );
+    assert!(
+        !query.contains("\"init\""),
+        "the keyword carries no identifying information:\n{query}"
+    );
+
+    // The point of dropping the name: the parameter is doing the work. Both
+    // initializers are structurally identical, so anything less matches twice.
+    assert!(
+        query.contains("\"second\""),
+        "the parameter name is the only discriminator available:\n{query}"
+    );
+    assert_eq!(
+        match_count(&query, &tree, source, &ts_lang),
+        1,
+        "the query must single out the selected initializer, not match both:\n{query}"
+    );
+}
+
+/// Navigation may still descend through an anonymous child.
+///
+/// The fix narrows *name* lookups only. Reading an anonymous node's text is
+/// fine, since no node type is written into the query — a Lua `if` still
+/// records its condition.
+#[test]
+fn navigation_still_reads_anonymous_children() {
+    let Some(lang) = lua_dynamic() else {
+        eprintln!("skipping: lua grammar fixture not found");
+        return;
+    };
+    let source = "if x > 10 then\n  print(x)\nend\n";
+    let query =
+        generate_and_compile(&lang, source, range_of(source, "if x > 10 then")).expect("query");
+
+    assert!(query.contains("condition:"), "the if condition should still be captured:\n{query}");
+}
+
 // --- The generalizing sweep ------------------------------------------------
 
 /// Bookmark every named node in a source file and count uncompilable queries.
@@ -425,11 +534,11 @@ fn child_by_field_is_absent(node: tree_sitter::Node, field: &str) -> bool {
 /// unbookmarkable".
 ///
 /// `expected` is a ratchet, not a blessing: the node kinds still failing for a
-/// cause not yet fixed — today only Swift's `init` ([#265]) and a Rust
+/// cause not yet fixed — today Swift's type annotations ([#267]) and a Rust
 /// "Invalid capture name" case. Carrying them keeps the sweep useful now
 /// instead of being deleted for being red.
 ///
-/// [#265]: https://github.com/DanielCardonaRojas/codemark/issues/265
+/// [#267]: https://github.com/DanielCardonaRojas/codemark/issues/267
 ///
 /// Compared as a **set of kinds**, not a count. A count lets a newly broken
 /// target hide behind a newly fixed one; the set makes any change in *which*
@@ -600,31 +709,14 @@ fn sweep_full_fixtures() {
         // where a predicate references a capture the query never emits
         // ("Invalid capture name name0") — a different bug from #263.
         (Language::Rust, "rust/auth_service.rs", &["identifier"]),
-        // Swift emits `init` as a node kind, which its grammar does not define
-        // ("Invalid node type init"), plus a handful of genuine impossible
-        // patterns. Also distinct from #263; see #265.
+        // Swift's `type_annotation` and `dictionary_type` declare a `name`
+        // field that tree-sitter nonetheless rejects in a query pattern, so
+        // these cannot be caught by walking direct children the way #239's
+        // check does. Pre-existing and distinct from #265; see #267.
         (
             Language::Swift,
             "swift/auth_service.swift",
-            &[
-                "array_type",
-                "assignment",
-                "dictionary_type",
-                "directly_assignable_expression",
-                "function_body",
-                "init_declaration",
-                "line_str_text",
-                "line_string_literal",
-                "navigation_expression",
-                "navigation_suffix",
-                "parameter",
-                "self_expression",
-                "simple_identifier",
-                "statements",
-                "type_annotation",
-                "type_identifier",
-                "user_type",
-            ],
+            &["array_type", "dictionary_type", "type_annotation"],
         ),
         (Language::Python, "python/auth_service.py", &[]),
         (Language::Dart, "dart/auth_service.dart", &[]),
