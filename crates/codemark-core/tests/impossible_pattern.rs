@@ -7,14 +7,15 @@
 //!
 //! This is the failure mode that is easiest to ship by accident, because it
 //! depends on a grammar's hidden-node layout rather than on anything visible in
-//! a profile. Three causes have been found so far:
+//! a profile. Five distinct causes have been found so far:
 //!
 //! | Cause | Issue | State |
 //! |---|---|---|
 //! | A field named on a kind that does not declare it | [#239] | fixed |
 //! | Sibling patterns duplicated, or out of grammar order | [#263] | fixed |
 //! | An anonymous keyword used as a name | [#265] | fixed |
-//! | A declared field the *query compiler* still rejects | [#267] | open |
+//! | A declared field the *query compiler* still rejects | [#267] | fixed |
+//! | Self-capture reusing a stale counter | [#270] | open |
 //!
 //! The sweeps at the bottom are the part that generalizes: they bookmark
 //! *every* named node of a source file and collect the node kinds whose query
@@ -29,6 +30,7 @@
 //! [#263]: https://github.com/DanielCardonaRojas/codemark/issues/263
 //! [#265]: https://github.com/DanielCardonaRojas/codemark/issues/265
 //! [#267]: https://github.com/DanielCardonaRojas/codemark/issues/267
+//! [#270]: https://github.com/DanielCardonaRojas/codemark/issues/270
 
 #![cfg(feature = "wasm")]
 
@@ -524,6 +526,129 @@ fn navigation_still_reads_anonymous_children() {
     assert!(query.contains("condition:"), "the if condition should still be captured:\n{query}");
 }
 
+// --- #267: a field on the tree is not a field in a query -------------------
+
+/// Being present on a parsed node does not make a field writable in a query.
+///
+/// Swift reports a `name` field on `type_annotation`:
+///
+/// ```text
+/// type_annotation [ -=:  name=dictionary_type ]
+/// ```
+///
+/// yet `(type_annotation name: (_))` is an "Impossible pattern". Nothing on the
+/// node explains it — `grammar_name` equals `kind`, so this is not an alias or
+/// supertype — the field is simply absent from the query compiler's table for
+/// that kind. The #239 child-walk therefore cannot catch it; only asking the
+/// compiler can.
+#[test]
+fn a_field_the_query_compiler_rejects_is_not_emitted() {
+    let source = "class C {\n    private var cache: [String: Claims] = [:]\n}\n";
+    let mut parser = Parser::new(Language::Swift).expect("parser");
+    let ts_lang = parser.language().clone();
+
+    // Preconditions: the tree says `name`, the compiler says no.
+    let tree = parser.parse(source.as_bytes()).expect("parse");
+    let annotation = std::iter::successors(
+        tree.root_node().descendant_for_byte_range(
+            source.find("[String:").expect("dict"),
+            source.find("[String:").expect("dict") + 1,
+        ),
+        |n| n.parent(),
+    )
+    .find(|n| n.kind() == "type_annotation")
+    .expect("type_annotation");
+    assert!(
+        annotation.child_by_field_name("name").is_some(),
+        "precondition: the parsed node reports a `name` field"
+    );
+    assert!(
+        tree_sitter::Query::new(&ts_lang, "(type_annotation name: (_))").is_err(),
+        "precondition: the query compiler rejects that same field"
+    );
+
+    let query =
+        generate_and_compile(&Language::Swift, source, range_of(source, "[String: Claims]"))
+            .expect("bookmarking a Swift dictionary type must succeed");
+    assert!(
+        !constrains_field_on(&query, "type_annotation", "name"),
+        "the rejected field must not be emitted:\n{query}"
+    );
+}
+
+/// The same shape for `[Int]`, so a fix aimed only at dictionaries is visible.
+#[test]
+fn an_array_type_is_bookmarkable() {
+    let source = "class C {\n    private var list: [Int] = []\n}\n";
+    generate_and_compile(&Language::Swift, source, range_of(source, "[Int]"))
+        .expect("bookmarking a Swift array type must succeed");
+}
+
+/// The probe must not reject fields that *are* valid.
+///
+/// A check this blunt could silently strip every name. These three compile, so
+/// they have to survive — otherwise #267 would trade uncompilable queries for
+/// unanchored ones, which resolve to the wrong node instead of failing loudly.
+///
+/// The assertion is per *enclosing kind*, not a bare `query.contains("name:")`.
+/// Swift's case nests the function in a class, and `class_declaration` emits a
+/// `name:` of its own:
+///
+/// ```scheme
+/// (class_declaration
+///   name: (type_identifier) @name0           ; <-- would satisfy "name:"
+///   (#eq? @name0 "C")
+///   (class_body
+///     (function_declaration
+///       name: (simple_identifier) @fn_name   ; <-- the one under test
+///       (#eq? @fn_name "handler")) @target))
+/// ```
+///
+/// so the loose check passes even if the function's name is dropped entirely.
+/// Pinning the field to the kind that must carry it, *and* requiring the
+/// `handler` text predicate, closes that gap: together they prove the query
+/// still distinguishes this function from a renamed one.
+#[test]
+fn valid_fields_still_reach_the_query() {
+    // (language, source, target, kind that must carry `name:`)
+    let cases: &[(Language, &str, &str, &str)] = &[
+        (Language::Rust, "fn handler() {}\n", "handler", "function_item"),
+        (Language::Python, "def handler():\n    pass\n", "handler", "function_definition"),
+        (
+            Language::Swift,
+            "class C {\n    func handler() {}\n}\n",
+            "handler",
+            "function_declaration",
+        ),
+    ];
+    for (lang, source, needle, kind) in cases {
+        let query = generate_and_compile(lang, source, range_of(source, needle))
+            .unwrap_or_else(|e| panic!("{lang:?}: {e}"));
+
+        // The `name:` field must sit directly under the target kind's pattern,
+        // not merely somewhere in the query.
+        let after_kind = query
+            .split_once(&format!("({kind}"))
+            .unwrap_or_else(|| panic!("{lang:?}: no `{kind}` pattern:\n{query}"))
+            .1;
+        let named_child = after_kind
+            .split_once(')')
+            .map(|(head, _)| head)
+            .unwrap_or_else(|| panic!("{lang:?}: unterminated `{kind}` pattern:\n{query}"));
+        assert!(
+            named_child.contains("name:"),
+            "{lang:?}: `{kind}` must still be anchored by `name:`:\n{query}"
+        );
+
+        // And the name must actually be compared against `handler`, so a
+        // renamed function would no longer match.
+        assert!(
+            query.contains(&format!("\"{needle}\"")),
+            "{lang:?}: the query must still pin the name to `{needle}`:\n{query}"
+        );
+    }
+}
+
 // --- The generalizing sweep ------------------------------------------------
 
 /// Bookmark every named node in a source file and count uncompilable queries.
@@ -534,11 +659,11 @@ fn navigation_still_reads_anonymous_children() {
 /// unbookmarkable".
 ///
 /// `expected` is a ratchet, not a blessing: the node kinds still failing for a
-/// cause not yet fixed — today Swift's type annotations ([#267]) and a Rust
-/// "Invalid capture name" case. Carrying them keeps the sweep useful now
-/// instead of being deleted for being red.
+/// cause not yet fixed — today only Rust's stale self-capture counter
+/// ([#270]). Carrying it keeps the sweep useful now instead of being deleted
+/// for being red.
 ///
-/// [#267]: https://github.com/DanielCardonaRojas/codemark/issues/267
+/// [#270]: https://github.com/DanielCardonaRojas/codemark/issues/270
 ///
 /// Compared as a **set of kinds**, not a count. A count lets a newly broken
 /// target hide behind a newly fixed one; the set makes any change in *which*
@@ -706,18 +831,10 @@ class Claims {
 fn sweep_full_fixtures() {
     let cases: &[(Language, &str, &[&str])] = &[
         // Both remaining Rust failures are `use std::collections::...` paths,
-        // where a predicate references a capture the query never emits
-        // ("Invalid capture name name0") — a different bug from #263.
+        // where self-capture reuses a stale counter so a predicate references a
+        // capture the query never emits ("Invalid capture name name0"); #270.
         (Language::Rust, "rust/auth_service.rs", &["identifier"]),
-        // Swift's `type_annotation` and `dictionary_type` declare a `name`
-        // field that tree-sitter nonetheless rejects in a query pattern, so
-        // these cannot be caught by walking direct children the way #239's
-        // check does. Pre-existing and distinct from #265; see #267.
-        (
-            Language::Swift,
-            "swift/auth_service.swift",
-            &["array_type", "dictionary_type", "type_annotation"],
-        ),
+        (Language::Swift, "swift/auth_service.swift", &[]),
         (Language::Python, "python/auth_service.py", &[]),
         (Language::Dart, "dart/auth_service.dart", &[]),
     ];
