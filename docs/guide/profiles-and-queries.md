@@ -147,7 +147,7 @@ container's *first source line*, not from a name:
 
 ```rust
 let line_text = source.lines().nth(start_pos.row).unwrap_or("").trim_end();
-breadcrumbs.push(Breadcrumb { line: start_pos.row + 1, text: line_text });
+breadcrumbs.push(Breadcrumb { line: start_pos.row + 1, text: line_text.to_string() });
 ```
 
 `extract_breadcrumbs` matches on the node **kind** alone and copies that line,
