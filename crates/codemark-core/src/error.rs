@@ -42,13 +42,20 @@ pub enum Error {
     /// otherwise: a bookmark whose grammar is missing is not broken, it is
     /// merely unreadable until the language is installed. Reporting it as a
     /// resolution failure makes a healthy collection look rotten.
+    // The two fallbacks are not interchangeable. `--from-registry` resolves the
+    // name against the index, so it fails outright for a language the registry
+    // does not carry — the very case the fallback exists for. Offer it only for
+    // a listed language (where it pairs a locally built `.wasm` with the
+    // curated profile), and `--name`/`--extensions` for everything else.
     #[error(
         "no grammar installed for '{language}'. Install one with \
          `codemark languages install {language}`, which downloads it from the \
-         registry. If no download is available, build the grammar and add it \
-         with `codemark languages add <grammar.wasm> --from-registry \
-         {language}`. See `codemark languages registry list` for what is \
-         available."
+         registry. If the registry lists it but has no download, build the \
+         grammar and pair it with the curated profile: `codemark languages add \
+         <grammar.wasm> --from-registry {language}`. If it is not listed at \
+         all, add it directly: `codemark languages add <grammar.wasm> --name \
+         {language} --extensions <ext,...>`. See `codemark languages registry \
+         list` for what is available."
     )]
     GrammarNotInstalled { language: String },
 
