@@ -7,18 +7,26 @@
 //!
 //! This is the failure mode that is easiest to ship by accident, because it
 //! depends on a grammar's hidden-node layout rather than on anything visible in
-//! a profile. See https://github.com/DanielCardonaRojas/codemark/issues/239
+//! a profile. Three causes have been found so far:
+//!
+//! | Cause | Issue | State |
+//! |---|---|---|
+//! | A field named on a kind that does not declare it | [#239] | fixed |
+//! | Sibling patterns duplicated, or out of grammar order | [#263] | fixed |
+//! | `init` emitted as a Swift node kind | [#265] | open |
 //!
 //! The sweeps at the bottom are the part that generalizes: they bookmark
 //! *every* named node of a source file and collect the node kinds whose query
 //! fails to compile. Adding a language means adding one `sweep(...)` line, and
 //! it inherits the whole check.
 //!
-//! Each sweep carries the set of kinds known to fail for
-//! <https://github.com/DanielCardonaRojas/codemark/issues/263>, a distinct
-//! pre-existing bug. The set is compared exactly, so a newly broken kind cannot
-//! hide behind a newly fixed one, and fixing #263 forces the list down rather
-//! than letting it rot upward.
+//! Each sweep carries the set of kinds still expected to fail, compared
+//! exactly, so a newly broken kind cannot hide behind a newly fixed one and
+//! fixing a bug forces the list down rather than letting it rot upward.
+//!
+//! [#239]: https://github.com/DanielCardonaRojas/codemark/issues/239
+//! [#263]: https://github.com/DanielCardonaRojas/codemark/issues/263
+//! [#265]: https://github.com/DanielCardonaRojas/codemark/issues/265
 
 #![cfg(feature = "wasm")]
 
@@ -114,8 +122,11 @@ fn assignment_inside_a_for_loop_is_bookmarkable() {
     let query = generate_and_compile(&lang, source, range_of(source, "total = total + item"))
         .expect("bookmarking inside a Lua for loop must succeed");
 
+    // The bug was a `name:` on `assignment_statement`, which declares none.
+    // Asserting "no `name:` anywhere" would overshoot: `variable_list` *does*
+    // declare one, and constraining it is correct. Pin the kind instead.
     assert!(
-        !query.contains("name:"),
+        !constrains_field_on(&query, "assignment_statement", "name"),
         "`assignment_statement` has no `name` field; emitting one is the #239 bug:\n{query}"
     );
 }
@@ -144,8 +155,11 @@ fn a_nested_name_is_recovered_rather_than_dropped() {
 
     let query = generate_and_compile(&lang, source, range_of(source, "total = 1")).expect("query");
 
+    // `variable_list` declares `name` on its identifier, so the recovered hop
+    // states it — strictly narrower than a positional match, which would also
+    // bind an identifier sitting under another field.
     assert!(
-        query.contains("(variable_list (identifier)"),
+        query.contains("(variable_list name: (identifier)"),
         "the name should be recovered through the fieldless wrapper:\n{query}"
     );
     assert!(
@@ -189,8 +203,11 @@ fn a_field_declared_elsewhere_in_the_grammar_is_not_assumed_valid_here() {
     // implementation that checks only the grammar's global field table.
     let query = generate_and_compile(&lang, source, range_of(source, "total = 1"))
         .expect("generator must not constrain a field the kind does not declare");
+    // Specifically on `assignment_statement`. The same field *is* legal one
+    // level down on `variable_list` — the distinction this whole test is about —
+    // so a blanket "no `name:`" check would forbid the correct query too.
     assert!(
-        !query.contains("name:"),
+        !constrains_field_on(&query, "assignment_statement", "name"),
         "generator wrote a `name:` field on a kind that has none:\n{query}"
     );
 }
@@ -220,6 +237,184 @@ fn dart_method_name_is_not_recovered_twice() {
     );
 }
 
+// --- #263: ordered siblings and duplicated children ------------------------
+
+/// Sibling patterns must follow the grammar's child order.
+///
+/// Dart puts the return type *before* the method name:
+///
+/// ```text
+/// function_signature [ return_type=type_identifier  name=identifier  parameters=... ]
+/// ```
+///
+/// so bookmarking the return type has to emit the target first. Emitting
+/// `name:` ahead of it is rejected outright, which made every return type in a
+/// Dart method unbookmarkable.
+#[test]
+fn a_name_after_the_target_is_emitted_after_it() {
+    let source = "class C {\n  bool check(String role) {\n    return true;\n  }\n}\n";
+    let query = generate_and_compile(&Language::Dart, source, range_of(source, "bool"))
+        .expect("bookmarking a Dart return type must succeed");
+
+    let target = query.find("@target").expect("target capture");
+    let name = query.find("name:").expect("name pattern");
+    assert!(
+        target < name,
+        "the grammar orders return_type before name, so the query must too:\n{query}"
+    );
+}
+
+/// An ancestor must not name the very child the path descends into.
+///
+/// Rust's `impl_item` names itself through its `type` field, so bookmarking the
+/// `Claims` in `impl Claims` asked for `type: (type_identifier)` *and* a
+/// positional `(type_identifier) @target` — the same single child twice. The
+/// path starts at the parent instead, which also yields the better anchor.
+#[test]
+fn an_impl_type_is_named_once() {
+    let source = "impl Claims {\n    pub fn new() -> Self {\n        Self\n    }\n}\n";
+    let query = generate_and_compile(&Language::Rust, source, range_of(source, "Claims"))
+        .expect("bookmarking an impl's type must succeed");
+
+    assert_eq!(
+        query.matches("(type_identifier)").count(),
+        1,
+        "impl_item has one type child, so it may be named once:\n{query}"
+    );
+    assert!(query.contains("type:"), "the name should stay a field match:\n{query}");
+}
+
+/// The deeper form of the same duplication, where the named child is an
+/// intermediate the path walks *through* rather than the target itself.
+///
+/// Lua's `function_declaration` names a `dot_index_expression`, and bookmarking
+/// `compute` in `function M.compute(...)` descends through that same node.
+#[test]
+fn a_named_intermediate_on_the_path_is_not_also_named() {
+    let Some(lang) = lua_dynamic() else {
+        eprintln!("skipping: lua grammar fixture not found");
+        return;
+    };
+    let source = "function M.compute(items)\n  return 1\nend\n";
+    let query = generate_and_compile(&lang, source, range_of(source, "compute"))
+        .expect("bookmarking a dotted Lua function name must succeed");
+
+    assert_eq!(
+        query.matches("(dot_index_expression").count(),
+        1,
+        "function_declaration has one dot_index_expression:\n{query}"
+    );
+}
+
+/// A wrapper kind may not borrow its inner declaration's field name.
+///
+/// `decorated_definition [ -=decorator  definition=function_definition ]` has no
+/// `name` field, but the name was taken from the inner definition *with its
+/// field intact*, producing `(decorated_definition name: (identifier))`. Same
+/// failure class as #239, reached only when the wrapper is itself the target.
+#[test]
+fn a_decorated_definition_does_not_claim_the_inner_name_field() {
+    let source = "@app.route('/x')\ndef handler(req):\n    return 1\n";
+    let mut parser = Parser::new(Language::Python).expect("parser");
+    let tree = parser.parse(source.as_bytes()).expect("parse");
+    let ts_lang = parser.language().clone();
+
+    let decorated = tree.root_node().named_child(0).expect("first child");
+    assert_eq!(decorated.kind(), "decorated_definition");
+    assert!(
+        child_by_field_is_absent(decorated, "name"),
+        "precondition: decorated_definition declares no `name` field of its own"
+    );
+
+    let range = decorated.byte_range();
+    let query = compile_for(&tree, source, (range.start, range.end), &ts_lang)
+        .expect("bookmarking a decorated definition must succeed");
+    assert!(
+        !query.contains("decorated_definition\n  name:"),
+        "the inner name field cannot be claimed by the wrapper:\n{query}"
+    );
+}
+
+/// A wrapper's nested name must reach the identifier, not stop at a declarator.
+///
+/// `export const Foo = 1` names itself through `lexical_declaration >
+/// variable_declarator > identifier`. Emitting only one level of nesting
+/// captured the declarator and compared `Foo = 1` against `Foo`, so the query
+/// **compiled and matched nothing** — invisible to every sweep here, which only
+/// checks compilation. Hence the match-count assertion.
+#[test]
+fn an_exported_const_query_matches_its_declaration() {
+    let source = "export const Foo = 1;\n";
+    let mut parser = Parser::new(Language::TypeScript).expect("parser");
+    let tree = parser.parse(source.as_bytes()).expect("parse");
+    let ts_lang = parser.language().clone();
+
+    let exported = tree.root_node().named_child(0).expect("first child");
+    assert_eq!(exported.kind(), "export_statement");
+
+    let range = exported.byte_range();
+    let query = compile_for(&tree, source, (range.start, range.end), &ts_lang)
+        .expect("bookmarking an exported const must succeed");
+
+    assert_eq!(
+        match_count(&query, &tree, source, &ts_lang),
+        1,
+        "the name capture must land on the identifier, not the declarator:\n{query}"
+    );
+
+    // Reaching the identifier is not enough: a *positional* `(identifier)` also
+    // binds the declarator's `value`, so the query would match any export whose
+    // initializer happens to be named `Foo`. The hop must re-state `name:`.
+    let collision = "export const Bar = Foo;\n";
+    let mut other = Parser::new(Language::TypeScript).expect("parser");
+    let collision_tree = other.parse(collision.as_bytes()).expect("parse");
+    assert_eq!(
+        match_count(&query, &collision_tree, collision, &ts_lang),
+        0,
+        "the name hop must constrain the `name` field, not match the initializer:\n{query}"
+    );
+}
+
+/// How many nodes `query` matches in `tree` — the check compilation cannot make.
+fn match_count(
+    query: &str,
+    tree: &tree_sitter::Tree,
+    source: &str,
+    ts_lang: &tree_sitter::Language,
+) -> usize {
+    use tree_sitter::StreamingIterator;
+
+    let compiled = tree_sitter::Query::new(ts_lang, query).expect("query must compile");
+    let mut cursor = tree_sitter::QueryCursor::new();
+    let mut matches = cursor.matches(&compiled, tree.root_node(), source.as_bytes());
+    let mut count = 0;
+    while matches.next().is_some() {
+        count += 1;
+    }
+    count
+}
+
+/// Whether `query` writes `field:` as a direct child of `kind`'s pattern.
+///
+/// Indentation varies with nesting depth, so match the structure rather than a
+/// fixed number of spaces: the first line after `(kind` that is a field or a
+/// nested pattern decides. A field *deeper* inside is not this kind's problem.
+fn constrains_field_on(query: &str, kind: &str, field: &str) -> bool {
+    query.split(&format!("({kind}\n")).skip(1).any(|rest| {
+        rest.lines()
+            .next()
+            .is_some_and(|first| first.trim_start().starts_with(&format!("{field}:")))
+    })
+}
+
+/// Whether no *direct* child of `node` sits under `field`.
+fn child_by_field_is_absent(node: tree_sitter::Node, field: &str) -> bool {
+    let mut cursor = node.walk();
+    node.children(&mut cursor)
+        .enumerate()
+        .all(|(i, _)| u32::try_from(i).is_ok_and(|i| node.field_name_for_child(i) != Some(field)))
+}
+
 // --- The generalizing sweep ------------------------------------------------
 
 /// Bookmark every named node in a source file and count uncompilable queries.
@@ -230,12 +425,11 @@ fn dart_method_name_is_not_recovered_twice() {
 /// unbookmarkable".
 ///
 /// `expected` is a ratchet, not a blessing: the node kinds still failing for a
-/// **separate, pre-existing** reason — the generator can name an ancestor *and*
-/// emit a positional pattern for the same single child, or emit fields in an
-/// order the grammar forbids
-/// (<https://github.com/DanielCardonaRojas/codemark/issues/263>). Those
-/// reproduce with the #239 fix reverted. Carrying them keeps the sweep useful
-/// now instead of being deleted for being red.
+/// cause not yet fixed — today only Swift's `init` ([#265]) and a Rust
+/// "Invalid capture name" case. Carrying them keeps the sweep useful now
+/// instead of being deleted for being red.
+///
+/// [#265]: https://github.com/DanielCardonaRojas/codemark/issues/265
 ///
 /// Compared as a **set of kinds**, not a count. A count lets a newly broken
 /// target hide behind a newly fixed one; the set makes any change in *which*
@@ -280,7 +474,7 @@ fn sweep(lang: &Language, source: &str, label: &str, expected: &[&str]) {
         panic!(
             "{label}: the set of kinds producing uncompilable queries changed.\n\
              newly broken (regression): {new:?}\n\
-             newly passing (progress on #263 — remove from the expected list): {fixed:?}\n\
+             newly passing (fixed — remove from the expected list): {fixed:?}\n\
              all {} failures across {} targets:\n{}",
             detail.len(),
             targets.len(),
@@ -319,9 +513,7 @@ end
 
 return M
 ";
-    // `function M.compute` names the ancestor `name: (dot_index_expression)`
-    // and also emits it positionally (#263).
-    sweep(&lang, source, "lua", &["identifier"]);
+    sweep(&lang, source, "lua", &[]);
 }
 
 /// The built-in languages, swept over compact snippets.
@@ -352,9 +544,7 @@ impl Claims {
     }
 }
 ",
-            // `pub` and the struct/field name are emitted in an order the
-            // grammar forbids (#263).
-            &["type_identifier", "visibility_modifier"],
+            &[],
         ),
         (
             Language::Python,
@@ -384,13 +574,69 @@ class Claims {
   }
 }
 ",
-            // The class name is both named on the ancestor and emitted
-            // positionally (#263).
-            &["type_identifier"],
+            &[],
         ),
     ];
 
     for (lang, label, source, expected) in cases {
         sweep(lang, source, label, expected);
+    }
+}
+
+/// The same sweep over the committed `auth_service.*` fixtures.
+///
+/// Slower than the snippets (~500 targets each, and disambiguation runs a query
+/// per candidate tier) but it is the one that finds things: the snippets missed
+/// the Python decorator bug entirely because no snippet had a decorator. Real
+/// fixtures contain constructs nobody thinks to write by hand.
+///
+/// `#[ignore]` keeps `cargo test` quick; CI and anyone touching the generator
+/// should run `cargo test -- --ignored`.
+#[test]
+#[ignore = "slow (~4 min): run with --ignored when changing the query generator"]
+fn sweep_full_fixtures() {
+    let cases: &[(Language, &str, &[&str])] = &[
+        // Both remaining Rust failures are `use std::collections::...` paths,
+        // where a predicate references a capture the query never emits
+        // ("Invalid capture name name0") — a different bug from #263.
+        (Language::Rust, "rust/auth_service.rs", &["identifier"]),
+        // Swift emits `init` as a node kind, which its grammar does not define
+        // ("Invalid node type init"), plus a handful of genuine impossible
+        // patterns. Also distinct from #263; see #265.
+        (
+            Language::Swift,
+            "swift/auth_service.swift",
+            &[
+                "array_type",
+                "assignment",
+                "dictionary_type",
+                "directly_assignable_expression",
+                "function_body",
+                "init_declaration",
+                "line_str_text",
+                "line_string_literal",
+                "navigation_expression",
+                "navigation_suffix",
+                "parameter",
+                "self_expression",
+                "simple_identifier",
+                "statements",
+                "type_annotation",
+                "type_identifier",
+                "user_type",
+            ],
+        ),
+        (Language::Python, "python/auth_service.py", &[]),
+        (Language::Dart, "dart/auth_service.dart", &[]),
+    ];
+
+    // All four fixtures are tracked in git, so a missing one means a broken
+    // checkout rather than an optional extra. Skipping would quietly drop a
+    // language's coverage while the test still reported success.
+    for (lang, rel, expected) in cases {
+        let fixture = repo_root().join("tests/fixtures").join(rel);
+        assert!(fixture.exists(), "required fixture is missing: {}", fixture.display());
+        let source = std::fs::read_to_string(&fixture).expect("read fixture");
+        sweep(lang, &source, rel, expected);
     }
 }
