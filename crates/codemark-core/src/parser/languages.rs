@@ -713,6 +713,42 @@ mod tests {
         assert!(matches!(fallback, Language::TypeScript));
     }
 
+    /// After a fallback, the parser reports the grammar it actually loaded.
+    ///
+    /// `Parser::new` degrades to the built-in when an override fails to load,
+    /// so the requested language is no longer the one that will parse. Bookmark
+    /// creation records `codemark_language()` for exactly this reason: filing a
+    /// query generated against the built-in under the override's identity would
+    /// send it back to the override once that grammar is repaired, and queries
+    /// are grammar-specific.
+    #[test]
+    fn a_fallback_parser_reports_the_builtin_it_loaded() {
+        // An override that cannot possibly load: the wasm file does not exist.
+        let broken = Language::Dynamic(Arc::new(DynamicLanguage {
+            name: "typescript".into(),
+            extensions: vec!["ts".into()],
+            wasm_path: PathBuf::from("/nonexistent/grammar.wasm"),
+            profile: Profile::default(),
+        }));
+        assert_eq!(broken.identity(), GrammarIdentity::Dynamic, "the premise");
+
+        let parser = Parser::new(broken).expect("must fall back rather than fail");
+
+        // What creation now saves — the built-in, not the override we asked for.
+        assert_eq!(parser.codemark_language().identity(), GrammarIdentity::Builtin);
+        assert!(matches!(parser.codemark_language(), Language::TypeScript));
+
+        // `new_exact` is the contrast: install and `languages validate` must see
+        // the failure instead of a grammar that silently became another one.
+        let broken_again = Language::Dynamic(Arc::new(DynamicLanguage {
+            name: "typescript".into(),
+            extensions: vec!["ts".into()],
+            wasm_path: PathBuf::from("/nonexistent/grammar.wasm"),
+            profile: Profile::default(),
+        }));
+        assert!(Parser::new_exact(broken_again).is_err());
+    }
+
     /// The stored spellings are a wire format: a value written by this version
     /// must still read back, since it lands in a DB column and in shared packs.
     #[test]

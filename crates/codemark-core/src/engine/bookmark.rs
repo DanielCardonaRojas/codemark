@@ -287,10 +287,22 @@ impl Bookmark {
     /// is the case for bookmarks created before schema v25.
     pub fn grammar(&self) -> crate::error::Result<crate::parser::languages::Language> {
         use crate::parser::languages::Language;
-        match self.grammar_source {
-            Some(identity) => Language::from_identity(&self.language, identity),
-            None => self.language.parse(),
-        }
+        let language = match self.grammar_source {
+            Some(identity) => Language::from_identity(&self.language, identity)?,
+            None => self.language.parse()?,
+        };
+        // Log requested *and* selected so the three outcomes are distinguishable
+        // in a trace: an exact match, a recorded identity whose grammar is gone
+        // (selected differs from requested), and a pre-v25 row with nothing
+        // recorded at all (requested is None).
+        tracing::debug!(
+            target: "codemark::languages",
+            name = %self.language,
+            requested = ?self.grammar_source,
+            selected = %language.identity(),
+            "resolved bookmark grammar"
+        );
+        Ok(language)
     }
 }
 

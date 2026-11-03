@@ -356,12 +356,14 @@ mod tests {
         let _ = std::fs::remove_file(&pack_db);
     }
 
-    /// A pack written before the column existed still reads back.
+    /// A pack written before the column existed still reads back once migrated,
+    /// which is what lets `reader.rs` select `grammar_source` unconditionally.
     ///
-    /// `import_pack` migrates an older pack up to the current schema before
-    /// reading it, so `reader.rs` can select `grammar_source` unconditionally.
-    /// If that ordering ever broke, every pre-v25 pack would fail to import on a
-    /// missing column — so pin the behaviour rather than the assumption.
+    /// This covers the reader in isolation: it asserts the read fails before the
+    /// migration and succeeds after. The *pull path* actually running them in
+    /// that order is pinned separately by
+    /// `sync::tests::pull_path_imports_a_pre_v25_pack`, which drives the real
+    /// sequence rather than restating it here.
     #[test]
     fn a_pre_v25_pack_reads_back_after_migration() {
         let pack_db =
