@@ -1322,7 +1322,7 @@ pub async fn resolve_batch(
     let head_commit = ctx.and_then(|c| c.head_commit);
 
     for bm in bookmarks {
-        let Ok(lang) = bm.language.parse::<Language>() else {
+        let Ok(lang) = bm.grammar() else {
             continue;
         };
         let mut cache = ParseCache::new(lang.clone())?;
@@ -2014,7 +2014,7 @@ pub async fn handle_open(cli: &Cli, args: &OpenArgs) -> Result<()> {
     };
 
     // Resolve the bookmark to get current location
-    let lang = bookmark.language.parse::<Language>()?;
+    let lang = bookmark.grammar()?;
     let mut cache = ParseCache::new(lang.clone())?;
     let ts_lang = cache.language().clone();
     let db_path = db.path();
@@ -2231,6 +2231,7 @@ mod tests {
             id: bm_id.clone(),
             query: "(function_item) @target".to_string(),
             language: "rust".to_string(),
+            grammar_source: None,
             file_path: "file.rs".to_string(),
             content_hash: None,
             commit_hash: Some(head.clone()),
@@ -2295,6 +2296,7 @@ mod tests {
             id: bm_id.clone(),
             query: "(function_item) @target".to_string(),
             language: "rust".to_string(),
+            grammar_source: None,
             file_path: "file.rs".to_string(),
             content_hash: None,
             commit_hash: Some(head.clone()),

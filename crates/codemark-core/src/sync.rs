@@ -533,6 +533,35 @@ pub async fn sync(opts: SyncOptions) -> Result<()> {
     }
 }
 
+/// Bring a freshly downloaded pack up to the current schema and verify it.
+///
+/// The ordering matters and is the reason this is a named step: the reader
+/// selects `grammar_source` unconditionally, so an older pack must be migrated
+/// *before* anything reads a bookmark out of it — otherwise every pre-v25 pack
+/// would fail to import on a missing column. Factored out of [`sync_pull`] so a
+/// test can drive the real sequence instead of restating it.
+async fn prepare_downloaded_pack(pack_path: &std::path::Path) -> Result<()> {
+    let user_version = pre_inspect(pack_path)
+        .map_err(|e| Error::Operation(format!("pre-inspection failed: {e}")))?;
+
+    if user_version < Database::CURRENT_VERSION {
+        let pack_path_clone = pack_path.to_path_buf();
+        tokio::task::spawn_blocking(move || {
+            let mut conn = rusqlite::Connection::open(&pack_path_clone)
+                .map_err(|e| Error::Database(e.to_string()))?;
+            Database::run_migrations_on(&mut conn).map_err(|e| Error::Database(e.to_string()))?;
+            Ok::<_, Error>(())
+        })
+        .await
+        .map_err(|_| Error::Operation("Blocking task panicked during migration".to_string()))??;
+    }
+
+    // Full inspection after potential migration
+    inspect(pack_path).map_err(|e| Error::Operation(format!("pack inspection failed: {e}")))?;
+
+    Ok(())
+}
+
 /// Handle pulling a collection from the server.
 async fn sync_pull(opts: SyncOptions) -> Result<()> {
     tracing::info!(target: "codemark::http", direction = "pull", collection_id = %opts.collection_id, server = %opts.server_url, "starting sync");
@@ -550,28 +579,7 @@ async fn sync_pull(opts: SyncOptions) -> Result<()> {
             .await
             .map_err(|e| Error::Operation(format!("failed to write pack: {e}")))?;
 
-        // Inspect and Migrate pack
-        let user_version = pre_inspect(&pack_path)
-            .map_err(|e| Error::Operation(format!("pre-inspection failed: {e}")))?;
-
-        if user_version < Database::CURRENT_VERSION {
-            let pack_path_clone = pack_path.clone();
-            tokio::task::spawn_blocking(move || {
-                let mut conn = rusqlite::Connection::open(&pack_path_clone)
-                    .map_err(|e| Error::Database(e.to_string()))?;
-                Database::run_migrations_on(&mut conn)
-                    .map_err(|e| Error::Database(e.to_string()))?;
-                Ok::<_, Error>(())
-            })
-            .await
-            .map_err(|_| {
-                Error::Operation("Blocking task panicked during migration".to_string())
-            })??;
-        }
-
-        // Full inspection after potential migration
-        inspect(&pack_path)
-            .map_err(|e| Error::Operation(format!("pack inspection failed: {e}")))?;
+        prepare_downloaded_pack(&pack_path).await?;
 
         // Pull is now persistent by default - always save locally
         let source_url = format!("{}/tours/{}", opts.server_url, opts.collection_id);
@@ -717,6 +725,7 @@ mod tests {
                 id: "pack-bookmark".to_string(),
                 query: "(function_declaration) @target".to_string(),
                 language: "swift".to_string(),
+                grammar_source: None,
                 file_path: "src/main.swift".to_string(),
                 content_hash: Some("sha256:abcd".to_string()),
                 commit_hash: Some("abc123".to_string()),
@@ -748,6 +757,70 @@ mod tests {
         }
 
         (pack_path, "http://example.com/tours/pack-collection".to_string())
+    }
+
+    // Regression: a pre-v25 pack must survive the *real* pull sequence —
+    // `prepare_downloaded_pack` then `import_pack`, which is what `sync_pull`
+    // runs. The reader selects `grammar_source` unconditionally, so if the
+    // migration did not happen before the first bookmark read, importing any
+    // older pack would fail on a missing column. Driving the shared step rather
+    // than restating it is what makes this test fail if that order is swapped.
+    #[tokio::test]
+    async fn pull_path_imports_a_pre_v25_pack() {
+        let (pack_path, source_url) = write_test_pack();
+
+        // Rewind the pack to a genuinely pre-v25 shape: drop the column and the
+        // version with it, as a pack published before the migration existed.
+        // Also shape it like a published pack rather than a full local
+        // database — drop the local-only tables and add the `_pack_meta` the
+        // packer writes — so the inspectors in the pull path accept it.
+        {
+            let conn = rusqlite::Connection::open(&pack_path).unwrap();
+            conn.execute_batch(
+                "CREATE TABLE _pack_meta (
+                     pack_id TEXT PRIMARY KEY,
+                     protocol_version INTEGER NOT NULL,
+                     purpose TEXT NOT NULL CHECK (purpose IN ('publish', 'mirror', 'export')),
+                     source_client TEXT NOT NULL,
+                     generated_at TEXT NOT NULL,
+                     notes TEXT
+                 );
+                 INSERT INTO _pack_meta
+                     (pack_id, protocol_version, purpose, source_client, generated_at)
+                 VALUES ('pack-1', 24, 'publish', 'codemark@test', '2026-01-01T00:00:00Z');",
+            )
+            .unwrap();
+            conn.execute_batch(
+                "DROP TABLE IF EXISTS bookmark_embeddings;
+                 DROP TABLE IF EXISTS collection_embeddings;
+                 DROP TABLE IF EXISTS bookmarks_fts;
+                 DROP TABLE IF EXISTS published_tours;
+                 DROP TRIGGER IF EXISTS bookmarks_ai;
+                 DROP TRIGGER IF EXISTS bookmarks_ad;
+                 DROP TRIGGER IF EXISTS bookmarks_au;
+                 ALTER TABLE bookmarks DROP COLUMN grammar_source;
+                 PRAGMA user_version = 24;",
+            )
+            .unwrap();
+        }
+
+        // Reading it as-is fails, which is what an old pack looks like.
+        assert!(PackReader::open(&pack_path).unwrap().bookmarks().is_err());
+
+        let db = Database::open_in_memory().unwrap();
+        prepare_downloaded_pack(&pack_path).await.unwrap();
+        import_pack(&db, &pack_path, None, &source_url).await.unwrap();
+
+        let collections = db.list_collections().unwrap();
+        assert_eq!(collections.len(), 1);
+        let bookmarks = db.list_bookmarks_in_collection(&collections[0].0.id).unwrap();
+        assert_eq!(bookmarks.len(), 1);
+        assert_eq!(
+            bookmarks[0].grammar_source, None,
+            "a pre-v25 row carries no evidence of its grammar, so it stays unknown"
+        );
+
+        let _ = std::fs::remove_file(&pack_path);
     }
 
     // Regression: pulling the same collection twice must not create a duplicate

@@ -102,7 +102,7 @@ impl SemanticRepo {
         &self,
         bookmark: &Bookmark,
     ) -> Option<crate::query::summarizer::QuerySummary> {
-        let language = bookmark.language.parse::<crate::parser::languages::Language>().ok()?;
+        let language = bookmark.grammar().ok()?;
         crate::query::summarizer::summarize_query(&bookmark.query, Some(language)).ok()
     }
 
@@ -413,6 +413,7 @@ mod tests {
             id: "test".to_string(),
             query: r#"(function_item name: (identifier) @fn_name (#eq? @fn_name "cycle_mode")) @target"#.to_string(),
             language: "rust".to_string(),
+            grammar_source: None,
             file_path: "/test.rs".to_string(),
             content_hash: Some("hash".to_string()),
             commit_hash: None,
@@ -451,6 +452,7 @@ mod tests {
             id: id.to_string(),
             query: r#"(function_item name: (identifier) @fn_name) @target"#.to_string(),
             language: "rust".to_string(),
+            grammar_source: None,
             file_path: "/test.rs".to_string(),
             content_hash: Some("hash".to_string()),
             commit_hash: None,

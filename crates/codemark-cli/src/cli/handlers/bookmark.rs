@@ -48,6 +48,12 @@ pub async fn handle_add(cli: &Cli, mode: &OutputMode, args: &AddArgsOriginal) ->
     let (abs_path, rel_path) = resolve_file_path(&args.file)?;
 
     let mut parser = codemark_core::parser::languages::Parser::new(lang.clone())?;
+    // `Parser::new` may fall back to the built-in when a dynamic override fails
+    // to load, so the grammar that actually parsed this file is the parser's,
+    // not the one we asked for. Record *that* one: a query generated against
+    // the fallback must not be filed as the override's, or it would be run
+    // against the override once it is repaired.
+    let lang = parser.codemark_language().clone();
     let provider = codemark_core::vfs::LocalFileProvider;
     let (tree, source) = parser.parse_file(&abs_path, &provider).await?;
     let ts_lang = parser.language().clone();
@@ -117,6 +123,10 @@ pub async fn handle_add(cli: &Cli, mode: &OutputMode, args: &AddArgsOriginal) ->
         id: bookmark_id.clone(),
         query: generated.query.clone(),
         language: lang.to_string(),
+        // Record *which* grammar generated this query, not just its name: a
+        // dynamic grammar can share a name with the built-in it overrides, so
+        // resolution needs the identity to ask for the same one back.
+        grammar_source: Some(lang.identity()),
         file_path: rel_path.clone(),
         content_hash: Some(content_hash.clone()),
         commit_hash: commit_hash.clone(),
@@ -300,6 +310,8 @@ pub async fn handle_add_from_snippet(
     }
 
     let mut parser = codemark_core::parser::languages::Parser::new(lang.clone())?;
+    // The parser's grammar, not the requested one — see `handle_add`.
+    let lang = parser.codemark_language().clone();
     let provider = codemark_core::vfs::LocalFileProvider;
     let (tree, source) = parser.parse_file(&abs_path, &provider).await?;
     let ts_lang = parser.language().clone();
@@ -361,6 +373,10 @@ pub async fn handle_add_from_snippet(
         id: bookmark_id.clone(),
         query: generated.query.clone(),
         language: lang.to_string(),
+        // Record *which* grammar generated this query, not just its name: a
+        // dynamic grammar can share a name with the built-in it overrides, so
+        // resolution needs the identity to ask for the same one back.
+        grammar_source: Some(lang.identity()),
         file_path: rel_path.clone(),
         content_hash: Some(content_hash.clone()),
         commit_hash: commit_hash.clone(),
@@ -531,6 +547,10 @@ pub async fn handle_add_from_query(
     let (abs_path, rel_path) = resolve_file_path(&args.file)?;
 
     let mut parser = codemark_core::parser::languages::Parser::new(lang.clone())?;
+    // The parser's grammar, not the requested one — see `handle_add`. The query
+    // here is the caller's, but it was validated against this parser, so it is
+    // this grammar the bookmark must be resolved against.
+    let lang = parser.codemark_language().clone();
     let provider = codemark_core::vfs::LocalFileProvider;
     let (tree, source) = parser.parse_file(&abs_path, &provider).await?;
     let ts_lang = parser.language().clone();
@@ -604,6 +624,10 @@ pub async fn handle_add_from_query(
         id: bookmark_id.clone(),
         query: args.query.clone(),
         language: lang.to_string(),
+        // Record *which* grammar generated this query, not just its name: a
+        // dynamic grammar can share a name with the built-in it overrides, so
+        // resolution needs the identity to ask for the same one back.
+        grammar_source: Some(lang.identity()),
         file_path: rel_path.clone(),
         content_hash: Some(content_hash.clone()),
         commit_hash: commit_hash.clone(),
@@ -818,7 +842,7 @@ pub async fn handle_resolve(cli: &Cli, mode: &OutputMode, args: &ResolveArgs) ->
     if let Some(ref id) = args.id {
         // Single bookmark resolution — search across all DBs
         let (bm, db) = Workspace::find_bookmark_across(&dbs, id)?;
-        let lang: Language = bm.language.parse()?;
+        let lang: Language = bm.grammar()?;
         let mut cache = ParseCache::new(lang.clone())?;
         let ts_lang = cache.language().clone();
         let provider = codemark_core::vfs::LocalFileProvider;

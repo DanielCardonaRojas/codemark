@@ -1,0 +1,17 @@
+-- V25__add_bookmark_grammar_source.sql
+--
+-- Records *which* grammar generated a bookmark's query, not just what it was
+-- called. `language` is a plain name, and a dynamic grammar may share that name
+-- with the built-in it overrides — so when an override claims only some of the
+-- built-in's extensions, creation (by extension) and resolution (by name) could
+-- select different grammars. The query then ran against a grammar other than
+-- the one that generated it and could silently fail to match. See
+-- https://github.com/DanielCardonaRojas/codemark/issues/244
+--
+-- 'builtin' | 'dynamic'. Deliberately nullable with no backfill: a bookmark
+-- written before this column exists carries no evidence of which grammar it
+-- used, and guessing would manufacture a provenance claim that happens to be
+-- wrong in exactly the overridden-language case this column exists to fix.
+-- NULL therefore means "unknown", and resolution falls back to the pre-existing
+-- name-only lookup for those rows — the same behaviour they have today.
+ALTER TABLE bookmarks ADD COLUMN grammar_source TEXT;

@@ -299,6 +299,7 @@ mod tests {
             id: bookmark_id.clone(),
             query: "test".to_string(),
             language: "rust".to_string(),
+            grammar_source: None,
             file_path: "file.rs".to_string(),
             content_hash: None,
             commit_hash: None,

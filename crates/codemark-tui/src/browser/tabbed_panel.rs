@@ -1103,6 +1103,7 @@ mod tests {
             id: id.to_string(),
             query: format!("(function_item name: (identifier) @name (#eq? @name \"{id}\"))"),
             language: "rust".to_string(),
+            grammar_source: None,
             file_path: file_path.to_string(),
             content_hash: None,
             commit_hash: None,

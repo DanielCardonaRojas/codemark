@@ -3,6 +3,8 @@ use std::str::FromStr;
 
 use serde::{Deserialize, Serialize};
 
+use crate::parser::languages::GrammarIdentity;
+
 // --- Enums ---
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -239,6 +241,19 @@ pub struct Bookmark {
     pub id: String,
     pub query: String,
     pub language: String,
+    /// Which grammar generated [`query`](Self::query) — see
+    /// [`GrammarIdentity`](crate::parser::languages::GrammarIdentity).
+    ///
+    /// `language` is only a *name*, and a dynamic grammar can share a name with
+    /// the built-in it overrides, so the name alone does not identify the
+    /// grammar the query was written against. Resolution pairs the two via
+    /// [`Language::from_identity`](crate::parser::languages::Language::from_identity).
+    ///
+    /// `None` for bookmarks created before schema v25 (and for packs written by
+    /// an older codemark): they carry no record of which grammar they used, and
+    /// those fall back to name-only resolution.
+    #[serde(default)]
+    pub grammar_source: Option<GrammarIdentity>,
     pub file_path: String,
     pub content_hash: Option<String>,
     pub commit_hash: Option<String>,
@@ -257,6 +272,38 @@ pub struct Bookmark {
     pub annotations: Vec<Annotation>,
     #[serde(default)]
     pub comments: Vec<BookmarkComment>,
+}
+
+impl Bookmark {
+    /// Resolve the grammar this bookmark's query was generated against.
+    ///
+    /// The single place that pairs [`language`](Self::language) with
+    /// [`grammar_source`](Self::grammar_source), so every reader agrees on which
+    /// grammar a bookmark means. Prefer this over parsing `language` directly:
+    /// a bare name can select a different grammar than the one that wrote the
+    /// query (issue #244).
+    ///
+    /// Falls back to name-only resolution when no identity was recorded, which
+    /// is the case for bookmarks created before schema v25.
+    pub fn grammar(&self) -> crate::error::Result<crate::parser::languages::Language> {
+        use crate::parser::languages::Language;
+        let language = match self.grammar_source {
+            Some(identity) => Language::from_identity(&self.language, identity)?,
+            None => self.language.parse()?,
+        };
+        // Log requested *and* selected so the three outcomes are distinguishable
+        // in a trace: an exact match, a recorded identity whose grammar is gone
+        // (selected differs from requested), and a pre-v25 row with nothing
+        // recorded at all (requested is None).
+        tracing::debug!(
+            target: "codemark::languages",
+            name = %self.language,
+            requested = ?self.grammar_source,
+            selected = %language.identity(),
+            "resolved bookmark grammar"
+        );
+        Ok(language)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -380,6 +427,7 @@ mod tests {
             id: "test-id".into(),
             query: "(function_declaration) @target".into(),
             language: "swift".into(),
+            grammar_source: None,
             file_path: "src/main.swift".into(),
             content_hash: Some("sha256:abcd1234abcd1234".into()),
             commit_hash: None,
