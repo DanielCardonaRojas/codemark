@@ -1022,12 +1022,10 @@ impl RightPane {
         (String, usize, usize, String, live_resolution::LiveUIStatus),
         codemark_core::error::Error,
     > {
-        use std::str::FromStr;
-
         // Propagated as-is rather than rewrapped: `Error::GrammarNotInstalled`
         // is what lets the caller show "No grammar" instead of "Unmatched",
         // and flattening it into `Error::Input` would throw that away.
-        let language = CodemarkLanguage::from_str(&bm.language)?;
+        let language = bm.grammar()?;
 
         // Get or create a ParseCache for this language
         let cache = match session_cache.entry(language.clone()) {
@@ -1849,6 +1847,7 @@ mod tests {
             id: id.to_string(),
             query: query.to_string(),
             language: "rust".to_string(),
+            grammar_source: None,
             file_path: file_path.to_string(),
             content_hash: None,
             commit_hash: None,

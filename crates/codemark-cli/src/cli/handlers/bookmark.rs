@@ -117,6 +117,10 @@ pub async fn handle_add(cli: &Cli, mode: &OutputMode, args: &AddArgsOriginal) ->
         id: bookmark_id.clone(),
         query: generated.query.clone(),
         language: lang.to_string(),
+        // Record *which* grammar generated this query, not just its name: a
+        // dynamic grammar can share a name with the built-in it overrides, so
+        // resolution needs the identity to ask for the same one back.
+        grammar_source: Some(lang.identity()),
         file_path: rel_path.clone(),
         content_hash: Some(content_hash.clone()),
         commit_hash: commit_hash.clone(),
@@ -361,6 +365,10 @@ pub async fn handle_add_from_snippet(
         id: bookmark_id.clone(),
         query: generated.query.clone(),
         language: lang.to_string(),
+        // Record *which* grammar generated this query, not just its name: a
+        // dynamic grammar can share a name with the built-in it overrides, so
+        // resolution needs the identity to ask for the same one back.
+        grammar_source: Some(lang.identity()),
         file_path: rel_path.clone(),
         content_hash: Some(content_hash.clone()),
         commit_hash: commit_hash.clone(),
@@ -604,6 +612,10 @@ pub async fn handle_add_from_query(
         id: bookmark_id.clone(),
         query: args.query.clone(),
         language: lang.to_string(),
+        // Record *which* grammar generated this query, not just its name: a
+        // dynamic grammar can share a name with the built-in it overrides, so
+        // resolution needs the identity to ask for the same one back.
+        grammar_source: Some(lang.identity()),
         file_path: rel_path.clone(),
         content_hash: Some(content_hash.clone()),
         commit_hash: commit_hash.clone(),
@@ -818,7 +830,7 @@ pub async fn handle_resolve(cli: &Cli, mode: &OutputMode, args: &ResolveArgs) ->
     if let Some(ref id) = args.id {
         // Single bookmark resolution — search across all DBs
         let (bm, db) = Workspace::find_bookmark_across(&dbs, id)?;
-        let lang: Language = bm.language.parse()?;
+        let lang: Language = bm.grammar()?;
         let mut cache = ParseCache::new(lang.clone())?;
         let ts_lang = cache.language().clone();
         let provider = codemark_core::vfs::LocalFileProvider;

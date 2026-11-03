@@ -60,8 +60,8 @@ impl Database {
         // Try to insert with OR FAIL to check for uniqueness constraint
         let result = conn.execute(
             "INSERT INTO bookmarks (id, query, language, file_path, content_hash, commit_hash,
-             created_at, created_by, repo_id)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+             created_at, created_by, repo_id, grammar_source)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
             rusqlite::params![
                 bookmark.id,
                 bookmark.query,
@@ -72,6 +72,7 @@ impl Database {
                 bookmark.created_at,
                 bookmark.created_by,
                 bookmark.repo_id,
+                bookmark.grammar_source.map(|g| g.as_str()),
             ],
         );
 
@@ -208,7 +209,7 @@ impl Database {
         tracing::debug!(target: "codemark::db", id = %id, "getting bookmark");
         let mut stmt = self.conn().prepare(
             "SELECT b.id, b.query, b.language, b.file_path, b.content_hash, b.commit_hash,
-             r.health, r.method, r.resolved_at, NULL as stale_since, b.created_at, b.created_by, b.current_resolution_id, b.repo_id
+             r.health, r.method, r.resolved_at, NULL as stale_since, b.created_at, b.created_by, b.current_resolution_id, b.repo_id, b.grammar_source
              FROM bookmarks b
              LEFT JOIN resolutions r ON b.current_resolution_id = r.id
              WHERE b.id = ?1",
@@ -231,7 +232,7 @@ impl Database {
         let pattern = format!("{prefix}%");
         let mut stmt = self.conn().prepare(
             "SELECT b.id, b.query, b.language, b.file_path, b.content_hash, b.commit_hash,
-             r.health, r.method, r.resolved_at, NULL as stale_since, b.created_at, b.created_by, b.current_resolution_id, b.repo_id
+             r.health, r.method, r.resolved_at, NULL as stale_since, b.created_at, b.created_by, b.current_resolution_id, b.repo_id, b.grammar_source
              FROM bookmarks b
              LEFT JOIN resolutions r ON b.current_resolution_id = r.id
              WHERE b.id LIKE ?1",
@@ -262,13 +263,13 @@ impl Database {
     ) -> Result<Option<Bookmark>> {
         let sql = if repo_id.is_some() {
             "SELECT b.id, b.query, b.language, b.file_path, b.content_hash, b.commit_hash,
-             r.health, r.method, r.resolved_at, NULL as stale_since, b.created_at, b.created_by, b.current_resolution_id, b.repo_id
+             r.health, r.method, r.resolved_at, NULL as stale_since, b.created_at, b.created_by, b.current_resolution_id, b.repo_id, b.grammar_source
              FROM bookmarks b
              LEFT JOIN resolutions r ON b.current_resolution_id = r.id
              WHERE b.repo_id = ?1 AND b.file_path = ?2 AND b.query = ?3"
         } else {
             "SELECT b.id, b.query, b.language, b.file_path, b.content_hash, b.commit_hash,
-             r.health, r.method, r.resolved_at, NULL as stale_since, b.created_at, b.created_by, b.current_resolution_id, b.repo_id
+             r.health, r.method, r.resolved_at, NULL as stale_since, b.created_at, b.created_by, b.current_resolution_id, b.repo_id, b.grammar_source
              FROM bookmarks b
              LEFT JOIN resolutions r ON b.current_resolution_id = r.id
              WHERE b.repo_id IS NULL AND b.file_path = ?1 AND b.query = ?2"
@@ -293,7 +294,7 @@ impl Database {
         tracing::debug!(target: "codemark::db", "listing bookmarks");
         let mut sql = String::from(
             "SELECT DISTINCT b.id, b.query, b.language, b.file_path, b.content_hash, b.commit_hash,
-             r.health, r.method, r.resolved_at, NULL as stale_since, b.created_at, b.created_by, b.current_resolution_id, b.repo_id
+             r.health, r.method, r.resolved_at, NULL as stale_since, b.created_at, b.created_by, b.current_resolution_id, b.repo_id, b.grammar_source
              FROM bookmarks b
              LEFT JOIN resolutions r ON b.current_resolution_id = r.id",
         );
@@ -481,7 +482,7 @@ impl Database {
         // Always need tag join for tag search
         let mut sql = String::from(
             "SELECT DISTINCT b.id, b.query, b.language, b.file_path, b.content_hash, b.commit_hash,
-             r.health, r.method, r.resolved_at, NULL as stale_since, b.created_at, b.created_by, b.current_resolution_id, b.repo_id
+             r.health, r.method, r.resolved_at, NULL as stale_since, b.created_at, b.created_by, b.current_resolution_id, b.repo_id, b.grammar_source
              FROM bookmarks b
              LEFT JOIN resolutions r ON b.current_resolution_id = r.id
              LEFT JOIN bookmark_annotations ba ON b.id = ba.bookmark_id
@@ -653,11 +654,16 @@ impl Database {
 fn row_to_bookmark_base(row: &rusqlite::Row) -> rusqlite::Result<Bookmark> {
     let health_str: Option<String> = row.get(6)?;
     let method_str: Option<String> = row.get(7)?;
+    let grammar_source_str: Option<String> = row.get(14)?;
 
     Ok(Bookmark {
         id: row.get(0)?,
         query: row.get(1)?,
         language: row.get(2)?,
+        // An unparseable value is treated as absent rather than fatal: it means
+        // the same thing (we can't tell which grammar was used) and a row
+        // written by a future codemark shouldn't make a bookmark unreadable.
+        grammar_source: grammar_source_str.as_deref().and_then(|s| s.parse().ok()),
         file_path: row.get(3)?,
         content_hash: row.get(4)?,
         commit_hash: row.get(5)?,
@@ -704,6 +710,7 @@ mod tests {
             id: id.to_string(),
             query: format!("(function_declaration) @{} /* {} */", "target", id),
             language: "swift".to_string(),
+            grammar_source: None,
             file_path: format!("src/main_{}.swift", id),
             content_hash: Some("sha256:abcd1234abcd1234".to_string()),
             commit_hash: Some("abc123".to_string()),
@@ -719,6 +726,47 @@ mod tests {
             annotations: Vec::new(),
             comments: vec![],
         }
+    }
+
+    /// The recorded grammar identity survives a write/read round-trip, and an
+    /// unrecorded one stays unrecorded.
+    ///
+    /// `language` alone cannot say which grammar wrote a query when an override
+    /// shares the built-in's name (#244), so this column is what resolution
+    /// relies on. A silent drop here would reintroduce the bug invisibly, since
+    /// every other field would still look right.
+    #[test]
+    fn grammar_identity_survives_a_storage_round_trip() {
+        use crate::parser::languages::GrammarIdentity;
+
+        init_test_env();
+        let db = Database::open_in_memory().unwrap();
+
+        for (id, recorded) in [
+            ("id-builtin", Some(GrammarIdentity::Builtin)),
+            ("id-dynamic", Some(GrammarIdentity::Dynamic)),
+            // A bookmark predating schema v25 carries no identity. It must stay
+            // NULL rather than being backfilled with a guess, which would
+            // manufacture a provenance claim that is wrong in exactly the
+            // overridden-language case the column exists to fix.
+            ("id-unknown", None),
+        ] {
+            let mut bm = test_bookmark(id);
+            bm.grammar_source = recorded;
+            db.insert_bookmark(&bm).unwrap();
+
+            let fetched = db.get_bookmark(id).unwrap().unwrap();
+            assert_eq!(fetched.grammar_source, recorded, "round-trip for {id}");
+        }
+
+        // And the identity is what `grammar()` resolves through: a bookmark
+        // recording the built-in resolves to the built-in, by name alone.
+        let mut bm = test_bookmark("id-resolves");
+        bm.language = "swift".to_string();
+        bm.grammar_source = Some(GrammarIdentity::Builtin);
+        db.insert_bookmark(&bm).unwrap();
+        let fetched = db.get_bookmark("id-resolves").unwrap().unwrap();
+        assert_eq!(fetched.grammar().unwrap().identity(), GrammarIdentity::Builtin);
     }
 
     #[test]
@@ -1210,6 +1258,7 @@ mod tests {
             id: bm_id.to_string(),
             query: original_query.to_string(),
             language: original_language.to_string(),
+            grammar_source: None,
             file_path: original_file_path.to_string(),
             content_hash: Some("sha256:original1234".to_string()),
             commit_hash: Some("commit-original".to_string()),
@@ -1291,6 +1340,7 @@ mod tests {
             id: bm_id.to_string(),
             query: "(function_declaration) @target".to_string(),
             language: "swift".to_string(),
+            grammar_source: None,
             file_path: "src/main.swift".to_string(),
             content_hash: None,
             commit_hash: None,

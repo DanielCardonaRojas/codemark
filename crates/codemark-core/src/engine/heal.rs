@@ -8,7 +8,7 @@ use crate::engine::bookmark::{Bookmark, BookmarkHealth, Resolution, ResolutionMe
 use crate::engine::{health, resolution};
 use crate::error::Result;
 use crate::git::context as git_context;
-use crate::parser::languages::{Language, ParseCache};
+use crate::parser::languages::ParseCache;
 use crate::storage::db::Database;
 
 /// Result of healing a single bookmark.
@@ -96,7 +96,7 @@ pub async fn heal_bookmark(
     }
 
     // Parse the language
-    let Ok(lang) = bookmark.language.parse::<Language>() else {
+    let Ok(lang) = bookmark.grammar() else {
         return Ok(HealResult {
             bookmark_id: bookmark.id.clone(),
             resolution_id: None,
@@ -383,6 +383,7 @@ mod tests {
             id: id.to_string(),
             query: "(function_item) @target".to_string(),
             language: "rust".to_string(),
+            grammar_source: None,
             file_path: "file.rs".to_string(),
             content_hash: Some(hash::content_hash("fn main() {}")),
             commit_hash: None,

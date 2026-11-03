@@ -16,9 +16,10 @@ use crate::parser::profile::Profile;
 ///
 /// Built-in variants are statically compiled. The [`Dynamic`] variant holds a
 /// WASM grammar loaded at runtime from the cache directory. Two `Language`
-/// values are equal if they have the same identity (same static variant, or
-/// same name for dynamic). `Hash`/`Eq` are based on identity, not full struct
-/// equality — this lets `Language` serve as a `HashMap` key.
+/// values are equal if they are the same kind of grammar
+/// ([`identity`](Self::identity)) with the same [`name`](Self::name) —
+/// deliberately *not* full struct equality, so `Language` can serve as a
+/// `HashMap` key despite `DynamicLanguage` carrying heavy data.
 #[derive(Debug, Clone)]
 pub enum Language {
     Swift,
@@ -33,6 +34,58 @@ pub enum Language {
     Dynamic(Arc<DynamicLanguage>),
 }
 
+/// Which *kind* of grammar a [`Language`] is — the half of a grammar's identity
+/// that its name does not carry.
+///
+/// A bookmark records a language name, and a dynamic grammar may share that name
+/// with the built-in it overrides. So when an override claims only some of the
+/// built-in's extensions, creation (by extension) and resolution (by name) can
+/// select different grammars while both report the same name. Storing this
+/// alongside the name is what lets resolution ask for the grammar that actually
+/// generated the query. See <https://github.com/DanielCardonaRojas/codemark/issues/244>.
+///
+/// Serialized as `"builtin"` / `"dynamic"`; that string is a stored value, so
+/// treat the spellings as a wire format.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum GrammarIdentity {
+    /// A grammar compiled into the binary.
+    Builtin,
+    /// A WASM grammar loaded at runtime from the cache directory.
+    Dynamic,
+}
+
+impl GrammarIdentity {
+    /// The stored spelling. Kept as one function so the DB value, the pack wire
+    /// format, and [`FromStr`] can't drift apart.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            GrammarIdentity::Builtin => "builtin",
+            GrammarIdentity::Dynamic => "dynamic",
+        }
+    }
+}
+
+impl fmt::Display for GrammarIdentity {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
+impl FromStr for GrammarIdentity {
+    type Err = Error;
+
+    fn from_str(s: &str) -> Result<Self> {
+        match s.to_lowercase().as_str() {
+            "builtin" => Ok(GrammarIdentity::Builtin),
+            "dynamic" => Ok(GrammarIdentity::Dynamic),
+            other => Err(Error::Input(format!(
+                "unknown grammar identity '{other}' (expected 'builtin' or 'dynamic')"
+            ))),
+        }
+    }
+}
+
 /// Metadata for a WASM-loaded language, parsed from `manifest.json`.
 #[derive(Debug, Clone)]
 pub struct DynamicLanguage {
@@ -45,17 +98,27 @@ pub struct DynamicLanguage {
     /// Language-specific structural metadata.
     pub profile: Profile,
 }
-// Identity-based equality and hashing — two Languages are equal if they have
-// the same name. This lets Language serve as a HashMap key even though
-// DynamicLanguage carries heavy data (wasm_path, profile, etc.).
+// Identity-based equality and hashing — two Languages are equal if they are the
+// same *kind* of grammar with the same name. This lets Language serve as a
+// HashMap key even though DynamicLanguage carries heavy data (wasm_path,
+// profile, etc.).
+//
+// The kind is part of the key, not just the name. A dynamic grammar overriding a
+// built-in shares its name, so comparing names alone makes the two
+// indistinguishable — and `HashMap<Language, ParseCache>` (the TUI's per-language
+// parser cache) would then hand a bookmark the *other* grammar's parser,
+// defeating the `GrammarIdentity` a bookmark records for exactly this reason.
+// Queries are grammar-specific, so a built-in bookmark parsed by an override's
+// grammar can silently fail to match.
 impl PartialEq for Language {
     fn eq(&self, other: &Self) -> bool {
-        self.name() == other.name()
+        self.identity() == other.identity() && self.name() == other.name()
     }
 }
 impl Eq for Language {}
 impl Hash for Language {
     fn hash<H: Hasher>(&self, state: &mut H) {
+        self.identity().hash(state);
         self.name().hash(state);
     }
 }
@@ -74,6 +137,60 @@ impl Language {
             Language::Dart => "dart",
             Language::Dynamic(dl) => &dl.name,
         }
+    }
+
+    /// Whether this is a compiled-in or a runtime-loaded grammar.
+    ///
+    /// Together with [`name`](Self::name) this is the grammar's identity, which
+    /// is what a bookmark needs to record in order to be resolved against the
+    /// same grammar that generated its query.
+    pub fn identity(&self) -> GrammarIdentity {
+        match self {
+            Language::Dynamic(_) => GrammarIdentity::Dynamic,
+            _ => GrammarIdentity::Builtin,
+        }
+    }
+
+    /// Resolve a stored grammar identity — a name plus the kind of grammar it
+    /// named when the query was generated.
+    ///
+    /// This is the lookup resolution should use, and the fix for the divergence
+    /// documented on [`from_str`](Self::from_str): `from_str` has only a name to
+    /// go on, so it must guess, and it guesses dynamic-first. Given the recorded
+    /// kind there is nothing to guess.
+    ///
+    /// `identity` is a *preference*, not a requirement. When the recorded
+    /// grammar is gone — a dynamic override since uninstalled, or a built-in
+    /// since unbundled — this falls back to whatever now answers to the name.
+    /// That may re-introduce the mismatch the identity exists to prevent, but
+    /// the alternative is reporting a resolvable bookmark as having no grammar
+    /// at all. A grammar swapped underneath a bookmark is a drift to detect, not
+    /// a reason to refuse to look.
+    ///
+    /// **Without the `wasm` feature a recorded `Dynamic` is ignored**, for the
+    /// same reason [`from_extension`](Self::from_extension) prefers the built-in
+    /// in that build: `Parser::new` cannot load a WASM grammar there, so
+    /// honouring the record would hand back a grammar that fails to parse and
+    /// break a bookmark the built-in could still resolve. A grammar that can't
+    /// be loaded is not a usable answer, however faithfully it was recorded.
+    pub fn from_identity(name: &str, identity: GrammarIdentity) -> Result<Self> {
+        let exact = match identity {
+            GrammarIdentity::Builtin => Self::static_from_name(name),
+            GrammarIdentity::Dynamic if cfg!(feature = "wasm") => {
+                crate::parser::registry::LanguageRegistry::from_name(name)
+            }
+            GrammarIdentity::Dynamic => None,
+        };
+        if let Some(lang) = exact {
+            return Ok(lang);
+        }
+        tracing::debug!(
+            target: "codemark::languages",
+            name = %name,
+            wanted = %identity,
+            "recorded grammar is unavailable; falling back to name-only resolution"
+        );
+        Self::from_str(name)
     }
 
     /// Returns the static tree-sitter language for built-in variants.
@@ -195,18 +312,19 @@ impl FromStr for Language {
     /// Falls back to built-in-first without the `wasm` feature, for the same
     /// reason: an unloadable grammar is not a usable override.
     ///
-    /// # Known gap
+    /// # A name is not an identity
     ///
-    /// A bookmark records only the language *name*, so the two lookups can
-    /// disagree for an extension the override doesn't claim. A dynamic
-    /// `typescript` claiming only `.ts` leaves a `.tsx` file resolving to the
-    /// built-in — which stores `"typescript"`, and that name later resolves to
-    /// the dynamic grammar.
+    /// A name alone cannot say *which* grammar is meant when an override shares
+    /// it with the built-in, so this has to guess, and it guesses dynamic-first
+    /// to match [`from_extension`](Self::from_extension). The guess is wrong for
+    /// an extension the override doesn't claim: a dynamic `typescript` claiming
+    /// only `.ts` leaves a `.tsx` file resolving to the built-in — which stores
+    /// `"typescript"`, and that name resolves back to the dynamic grammar.
     ///
-    /// Closing it properly means recording grammar identity on the bookmark,
-    /// which is a schema change. Until then the narrower mitigation is to claim
-    /// every extension of the built-in you override, which
-    /// `--override-builtin` makes visible at install time.
+    /// Prefer [`from_identity`](Self::from_identity) wherever a recorded
+    /// [`GrammarIdentity`] is available, which is the case for any bookmark
+    /// created since schema v25. Use this only for a bare name from a user
+    /// (`--lang`) or a bookmark predating that column.
     fn from_str(s: &str) -> Result<Self> {
         let resolved = if cfg!(feature = "wasm") {
             crate::parser::registry::LanguageRegistry::from_name(s)
@@ -544,6 +662,70 @@ mod tests {
     }
 
     use super::*;
+
+    /// A built-in and a dynamic grammar sharing a name are distinct map keys.
+    ///
+    /// The TUI caches parsers in a `HashMap<Language, ParseCache>`. If the key
+    /// were the name alone, these two would collide and a bookmark would be
+    /// handed the *other* grammar's parser — which would defeat the recorded
+    /// `GrammarIdentity` at the last step, since queries are grammar-specific.
+    #[test]
+    fn an_override_and_its_builtin_are_different_cache_keys() {
+        let dynamic = Language::Dynamic(Arc::new(DynamicLanguage {
+            name: "typescript".into(),
+            extensions: vec!["ts".into()],
+            wasm_path: PathBuf::from("/nonexistent"),
+            profile: Profile::default(),
+        }));
+        let builtin = Language::TypeScript;
+
+        assert_eq!(dynamic.name(), builtin.name(), "the premise: names collide");
+        assert_ne!(dynamic, builtin, "but the languages must not compare equal");
+
+        let mut caches: HashMap<Language, &str> = HashMap::new();
+        caches.insert(builtin.clone(), "builtin parser");
+        caches.insert(dynamic.clone(), "dynamic parser");
+        assert_eq!(caches.len(), 2, "each grammar needs its own cache entry");
+        assert_eq!(caches.get(&builtin), Some(&"builtin parser"));
+        assert_eq!(caches.get(&dynamic), Some(&"dynamic parser"));
+    }
+
+    /// A recorded identity selects the grammar that generated the query, where a
+    /// bare name cannot — the fix for #244.
+    #[test]
+    fn a_recorded_identity_pins_the_builtin_against_a_same_named_override() {
+        // Only meaningful when nothing overrides `typescript` on this machine;
+        // the registry is process-global, so a developer with a real override
+        // installed would otherwise see a different (also correct) answer.
+        if crate::parser::registry::LanguageRegistry::from_name("typescript").is_some() {
+            return;
+        }
+
+        // Recording `Builtin` asks for the compiled-in grammar by name...
+        let pinned = Language::from_identity("typescript", GrammarIdentity::Builtin).unwrap();
+        assert!(matches!(pinned, Language::TypeScript));
+        assert_eq!(pinned.identity(), GrammarIdentity::Builtin);
+
+        // ...and an identity for a grammar that isn't installed falls back to
+        // name-only resolution rather than failing: a bookmark whose override
+        // was uninstalled is still worth trying to resolve.
+        let fallback = Language::from_identity("typescript", GrammarIdentity::Dynamic).unwrap();
+        assert!(matches!(fallback, Language::TypeScript));
+    }
+
+    /// The stored spellings are a wire format: a value written by this version
+    /// must still read back, since it lands in a DB column and in shared packs.
+    #[test]
+    fn grammar_identity_round_trips_through_its_stored_spelling() {
+        for identity in [GrammarIdentity::Builtin, GrammarIdentity::Dynamic] {
+            assert_eq!(identity.as_str().parse::<GrammarIdentity>().unwrap(), identity);
+            // Serde uses the same spellings, so a pack and the DB agree.
+            let json = serde_json::to_string(&identity).unwrap();
+            assert_eq!(json, format!("\"{}\"", identity.as_str()));
+        }
+        assert_eq!("BUILTIN".parse::<GrammarIdentity>().unwrap(), GrammarIdentity::Builtin);
+        assert!("wasm".parse::<GrammarIdentity>().is_err());
+    }
 
     #[test]
     fn language_round_trip() {

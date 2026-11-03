@@ -869,8 +869,7 @@ impl BrowserLayout {
             for bm in &bookmarks {
                 let status =
                     (|| -> std::result::Result<LiveUIStatus, codemark_core::error::Error> {
-                        use std::str::FromStr;
-                        let language = CL::from_str(&bm.language)?;
+                        let language = bm.grammar()?;
                         let cache = match caches.entry(language.clone()) {
                             std::collections::hash_map::Entry::Occupied(e) => e.into_mut(),
                             std::collections::hash_map::Entry::Vacant(e) => {
@@ -1019,8 +1018,7 @@ impl BrowserLayout {
                     }
                     let status =
                         (|| -> std::result::Result<LiveUIStatus, codemark_core::error::Error> {
-                            use std::str::FromStr;
-                            let language = CL::from_str(&bm.language)?;
+                            let language = bm.grammar()?;
                             let cache = match caches.entry(language.clone()) {
                                 std::collections::hash_map::Entry::Occupied(e) => e.into_mut(),
                                 std::collections::hash_map::Entry::Vacant(e) => {

@@ -265,6 +265,7 @@ mod tests {
             id: id.to_string(),
             query: format!("(function_declaration) @{} /* {} */", "target", id),
             language: "swift".to_string(),
+            grammar_source: None,
             file_path: format!("src/main_{}.swift", id),
             content_hash: Some("sha256:abcd1234abcd1234".to_string()),
             commit_hash: Some("abc123".to_string()),

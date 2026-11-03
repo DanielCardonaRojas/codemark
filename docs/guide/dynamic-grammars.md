@@ -31,6 +31,23 @@ Reaching past them still needs `--override-builtin`: `languages install c_sharp
 --extensions cs,rs` is refused, because the C# entry never claimed `.rs` and a
 dynamic grammar wins resolution.
 
+### Existing bookmarks go by identity, not by name
+
+The precedence above decides which grammar a *new* bookmark is created with. An
+*existing* one isn't re-decided: a bookmark records which grammar generated its
+query — `builtin` or `dynamic` — and resolution asks for that one back.
+
+This matters because a name is ambiguous while an override is installed. A
+dynamic `typescript` claiming only `.ts` leaves a `.tsx` file correctly
+resolving to the built-in, but both grammars answer to the name `typescript`, so
+a name-only lookup would later hand that bookmark the override's grammar.
+Queries are grammar-specific, so it would silently stop matching.
+
+The recorded identity is a preference rather than a requirement. Uninstall the
+override and its bookmarks fall back to whatever now answers to the name — worth
+resolving imperfectly beats reporting as unreadable. Bookmarks created before
+this was recorded (schema v25) have no identity and use the name-only lookup.
+
 ## Cache location
 
 `global_grammars_dir()`: `$CODEMARK_GRAMMARS_DIR` → `cache_dir/codemark/grammars`.

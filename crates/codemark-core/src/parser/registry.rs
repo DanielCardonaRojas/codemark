@@ -298,22 +298,27 @@ impl LanguageRegistry {
 
     /// Look up a dynamic language by file extension (case-insensitive).
     pub fn from_extension(ext: &str) -> Option<Language> {
-        GLOBAL_REGISTRY
-            .read()
-            .expect("grammar registry lock poisoned")
-            .by_extension
-            .get(&ext.to_lowercase())
-            .cloned()
+        GLOBAL_REGISTRY.read().expect("grammar registry lock poisoned").lookup_extension(ext)
     }
 
     /// Look up a dynamic language by name (case-insensitive).
     pub fn from_name(name: &str) -> Option<Language> {
-        GLOBAL_REGISTRY
-            .read()
-            .expect("grammar registry lock poisoned")
-            .by_name
-            .get(&name.to_lowercase())
-            .cloned()
+        GLOBAL_REGISTRY.read().expect("grammar registry lock poisoned").lookup_name(name)
+    }
+
+    /// Instance-level extension lookup, behind the process-global
+    /// [`from_extension`](Self::from_extension).
+    ///
+    /// Split out so resolution rules can be tested against a fixture registry
+    /// built by [`discover_in`](Self::discover_in), rather than only against
+    /// whatever grammars the developer running the tests has installed.
+    fn lookup_extension(&self, ext: &str) -> Option<Language> {
+        self.by_extension.get(&ext.to_lowercase()).cloned()
+    }
+
+    /// Instance-level name lookup — see [`lookup_extension`](Self::lookup_extension).
+    fn lookup_name(&self, name: &str) -> Option<Language> {
+        self.by_name.get(&name.to_lowercase()).cloned()
     }
 
     /// List all registered dynamic language names.
@@ -417,6 +422,7 @@ struct Manifest {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::parser::languages::GrammarIdentity;
 
     /// Write a `<dir>/<name>/{manifest.json,grammar.wasm}` fixture. When
     /// `with_wasm` is false the `.wasm` is omitted so we can exercise the
@@ -448,6 +454,55 @@ mod tests {
         // Extensions are lowercased on insert, so "LUA" collapses onto "lua".
         assert_eq!(reg.by_extension.get("lua").map(|l| l.name()), Some("lua"));
         assert!(!reg.by_extension.contains_key("LUA"));
+    }
+
+    /// A partial override makes creation and resolution disagree about which
+    /// grammar a bookmark's language name refers to — issue #244.
+    ///
+    /// The dynamic `typescript` claims only `.ts`, so a `.tsx` file resolves to
+    /// the *built-in* at creation time and stores `"typescript"`. That name
+    /// later resolves to the *dynamic* grammar, so the stored query runs
+    /// against a grammar other than the one that generated it. The two lookups
+    /// are each internally consistent; they diverge only for an extension the
+    /// override does not claim.
+    #[test]
+    fn a_partial_override_makes_name_and_extension_lookup_disagree() {
+        let tmp = tempfile::tempdir().unwrap();
+        write_grammar(
+            tmp.path(),
+            "typescript",
+            r#"{ "name": "typescript", "extensions": ["ts"], "profile": {} }"#,
+            true,
+        );
+        let reg = LanguageRegistry::discover_in(tmp.path()).unwrap();
+
+        // `.tsx` is unclaimed by the override, so extension lookup falls
+        // through to the built-in — which is the correct grammar for the file.
+        assert!(reg.lookup_extension("tsx").is_none(), "override must not claim .tsx");
+        let at_creation = Language::static_from_extension("tsx").expect("built-in claims .tsx");
+        assert!(matches!(at_creation, Language::TypeScript));
+
+        // But the name it stores resolves to the dynamic grammar. Both are
+        // called "typescript", so comparing names cannot tell them apart —
+        // which is precisely why a name is not an identity.
+        let at_resolution = reg.lookup_name("typescript").expect("override claims the name");
+        assert!(matches!(at_resolution, Language::Dynamic(_)));
+        assert_eq!(at_creation.name(), at_resolution.name());
+
+        // The identity does distinguish them, and is what the bookmark records.
+        assert_eq!(at_creation.identity(), GrammarIdentity::Builtin);
+        assert_eq!(at_resolution.identity(), GrammarIdentity::Dynamic);
+        assert_ne!(at_creation.identity(), at_resolution.identity());
+
+        // And `from_identity` is what turns that record back into the right
+        // grammar: a bookmark recording `Builtin` resolves to the built-in even
+        // with an override owning the name. (Exercised against the real
+        // function, hence the process-global registry — so it must tolerate a
+        // machine that genuinely has a `typescript` override installed, where
+        // the dynamic answer is the correct one.)
+        let pinned = Language::from_identity("typescript", GrammarIdentity::Builtin).unwrap();
+        assert_eq!(pinned.identity(), GrammarIdentity::Builtin, "Builtin must stay built-in");
+        assert!(matches!(pinned, Language::TypeScript));
     }
 
     #[test]

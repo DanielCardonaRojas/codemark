@@ -110,8 +110,8 @@ impl Packer {
             // so persisting it would create a dangling foreign key on import.
             conn.execute(
                 "INSERT INTO bookmarks (id, query, language, file_path, content_hash, commit_hash,
-                 created_at, created_by, current_resolution_id)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                 created_at, created_by, current_resolution_id, grammar_source)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
                 params![
                     bm.id,
                     bm.query,
@@ -122,6 +122,11 @@ impl Packer {
                     bm.created_at,
                     bm.created_by,
                     bm.current_resolution_id,
+                    // Carried as authored, not translated to the importer's
+                    // setup: it records which grammar wrote the query, which is
+                    // what makes a mismatch on the importing machine visible
+                    // rather than silently re-labelled as a local grammar.
+                    bm.grammar_source.map(|g| g.as_str()),
                 ],
             )?;
 
@@ -244,5 +249,151 @@ impl Packer {
         encoder.finish()?;
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::engine::bookmark::{
+        Bookmark, BookmarkHealth, Collection, ResolutionMethod, Visibility,
+    };
+    use crate::parser::languages::GrammarIdentity;
+    use crate::storage::pack::PackReader;
+
+    fn bookmark(id: &str, grammar_source: Option<GrammarIdentity>) -> Bookmark {
+        Bookmark {
+            id: id.to_string(),
+            query: format!("(function_declaration) @target /* {id} */"),
+            language: "swift".to_string(),
+            grammar_source,
+            file_path: format!("src/{id}.swift"),
+            content_hash: Some("sha256:abcd".to_string()),
+            commit_hash: Some("abc123".to_string()),
+            health: BookmarkHealth::Active,
+            resolution_method: Some(ResolutionMethod::Exact),
+            last_resolved_at: None,
+            stale_since: None,
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+            created_by: None,
+            current_resolution_id: None,
+            repo_id: None,
+            tags: vec![],
+            annotations: vec![],
+            comments: vec![],
+        }
+    }
+
+    /// A one-collection snapshot wrapping `bookmarks`.
+    fn payload_with(bookmarks: Vec<Bookmark>) -> crate::engine::snapshot::SnapshotPayload {
+        crate::engine::snapshot::SnapshotPayload {
+            collection: Collection {
+                id: "c1".to_string(),
+                name: "Tour".to_string(),
+                description: None,
+                visibility: Visibility::Public,
+                created_at: "2026-01-01T00:00:00Z".to_string(),
+                created_by: None,
+                created_branch: None,
+                published_at: None,
+                published_commit_sha: None,
+                repo_url: None,
+                repo_id: None,
+                status: None,
+                health: None,
+                health_computed_at: None,
+                updated_at: None,
+                imported_from_url: None,
+                prompt: None,
+            },
+            bookmarks,
+            resolutions: vec![],
+            tags: vec![],
+            comments: vec![],
+            collection_tags: vec![],
+            collection_links: vec![],
+        }
+    }
+
+    /// A shared pack carries the grammar identity its author recorded.
+    ///
+    /// The identity is what resolution uses to pick the grammar that generated a
+    /// query (#244). Dropping it on export would silently downgrade every
+    /// imported bookmark to name-only resolution — the exact bug — while the
+    /// pack otherwise looked complete. It is deliberately carried *as authored*
+    /// rather than translated to the importer's setup, so a grammar mismatch on
+    /// the importing machine stays visible.
+    #[test]
+    fn a_pack_preserves_the_authors_grammar_identity() {
+        let payload = payload_with(vec![
+            bookmark("b-builtin", Some(GrammarIdentity::Builtin)),
+            bookmark("b-dynamic", Some(GrammarIdentity::Dynamic)),
+            // Written by a codemark predating the column: stays unknown rather
+            // than being guessed at on export.
+            bookmark("b-unknown", None),
+        ]);
+
+        let pack_db = std::env::temp_dir()
+            .join(format!("codemark-identity-pack-{}.sqlite", uuid::Uuid::new_v4()));
+        {
+            let db = Database::create(&pack_db).unwrap();
+            let packer = Packer::new(&db);
+            packer.insert_snapshot_data(db.conn(), &payload).unwrap();
+        }
+
+        let reader = PackReader::open(&pack_db).unwrap();
+        let round_tripped: std::collections::HashMap<_, _> = reader
+            .bookmarks()
+            .unwrap()
+            .into_iter()
+            .map(|b| (b.id.clone(), b.grammar_source))
+            .collect();
+
+        assert_eq!(round_tripped.get("b-builtin"), Some(&Some(GrammarIdentity::Builtin)));
+        assert_eq!(round_tripped.get("b-dynamic"), Some(&Some(GrammarIdentity::Dynamic)));
+        assert_eq!(round_tripped.get("b-unknown"), Some(&None));
+
+        let _ = std::fs::remove_file(&pack_db);
+    }
+
+    /// A pack written before the column existed still reads back.
+    ///
+    /// `import_pack` migrates an older pack up to the current schema before
+    /// reading it, so `reader.rs` can select `grammar_source` unconditionally.
+    /// If that ordering ever broke, every pre-v25 pack would fail to import on a
+    /// missing column — so pin the behaviour rather than the assumption.
+    #[test]
+    fn a_pre_v25_pack_reads_back_after_migration() {
+        let pack_db =
+            std::env::temp_dir().join(format!("codemark-old-pack-{}.sqlite", uuid::Uuid::new_v4()));
+
+        {
+            let db = Database::create(&pack_db).unwrap();
+            let packer = Packer::new(&db);
+            packer
+                .insert_snapshot_data(db.conn(), &payload_with(vec![bookmark("b-old", None)]))
+                .unwrap();
+            // Drop the column to recreate a genuinely pre-v25 pack, and rewind
+            // the version so the importer migrates it forward again.
+            db.conn()
+                .execute_batch(
+                    "ALTER TABLE bookmarks DROP COLUMN grammar_source; PRAGMA user_version = 24;",
+                )
+                .unwrap();
+        }
+
+        // Selecting the column now fails, which is what an old pack looks like.
+        assert!(PackReader::open(&pack_db).unwrap().bookmarks().is_err());
+
+        // The importer migrates first; after that the read succeeds.
+        let mut conn = rusqlite::Connection::open(&pack_db).unwrap();
+        Database::run_migrations_on(&mut conn).unwrap();
+        drop(conn);
+
+        let bookmarks = PackReader::open(&pack_db).unwrap().bookmarks().unwrap();
+        assert_eq!(bookmarks.len(), 1);
+        assert_eq!(bookmarks[0].grammar_source, None, "migrated rows stay unknown");
+
+        let _ = std::fs::remove_file(&pack_db);
     }
 }

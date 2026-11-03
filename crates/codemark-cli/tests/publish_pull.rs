@@ -77,6 +77,7 @@ async fn test_cli_publish_pull_roundtrip() {
         id: Uuid::new_v4().to_string(),
         query: "fn main".to_string(),
         language: "rust".to_string(),
+        grammar_source: None,
         file_path: "src/main.rs".to_string(),
         content_hash: None,
         commit_hash: None,

@@ -101,6 +101,7 @@ fn row_to_bookmark(row: &rusqlite::Row) -> rusqlite::Result<Bookmark> {
         id: row.get(0)?,
         query: row.get(1)?,
         language: row.get(2)?,
+        grammar_source: None,
         file_path: row.get(3)?,
         content_hash: row.get(4)?,
         commit_hash: row.get(5)?,

@@ -279,9 +279,7 @@ fn extract_breadcrumbs_from_match(
     }
 
     // Fallback to AST walking for legacy queries
-    use std::str::FromStr;
-    let lang = crate::parser::languages::Language::from_str(&bookmark.language)
-        .unwrap_or(crate::parser::languages::Language::Rust);
+    let lang = bookmark.grammar().unwrap_or(crate::parser::languages::Language::Rust);
 
     if let Some(target_node) =
         tree.root_node().descendant_for_byte_range(m.byte_range.0, m.byte_range.1)
@@ -326,9 +324,7 @@ fn hash_fallback_walk(
         let ch = hash::content_hash(text);
         if ch == stored_hash {
             let source_str = std::str::from_utf8(source_bytes).unwrap_or("");
-            use std::str::FromStr;
-            let lang_enum = crate::parser::languages::Language::from_str(&bookmark.language)
-                .unwrap_or(crate::parser::languages::Language::Rust);
+            let lang_enum = bookmark.grammar().unwrap_or(crate::parser::languages::Language::Rust);
             let breadcrumbs =
                 crate::engine::breadcrumbs::extract_breadcrumbs(node, source_str, lang_enum, 3);
 
@@ -388,6 +384,7 @@ mod tests {
             id: "test-bm".to_string(),
             query: generated.query,
             language: "swift".to_string(),
+            grammar_source: None,
             file_path: path.to_string_lossy().to_string(),
             content_hash: Some(ch),
             commit_hash: None,
@@ -745,6 +742,7 @@ class TierTest {
             id: "tier-test-exact".to_string(),
             query: generated.query.clone(),
             language: "swift".to_string(),
+            grammar_source: None,
             file_path: path.to_string_lossy().to_string(),
             content_hash: Some(ch.clone()),
             commit_hash: None,
@@ -776,6 +774,7 @@ class TierTest {
   (#eq? @fn_name "wrongName")) @target"#
                 .to_string(),
             language: "swift".to_string(),
+            grammar_source: None,
             file_path: path.to_string_lossy().to_string(),
             content_hash: Some(ch.clone()),
             commit_hash: None,
