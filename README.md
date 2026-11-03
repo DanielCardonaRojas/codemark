@@ -273,7 +273,7 @@ See the [**Full Command Reference**](./dev-docs/CLI.md) for every subcommand and
 
 ## 🌐 Supported Languages
 
-Codemark is powered by Tree-sitter. It supports 8 built-in languages out of the box, plus **any other language** via WASM grammars loaded at runtime — eleven more are one command away from the [grammar registry](#from-the-grammar-registry-one-command).
+Codemark is powered by Tree-sitter. It supports 8 built-in languages out of the box, plus **any other language** via WASM grammars loaded at runtime — twelve more are one command away from the [grammar registry](#from-the-grammar-registry-one-command).
 
 **Built-in:**
 - 🦀 **Rust**
@@ -307,6 +307,7 @@ Available today:
 | **PHP** | `php`, `phtml` |  |
 | **Python** | `py`, `pyi`, `pyw` | replaces the built-in |
 | **Ruby** | `rb`, `rake`, `gemspec` |  |
+| **Rust** | `rs` | replaces the built-in |
 | **Scala** | `scala`, `sc` |  |
 | **Swift** | `swift` | replaces the built-in |
 | **TypeScript** | `ts` | replaces the built-in |

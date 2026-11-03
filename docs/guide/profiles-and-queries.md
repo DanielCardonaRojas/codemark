@@ -142,17 +142,21 @@ list. Name a label no kind in the profile carries, or leave it empty, and
 breadcrumbs are blank with no error. `validate` reports an unmatched label as
 an **error** for exactly this reason.
 
-**2. A container need not be named.** `containers` drives two presentations of
-one idea, and they need different things:
+**2. A container need not be named.** Both presentations work from the
+container's *first source line*, not from a name:
 
-| Presentation | Needs | Unnamed container |
-|---|---|---|
-| Sticky header | the *line*, pinned while scrolling | works |
-| Breadcrumb trail | the *name*, for a path to the target | skipped |
+```rust
+let line_text = source.lines().nth(start_pos.row).unwrap_or("").trim_end();
+breadcrumbs.push(Breadcrumb { line: start_pos.row + 1, text: line_text.to_string() });
+```
+
+`extract_breadcrumbs` matches on the node **kind** alone and copies that line,
+so a nameless container still produces a usable trail entry — `const Point =
+struct {` reads perfectly well. Nothing is dropped for lacking a name.
 
 A Zig struct is an anonymous value bound by its enclosing
-`variable_declaration` — it has no name of its own, but you still want it
-pinned while reading its methods.
+`variable_declaration`: no name of its own, but still worth both pinning while
+you read its methods and showing in the trail that leads to them.
 
 **3. A container is a landmark with a body.** Having a body is what makes a
 kind worth pinning: it is something you can scroll inside. A one-liner such as
@@ -218,11 +222,14 @@ the build.
 
 ## Authoring a profile
 
-Don't hand-write one. The registry has a generator that proposes a profile by
-parsing real sample files:
+Don't hand-write one. A generator proposes a profile by parsing real sample
+files — it lives behind the off-by-default `profile-authoring` feature, since
+it is for people contributing profiles rather than installing a language, so
+the shipped binary does not carry it:
 
 ```bash
-codemark languages profile init ./tree-sitter-ruby.wasm \
+cargo run -p codemark-cli --features profile-authoring -- \
+  languages profile init ./tree-sitter-ruby.wasm \
   --sample sample.rb --name ruby
 ```
 
