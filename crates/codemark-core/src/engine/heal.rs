@@ -402,6 +402,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     async fn test_heal_creates_resolution() {
         let (repo_path, db, _head) = create_heal_test_env();
         let config = Config::default();
@@ -420,6 +421,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     async fn test_heal_stores_resolution_in_db() {
         let (repo_path, db, _head) = create_heal_test_env();
         let config = Config::default();
@@ -441,6 +443,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     async fn test_heal_updates_bookmark_health_in_db() {
         let (repo_path, db, _head) = create_heal_test_env();
         let config = Config::default();
@@ -460,6 +463,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     async fn test_heal_validate_only_no_db_writes() {
         let (repo_path, db, _head) = create_heal_test_env();
         let config = Config::default();
@@ -498,6 +502,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     async fn test_heal_auto_archive_stale() {
         let (repo_path, db, _head) = create_heal_test_env();
         let config = Config::default();
@@ -526,6 +531,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     async fn test_heal_auto_archive_not_triggered_when_active() {
         let (repo_path, db, _head) = create_heal_test_env();
         let config = Config::default();

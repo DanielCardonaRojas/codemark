@@ -1303,6 +1303,44 @@ pub struct ResolutionRecord {
     pub status: String,
 }
 
+/// Bookmarks a batch command skipped because their grammar could not be
+/// loaded, grouped by the error so each missing grammar is reported once.
+///
+/// Since 0.8.0 most languages are registry grammars, so after an upgrade a
+/// batch run over Rust or Swift bookmarks can skip all of them. Reporting the
+/// skip (with the error's `codemark languages add` hint) keeps that from
+/// looking like an empty result.
+#[derive(Default)]
+pub(crate) struct SkippedGrammars(std::collections::BTreeMap<String, usize>);
+
+impl SkippedGrammars {
+    /// The bookmark's grammar, or `None` after recording why it is skipped.
+    pub(crate) fn grammar(&mut self, bm: &Bookmark) -> Option<Language> {
+        match bm.grammar() {
+            Ok(lang) => Some(lang),
+            Err(e) => {
+                tracing::warn!(
+                    target: "codemark::languages",
+                    bookmark = %bm.id,
+                    language = %bm.language,
+                    error = %e,
+                    "skipping bookmark: grammar unavailable"
+                );
+                *self.0.entry(e.to_string()).or_default() += 1;
+                None
+            }
+        }
+    }
+
+    /// Warn on stderr about every skipped group.
+    pub(crate) fn report(&self) {
+        for (reason, count) in &self.0 {
+            let noun = if *count == 1 { "bookmark" } else { "bookmarks" };
+            eprintln!("codemark: warning: skipped {count} {noun}: {reason}");
+        }
+    }
+}
+
 /// Batch resolve bookmarks and return structured results.
 pub async fn resolve_batch(
     db: &Database,
@@ -1321,8 +1359,9 @@ pub async fn resolve_batch(
     let repo_root = ctx.as_ref().map(|c| c.repo_root.clone()).unwrap_or_else(|| cwd.clone());
     let head_commit = ctx.and_then(|c| c.head_commit);
 
+    let mut skipped = SkippedGrammars::default();
     for bm in bookmarks {
-        let Ok(lang) = bm.grammar() else {
+        let Some(lang) = skipped.grammar(bm) else {
             continue;
         };
         let mut cache = ParseCache::new(lang.clone())?;
@@ -1392,6 +1431,8 @@ pub async fn resolve_batch(
             db.update_bookmark_resolution_id(&bm.id, &res_id)?;
         }
     }
+
+    skipped.report();
 
     // Recompute health for all affected collections
     for collection_id in affected_collections {

@@ -433,6 +433,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     async fn resolve_exact_match() {
         let (bm, mut cache) =
             create_bookmark_for_function("auth_service.swift", "validateToken").await;
@@ -449,6 +450,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     async fn resolve_exact_with_hash_mismatch() {
         let (mut bm, mut cache) =
             create_bookmark_for_function("auth_service.swift", "validateToken").await;
@@ -465,6 +467,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     async fn resolve_with_wrong_name_falls_through_tiers() {
         let (mut bm, mut cache) =
             create_bookmark_for_function("auth_service.swift", "validateToken").await;
@@ -492,6 +495,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     async fn resolve_completely_missing_fails() {
         let (mut bm, mut cache) =
             create_bookmark_for_function("auth_service.swift", "validateToken").await;
@@ -510,6 +514,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     async fn breadcrumbs_extracted_from_sticky_captures() {
         // Test that breadcrumbs come from captures when present
         let (bm, mut cache) =
@@ -531,6 +536,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     async fn fallback_to_ast_walking_without_sticky_captures() {
         // Test that legacy queries without @sticky captures still work
         let source = r#"
@@ -586,6 +592,7 @@ class LegacyService {
     }
 
     #[tokio::test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     async fn extract_breadcrumbs_from_captures_direct() {
         // Direct unit test for extract_breadcrumbs_from_captures
         let source = r#"
@@ -646,6 +653,7 @@ class TestClass {
     }
 
     #[tokio::test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     async fn test_exact_over_relaxed() {
         // @lat: [[tests#System Invariants Tests#Health & Resolution Rules#Hierarchical Preference]]
         // Verifies that the resolution engine always prefers higher-tier matches.
@@ -697,6 +705,7 @@ class TestClass {
     }
 
     #[tokio::test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     async fn test_resolution_tier_hierarchy() {
         // @lat: [[tests#System Invariants Tests#Health & Resolution Rules#Hierarchical Preference]]
         // Explicitly test that tiers are tried in order: Exact → Relaxed → Minimal → HashFallback

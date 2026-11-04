@@ -222,11 +222,12 @@ pub async fn handle_diff(cli: &Cli, mode: &OutputMode, args: &DiffArgs) -> Resul
     }
 
     // Resolve affected bookmarks and report
+    let mut skipped = super::SkippedGrammars::default();
     match mode {
         OutputMode::Json => {
             let mut results = Vec::new();
             for bm in &affected {
-                let Ok(lang) = bm.grammar() else { continue };
+                let Some(lang) = skipped.grammar(bm) else { continue };
                 let mut cache = ParseCache::new(lang.clone())?;
                 let ts_lang = cache.language().clone();
                 let provider = codemark_core::vfs::LocalFileProvider;
@@ -258,7 +259,7 @@ pub async fn handle_diff(cli: &Cli, mode: &OutputMode, args: &DiffArgs) -> Resul
                 affected.len()
             );
             for bm in &affected {
-                let Ok(lang) = bm.grammar() else { continue };
+                let Some(lang) = skipped.grammar(bm) else { continue };
                 let mut cache = ParseCache::new(lang.clone())?;
                 let ts_lang = cache.language().clone();
                 let provider = codemark_core::vfs::LocalFileProvider;
@@ -294,6 +295,7 @@ pub async fn handle_diff(cli: &Cli, mode: &OutputMode, args: &DiffArgs) -> Resul
             }
         }
     }
+    skipped.report();
     Ok(())
 }
 

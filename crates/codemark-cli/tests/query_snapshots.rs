@@ -68,6 +68,7 @@ fn line_col_to_byte(source: &str, line: usize, col: usize) -> usize {
 }
 
 #[tokio::test]
+#[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
 async fn test_swift_complex_query_snapshots() {
     let fixture_name = "complex_scenarios.swift";
     let (source, tree): (String, tree_sitter::Tree) = get_fixture_content(fixture_name).await;

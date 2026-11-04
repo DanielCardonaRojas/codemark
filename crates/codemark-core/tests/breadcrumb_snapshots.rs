@@ -14,6 +14,7 @@ fn get_fixture_path(lang: &str, file: &str) -> PathBuf {
 }
 
 #[tokio::test]
+#[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
 async fn test_breadcrumb_extraction_rust() {
     let path = get_fixture_path("rust", "auth_service.rs");
     let source = std::fs::read_to_string(&path).expect("failed to read rust fixture");
@@ -59,6 +60,7 @@ async fn test_breadcrumb_extraction_rust() {
 }
 
 #[tokio::test]
+#[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
 async fn test_breadcrumb_extraction_swift() {
     let path = get_fixture_path("swift", "auth_service.swift");
     let source = std::fs::read_to_string(&path).expect("failed to read swift fixture");
@@ -106,6 +108,7 @@ async fn test_breadcrumb_extraction_swift() {
 }
 
 #[tokio::test]
+#[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
 async fn test_breadcrumb_extraction_typescript() {
     let path = get_fixture_path("typescript", "auth_service.ts");
     let source = std::fs::read_to_string(&path).expect("failed to read ts fixture");

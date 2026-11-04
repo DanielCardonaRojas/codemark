@@ -64,6 +64,7 @@ mod tests {
     use crate::parser::languages::Parser;
 
     #[test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     fn test_extract_rust_breadcrumbs() {
         let source = r#"
 mod auth {
@@ -91,6 +92,7 @@ mod auth {
     /// Both are whitelisted ancestors, so the walker used to emit the header
     /// twice and burn two breadcrumb slots on one level of nesting.
     #[test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     fn test_go_type_header_is_not_repeated() {
         let source = "package main\n\ntype S struct {\n\tName string\n}\n";
         let mut parser = Parser::new(crate::testing::grammar("go")).unwrap();
@@ -105,6 +107,7 @@ mod auth {
     /// A method inside a Go type must still report both levels: collapsing is
     /// keyed on the line, so it must not swallow a genuinely distinct ancestor.
     #[test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     fn test_go_func_inside_type_keeps_both_levels() {
         let source =
             "package main\n\ntype S struct{}\n\nfunc (s S) Name() string {\n\treturn \"\"\n}\n";
@@ -123,6 +126,7 @@ mod auth {
     /// covers it. The profile used to carry an `async_function_definition` entry
     /// that no node kind ever matched.
     #[test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     fn test_python_async_def_is_a_container() {
         let source = "class C:\n    async def fetch(self):\n        return 1\n";
         let mut parser = Parser::new(crate::testing::grammar("python")).unwrap();
@@ -136,24 +140,27 @@ mod auth {
         assert_eq!(bc[1].text, "    async def fetch(self):");
     }
 
-    /// Swift maps both `enum_declaration` and `enum_entry` to the `enum` label,
-    /// but they sit on different lines, so both are real breadcrumbs. Guards
-    /// against the duplicate fix being written as a node-kind exclusion.
+    /// Swift maps both `protocol_declaration` and `protocol_function_declaration`
+    /// to the `interface` label, but they sit on different lines, so both are
+    /// real breadcrumbs. Guards against the duplicate fix being written as a
+    /// label or node-kind exclusion rather than keyed on the line.
     #[test]
-    fn test_swift_enum_entry_on_its_own_line_is_kept() {
-        let source = "enum Color {\n    case red, green\n}\n";
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
+    fn test_swift_same_label_on_its_own_line_is_kept() {
+        let source = "protocol Shape {\n    func area() -> Double\n}\n";
         let mut parser = Parser::new(crate::testing::grammar("swift")).unwrap();
         let tree = parser.parse(source.as_bytes()).unwrap();
-        let idx = source.find("red").unwrap();
+        let idx = source.find("Double").unwrap();
         let target = tree.root_node().descendant_for_byte_range(idx, idx + 1).unwrap();
 
         let bc = extract_breadcrumbs(target, source, crate::testing::grammar("swift"), 3);
         assert_eq!(bc.len(), 2, "same-line collapsing swallowed a distinct ancestor: {bc:#?}");
-        assert_eq!(bc[0].text, "enum Color {");
-        assert_eq!(bc[1].text, "    case red, green");
+        assert_eq!(bc[0].text, "protocol Shape {");
+        assert_eq!(bc[1].text, "    func area() -> Double");
     }
 
     #[test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     fn test_extract_swift_breadcrumbs() {
         let source = r#"
 class AuthService {

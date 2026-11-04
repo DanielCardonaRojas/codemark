@@ -113,6 +113,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     fn relaxed_query_matches_more() {
         // Verify with real parser that relaxed query still matches
         use crate::parser::languages::Parser;

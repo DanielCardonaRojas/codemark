@@ -385,7 +385,7 @@ pub fn stored_spellings(name: &str) -> Vec<String> {
     out.extend(
         LANGUAGE_ALIASES
             .iter()
-            .filter(|(_, c)| *c == canonical)
+            .filter(|(_, c)| c.eq_ignore_ascii_case(canonical))
             .map(|(alias, _)| alias.to_string()),
     );
     out
@@ -746,6 +746,11 @@ mod tests {
         csharp.sort();
         assert_eq!(csharp, ["c#", "c_sharp", "cs", "csharp"]);
         assert_eq!(stored_spellings("lua"), ["lua"]);
+
+        // A canonical name in another case still pulls in its aliases.
+        let mut upper = stored_spellings("C_SHARP");
+        upper.sort();
+        assert_eq!(upper, ["C_SHARP", "c#", "cs", "csharp"]);
     }
 
     /// Precedence must follow what the build can actually load.
@@ -925,6 +930,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     fn parse_swift_source() {
         let mut parser = Parser::new(crate::testing::grammar("swift").clone()).unwrap();
         let source = b"func hello() { print(\"hello\") }";
@@ -935,6 +941,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     fn parse_rust_source() {
         let mut parser = Parser::new(crate::testing::grammar("rust").clone()).unwrap();
         let source = b"fn hello() { println!(\"hello\"); }";
@@ -944,6 +951,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     fn parse_typescript_source() {
         let mut parser = Parser::new(crate::testing::grammar("typescript").clone()).unwrap();
         let source = b"function hello(): void { console.log('hello'); }";
@@ -953,6 +961,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     fn parse_python_source() {
         let mut parser = Parser::new(crate::testing::grammar("python").clone()).unwrap();
         let source = b"def hello():\n    print('hello')\n";
@@ -962,6 +971,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     async fn parse_swift_fixture() {
         let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../tests/fixtures/swift/auth_service.swift");
@@ -977,6 +987,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     async fn parse_cache_reuses_tree() {
         let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../tests/fixtures/swift/auth_service.swift");

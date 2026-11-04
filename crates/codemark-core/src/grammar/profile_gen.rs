@@ -686,6 +686,7 @@ mod tests {
     // The generator is derived from observed structure, so the built-in grammars
     // are the cheapest ground truth: we already know the right answer for them.
     #[test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     fn proposes_rust_landmarks_and_containers() {
         let src = r#"
 mod auth {
@@ -730,6 +731,7 @@ mod auth {
     /// check restored — verified by reverting it. Ruby, which does express it,
     /// is a registry grammar and not committed here.
     #[test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     fn nesting_is_detected_by_shape_not_by_kind_name() {
         // Ruby's declaration kinds — the ones that exposed the bug — carry none
         // of the marker words the old check looked for. Pin that, so the case
@@ -766,6 +768,7 @@ mod auth {
     /// value bound by its enclosing `variable_declaration`. A sticky header
     /// needs only the line, so the name is the breadcrumb renderer's problem.
     #[test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     fn a_container_needs_a_body_not_a_name() {
         // Rust's `impl_item` holds its name under `type`, never `name` — the
         // asymmetry that made a per-kind name field error-prone in the first
@@ -787,6 +790,7 @@ mod auth {
     }
 
     #[test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     fn labels_come_from_the_builtin_vocabulary() {
         let src = r#"
 struct S { x: i32 }
@@ -972,6 +976,7 @@ fn f() {
     }
 
     #[test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     fn evidence_is_ranked_and_explains_each_kind() {
         let src = "fn a() {}\nfn b() {}\nstruct S;\n";
         let p = propose(crate::testing::grammar("rust"), src);
@@ -986,6 +991,7 @@ fn f() {
     }
 
     #[test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     fn reports_samples_that_failed_to_parse() {
         // Python source fed to the Rust grammar produces ERROR nodes; the caller
         // needs to know the proposal is built on a bad parse.
@@ -994,6 +1000,7 @@ fn f() {
     }
 
     #[test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     fn proposal_is_deterministic() {
         let src = "mod m { fn a() {} struct S; }";
         let a = propose(crate::testing::grammar("rust"), src);
@@ -1094,6 +1101,7 @@ fn f() {
     // A generated profile must satisfy the Phase 0 lint — otherwise the
     // generator would emit exactly the dead entries the lint exists to catch.
     #[test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     fn generated_profile_is_lint_clean() {
         use crate::parser::profile::{LintSeverity, lint};
         let src = r#"

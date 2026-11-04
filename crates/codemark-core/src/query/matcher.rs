@@ -69,6 +69,7 @@ mod tests {
     use crate::parser::languages::{Language as CodemarkLang, Parser};
 
     #[test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     fn run_simple_query() {
         let mut parser = Parser::new(crate::testing::grammar("swift")).unwrap();
         let source = b"func hello() { }\nfunc world() { }";
@@ -89,6 +90,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     fn run_query_with_predicate() {
         let mut parser = Parser::new(crate::testing::grammar("swift")).unwrap();
         let source = b"func hello() { }\nfunc world() { }";
@@ -147,6 +149,7 @@ mod tests {
 
     /// Dump AST for Swift fixture to discover actual node type names.
     #[tokio::test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     async fn dump_swift_ast_structure() {
         let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../tests/fixtures/swift/complex_scenarios.swift");
@@ -162,6 +165,7 @@ mod tests {
 
     /// Dump AST for Rust fixture to discover node type names.
     #[tokio::test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     async fn dump_rust_ast_structure() {
         let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../tests/fixtures/rust/auth_service.rs");
@@ -176,6 +180,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     async fn dump_typescript_ast_structure() {
         let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../tests/fixtures/typescript/auth_service.ts");
@@ -189,6 +194,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     async fn dump_python_ast_structure() {
         let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../tests/fixtures/python/auth_service.py");
@@ -203,8 +209,9 @@ mod tests {
 
     // Macro to generate AST dump tests for any language/fixture pair
     macro_rules! dump_ast_test {
-        ($name:ident, $lang:expr, $fixture:expr) => {
+        ($(#[$attr:meta])* $name:ident, $lang:expr, $fixture:expr) => {
             #[tokio::test]
+            $(#[$attr])*
             async fn $name() {
                 let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join($fixture);
                 if !fixture.exists() {
@@ -256,16 +263,28 @@ mod tests {
     }
 
     dump_ast_test!(
+        #[cfg_attr(
+            not(feature = "wasm"),
+            ignore = "needs the wasm feature to load registry grammars"
+        )]
         dump_go_ast,
         crate::testing::grammar("go"),
         "../../tests/fixtures/go/auth_service.go"
     );
     dump_ast_test!(
+        #[cfg_attr(
+            not(feature = "wasm"),
+            ignore = "needs the wasm feature to load registry grammars"
+        )]
         dump_java_ast,
         crate::testing::grammar("java"),
         "../../tests/fixtures/java/AuthService.java"
     );
     dump_ast_test!(
+        #[cfg_attr(
+            not(feature = "wasm"),
+            ignore = "needs the wasm feature to load registry grammars"
+        )]
         dump_csharp_ast,
         crate::testing::grammar("c_sharp"),
         "../../tests/fixtures/csharp/AuthService.cs"
@@ -279,6 +298,7 @@ mod tests {
     // --- Sticky capture tests ---
 
     #[test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     fn matcher_extracts_sticky_captures() {
         let source = r#"
     class Foo {
@@ -315,6 +335,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     async fn matcher_no_sticky_captures_in_legacy_query() {
         // Legacy query without @sticky captures should return empty captures vec
         let source = r#"

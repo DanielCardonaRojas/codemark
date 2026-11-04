@@ -643,6 +643,7 @@ mod tests {
     /// for the first time: four of its twenty labels named `*_statement` kinds
     /// that tree-sitter-rust spells `*_expression`.
     #[test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     fn builtin_profiles_are_valid_against_their_own_grammars() {
         let languages = [
             crate::testing::grammar("rust"),
@@ -682,6 +683,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     fn lint_accepts_a_correct_profile() {
         let value = serde_json::json!({
             "landmark_kinds": ["function_item", "struct_item"],
@@ -692,6 +694,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     fn lint_flags_a_node_kind_the_grammar_does_not_define() {
         // `function_declaration` is Swift/TS; Rust says `function_item`. This is
         // the most common real mistake: a kind borrowed from another language.
@@ -704,6 +707,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     fn lint_suggests_a_near_miss_kind() {
         // A one-character slip should name the intended kind.
         let value = serde_json::json!({ "landmark_kinds": ["function_itm"] });
@@ -718,6 +722,7 @@ mod tests {
     /// define: a container label no kind in this profile carries can never
     /// match, and `containers` has no fallback, so it must be an error.
     #[test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     fn lint_flags_a_container_label_no_kind_carries() {
         let value = serde_json::json!({
             "node_labels": { "impl_item": "impl" },
@@ -734,6 +739,7 @@ mod tests {
     /// grammar doesn't define — and it earns a warning pointing at the new
     /// shape, so a stale manifest is visible rather than merely tolerated.
     #[test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     fn lint_accepts_the_legacy_pair_form_with_a_warning() {
         let value = serde_json::json!({ "containers": [["impl_item", "type"]] });
         let findings = lint(&value, &rust_grammar());
@@ -751,6 +757,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     fn lint_warns_on_unknown_profile_key() {
         // The exact drift that shipped in the Lua fixture: a key that
         // deserialization silently discards.
@@ -768,6 +775,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     fn lint_warns_when_containers_is_empty_or_absent() {
         // No fallback exists for containers, so blank breadcrumbs are silent.
         for value in [serde_json::json!({}), serde_json::json!({ "containers": [] })] {
@@ -782,6 +790,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     fn lint_warns_on_a_label_outside_the_known_vocabulary() {
         let value = serde_json::json!({
             "node_labels": { "function_item": "subroutine" },
@@ -796,12 +805,14 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     fn lint_rejects_a_profile_that_is_not_an_object() {
         let findings = lint(&serde_json::json!("landmark_kinds"), &rust_grammar());
         assert_eq!(errors(&findings).len(), 1);
     }
 
     #[test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     fn lint_rejects_a_field_of_the_wrong_type() {
         // A bare string where an array belongs makes the whole profile fail to
         // deserialize at discovery. Walking the fields individually would just

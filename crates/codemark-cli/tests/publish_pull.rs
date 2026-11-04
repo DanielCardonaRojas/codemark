@@ -38,6 +38,7 @@ async fn start_test_server(data_dir: std::path::PathBuf) -> (String, tokio::task
 }
 
 #[tokio::test]
+#[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
 async fn test_cli_publish_pull_roundtrip() {
     let server_dir = tempdir().unwrap();
     let cli_dir = tempdir().unwrap();

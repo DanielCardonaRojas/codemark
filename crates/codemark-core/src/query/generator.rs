@@ -1513,6 +1513,7 @@ mod tests {
     // the default (empty) profile leaves it non-landmark. This is the behavior
     // dynamic (WASM) grammars rely on for their manifest landmarks.
     #[test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     fn build_structural_path_uses_profile_landmarks() {
         let source = b"fn outer() {\n    let x = 1;\n}\n";
         let mut parser = Parser::new(crate::testing::grammar("rust")).unwrap();
@@ -1571,6 +1572,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     async fn generate_query_for_top_level_function() {
         let (tree, source) = parse_fixture("auth_service.swift").await;
         let range = find_function_byte_range(&tree, &source, "createDefaultAuthService");
@@ -1589,6 +1591,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     async fn generate_query_for_class_method() {
         let (tree, source) = parse_fixture("auth_service.swift").await;
         let range = find_function_byte_range(&tree, &source, "validateToken");
@@ -1606,6 +1609,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     async fn generate_query_for_private_method() {
         let (tree, source) = parse_fixture("auth_service.swift").await;
         let range = find_function_byte_range(&tree, &source, "decode");
@@ -1621,6 +1625,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     async fn generate_query_for_extension_method() {
         let (tree, source) = parse_fixture("auth_service.swift").await;
         let range = find_function_byte_range(&tree, &source, "invalidateCache");
@@ -1636,6 +1641,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     async fn generated_query_round_trips() {
         let (tree, source) = parse_fixture("auth_service.swift").await;
         let cm_lang = crate::testing::grammar("swift");
@@ -1705,6 +1711,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     async fn rust_top_level_function() {
         let (tree, source) = parse_rust_fixture("auth_service.rs").await;
         let range = find_rust_function_byte_range(&tree, &source, "create_default_auth_service");
@@ -1721,6 +1728,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     async fn rust_impl_method() {
         let (tree, source) = parse_rust_fixture("auth_service.rs").await;
         let range = find_rust_function_byte_range(&tree, &source, "decode");
@@ -1737,6 +1745,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     async fn rust_trait_impl_method() {
         let (tree, source) = parse_rust_fixture("auth_service.rs").await;
         // validate_token appears both in the trait and in the impl
@@ -1752,6 +1761,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     async fn rust_generic_function() {
         let (tree, source) = parse_rust_fixture("auth_service.rs").await;
         let range = find_rust_function_byte_range(&tree, &source, "validate_and_check");
@@ -1767,6 +1777,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     async fn rust_round_trips() {
         let (tree, source) = parse_rust_fixture("auth_service.rs").await;
         let cm_lang = crate::testing::grammar("rust");
@@ -1828,6 +1839,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     async fn ts_top_level_function() {
         let (tree, source) = parse_ts_fixture("auth_service.ts").await;
         let range = find_ts_function_byte_range(&tree, &source, "validateAndCheck");
@@ -1843,6 +1855,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     async fn ts_class_method() {
         let (tree, source) = parse_ts_fixture("auth_service.ts").await;
         let range = find_ts_function_byte_range(&tree, &source, "validateToken");
@@ -1858,6 +1871,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     async fn ts_private_method() {
         let (tree, source) = parse_ts_fixture("auth_service.ts").await;
         let range = find_ts_function_byte_range(&tree, &source, "decode");
@@ -1904,6 +1918,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     async fn py_top_level_function() {
         let (tree, source) = parse_py_fixture("auth_service.py").await;
         let range = find_py_function_byte_range(&tree, &source, "create_default_auth_service");
@@ -1919,6 +1934,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     async fn py_class_method() {
         let (tree, source) = parse_py_fixture("auth_service.py").await;
         let range = find_py_function_byte_range(&tree, &source, "validate_token");
@@ -1934,6 +1950,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     async fn py_private_method() {
         let (tree, source) = parse_py_fixture("auth_service.py").await;
         let range = find_py_function_byte_range(&tree, &source, "_decode");
@@ -1949,6 +1966,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     async fn py_decorated_function() {
         let (tree, source) = parse_py_fixture("auth_service.py").await;
         let range = find_py_function_byte_range(&tree, &source, "require_auth");
@@ -1995,6 +2013,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     async fn go_free_function() {
         let (tree, source) = parse_go_fixture("auth_service.go").await;
         let range = find_go_function_range(&tree, &source, "CreateDefaultAuthService");
@@ -2008,6 +2027,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     async fn go_method() {
         let (tree, source) = parse_go_fixture("auth_service.go").await;
         let range = find_go_function_range(&tree, &source, "ValidateToken");
@@ -2020,6 +2040,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     async fn go_private_method() {
         let (tree, source) = parse_go_fixture("auth_service.go").await;
         let range = find_go_function_range(&tree, &source, "decode");
@@ -2063,6 +2084,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     async fn java_method() {
         let (tree, source) = parse_java_fixture("AuthService.java").await;
         let range = find_java_range(&tree, &source, "validateToken");
@@ -2076,6 +2098,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     async fn java_private_method() {
         let (tree, source) = parse_java_fixture("AuthService.java").await;
         let range = find_java_range(&tree, &source, "decode");
@@ -2089,6 +2112,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     async fn java_static_method() {
         let (tree, source) = parse_java_fixture("AuthService.java").await;
         let range = find_java_range(&tree, &source, "createDefault");
@@ -2132,6 +2156,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     async fn csharp_method() {
         let (tree, source) = parse_csharp_fixture("AuthService.cs").await;
         let range = find_csharp_range(&tree, &source, "ValidateToken");
@@ -2145,6 +2170,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     async fn csharp_private_method() {
         let (tree, source) = parse_csharp_fixture("AuthService.cs").await;
         let range = find_csharp_range(&tree, &source, "Decode");
@@ -2158,6 +2184,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     async fn csharp_static_method() {
         let (tree, source) = parse_csharp_fixture("AuthService.cs").await;
         let range = find_csharp_range(&tree, &source, "CreateDefault");
@@ -2225,6 +2252,7 @@ mod tests {
     // --- Range precision tests: method range should target method, not class ---
 
     #[tokio::test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     async fn swift_exact_range_targets_method_not_class() {
         let (tree, source) = parse_fixture("auth_service.swift").await;
         let cm_lang = crate::testing::grammar("swift");
@@ -2243,6 +2271,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     async fn rust_exact_range_targets_method_not_impl() {
         let (tree, source) = parse_rust_fixture("auth_service.rs").await;
         let cm_lang = crate::testing::grammar("rust");
@@ -2260,6 +2289,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     async fn ts_exact_range_targets_method_not_class() {
         let (tree, source) = parse_ts_fixture("auth_service.ts").await;
         let cm_lang = crate::testing::grammar("typescript");
@@ -2277,6 +2307,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     async fn py_exact_range_targets_method_not_class() {
         let (tree, source) = parse_py_fixture("auth_service.py").await;
         let cm_lang = crate::testing::grammar("python");
@@ -2294,6 +2325,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     async fn go_exact_range_targets_method() {
         let (tree, source) = parse_go_fixture("auth_service.go").await;
         let cm_lang = crate::testing::grammar("go");
@@ -2310,6 +2342,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     async fn java_exact_range_targets_method_not_class() {
         let (tree, source) = parse_java_fixture("AuthService.java").await;
         let cm_lang = crate::testing::grammar("java");
@@ -2327,6 +2360,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     async fn single_line_inside_method_targets_anchored_declaration() {
         // A single line inside a method should target the enclosing method
         let (tree, source) = parse_rust_fixture("auth_service.rs").await;
@@ -2350,6 +2384,7 @@ mod tests {
     // --- Sticky capture tests ---
 
     #[tokio::test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     async fn generated_query_includes_sticky_captures() {
         let (tree, source) = parse_fixture("auth_service.swift").await;
         let range = find_function_byte_range(&tree, &source, "validateToken");
@@ -2373,6 +2408,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     async fn generated_query_for_nested_class_has_sticky_captures() {
         let (tree, source) = parse_ts_fixture("auth_service.ts").await;
         let range = find_ts_function_byte_range(&tree, &source, "validateToken");
