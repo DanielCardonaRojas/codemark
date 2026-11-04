@@ -646,7 +646,7 @@ Examples:
 ## Supported languages
 Only Dart is built in. Every other language is a grammar installed from the
 registry — `codemark languages registry list` shows them: Bash, C# (`c_sharp`),
-Go, Java, JavaScript, Lua, PHP, Python, Ruby, Rust, Scala, Swift, TypeScript,
+Go, Java, JavaScript, Lua, PHP, Python, Ruby, Rust, Scala, Swift, TSX, TypeScript,
 Zig. Anything else loads at runtime from a WASM grammar — no recompile needed.
 
 A fresh install has none of them, so expect to hit the missing-grammar error

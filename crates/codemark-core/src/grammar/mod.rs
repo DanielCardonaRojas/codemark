@@ -349,7 +349,7 @@ pub fn validate_name_and_extensions_opt(
     let canonical = canonical_name(name);
     if canonical != name {
         return Err(Error::Input(format!(
-            "Invalid grammar name '{name}': it is an alias of '{canonical}'. Install it as              '{canonical}' instead."
+            "Invalid grammar name '{name}': it is an alias of '{canonical}'. Install it as '{canonical}' instead."
         )));
     }
 

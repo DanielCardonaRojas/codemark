@@ -19,11 +19,11 @@
 # for users upgrading to the new grammar.
 set -euo pipefail
 
-REGISTRY_REV="${CODEMARK_TEST_REGISTRY_REV:-5e7faf9d4f7c3b885e885e48d52b4c8625d60411}"
+REGISTRY_REV="${CODEMARK_TEST_REGISTRY_REV:-334e54f0a307f16587cd17b462f6bb6d9de74bff}"
 REGISTRY_URL="https://raw.githubusercontent.com/DanielCardonaRojas/codemark-grammars/${REGISTRY_REV}"
 
 # Languages the test suite parses. Dart is still compiled in and needs nothing.
-LANGUAGES=(rust swift typescript python go java c_sharp)
+LANGUAGES=(rust swift typescript tsx python go java c_sharp)
 
 ROOT="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 DEST="${ROOT}/tests/grammars"
