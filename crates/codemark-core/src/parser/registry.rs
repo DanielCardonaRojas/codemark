@@ -874,30 +874,38 @@ mod tests {
 
 #[cfg(test)]
 mod notice_tests {
-    /// The override notices must be emitted as `tracing` events, never written
-    /// to the terminal: `refresh()` runs on every TUI `FocusGained`, so stray
-    /// output lands on the alternate screen mid-render.
+    /// Grammar discovery, loading and the registry client must report through
+    /// `tracing`, never the terminal: the TUI runs all of them (`refresh()` on
+    /// every `FocusGained`, installs from the Languages tab), and stray output
+    /// lands on the alternate screen mid-render.
     ///
-    /// Scans this module's own source, so a future `eprintln!` added anywhere in
-    /// grammar discovery fails here rather than in someone's terminal. The
-    /// macro names are assembled at runtime so this test does not match itself.
+    /// Scans the non-test part of each module's source, so a future `eprintln!`
+    /// fails here rather than in someone's terminal. The macro names are
+    /// assembled at runtime so this test does not match itself.
     #[test]
-    fn discovery_writes_nothing_to_the_terminal() {
+    fn grammar_code_writes_nothing_to_the_terminal() {
         let banned = ["eprint", "print"].map(|stem| format!("{stem}ln!"));
-        let offenders: Vec<_> = include_str!("registry.rs")
-            .lines()
-            .enumerate()
-            .filter(|(_, line)| {
+        let sources = [
+            ("parser/registry.rs", include_str!("registry.rs")),
+            ("parser/languages.rs", include_str!("languages.rs")),
+            ("grammar/mod.rs", include_str!("../grammar/mod.rs")),
+            ("grammar/registry_source.rs", include_str!("../grammar/registry_source.rs")),
+        ];
+        let mut offenders = Vec::new();
+        for (file, source) in sources {
+            // Test modules may print (fixture-skip notes); production code may not.
+            let production = source.split("\n#[cfg(test)]").next().unwrap_or(source);
+            for (i, line) in production.lines().enumerate() {
                 let code = line.split("//").next().unwrap_or("").trim();
-                banned.iter().any(|m| code.contains(m.as_str()))
-            })
-            .map(|(i, line)| format!("  {}: {}", i + 1, line.trim()))
-            .collect();
+                if banned.iter().any(|m| code.contains(m.as_str())) {
+                    offenders.push(format!("  {file}:{}: {}", i + 1, line.trim()));
+                }
+            }
+        }
 
         assert!(
             offenders.is_empty(),
-            "grammar discovery must report through `tracing` on codemark::registry, \
-             because the TUI re-scans on FocusGained:\n{}",
+            "grammar code must report through `tracing`, because the TUI runs it:\n{}",
             offenders.join("\n")
         );
     }

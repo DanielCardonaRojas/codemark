@@ -217,6 +217,11 @@ async fn handle_registry_list(
     let config = crate::cli::handlers::load_config(cli);
     let client = RegistryClient::from_config(&config.grammars)?;
     let index = client.fetch_index(args.refresh).await?;
+    if let Some(error) = &index.stale {
+        eprintln!(
+            "codemark: could not reach the grammar registry ({error}); using the cached index"
+        );
+    }
 
     if matches!(mode, OutputMode::Json) {
         output::write_json_success(&serde_json::json!({

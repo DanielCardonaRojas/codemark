@@ -48,6 +48,13 @@ pub struct RegistryIndex {
     /// fields are additive and do not bump it — `wasm_url` was added this way.
     pub schema_version: u32,
     pub grammars: Vec<RegistryEntry>,
+    /// Set when this index is a stale cache served because the registry could
+    /// not be reached; holds the fetch error. Not part of the wire format.
+    ///
+    /// Core never prints this itself — the CLI and the TUI each surface it in
+    /// their own way (a stderr line would land on top of the TUI's screen).
+    #[serde(skip)]
+    pub stale: Option<String>,
 }
 
 /// One language's entry in the index.
@@ -277,10 +284,7 @@ impl RegistryClient {
                         error = %e,
                         "registry fetch failed; using the cached index"
                     );
-                    eprintln!(
-                        "codemark: could not reach the grammar registry ({e}); using the cached index"
-                    );
-                    return Ok(stale);
+                    return Ok(RegistryIndex { stale: Some(e.to_string()), ..stale });
                 }
                 Err(e)
             }
@@ -678,6 +682,27 @@ mod tests {
             tmp.join("cache"),
             Duration::from_secs(3600),
         )
+    }
+
+    /// A stale fallback is reported on the index, not printed: the TUI calls
+    /// this, and stderr would draw over its screen. A fresh fetch carries no
+    /// such marker, and the marker never reaches the on-disk cache.
+    #[tokio::test]
+    async fn a_stale_fallback_is_reported_on_the_index_not_printed() {
+        let tmp = tempfile::tempdir().unwrap();
+        let client = fixture_registry(tmp.path());
+
+        let fresh = client.fetch_index(true).await.unwrap();
+        assert!(fresh.stale.is_none(), "a successful fetch is not stale");
+
+        // Take the registry away; the cached copy is all that's left.
+        std::fs::remove_dir_all(tmp.path().join("registry")).unwrap();
+        let offline = client.fetch_index(true).await.unwrap();
+        assert_eq!(offline.grammars.len(), fresh.grammars.len());
+        assert!(offline.stale.is_some(), "a cache served after a failed fetch is stale");
+
+        let cached = std::fs::read_to_string(client.index_cache_path()).unwrap();
+        assert!(!cached.contains("stale"), "the marker is not part of the wire format");
     }
 
     #[tokio::test]
