@@ -289,7 +289,9 @@ built in, until the registry has a prebuilt grammar for it.
 > **Upgrading from 0.7?** Rust, Swift, TypeScript, Python, Go, Java and C# used
 > to be built in. Existing bookmarks keep working once the grammar is installed
 > — including C# bookmarks stored as `csharp`. `.tsx` files now have their own
-> `tsx` grammar (`codemark languages install tsx`), which parses JSX.
+> `tsx` grammar (`codemark languages install tsx`), which parses JSX. Bookmarks
+> on `.tsx` files made before 0.8.0 recorded `typescript`, so they also need
+> `codemark languages install typescript`.
 
 ### From the grammar registry (one command)
 

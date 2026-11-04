@@ -48,7 +48,7 @@ The precedence above decides which grammar a *new* bookmark is created with. An
 query — `builtin` or `dynamic` — and resolution asks for that one back.
 
 This matters because a name is ambiguous while an override is installed. A
-dynamic `dart` claiming only some of the built-in's extensions leaves the rest
+dynamic `dart` claiming `.dartx` but not `.dart` leaves `.dart` files
 resolving to the built-in, but both grammars answer to the name `dart`, so a
 name-only lookup would later hand that bookmark the override's grammar.
 Queries are grammar-specific, so it would silently stop matching.
