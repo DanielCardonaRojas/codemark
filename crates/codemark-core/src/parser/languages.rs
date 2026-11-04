@@ -329,7 +329,6 @@ impl FromStr for Language {
 const LANGUAGE_ALIASES: &[(&str, &str)] = &[
     ("rs", "rust"),
     ("ts", "typescript"),
-    ("tsx", "typescript"),
     ("py", "python"),
     ("csharp", "c_sharp"),
     ("c#", "c_sharp"),
@@ -342,12 +341,12 @@ const LANGUAGE_ALIASES: &[(&str, &str)] = &[
 /// These were parseable out of the box before 0.8.0, so meeting one with no
 /// grammar installed is the common upgrade case, not an unknown file type. This
 /// table lets that be reported as a missing grammar *with its name*, which
-/// tells the user (or the agent skill) exactly what to install. `.tsx` is
-/// absent on purpose: the registry's `typescript` grammar does not parse TSX.
+/// tells the user (or the agent skill) exactly what to install.
 const UNBUNDLED_EXTENSIONS: &[(&str, &str)] = &[
     ("rs", "rust"),
     ("swift", "swift"),
     ("ts", "typescript"),
+    ("tsx", "tsx"),
     ("py", "python"),
     ("go", "go"),
     ("java", "java"),
@@ -703,6 +702,9 @@ mod tests {
             ("swift", "swift"),
             ("typescript", "typescript"),
             ("ts", "typescript"),
+            // A grammar of its own since the registry gained one — no longer
+            // an alias of `typescript`, which cannot parse JSX.
+            ("tsx", "tsx"),
             ("python", "python"),
             ("py", "python"),
             ("go", "go"),

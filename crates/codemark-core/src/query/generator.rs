@@ -1886,6 +1886,62 @@ mod tests {
         assert_eq!(matches.len(), 1, "query:\n{}", result.query);
     }
 
+    // --- TSX tests ---
+
+    /// The `tsx` grammar exists because `typescript` cannot parse JSX. Loading
+    /// by name is not enough: the grammar has to parse a component cleanly,
+    /// and a bookmark on it has to resolve — including after the file moves
+    /// around it, which is what resolution is for.
+    #[test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
+    fn tsx_component_parses_and_its_bookmark_resolves() {
+        let source = "\
+import { useState } from 'react';
+
+export function Counter({ start }: { start: number }) {
+  const [count, setCount] = useState(start);
+  return (
+    <button className=\"counter\" onClick={() => setCount(count + 1)}>
+      {count}
+    </button>
+  );
+}
+
+export function Label({ text }: { text: string }) {
+  return <span>{text}</span>;
+}
+";
+        // The reason for the split: TypeScript's grammar errors on this file.
+        let mut ts = Parser::new(crate::testing::grammar("typescript")).unwrap();
+        assert!(
+            ts.parse(source.as_bytes()).unwrap().root_node().has_error(),
+            "typescript should not parse JSX; if it now does, the tsx split needs revisiting"
+        );
+
+        let cm_lang = crate::testing::grammar("tsx");
+        let mut parser = Parser::new(cm_lang.clone()).unwrap();
+        let tree = parser.parse(source.as_bytes()).unwrap();
+        assert!(!tree.root_node().has_error(), "tsx failed to parse:\n{}", tree.root_node());
+
+        let lang = cm_lang.tree_sitter_language();
+        let range = find_ts_function_byte_range(&tree, source, "Counter");
+        let result =
+            generate_query(&tree, source.as_bytes(), range, &lang, cm_lang.profile()).unwrap();
+        assert_eq!(result.target_name.as_deref(), Some("Counter"));
+
+        let matches = matcher::run_query(&result.query, &tree, source.as_bytes(), &lang).unwrap();
+        assert_eq!(matches.len(), 1, "query:\n{}", result.query);
+
+        // Code added above the component shifts every byte offset; the query
+        // must still find it, and only it.
+        let edited = format!("const VERSION = 2;\n\n{source}");
+        let edited_tree = parser.parse(edited.as_bytes()).unwrap();
+        assert!(!edited_tree.root_node().has_error());
+        let matches =
+            matcher::run_query(&result.query, &edited_tree, edited.as_bytes(), &lang).unwrap();
+        assert_eq!(matches.len(), 1, "query after edit:\n{}", result.query);
+    }
+
     // --- Python tests ---
 
     async fn parse_py_fixture(name: &str) -> (Tree, String) {
