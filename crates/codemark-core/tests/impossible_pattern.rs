@@ -15,7 +15,11 @@
 //! | Sibling patterns duplicated, or out of grammar order | [#263] | fixed |
 //! | An anonymous keyword used as a name | [#265] | fixed |
 //! | A declared field the *query compiler* still rejects | [#267] | fixed |
-//! | Self-capture reusing a stale counter | [#270] | open |
+//! | Self-capture reusing a stale counter | [#270] | fixed |
+//!
+//! All five are fixed, and every named node across the four committed fixtures
+//! now yields a compilable query. The expected-failure lists below are empty —
+//! an entry reappearing is a regression, not a new baseline.
 //!
 //! The sweeps at the bottom are the part that generalizes: they bookmark
 //! *every* named node of a source file and collect the node kinds whose query
@@ -649,6 +653,144 @@ fn valid_fields_still_reach_the_query() {
     }
 }
 
+// --- #270: a self-capture's number must survive recursion ------------------
+
+/// The exact reproduction from the issue.
+///
+/// Rust's `use std::collections::HashMap;` nests `scoped_identifier` inside
+/// `scoped_identifier`, and each level's name *is* the node itself — the
+/// `field: None` and `node_type == direct_type` branch, where the capture is
+/// appended after recursing. Deriving its number from the shared counter
+/// afterwards is only right when nothing consumed a number in between, which
+/// nesting guarantees it did.
+#[test]
+fn a_path_segment_in_a_use_declaration_is_bookmarkable() {
+    let source = "use std::collections::HashMap;\n";
+
+    for segment in ["std", "collections"] {
+        let query = generate_and_compile(&Language::Rust, source, range_of(source, segment))
+            .unwrap_or_else(|e| panic!("bookmarking `{segment}` in a use path must succeed: {e}"));
+
+        // The failure was structural, so assert the invariant rather than the
+        // text: every capture a predicate references must be one the pattern
+        // actually binds. Tree-sitter rejecting the query is the symptom; an
+        // unbound reference is the defect.
+        assert_predicates_reference_bound_captures(&query);
+    }
+}
+
+/// Nesting deeper must keep working — the counter is shared across the whole
+/// path, so a third level is where an off-by-one that happens to cancel out at
+/// two levels would show up.
+#[test]
+fn deeply_nested_path_segments_keep_their_own_captures() {
+    let source = "use a::b::c::d::E;\n";
+
+    for segment in ["a", "b", "c"] {
+        let query = generate_and_compile(&Language::Rust, source, range_of(source, segment))
+            .unwrap_or_else(|e| panic!("bookmarking `{segment}` must succeed: {e}"));
+        assert_predicates_reference_bound_captures(&query);
+    }
+}
+
+/// Every `@name` a predicate compares must be bound somewhere in the pattern,
+/// and no two nodes may claim the same one.
+///
+/// Both halves matter and the original bug broke both: `@name1` was emitted
+/// twice while `@name0` was referenced by a predicate and never bound. Checking
+/// only for duplicates, or only for unbound references, would each have passed
+/// on one of the two symptoms.
+fn assert_predicates_reference_bound_captures(query: &str) {
+    let mut bound: Vec<String> = Vec::new();
+    let mut referenced: Vec<String> = Vec::new();
+
+    // A `@name` inside a `(#...)` predicate is a reference; anywhere else it
+    // binds. This has to be decided per *capture*, not per line: a predicate's
+    // closing parens and the next node's capture share a line, as in
+    // `(#eq? @fn_name "std"))) @name1`, so classifying whole lines would read
+    // that binding as a reference and report a correct query as broken.
+    for (cap, in_predicate) in captures_with_context(query) {
+        if in_predicate {
+            referenced.push(cap);
+        } else {
+            bound.push(cap);
+        }
+    }
+
+    for r in &referenced {
+        assert!(
+            bound.contains(r),
+            "predicate references @{r}, which the pattern never binds:\n{query}"
+        );
+    }
+
+    let mut seen = std::collections::BTreeSet::new();
+    for b in &bound {
+        // `@sticky.*` is deliberately repeatable; the numbered name captures
+        // and `@target` are not.
+        if b.starts_with("sticky.") {
+            continue;
+        }
+        assert!(seen.insert(b.clone()), "@{b} is bound twice, so it names two nodes:\n{query}");
+    }
+}
+
+/// Every capture in `query` (without the `@`), paired with whether it sits
+/// inside a `(#...)` predicate.
+///
+/// Walks the text tracking paren depth and the depth at which the innermost
+/// predicate opened, so a capture is attributed to a predicate only while still
+/// nested inside it. String literals are skipped, since a `@` or a paren inside
+/// one is text rather than syntax.
+fn captures_with_context(query: &str) -> Vec<(String, bool)> {
+    let bytes = query.as_bytes();
+    let mut out = Vec::new();
+    let mut depth = 0usize;
+    // Depths at which predicates are currently open, innermost last.
+    let mut predicate_depths: Vec<usize> = Vec::new();
+    let mut i = 0;
+
+    while i < bytes.len() {
+        match bytes[i] {
+            b'"' => {
+                i += 1;
+                while i < bytes.len() && bytes[i] != b'"' {
+                    // A backslash escapes the next byte, so `\"` stays inside.
+                    i += if bytes[i] == b'\\' { 2 } else { 1 };
+                }
+                i += 1;
+            }
+            b'(' => {
+                depth += 1;
+                if bytes.get(i + 1) == Some(&b'#') {
+                    predicate_depths.push(depth);
+                }
+                i += 1;
+            }
+            b')' => {
+                if predicate_depths.last() == Some(&depth) {
+                    predicate_depths.pop();
+                }
+                depth = depth.saturating_sub(1);
+                i += 1;
+            }
+            b'@' => {
+                let start = i + 1;
+                let end = bytes[start..]
+                    .iter()
+                    .position(|c| !(c.is_ascii_alphanumeric() || *c == b'_' || *c == b'.'))
+                    .map_or(bytes.len(), |p| start + p);
+                if end > start {
+                    out.push((query[start..end].to_string(), !predicate_depths.is_empty()));
+                }
+                i = end.max(start);
+            }
+            _ => i += 1,
+        }
+    }
+    out
+}
+
 // --- The generalizing sweep ------------------------------------------------
 
 /// Bookmark every named node in a source file and count uncompilable queries.
@@ -659,11 +801,9 @@ fn valid_fields_still_reach_the_query() {
 /// unbookmarkable".
 ///
 /// `expected` is a ratchet, not a blessing: the node kinds still failing for a
-/// cause not yet fixed — today only Rust's stale self-capture counter
-/// ([#270]). Carrying it keeps the sweep useful now instead of being deleted
-/// for being red.
-///
-/// [#270]: https://github.com/DanielCardonaRojas/codemark/issues/270
+/// cause not yet fixed. Every list is empty today, so the ratchet is fully
+/// closed and any entry appearing is a regression to fix rather than a baseline
+/// to record.
 ///
 /// Compared as a **set of kinds**, not a count. A count lets a newly broken
 /// target hide behind a newly fixed one; the set makes any change in *which*
@@ -829,11 +969,11 @@ class Claims {
 #[test]
 #[ignore = "slow (~4 min): run with --ignored when changing the query generator"]
 fn sweep_full_fixtures() {
+    // Empty across the board since #270: every named node in all four fixtures
+    // produces a query that compiles. The list is a ratchet — a new entry here
+    // means a regression, not a new baseline to accept.
     let cases: &[(Language, &str, &[&str])] = &[
-        // Both remaining Rust failures are `use std::collections::...` paths,
-        // where self-capture reuses a stale counter so a predicate references a
-        // capture the query never emits ("Invalid capture name name0"); #270.
-        (Language::Rust, "rust/auth_service.rs", &["identifier"]),
+        (Language::Rust, "rust/auth_service.rs", &[]),
         (Language::Swift, "swift/auth_service.swift", &[]),
         (Language::Python, "python/auth_service.py", &[]),
         (Language::Dart, "dart/auth_service.dart", &[]),

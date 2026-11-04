@@ -1235,6 +1235,15 @@ fn build_tier1_query(path: &[PathEntry]) -> String {
         // Held separately so it can be placed after the nested child when the
         // grammar orders the name later; see `PathEntry::name_after_child`.
         let mut name_pattern = String::new();
+        // The name this entry's capture was allocated, kept so the self-capture
+        // branches below can reuse it verbatim.
+        //
+        // They append the capture *after* recursing, and used to reconstruct the
+        // number as `*counter - 1`. That only holds when nothing consumed a
+        // number in between — false as soon as a nested entry also takes one
+        // (Rust's `scoped_identifier` inside `scoped_identifier`), which both
+        // emitted a duplicate and left the predicate's capture unbound. See #270.
+        let mut self_capture_name = None;
         if let Some(ref info) = entry.name_info {
             let capture_name = if is_target {
                 "fn_name".to_string()
@@ -1243,6 +1252,7 @@ fn build_tier1_query(path: &[PathEntry]) -> String {
                 *counter += 1;
                 name
             };
+            self_capture_name = Some(capture_name.clone());
 
             // Determine if this landmark node gets a sticky capture
             let sticky_suffix = if let Some(ref tag) = entry.sticky_tag {
@@ -1324,12 +1334,14 @@ fn build_tier1_query(path: &[PathEntry]) -> String {
             s.push_str(&inner_predicate);
             s.push(')');
 
-            // Add name capture if it was on the node itself
+            // Add name capture if it was on the node itself. Reuses the
+            // allocated name rather than restating `fn_name`, so this and the
+            // predicate above cannot disagree about what the capture is called.
             if let Some(ref info) = entry.name_info
                 && info.field.is_none()
                 && entry.node_type == info.direct_type
+                && let Some(ref capture_name) = self_capture_name
             {
-                let capture_name = "fn_name";
                 let sticky_suffix = if let Some(ref tag) = entry.sticky_tag {
                     format!(" @sticky.{}", tag)
                 } else {
@@ -1364,12 +1376,14 @@ fn build_tier1_query(path: &[PathEntry]) -> String {
             }
             s.push(')');
 
-            // Add name capture if it was on the node itself
+            // Add name capture if it was on the node itself. Reuses the name
+            // allocated before recursing — the recursive call above has advanced
+            // the shared counter, so it can no longer be derived from it (#270).
             if let Some(ref info) = entry.name_info
                 && info.field.is_none()
                 && entry.node_type == info.direct_type
+                && let Some(ref capture_name) = self_capture_name
             {
-                let capture_name = format!("name{}", *counter - 1);
                 let sticky_suffix = if let Some(ref tag) = entry.sticky_tag {
                     format!(" @sticky.{}", tag)
                 } else {
