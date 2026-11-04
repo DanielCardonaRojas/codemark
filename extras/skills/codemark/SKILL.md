@@ -644,11 +644,13 @@ Examples:
 - `Context: User preferences | Cached 30s | DB: users_table`
 
 ## Supported languages
-Swift, Rust, TypeScript, Python, Go, Java, C#, Dart (built-in).
+Only Dart is built in. Every other language is a grammar installed from the
+registry — `codemark languages registry list` shows them: Bash, C# (`c_sharp`),
+Go, Java, JavaScript, Lua, PHP, Python, Ruby, Rust, Scala, Swift, TypeScript,
+Zig. Anything else loads at runtime from a WASM grammar — no recompile needed.
 
-Twelve more are one command away from the grammar registry: Bash, C#, Go, Lua,
-PHP, Python, Ruby, Rust, Scala, Swift, TypeScript, Zig. Anything else loads at
-runtime from a WASM grammar — no recompile needed.
+A fresh install has none of them, so expect to hit the missing-grammar error
+below the first time a repo's language is used.
 
 ### When a grammar is missing, install it
 
@@ -663,13 +665,10 @@ codemark languages install <lang>    # downloads, verifies the SHA-256, installs
 This is safe to do on the user's behalf: it writes only to the grammar cache
 and verifies the published SHA-256 before installing.
 
-**Mention it when the grammar replaces a built-in.** Some registry entries —
-Python, Go, C#, Rust, Swift, TypeScript — are richer profiles for languages
-codemark already ships, and installing one takes over that extension for
-*every* bookmark in the repo. The registry entry carries its own consent, so no extra
-flag is needed and the install just succeeds; say which built-in was replaced
-so the user isn't surprised. `codemark languages list` afterwards shows both
-entries, the dynamic one owning the extension.
+Tell the user which grammar you installed, in one line, so it isn't a
+surprise. Bookmarks created before 0.8.0, when Rust, Swift, TypeScript, Python,
+Go, Java and C# were built in, resolve against the installed grammar — C# ones
+store `csharp`, which still maps to `c_sharp`.
 
 Stop and ask if **the language isn't in the registry**. Building a grammar is a
 much larger task — see *Adding a new language* below, and confirm before

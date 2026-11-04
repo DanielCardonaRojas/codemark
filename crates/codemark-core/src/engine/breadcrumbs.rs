@@ -74,12 +74,12 @@ mod auth {
     }
 }
 "#;
-        let mut parser = Parser::new(Language::Rust).unwrap();
+        let mut parser = Parser::new(crate::testing::grammar("rust")).unwrap();
         let tree = parser.parse(source.as_bytes()).unwrap();
         // Target is the block inside validate
         let target = tree.root_node().descendant_for_byte_range(60, 61).unwrap();
 
-        let bc = extract_breadcrumbs(target, source, Language::Rust, 3);
+        let bc = extract_breadcrumbs(target, source, crate::testing::grammar("rust"), 3);
         assert_eq!(bc.len(), 3);
         assert_eq!(bc[0].text, "mod auth {");
         assert_eq!(bc[1].text, "    impl User {");
@@ -93,12 +93,12 @@ mod auth {
     #[test]
     fn test_go_type_header_is_not_repeated() {
         let source = "package main\n\ntype S struct {\n\tName string\n}\n";
-        let mut parser = Parser::new(Language::Go).unwrap();
+        let mut parser = Parser::new(crate::testing::grammar("go")).unwrap();
         let tree = parser.parse(source.as_bytes()).unwrap();
         let idx = source.find("Name").unwrap();
         let target = tree.root_node().descendant_for_byte_range(idx, idx + 1).unwrap();
 
-        let bc = extract_breadcrumbs(target, source, Language::Go, 3);
+        let bc = extract_breadcrumbs(target, source, crate::testing::grammar("go"), 3);
         assert_eq!(bc, vec![Breadcrumb { line: 3, text: "type S struct {".to_string() }]);
     }
 
@@ -108,12 +108,12 @@ mod auth {
     fn test_go_func_inside_type_keeps_both_levels() {
         let source =
             "package main\n\ntype S struct{}\n\nfunc (s S) Name() string {\n\treturn \"\"\n}\n";
-        let mut parser = Parser::new(Language::Go).unwrap();
+        let mut parser = Parser::new(crate::testing::grammar("go")).unwrap();
         let tree = parser.parse(source.as_bytes()).unwrap();
         let idx = source.find("return").unwrap();
         let target = tree.root_node().descendant_for_byte_range(idx, idx + 1).unwrap();
 
-        let bc = extract_breadcrumbs(target, source, Language::Go, 3);
+        let bc = extract_breadcrumbs(target, source, crate::testing::grammar("go"), 3);
         assert_eq!(bc.len(), 1, "unexpected trail: {bc:#?}");
         assert_eq!(bc[0].text, "func (s S) Name() string {");
     }
@@ -125,12 +125,12 @@ mod auth {
     #[test]
     fn test_python_async_def_is_a_container() {
         let source = "class C:\n    async def fetch(self):\n        return 1\n";
-        let mut parser = Parser::new(Language::Python).unwrap();
+        let mut parser = Parser::new(crate::testing::grammar("python")).unwrap();
         let tree = parser.parse(source.as_bytes()).unwrap();
         let idx = source.find("return").unwrap();
         let target = tree.root_node().descendant_for_byte_range(idx, idx + 1).unwrap();
 
-        let bc = extract_breadcrumbs(target, source, Language::Python, 3);
+        let bc = extract_breadcrumbs(target, source, crate::testing::grammar("python"), 3);
         assert_eq!(bc.len(), 2, "async def dropped out of the trail: {bc:#?}");
         assert_eq!(bc[0].text, "class C:");
         assert_eq!(bc[1].text, "    async def fetch(self):");
@@ -142,12 +142,12 @@ mod auth {
     #[test]
     fn test_swift_enum_entry_on_its_own_line_is_kept() {
         let source = "enum Color {\n    case red, green\n}\n";
-        let mut parser = Parser::new(Language::Swift).unwrap();
+        let mut parser = Parser::new(crate::testing::grammar("swift")).unwrap();
         let tree = parser.parse(source.as_bytes()).unwrap();
         let idx = source.find("red").unwrap();
         let target = tree.root_node().descendant_for_byte_range(idx, idx + 1).unwrap();
 
-        let bc = extract_breadcrumbs(target, source, Language::Swift, 3);
+        let bc = extract_breadcrumbs(target, source, crate::testing::grammar("swift"), 3);
         assert_eq!(bc.len(), 2, "same-line collapsing swallowed a distinct ancestor: {bc:#?}");
         assert_eq!(bc[0].text, "enum Color {");
         assert_eq!(bc[1].text, "    case red, green");
@@ -162,11 +162,11 @@ class AuthService {
     }
 }
 "#;
-        let mut parser = Parser::new(Language::Swift).unwrap();
+        let mut parser = Parser::new(crate::testing::grammar("swift")).unwrap();
         let tree = parser.parse(source.as_bytes()).unwrap();
         let target = tree.root_node().descendant_for_byte_range(45, 46).unwrap();
 
-        let bc = extract_breadcrumbs(target, source, Language::Swift, 3);
+        let bc = extract_breadcrumbs(target, source, crate::testing::grammar("swift"), 3);
         assert_eq!(bc.len(), 2);
         assert_eq!(bc[0].text, "class AuthService {");
         assert_eq!(bc[1].text, "    func login() {");

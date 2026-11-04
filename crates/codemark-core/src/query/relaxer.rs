@@ -115,13 +115,13 @@ mod tests {
     #[test]
     fn relaxed_query_matches_more() {
         // Verify with real parser that relaxed query still matches
-        use crate::parser::languages::{Language, Parser};
+        use crate::parser::languages::Parser;
         use crate::query::matcher;
 
-        let mut parser = Parser::new(Language::Swift).unwrap();
+        let mut parser = Parser::new(crate::testing::grammar("swift")).unwrap();
         let source = b"class Foo {\n  func bar() {}\n  func baz() {}\n}";
         let tree = parser.parse(source).unwrap();
-        let lang = Language::Swift.tree_sitter_language();
+        let lang = crate::testing::grammar("swift").tree_sitter_language();
 
         let exact = r#"(class_declaration
   name: (type_identifier) @name0

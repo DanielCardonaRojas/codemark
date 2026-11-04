@@ -38,3 +38,7 @@ docker-compose.override.yml
 /dynamic_treesitter_analysis.md
 /dynamic_treesitter_deep_review.md
 /tags_scm_sufficiency_analysis.md
+
+# Registry grammars the test suite parses with — fetched by
+# scripts/fetch-test-grammars.sh from a pinned registry commit.
+/tests/grammars/

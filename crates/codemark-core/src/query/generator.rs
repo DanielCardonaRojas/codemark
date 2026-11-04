@@ -1515,7 +1515,7 @@ mod tests {
     #[test]
     fn build_structural_path_uses_profile_landmarks() {
         let source = b"fn outer() {\n    let x = 1;\n}\n";
-        let mut parser = Parser::new(CodemarkLang::Rust).unwrap();
+        let mut parser = Parser::new(crate::testing::grammar("rust")).unwrap();
         let tree = parser.parse(source).unwrap();
         // Target the `let` statement so `block` is an ancestor in the path.
         let target = tree.root_node().descendant_for_byte_range(17, 27).unwrap();
@@ -1543,7 +1543,7 @@ mod tests {
     async fn parse_fixture(name: &str) -> (Tree, String) {
         let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join(format!("../../tests/fixtures/swift/{name}"));
-        let mut parser = Parser::new(CodemarkLang::Swift).unwrap();
+        let mut parser = Parser::new(crate::testing::grammar("swift")).unwrap();
         let provider = crate::vfs::LocalFileProvider;
         parser.parse_file(&fixture, &provider).await.unwrap()
     }
@@ -1574,7 +1574,7 @@ mod tests {
     async fn generate_query_for_top_level_function() {
         let (tree, source) = parse_fixture("auth_service.swift").await;
         let range = find_function_byte_range(&tree, &source, "createDefaultAuthService");
-        let cm_lang = CodemarkLang::Swift;
+        let cm_lang = crate::testing::grammar("swift");
         let lang = cm_lang.tree_sitter_language();
         let profile = cm_lang.profile();
 
@@ -1592,7 +1592,7 @@ mod tests {
     async fn generate_query_for_class_method() {
         let (tree, source) = parse_fixture("auth_service.swift").await;
         let range = find_function_byte_range(&tree, &source, "validateToken");
-        let cm_lang = CodemarkLang::Swift;
+        let cm_lang = crate::testing::grammar("swift");
         let lang = cm_lang.tree_sitter_language();
         let profile = cm_lang.profile();
 
@@ -1609,7 +1609,7 @@ mod tests {
     async fn generate_query_for_private_method() {
         let (tree, source) = parse_fixture("auth_service.swift").await;
         let range = find_function_byte_range(&tree, &source, "decode");
-        let cm_lang = CodemarkLang::Swift;
+        let cm_lang = crate::testing::grammar("swift");
         let lang = cm_lang.tree_sitter_language();
         let profile = cm_lang.profile();
 
@@ -1624,7 +1624,7 @@ mod tests {
     async fn generate_query_for_extension_method() {
         let (tree, source) = parse_fixture("auth_service.swift").await;
         let range = find_function_byte_range(&tree, &source, "invalidateCache");
-        let cm_lang = CodemarkLang::Swift;
+        let cm_lang = crate::testing::grammar("swift");
         let lang = cm_lang.tree_sitter_language();
         let profile = cm_lang.profile();
 
@@ -1638,7 +1638,7 @@ mod tests {
     #[tokio::test]
     async fn generated_query_round_trips() {
         let (tree, source) = parse_fixture("auth_service.swift").await;
-        let cm_lang = CodemarkLang::Swift;
+        let cm_lang = crate::testing::grammar("swift");
         let lang = cm_lang.tree_sitter_language();
         let profile = cm_lang.profile();
 
@@ -1679,7 +1679,7 @@ mod tests {
     async fn parse_rust_fixture(name: &str) -> (Tree, String) {
         let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join(format!("../../tests/fixtures/rust/{name}"));
-        let mut parser = Parser::new(CodemarkLang::Rust).unwrap();
+        let mut parser = Parser::new(crate::testing::grammar("rust")).unwrap();
         let provider = crate::vfs::LocalFileProvider;
         parser.parse_file(&fixture, &provider).await.unwrap()
     }
@@ -1708,7 +1708,7 @@ mod tests {
     async fn rust_top_level_function() {
         let (tree, source) = parse_rust_fixture("auth_service.rs").await;
         let range = find_rust_function_byte_range(&tree, &source, "create_default_auth_service");
-        let cm_lang = CodemarkLang::Rust;
+        let cm_lang = crate::testing::grammar("rust");
         let lang = cm_lang.tree_sitter_language();
         let profile = cm_lang.profile();
 
@@ -1724,7 +1724,7 @@ mod tests {
     async fn rust_impl_method() {
         let (tree, source) = parse_rust_fixture("auth_service.rs").await;
         let range = find_rust_function_byte_range(&tree, &source, "decode");
-        let cm_lang = CodemarkLang::Rust;
+        let cm_lang = crate::testing::grammar("rust");
         let lang = cm_lang.tree_sitter_language();
         let profile = cm_lang.profile();
 
@@ -1741,7 +1741,7 @@ mod tests {
         let (tree, source) = parse_rust_fixture("auth_service.rs").await;
         // validate_token appears both in the trait and in the impl
         let range = find_rust_function_byte_range(&tree, &source, "validate_token");
-        let cm_lang = CodemarkLang::Rust;
+        let cm_lang = crate::testing::grammar("rust");
         let lang = cm_lang.tree_sitter_language();
         let profile = cm_lang.profile();
 
@@ -1755,7 +1755,7 @@ mod tests {
     async fn rust_generic_function() {
         let (tree, source) = parse_rust_fixture("auth_service.rs").await;
         let range = find_rust_function_byte_range(&tree, &source, "validate_and_check");
-        let cm_lang = CodemarkLang::Rust;
+        let cm_lang = crate::testing::grammar("rust");
         let lang = cm_lang.tree_sitter_language();
         let profile = cm_lang.profile();
 
@@ -1769,7 +1769,7 @@ mod tests {
     #[tokio::test]
     async fn rust_round_trips() {
         let (tree, source) = parse_rust_fixture("auth_service.rs").await;
-        let cm_lang = CodemarkLang::Rust;
+        let cm_lang = crate::testing::grammar("rust");
         let lang = cm_lang.tree_sitter_language();
         let profile = cm_lang.profile();
 
@@ -1801,7 +1801,7 @@ mod tests {
     async fn parse_ts_fixture(name: &str) -> (Tree, String) {
         let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join(format!("../../tests/fixtures/typescript/{name}"));
-        let mut parser = Parser::new(CodemarkLang::TypeScript).unwrap();
+        let mut parser = Parser::new(crate::testing::grammar("typescript")).unwrap();
         let provider = crate::vfs::LocalFileProvider;
         parser.parse_file(&fixture, &provider).await.unwrap()
     }
@@ -1831,7 +1831,7 @@ mod tests {
     async fn ts_top_level_function() {
         let (tree, source) = parse_ts_fixture("auth_service.ts").await;
         let range = find_ts_function_byte_range(&tree, &source, "validateAndCheck");
-        let cm_lang = CodemarkLang::TypeScript;
+        let cm_lang = crate::testing::grammar("typescript");
         let lang = cm_lang.tree_sitter_language();
         let profile = cm_lang.profile();
 
@@ -1846,7 +1846,7 @@ mod tests {
     async fn ts_class_method() {
         let (tree, source) = parse_ts_fixture("auth_service.ts").await;
         let range = find_ts_function_byte_range(&tree, &source, "validateToken");
-        let cm_lang = CodemarkLang::TypeScript;
+        let cm_lang = crate::testing::grammar("typescript");
         let lang = cm_lang.tree_sitter_language();
         let profile = cm_lang.profile();
 
@@ -1861,7 +1861,7 @@ mod tests {
     async fn ts_private_method() {
         let (tree, source) = parse_ts_fixture("auth_service.ts").await;
         let range = find_ts_function_byte_range(&tree, &source, "decode");
-        let cm_lang = CodemarkLang::TypeScript;
+        let cm_lang = crate::testing::grammar("typescript");
         let lang = cm_lang.tree_sitter_language();
         let profile = cm_lang.profile();
 
@@ -1877,7 +1877,7 @@ mod tests {
     async fn parse_py_fixture(name: &str) -> (Tree, String) {
         let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join(format!("../../tests/fixtures/python/{name}"));
-        let mut parser = Parser::new(CodemarkLang::Python).unwrap();
+        let mut parser = Parser::new(crate::testing::grammar("python")).unwrap();
         let provider = crate::vfs::LocalFileProvider;
         parser.parse_file(&fixture, &provider).await.unwrap()
     }
@@ -1907,7 +1907,7 @@ mod tests {
     async fn py_top_level_function() {
         let (tree, source) = parse_py_fixture("auth_service.py").await;
         let range = find_py_function_byte_range(&tree, &source, "create_default_auth_service");
-        let cm_lang = CodemarkLang::Python;
+        let cm_lang = crate::testing::grammar("python");
         let lang = cm_lang.tree_sitter_language();
         let profile = cm_lang.profile();
 
@@ -1922,7 +1922,7 @@ mod tests {
     async fn py_class_method() {
         let (tree, source) = parse_py_fixture("auth_service.py").await;
         let range = find_py_function_byte_range(&tree, &source, "validate_token");
-        let cm_lang = CodemarkLang::Python;
+        let cm_lang = crate::testing::grammar("python");
         let lang = cm_lang.tree_sitter_language();
         let profile = cm_lang.profile();
 
@@ -1937,7 +1937,7 @@ mod tests {
     async fn py_private_method() {
         let (tree, source) = parse_py_fixture("auth_service.py").await;
         let range = find_py_function_byte_range(&tree, &source, "_decode");
-        let cm_lang = CodemarkLang::Python;
+        let cm_lang = crate::testing::grammar("python");
         let lang = cm_lang.tree_sitter_language();
         let profile = cm_lang.profile();
 
@@ -1952,7 +1952,7 @@ mod tests {
     async fn py_decorated_function() {
         let (tree, source) = parse_py_fixture("auth_service.py").await;
         let range = find_py_function_byte_range(&tree, &source, "require_auth");
-        let cm_lang = CodemarkLang::Python;
+        let cm_lang = crate::testing::grammar("python");
         let lang = cm_lang.tree_sitter_language();
         let profile = cm_lang.profile();
 
@@ -1968,7 +1968,7 @@ mod tests {
     async fn parse_go_fixture(name: &str) -> (Tree, String) {
         let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join(format!("../../tests/fixtures/go/{name}"));
-        let mut parser = Parser::new(CodemarkLang::Go).unwrap();
+        let mut parser = Parser::new(crate::testing::grammar("go")).unwrap();
         let provider = crate::vfs::LocalFileProvider;
         parser.parse_file(&fixture, &provider).await.unwrap()
     }
@@ -1998,7 +1998,7 @@ mod tests {
     async fn go_free_function() {
         let (tree, source) = parse_go_fixture("auth_service.go").await;
         let range = find_go_function_range(&tree, &source, "CreateDefaultAuthService");
-        let cm_lang = CodemarkLang::Go;
+        let cm_lang = crate::testing::grammar("go");
         let lang = cm_lang.tree_sitter_language();
         let profile = cm_lang.profile();
         let result = generate_query(&tree, source.as_bytes(), range, &lang, profile).unwrap();
@@ -2011,7 +2011,7 @@ mod tests {
     async fn go_method() {
         let (tree, source) = parse_go_fixture("auth_service.go").await;
         let range = find_go_function_range(&tree, &source, "ValidateToken");
-        let cm_lang = CodemarkLang::Go;
+        let cm_lang = crate::testing::grammar("go");
         let lang = cm_lang.tree_sitter_language();
         let profile = cm_lang.profile();
         let result = generate_query(&tree, source.as_bytes(), range, &lang, profile).unwrap();
@@ -2023,7 +2023,7 @@ mod tests {
     async fn go_private_method() {
         let (tree, source) = parse_go_fixture("auth_service.go").await;
         let range = find_go_function_range(&tree, &source, "decode");
-        let cm_lang = CodemarkLang::Go;
+        let cm_lang = crate::testing::grammar("go");
         let lang = cm_lang.tree_sitter_language();
         let profile = cm_lang.profile();
         let result = generate_query(&tree, source.as_bytes(), range, &lang, profile).unwrap();
@@ -2037,7 +2037,7 @@ mod tests {
     async fn parse_java_fixture(name: &str) -> (Tree, String) {
         let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join(format!("../../tests/fixtures/java/{name}"));
-        let mut parser = Parser::new(CodemarkLang::Java).unwrap();
+        let mut parser = Parser::new(crate::testing::grammar("java")).unwrap();
         let provider = crate::vfs::LocalFileProvider;
         parser.parse_file(&fixture, &provider).await.unwrap()
     }
@@ -2066,7 +2066,7 @@ mod tests {
     async fn java_method() {
         let (tree, source) = parse_java_fixture("AuthService.java").await;
         let range = find_java_range(&tree, &source, "validateToken");
-        let cm_lang = CodemarkLang::Java;
+        let cm_lang = crate::testing::grammar("java");
         let lang = cm_lang.tree_sitter_language();
         let profile = cm_lang.profile();
         let result = generate_query(&tree, source.as_bytes(), range, &lang, profile).unwrap();
@@ -2079,7 +2079,7 @@ mod tests {
     async fn java_private_method() {
         let (tree, source) = parse_java_fixture("AuthService.java").await;
         let range = find_java_range(&tree, &source, "decode");
-        let cm_lang = CodemarkLang::Java;
+        let cm_lang = crate::testing::grammar("java");
         let lang = cm_lang.tree_sitter_language();
         let profile = cm_lang.profile();
         let result = generate_query(&tree, source.as_bytes(), range, &lang, profile).unwrap();
@@ -2092,7 +2092,7 @@ mod tests {
     async fn java_static_method() {
         let (tree, source) = parse_java_fixture("AuthService.java").await;
         let range = find_java_range(&tree, &source, "createDefault");
-        let cm_lang = CodemarkLang::Java;
+        let cm_lang = crate::testing::grammar("java");
         let lang = cm_lang.tree_sitter_language();
         let profile = cm_lang.profile();
         let result = generate_query(&tree, source.as_bytes(), range, &lang, profile).unwrap();
@@ -2106,7 +2106,7 @@ mod tests {
     async fn parse_csharp_fixture(name: &str) -> (Tree, String) {
         let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join(format!("../../tests/fixtures/csharp/{name}"));
-        let mut parser = Parser::new(CodemarkLang::CSharp).unwrap();
+        let mut parser = Parser::new(crate::testing::grammar("c_sharp")).unwrap();
         let provider = crate::vfs::LocalFileProvider;
         parser.parse_file(&fixture, &provider).await.unwrap()
     }
@@ -2135,7 +2135,7 @@ mod tests {
     async fn csharp_method() {
         let (tree, source) = parse_csharp_fixture("AuthService.cs").await;
         let range = find_csharp_range(&tree, &source, "ValidateToken");
-        let cm_lang = CodemarkLang::CSharp;
+        let cm_lang = crate::testing::grammar("c_sharp");
         let lang = cm_lang.tree_sitter_language();
         let profile = cm_lang.profile();
         let result = generate_query(&tree, source.as_bytes(), range, &lang, profile).unwrap();
@@ -2148,7 +2148,7 @@ mod tests {
     async fn csharp_private_method() {
         let (tree, source) = parse_csharp_fixture("AuthService.cs").await;
         let range = find_csharp_range(&tree, &source, "Decode");
-        let cm_lang = CodemarkLang::CSharp;
+        let cm_lang = crate::testing::grammar("c_sharp");
         let lang = cm_lang.tree_sitter_language();
         let profile = cm_lang.profile();
         let result = generate_query(&tree, source.as_bytes(), range, &lang, profile).unwrap();
@@ -2161,7 +2161,7 @@ mod tests {
     async fn csharp_static_method() {
         let (tree, source) = parse_csharp_fixture("AuthService.cs").await;
         let range = find_csharp_range(&tree, &source, "CreateDefault");
-        let cm_lang = CodemarkLang::CSharp;
+        let cm_lang = crate::testing::grammar("c_sharp");
         let lang = cm_lang.tree_sitter_language();
         let profile = cm_lang.profile();
         let result = generate_query(&tree, source.as_bytes(), range, &lang, profile).unwrap();
@@ -2227,7 +2227,7 @@ mod tests {
     #[tokio::test]
     async fn swift_exact_range_targets_method_not_class() {
         let (tree, source) = parse_fixture("auth_service.swift").await;
-        let cm_lang = CodemarkLang::Swift;
+        let cm_lang = crate::testing::grammar("swift");
         let lang = cm_lang.tree_sitter_language();
         let profile = cm_lang.profile();
 
@@ -2245,7 +2245,7 @@ mod tests {
     #[tokio::test]
     async fn rust_exact_range_targets_method_not_impl() {
         let (tree, source) = parse_rust_fixture("auth_service.rs").await;
-        let cm_lang = CodemarkLang::Rust;
+        let cm_lang = crate::testing::grammar("rust");
         let lang = cm_lang.tree_sitter_language();
         let profile = cm_lang.profile();
 
@@ -2262,7 +2262,7 @@ mod tests {
     #[tokio::test]
     async fn ts_exact_range_targets_method_not_class() {
         let (tree, source) = parse_ts_fixture("auth_service.ts").await;
-        let cm_lang = CodemarkLang::TypeScript;
+        let cm_lang = crate::testing::grammar("typescript");
         let lang = cm_lang.tree_sitter_language();
         let profile = cm_lang.profile();
 
@@ -2279,7 +2279,7 @@ mod tests {
     #[tokio::test]
     async fn py_exact_range_targets_method_not_class() {
         let (tree, source) = parse_py_fixture("auth_service.py").await;
-        let cm_lang = CodemarkLang::Python;
+        let cm_lang = crate::testing::grammar("python");
         let lang = cm_lang.tree_sitter_language();
         let profile = cm_lang.profile();
 
@@ -2296,7 +2296,7 @@ mod tests {
     #[tokio::test]
     async fn go_exact_range_targets_method() {
         let (tree, source) = parse_go_fixture("auth_service.go").await;
-        let cm_lang = CodemarkLang::Go;
+        let cm_lang = crate::testing::grammar("go");
         let lang = cm_lang.tree_sitter_language();
         let profile = cm_lang.profile();
 
@@ -2312,7 +2312,7 @@ mod tests {
     #[tokio::test]
     async fn java_exact_range_targets_method_not_class() {
         let (tree, source) = parse_java_fixture("AuthService.java").await;
-        let cm_lang = CodemarkLang::Java;
+        let cm_lang = crate::testing::grammar("java");
         let lang = cm_lang.tree_sitter_language();
         let profile = cm_lang.profile();
 
@@ -2330,7 +2330,7 @@ mod tests {
     async fn single_line_inside_method_targets_anchored_declaration() {
         // A single line inside a method should target the enclosing method
         let (tree, source) = parse_rust_fixture("auth_service.rs").await;
-        let cm_lang = CodemarkLang::Rust;
+        let cm_lang = crate::testing::grammar("rust");
         let lang = cm_lang.tree_sitter_language();
         let profile = cm_lang.profile();
 
@@ -2353,7 +2353,7 @@ mod tests {
     async fn generated_query_includes_sticky_captures() {
         let (tree, source) = parse_fixture("auth_service.swift").await;
         let range = find_function_byte_range(&tree, &source, "validateToken");
-        let cm_lang = CodemarkLang::Swift;
+        let cm_lang = crate::testing::grammar("swift");
         let lang = cm_lang.tree_sitter_language();
         let profile = cm_lang.profile();
 
@@ -2376,7 +2376,7 @@ mod tests {
     async fn generated_query_for_nested_class_has_sticky_captures() {
         let (tree, source) = parse_ts_fixture("auth_service.ts").await;
         let range = find_ts_function_byte_range(&tree, &source, "validateToken");
-        let cm_lang = CodemarkLang::TypeScript;
+        let cm_lang = crate::testing::grammar("typescript");
         let lang = cm_lang.tree_sitter_language();
         let profile = cm_lang.profile();
 

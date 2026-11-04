@@ -15,4 +15,6 @@ pub mod sort;
 pub mod storage;
 pub mod sync;
 pub mod templates;
+#[doc(hidden)]
+pub mod testing;
 pub mod vfs;

@@ -1,5 +1,5 @@
 use codemark_core::engine::breadcrumbs::extract_breadcrumbs;
-use codemark_core::parser::languages::{Language, ParseCache};
+use codemark_core::parser::languages::ParseCache;
 use std::path::PathBuf;
 
 fn get_fixture_path(lang: &str, file: &str) -> PathBuf {
@@ -17,7 +17,7 @@ fn get_fixture_path(lang: &str, file: &str) -> PathBuf {
 async fn test_breadcrumb_extraction_rust() {
     let path = get_fixture_path("rust", "auth_service.rs");
     let source = std::fs::read_to_string(&path).expect("failed to read rust fixture");
-    let lang = Language::Rust;
+    let lang = codemark_core::testing::grammar("rust");
     let mut cache = ParseCache::new(lang.clone()).expect("failed to create cache");
     let _ts_lang = lang.tree_sitter_language();
 
@@ -62,7 +62,7 @@ async fn test_breadcrumb_extraction_rust() {
 async fn test_breadcrumb_extraction_swift() {
     let path = get_fixture_path("swift", "auth_service.swift");
     let source = std::fs::read_to_string(&path).expect("failed to read swift fixture");
-    let lang = Language::Swift;
+    let lang = codemark_core::testing::grammar("swift");
     let mut cache = ParseCache::new(lang.clone()).expect("failed to create cache");
     let _ts_lang = lang.tree_sitter_language();
 
@@ -109,7 +109,7 @@ async fn test_breadcrumb_extraction_swift() {
 async fn test_breadcrumb_extraction_typescript() {
     let path = get_fixture_path("typescript", "auth_service.ts");
     let source = std::fs::read_to_string(&path).expect("failed to read ts fixture");
-    let lang = Language::TypeScript;
+    let lang = codemark_core::testing::grammar("typescript");
     let mut cache = ParseCache::new(lang.clone()).expect("failed to create cache");
     let _ts_lang = lang.tree_sitter_language();
 

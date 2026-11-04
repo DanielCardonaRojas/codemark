@@ -1235,9 +1235,14 @@ fn resolve_language(lang_flag: Option<&str>, file: &std::path::Path) -> Result<L
         ))
     })?;
     Language::from_extension(ext).ok_or_else(|| {
-        Error::Input(format!(
-            "cannot infer language from extension '.{ext}'; use --lang to specify"
-        ))
+        // A language that was built in before 0.8.0 is a known grammar that
+        // just isn't installed yet — say which one, so it can be installed.
+        match Language::unbundled_grammar_for_extension(ext) {
+            Some(name) => Error::GrammarNotInstalled { language: name.to_string() },
+            None => Error::Input(format!(
+                "cannot infer language from extension '.{ext}'; use --lang to specify"
+            )),
+        }
     })
 }
 

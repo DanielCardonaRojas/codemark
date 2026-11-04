@@ -67,6 +67,12 @@ export XDG_CONFIG_HOME="$SANDBOX/config"
 export XDG_DATA_HOME="$SANDBOX/data"
 export XDG_CACHE_HOME="$SANDBOX/cache"
 
+# Grammars aren't compiled in (since 0.8.0), and the gallery's bookmarks are
+# Rust. Parse with the same pinned registry grammars the test suite uses, so the
+# shots are reproducible and don't depend on network access mid-capture.
+"$REPO_ROOT/scripts/fetch-test-grammars.sh"
+export CODEMARK_GRAMMARS_DIR="$REPO_ROOT/tests/grammars"
+
 # The TUI's background live-health pass can write resolutions to the database.
 # Snapshot the tracked db and restore it afterward so a capture run leaves it
 # byte-identical (no spurious git diff on the fixture).

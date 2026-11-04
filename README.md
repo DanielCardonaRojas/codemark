@@ -194,7 +194,7 @@ variable; run `codemark-tui --list-schemes` to see what's available.
 - 🗃️ **Collections**: Group bookmarks into logical sets for specific tasks.
 - 📦 **Git Integrated**: Track bookmarks across commits and branches.
 - 🧩 **Agent Skills**: An installable skill that teaches AI coding agents to bookmark for you. Works with Claude Code, GitHub Copilot, Gemini CLI, and any agent that loads `.agents/skills`.
-- 🌍 **Any Language**: 8 languages built in; the rest load at runtime from WASM grammars. `codemark languages install ruby` fetches a verified grammar and a curated profile in one step.
+- 🌍 **Any Language**: grammars load at runtime from WASM, so the binary stays small. `codemark languages install rust` fetches a verified grammar and a curated profile in one step.
 
 ---
 
@@ -273,17 +273,23 @@ See the [**Full Command Reference**](./dev-docs/CLI.md) for every subcommand and
 
 ## 🌐 Supported Languages
 
-Codemark is powered by Tree-sitter. It supports 8 built-in languages out of the box, plus **any other language** via WASM grammars loaded at runtime — twelve more are one command away from the [grammar registry](#from-the-grammar-registry-one-command).
+Codemark is powered by Tree-sitter. Since 0.8.0 grammars are **not compiled
+into the binary** — each language loads at runtime as a WASM grammar from the
+[grammar registry](#from-the-grammar-registry-one-command), which roughly halved
+the binary size. Install what you use, once:
 
-**Built-in:**
-- 🦀 **Rust**
-- 🍎 **Swift**
-- 🔷 **TypeScript / TSX**
-- 🐍 **Python**
-- 🐹 **Go**
-- ☕ **Java**
-- 🎯 **Dart**
-- ♯ **C#**
+```bash
+codemark languages install rust      # likewise swift, typescript, python, go, java, c_sharp, …
+```
+
+A command that meets a language with no grammar installed says which one to
+install; the agent skill installs it for you. **Dart** is the one language still
+built in, until the registry has a prebuilt grammar for it.
+
+> **Upgrading from 0.7?** Rust, Swift, TypeScript, Python, Go, Java and C# used
+> to be built in. Existing bookmarks keep working once the grammar is installed
+> — including C# bookmarks stored as `csharp`. TSX is not yet covered by the
+> registry's TypeScript grammar.
 
 ### From the grammar registry (one command)
 
@@ -301,16 +307,18 @@ Available today:
 | Language | Extensions | |
 |---|---|---|
 | **Bash** | `sh`, `bash` |  |
-| **C#** | `cs`, `csx` | replaces the built-in |
-| **Go** | `go` | replaces the built-in |
+| **C#** (`c_sharp`) | `cs`, `csx` |  |
+| **Go** | `go` |  |
+| **Java** | `java` |  |
+| **JavaScript** | `js`, `jsx`, `mjs`, `cjs` |  |
 | **Lua** | `lua` |  |
 | **PHP** | `php`, `phtml` |  |
-| **Python** | `py`, `pyi`, `pyw` | replaces the built-in |
+| **Python** | `py`, `pyi`, `pyw` |  |
 | **Ruby** | `rb`, `rake`, `gemspec` |  |
-| **Rust** | `rs` | replaces the built-in |
+| **Rust** | `rs` |  |
 | **Scala** | `scala`, `sc` |  |
-| **Swift** | `swift` | replaces the built-in |
-| **TypeScript** | `ts` | replaces the built-in |
+| **Swift** | `swift` |  |
+| **TypeScript** | `ts` |  |
 | **Zig** | `zig`, `zon` |  |
 
 The registry hosts **profiles, not binaries** — each entry points at the
