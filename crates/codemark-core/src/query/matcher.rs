@@ -69,15 +69,20 @@ mod tests {
     use crate::parser::languages::{Language as CodemarkLang, Parser};
 
     #[test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     fn run_simple_query() {
-        let mut parser = Parser::new(CodemarkLang::Swift).unwrap();
+        let mut parser = Parser::new(crate::testing::grammar("swift")).unwrap();
         let source = b"func hello() { }\nfunc world() { }";
         let tree = parser.parse(source).unwrap();
 
         let query_str = "(function_declaration name: (simple_identifier) @name) @target";
-        let results =
-            run_query(query_str, &tree, source, &CodemarkLang::Swift.tree_sitter_language())
-                .unwrap();
+        let results = run_query(
+            query_str,
+            &tree,
+            source,
+            &crate::testing::grammar("swift").tree_sitter_language(),
+        )
+        .unwrap();
 
         assert_eq!(results.len(), 2);
         assert!(results[0].node_text.contains("hello"));
@@ -85,17 +90,22 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     fn run_query_with_predicate() {
-        let mut parser = Parser::new(CodemarkLang::Swift).unwrap();
+        let mut parser = Parser::new(crate::testing::grammar("swift")).unwrap();
         let source = b"func hello() { }\nfunc world() { }";
         let tree = parser.parse(source).unwrap();
 
         let query_str = r#"(function_declaration
             name: (simple_identifier) @name
             (#eq? @name "hello")) @target"#;
-        let results =
-            run_query(query_str, &tree, source, &CodemarkLang::Swift.tree_sitter_language())
-                .unwrap();
+        let results = run_query(
+            query_str,
+            &tree,
+            source,
+            &crate::testing::grammar("swift").tree_sitter_language(),
+        )
+        .unwrap();
 
         assert_eq!(results.len(), 1);
         assert!(results[0].node_text.contains("hello"));
@@ -139,13 +149,14 @@ mod tests {
 
     /// Dump AST for Swift fixture to discover actual node type names.
     #[tokio::test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     async fn dump_swift_ast_structure() {
         let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../tests/fixtures/swift/complex_scenarios.swift");
         if !fixture.exists() {
             return;
         }
-        let mut parser = Parser::new(CodemarkLang::Swift).unwrap();
+        let mut parser = Parser::new(crate::testing::grammar("swift")).unwrap();
         let provider = crate::vfs::LocalFileProvider;
         let (tree, source) = parser.parse_file(&fixture, &provider).await.unwrap();
 
@@ -154,13 +165,14 @@ mod tests {
 
     /// Dump AST for Rust fixture to discover node type names.
     #[tokio::test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     async fn dump_rust_ast_structure() {
         let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../tests/fixtures/rust/auth_service.rs");
         if !fixture.exists() {
             return;
         }
-        let mut parser = Parser::new(CodemarkLang::Rust).unwrap();
+        let mut parser = Parser::new(crate::testing::grammar("rust")).unwrap();
         let provider = crate::vfs::LocalFileProvider;
         let (tree, source) = parser.parse_file(&fixture, &provider).await.unwrap();
 
@@ -168,26 +180,28 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     async fn dump_typescript_ast_structure() {
         let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../tests/fixtures/typescript/auth_service.ts");
         if !fixture.exists() {
             return;
         }
-        let mut parser = Parser::new(CodemarkLang::TypeScript).unwrap();
+        let mut parser = Parser::new(crate::testing::grammar("typescript")).unwrap();
         let provider = crate::vfs::LocalFileProvider;
         let (tree, source) = parser.parse_file(&fixture, &provider).await.unwrap();
         dump_ast_with_limit(tree.root_node(), &source, 0, 10, None);
     }
 
     #[tokio::test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     async fn dump_python_ast_structure() {
         let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../tests/fixtures/python/auth_service.py");
         if !fixture.exists() {
             return;
         }
-        let mut parser = Parser::new(CodemarkLang::Python).unwrap();
+        let mut parser = Parser::new(crate::testing::grammar("python")).unwrap();
         let provider = crate::vfs::LocalFileProvider;
         let (tree, source) = parser.parse_file(&fixture, &provider).await.unwrap();
         dump_ast_with_limit(tree.root_node(), &source, 0, 10, None);
@@ -195,8 +209,9 @@ mod tests {
 
     // Macro to generate AST dump tests for any language/fixture pair
     macro_rules! dump_ast_test {
-        ($name:ident, $lang:expr, $fixture:expr) => {
+        ($(#[$attr:meta])* $name:ident, $lang:expr, $fixture:expr) => {
             #[tokio::test]
+            $(#[$attr])*
             async fn $name() {
                 let fixture = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join($fixture);
                 if !fixture.exists() {
@@ -247,11 +262,31 @@ mod tests {
         };
     }
 
-    dump_ast_test!(dump_go_ast, CodemarkLang::Go, "../../tests/fixtures/go/auth_service.go");
-    dump_ast_test!(dump_java_ast, CodemarkLang::Java, "../../tests/fixtures/java/AuthService.java");
     dump_ast_test!(
+        #[cfg_attr(
+            not(feature = "wasm"),
+            ignore = "needs the wasm feature to load registry grammars"
+        )]
+        dump_go_ast,
+        crate::testing::grammar("go"),
+        "../../tests/fixtures/go/auth_service.go"
+    );
+    dump_ast_test!(
+        #[cfg_attr(
+            not(feature = "wasm"),
+            ignore = "needs the wasm feature to load registry grammars"
+        )]
+        dump_java_ast,
+        crate::testing::grammar("java"),
+        "../../tests/fixtures/java/AuthService.java"
+    );
+    dump_ast_test!(
+        #[cfg_attr(
+            not(feature = "wasm"),
+            ignore = "needs the wasm feature to load registry grammars"
+        )]
         dump_csharp_ast,
-        CodemarkLang::CSharp,
+        crate::testing::grammar("c_sharp"),
         "../../tests/fixtures/csharp/AuthService.cs"
     );
     dump_ast_test!(
@@ -263,6 +298,7 @@ mod tests {
     // --- Sticky capture tests ---
 
     #[test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     fn matcher_extracts_sticky_captures() {
         let source = r#"
     class Foo {
@@ -277,12 +313,16 @@ mod tests {
           name: (simple_identifier) @fn_name @sticky.method) @target))
     "#;
 
-        let mut parser = Parser::new(CodemarkLang::Swift).unwrap();
+        let mut parser = Parser::new(crate::testing::grammar("swift")).unwrap();
         let tree = parser.parse(source.as_bytes()).unwrap();
 
-        let results =
-            run_query(query, &tree, source.as_bytes(), &CodemarkLang::Swift.tree_sitter_language())
-                .unwrap();
+        let results = run_query(
+            query,
+            &tree,
+            source.as_bytes(),
+            &crate::testing::grammar("swift").tree_sitter_language(),
+        )
+        .unwrap();
 
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].captures.len(), 2);
@@ -295,6 +335,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     async fn matcher_no_sticky_captures_in_legacy_query() {
         // Legacy query without @sticky captures should return empty captures vec
         let source = r#"
@@ -310,12 +351,16 @@ mod tests {
           name: (simple_identifier) @fn_name) @target))
     "#;
 
-        let mut parser = Parser::new(CodemarkLang::Swift).unwrap();
+        let mut parser = Parser::new(crate::testing::grammar("swift")).unwrap();
         let tree = parser.parse(source.as_bytes()).unwrap();
 
-        let results =
-            run_query(query, &tree, source.as_bytes(), &CodemarkLang::Swift.tree_sitter_language())
-                .unwrap();
+        let results = run_query(
+            query,
+            &tree,
+            source.as_bytes(),
+            &crate::testing::grammar("swift").tree_sitter_language(),
+        )
+        .unwrap();
 
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].captures.len(), 0);

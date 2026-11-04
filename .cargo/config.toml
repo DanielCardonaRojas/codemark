@@ -1,0 +1,8 @@
+[env]
+# Most grammars are no longer compiled into codemark; they load as WASM from a
+# grammar cache. Point every `cargo test` / `cargo run` in this repo at the
+# pinned test cache so the suite is hermetic — it never sees grammars a
+# developer happens to have installed. Populate it with
+# `scripts/fetch-test-grammars.sh`. A value already set in the environment
+# wins (`force = false`), so a developer can still point elsewhere.
+CODEMARK_GRAMMARS_DIR = { value = "tests/grammars", relative = true }

@@ -47,15 +47,8 @@ candle-transformers = { version = "0.8", optional = true }
 candle-nn = { version = "0.8", optional = true }
 sha2 = "0.10"
 tokenizers = { version = "0.21", optional = true }
-tree-sitter-c-sharp = "0.23"
 tree-sitter-dart = "0.1"
-tree-sitter-go = "0.23"
-tree-sitter-java = "0.23"
-tree-sitter-python = "0.23"
 tree-sitter-tsquery = "0.7"
-tree-sitter-rust = "0.23"
-tree-sitter-swift = "0.7"
-tree-sitter-typescript = "0.23"
 # Sync (ureq) API only — see embeddings/local.rs. Drop the default native-tls
 # backend (and unused async `tokio` API) for rustls so we stay openssl-free;
 # otherwise Cargo feature unification flips reqwest's native-tls back on too.

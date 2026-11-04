@@ -14,21 +14,16 @@ use crate::parser::profile::Profile;
 
 /// A programming language codemark can parse.
 ///
-/// Built-in variants are statically compiled. The [`Dynamic`] variant holds a
-/// WASM grammar loaded at runtime from the cache directory. Two `Language`
+/// Only Dart is still statically compiled — it has no prebuilt WASM in the
+/// registry yet. Every other language is a [`Dynamic`] WASM grammar loaded at
+/// runtime from the cache directory and installed from the grammar registry
+/// (`codemark languages install <lang>`). Two `Language`
 /// values are equal if they are the same kind of grammar
 /// ([`identity`](Self::identity)) with the same [`name`](Self::name) —
 /// deliberately *not* full struct equality, so `Language` can serve as a
 /// `HashMap` key despite `DynamicLanguage` carrying heavy data.
 #[derive(Debug, Clone)]
 pub enum Language {
-    Swift,
-    Rust,
-    TypeScript,
-    Python,
-    Go,
-    Java,
-    CSharp,
     Dart,
     /// A dynamically loaded WASM grammar.
     Dynamic(Arc<DynamicLanguage>),
@@ -127,13 +122,6 @@ impl Language {
     /// The canonical name string for this language (e.g. "rust", "lua").
     pub fn name(&self) -> &str {
         match self {
-            Language::Swift => "swift",
-            Language::Rust => "rust",
-            Language::TypeScript => "typescript",
-            Language::Python => "python",
-            Language::Go => "go",
-            Language::Java => "java",
-            Language::CSharp => "csharp",
             Language::Dart => "dart",
             Language::Dynamic(dl) => &dl.name,
         }
@@ -193,36 +181,44 @@ impl Language {
         Self::from_str(name)
     }
 
-    /// Returns the static tree-sitter language for built-in variants.
+    /// The tree-sitter language handle, for compiling and running queries.
     ///
-    /// **Panics** for `Dynamic` — the WASM-loaded language is only available
-    /// inside a `Parser` that holds the `WasmStore`. Callers that need a
-    /// `tree_sitter::Language` for dynamic grammars must go through `Parser`.
+    /// **Panics** if a dynamic grammar fails to load; use
+    /// [`load_tree_sitter_language`](Self::load_tree_sitter_language) where that
+    /// is a possibility to handle rather than a bug.
     pub fn tree_sitter_language(&self) -> tree_sitter::Language {
+        self.load_tree_sitter_language()
+            .unwrap_or_else(|e| panic!("loading the {} grammar: {e}", self.name()))
+    }
+
+    /// The tree-sitter language handle, loading a dynamic grammar's WASM if
+    /// this process has not already.
+    ///
+    /// A handle loaded from WASM is self-contained for queries, and parsing
+    /// with it only needs a parser that has a `WasmStore` attached —
+    /// [`Parser::new`] attaches one. It is cached per grammar file, so the
+    /// module is compiled once per process rather than once per parser.
+    pub fn load_tree_sitter_language(&self) -> Result<tree_sitter::Language> {
         match self {
-            Language::Swift => tree_sitter_swift::LANGUAGE.into(),
-            Language::Rust => tree_sitter_rust::LANGUAGE.into(),
-            Language::TypeScript => tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into(),
-            Language::Python => tree_sitter_python::LANGUAGE.into(),
-            Language::Go => tree_sitter_go::LANGUAGE.into(),
-            Language::Java => tree_sitter_java::LANGUAGE.into(),
-            Language::CSharp => tree_sitter_c_sharp::LANGUAGE.into(),
-            Language::Dart => tree_sitter_dart::LANGUAGE.into(),
-            Language::Dynamic(_) => panic!(
-                "tree_sitter_language() is not available for Dynamic languages; use Parser::new()"
-            ),
+            Language::Dart => Ok(tree_sitter_dart::LANGUAGE.into()),
+            Language::Dynamic(dl) => {
+                #[cfg(feature = "wasm")]
+                {
+                    load_wasm_language(dl)
+                }
+                #[cfg(not(feature = "wasm"))]
+                {
+                    Err(Error::TreeSitter(format!(
+                        "dynamic grammar '{}' requires the 'wasm' feature — rebuild codemark with --features wasm",
+                        dl.name
+                    )))
+                }
+            }
         }
     }
 
     pub fn file_extensions(&self) -> Vec<String> {
         match self {
-            Language::Swift => vec!["swift".into()],
-            Language::Rust => vec!["rs".into()],
-            Language::TypeScript => vec!["ts".into(), "tsx".into()],
-            Language::Python => vec!["py".into()],
-            Language::Go => vec!["go".into()],
-            Language::Java => vec!["java".into()],
-            Language::CSharp => vec!["cs".into()],
             Language::Dart => vec!["dart".into()],
             Language::Dynamic(dl) => dl.extensions.clone(),
         }
@@ -235,7 +231,7 @@ impl Language {
     /// so it reads as the more specific intent. It also makes a built-in
     /// *replaceable*: a language can be dropped from the binary and picked up
     /// from the registry without the extension becoming unresolvable, which is
-    /// how the eight bundled grammars can be unbundled one at a time.
+    /// how seven of the eight bundled grammars were unbundled in 0.8.0.
     ///
     /// Nothing is shadowed by accident — installing over a built-in takes an
     /// explicit `--override-builtin` (see
@@ -262,13 +258,6 @@ impl Language {
     /// would otherwise be shadowed and never resolve).
     pub fn static_from_extension(ext: &str) -> Option<Language> {
         match ext.to_lowercase().as_str() {
-            "swift" => Some(Language::Swift),
-            "rs" => Some(Language::Rust),
-            "ts" | "tsx" => Some(Language::TypeScript),
-            "py" => Some(Language::Python),
-            "go" => Some(Language::Go),
-            "java" => Some(Language::Java),
-            "cs" => Some(Language::CSharp),
             "dart" => Some(Language::Dart),
             _ => None,
         }
@@ -276,16 +265,7 @@ impl Language {
 
     /// List all built-in static languages.
     pub fn builtins() -> Vec<Self> {
-        vec![
-            Language::Rust,
-            Language::Swift,
-            Language::TypeScript,
-            Language::Python,
-            Language::Go,
-            Language::Java,
-            Language::CSharp,
-            Language::Dart,
-        ]
+        vec![Language::Dart]
     }
 
     /// List all supported languages (static + any dynamic ones discovered).
@@ -326,6 +306,7 @@ impl FromStr for Language {
     /// created since schema v25. Use this only for a bare name from a user
     /// (`--lang`) or a bookmark predating that column.
     fn from_str(s: &str) -> Result<Self> {
+        let s = canonical_name(s);
         let resolved = if cfg!(feature = "wasm") {
             crate::parser::registry::LanguageRegistry::from_name(s)
                 .or_else(|| Language::static_from_name(s))
@@ -337,6 +318,79 @@ impl FromStr for Language {
     }
 }
 
+/// Spellings that name an unbundled language, mapped to its registry name.
+///
+/// Before 0.8.0 these languages were compiled in and answered to aliases
+/// (`rs`, `ts`, `py`, `cs`) and, for C#, a name the registry spells
+/// differently (`csharp` vs `c_sharp`). Bookmarks and shared packs created then
+/// store those spellings, and users still type them for `--lang`, so a name is
+/// canonicalized before the registry lookup. Spellings are matched
+/// case-insensitively; anything not listed passes through unchanged.
+const LANGUAGE_ALIASES: &[(&str, &str)] = &[
+    ("rs", "rust"),
+    ("ts", "typescript"),
+    ("tsx", "typescript"),
+    ("py", "python"),
+    ("csharp", "c_sharp"),
+    ("c#", "c_sharp"),
+    ("cs", "c_sharp"),
+];
+
+/// Extensions of the languages unbundled in 0.8.0, mapped to the registry
+/// grammar that handles them.
+///
+/// These were parseable out of the box before 0.8.0, so meeting one with no
+/// grammar installed is the common upgrade case, not an unknown file type. This
+/// table lets that be reported as a missing grammar *with its name*, which
+/// tells the user (or the agent skill) exactly what to install. `.tsx` is
+/// absent on purpose: the registry's `typescript` grammar does not parse TSX.
+const UNBUNDLED_EXTENSIONS: &[(&str, &str)] = &[
+    ("rs", "rust"),
+    ("swift", "swift"),
+    ("ts", "typescript"),
+    ("py", "python"),
+    ("go", "go"),
+    ("java", "java"),
+    ("cs", "c_sharp"),
+];
+
+impl Language {
+    /// The registry grammar to install for a file extension that was built in
+    /// before 0.8.0, if `ext` is one. See [`UNBUNDLED_EXTENSIONS`].
+    pub fn unbundled_grammar_for_extension(ext: &str) -> Option<&'static str> {
+        UNBUNDLED_EXTENSIONS
+            .iter()
+            .find(|(e, _)| e.eq_ignore_ascii_case(ext))
+            .map(|(_, name)| *name)
+    }
+}
+
+/// The registry name for `name`, resolving the pre-0.8.0 aliases in
+/// [`LANGUAGE_ALIASES`].
+pub fn canonical_name(name: &str) -> &str {
+    LANGUAGE_ALIASES
+        .iter()
+        .find(|(alias, _)| alias.eq_ignore_ascii_case(name))
+        .map(|(_, canonical)| *canonical)
+        .unwrap_or(name)
+}
+
+/// Every stored spelling that refers to the same language as `name`: the
+/// canonical name plus each alias of it. A bookmark stores the name its grammar
+/// reported when it was created, so filtering C# bookmarks must match both the
+/// pre-0.8.0 `csharp` and the registry's `c_sharp`.
+pub fn stored_spellings(name: &str) -> Vec<String> {
+    let canonical = canonical_name(name);
+    let mut out = vec![canonical.to_string()];
+    out.extend(
+        LANGUAGE_ALIASES
+            .iter()
+            .filter(|(_, c)| c.eq_ignore_ascii_case(canonical))
+            .map(|(alias, _)| alias.to_string()),
+    );
+    out
+}
+
 impl Language {
     /// Resolve a name (including alias like `rs`/`ts`) to a *built-in* language,
     /// without consulting the dynamic registry.
@@ -346,13 +400,6 @@ impl Language {
     /// by a built-in, so the two can never drift (see [`from_str`](Self::from_str)).
     pub fn static_from_name(s: &str) -> Option<Language> {
         match s.to_lowercase().as_str() {
-            "swift" => Some(Language::Swift),
-            "rust" | "rs" => Some(Language::Rust),
-            "typescript" | "ts" | "tsx" => Some(Language::TypeScript),
-            "python" | "py" => Some(Language::Python),
-            "go" => Some(Language::Go),
-            "java" => Some(Language::Java),
-            "csharp" | "c#" | "cs" => Some(Language::CSharp),
             "dart" => Some(Language::Dart),
             _ => None,
         }
@@ -410,49 +457,21 @@ impl Parser {
     /// grammar look installable and report it as valid.
     pub fn new_exact(language: Language) -> Result<Self> {
         let mut inner = tree_sitter::Parser::new();
-        let ts_language = match &language {
-            Language::Swift
-            | Language::Rust
-            | Language::TypeScript
-            | Language::Python
-            | Language::Go
-            | Language::Java
-            | Language::CSharp
-            | Language::Dart => {
-                let ts = language.tree_sitter_language();
-                inner
-                    .set_language(&ts)
-                    .map_err(|e| Error::TreeSitter(format!("failed to set language: {e}")))?;
-                ts
-            }
-            Language::Dynamic(dl) => {
-                #[cfg(feature = "wasm")]
-                {
-                    let engine = wasm_engine();
-                    let mut store = tree_sitter::WasmStore::new(engine)
-                        .map_err(|e| Error::TreeSitter(format!("wasm store: {e:?}")))?;
-                    let wasm_bytes = std::fs::read(&dl.wasm_path)
-                        .map_err(|e| Error::TreeSitter(format!("reading grammar.wasm: {e}")))?;
-                    let lang = store.load_language(&dl.name, &wasm_bytes).map_err(|e| {
-                        Error::TreeSitter(format!("loading grammar '{}': {e:?}", dl.name))
-                    })?;
-                    inner
-                        .set_wasm_store(store)
-                        .map_err(|e| Error::TreeSitter(format!("attaching wasm store: {e}")))?;
-                    inner
-                        .set_language(&lang)
-                        .map_err(|e| Error::TreeSitter(format!("failed to set language: {e}")))?;
-                    lang
-                }
-                #[cfg(not(feature = "wasm"))]
-                {
-                    return Err(Error::TreeSitter(format!(
-                        "dynamic grammar '{}' requires the 'wasm' feature — rebuild codemark with --features wasm",
-                        dl.name
-                    )));
-                }
-            }
-        };
+        let ts_language = language.load_tree_sitter_language()?;
+        // A WASM language is compiled once and cached (see
+        // `load_wasm_language`), but each parser still needs a store of its own
+        // to instantiate it into: stores are not shareable across parsers.
+        #[cfg(feature = "wasm")]
+        if ts_language.is_wasm() {
+            let store = tree_sitter::WasmStore::new(wasm_engine())
+                .map_err(|e| Error::TreeSitter(format!("wasm store: {e:?}")))?;
+            inner
+                .set_wasm_store(store)
+                .map_err(|e| Error::TreeSitter(format!("attaching wasm store: {e}")))?;
+        }
+        inner
+            .set_language(&ts_language)
+            .map_err(|e| Error::TreeSitter(format!("failed to set language: {e}")))?;
         Ok(Parser { inner, language, ts_language })
     }
 
@@ -493,6 +512,55 @@ fn wasm_engine() -> &'static tree_sitter::wasmtime::Engine {
     static ENGINE: std::sync::LazyLock<tree_sitter::wasmtime::Engine> =
         std::sync::LazyLock::new(tree_sitter::wasmtime::Engine::default);
     &ENGINE
+}
+
+/// Load (or fetch from the process cache) the tree-sitter language for a
+/// dynamic grammar.
+///
+/// Compiling a grammar's WASM is the expensive step — hundreds of milliseconds
+/// for a large grammar like Swift — and it used to happen on every
+/// `Parser::new`. The handle is now kept per grammar file, keyed by path, size
+/// and mtime so a reinstalled grammar is picked up rather than served stale.
+#[cfg(feature = "wasm")]
+fn load_wasm_language(dl: &DynamicLanguage) -> Result<tree_sitter::Language> {
+    use std::sync::{LazyLock, Mutex};
+    use std::time::SystemTime;
+
+    type Key = (PathBuf, u64, Option<SystemTime>);
+    static CACHE: LazyLock<Mutex<HashMap<Key, tree_sitter::Language>>> =
+        LazyLock::new(|| Mutex::new(HashMap::new()));
+
+    let meta = std::fs::metadata(&dl.wasm_path)
+        .map_err(|e| Error::TreeSitter(format!("reading grammar.wasm: {e}")))?;
+    let key: Key = (dl.wasm_path.clone(), meta.len(), meta.modified().ok());
+
+    // Held across the compile so two threads asking for the same grammar don't
+    // both pay for it. A compile is a one-off per grammar per process.
+    let mut cache = CACHE.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    if let Some(lang) = cache.get(&key) {
+        return Ok(lang.clone());
+    }
+
+    let started = std::time::Instant::now();
+    let wasm_bytes = std::fs::read(&dl.wasm_path)
+        .map_err(|e| Error::TreeSitter(format!("reading grammar.wasm: {e}")))?;
+    let mut store = tree_sitter::WasmStore::new(wasm_engine())
+        .map_err(|e| Error::TreeSitter(format!("wasm store: {e:?}")))?;
+    let lang = store
+        .load_language(&dl.name, &wasm_bytes)
+        .map_err(|e| Error::TreeSitter(format!("loading grammar '{}': {e:?}", dl.name)))?;
+    tracing::debug!(
+        target: "codemark::languages",
+        name = %dl.name,
+        path = %dl.wasm_path.display(),
+        elapsed_ms = started.elapsed().as_millis() as u64,
+        "compiled wasm grammar"
+    );
+
+    // Drop any handle for an older build of this same file.
+    cache.retain(|(path, _, _), _| path != &dl.wasm_path);
+    cache.insert(key, lang.clone());
+    Ok(lang)
 }
 
 /// A cached parse: the tree, its source, and the file mtime it was parsed at.
@@ -621,43 +689,91 @@ mod tests {
         assert!(install_at < add_at, "install should be recommended before add: {shown}");
     }
 
-    /// Built-in languages keep resolving by every alias they advertise.
+    /// The pre-0.8.0 names and aliases of the unbundled languages still
+    /// resolve — now to the registry grammar. Bookmarks and shared packs
+    /// created before 0.8.0 store these spellings.
     #[test]
-    fn builtin_languages_still_resolve_by_name() {
+    fn unbundled_languages_resolve_by_their_old_names() {
         use super::Language;
         use std::str::FromStr;
 
-        for name in ["rust", "rs", "swift", "typescript", "ts", "python", "py", "go", "cs"] {
-            assert!(Language::from_str(name).is_ok(), "{name} should resolve");
+        for (name, canonical) in [
+            ("rust", "rust"),
+            ("rs", "rust"),
+            ("swift", "swift"),
+            ("typescript", "typescript"),
+            ("ts", "typescript"),
+            ("python", "python"),
+            ("py", "python"),
+            ("go", "go"),
+            ("java", "java"),
+            ("csharp", "c_sharp"),
+            ("C#", "c_sharp"),
+            ("cs", "c_sharp"),
+        ] {
+            let lang =
+                Language::from_str(name).unwrap_or_else(|e| panic!("{name} should resolve: {e}"));
+            assert_eq!(lang.name(), canonical, "{name}");
+            assert_eq!(lang.identity(), GrammarIdentity::Dynamic, "{name}");
         }
+    }
+
+    /// A bookmark recorded against a built-in that has since been unbundled
+    /// still resolves: the recorded identity is a preference, and the name
+    /// falls through to the registry grammar that replaced it.
+    #[test]
+    fn a_builtin_identity_for_an_unbundled_language_falls_back_to_the_registry() {
+        let lang = Language::from_identity("csharp", GrammarIdentity::Builtin).unwrap();
+        assert_eq!(lang.name(), "c_sharp");
+        assert_eq!(lang.identity(), GrammarIdentity::Dynamic);
+    }
+
+    #[test]
+    fn an_unbundled_extension_names_the_grammar_to_install() {
+        assert_eq!(Language::unbundled_grammar_for_extension("rs"), Some("rust"));
+        assert_eq!(Language::unbundled_grammar_for_extension("CS"), Some("c_sharp"));
+        assert_eq!(Language::unbundled_grammar_for_extension("lua"), None);
+        assert_eq!(Language::unbundled_grammar_for_extension("dart"), None);
+        // Every name it suggests must be one install will accept.
+        for (_, name) in UNBUNDLED_EXTENSIONS {
+            assert_eq!(canonical_name(name), *name, "{name} must be canonical");
+        }
+    }
+
+    #[test]
+    fn stored_spellings_cover_the_canonical_name_and_its_aliases() {
+        let mut csharp = stored_spellings("csharp");
+        csharp.sort();
+        assert_eq!(csharp, ["c#", "c_sharp", "cs", "csharp"]);
+        assert_eq!(stored_spellings("lua"), ["lua"]);
+
+        // A canonical name in another case still pulls in its aliases.
+        let mut upper = stored_spellings("C_SHARP");
+        upper.sort();
+        assert_eq!(upper, ["C_SHARP", "c#", "cs", "csharp"]);
     }
 
     /// Precedence must follow what the build can actually load.
     ///
     /// With `wasm`, a dynamic grammar wins — that is what lets a bundled
     /// language be replaced by a registry one. Without it, `Parser::new`
-    /// rejects every dynamic grammar, so preferring one would route `.rs` to a
-    /// grammar that cannot parse and break a language that worked before the
+    /// rejects every dynamic grammar, so preferring one would route `.dart` to
+    /// a grammar that cannot parse and break a language that worked before the
     /// override was installed.
     #[test]
     fn builtin_resolution_survives_without_the_wasm_feature() {
         use super::Language;
         use std::str::FromStr;
 
-        // Deliberately the *static* helpers: `from_extension` / `from_str`
-        // consult the user's real grammar cache, so a `rust` override on the
-        // machine running the tests would fail these. What matters here is
-        // that the built-in arm still maps correctly.
-        assert!(matches!(Language::static_from_extension("rs"), Some(Language::Rust)));
-        assert!(matches!(Language::static_from_name("rust"), Some(Language::Rust)));
-        assert!(matches!(Language::static_from_name("rs"), Some(Language::Rust)));
+        assert!(matches!(Language::static_from_extension("dart"), Some(Language::Dart)));
+        assert!(matches!(Language::static_from_name("dart"), Some(Language::Dart)));
 
         // And the built-in remains reachable through the public lookups when
         // nothing overrides it — true in CI, and the no-default-features build
         // covers the other ordering.
-        if crate::parser::registry::LanguageRegistry::from_extension("rs").is_none() {
-            assert!(matches!(Language::from_extension("rs"), Some(Language::Rust)));
-            assert!(matches!(Language::from_str("rust"), Ok(Language::Rust)));
+        if crate::parser::registry::LanguageRegistry::from_extension("dart").is_none() {
+            assert!(matches!(Language::from_extension("dart"), Some(Language::Dart)));
+            assert!(matches!(Language::from_str("dart"), Ok(Language::Dart)));
         }
     }
 
@@ -672,12 +788,12 @@ mod tests {
     #[test]
     fn an_override_and_its_builtin_are_different_cache_keys() {
         let dynamic = Language::Dynamic(Arc::new(DynamicLanguage {
-            name: "typescript".into(),
-            extensions: vec!["ts".into()],
+            name: "dart".into(),
+            extensions: vec!["dart".into()],
             wasm_path: PathBuf::from("/nonexistent"),
             profile: Profile::default(),
         }));
-        let builtin = Language::TypeScript;
+        let builtin = Language::Dart;
 
         assert_eq!(dynamic.name(), builtin.name(), "the premise: names collide");
         assert_ne!(dynamic, builtin, "but the languages must not compare equal");
@@ -694,23 +810,21 @@ mod tests {
     /// bare name cannot — the fix for #244.
     #[test]
     fn a_recorded_identity_pins_the_builtin_against_a_same_named_override() {
-        // Only meaningful when nothing overrides `typescript` on this machine;
-        // the registry is process-global, so a developer with a real override
-        // installed would otherwise see a different (also correct) answer.
-        if crate::parser::registry::LanguageRegistry::from_name("typescript").is_some() {
+        // Only meaningful when nothing overrides `dart` in the grammar cache.
+        if crate::parser::registry::LanguageRegistry::from_name("dart").is_some() {
             return;
         }
 
         // Recording `Builtin` asks for the compiled-in grammar by name...
-        let pinned = Language::from_identity("typescript", GrammarIdentity::Builtin).unwrap();
-        assert!(matches!(pinned, Language::TypeScript));
+        let pinned = Language::from_identity("dart", GrammarIdentity::Builtin).unwrap();
+        assert!(matches!(pinned, Language::Dart));
         assert_eq!(pinned.identity(), GrammarIdentity::Builtin);
 
         // ...and an identity for a grammar that isn't installed falls back to
         // name-only resolution rather than failing: a bookmark whose override
         // was uninstalled is still worth trying to resolve.
-        let fallback = Language::from_identity("typescript", GrammarIdentity::Dynamic).unwrap();
-        assert!(matches!(fallback, Language::TypeScript));
+        let fallback = Language::from_identity("dart", GrammarIdentity::Dynamic).unwrap();
+        assert!(matches!(fallback, Language::Dart));
     }
 
     /// After a fallback, the parser reports the grammar it actually loaded.
@@ -723,30 +837,58 @@ mod tests {
     /// are grammar-specific.
     #[test]
     fn a_fallback_parser_reports_the_builtin_it_loaded() {
-        // An override that cannot possibly load: the wasm file does not exist.
-        let broken = Language::Dynamic(Arc::new(DynamicLanguage {
-            name: "typescript".into(),
-            extensions: vec!["ts".into()],
-            wasm_path: PathBuf::from("/nonexistent/grammar.wasm"),
-            profile: Profile::default(),
-        }));
-        assert_eq!(broken.identity(), GrammarIdentity::Dynamic, "the premise");
+        let broken = || {
+            // An override that cannot possibly load: the wasm file does not exist.
+            Language::Dynamic(Arc::new(DynamicLanguage {
+                name: "dart".into(),
+                extensions: vec!["dart".into()],
+                wasm_path: PathBuf::from("/nonexistent/grammar.wasm"),
+                profile: Profile::default(),
+            }))
+        };
+        assert_eq!(broken().identity(), GrammarIdentity::Dynamic, "the premise");
 
-        let parser = Parser::new(broken).expect("must fall back rather than fail");
+        let parser = Parser::new(broken()).expect("must fall back rather than fail");
 
         // What creation now saves — the built-in, not the override we asked for.
         assert_eq!(parser.codemark_language().identity(), GrammarIdentity::Builtin);
-        assert!(matches!(parser.codemark_language(), Language::TypeScript));
+        assert!(matches!(parser.codemark_language(), Language::Dart));
 
         // `new_exact` is the contrast: install and `languages validate` must see
         // the failure instead of a grammar that silently became another one.
-        let broken_again = Language::Dynamic(Arc::new(DynamicLanguage {
-            name: "typescript".into(),
-            extensions: vec!["ts".into()],
+        assert!(Parser::new_exact(broken()).is_err());
+    }
+
+    /// An unbundled language with no grammar installed has no built-in floor:
+    /// a broken grammar is an error, not a silent fallback.
+    #[test]
+    fn a_broken_unbundled_grammar_has_no_fallback() {
+        let broken = Language::Dynamic(Arc::new(DynamicLanguage {
+            name: "rust".into(),
+            extensions: vec!["rs".into()],
             wasm_path: PathBuf::from("/nonexistent/grammar.wasm"),
             profile: Profile::default(),
         }));
-        assert!(Parser::new_exact(broken_again).is_err());
+        assert!(Parser::new(broken).is_err());
+    }
+
+    /// Two parsers for one WASM grammar share a single compiled language and
+    /// still parse independently — each gets its own store.
+    #[cfg(feature = "wasm")]
+    #[test]
+    fn parsers_share_a_compiled_wasm_grammar() {
+        let swift = crate::testing::grammar("swift");
+        let a = swift.tree_sitter_language();
+        let b = swift.tree_sitter_language();
+        assert!(a.is_wasm());
+        assert_eq!(a.node_kind_count(), b.node_kind_count());
+
+        let mut p1 = Parser::new(swift.clone()).unwrap();
+        let mut p2 = Parser::new(swift).unwrap();
+        let t1 = p1.parse(b"func a() {}").unwrap();
+        let t2 = p2.parse(b"struct B {}").unwrap();
+        assert!(!t1.root_node().has_error());
+        assert!(!t2.root_node().has_error());
     }
 
     /// The stored spellings are a wire format: a value written by this version
@@ -765,19 +907,20 @@ mod tests {
 
     #[test]
     fn language_round_trip() {
-        for (input, expected, display) in [
-            ("swift", Language::Swift, "swift"),
-            ("rust", Language::Rust, "rust"),
-            ("rs", Language::Rust, "rust"),
-            ("typescript", Language::TypeScript, "typescript"),
-            ("ts", Language::TypeScript, "typescript"),
-            ("tsx", Language::TypeScript, "typescript"),
-            ("python", Language::Python, "python"),
-            ("py", Language::Python, "python"),
+        for (input, display) in [
+            ("dart", "dart"),
+            ("swift", "swift"),
+            ("rust", "rust"),
+            ("rs", "rust"),
+            ("typescript", "typescript"),
+            ("ts", "typescript"),
+            ("python", "python"),
+            ("py", "python"),
         ] {
             let lang: Language = input.parse().unwrap();
-            assert_eq!(lang, expected, "parsing '{input}'");
-            assert_eq!(lang.to_string(), display);
+            assert_eq!(lang.to_string(), display, "parsing '{input}'");
+            let again: Language = lang.to_string().parse().unwrap();
+            assert_eq!(again, lang);
         }
     }
 
@@ -787,8 +930,9 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     fn parse_swift_source() {
-        let mut parser = Parser::new(Language::Swift.clone()).unwrap();
+        let mut parser = Parser::new(crate::testing::grammar("swift").clone()).unwrap();
         let source = b"func hello() { print(\"hello\") }";
         let tree = parser.parse(source).unwrap();
         let root = tree.root_node();
@@ -797,8 +941,9 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     fn parse_rust_source() {
-        let mut parser = Parser::new(Language::Rust.clone()).unwrap();
+        let mut parser = Parser::new(crate::testing::grammar("rust").clone()).unwrap();
         let source = b"fn hello() { println!(\"hello\"); }";
         let tree = parser.parse(source).unwrap();
         assert_eq!(tree.root_node().kind(), "source_file");
@@ -806,8 +951,9 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     fn parse_typescript_source() {
-        let mut parser = Parser::new(Language::TypeScript.clone()).unwrap();
+        let mut parser = Parser::new(crate::testing::grammar("typescript").clone()).unwrap();
         let source = b"function hello(): void { console.log('hello'); }";
         let tree = parser.parse(source).unwrap();
         assert_eq!(tree.root_node().kind(), "program");
@@ -815,8 +961,9 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     fn parse_python_source() {
-        let mut parser = Parser::new(Language::Python.clone()).unwrap();
+        let mut parser = Parser::new(crate::testing::grammar("python").clone()).unwrap();
         let source = b"def hello():\n    print('hello')\n";
         let tree = parser.parse(source).unwrap();
         assert_eq!(tree.root_node().kind(), "module");
@@ -824,13 +971,14 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     async fn parse_swift_fixture() {
         let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../tests/fixtures/swift/auth_service.swift");
         if !fixture.exists() {
             return;
         }
-        let mut parser = Parser::new(Language::Swift.clone()).unwrap();
+        let mut parser = Parser::new(crate::testing::grammar("swift").clone()).unwrap();
         let provider = crate::vfs::LocalFileProvider;
         let (tree, _source) = parser.parse_file(&fixture, &provider).await.unwrap();
         let root = tree.root_node();
@@ -839,13 +987,14 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     async fn parse_cache_reuses_tree() {
         let fixture = Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../../tests/fixtures/swift/auth_service.swift");
         if !fixture.exists() {
             return;
         }
-        let mut cache = ParseCache::new(Language::Swift).unwrap();
+        let mut cache = ParseCache::new(crate::testing::grammar("swift")).unwrap();
         let provider = crate::vfs::LocalFileProvider;
         let (tree1, _) = cache.get_or_parse(&fixture, &provider).await.unwrap();
         let root1_kind = tree1.root_node().kind().to_string();

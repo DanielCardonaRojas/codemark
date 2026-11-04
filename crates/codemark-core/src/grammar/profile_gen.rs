@@ -680,12 +680,13 @@ mod tests {
 
     #[test]
     fn requires_at_least_one_sample() {
-        assert!(propose_profile(&Language::Rust, &[]).is_err());
+        assert!(propose_profile(&crate::testing::grammar("rust"), &[]).is_err());
     }
 
     // The generator is derived from observed structure, so the built-in grammars
     // are the cheapest ground truth: we already know the right answer for them.
     #[test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     fn proposes_rust_landmarks_and_containers() {
         let src = r#"
 mod auth {
@@ -699,7 +700,7 @@ mod auth {
     trait Check { fn run(&self); }
 }
 "#;
-        let p = propose(Language::Rust, src);
+        let p = propose(crate::testing::grammar("rust"), src);
         let lm = &p.profile.landmark_kinds;
         for expected in ["function_item", "struct_item", "impl_item", "mod_item", "trait_item"] {
             assert!(lm.iter().any(|k| k == expected), "missing {expected} in {lm:?}");
@@ -730,6 +731,7 @@ mod auth {
     /// check restored — verified by reverting it. Ruby, which does express it,
     /// is a registry grammar and not committed here.
     #[test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     fn nesting_is_detected_by_shape_not_by_kind_name() {
         // Ruby's declaration kinds — the ones that exposed the bug — carry none
         // of the marker words the old check looked for. Pin that, so the case
@@ -746,7 +748,7 @@ mod auth {
         // its *fields*, not its name. `mod_item` has a name and a body; what
         // matters is that `node_has_declaration_shape` reaches its decision
         // from those fields, which is what lets Ruby's `module` work too.
-        let mut parser = Parser::new(Language::Rust).unwrap();
+        let mut parser = Parser::new(crate::testing::grammar("rust")).unwrap();
         let tree = parser.parse(b"mod outer { mod inner { fn f() {} } }").unwrap();
         let outer = tree.root_node().child(0).unwrap();
         assert_eq!(outer.kind(), "mod_item");
@@ -754,7 +756,7 @@ mod auth {
         assert!(has_declaration_descendant(outer), "outer wraps inner");
 
         // And end to end, it becomes a container.
-        let p = propose(Language::Rust, "mod outer { mod inner { fn f() {} } }");
+        let p = propose(crate::testing::grammar("rust"), "mod outer { mod inner { fn f() {} } }");
         let c = p.profile.containers.labels();
         assert!(c.iter().any(|l| l == "module"), "{c:?}");
     }
@@ -766,11 +768,13 @@ mod auth {
     /// value bound by its enclosing `variable_declaration`. A sticky header
     /// needs only the line, so the name is the breadcrumb renderer's problem.
     #[test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     fn a_container_needs_a_body_not_a_name() {
         // Rust's `impl_item` holds its name under `type`, never `name` — the
         // asymmetry that made a per-kind name field error-prone in the first
         // place. As a concept it is simply "impl".
-        let p = propose(Language::Rust, "impl Service {\n    fn go(&self) {}\n}\n");
+        let p =
+            propose(crate::testing::grammar("rust"), "impl Service {\n    fn go(&self) {}\n}\n");
         let c = p.profile.containers.labels();
         assert!(c.iter().any(|l| l == "impl"), "{c:?}");
 
@@ -786,6 +790,7 @@ mod auth {
     }
 
     #[test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     fn labels_come_from_the_builtin_vocabulary() {
         let src = r#"
 struct S { x: i32 }
@@ -794,7 +799,7 @@ fn f() {
     g();
 }
 "#;
-        let p = propose(Language::Rust, src);
+        let p = propose(crate::testing::grammar("rust"), src);
         let labels = &p.profile.node_labels;
         assert_eq!(labels.get("function_item").map(String::as_str), Some("function"));
         assert_eq!(labels.get("struct_item").map(String::as_str), Some("class"));
@@ -971,9 +976,10 @@ fn f() {
     }
 
     #[test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     fn evidence_is_ranked_and_explains_each_kind() {
         let src = "fn a() {}\nfn b() {}\nstruct S;\n";
-        let p = propose(Language::Rust, src);
+        let p = propose(crate::testing::grammar("rust"), src);
         // Ranked by occurrence, descending.
         for w in p.evidence.windows(2) {
             assert!(w[0].occurrences >= w[1].occurrences, "{:?}", p.evidence);
@@ -985,18 +991,20 @@ fn f() {
     }
 
     #[test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     fn reports_samples_that_failed_to_parse() {
         // Python source fed to the Rust grammar produces ERROR nodes; the caller
         // needs to know the proposal is built on a bad parse.
-        let p = propose(Language::Rust, "def f(:\n  ???");
+        let p = propose(crate::testing::grammar("rust"), "def f(:\n  ???");
         assert_eq!(p.samples_with_errors, vec!["sample".to_string()]);
     }
 
     #[test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     fn proposal_is_deterministic() {
         let src = "mod m { fn a() {} struct S; }";
-        let a = propose(Language::Rust, src);
-        let b = propose(Language::Rust, src);
+        let a = propose(crate::testing::grammar("rust"), src);
+        let b = propose(crate::testing::grammar("rust"), src);
         assert_eq!(a.profile.landmark_kinds, b.profile.landmark_kinds);
         assert_eq!(a.profile.containers, b.profile.containers);
     }
@@ -1093,6 +1101,7 @@ fn f() {
     // A generated profile must satisfy the Phase 0 lint — otherwise the
     // generator would emit exactly the dead entries the lint exists to catch.
     #[test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     fn generated_profile_is_lint_clean() {
         use crate::parser::profile::{LintSeverity, lint};
         let src = r#"
@@ -1101,9 +1110,9 @@ mod auth {
     impl User { fn go(&self) { if true { return; } } }
 }
 "#;
-        let p = propose(Language::Rust, src);
+        let p = propose(crate::testing::grammar("rust"), src);
         let value = serde_json::to_value(&p.profile).unwrap();
-        let findings = lint(&value, &Language::Rust.tree_sitter_language());
+        let findings = lint(&value, &crate::testing::grammar("rust").tree_sitter_language());
         let errors: Vec<_> =
             findings.iter().filter(|f| f.severity == LintSeverity::Error).collect();
         assert!(errors.is_empty(), "generated profile has lint errors: {errors:?}");

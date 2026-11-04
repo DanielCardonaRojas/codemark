@@ -329,8 +329,14 @@ impl Database {
         }
 
         if let Some(ref language) = filter.language {
-            conditions.push("b.language = ?".to_string());
-            params.push(Box::new(language.clone()));
+            // Match every spelling the language has been stored under — C#
+            // bookmarks from before 0.8.0 say `csharp`, newer ones `c_sharp`.
+            let spellings = crate::parser::languages::stored_spellings(language);
+            let placeholders = vec!["?"; spellings.len()].join(", ");
+            conditions.push(format!("LOWER(b.language) IN ({placeholders})"));
+            for s in spellings {
+                params.push(Box::new(s.to_lowercase()));
+            }
         }
 
         if let Some(ref created_by) = filter.created_by {
@@ -522,8 +528,12 @@ impl Database {
             conditions.push(format!("({})", search_conditions.join(" OR ")));
         }
         if let Some(lang) = language {
-            conditions.push("b.language = ?".to_string());
-            params.push(Box::new(lang.to_string()));
+            let spellings = crate::parser::languages::stored_spellings(lang);
+            let placeholders = vec!["?"; spellings.len()].join(", ");
+            conditions.push(format!("LOWER(b.language) IN ({placeholders})"));
+            for s in spellings {
+                params.push(Box::new(s.to_lowercase()));
+            }
         }
         if let Some(author) = created_by {
             conditions.push("b.created_by = ?".to_string());
@@ -762,11 +772,20 @@ mod tests {
         // And the identity is what `grammar()` resolves through: a bookmark
         // recording the built-in resolves to the built-in, by name alone.
         let mut bm = test_bookmark("id-resolves");
-        bm.language = "swift".to_string();
+        bm.language = "dart".to_string();
         bm.grammar_source = Some(GrammarIdentity::Builtin);
         db.insert_bookmark(&bm).unwrap();
         let fetched = db.get_bookmark("id-resolves").unwrap().unwrap();
         assert_eq!(fetched.grammar().unwrap().identity(), GrammarIdentity::Builtin);
+
+        // A bookmark recorded against a built-in that 0.8.0 unbundled still
+        // resolves — to the registry grammar that replaced it.
+        let mut bm = test_bookmark("id-unbundled");
+        bm.language = "swift".to_string();
+        bm.grammar_source = Some(GrammarIdentity::Builtin);
+        db.insert_bookmark(&bm).unwrap();
+        let fetched = db.get_bookmark("id-unbundled").unwrap().unwrap();
+        assert_eq!(fetched.grammar().unwrap().identity(), GrammarIdentity::Dynamic);
     }
 
     #[test]
@@ -1017,6 +1036,31 @@ mod tests {
         let results = db.list_bookmarks(&filter).unwrap();
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].id, "aaaa-0000-0000-0001");
+    }
+
+    /// C# bookmarks from before 0.8.0 store `csharp`; the registry grammar
+    /// stores `c_sharp`. Filtering by either spelling finds both.
+    #[test]
+    fn language_filter_matches_every_spelling_of_a_language() {
+        init_test_env();
+        let db = Database::open_in_memory().unwrap();
+        for (id, language) in [
+            ("aaaa-0000-0000-0001", "csharp"),
+            ("aaaa-0000-0000-0002", "c_sharp"),
+            ("aaaa-0000-0000-0003", "rust"),
+        ] {
+            let mut bm = test_bookmark(id);
+            bm.language = language.to_string();
+            db.insert_bookmark(&bm).unwrap();
+        }
+
+        for query in ["csharp", "c_sharp", "cs"] {
+            let filter = BookmarkFilter { language: Some(query.into()), ..Default::default() };
+            let mut ids: Vec<_> =
+                db.list_bookmarks(&filter).unwrap().into_iter().map(|b| b.id).collect();
+            ids.sort();
+            assert_eq!(ids, ["aaaa-0000-0000-0001", "aaaa-0000-0000-0002"], "--lang {query}");
+        }
     }
 
     #[test]

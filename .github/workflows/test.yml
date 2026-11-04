@@ -46,6 +46,17 @@ jobs:
       - name: Run cargo check
         run: cargo check --verbose
 
+      # Tests parse with the registry's WASM grammars, not compiled-in ones.
+      # The script pins the registry commit, so its hash is the cache key.
+      - name: Cache test grammars
+        uses: actions/cache@v4
+        with:
+          path: tests/grammars
+          key: test-grammars-${{ hashFiles('scripts/fetch-test-grammars.sh') }}
+
+      - name: Fetch test grammars
+        run: scripts/fetch-test-grammars.sh
+
       - name: Run cargo test
         run: cargo test --verbose
 

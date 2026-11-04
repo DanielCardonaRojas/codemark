@@ -1,15 +1,25 @@
 # Dynamic Tree-sitter Grammars
 
-Codemark supports 8 languages built in (Rust, Swift, TypeScript/TSX, Python, Go,
-Java, Dart, C#), and **any other language** via dynamic WASM grammar loading —
-no recompilation needed. This page covers how it works in
+Since 0.8.0 codemark compiles in only one grammar (Dart, which has no prebuilt
+WASM in the registry yet). Every other language — including the formerly
+built-in Rust, Swift, TypeScript, Python, Go, Java and C# — loads as a WASM
+grammar at runtime, installed with `codemark languages install <lang>`. That
+halved the release binary (25 MB → 12.5 MB on macOS arm64). This page covers how it works in
 `crates/codemark-core/src/grammar/` and `parser/registry.rs`.
 
 ## How it works
 
 Built-in languages are statically compiled into the binary. Dynamic languages
 are WASM grammars loaded at runtime from a cache directory. A single
-process-global [wasmtime](https://wasmtime.dev/) `Engine` backs all WASM stores.
+process-global [wasmtime](https://wasmtime.dev/) `Engine` backs all WASM stores,
+and each grammar's module is compiled once per process and shared by every
+parser (each parser still gets its own store).
+
+**Old names keep working.** Bookmarks and packs created before 0.8.0 store the
+built-in names and aliases (`rs`, `ts`, `py`, and `csharp` where the registry
+says `c_sharp`). `Language::from_str` canonicalizes them before looking up the
+registry, and `--lang` filters match every spelling. A grammar cannot be
+*installed* under an alias, since it could never be found by name.
 
 **A dynamic grammar wins resolution over a built-in of the same name or
 extension.** An installed grammar is something you went out of your way to add,

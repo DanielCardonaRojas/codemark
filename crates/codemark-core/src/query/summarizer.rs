@@ -97,7 +97,8 @@ impl QuerySummary {
 /// use codemark_core::parser::languages::Language;
 ///
 /// let query = r#"(function_item name: (identifier) @fn_name (#eq? @fn_name "cycle_mode")) @target"#;
-/// let summary = summarize_query(query, Some(Language::Rust)).unwrap();
+/// let rust: Language = "rust".parse().unwrap();
+/// let summary = summarize_query(query, Some(rust)).unwrap();
 /// assert_eq!(summary.label, "function");
 /// assert_eq!(summary.identifier, Some("cycle_mode".to_string()));
 /// ```
@@ -287,7 +288,7 @@ mod tests {
     fn test_summarize_simple_function_query() {
         let query =
             r#"(function_item name: (identifier) @fn_name (#eq? @fn_name "cycle_mode")) @target"#;
-        let summary = summarize_query(query, Some(Language::Rust)).unwrap();
+        let summary = summarize_query(query, Some(crate::testing::grammar("rust"))).unwrap();
 
         assert_eq!(summary.label, "function");
         assert_eq!(summary.identifier, Some("cycle_mode".to_string()));
@@ -297,7 +298,7 @@ mod tests {
     #[test]
     fn test_summarize_class_query() {
         let query = r#"(class_declaration name: (type_identifier) @name0 (#eq? @name0 "AuthService")) @target"#;
-        let summary = summarize_query(query, Some(Language::Swift)).unwrap();
+        let summary = summarize_query(query, Some(crate::testing::grammar("swift"))).unwrap();
 
         assert_eq!(summary.label, "class");
         assert_eq!(summary.identifier, Some("AuthService".to_string()));
@@ -307,7 +308,7 @@ mod tests {
     #[test]
     fn test_summarize_method_query() {
         let query = r#"(method_definition name: (property_identifier) @fn_name (#eq? @fn_name "validateToken")) @target"#;
-        let summary = summarize_query(query, Some(Language::TypeScript)).unwrap();
+        let summary = summarize_query(query, Some(crate::testing::grammar("typescript"))).unwrap();
 
         assert_eq!(summary.label, "method");
         assert_eq!(summary.identifier, Some("validateToken".to_string()));
@@ -316,7 +317,7 @@ mod tests {
     #[test]
     fn test_summarize_query_without_identifier() {
         let query = r#"(if_statement) @target"#;
-        let summary = summarize_query(query, Some(Language::Rust)).unwrap();
+        let summary = summarize_query(query, Some(crate::testing::grammar("rust"))).unwrap();
 
         assert_eq!(summary.label, "if statement");
         assert_eq!(summary.identifier, None);
@@ -335,7 +336,7 @@ mod tests {
     fn test_short_display_prefers_target_identifier() {
         let query =
             r#"(function_item name: (identifier) @fn_name (#eq? @fn_name "cycle_mode")) @target"#;
-        let summary = summarize_query(query, Some(Language::Rust)).unwrap();
+        let summary = summarize_query(query, Some(crate::testing::grammar("rust"))).unwrap();
 
         assert_eq!(summary.short_display(), "cycle_mode");
     }
@@ -350,7 +351,7 @@ mod tests {
               (#eq? @name0 "process")
               body: (block
                 (expression_statement) @target))"#;
-        let summary = summarize_query(query, Some(Language::Rust)).unwrap();
+        let summary = summarize_query(query, Some(crate::testing::grammar("rust"))).unwrap();
 
         // No target-scoped #eq, so the strict identifier stays empty...
         assert_eq!(summary.identifier, None);
@@ -371,7 +372,7 @@ mod tests {
                   (#eq? @name1 "validateToken")
                   body: (statement_block
                     (return_statement) @target))))"#;
-        let summary = summarize_query(query, Some(Language::TypeScript)).unwrap();
+        let summary = summarize_query(query, Some(crate::testing::grammar("typescript"))).unwrap();
 
         assert_eq!(summary.identifier, None);
         assert_eq!(summary.short_display(), "validateToken");
@@ -382,7 +383,7 @@ mod tests {
     #[test]
     fn test_short_display_falls_back_to_label() {
         let query = r#"(if_statement) @target"#;
-        let summary = summarize_query(query, Some(Language::Rust)).unwrap();
+        let summary = summarize_query(query, Some(crate::testing::grammar("rust"))).unwrap();
 
         assert_eq!(summary.identifier, None);
         assert_eq!(summary.short_display(), "if statement");
@@ -391,7 +392,7 @@ mod tests {
     #[test]
     fn test_summarize_enum_query() {
         let query = r#"(enum_declaration name: (type_identifier) @name0 (#eq? @name0 "AuthError")) @target"#;
-        let summary = summarize_query(query, Some(Language::Swift)).unwrap();
+        let summary = summarize_query(query, Some(crate::testing::grammar("swift"))).unwrap();
 
         assert_eq!(summary.label, "enum");
         assert_eq!(summary.identifier, Some("AuthError".to_string()));

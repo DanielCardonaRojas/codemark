@@ -966,11 +966,11 @@ mod tests {
         assert!(e.overrides_builtin);
     }
 
-    /// A C#-shaped entry: declares the override, collides with a built-in.
+    /// A Dart-shaped entry: declares the override, collides with a built-in.
     fn overriding_entry() -> RegistryEntry {
         RegistryEntry {
-            name: "c_sharp".into(),
-            extensions: vec!["cs".into()],
+            name: "dart".into(),
+            extensions: vec!["dart".into()],
             profile_version: None,
             profile_url: "p.json".into(),
             ts_abi: None,
@@ -986,25 +986,25 @@ mod tests {
     #[test]
     fn entry_consent_covers_what_it_declares() {
         let e = overriding_entry();
-        assert!(e.consents_to_override("c_sharp", &["cs".to_string()]));
+        assert!(e.consents_to_override("dart", &["dart".to_string()]));
         // Normalization differences in the index must still match.
         let mut dotted = overriding_entry();
-        dotted.extensions = vec![".CS".into()];
-        assert!(dotted.consents_to_override("c_sharp", &["cs".to_string()]));
+        dotted.extensions = vec![".DART".into()];
+        assert!(dotted.consents_to_override("dart", &["dart".to_string()]));
     }
 
     #[test]
     fn entry_consent_stops_at_undeclared_values() {
         let e = overriding_entry();
-        // An extension the entry never declared: `--extensions cs,rs` must not
-        // inherit C#'s consent and take over every .rs file.
-        assert!(!e.consents_to_override("c_sharp", &["cs".to_string(), "rs".to_string()]));
+        // An extension the entry never declared: `--extensions dart,dartx` must not
+        // inherit Dart's consent and take over every .dartx file.
+        assert!(!e.consents_to_override("dart", &["dart".to_string(), "dartx".to_string()]));
         // Nor a name it never declared.
-        assert!(!e.consents_to_override("rust", &["cs".to_string()]));
+        assert!(!e.consents_to_override("lua", &["dart".to_string()]));
         // And an entry that declares nothing consents to nothing.
         let mut plain = overriding_entry();
         plain.overrides_builtin = false;
-        assert!(!plain.consents_to_override("c_sharp", &["cs".to_string()]));
+        assert!(!plain.consents_to_override("dart", &["dart".to_string()]));
     }
 
     /// Drive the real install-path decision (`validate_registry_install`) for
@@ -1018,40 +1018,40 @@ mod tests {
         let mut silent = overriding_entry();
         silent.overrides_builtin = false;
 
-        // 1. Entry consent, no flag: the C# install that was failing now works.
-        let exts = validate_registry_install(&declaring, "c_sharp", "cs", false).unwrap();
-        assert_eq!(exts, vec!["cs".to_string()]);
+        // 1. Entry consent, no flag: the Dart install that was failing now works.
+        let exts = validate_registry_install(&declaring, "dart", "dart", false).unwrap();
+        assert_eq!(exts, vec!["dart".to_string()]);
 
         // 2. Collision with no consent anywhere: still refused.
-        let err = validate_registry_install(&silent, "c_sharp", "cs", false).unwrap_err();
+        let err = validate_registry_install(&silent, "dart", "dart", false).unwrap_err();
         assert!(err.to_string().contains("built-in"), "{err}");
 
         // 3. Consent doesn't stretch to an undeclared extension.
-        let err = validate_registry_install(&declaring, "c_sharp", "cs,rs", false).unwrap_err();
+        let err = validate_registry_install(&declaring, "dart", "dart,dartx", false).unwrap_err();
         assert!(err.to_string().contains("built-in"), "{err}");
 
         // 4. The caller's explicit flag still wins over everything.
-        let exts = validate_registry_install(&silent, "c_sharp", "cs,rs", true).unwrap();
-        assert_eq!(exts, vec!["cs".to_string(), "rs".to_string()]);
+        let exts = validate_registry_install(&silent, "dart", "dart,dartx", true).unwrap();
+        assert_eq!(exts, vec!["dart".to_string(), "dartx".to_string()]);
     }
 
     #[test]
     fn builtin_collision_detection_reads_name_and_extensions() {
-        assert!(overriding_entry().collides_with_builtin()); // c_sharp / cs
+        assert!(overriding_entry().collides_with_builtin()); // dart / cs
         let mut free = overriding_entry();
         free.name = "lua".into();
         free.extensions = vec!["lua".into()];
         assert!(!free.collides_with_builtin());
         // Either half colliding is enough.
         let mut by_ext = free.clone();
-        by_ext.extensions = vec!["rs".into()];
+        by_ext.extensions = vec!["dart".into()];
         assert!(by_ext.collides_with_builtin());
     }
 
     #[tokio::test]
     async fn an_upgrade_refetches_a_cache_written_before_overrides_builtin() {
         // A cache from an older codemark has no `overrides_builtin` key, so the
-        // entry reads as `false` and the no-flag C# install would fail for a
+        // entry reads as `false` and the no-flag Dart install would fail for a
         // whole TTL. The install lookup must re-read the index to find the
         // declaration the registry has been serving all along.
         let tmp = tempfile::tempdir().unwrap();
@@ -1064,7 +1064,7 @@ mod tests {
         std::fs::write(
             reg.join("index.json"),
             r#"{"schema_version":1,"grammars":[
-               {"name":"c_sharp","extensions":["cs"],"profile_url":"p.json",
+               {"name":"dart","extensions":["dart"],"profile_url":"p.json",
                 "overrides_builtin":true}
             ]}"#,
         )
@@ -1080,18 +1080,18 @@ mod tests {
         std::fs::write(
             client.index_cache_path(),
             r#"{"schema_version":1,"grammars":[
-               {"name":"c_sharp","extensions":["cs"],"profile_url":"p.json"}
+               {"name":"dart","extensions":["dart"],"profile_url":"p.json"}
             ]}"#,
         )
         .unwrap();
 
         // Plain `find` honors the (stale) cache and sees no declaration.
-        assert!(!client.find("c_sharp", false).await.unwrap().overrides_builtin);
+        assert!(!client.find("dart", false).await.unwrap().overrides_builtin);
 
         // The install lookup notices the collision and refetches.
-        let entry = client.find_for_install("c_sharp", false).await.unwrap();
+        let entry = client.find_for_install("dart", false).await.unwrap();
         assert!(entry.overrides_builtin, "install lookup should re-read the index");
-        assert!(crate::grammar::validate_registry_install(&entry, "c_sharp", "cs", false).is_ok());
+        assert!(crate::grammar::validate_registry_install(&entry, "dart", "dart", false).is_ok());
     }
 
     #[tokio::test]
@@ -1105,7 +1105,7 @@ mod tests {
         std::fs::create_dir_all(&reg).unwrap();
         std::fs::create_dir_all(&cache).unwrap();
 
-        // Reachable registry that no longer lists c_sharp.
+        // Reachable registry that no longer lists dart.
         std::fs::write(
             reg.join("index.json"),
             r#"{"schema_version":1,"grammars":[
@@ -1124,12 +1124,12 @@ mod tests {
         std::fs::write(
             client.index_cache_path(),
             r#"{"schema_version":1,"grammars":[
-               {"name":"c_sharp","extensions":["cs"],"profile_url":"p.json"}
+               {"name":"dart","extensions":["dart"],"profile_url":"p.json"}
             ]}"#,
         )
         .unwrap();
 
-        let err = client.find_for_install("c_sharp", false).await.unwrap_err();
+        let err = client.find_for_install("dart", false).await.unwrap_err();
         assert!(err.to_string().contains("not in the grammar registry"), "{err}");
     }
 
@@ -1152,17 +1152,17 @@ mod tests {
         std::fs::write(
             client.index_cache_path(),
             r#"{"schema_version":1,"grammars":[
-               {"name":"c_sharp","extensions":["cs"],"profile_url":"p.json"}
+               {"name":"dart","extensions":["dart"],"profile_url":"p.json"}
             ]}"#,
         )
         .unwrap();
 
-        let entry = client.find_for_install("c_sharp", false).await.unwrap();
-        assert_eq!(entry.name, "c_sharp");
+        let entry = client.find_for_install("dart", false).await.unwrap();
+        assert_eq!(entry.name, "dart");
         assert!(!entry.overrides_builtin);
         // And it is still refused without the flag.
         let err =
-            crate::grammar::validate_registry_install(&entry, "c_sharp", "cs", false).unwrap_err();
+            crate::grammar::validate_registry_install(&entry, "dart", "dart", false).unwrap_err();
         assert!(err.to_string().contains("built-in"), "{err}");
     }
 
@@ -1211,20 +1211,20 @@ mod tests {
     #[tokio::test]
     async fn registry_entries_cannot_shadow_a_builtin() {
         // A registry entry gets no more trust than a hand-typed --name: it must
-        // not be able to claim `rs` (or any built-in alias/extension), which
+        // not be able to claim `dart` (or any built-in alias/extension), which
         // would install a grammar that could never resolve.
         let tmp = tempfile::tempdir().unwrap();
         std::fs::create_dir_all(tmp.path().join("registry")).unwrap();
         std::fs::write(
             tmp.path().join("registry").join("index.json"),
             r#"{"schema_version":1,"grammars":[
-               {"name":"rust","extensions":["rs"],"profile_url":"p.json"}
+               {"name":"dart","extensions":["dart"],"profile_url":"p.json"}
             ]}"#,
         )
         .unwrap();
         std::fs::write(
             tmp.path().join("registry").join("p.json"),
-            r#"{"name":"rust","extensions":["rs"],"profile":{}}"#,
+            r#"{"name":"dart","extensions":["dart"],"profile":{}}"#,
         )
         .unwrap();
 
@@ -1233,7 +1233,7 @@ mod tests {
             tmp.path().join("cache"),
             Duration::from_secs(60),
         );
-        let entry = client.find("rust", false).await.unwrap();
+        let entry = client.find("dart", false).await.unwrap();
         let manifest = client.fetch_profile(&entry).await.unwrap();
 
         // The install path runs the same validation as `add`, which is what

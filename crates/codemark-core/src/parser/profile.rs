@@ -478,13 +478,6 @@ impl Language {
     /// their manifest-loaded profile.
     pub fn profile(&self) -> &Profile {
         match self {
-            Language::Rust => &RUST_PROFILE,
-            Language::Swift => &SWIFT_PROFILE,
-            Language::TypeScript => &TYPESCRIPT_PROFILE,
-            Language::Python => &PYTHON_PROFILE,
-            Language::Go => &GO_PROFILE,
-            Language::Java => &JAVA_PROFILE,
-            Language::CSharp => &CSHARP_PROFILE,
             Language::Dart => &DART_PROFILE,
             Language::Dynamic(dl) => &dl.profile,
         }
@@ -495,234 +488,6 @@ impl Language {
 // Static language profiles — each mirrors the exact data that was previously
 // hardcoded in match arms. Zero behavior change.
 // ---------------------------------------------------------------------------
-
-static RUST_PROFILE: LazyLock<Profile> = LazyLock::new(|| Profile {
-    landmark_kinds: vec![
-        "function_item".into(),
-        "struct_item".into(),
-        "enum_item".into(),
-        "trait_item".into(),
-        "impl_item".into(),
-        "type_item".into(),
-        "const_item".into(),
-        "static_item".into(),
-        "mod_item".into(),
-        "macro_definition".into(),
-    ],
-    node_labels: HashMap::from([
-        ("function_item".into(), "function".into()),
-        ("struct_item".into(), "class".into()),
-        ("enum_item".into(), "enum".into()),
-        ("enum_variant".into(), "enum".into()),
-        ("trait_item".into(), "interface".into()),
-        ("impl_item".into(), "impl".into()),
-        ("type_item".into(), "type".into()),
-        ("const_item".into(), "variable".into()),
-        ("static_item".into(), "variable".into()),
-        ("mod_item".into(), "module".into()),
-        ("macro_definition".into(), "macro".into()),
-        ("if_expression".into(), "if statement".into()),
-        ("for_expression".into(), "for loop".into()),
-        ("while_expression".into(), "while loop".into()),
-        ("match_expression".into(), "match".into()),
-        ("return_expression".into(), "return".into()),
-        ("assignment_expression".into(), "assignment".into()),
-        ("call_expression".into(), "call".into()),
-        ("binary_expression".into(), "expression".into()),
-    ]),
-    containers: Containers::from_labels(vec![
-        "function".into(),
-        "impl".into(),
-        "interface".into(),
-        "module".into(),
-    ]),
-});
-
-static SWIFT_PROFILE: LazyLock<Profile> = LazyLock::new(|| Profile {
-    landmark_kinds: vec![
-        "class_declaration".into(),
-        "function_declaration".into(),
-        "protocol_declaration".into(),
-        "protocol_function_declaration".into(),
-        "init_declaration".into(),
-        "deinit_declaration".into(),
-        "subscript_declaration".into(),
-        "enum_entry".into(),
-    ],
-    node_labels: HashMap::from([
-        ("function_declaration".into(), "function".into()),
-        ("class_declaration".into(), "class".into()),
-        ("protocol_declaration".into(), "interface".into()),
-        ("enum_entry".into(), "enum".into()),
-        ("init_declaration".into(), "init".into()),
-        ("deinit_declaration".into(), "deinit".into()),
-        // A Swift extension is a container, so it needs a label for
-        // `containers` to name it as a concept. `impl` is the same idea Rust's
-        // `impl_item` carries: methods attached to a type declared elsewhere.
-        ("subscript_declaration".into(), "subscript".into()),
-        ("if_statement".into(), "if statement".into()),
-        ("for_statement".into(), "for loop".into()),
-        ("while_statement".into(), "while loop".into()),
-        ("switch_statement".into(), "match".into()),
-        ("call_expression".into(), "call".into()),
-    ]),
-    // No `impl`: this grammar has no extension kind — `class_declaration`
-    // covers class, struct, enum and extension alike, so an extension is
-    // already reached through `class`.
-    containers: Containers::from_labels(vec![
-        "class".into(),
-        "enum".into(),
-        "function".into(),
-        "interface".into(),
-    ]),
-});
-
-static TYPESCRIPT_PROFILE: LazyLock<Profile> = LazyLock::new(|| Profile {
-    landmark_kinds: vec![
-        "class_declaration".into(),
-        "interface_declaration".into(),
-        "enum_declaration".into(),
-        "method_definition".into(),
-        "function_declaration".into(),
-        "type_alias_declaration".into(),
-        "lexical_declaration".into(),
-        "export_statement".into(),
-    ],
-    node_labels: HashMap::from([
-        ("function_declaration".into(), "function".into()),
-        ("method_definition".into(), "method".into()),
-        ("class_declaration".into(), "class".into()),
-        ("interface_declaration".into(), "interface".into()),
-        ("enum_declaration".into(), "enum".into()),
-        ("type_alias_declaration".into(), "type".into()),
-        ("lexical_declaration".into(), "variable".into()),
-        ("variable_declaration".into(), "variable".into()),
-        ("internal_module".into(), "namespace".into()),
-        ("if_statement".into(), "if statement".into()),
-        ("for_statement".into(), "for loop".into()),
-        ("while_statement".into(), "while loop".into()),
-        ("return_statement".into(), "return".into()),
-        ("assignment_expression".into(), "assignment".into()),
-        ("call_expression".into(), "call".into()),
-    ]),
-    containers: Containers::from_labels(vec![
-        "class".into(),
-        "enum".into(),
-        "function".into(),
-        "interface".into(),
-        "method".into(),
-        "namespace".into(),
-        "type".into(),
-    ]),
-});
-
-static PYTHON_PROFILE: LazyLock<Profile> = LazyLock::new(|| Profile {
-    landmark_kinds: vec![
-        "class_definition".into(),
-        "function_definition".into(),
-        "decorated_definition".into(),
-    ],
-    node_labels: HashMap::from([
-        // Covers `async def` too: tree-sitter-python parses it as a
-        // `function_definition` with an `async` child, not a distinct kind.
-        ("function_definition".into(), "function".into()),
-        ("class_definition".into(), "class".into()),
-        ("if_statement".into(), "if statement".into()),
-        ("for_statement".into(), "for loop".into()),
-        ("while_statement".into(), "while loop".into()),
-        ("return_statement".into(), "return".into()),
-        ("assignment".into(), "assignment".into()),
-        ("call".into(), "call".into()),
-    ]),
-    containers: Containers::from_labels(vec!["class".into(), "function".into()]),
-});
-
-static GO_PROFILE: LazyLock<Profile> = LazyLock::new(|| Profile {
-    landmark_kinds: vec![
-        "type_declaration".into(),
-        "type_spec".into(),
-        "var_declaration".into(),
-        "function_declaration".into(),
-        "method_declaration".into(),
-    ],
-    node_labels: HashMap::from([
-        ("function_declaration".into(), "function".into()),
-        ("method_declaration".into(), "method".into()),
-        ("type_declaration".into(), "type".into()),
-        ("type_spec".into(), "type".into()),
-        ("var_declaration".into(), "variable".into()),
-        ("if_statement".into(), "if statement".into()),
-        ("for_statement".into(), "for loop".into()),
-        ("return_statement".into(), "return".into()),
-        ("call_expression".into(), "call".into()),
-    ]),
-    containers: Containers::from_labels(vec!["function".into(), "method".into(), "type".into()]),
-});
-
-static JAVA_PROFILE: LazyLock<Profile> = LazyLock::new(|| Profile {
-    landmark_kinds: vec![
-        "class_declaration".into(),
-        "interface_declaration".into(),
-        "enum_declaration".into(),
-        "method_declaration".into(),
-        "constructor_declaration".into(),
-    ],
-    node_labels: HashMap::from([
-        ("method_declaration".into(), "method".into()),
-        ("constructor_declaration".into(), "constructor".into()),
-        ("class_declaration".into(), "class".into()),
-        ("interface_declaration".into(), "interface".into()),
-        ("enum_declaration".into(), "enum".into()),
-        ("if_statement".into(), "if statement".into()),
-        ("for_statement".into(), "for loop".into()),
-        ("while_statement".into(), "while loop".into()),
-        ("return_statement".into(), "return".into()),
-        ("method_invocation".into(), "call".into()),
-    ]),
-    containers: Containers::from_labels(vec![
-        "class".into(),
-        "enum".into(),
-        "interface".into(),
-        "method".into(),
-    ]),
-});
-
-static CSHARP_PROFILE: LazyLock<Profile> = LazyLock::new(|| Profile {
-    landmark_kinds: vec![
-        "class_declaration".into(),
-        "interface_declaration".into(),
-        "struct_declaration".into(),
-        "enum_declaration".into(),
-        "method_declaration".into(),
-        "constructor_declaration".into(),
-        "namespace_declaration".into(),
-        "record_declaration".into(),
-        "property_declaration".into(),
-    ],
-    node_labels: HashMap::from([
-        ("method_declaration".into(), "method".into()),
-        ("constructor_declaration".into(), "constructor".into()),
-        ("class_declaration".into(), "class".into()),
-        ("struct_declaration".into(), "class".into()),
-        ("interface_declaration".into(), "interface".into()),
-        ("enum_declaration".into(), "enum".into()),
-        ("namespace_declaration".into(), "namespace".into()),
-        ("property_declaration".into(), "variable".into()),
-        ("if_statement".into(), "if statement".into()),
-        ("for_statement".into(), "for loop".into()),
-        ("while_statement".into(), "while loop".into()),
-        ("switch_statement".into(), "match".into()),
-        ("return_statement".into(), "return".into()),
-        ("invocation_expression".into(), "call".into()),
-    ]),
-    containers: Containers::from_labels(vec![
-        "class".into(),
-        "enum".into(),
-        "interface".into(),
-        "method".into(),
-        "namespace".into(),
-    ]),
-});
 
 static DART_PROFILE: LazyLock<Profile> = LazyLock::new(|| Profile {
     landmark_kinds: vec![
@@ -878,15 +643,16 @@ mod tests {
     /// for the first time: four of its twenty labels named `*_statement` kinds
     /// that tree-sitter-rust spells `*_expression`.
     #[test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     fn builtin_profiles_are_valid_against_their_own_grammars() {
         let languages = [
-            Language::Rust,
-            Language::Swift,
-            Language::TypeScript,
-            Language::Python,
-            Language::Go,
-            Language::Java,
-            Language::CSharp,
+            crate::testing::grammar("rust"),
+            crate::testing::grammar("swift"),
+            crate::testing::grammar("typescript"),
+            crate::testing::grammar("python"),
+            crate::testing::grammar("go"),
+            crate::testing::grammar("java"),
+            crate::testing::grammar("c_sharp"),
             Language::Dart,
         ];
 
@@ -909,7 +675,7 @@ mod tests {
     }
 
     fn rust_grammar() -> tree_sitter::Language {
-        Language::Rust.tree_sitter_language()
+        crate::testing::grammar("rust").tree_sitter_language()
     }
 
     fn errors(findings: &[LintFinding]) -> Vec<&LintFinding> {
@@ -917,6 +683,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     fn lint_accepts_a_correct_profile() {
         let value = serde_json::json!({
             "landmark_kinds": ["function_item", "struct_item"],
@@ -927,6 +694,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     fn lint_flags_a_node_kind_the_grammar_does_not_define() {
         // `function_declaration` is Swift/TS; Rust says `function_item`. This is
         // the most common real mistake: a kind borrowed from another language.
@@ -939,6 +707,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     fn lint_suggests_a_near_miss_kind() {
         // A one-character slip should name the intended kind.
         let value = serde_json::json!({ "landmark_kinds": ["function_itm"] });
@@ -953,6 +722,7 @@ mod tests {
     /// define: a container label no kind in this profile carries can never
     /// match, and `containers` has no fallback, so it must be an error.
     #[test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     fn lint_flags_a_container_label_no_kind_carries() {
         let value = serde_json::json!({
             "node_labels": { "impl_item": "impl" },
@@ -969,6 +739,7 @@ mod tests {
     /// grammar doesn't define — and it earns a warning pointing at the new
     /// shape, so a stale manifest is visible rather than merely tolerated.
     #[test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     fn lint_accepts_the_legacy_pair_form_with_a_warning() {
         let value = serde_json::json!({ "containers": [["impl_item", "type"]] });
         let findings = lint(&value, &rust_grammar());
@@ -986,6 +757,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     fn lint_warns_on_unknown_profile_key() {
         // The exact drift that shipped in the Lua fixture: a key that
         // deserialization silently discards.
@@ -1003,6 +775,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     fn lint_warns_when_containers_is_empty_or_absent() {
         // No fallback exists for containers, so blank breadcrumbs are silent.
         for value in [serde_json::json!({}), serde_json::json!({ "containers": [] })] {
@@ -1017,6 +790,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     fn lint_warns_on_a_label_outside_the_known_vocabulary() {
         let value = serde_json::json!({
             "node_labels": { "function_item": "subroutine" },
@@ -1031,12 +805,14 @@ mod tests {
     }
 
     #[test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     fn lint_rejects_a_profile_that_is_not_an_object() {
         let findings = lint(&serde_json::json!("landmark_kinds"), &rust_grammar());
         assert_eq!(errors(&findings).len(), 1);
     }
 
     #[test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     fn lint_rejects_a_field_of_the_wrong_type() {
         // A bare string where an array belongs makes the whole profile fail to
         // deserialize at discovery. Walking the fields individually would just

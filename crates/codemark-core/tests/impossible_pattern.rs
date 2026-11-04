@@ -281,8 +281,12 @@ fn a_name_after_the_target_is_emitted_after_it() {
 #[test]
 fn an_impl_type_is_named_once() {
     let source = "impl Claims {\n    pub fn new() -> Self {\n        Self\n    }\n}\n";
-    let query = generate_and_compile(&Language::Rust, source, range_of(source, "Claims"))
-        .expect("bookmarking an impl's type must succeed");
+    let query = generate_and_compile(
+        &codemark_core::testing::grammar("rust"),
+        source,
+        range_of(source, "Claims"),
+    )
+    .expect("bookmarking an impl's type must succeed");
 
     assert_eq!(
         query.matches("(type_identifier)").count(),
@@ -323,7 +327,7 @@ fn a_named_intermediate_on_the_path_is_not_also_named() {
 #[test]
 fn a_decorated_definition_does_not_claim_the_inner_name_field() {
     let source = "@app.route('/x')\ndef handler(req):\n    return 1\n";
-    let mut parser = Parser::new(Language::Python).expect("parser");
+    let mut parser = Parser::new(codemark_core::testing::grammar("python")).expect("parser");
     let tree = parser.parse(source.as_bytes()).expect("parse");
     let ts_lang = parser.language().clone();
 
@@ -353,7 +357,7 @@ fn a_decorated_definition_does_not_claim_the_inner_name_field() {
 #[test]
 fn an_exported_const_query_matches_its_declaration() {
     let source = "export const Foo = 1;\n";
-    let mut parser = Parser::new(Language::TypeScript).expect("parser");
+    let mut parser = Parser::new(codemark_core::testing::grammar("typescript")).expect("parser");
     let tree = parser.parse(source.as_bytes()).expect("parse");
     let ts_lang = parser.language().clone();
 
@@ -374,7 +378,7 @@ fn an_exported_const_query_matches_its_declaration() {
     // binds the declarator's `value`, so the query would match any export whose
     // initializer happens to be named `Foo`. The hop must re-state `name:`.
     let collision = "export const Bar = Foo;\n";
-    let mut other = Parser::new(Language::TypeScript).expect("parser");
+    let mut other = Parser::new(codemark_core::testing::grammar("typescript")).expect("parser");
     let collision_tree = other.parse(collision.as_bytes()).expect("parse");
     assert_eq!(
         match_count(&query, &collision_tree, collision, &ts_lang),
@@ -440,7 +444,7 @@ fn child_by_field_is_absent(node: tree_sitter::Node, field: &str) -> bool {
 #[test]
 fn an_anonymous_keyword_is_not_used_as_a_name() {
     let source = "class C {\n    var x: Int\n    init(x: Int) {\n        self.x = x\n    }\n}\n";
-    let mut parser = Parser::new(Language::Swift).expect("parser");
+    let mut parser = Parser::new(codemark_core::testing::grammar("swift")).expect("parser");
     let tree = parser.parse(source.as_bytes()).expect("parse");
 
     // Preconditions: the field exists, and its child is anonymous.
@@ -458,8 +462,12 @@ fn an_anonymous_keyword_is_not_used_as_a_name() {
     assert_eq!(name_child.kind(), "init");
     assert!(!name_child.is_named(), "precondition: `init` is an anonymous keyword");
 
-    let query = generate_and_compile(&Language::Swift, source, range_of(source, "self.x = x"))
-        .expect("bookmarking inside a Swift initializer must succeed");
+    let query = generate_and_compile(
+        &codemark_core::testing::grammar("swift"),
+        source,
+        range_of(source, "self.x = x"),
+    )
+    .expect("bookmarking inside a Swift initializer must succeed");
     assert!(
         !query.contains("(init)"),
         "an anonymous keyword cannot be written as a node type:\n{query}"
@@ -479,7 +487,7 @@ fn an_anonymous_keyword_is_not_used_as_a_name() {
 #[test]
 fn an_initializer_anchors_on_structure_rather_than_the_keyword() {
     let source = "class C {\n    init(first: String) {\n        self.stored = 1\n    }\n\n    init(second: String) {\n        self.stored = 1\n    }\n}\n";
-    let mut parser = Parser::new(Language::Swift).expect("parser");
+    let mut parser = Parser::new(codemark_core::testing::grammar("swift")).expect("parser");
     let tree = parser.parse(source.as_bytes()).expect("parse");
     let ts_lang = parser.language().clone();
 
@@ -548,7 +556,7 @@ fn navigation_still_reads_anonymous_children() {
 #[test]
 fn a_field_the_query_compiler_rejects_is_not_emitted() {
     let source = "class C {\n    private var cache: [String: Claims] = [:]\n}\n";
-    let mut parser = Parser::new(Language::Swift).expect("parser");
+    let mut parser = Parser::new(codemark_core::testing::grammar("swift")).expect("parser");
     let ts_lang = parser.language().clone();
 
     // Preconditions: the tree says `name`, the compiler says no.
@@ -571,9 +579,12 @@ fn a_field_the_query_compiler_rejects_is_not_emitted() {
         "precondition: the query compiler rejects that same field"
     );
 
-    let query =
-        generate_and_compile(&Language::Swift, source, range_of(source, "[String: Claims]"))
-            .expect("bookmarking a Swift dictionary type must succeed");
+    let query = generate_and_compile(
+        &codemark_core::testing::grammar("swift"),
+        source,
+        range_of(source, "[String: Claims]"),
+    )
+    .expect("bookmarking a Swift dictionary type must succeed");
     assert!(
         !constrains_field_on(&query, "type_annotation", "name"),
         "the rejected field must not be emitted:\n{query}"
@@ -584,8 +595,12 @@ fn a_field_the_query_compiler_rejects_is_not_emitted() {
 #[test]
 fn an_array_type_is_bookmarkable() {
     let source = "class C {\n    private var list: [Int] = []\n}\n";
-    generate_and_compile(&Language::Swift, source, range_of(source, "[Int]"))
-        .expect("bookmarking a Swift array type must succeed");
+    generate_and_compile(
+        &codemark_core::testing::grammar("swift"),
+        source,
+        range_of(source, "[Int]"),
+    )
+    .expect("bookmarking a Swift array type must succeed");
 }
 
 /// The probe must not reject fields that *are* valid.
@@ -616,10 +631,15 @@ fn an_array_type_is_bookmarkable() {
 fn valid_fields_still_reach_the_query() {
     // (language, source, target, kind that must carry `name:`)
     let cases: &[(Language, &str, &str, &str)] = &[
-        (Language::Rust, "fn handler() {}\n", "handler", "function_item"),
-        (Language::Python, "def handler():\n    pass\n", "handler", "function_definition"),
+        (codemark_core::testing::grammar("rust"), "fn handler() {}\n", "handler", "function_item"),
         (
-            Language::Swift,
+            codemark_core::testing::grammar("python"),
+            "def handler():\n    pass\n",
+            "handler",
+            "function_definition",
+        ),
+        (
+            codemark_core::testing::grammar("swift"),
             "class C {\n    func handler() {}\n}\n",
             "handler",
             "function_declaration",
@@ -668,8 +688,12 @@ fn a_path_segment_in_a_use_declaration_is_bookmarkable() {
     let source = "use std::collections::HashMap;\n";
 
     for segment in ["std", "collections"] {
-        let query = generate_and_compile(&Language::Rust, source, range_of(source, segment))
-            .unwrap_or_else(|e| panic!("bookmarking `{segment}` in a use path must succeed: {e}"));
+        let query = generate_and_compile(
+            &codemark_core::testing::grammar("rust"),
+            source,
+            range_of(source, segment),
+        )
+        .unwrap_or_else(|e| panic!("bookmarking `{segment}` in a use path must succeed: {e}"));
 
         // The failure was structural, so assert the invariant rather than the
         // text: every capture a predicate references must be one the pattern
@@ -687,8 +711,12 @@ fn deeply_nested_path_segments_keep_their_own_captures() {
     let source = "use a::b::c::d::E;\n";
 
     for segment in ["a", "b", "c"] {
-        let query = generate_and_compile(&Language::Rust, source, range_of(source, segment))
-            .unwrap_or_else(|e| panic!("bookmarking `{segment}` must succeed: {e}"));
+        let query = generate_and_compile(
+            &codemark_core::testing::grammar("rust"),
+            source,
+            range_of(source, segment),
+        )
+        .unwrap_or_else(|e| panic!("bookmarking `{segment}` must succeed: {e}"));
         assert_predicates_reference_bound_captures(&query);
     }
 }
@@ -905,7 +933,7 @@ fn sweep_builtin_snippets() {
     // Measured against the #239 fix; every entry is attributable to #263.
     let cases: &[(Language, &str, &str, &[&str])] = &[
         (
-            Language::Rust,
+            codemark_core::testing::grammar("rust"),
             "rust",
             "\
 pub struct Claims {
@@ -921,7 +949,7 @@ impl Claims {
             &[],
         ),
         (
-            Language::Python,
+            codemark_core::testing::grammar("python"),
             "python",
             "\
 class Claims:
@@ -973,9 +1001,9 @@ fn sweep_full_fixtures() {
     // produces a query that compiles. The list is a ratchet — a new entry here
     // means a regression, not a new baseline to accept.
     let cases: &[(Language, &str, &[&str])] = &[
-        (Language::Rust, "rust/auth_service.rs", &[]),
-        (Language::Swift, "swift/auth_service.swift", &[]),
-        (Language::Python, "python/auth_service.py", &[]),
+        (codemark_core::testing::grammar("rust"), "rust/auth_service.rs", &[]),
+        (codemark_core::testing::grammar("swift"), "swift/auth_service.swift", &[]),
+        (codemark_core::testing::grammar("python"), "python/auth_service.py", &[]),
         (Language::Dart, "dart/auth_service.dart", &[]),
     ];
 

@@ -13,7 +13,9 @@ use crate::parser::profile::Profile;
 /// use codemark_core::query::classifier::classify_node_type;
 /// use codemark_core::parser::languages::Language;
 ///
-/// let profile = Language::Rust.profile();
+/// // Rust is a registry grammar: `codemark languages install rust`.
+/// let rust: Language = "rust".parse().unwrap();
+/// let profile = rust.profile();
 /// assert_eq!(classify_node_type("function_item", Some(profile)).as_deref(), Some("function"));
 /// assert_eq!(classify_node_type("identifier", Some(profile)).as_deref(), None);
 /// ```

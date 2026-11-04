@@ -1303,6 +1303,54 @@ pub struct ResolutionRecord {
     pub status: String,
 }
 
+/// Bookmarks a batch command skipped because their grammar could not be
+/// loaded, grouped by the error so each missing grammar is reported once.
+///
+/// Since 0.8.0 most languages are registry grammars, so after an upgrade a
+/// batch run over Rust or Swift bookmarks can skip all of them. Reporting the
+/// skip (with the error's `codemark languages add` hint) keeps that from
+/// looking like an empty result.
+#[derive(Default)]
+pub(crate) struct SkippedGrammars(std::collections::BTreeMap<String, usize>);
+
+impl SkippedGrammars {
+    /// A parse cache for the bookmark's grammar, or `None` after recording why
+    /// it is skipped.
+    ///
+    /// Covers both lookup (no grammar installed) and loading (an installed
+    /// module that is corrupt, ABI-incompatible, or needs the `wasm` feature):
+    /// registry grammars have no built-in to fall back on, so either failure
+    /// would otherwise abort the whole batch.
+    pub(crate) fn parse_cache(
+        &mut self,
+        bm: &Bookmark,
+    ) -> Option<codemark_core::parser::languages::ParseCache> {
+        let loaded = bm.grammar().and_then(codemark_core::parser::languages::ParseCache::new);
+        match loaded {
+            Ok(cache) => Some(cache),
+            Err(e) => {
+                tracing::warn!(
+                    target: "codemark::languages",
+                    bookmark = %bm.id,
+                    language = %bm.language,
+                    error = %e,
+                    "skipping bookmark: grammar unavailable"
+                );
+                *self.0.entry(e.to_string()).or_default() += 1;
+                None
+            }
+        }
+    }
+
+    /// Warn on stderr about every skipped group.
+    pub(crate) fn report(&self) {
+        for (reason, count) in &self.0 {
+            let noun = if *count == 1 { "bookmark" } else { "bookmarks" };
+            eprintln!("codemark: warning: skipped {count} {noun}: {reason}");
+        }
+    }
+}
+
 /// Batch resolve bookmarks and return structured results.
 pub async fn resolve_batch(
     db: &Database,
@@ -1310,8 +1358,6 @@ pub async fn resolve_batch(
     config: &Config,
     dry_run: bool,
 ) -> Result<Vec<ResolutionRecord>> {
-    use codemark_core::parser::languages::ParseCache;
-
     let mut results = Vec::new();
     let provider = codemark_core::vfs::LocalFileProvider;
     let mut affected_collections: HashSet<String> = std::collections::HashSet::new();
@@ -1321,11 +1367,11 @@ pub async fn resolve_batch(
     let repo_root = ctx.as_ref().map(|c| c.repo_root.clone()).unwrap_or_else(|| cwd.clone());
     let head_commit = ctx.and_then(|c| c.head_commit);
 
+    let mut skipped = SkippedGrammars::default();
     for bm in bookmarks {
-        let Ok(lang) = bm.grammar() else {
+        let Some(mut cache) = skipped.parse_cache(bm) else {
             continue;
         };
-        let mut cache = ParseCache::new(lang.clone())?;
         let ts_lang = cache.language().clone();
         let result = resolution::resolve(bm, &mut cache, &ts_lang, db.path(), &provider).await?;
         let days_since = health::days_since_resolution(bm.last_resolved_at.as_deref());
@@ -1392,6 +1438,8 @@ pub async fn resolve_batch(
             db.update_bookmark_resolution_id(&bm.id, &res_id)?;
         }
     }
+
+    skipped.report();
 
     // Recompute health for all affected collections
     for collection_id in affected_collections {

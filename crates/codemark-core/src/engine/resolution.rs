@@ -278,8 +278,12 @@ fn extract_breadcrumbs_from_match(
         }
     }
 
-    // Fallback to AST walking for legacy queries
-    let lang = bookmark.grammar().unwrap_or(crate::parser::languages::Language::Rust);
+    // Fallback to AST walking for legacy queries. Without a grammar there is no
+    // profile to say which ancestors are worth showing, so show none rather
+    // than guess with another language's.
+    let Ok(lang) = bookmark.grammar() else {
+        return Vec::new();
+    };
 
     if let Some(target_node) =
         tree.root_node().descendant_for_byte_range(m.byte_range.0, m.byte_range.1)
@@ -324,9 +328,13 @@ fn hash_fallback_walk(
         let ch = hash::content_hash(text);
         if ch == stored_hash {
             let source_str = std::str::from_utf8(source_bytes).unwrap_or("");
-            let lang_enum = bookmark.grammar().unwrap_or(crate::parser::languages::Language::Rust);
-            let breadcrumbs =
-                crate::engine::breadcrumbs::extract_breadcrumbs(node, source_str, lang_enum, 3);
+            let breadcrumbs = bookmark
+                .grammar()
+                .ok()
+                .map(|lang| {
+                    crate::engine::breadcrumbs::extract_breadcrumbs(node, source_str, lang, 3)
+                })
+                .unwrap_or_default();
 
             return Some(ResolutionResult {
                 method: ResolutionMethod::HashFallback,
@@ -359,7 +367,7 @@ fn hash_fallback_walk(
 mod tests {
     use super::*;
     use crate::engine::bookmark::{Bookmark, BookmarkHealth};
-    use crate::parser::languages::Language as CodemarkLang;
+
     use crate::query::generator as qgen;
 
     fn fixture_path(name: &str) -> std::path::PathBuf {
@@ -369,9 +377,10 @@ mod tests {
 
     async fn create_bookmark_for_function(file: &str, func_name: &str) -> (Bookmark, ParseCache) {
         let path = fixture_path(file);
-        let mut cache = ParseCache::new(CodemarkLang::Swift).unwrap();
-        let lang = CodemarkLang::Swift.tree_sitter_language();
-        let profile = CodemarkLang::Swift.profile();
+        let mut cache = ParseCache::new(crate::testing::grammar("swift")).unwrap();
+        let lang = crate::testing::grammar("swift").tree_sitter_language();
+        let profile_lang = crate::testing::grammar("swift");
+        let profile = profile_lang.profile();
 
         let provider = crate::vfs::LocalFileProvider;
         let (tree, source) = cache.get_or_parse(&path, &provider).await.unwrap();
@@ -424,10 +433,11 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     async fn resolve_exact_match() {
         let (bm, mut cache) =
             create_bookmark_for_function("auth_service.swift", "validateToken").await;
-        let lang = CodemarkLang::Swift.tree_sitter_language();
+        let lang = crate::testing::grammar("swift").tree_sitter_language();
         // For tests, use a dummy db path - the bookmark stores absolute paths from fixture_path
         let dummy_db =
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(".codemark/codemark.db");
@@ -440,12 +450,13 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     async fn resolve_exact_with_hash_mismatch() {
         let (mut bm, mut cache) =
             create_bookmark_for_function("auth_service.swift", "validateToken").await;
         // Corrupt the stored hash
         bm.content_hash = Some("sha256:0000000000000000".to_string());
-        let lang = CodemarkLang::Swift.tree_sitter_language();
+        let lang = crate::testing::grammar("swift").tree_sitter_language();
         let dummy_db =
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(".codemark/codemark.db");
 
@@ -456,6 +467,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     async fn resolve_with_wrong_name_falls_through_tiers() {
         let (mut bm, mut cache) =
             create_bookmark_for_function("auth_service.swift", "validateToken").await;
@@ -465,7 +477,7 @@ mod tests {
   name: (simple_identifier) @fn_name
   (#eq? @fn_name "nonexistentFunction")) @target"#
             .to_string();
-        let lang = CodemarkLang::Swift.tree_sitter_language();
+        let lang = crate::testing::grammar("swift").tree_sitter_language();
         let dummy_db =
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(".codemark/codemark.db");
 
@@ -483,6 +495,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     async fn resolve_completely_missing_fails() {
         let (mut bm, mut cache) =
             create_bookmark_for_function("auth_service.swift", "validateToken").await;
@@ -491,7 +504,7 @@ mod tests {
   (#eq? @fn_name "totallyGone")) @target"#
             .to_string();
         bm.content_hash = Some("sha256:0000000000000000".to_string());
-        let lang = CodemarkLang::Swift.tree_sitter_language();
+        let lang = crate::testing::grammar("swift").tree_sitter_language();
         let dummy_db =
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(".codemark/codemark.db");
 
@@ -501,11 +514,12 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     async fn breadcrumbs_extracted_from_sticky_captures() {
         // Test that breadcrumbs come from captures when present
         let (bm, mut cache) =
             create_bookmark_for_function("auth_service.swift", "validateToken").await;
-        let lang = CodemarkLang::Swift.tree_sitter_language();
+        let lang = crate::testing::grammar("swift").tree_sitter_language();
         let dummy_db =
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(".codemark/codemark.db");
 
@@ -522,6 +536,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     async fn fallback_to_ast_walking_without_sticky_captures() {
         // Test that legacy queries without @sticky captures still work
         let source = r#"
@@ -537,8 +552,8 @@ class LegacyService {
         }
         std::fs::write(&path, source).ok();
 
-        let _cache = ParseCache::new(CodemarkLang::Swift).unwrap();
-        let lang = CodemarkLang::Swift.tree_sitter_language();
+        let _cache = ParseCache::new(crate::testing::grammar("swift")).unwrap();
+        let lang = crate::testing::grammar("swift").tree_sitter_language();
 
         // Create a legacy query without sticky captures
         let query = r#"
@@ -549,7 +564,8 @@ class LegacyService {
       name: (simple_identifier) @fn_name) @target))
 "#;
 
-        let mut parser = crate::parser::languages::Parser::new(CodemarkLang::Swift).unwrap();
+        let mut parser =
+            crate::parser::languages::Parser::new(crate::testing::grammar("swift")).unwrap();
         let tree = parser.parse(source.as_bytes()).unwrap();
 
         let matches =
@@ -564,7 +580,7 @@ class LegacyService {
         let breadcrumbs = crate::engine::breadcrumbs::extract_breadcrumbs(
             target_node,
             source,
-            crate::parser::languages::Language::Swift,
+            crate::testing::grammar("swift"),
             3,
         );
 
@@ -576,6 +592,7 @@ class LegacyService {
     }
 
     #[tokio::test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     async fn extract_breadcrumbs_from_captures_direct() {
         // Direct unit test for extract_breadcrumbs_from_captures
         let source = r#"
@@ -584,7 +601,8 @@ class TestClass {
 }
 "#;
 
-        let mut parser = crate::parser::languages::Parser::new(CodemarkLang::Swift).unwrap();
+        let mut parser =
+            crate::parser::languages::Parser::new(crate::testing::grammar("swift")).unwrap();
         let tree = parser.parse(source.as_bytes()).unwrap();
 
         // Manually create captures to test the extraction function
@@ -635,6 +653,7 @@ class TestClass {
     }
 
     #[tokio::test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     async fn test_exact_over_relaxed() {
         // @lat: [[tests#System Invariants Tests#Health & Resolution Rules#Hierarchical Preference]]
         // Verifies that the resolution engine always prefers higher-tier matches.
@@ -642,7 +661,7 @@ class TestClass {
         // for the same query.
         let (bm, mut cache) =
             create_bookmark_for_function("auth_service.swift", "validateToken").await;
-        let lang = CodemarkLang::Swift.tree_sitter_language();
+        let lang = crate::testing::grammar("swift").tree_sitter_language();
         let dummy_db =
             std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join(".codemark/codemark.db");
 
@@ -686,6 +705,7 @@ class TestClass {
     }
 
     #[tokio::test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     async fn test_resolution_tier_hierarchy() {
         // @lat: [[tests#System Invariants Tests#Health & Resolution Rules#Hierarchical Preference]]
         // Explicitly test that tiers are tried in order: Exact → Relaxed → Minimal → HashFallback
@@ -707,12 +727,14 @@ class TierTest {
         }
         std::fs::write(&path, source).ok();
 
-        let mut cache = ParseCache::new(CodemarkLang::Swift).unwrap();
-        let lang = CodemarkLang::Swift.tree_sitter_language();
-        let profile = CodemarkLang::Swift.profile();
+        let mut cache = ParseCache::new(crate::testing::grammar("swift")).unwrap();
+        let lang = crate::testing::grammar("swift").tree_sitter_language();
+        let profile_lang = crate::testing::grammar("swift");
+        let profile = profile_lang.profile();
 
         // Generate a query for targetFunction with its hash
-        let mut parser = crate::parser::languages::Parser::new(CodemarkLang::Swift).unwrap();
+        let mut parser =
+            crate::parser::languages::Parser::new(crate::testing::grammar("swift")).unwrap();
         let tree = parser.parse(source.as_bytes()).unwrap();
 
         // Find targetFunction node

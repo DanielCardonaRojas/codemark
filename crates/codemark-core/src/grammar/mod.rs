@@ -341,7 +341,17 @@ pub fn validate_name_and_extensions_opt(
     raw_extensions: &str,
     override_builtin: bool,
 ) -> Result<Vec<String>> {
-    use crate::parser::languages::Language;
+    use crate::parser::languages::{Language, canonical_name};
+
+    // An alias (`rs`, `csharp`, …) is rewritten to its canonical name before
+    // every lookup, so a grammar installed under one could never be found.
+    // Not something `--override-builtin` can waive.
+    let canonical = canonical_name(name);
+    if canonical != name {
+        return Err(Error::Input(format!(
+            "Invalid grammar name '{name}': it is an alias of '{canonical}'. Install it as              '{canonical}' instead."
+        )));
+    }
 
     if !override_builtin && Language::static_from_name(name).is_some() {
         return Err(Error::Input(format!(
@@ -707,34 +717,45 @@ mod tests {
 
     #[test]
     fn override_builtin_permits_shadowing_a_builtin_name_and_extension() {
-        // The whole point of the flag: a grammar may take over `rust`/`.rs` so
-        // a bundled language can be replaced by a registry one. Without it the
-        // same call is refused, which keeps shadowing deliberate.
-        assert!(validate_name_and_extensions("rust", "rs").is_err());
-        let exts = validate_name_and_extensions_opt("rust", "rs", true).unwrap();
-        assert_eq!(exts, vec!["rs".to_string()]);
+        // The whole point of the flag: a grammar may take over `dart`/`.dart`
+        // so a bundled language can be replaced by a registry one. Without it
+        // the same call is refused, which keeps shadowing deliberate.
+        assert!(validate_name_and_extensions("dart", "dart").is_err());
+        let exts = validate_name_and_extensions_opt("dart", "dart", true).unwrap();
+        assert_eq!(exts, vec!["dart".to_string()]);
     }
 
     #[test]
     fn override_builtin_still_enforces_the_other_rules() {
         // The flag relaxes the built-in checks only — it is not a bypass for
         // malformed input.
-        assert!(validate_name_and_extensions_opt("rust", "", true).is_err());
-        assert!(validate_name_and_extensions_opt("rust", " , . , ", true).is_err());
+        assert!(validate_name_and_extensions_opt("dart", "", true).is_err());
+        assert!(validate_name_and_extensions_opt("dart", " , . , ", true).is_err());
     }
 
     #[test]
-    fn rejects_name_that_aliases_a_builtin() {
-        // `rs` aliases built-in Rust — the grammar would never resolve, and
-        // installing it could clobber an unrelated same-named install.
-        assert!(validate_name_and_extensions("rs", "myrs").is_err());
-        assert!(validate_name_and_extensions("typescript", "myts").is_err());
+    fn unbundled_languages_install_without_the_flag() {
+        // Since 0.8.0 these come from the registry; installing one is the
+        // normal path, not an override.
+        for (name, exts) in [("rust", "rs"), ("typescript", "ts"), ("c_sharp", "cs")] {
+            assert!(validate_name_and_extensions(name, exts).is_ok(), "{name}");
+        }
+    }
+
+    #[test]
+    fn rejects_a_name_that_is_an_alias() {
+        // `rs` is rewritten to `rust` before every lookup, so a grammar named
+        // `rs` could never resolve — not even with the flag.
+        for alias in ["rs", "ts", "py", "csharp", "CSharp", "cs"] {
+            let err = validate_name_and_extensions_opt(alias, "x", true).unwrap_err();
+            assert!(err.to_string().contains("alias"), "{alias}: {err}");
+        }
     }
 
     #[test]
     fn rejects_extensions_owned_by_a_builtin() {
-        // `.rs` is owned by built-in Rust; a dynamic grammar can't claim it.
-        assert!(validate_name_and_extensions("lua", "rs").is_err());
+        // `.dart` is owned by built-in Dart; a dynamic grammar can't claim it.
+        assert!(validate_name_and_extensions("lua", "dart").is_err());
     }
 
     #[test]

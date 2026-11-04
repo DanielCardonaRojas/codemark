@@ -1,10 +1,10 @@
-use codemark_core::parser::languages::{Language as CodemarkLang, Parser};
+use codemark_core::parser::languages::Parser;
 use codemark_core::query::generator;
 use std::path::Path;
 
 async fn get_fixture_content(name: &str) -> (String, tree_sitter::Tree) {
     let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/swift").join(name);
-    let mut parser = Parser::new(CodemarkLang::Swift).unwrap();
+    let mut parser = Parser::new(codemark_core::testing::grammar("swift")).unwrap();
     let provider = codemark_core::vfs::LocalFileProvider;
     let (tree, source) = parser.parse_file(&path, &provider).await.unwrap();
     (source, tree)
@@ -68,11 +68,13 @@ fn line_col_to_byte(source: &str, line: usize, col: usize) -> usize {
 }
 
 #[tokio::test]
+#[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
 async fn test_swift_complex_query_snapshots() {
     let fixture_name = "complex_scenarios.swift";
     let (source, tree): (String, tree_sitter::Tree) = get_fixture_content(fixture_name).await;
-    let language = CodemarkLang::Swift.tree_sitter_language();
-    let profile = CodemarkLang::Swift.profile();
+    let language = codemark_core::testing::grammar("swift").tree_sitter_language();
+    let profile_lang = codemark_core::testing::grammar("swift");
+    let profile = profile_lang.profile();
 
     let scenarios = [
         ("declaration_method", "27"),

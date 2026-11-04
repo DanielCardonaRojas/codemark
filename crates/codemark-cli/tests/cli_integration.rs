@@ -254,6 +254,7 @@ fn uuid() -> String {
 // --- Tests ---
 
 #[test]
+#[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
 fn add_and_resolve_round_trip() {
     let cm = Codemark::new();
 
@@ -281,6 +282,7 @@ fn add_and_resolve_round_trip() {
 }
 
 #[test]
+#[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
 fn add_sets_repo_id_on_bookmark() {
     let cm = Codemark::new();
 
@@ -299,6 +301,7 @@ fn add_sets_repo_id_on_bookmark() {
 }
 
 #[test]
+#[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
 fn add_dry_run_does_not_persist() {
     let cm = Codemark::new();
 
@@ -321,6 +324,7 @@ fn add_dry_run_does_not_persist() {
 }
 
 #[test]
+#[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
 fn add_auto_detects_language() {
     let cm = Codemark::new();
 
@@ -338,6 +342,7 @@ fn add_auto_detects_language() {
 }
 
 #[test]
+#[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
 fn add_with_created_by() {
     let cm = Codemark::new();
 
@@ -385,6 +390,7 @@ fn add_with_created_by() {
 }
 
 #[test]
+#[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
 fn add_with_comments_stores_them_separately_from_notes() {
     let cm = Codemark::new();
 
@@ -422,6 +428,7 @@ fn add_with_comments_stores_them_separately_from_notes() {
 }
 
 #[test]
+#[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
 fn edit_adds_comments() {
     let cm = Codemark::new();
 
@@ -438,6 +445,7 @@ fn edit_adds_comments() {
 }
 
 #[test]
+#[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
 fn add_from_snippet() {
     let cm = Codemark::new();
 
@@ -463,6 +471,7 @@ fn add_from_snippet() {
 }
 
 #[test]
+#[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
 fn list_with_filters() {
     let cm = Codemark::new();
 
@@ -510,6 +519,7 @@ fn list_with_filters() {
 }
 
 #[test]
+#[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
 fn show_includes_resolution_history() {
     let cm = Codemark::new();
 
@@ -534,6 +544,7 @@ fn show_includes_resolution_history() {
 }
 
 #[test]
+#[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
 fn heal_updates_statuses() {
     let cm = Codemark::new();
 
@@ -570,6 +581,7 @@ fn heal_updates_statuses() {
 }
 
 #[test]
+#[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
 fn heal_validate_only_skips_recording() {
     let cm = Codemark::new();
 
@@ -592,6 +604,7 @@ fn heal_validate_only_skips_recording() {
 }
 
 #[test]
+#[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
 fn status_shows_counts() {
     let cm = Codemark::new();
 
@@ -610,6 +623,7 @@ fn status_shows_counts() {
 }
 
 #[test]
+#[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
 fn search_finds_by_note() {
     let cm = Codemark::new();
 
@@ -642,6 +656,7 @@ fn search_finds_by_note() {
 }
 
 #[test]
+#[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
 fn search_finds_by_file_path() {
     let cm = Codemark::new();
 
@@ -672,6 +687,7 @@ fn search_finds_by_file_path() {
 }
 
 #[test]
+#[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
 fn search_finds_by_tag() {
     let cm = Codemark::new();
 
@@ -708,6 +724,7 @@ fn search_finds_by_tag() {
 }
 
 #[test]
+#[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
 fn collections_crud() {
     let cm = Codemark::new();
 
@@ -755,6 +772,7 @@ fn collections_crud() {
 }
 
 #[test]
+#[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
 fn delete_collection_with_bookmarks() {
     let cm = Codemark::new();
 
@@ -833,6 +851,7 @@ fn delete_collection_with_bookmarks() {
 }
 
 #[test]
+#[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
 fn export_and_import() {
     let cm = Codemark::new();
 
@@ -872,6 +891,7 @@ fn export_and_import() {
 }
 
 #[test]
+#[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
 fn gc_removes_archived() {
     let cm = Codemark::new();
 
@@ -893,6 +913,7 @@ fn gc_removes_archived() {
 }
 
 #[test]
+#[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
 fn preview_shows_code() {
     let cm = Codemark::new();
 
@@ -924,6 +945,7 @@ fn preview_shows_code() {
 }
 
 #[test]
+#[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
 fn preview_uses_cached_resolution_by_default() {
     let cm = Codemark::new();
 
@@ -947,6 +969,7 @@ fn preview_uses_cached_resolution_by_default() {
 }
 
 #[test]
+#[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
 fn preview_shows_drifted_status() {
     let cm = Codemark::new();
 
@@ -968,6 +991,7 @@ fn preview_shows_drifted_status() {
 }
 
 #[test]
+#[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
 fn diff_runs_without_error() {
     let cm = Codemark::new();
 
@@ -994,6 +1018,7 @@ fn diff_runs_without_error() {
 }
 
 #[test]
+#[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
 fn line_output_is_tab_separated() {
     let cm = Codemark::new();
 
@@ -1021,6 +1046,7 @@ fn line_output_is_tab_separated() {
 }
 
 #[test]
+#[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
 fn hunk_range_parsing() {
     let cm = Codemark::new();
 
@@ -1038,6 +1064,7 @@ fn hunk_range_parsing() {
 }
 
 #[test]
+#[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
 fn byte_range_backwards_compat() {
     let cm = Codemark::new();
 
@@ -1054,6 +1081,7 @@ fn byte_range_backwards_compat() {
 }
 
 #[test]
+#[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
 fn multi_language_support() {
     let cm = Codemark::new();
 
@@ -1093,6 +1121,7 @@ fn invalid_file_returns_error() {
 }
 
 #[test]
+#[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
 fn remove_bookmark() {
     let cm = Codemark::new();
 
@@ -1132,6 +1161,7 @@ fn remove_bookmark() {
 }
 
 #[test]
+#[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
 fn remove_multiple_bookmarks() {
     let cm = Codemark::new();
 
@@ -1176,6 +1206,7 @@ fn remove_nonexistent_returns_error() {
 }
 
 #[test]
+#[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
 fn collection_ordering_and_reorder() {
     let cm = Codemark::new();
 
@@ -1243,6 +1274,7 @@ fn collection_ordering_and_reorder() {
 // --- Semantic search tests ---
 
 #[test]
+#[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
 fn semantic_search_finds_by_meaning() {
     let cm = Codemark::new();
 
@@ -1294,6 +1326,7 @@ fn semantic_search_finds_by_meaning() {
 }
 
 #[test]
+#[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
 fn semantic_search_without_reindex_fails_gracefully() {
     let cm = Codemark::new();
 
@@ -1316,6 +1349,7 @@ fn semantic_search_without_reindex_fails_gracefully() {
 }
 
 #[test]
+#[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
 fn semantic_search_with_limit() {
     let cm = Codemark::new();
 
@@ -1362,6 +1396,7 @@ fn semantic_search_with_limit() {
 }
 
 #[test]
+#[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
 fn reindex_generates_embeddings() {
     let cm = Codemark::new();
 
@@ -1398,6 +1433,7 @@ fn reindex_generates_embeddings() {
 // --- Heal protection tests (backward healing prevention) ---
 
 #[test]
+#[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
 fn heal_validates_without_resolution() {
     // Test that heal works normally when there's no prior resolution
     let cm = Codemark::new();
@@ -1419,6 +1455,7 @@ fn heal_validates_without_resolution() {
 }
 
 #[test]
+#[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
 fn heal_force_flag_exists() {
     // Test that --force flag is accepted (doesn't error)
     let cm = Codemark::new();
@@ -1449,6 +1486,7 @@ fn heal_force_flag_exists() {
 // --- Preview nearest-ancestor resolution tests ---
 
 #[test]
+#[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
 fn preview_uses_nearest_ancestor_resolution() {
     // This test verifies that preview uses the resolution associated
     // with the commit nearest to HEAD when multiple resolutions exist
@@ -1513,6 +1551,7 @@ fn preview_uses_nearest_ancestor_resolution() {
 // --- Git repo integration tests ---
 
 #[test]
+#[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
 fn git_repo_heal_skips_when_head_is_before_resolution() {
     // Test that heal skips bookmarks when current HEAD is before the latest resolution.
     // This is the real integration test for backward healing prevention.
@@ -1611,6 +1650,7 @@ fn git_repo_heal_skips_when_head_is_before_resolution() {
 }
 
 #[test]
+#[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
 fn git_repo_heal_force_bypasses_ancestry_check() {
     let cm = Codemark::with_git_repo();
 
@@ -1636,6 +1676,7 @@ fn git_repo_heal_force_bypasses_ancestry_check() {
 }
 
 #[test]
+#[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
 fn git_repo_preview_uses_nearest_ancestor_resolution() {
     // Test that preview uses the resolution from the commit nearest to HEAD.
     let cm = Codemark::with_git_repo();
@@ -1708,6 +1749,7 @@ fn git_repo_preview_uses_nearest_ancestor_resolution() {
 }
 
 #[test]
+#[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
 fn git_repo_move_method_then_heal_gets_new_resolution() {
     // Test the complete workflow: create bookmark → move method → heal → verify new resolution
     let cm = Codemark::with_git_repo();
@@ -1791,6 +1833,7 @@ fn git_repo_move_method_then_heal_gets_new_resolution() {
 }
 
 #[test]
+#[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
 fn git_repo_resolve_fails_when_function_deleted() {
     // Test that resolve fails when the bookmarked code is deleted
     let cm = Codemark::with_git_repo();
@@ -1859,6 +1902,7 @@ fn git_repo_resolve_fails_when_function_deleted() {
 }
 
 #[test]
+#[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
 fn git_repo_bookmark_goes_stale_when_code_completely_changed() {
     // Test that a bookmark goes stale (not just drifted) when code is unrecognizable
     let cm = Codemark::with_git_repo();
@@ -1912,6 +1956,7 @@ fn git_repo_bookmark_goes_stale_when_code_completely_changed() {
 }
 
 #[test]
+#[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
 fn git_repo_bookmark_recovers_from_stale_to_active() {
     // Test that a bookmark recovers from stale back to active when the code is restored
     let cm = Codemark::with_git_repo();
@@ -1964,6 +2009,7 @@ fn git_repo_bookmark_recovers_from_stale_to_active() {
 }
 
 #[test]
+#[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
 fn git_repo_resolve_fails_when_file_deleted() {
     // Test that resolve handles deleted file gracefully
     let cm = Codemark::with_git_repo();
@@ -2025,6 +2071,7 @@ fn git_repo_resolve_fails_when_file_deleted() {
 }
 
 #[test]
+#[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
 fn git_repo_function_renamed_resolve_uses_fallback() {
     // Test that resolve uses fallback methods when function is renamed
     let cm = Codemark::with_git_repo();
@@ -2090,6 +2137,7 @@ fn git_repo_commit_creates_real_history() {
 }
 
 #[test]
+#[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
 fn resolve_dry_run_shows_result_without_storing() {
     let cm = Codemark::with_git_repo();
 
@@ -2116,6 +2164,7 @@ fn resolve_dry_run_shows_result_without_storing() {
 }
 
 #[test]
+#[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
 fn resolve_batch_dry_run_shows_results_without_storing() {
     let cm = Codemark::with_git_repo();
 
@@ -2150,6 +2199,7 @@ fn resolve_batch_dry_run_shows_results_without_storing() {
 }
 
 #[test]
+#[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
 fn resolve_dry_run_after_code_change() {
     let cm = Codemark::with_git_repo();
 
@@ -2208,6 +2258,7 @@ fn resolve_dry_run_after_code_change() {
 }
 
 #[test]
+#[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
 fn add_with_collection_flag_creates_collection_and_adds_bookmark() {
     let cm = Codemark::with_git_repo();
 
@@ -2241,6 +2292,7 @@ fn add_with_collection_flag_creates_collection_and_adds_bookmark() {
 }
 
 #[test]
+#[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
 fn add_from_query_with_collection_flag() {
     let cm = Codemark::with_git_repo();
 
@@ -2272,6 +2324,7 @@ fn add_from_query_with_collection_flag() {
 }
 
 #[test]
+#[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
 fn add_from_snippet_with_collection_flag() {
     let cm = Codemark::with_git_repo();
 
@@ -2316,6 +2369,7 @@ fn add_from_snippet_with_collection_flag() {
 }
 
 #[test]
+#[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
 fn multiple_bookmarks_added_to_same_collection_maintain_order() {
     let cm = Codemark::with_git_repo();
 
@@ -2368,6 +2422,7 @@ fn multiple_bookmarks_added_to_same_collection_maintain_order() {
 // --- Raw output and offset placeholder tests ---
 
 #[test]
+#[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
 fn preview_raw_outputs_file_content() {
     let cm = Codemark::new();
 
@@ -2398,6 +2453,7 @@ fn preview_raw_outputs_file_content() {
 }
 
 #[test]
+#[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
 fn preview_raw_with_piping() {
     let cm = Codemark::with_git_repo();
 
@@ -2426,6 +2482,7 @@ fn preview_raw_with_piping() {
 }
 
 #[test]
+#[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
 fn line_format_with_offset_placeholder() {
     let cm = Codemark::new();
 
@@ -2465,6 +2522,7 @@ fn line_format_with_offset_placeholder() {
 }
 
 #[test]
+#[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
 fn line_format_offset_is_center_of_range() {
     let cm = Codemark::with_git_repo();
 
@@ -2514,6 +2572,7 @@ fn test_function() {
 // --- Multi-database configuration tests ---
 
 #[test]
+#[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
 fn config_additional_databases_relative_path() {
     // Create a parent tempdir for both repos
     let parent_temp = tempfile::tempdir().unwrap();
@@ -2599,6 +2658,7 @@ additional = [
 }
 
 #[test]
+#[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
 fn config_additional_databases_absolute_path() {
     let cm = Codemark::with_git_repo();
 
@@ -2657,6 +2717,7 @@ additional = [
 }
 
 #[test]
+#[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
 fn cli_db_overrides_config() {
     let cm = Codemark::with_git_repo();
 
@@ -2747,6 +2808,7 @@ additional = [
 }
 
 #[test]
+#[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
 fn write_operations_only_affect_primary_db() {
     let cm = Codemark::with_git_repo();
 
@@ -2818,6 +2880,7 @@ additional = [
 }
 
 #[test]
+#[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
 fn config_empty_additional_list_behaves_same_as_no_config() {
     let cm = Codemark::with_git_repo();
 
@@ -2856,6 +2919,7 @@ additional = []
 }
 
 #[test]
+#[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
 fn databases_config_only_in_local_config() {
     // This test verifies that databases config in global config is ignored
     // Only local config (.codemark/config.toml) should be respected
@@ -2924,6 +2988,7 @@ additional = [
 }
 
 #[test]
+#[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
 fn rust_data_models_bookmarking() {
     let cm = Codemark::new();
 
@@ -2977,6 +3042,7 @@ fn rust_data_models_bookmarking() {
 }
 
 #[test]
+#[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
 fn targets_method_when_selecting_body() {
     let cm = Codemark::new();
     let fixture = "rust/data_models.rs";
@@ -2992,6 +3058,7 @@ fn targets_method_when_selecting_body() {
 }
 
 #[test]
+#[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
 fn add_with_fine_grained_strategy() {
     let cm = Codemark::new();
     let fixture = "rust/data_models.rs";
@@ -3012,6 +3079,7 @@ fn add_with_fine_grained_strategy() {
 }
 
 #[test]
+#[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
 fn env_variable_filters() {
     // Isolate from parent environment
     unsafe {
@@ -3097,6 +3165,7 @@ fn env_variable_filters() {
 }
 
 #[tokio::test]
+#[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
 async fn test_no_past_resolution() {
     // @lat: [[tests#System Invariants Tests#Bookmark Integrity Rules#Resolution Horizon]]
     // Integration test that verifies a bookmark cannot be resolved against a git commit

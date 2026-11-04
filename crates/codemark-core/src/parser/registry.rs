@@ -459,8 +459,8 @@ mod tests {
     /// A partial override makes creation and resolution disagree about which
     /// grammar a bookmark's language name refers to — issue #244.
     ///
-    /// The dynamic `typescript` claims only `.ts`, so a `.tsx` file resolves to
-    /// the *built-in* at creation time and stores `"typescript"`. That name
+    /// A dynamic `dart` claiming only `.dartx` leaves a `.dart` file resolving
+    /// to the *built-in* at creation time, which stores `"dart"`. That name
     /// later resolves to the *dynamic* grammar, so the stored query runs
     /// against a grammar other than the one that generated it. The two lookups
     /// are each internally consistent; they diverge only for an extension the
@@ -470,22 +470,22 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         write_grammar(
             tmp.path(),
-            "typescript",
-            r#"{ "name": "typescript", "extensions": ["ts"], "profile": {} }"#,
+            "dart",
+            r#"{ "name": "dart", "extensions": ["dartx"], "profile": {} }"#,
             true,
         );
         let reg = LanguageRegistry::discover_in(tmp.path()).unwrap();
 
-        // `.tsx` is unclaimed by the override, so extension lookup falls
+        // `.dart` is unclaimed by the override, so extension lookup falls
         // through to the built-in — which is the correct grammar for the file.
-        assert!(reg.lookup_extension("tsx").is_none(), "override must not claim .tsx");
-        let at_creation = Language::static_from_extension("tsx").expect("built-in claims .tsx");
-        assert!(matches!(at_creation, Language::TypeScript));
+        assert!(reg.lookup_extension("dart").is_none(), "override must not claim .dart");
+        let at_creation = Language::static_from_extension("dart").expect("built-in claims .dart");
+        assert!(matches!(at_creation, Language::Dart));
 
         // But the name it stores resolves to the dynamic grammar. Both are
-        // called "typescript", so comparing names cannot tell them apart —
+        // called "dart", so comparing names cannot tell them apart —
         // which is precisely why a name is not an identity.
-        let at_resolution = reg.lookup_name("typescript").expect("override claims the name");
+        let at_resolution = reg.lookup_name("dart").expect("override claims the name");
         assert!(matches!(at_resolution, Language::Dynamic(_)));
         assert_eq!(at_creation.name(), at_resolution.name());
 
@@ -498,11 +498,11 @@ mod tests {
         // grammar: a bookmark recording `Builtin` resolves to the built-in even
         // with an override owning the name. (Exercised against the real
         // function, hence the process-global registry — so it must tolerate a
-        // machine that genuinely has a `typescript` override installed, where
-        // the dynamic answer is the correct one.)
-        let pinned = Language::from_identity("typescript", GrammarIdentity::Builtin).unwrap();
+        // machine that genuinely has a `dart` override installed, where the
+        // dynamic answer is the correct one.)
+        let pinned = Language::from_identity("dart", GrammarIdentity::Builtin).unwrap();
         assert_eq!(pinned.identity(), GrammarIdentity::Builtin, "Builtin must stay built-in");
-        assert!(matches!(pinned, Language::TypeScript));
+        assert!(matches!(pinned, Language::Dart));
     }
 
     #[test]
@@ -611,14 +611,14 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         write_grammar(
             tmp.path(),
-            "rust",
-            r#"{ "name": "Rust", "extensions": ["rs"], "profile": {} }"#,
+            "dart",
+            r#"{ "name": "Dart", "extensions": ["dart"], "profile": {} }"#,
             true,
         );
 
         let reg = LanguageRegistry::discover_in(tmp.path()).unwrap();
-        assert_eq!(reg.by_name.get("rust").map(|l| l.name()), Some("Rust"));
-        assert!(reg.by_extension.contains_key("rs"));
+        assert_eq!(reg.by_name.get("dart").map(|l| l.name()), Some("Dart"));
+        assert!(reg.by_extension.contains_key("dart"));
     }
 
     #[test]
@@ -816,21 +816,23 @@ mod tests {
 
     #[test]
     fn is_static_language_name_is_case_insensitive() {
-        assert!(is_static_language_name("Rust"));
-        assert!(is_static_language_name("PYTHON"));
-        assert!(is_static_language_name("ts"));
+        assert!(is_static_language_name("Dart"));
+        assert!(is_static_language_name("DART"));
         assert!(!is_static_language_name("lua"));
         assert!(!is_static_language_name("ruby"));
     }
 
+    /// Since 0.8.0 only Dart is compiled in. The languages that were unbundled
+    /// — and their old aliases — are ordinary registry names now, so a dynamic
+    /// grammar is free to claim them.
     #[test]
-    fn is_static_language_name_covers_builtin_aliases() {
-        // Aliases resolve to a built-in, so a dynamic grammar can't claim them.
-        // `rs` regressed previously because the check was a hand-maintained list.
-        assert!(is_static_language_name("rs"));
-        assert!(is_static_language_name("py"));
-        assert!(is_static_language_name("cs"));
-        assert!(is_static_language_name("tsx"));
+    fn unbundled_languages_are_no_longer_static() {
+        for name in ["rust", "rs", "python", "py", "typescript", "ts", "tsx", "csharp", "cs"] {
+            assert!(!is_static_language_name(name), "{name} should not be built in");
+        }
+        for ext in ["rs", "py", "ts", "tsx", "swift", "go", "java", "cs"] {
+            assert!(!is_static_extension(ext), ".{ext} should not be built in");
+        }
     }
 
     #[test]
