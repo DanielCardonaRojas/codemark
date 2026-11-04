@@ -13,7 +13,6 @@ use codemark_core::engine::bookmark::{
 use codemark_core::engine::{heal, health, resolution};
 use codemark_core::error::{Error, Result};
 use codemark_core::git::context as git_context;
-use codemark_core::parser::languages::ParseCache;
 #[cfg(feature = "semantic")]
 use codemark_core::storage::SemanticRepo;
 
@@ -227,8 +226,7 @@ pub async fn handle_diff(cli: &Cli, mode: &OutputMode, args: &DiffArgs) -> Resul
         OutputMode::Json => {
             let mut results = Vec::new();
             for bm in &affected {
-                let Some(lang) = skipped.grammar(bm) else { continue };
-                let mut cache = ParseCache::new(lang.clone())?;
+                let Some(mut cache) = skipped.parse_cache(bm) else { continue };
                 let ts_lang = cache.language().clone();
                 let provider = codemark_core::vfs::LocalFileProvider;
                 let result =
@@ -259,8 +257,7 @@ pub async fn handle_diff(cli: &Cli, mode: &OutputMode, args: &DiffArgs) -> Resul
                 affected.len()
             );
             for bm in &affected {
-                let Some(lang) = skipped.grammar(bm) else { continue };
-                let mut cache = ParseCache::new(lang.clone())?;
+                let Some(mut cache) = skipped.parse_cache(bm) else { continue };
                 let ts_lang = cache.language().clone();
                 let provider = codemark_core::vfs::LocalFileProvider;
                 let result =

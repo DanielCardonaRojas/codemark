@@ -1314,10 +1314,20 @@ pub struct ResolutionRecord {
 pub(crate) struct SkippedGrammars(std::collections::BTreeMap<String, usize>);
 
 impl SkippedGrammars {
-    /// The bookmark's grammar, or `None` after recording why it is skipped.
-    pub(crate) fn grammar(&mut self, bm: &Bookmark) -> Option<Language> {
-        match bm.grammar() {
-            Ok(lang) => Some(lang),
+    /// A parse cache for the bookmark's grammar, or `None` after recording why
+    /// it is skipped.
+    ///
+    /// Covers both lookup (no grammar installed) and loading (an installed
+    /// module that is corrupt, ABI-incompatible, or needs the `wasm` feature):
+    /// registry grammars have no built-in to fall back on, so either failure
+    /// would otherwise abort the whole batch.
+    pub(crate) fn parse_cache(
+        &mut self,
+        bm: &Bookmark,
+    ) -> Option<codemark_core::parser::languages::ParseCache> {
+        let loaded = bm.grammar().and_then(codemark_core::parser::languages::ParseCache::new);
+        match loaded {
+            Ok(cache) => Some(cache),
             Err(e) => {
                 tracing::warn!(
                     target: "codemark::languages",
@@ -1348,8 +1358,6 @@ pub async fn resolve_batch(
     config: &Config,
     dry_run: bool,
 ) -> Result<Vec<ResolutionRecord>> {
-    use codemark_core::parser::languages::ParseCache;
-
     let mut results = Vec::new();
     let provider = codemark_core::vfs::LocalFileProvider;
     let mut affected_collections: HashSet<String> = std::collections::HashSet::new();
@@ -1361,10 +1369,9 @@ pub async fn resolve_batch(
 
     let mut skipped = SkippedGrammars::default();
     for bm in bookmarks {
-        let Some(lang) = skipped.grammar(bm) else {
+        let Some(mut cache) = skipped.parse_cache(bm) else {
             continue;
         };
-        let mut cache = ParseCache::new(lang.clone())?;
         let ts_lang = cache.language().clone();
         let result = resolution::resolve(bm, &mut cache, &ts_lang, db.path(), &provider).await?;
         let days_since = health::days_since_resolution(bm.last_resolved_at.as_deref());
