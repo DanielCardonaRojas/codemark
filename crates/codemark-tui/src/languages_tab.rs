@@ -22,7 +22,7 @@ use ratatui::{
     layout::{Alignment, Rect},
     style::{Style, Stylize},
     text::{Line, Span, Text},
-    widgets::{Paragraph, Widget},
+    widgets::{Paragraph, Widget, Wrap},
 };
 
 use crate::settings::SettingsAction;
@@ -168,6 +168,17 @@ pub struct LanguagesTab {
     /// Last install error per grammar, shown under its row until retried.
     errors: HashMap<String, String>,
     selected: usize,
+    /// The grammar the tab was opened for (`I` on a "No grammar" bookmark),
+    /// until it is selected or the user moves on. Kept through a miss and
+    /// through a failed fetch, so a successful refresh can still select it.
+    pending_select: Option<String>,
+    /// Shown above the list while [`pending_select`](Self::pending_select)
+    /// is known to be absent from a successfully loaded registry index.
+    notice: Option<String>,
+    /// No row is selected: set while a requested grammar isn't listed, so
+    /// `Enter` can't install whatever row happened to be selected before.
+    /// Cleared by selecting the requested grammar or by moving with `j`/`k`.
+    parked: bool,
     /// Installed grammars, cached: re-read when the tab is shown and after an
     /// install rather than on every frame (it reads each grammar's manifest).
     installed: Vec<InstalledGrammar>,
@@ -194,6 +205,9 @@ impl LanguagesTab {
             installing: None,
             errors: HashMap::new(),
             selected: 0,
+            pending_select: None,
+            notice: None,
+            parked: false,
             installed: installed_source(),
             installed_source,
         }
@@ -227,12 +241,52 @@ impl LanguagesTab {
     pub fn on_shown(&mut self) -> Option<SettingsAction> {
         self.refresh_installed();
         self.clamp_selection();
+        self.apply_pending_select();
         if self.index == IndexState::NotLoaded {
             self.index = IndexState::Loading;
             self.fetching = true;
             return Some(SettingsAction::FetchRegistry { refresh: false });
         }
         None
+    }
+
+    /// Select `language` — by any pre-0.8.0 alias too, so a `csharp` bookmark
+    /// selects `c_sharp` — now if it is listed, or once the index loads.
+    /// `None` (the tab opened without a request) drops any earlier request.
+    pub fn preselect(&mut self, language: Option<&str>) {
+        self.notice = None;
+        self.pending_select =
+            language.map(|l| codemark_core::parser::languages::canonical_name(l).to_string());
+        self.parked = self.pending_select.is_some();
+        self.apply_pending_select();
+    }
+
+    /// Resolve [`pending_select`](Self::pending_select) against the current
+    /// rows: select it when listed; when a *successful*, settled fetch doesn't
+    /// list it, say so — but keep the request, so a later refresh that does
+    /// list it still selects it. A failed or in-flight fetch proves nothing.
+    fn apply_pending_select(&mut self) {
+        let Some(name) = self.pending_select.clone() else {
+            return;
+        };
+        if let Some(pos) = self.rows().iter().position(|r| r.name.eq_ignore_ascii_case(&name)) {
+            self.selected = pos;
+            self.pending_select = None;
+            self.notice = None;
+            self.parked = false;
+        } else if matches!(self.index, IndexState::Loaded(_)) && !self.fetching {
+            self.notice = Some(format!(
+                "{name} is not in the grammar registry. To install a grammar by hand, see \
+                 `codemark languages add --help`."
+            ));
+        }
+    }
+
+    /// The user moved on from a requested grammar: forget it.
+    fn drop_request(&mut self) {
+        self.pending_select = None;
+        self.notice = None;
+        self.parked = false;
     }
 
     /// Apply a finished index fetch.
@@ -246,7 +300,10 @@ impl LanguagesTab {
             // A failed *refresh* keeps the list it already had; the failure is
             // only worth a screen of its own when there is nothing to show.
             Err(_) if matches!(self.index, IndexState::Loaded(_)) => {
-                return self.clamp_selection();
+                self.clamp_selection();
+                // A pre-selection waiting on this fetch resolves against the
+                // list that is still shown.
+                return self.apply_pending_select();
             }
             Err(e) => IndexState::Failed(e),
         };
@@ -254,6 +311,7 @@ impl LanguagesTab {
             self.selected = pos;
         }
         self.clamp_selection();
+        self.apply_pending_select();
     }
 
     /// Apply a finished install. On success the grammar has already been
@@ -287,13 +345,19 @@ impl LanguagesTab {
     pub fn handle_key(&mut self, code: KeyCode) -> SettingsAction {
         let rows = self.rows();
         match code {
+            // Moving resumes from the current row; leaving a parked selection
+            // only shows it again rather than also stepping past it.
             KeyCode::Char('j') | KeyCode::Down => {
-                if self.selected + 1 < rows.len() {
+                if !self.parked && self.selected + 1 < rows.len() {
                     self.selected += 1;
                 }
+                self.drop_request();
             }
             KeyCode::Char('k') | KeyCode::Up => {
-                self.selected = self.selected.saturating_sub(1);
+                if !self.parked {
+                    self.selected = self.selected.saturating_sub(1);
+                }
+                self.drop_request();
             }
             KeyCode::Char('r') => {
                 // Refresh both halves: what is installed may have changed too.
@@ -309,6 +373,9 @@ impl LanguagesTab {
                 }
             }
             KeyCode::Enter => {
+                if self.parked {
+                    return SettingsAction::Handled;
+                }
                 let Some(row) = rows.get(self.selected) else {
                     return SettingsAction::Handled;
                 };
@@ -346,31 +413,42 @@ impl LanguagesTab {
         let palette = crate::theme::palette();
         let rows = self.rows();
 
-        let mut text = Text::default();
+        // Status and notice sit in a fixed, wrapped header so they stay readable
+        // on a narrow terminal and never scroll away with the list.
+        let mut header = Text::default();
         match &self.index {
-            IndexState::NotLoaded | IndexState::Loading => text.push_line(Line::styled(
+            IndexState::NotLoaded | IndexState::Loading => header.push_line(Line::styled(
                 " Fetching the grammar registry…",
                 Style::default().fg(palette.dim),
             )),
-            IndexState::Failed(e) => text.push_line(Line::styled(
+            IndexState::Failed(e) => header.push_line(Line::styled(
                 format!(" Could not load the grammar registry: {e}"),
                 Style::default().fg(palette.error),
             )),
-            IndexState::Loaded(_) if self.fetching => text.push_line(Line::styled(
+            IndexState::Loaded(_) if self.fetching => header.push_line(Line::styled(
                 " Refreshing the grammar registry…",
                 Style::default().fg(palette.dim),
             )),
             IndexState::Loaded(ix) => match &ix.stale {
-                Some(e) => text.push_line(Line::styled(
+                Some(e) => header.push_line(Line::styled(
                     format!(" Could not load the registry — showing the cached list ({e})"),
                     Style::default().fg(palette.warning),
                 )),
-                None => text.push_line(Line::styled(
+                None => header.push_line(Line::styled(
                     format!(" {} grammars in the registry", ix.grammars.len()),
                     Style::default().fg(palette.dim),
                 )),
             },
         }
+
+        if let Some(notice) = &self.notice {
+            header.push_line(Line::styled(
+                format!(" {notice}"),
+                Style::default().fg(palette.warning),
+            ));
+        }
+
+        let mut text = Text::default();
 
         let name_width = rows.iter().map(|r| r.name.len()).max().unwrap_or(0);
         let ext_width = rows.iter().map(|r| ext_label(r).len()).max().unwrap_or(0);
@@ -392,7 +470,7 @@ impl LanguagesTab {
                 ));
             }
 
-            let selected = i == self.selected;
+            let selected = i == self.selected && !self.parked;
             if selected {
                 selected_line = text.lines.len();
             }
@@ -439,10 +517,16 @@ impl LanguagesTab {
             ));
         }
 
+        let header_height = wrapped_height(&header, area.width).min(area.height);
+        let header_area = Rect { height: header_height, ..area };
+        let list_area =
+            Rect { y: area.y + header_height, height: area.height - header_height, ..area };
+        Paragraph::new(header).wrap(Wrap { trim: false }).render(header_area, buf);
+
         // Keep the selected row on screen, with a line of context when possible.
-        let height = area.height as usize;
+        let height = list_area.height as usize;
         let offset = (selected_line + 2).saturating_sub(height);
-        Paragraph::new(text).scroll((offset as u16, 0)).render(area, buf);
+        Paragraph::new(text).scroll((offset as u16, 0)).render(list_area, buf);
     }
 
     /// The tab's key hint line.
@@ -464,6 +548,13 @@ impl LanguagesTab {
         ])
         .alignment(Alignment::Center)
     }
+}
+
+/// Rows `text` takes when wrapped to `width` columns — an estimate by
+/// character count, which is all the header (plain prose) needs.
+fn wrapped_height(text: &Text, width: u16) -> u16 {
+    let width = usize::from(width.max(1));
+    text.lines.iter().map(|line| line.width().max(1).div_ceil(width) as u16).sum()
 }
 
 fn ext_label(row: &Row) -> String {
@@ -725,6 +816,134 @@ mod tests {
         // Retrying clears the error and starts again.
         assert_eq!(tab.handle_key(KeyCode::Enter), SettingsAction::InstallGrammar("swift".into()));
         assert!(!tab.errors.contains_key("swift"));
+    }
+
+    #[test]
+    fn preselecting_waits_for_the_index_then_selects_the_grammar() {
+        let mut tab = LanguagesTab::with_installed(installed);
+        tab.preselect(Some("swift"));
+        assert_eq!(tab.selected, 0, "swift isn't listed until the index loads");
+
+        tab.on_index_loaded(Ok(registry()));
+        assert_eq!(tab.rows()[tab.selected].name, "swift");
+        // So Enter installs exactly what the bookmark needs (in a build that
+        // can load WASM grammars; without it Enter explains instead).
+        if cfg!(feature = "wasm") {
+            assert_eq!(
+                tab.handle_key(KeyCode::Enter),
+                SettingsAction::InstallGrammar("swift".into())
+            );
+        }
+    }
+
+    #[test]
+    fn preselecting_an_old_alias_selects_the_registry_name() {
+        let mut tab = LanguagesTab::with_installed(installed);
+        tab.on_index_loaded(Ok(index(vec![entry("c_sharp", &["cs"], true)])));
+        tab.preselect(Some("csharp"));
+        assert_eq!(tab.rows()[tab.selected].name, "c_sharp");
+        assert!(tab.notice.is_none());
+    }
+
+    #[test]
+    fn preselecting_a_grammar_the_registry_lacks_says_so() {
+        let mut tab = LanguagesTab::with_installed(installed);
+        tab.preselect(Some("fortran"));
+        assert!(tab.notice.is_none(), "can't tell yet: the index hasn't loaded");
+        tab.on_index_loaded(Ok(registry()));
+        assert!(tab.notice.as_deref().is_some_and(|n| n.contains("fortran")));
+        // Kept, so a refresh that lists it can still select it.
+        assert_eq!(tab.pending_select.as_deref(), Some("fortran"));
+    }
+
+    /// A failed fetch proves nothing about the registry: no "not in the
+    /// registry" claim, and a successful retry still selects the grammar.
+    #[test]
+    fn a_failed_fetch_keeps_the_request_for_a_retry() {
+        let mut tab = LanguagesTab::with_installed(installed);
+        tab.on_shown();
+        tab.preselect(Some("swift"));
+        tab.on_index_loaded(Err("offline".into()));
+        assert!(tab.notice.is_none(), "a failure is not evidence of absence");
+
+        assert_eq!(
+            tab.handle_key(KeyCode::Char('r')),
+            SettingsAction::FetchRegistry { refresh: true }
+        );
+        tab.on_index_loaded(Ok(registry()));
+        assert_eq!(tab.rows()[tab.selected].name, "swift");
+        assert!(tab.pending_select.is_none());
+    }
+
+    /// A miss followed by a refresh that lists the grammar selects it and
+    /// clears the stale "not in the registry" notice.
+    #[test]
+    fn a_refresh_that_lists_a_missed_grammar_selects_it() {
+        let mut tab = LanguagesTab::with_installed(installed);
+        tab.on_index_loaded(Ok(registry()));
+        tab.preselect(Some("python"));
+        assert!(tab.notice.is_some());
+
+        tab.handle_key(KeyCode::Char('r'));
+        let mut grown = registry();
+        grown.grammars.push(entry("python", &["py"], true));
+        tab.on_index_loaded(Ok(grown));
+        assert_eq!(tab.rows()[tab.selected].name, "python");
+        assert!(tab.notice.is_none());
+    }
+
+    /// After a miss, Enter must not install whatever row was selected before
+    /// the request — the user has to pick a row first.
+    #[test]
+    fn a_miss_parks_the_selection_until_the_user_moves() {
+        let mut tab = LanguagesTab::with_installed(installed);
+        tab.on_index_loaded(Ok(registry()));
+        select(&mut tab, "swift");
+        tab.preselect(Some("fortran"));
+
+        assert_eq!(tab.handle_key(KeyCode::Enter), SettingsAction::Handled);
+        // The first move shows the selection again without stepping past it.
+        tab.handle_key(KeyCode::Char('j'));
+        assert_eq!(tab.rows()[tab.selected].name, "swift");
+        assert!(tab.notice.is_none() && tab.pending_select.is_none());
+        if cfg!(feature = "wasm") {
+            assert_eq!(
+                tab.handle_key(KeyCode::Enter),
+                SettingsAction::InstallGrammar("swift".into())
+            );
+        }
+    }
+
+    /// Opening the tab without a language drops an earlier request and notice.
+    #[test]
+    fn opening_without_a_language_drops_an_old_request() {
+        let mut tab = LanguagesTab::with_installed(installed);
+        tab.preselect(Some("fortran"));
+        tab.on_index_loaded(Ok(registry()));
+        assert!(tab.notice.is_some());
+
+        tab.preselect(None);
+        assert!(tab.notice.is_none() && tab.pending_select.is_none());
+        assert!(!tab.parked);
+    }
+
+    /// The notice wraps in a fixed header, so the advice is readable on a
+    /// narrow terminal instead of being cut off.
+    #[test]
+    fn the_notice_wraps_instead_of_being_cut_off() {
+        let mut tab = LanguagesTab::with_installed(installed);
+        tab.on_index_loaded(Ok(registry()));
+        tab.preselect(Some("fortran"));
+
+        let area = Rect::new(0, 0, 40, 20);
+        let mut buf = Buffer::empty(area);
+        tab.render(area, &mut buf);
+        let screen: String = (0..area.height)
+            .map(|y| (0..area.width).map(|x| buf[(x, y)].symbol()).collect::<String>() + "\n")
+            .collect();
+        let flat: String = screen.split_whitespace().collect::<Vec<_>>().join(" ");
+        assert!(flat.contains("--help"), "advice cut off:\n{screen}");
+        assert!(screen.contains("Installed"), "the list still renders below:\n{screen}");
     }
 
     #[test]

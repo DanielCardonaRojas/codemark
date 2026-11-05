@@ -127,6 +127,9 @@ impl BrowserLayout {
         // J/K scroll the preview from any pane, but in Search focus those keys
         // type into the query box instead (the handler guards on the same
         // condition), so only advertise them when they're actually live.
+        if self.focus != FocusArea::Search && self.missing_grammar_language().is_some() {
+            bindings.push(("I", "Install grammar"));
+        }
         if self.focus != FocusArea::Search {
             bindings.push(("J/K", "Scroll preview"));
         }
@@ -269,6 +272,13 @@ impl BrowserLayout {
                 bindings.push(KeyBinding::new("+/-", "Cycle layout").with_priority(25));
             }
             FocusArea::Filter => {}
+        }
+
+        // The previewed bookmark can't be read without a grammar: offer the
+        // install right where the user meets the problem. Ranked above the
+        // pane's own actions — it is the only thing that unblocks this view.
+        if self.focus != FocusArea::Search && self.missing_grammar_language().is_some() {
+            bindings.push(KeyBinding::new("I", "Install grammar").with_priority(96));
         }
 
         // Global bindings, always appended. `?` Help and `,` Settings are

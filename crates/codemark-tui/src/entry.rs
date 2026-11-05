@@ -372,6 +372,29 @@ async fn run_app() -> Result<Option<i32>> {
                                         settings.hide();
                                         handled = true;
                                     }
+                                    event::KeyCode::Char('I')
+                                        if !search_focused && !dialog_active =>
+                                    {
+                                        // Install a grammar: open Settings on the
+                                        // Languages tab, with the previewed
+                                        // bookmark's language selected when it
+                                        // shows "No grammar".
+                                        let language = layout.missing_grammar_language();
+                                        tracing::debug!(
+                                            target: "codemark::ui",
+                                            language = ?language,
+                                            "opening the Languages tab"
+                                        );
+                                        show_keys = false;
+                                        let action = settings.open_languages(language.as_deref());
+                                        run_settings_action(
+                                            action,
+                                            &mut layout,
+                                            &mut notification,
+                                            &registry_client,
+                                        );
+                                        handled = true;
+                                    }
                                     event::KeyCode::Char(',')
                                         if !search_focused && !dialog_active =>
                                     {
