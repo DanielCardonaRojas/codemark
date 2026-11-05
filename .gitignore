@@ -42,3 +42,7 @@ docker-compose.override.yml
 # Registry grammars the test suite parses with — fetched by
 # scripts/fetch-test-grammars.sh from a pinned registry commit.
 /tests/grammars/
+
+# insta writes pending snapshots here on a mismatch; review with `cargo insta
+# review`, never commit them.
+*.snap.new
