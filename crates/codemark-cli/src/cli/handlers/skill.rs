@@ -6,6 +6,11 @@
 //! handler downloads the asset matching the running binary's version (or an
 //! explicit `--version`), extracts it, and installs it into the agent/scope
 //! specific directory.
+//!
+//! Every install records the skill's release version in a `VERSION` file next
+//! to `SKILL.md`, and `install-skill --check` compares those markers against
+//! the running binary so a stale skill (binary upgraded, skill left behind) is
+//! reported with the exact command that reinstalls it.
 
 use std::io::{self, Cursor, IsTerminal, Write};
 use std::path::{Path, PathBuf};
@@ -17,6 +22,18 @@ use codemark_core::sync::build_sync_http_client;
 
 const SKILL_NAME: &str = "codemark";
 const REPO_SLUG: &str = "DanielCardonaRojas/codemark";
+
+/// File inside the installed skill folder that pins the release version the
+/// skill was published for. Stamped by `release-skill.yml` and (re)written by
+/// every `install-skill` so installs of older archives carry it too.
+const VERSION_FILE: &str = "VERSION";
+
+/// Version of the running binary.
+const BINARY_VERSION: &str = env!("CARGO_PKG_VERSION");
+
+const ALL_AGENTS: [SkillAgent; 4] =
+    [SkillAgent::Claude, SkillAgent::Copilot, SkillAgent::Agents, SkillAgent::Gemini];
+const ALL_SCOPES: [SkillScope; 2] = [SkillScope::User, SkillScope::Project];
 
 /// Upper bound on the skill archive download size (16 MiB). The skill is a
 /// handful of markdown files, so anything larger indicates a wrong/corrupt
@@ -46,7 +63,15 @@ pub async fn handle_install_skill(
     mode: &OutputMode,
     args: &InstallSkillArgs,
 ) -> Result<()> {
-    let version = args.version.clone().unwrap_or_else(|| env!("CARGO_PKG_VERSION").to_string());
+    if args.check {
+        return handle_check(mode, args.agent, args.scope);
+    }
+    // clap enforces both unless `--check` is set.
+    let (Some(agent), Some(scope)) = (args.agent, args.scope) else {
+        return Err(Error::Input("--agent and --scope are required to install".to_string()));
+    };
+
+    let version = args.version.clone().unwrap_or_else(|| BINARY_VERSION.to_string());
     validate_version(&version)?;
 
     let asset_url = format!(
@@ -54,14 +79,14 @@ pub async fn handle_install_skill(
     );
 
     // Resolve the directory that will contain the `codemark/` skill folder.
-    let skills_root = skill_install_root(args.agent, args.scope)?;
+    let skills_root = skill_install_root(agent, scope)?;
     let target_dir = skills_root.join(SKILL_NAME);
 
     tracing::debug!(
         target: "codemark::skill",
         version = %version,
-        agent = ?args.agent,
-        scope = ?args.scope,
+        agent = ?agent,
+        scope = ?scope,
         target = %target_dir.display(),
         "installing skill"
     );
@@ -136,6 +161,14 @@ pub async fn handle_install_skill(
     }
     let staged_skill = staging_root.join(SKILL_NAME);
 
+    // Pin the installed version so `--check` can detect a mismatched binary
+    // later. Archives published before version stamping lack the file, so it
+    // is always written from the tag that was actually downloaded.
+    if let Err(e) = record_installed_version(&staged_skill, &version) {
+        let _ = std::fs::remove_dir_all(&staging_root);
+        return Err(e);
+    }
+
     // Swap the freshly extracted skill into place. Only now is the old install
     // removed, immediately before the rename, minimizing the failure window.
     if target_dir.exists() {
@@ -154,11 +187,261 @@ pub async fn handle_install_skill(
 
     // Gemini consumes `.toml` custom commands rather than SKILL.md skills, so
     // drop a thin command file that points the agent at the installed SKILL.md.
-    if matches!(args.agent, SkillAgent::Gemini) {
-        write_gemini_shim(&skills_root, args.scope)?;
+    if matches!(agent, SkillAgent::Gemini) {
+        write_gemini_shim(&skills_root, scope)?;
     }
 
-    report_success(mode, args.agent, &version, &target_dir)
+    report_success(mode, agent, &version, &target_dir)
+}
+
+/// Write the `VERSION` marker into an extracted skill folder.
+fn record_installed_version(skill_dir: &Path, version: &str) -> Result<()> {
+    let path = skill_dir.join(VERSION_FILE);
+    if let Some(stamped) = read_version_file(skill_dir)
+        && normalize_version(&stamped) != normalize_version(version)
+    {
+        tracing::warn!(
+            target: "codemark::skill",
+            stamped = %stamped,
+            requested = %version,
+            "skill archive is stamped with a different version than its release tag"
+        );
+    }
+    std::fs::write(&path, format!("{version}\n"))
+        .map_err(|e| Error::Operation(format!("failed to record skill version: {e}")))?;
+    tracing::debug!(target: "codemark::skill", version = %version, path = %path.display(), "recorded skill version");
+    Ok(())
+}
+
+/// Read the `VERSION` marker of an installed skill, if present and non-empty.
+fn read_version_file(skill_dir: &Path) -> Option<String> {
+    let raw = std::fs::read_to_string(skill_dir.join(VERSION_FILE)).ok()?;
+    let v = raw.trim();
+    (!v.is_empty()).then(|| v.to_string())
+}
+
+/// Read the `metadata.codemark-version` frontmatter field of a SKILL.md.
+///
+/// Fallback for installs whose `VERSION` file was removed; only the
+/// frontmatter block (between the leading `---` fences) is scanned.
+fn read_frontmatter_version(skill_dir: &Path) -> Option<String> {
+    let raw = std::fs::read_to_string(skill_dir.join("SKILL.md")).ok()?;
+    let mut lines = raw.lines();
+    if lines.next()?.trim() != "---" {
+        return None;
+    }
+    lines
+        .take_while(|l| l.trim() != "---")
+        .find_map(|l| l.trim().strip_prefix("codemark-version:"))
+        .map(|v| v.trim().trim_matches(|c| c == '"' || c == '\'').to_string())
+        .filter(|v| !v.is_empty())
+}
+
+/// The version an installed skill was released for, if it records one.
+fn installed_skill_version(skill_dir: &Path) -> Option<String> {
+    read_version_file(skill_dir).or_else(|| read_frontmatter_version(skill_dir))
+}
+
+/// Strip a leading `v` so `v0.8.0` and `0.8.0` compare equal.
+fn normalize_version(v: &str) -> &str {
+    v.strip_prefix('v').unwrap_or(v)
+}
+
+/// Development builds (`0.0.0-dev` placeholder in the repo copy) never warn.
+fn is_dev_version(v: &str) -> bool {
+    v.ends_with("-dev")
+}
+
+/// How an installed skill relates to the running binary.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum SkillStatus {
+    /// Skill version equals the binary version.
+    Current,
+    /// Skill was released for a different version.
+    Mismatch,
+    /// Skill predates version pinning, so its version is unknown.
+    Unversioned,
+    /// Either side is a development build; comparison skipped.
+    Dev,
+}
+
+impl SkillStatus {
+    fn as_str(&self) -> &'static str {
+        match self {
+            SkillStatus::Current => "current",
+            SkillStatus::Mismatch => "mismatch",
+            SkillStatus::Unversioned => "unversioned",
+            SkillStatus::Dev => "dev",
+        }
+    }
+
+    fn needs_reinstall(&self) -> bool {
+        matches!(self, SkillStatus::Mismatch | SkillStatus::Unversioned)
+    }
+}
+
+/// Compare an installed skill's version against the binary's.
+///
+/// Matching is exact (modulo a leading `v`): patch releases do change the
+/// skill's instructions, and reinstalling is a single command.
+fn compare_versions(skill: Option<&str>, binary: &str) -> SkillStatus {
+    match skill {
+        None => SkillStatus::Unversioned,
+        Some(s) if is_dev_version(s) || is_dev_version(binary) => SkillStatus::Dev,
+        Some(s) if normalize_version(s) == normalize_version(binary) => SkillStatus::Current,
+        Some(_) => SkillStatus::Mismatch,
+    }
+}
+
+/// One installed skill found by `--check`.
+struct SkillInstall {
+    agent: SkillAgent,
+    scope: SkillScope,
+    path: PathBuf,
+    version: Option<String>,
+    status: SkillStatus,
+}
+
+impl SkillInstall {
+    fn reinstall_command(&self) -> String {
+        format!(
+            "codemark install-skill --agent {} --scope {} --force",
+            agent_name(self.agent),
+            scope_name(self.scope)
+        )
+    }
+}
+
+/// Scan the install roots (optionally narrowed to one agent/scope) for
+/// installed codemark skills and classify each against `binary`.
+fn scan_installs(
+    agent: Option<SkillAgent>,
+    scope: Option<SkillScope>,
+    binary: &str,
+) -> Result<Vec<SkillInstall>> {
+    let mut seen: Vec<PathBuf> = Vec::new();
+    let mut found = Vec::new();
+    for a in ALL_AGENTS.into_iter().filter(|a| agent.is_none_or(|x| x == *a)) {
+        for s in ALL_SCOPES.into_iter().filter(|s| scope.is_none_or(|x| x == *s)) {
+            let path = skill_install_root(a, s)?.join(SKILL_NAME);
+            if !path.join("SKILL.md").is_file() {
+                continue;
+            }
+            // User and project roots coincide when run from $HOME; compare
+            // canonical paths so symlinked prefixes (macOS /var -> /private/var)
+            // don't report the same install twice.
+            let key = std::fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
+            if seen.contains(&key) {
+                continue;
+            }
+            seen.push(key);
+            let version = installed_skill_version(&path);
+            let status = compare_versions(version.as_deref(), binary);
+            tracing::debug!(
+                target: "codemark::skill",
+                agent = ?a,
+                scope = ?s,
+                path = %path.display(),
+                version = ?version,
+                binary = %binary,
+                status = status.as_str(),
+                "checked installed skill"
+            );
+            found.push(SkillInstall { agent: a, scope: s, path, version, status });
+        }
+    }
+    Ok(found)
+}
+
+/// Handle `codemark install-skill --check`.
+fn handle_check(
+    mode: &OutputMode,
+    agent: Option<SkillAgent>,
+    scope: Option<SkillScope>,
+) -> Result<()> {
+    let installs = scan_installs(agent, scope, BINARY_VERSION)?;
+    let stale = installs.iter().filter(|i| i.status.needs_reinstall()).count();
+    if stale > 0 {
+        tracing::info!(target: "codemark::skill", stale, "installed skill(s) don't match the binary");
+    }
+
+    match mode {
+        OutputMode::Json => {
+            let items: Vec<_> = installs
+                .iter()
+                .map(|i| {
+                    serde_json::json!({
+                        "agent": agent_name(i.agent),
+                        "scope": scope_name(i.scope),
+                        "path": i.path.display().to_string(),
+                        "skill_version": i.version,
+                        "status": i.status.as_str(),
+                        "reinstall_command": i.status.needs_reinstall().then(|| i.reinstall_command()),
+                    })
+                })
+                .collect();
+            crate::cli::output::write_json_success(&serde_json::json!({
+                "binary_version": BINARY_VERSION,
+                "ok": stale == 0,
+                "installs": items,
+            }))?;
+        }
+        _ => print!("{}", render_check_report(&installs, BINARY_VERSION)),
+    }
+    Ok(())
+}
+
+/// Human-readable `--check` report.
+fn render_check_report(installs: &[SkillInstall], binary: &str) -> String {
+    use std::fmt::Write as _;
+    let mut out = String::new();
+    if installs.is_empty() {
+        let _ = writeln!(
+            out,
+            "No codemark skill installed. Install one with: codemark install-skill --agent <agent> --scope <scope>"
+        );
+        return out;
+    }
+    for i in installs {
+        let label = format!("{} ({})", agent_name(i.agent), scope_name(i.scope));
+        let shown = i.version.as_deref().unwrap_or("unknown");
+        match i.status {
+            SkillStatus::Current => {
+                let _ = writeln!(out, "ok        {label}: skill {shown} matches codemark {binary}");
+            }
+            SkillStatus::Dev => {
+                let _ = writeln!(
+                    out,
+                    "dev       {label}: skill {shown}, codemark {binary} (development build, not compared)"
+                );
+            }
+            SkillStatus::Mismatch | SkillStatus::Unversioned => {
+                let _ = writeln!(
+                    out,
+                    "mismatch  {label}: your codemark skill ({shown}) doesn't match the codemark binary ({binary}). Run: {}",
+                    i.reinstall_command()
+                );
+            }
+        }
+        let _ = writeln!(out, "          {}", i.path.display());
+    }
+    out
+}
+
+fn agent_name(agent: SkillAgent) -> &'static str {
+    match agent {
+        SkillAgent::Claude => "claude",
+        SkillAgent::Copilot => "copilot",
+        SkillAgent::Agents => "agents",
+        SkillAgent::Gemini => "gemini",
+    }
+}
+
+fn scope_name(scope: SkillScope) -> &'static str {
+    match scope {
+        SkillScope::User => "user",
+        SkillScope::Project => "project",
+    }
 }
 
 /// Resolve the skills *root* directory (the parent that will contain the
@@ -252,12 +535,7 @@ fn report_success(
     version: &str,
     target: &Path,
 ) -> Result<()> {
-    let agent_name = match agent {
-        SkillAgent::Claude => "claude",
-        SkillAgent::Copilot => "copilot",
-        SkillAgent::Agents => "agents",
-        SkillAgent::Gemini => "gemini",
-    };
+    let agent_name = agent_name(agent);
 
     match mode {
         OutputMode::Json => {
@@ -308,5 +586,87 @@ mod tests {
         for bad in ["", "../etc", "0.7.3/foo", "1 2", "a;b", "tag?x=1"] {
             assert!(validate_version(bad).is_err(), "expected '{bad}' to be invalid");
         }
+    }
+    #[test]
+    fn test_compare_versions() {
+        assert_eq!(compare_versions(Some("0.8.0"), "0.8.0"), SkillStatus::Current);
+        assert_eq!(compare_versions(Some("v0.8.0"), "0.8.0"), SkillStatus::Current);
+        assert_eq!(compare_versions(Some("0.7.30"), "0.8.0"), SkillStatus::Mismatch);
+        assert_eq!(compare_versions(Some("0.8.0"), "0.8.1"), SkillStatus::Mismatch);
+        assert_eq!(compare_versions(None, "0.8.0"), SkillStatus::Unversioned);
+        assert_eq!(compare_versions(Some("0.0.0-dev"), "0.8.0"), SkillStatus::Dev);
+        assert_eq!(compare_versions(Some("0.8.0"), "0.9.0-dev"), SkillStatus::Dev);
+        assert!(SkillStatus::Mismatch.needs_reinstall());
+        assert!(SkillStatus::Unversioned.needs_reinstall());
+        assert!(!SkillStatus::Current.needs_reinstall());
+        assert!(!SkillStatus::Dev.needs_reinstall());
+    }
+
+    #[test]
+    fn test_installed_version_prefers_version_file() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("SKILL.md"),
+            "---\nname: codemark\nmetadata:\n  codemark-version: \"0.7.0\"\n---\n# body\n",
+        )
+        .unwrap();
+        assert_eq!(installed_skill_version(dir.path()).as_deref(), Some("0.7.0"));
+
+        std::fs::write(dir.path().join(VERSION_FILE), "0.8.0\n").unwrap();
+        assert_eq!(installed_skill_version(dir.path()).as_deref(), Some("0.8.0"));
+    }
+
+    #[test]
+    fn test_frontmatter_version_ignores_body() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("SKILL.md"),
+            "---\nname: codemark\n---\ncodemark-version: 1.2.3\n",
+        )
+        .unwrap();
+        assert_eq!(installed_skill_version(dir.path()), None);
+    }
+
+    #[test]
+    fn test_repo_skill_carries_dev_placeholder() {
+        // The release workflow rewrites this placeholder; keep both markers in sync.
+        let skill = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../extras/skills/codemark");
+        assert_eq!(read_version_file(&skill).as_deref(), Some("0.0.0-dev"));
+        assert_eq!(read_frontmatter_version(&skill).as_deref(), Some("0.0.0-dev"));
+    }
+
+    #[test]
+    fn test_record_installed_version_overwrites_marker() {
+        let dir = tempfile::tempdir().unwrap();
+        record_installed_version(dir.path(), "0.7.30").unwrap();
+        assert_eq!(read_version_file(dir.path()).as_deref(), Some("0.7.30"));
+        record_installed_version(dir.path(), "0.8.0").unwrap();
+        assert_eq!(read_version_file(dir.path()).as_deref(), Some("0.8.0"));
+    }
+
+    #[test]
+    fn test_render_check_report() {
+        let installs = vec![
+            SkillInstall {
+                agent: SkillAgent::Claude,
+                scope: SkillScope::User,
+                path: PathBuf::from("/h/.claude/skills/codemark"),
+                version: Some("0.7.30".into()),
+                status: SkillStatus::Mismatch,
+            },
+            SkillInstall {
+                agent: SkillAgent::Copilot,
+                scope: SkillScope::Project,
+                path: PathBuf::from("/p/.github/skills/codemark"),
+                version: Some("0.8.0".into()),
+                status: SkillStatus::Current,
+            },
+        ];
+        let out = render_check_report(&installs, "0.8.0");
+        assert!(out.contains(
+            "your codemark skill (0.7.30) doesn't match the codemark binary (0.8.0). Run: codemark install-skill --agent claude --scope user --force"
+        ));
+        assert!(out.contains("ok        copilot (project): skill 0.8.0 matches codemark 0.8.0"));
+        assert!(render_check_report(&[], "0.8.0").starts_with("No codemark skill installed"));
     }
 }

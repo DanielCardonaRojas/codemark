@@ -21,6 +21,20 @@ jobs:
         with:
           ref: ${{ github.event.release.tag_name }}
 
+      - name: Stamp release version into skill
+        env:
+          VERSION: ${{ github.event.release.tag_name }}
+        run: |
+          # The repo copy carries the `0.0.0-dev` placeholder; pin the release
+          # version so the installed skill can detect a mismatched binary
+          # (`codemark install-skill --check`).
+          set -euo pipefail
+          SKILL_DIR=extras/skills/codemark
+          printf '%s\n' "${VERSION}" > "${SKILL_DIR}/VERSION"
+          sed -i "s/0\.0\.0-dev/${VERSION}/g" "${SKILL_DIR}/SKILL.md"
+          grep -q "codemark-version: \"${VERSION}\"" "${SKILL_DIR}/SKILL.md" \
+            || { echo "failed to stamp version into SKILL.md" >&2; exit 1; }
+
       - name: Package skill archive
         env:
           VERSION: ${{ github.event.release.tag_name }}
