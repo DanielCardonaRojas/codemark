@@ -228,6 +228,28 @@ pub struct RemoteWasm {
 /// Highest `schema_version` this build understands.
 const SUPPORTED_SCHEMA_VERSION: u32 = 1;
 
+/// Append to `err` that the registry could not be loaded, when `stale` says the
+/// lookup behind it used a cached index the registry couldn't confirm.
+///
+/// Without this, a failure that followed a stale lookup — "not in the
+/// registry", "no prebuilt grammar" — reads as the registry's current answer,
+/// when a fresh index might well say otherwise. Only message-carrying variants
+/// are annotated; anything else passes through unchanged.
+pub(crate) fn note_stale(err: Error, stale: Option<&str>) -> Error {
+    let Some(cause) = stale else {
+        return err;
+    };
+    let note = format!(
+        "\n(The grammar registry could not be loaded ({cause}), so this used the cached index, \
+         which may be out of date. Retry once the registry is reachable.)"
+    );
+    match err {
+        Error::Input(m) => Error::Input(m + &note),
+        Error::Operation(m) => Error::Operation(m + &note),
+        other => other,
+    }
+}
+
 /// Reads the grammar registry, caching the index on disk.
 pub struct RegistryClient {
     base_url: String,
@@ -383,13 +405,18 @@ impl RegistryClient {
     fn pick(index: RegistryIndex, name: &str) -> Result<RegistryEntry> {
         let needle = name.to_lowercase();
         let stale = index.stale;
-        let found = index.grammars.into_iter().find(|e| e.name.to_lowercase() == needle);
-        found.map(|entry| RegistryEntry { stale, ..entry }).ok_or_else(|| {
-            Error::Input(format!(
-                "'{name}' is not in the grammar registry — run `codemark languages registry \
-                     list` to see what is available"
-            ))
-        })
+        match index.grammars.into_iter().find(|e| e.name.to_lowercase() == needle) {
+            Some(entry) => Ok(RegistryEntry { stale, ..entry }),
+            // A stale list may simply predate the language: say so, rather than
+            // a flat "not in the registry".
+            None => Err(note_stale(
+                Error::Input(format!(
+                    "'{name}' is not in the grammar registry — run `codemark languages registry \
+                         list` to see what is available"
+                )),
+                stale.as_deref(),
+            )),
+        }
     }
 
     /// Fetch the curated manifest for `entry`.
@@ -719,6 +746,40 @@ mod tests {
         // warn that it is installing from outdated metadata.
         let entry = client.find("lua", true).await.unwrap();
         assert!(entry.stale.is_some(), "an entry from a stale index is stale");
+    }
+
+    /// Failures that follow a stale lookup say the list may be out of date,
+    /// rather than reading as the registry's current answer.
+    #[tokio::test]
+    async fn errors_after_a_stale_lookup_say_the_index_may_be_outdated() {
+        let tmp = tempfile::tempdir().unwrap();
+        let client = fixture_registry(tmp.path());
+        client.fetch_index(true).await.unwrap();
+        std::fs::remove_dir_all(tmp.path().join("registry")).unwrap();
+
+        // Not found: a stale list may simply predate the language.
+        let missing = client.find("cobol", true).await.unwrap_err().to_string();
+        assert!(missing.contains("not in the grammar registry"), "{missing}");
+        assert!(missing.contains("could not be loaded"), "{missing}");
+
+        // Found, but the stale entry has no download — a fresh index might.
+        let install = crate::grammar::install_from_registry_download(
+            "lua",
+            crate::grammar::InstallOverrides::default(),
+            &client,
+            true,
+        )
+        .await
+        .unwrap_err()
+        .to_string();
+        assert!(install.contains("no prebuilt grammar"), "{install}");
+        assert!(install.contains("could not be loaded"), "{install}");
+    }
+
+    #[test]
+    fn a_fresh_lookup_error_is_left_alone() {
+        let err = note_stale(Error::Input("plain".into()), None);
+        assert_eq!(err.to_string(), Error::Input("plain".into()).to_string());
     }
 
     #[tokio::test]

@@ -87,6 +87,20 @@ pub async fn install_from_registry(
     refresh: bool,
 ) -> Result<InstallOutcome> {
     let entry = client.find_for_install(registry_name, refresh).await?;
+    let stale = entry.stale.clone();
+    install_registry_entry(path, entry, overrides, client)
+        .await
+        .map_err(|e| registry_source::note_stale(e, stale.as_deref()))
+}
+
+/// [`install_from_registry`] after the lookup, split out so any failure from
+/// here on can be annotated when the entry came from a stale index.
+async fn install_registry_entry(
+    path: &std::path::Path,
+    entry: registry_source::RegistryEntry,
+    overrides: InstallOverrides,
+    client: &registry_source::RegistryClient,
+) -> Result<InstallOutcome> {
     let manifest = client.fetch_profile(&entry).await?;
 
     // Caller's flags beat the registry, which beats the manifest's own fields.
@@ -143,7 +157,20 @@ pub async fn install_from_registry_download(
     refresh: bool,
 ) -> Result<InstallOutcome> {
     let entry = client.find_for_install(registry_name, refresh).await?;
+    let stale = entry.stale.clone();
+    download_registry_entry(entry, overrides, client)
+        .await
+        .map_err(|e| registry_source::note_stale(e, stale.as_deref()))
+}
 
+/// [`install_from_registry_download`] after the lookup, split out so any
+/// failure from here on — "no prebuilt grammar" above all, which a fresh index
+/// might contradict — can be annotated when the entry came from a stale index.
+async fn download_registry_entry(
+    entry: registry_source::RegistryEntry,
+    overrides: InstallOverrides,
+    client: &registry_source::RegistryClient,
+) -> Result<InstallOutcome> {
     let Some(remote) = entry.download()? else {
         return Err(Error::Input(format!(
             "'{}' has no prebuilt grammar in the registry, so it can't be installed \
