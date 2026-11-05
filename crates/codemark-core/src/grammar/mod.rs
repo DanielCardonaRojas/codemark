@@ -87,6 +87,20 @@ pub async fn install_from_registry(
     refresh: bool,
 ) -> Result<InstallOutcome> {
     let entry = client.find_for_install(registry_name, refresh).await?;
+    let stale = entry.stale.clone();
+    install_registry_entry(path, entry, overrides, client)
+        .await
+        .map_err(|e| registry_source::note_stale(e, stale.as_deref()))
+}
+
+/// [`install_from_registry`] after the lookup, split out so any failure from
+/// here on can be annotated when the entry came from a stale index.
+async fn install_registry_entry(
+    path: &std::path::Path,
+    entry: registry_source::RegistryEntry,
+    overrides: InstallOverrides,
+    client: &registry_source::RegistryClient,
+) -> Result<InstallOutcome> {
     let manifest = client.fetch_profile(&entry).await?;
 
     // Caller's flags beat the registry, which beats the manifest's own fields.
@@ -120,7 +134,8 @@ pub async fn install_from_registry(
         "installing with a registry profile"
     );
 
-    install_grammar(&name, &extensions, profile, wasm_bytes)
+    let outcome = install_grammar(&name, &extensions, profile, wasm_bytes)?;
+    Ok(InstallOutcome { registry_stale: entry.stale, ..outcome })
 }
 
 /// Install a language end to end from the registry: download the grammar it
@@ -142,7 +157,20 @@ pub async fn install_from_registry_download(
     refresh: bool,
 ) -> Result<InstallOutcome> {
     let entry = client.find_for_install(registry_name, refresh).await?;
+    let stale = entry.stale.clone();
+    download_registry_entry(entry, overrides, client)
+        .await
+        .map_err(|e| registry_source::note_stale(e, stale.as_deref()))
+}
 
+/// [`install_from_registry_download`] after the lookup, split out so any
+/// failure from here on — "no prebuilt grammar" above all, which a fresh index
+/// might contradict — can be annotated when the entry came from a stale index.
+async fn download_registry_entry(
+    entry: registry_source::RegistryEntry,
+    overrides: InstallOverrides,
+    client: &registry_source::RegistryClient,
+) -> Result<InstallOutcome> {
     let Some(remote) = entry.download()? else {
         return Err(Error::Input(format!(
             "'{}' has no prebuilt grammar in the registry, so it can't be installed \
@@ -182,7 +210,9 @@ pub async fn install_from_registry_download(
         "installing a downloaded grammar"
     );
 
-    install_grammar(&name, &extensions, manifest.get("profile").cloned(), wasm_bytes)
+    let outcome =
+        install_grammar(&name, &extensions, manifest.get("profile").cloned(), wasm_bytes)?;
+    Ok(InstallOutcome { registry_stale: entry.stale, ..outcome })
 }
 
 /// The outcome of a successful [`install_grammar`], returned so the caller can
@@ -198,6 +228,10 @@ pub struct InstallOutcome {
     /// Whether this build can actually load the grammar at runtime (the `wasm`
     /// feature). When false the files are installed but inert.
     pub runtime_enabled: bool,
+    /// For a registry install: set when the registry could not be reached and
+    /// the entry came from a stale cache, holding the fetch error. Core never
+    /// prints it; the CLI and the TUI each surface it their own way.
+    pub registry_stale: Option<String>,
 }
 
 /// Install a grammar from in-memory `wasm_bytes` under `name`, writing a manifest
@@ -254,6 +288,7 @@ pub fn install_grammar(
         directory: lang_dir,
         extensions: extensions.to_vec(),
         runtime_enabled: cfg!(feature = "wasm"),
+        registry_stale: None,
     })
 }
 

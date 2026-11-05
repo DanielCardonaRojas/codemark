@@ -437,10 +437,13 @@ impl Parser {
             Ok(p) => Ok(p),
             Err(e) => match fallback {
                 Some(builtin) => {
-                    eprintln!(
-                        "codemark: dynamic grammar failed to load ({e}); falling back to the \
-                         built-in {} parser",
-                        builtin.name()
+                    // Logged, not printed: this runs inside the TUI too, where
+                    // stderr would draw over the screen.
+                    tracing::warn!(
+                        target: "codemark::languages",
+                        error = %e,
+                        builtin = %builtin.name(),
+                        "dynamic grammar failed to load; falling back to the built-in parser"
                     );
                     Self::new_exact(builtin)
                 }
