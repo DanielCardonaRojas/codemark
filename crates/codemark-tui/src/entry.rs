@@ -495,13 +495,23 @@ async fn run_app() -> Result<Option<i32>> {
                 let is_input_mode =
                     matches!(state.mode(), AppMode::Command | AppMode::Search | AppMode::Insert);
                 let is_mouse_event = matches!(event, Event::Mouse(_));
-                // Focus changes must always reach the layout (even in an input mode
-                // or behind an overlay): returning to the TUI after an external
-                // `codemark auth login`/`logout` triggers a registry/visibility
-                // refresh that would otherwise be dropped by the input-mode filter.
-                let is_focus_event = matches!(event, Event::FocusGained | Event::FocusLost);
+                // Only *user input* is withheld from the layout behind an overlay or
+                // in an input mode. Everything else — focus changes and the results
+                // of background work (live health, previews, search) — must always
+                // reach it: dropping a focus change loses the refresh after an
+                // external `codemark auth login`, and dropping a health batch
+                // (e.g. the re-check after installing a grammar from Settings)
+                // leaves rows showing a stale "No grammar" once the overlay closes.
+                let is_user_input = matches!(
+                    event,
+                    Event::Key(_)
+                        | Event::Mouse(_)
+                        | Event::Paste(_)
+                        | Event::Resize(..)
+                        | Event::Tick
+                );
                 if !handled
-                    && (is_focus_event || (!overlay_open && (!is_input_mode || is_mouse_event)))
+                    && (!is_user_input || (!overlay_open && (!is_input_mode || is_mouse_event)))
                 {
                     handled = layout.handle_event(&event);
                 }
@@ -697,8 +707,17 @@ fn run_settings_action(
                             &client,
                             false,
                         ))
-                        .map(|_| ())
-                        .map_err(|e| e.to_string()),
+                        .map_err(|e| e.to_string())
+                        .and_then(|outcome| {
+                            // Files written but unusable: don't report it as installed.
+                            if outcome.runtime_enabled {
+                                Ok(())
+                            } else {
+                                Err("saved, but this build of codemark can't load WASM grammars \
+                                     (built without the `wasm` feature)"
+                                    .to_string())
+                            }
+                        }),
                     Err(e) => Err(e),
                 };
                 if let Err(e) = &result {
