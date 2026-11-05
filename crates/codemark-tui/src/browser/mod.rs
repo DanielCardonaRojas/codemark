@@ -808,6 +808,53 @@ impl BrowserLayout {
         self.pending_command.take()
     }
 
+    /// Re-scan the grammar cache and drop everything that was resolved under
+    /// the previous set of grammars, so the next resolution uses the new ones.
+    ///
+    /// Shared by `FocusGained` (a grammar installed from the CLI meanwhile)
+    /// and [`reload_grammars`](Self::reload_grammars) (one installed from the
+    /// Languages tab).
+    pub(crate) fn forget_grammar_state(&mut self) {
+        // Re-scan the
+        // grammar cache so live resolution picks up new languages instead
+        // of retaining the startup snapshot until the process restarts.
+        codemark_core::parser::registry::LanguageRegistry::refresh();
+        // The parse caches key their `Parser`/`Profile` by language name,
+        // so after a refresh an *updated* grammar would still be served
+        // from the old cached parser. Drop both the synchronous session
+        // cache and the background preview cache so the next resolution
+        // rebuilds against the freshly discovered grammar.
+        self.session_cache.clear();
+        self.preview_cache.lock().unwrap_or_else(|e| e.into_inner()).clear();
+        // Advance the health epoch so any live-health task spawned under
+        // the previous grammar is discarded on arrival rather than
+        // overwriting the panels we're about to rebuild.
+        self.health_generation = self.health_generation.wrapping_add(1);
+        tracing::debug!(
+            target: "codemark::ui",
+            health_generation = self.health_generation,
+            "advanced health epoch on grammar refresh"
+        );
+        // Same hazard for the bookmark preview: a preview task spawned
+        // before the refresh would resolve with the old grammar. Bumping
+        // the request id drops any in-flight/queued preview result.
+        self.cancel_inflight_preview();
+    }
+
+    /// Pick up a grammar installed from inside the TUI: forget grammar state,
+    /// then rebuild the panels so bookmarks that showed "No grammar" resolve.
+    pub fn reload_grammars(&mut self) {
+        tracing::debug!(target: "codemark::ui", "reloading grammars after an in-app install");
+        self.forget_grammar_state();
+        self.refresh_all_panels_preserving_search();
+        self.reconcile_preserved_search_rows();
+    }
+
+    /// A handle for sending events back to the main loop from a background task.
+    pub fn event_sender(&self) -> crate::event::EventHandler {
+        self.event_handler.clone()
+    }
+
     /// Take the pending heal notification, if any.
     pub fn take_pending_notification(&mut self) -> Option<HealNotification> {
         self.pending_notification.take()

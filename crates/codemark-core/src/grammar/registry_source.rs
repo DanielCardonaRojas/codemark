@@ -42,7 +42,7 @@ const MAX_PROFILE_BYTES: u64 = 1024 * 1024;
 const REGISTRY_CACHE_DIR: &str = ".registry";
 
 /// The registry's `index.json`.
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct RegistryIndex {
     /// Wire-format version. Bumped only for a breaking change; new optional
     /// fields are additive and do not bump it — `wasm_url` was added this way.
@@ -58,7 +58,7 @@ pub struct RegistryIndex {
 }
 
 /// One language's entry in the index.
-#[derive(Debug, Clone, Deserialize, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct RegistryEntry {
     pub name: String,
     pub extensions: Vec<String>,
@@ -222,6 +222,10 @@ pub struct RemoteWasm {
 const SUPPORTED_SCHEMA_VERSION: u32 = 1;
 
 /// Reads the grammar registry, caching the index on disk.
+///
+/// Cheap to clone (a URL, a path and a TTL), so a long-lived caller like the
+/// TUI can build one up front and hand a copy to each background task.
+#[derive(Debug, Clone)]
 pub struct RegistryClient {
     base_url: String,
     cache_dir: PathBuf,

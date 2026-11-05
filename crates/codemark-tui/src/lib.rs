@@ -32,6 +32,7 @@ pub mod browser;
 pub mod component;
 pub mod entry;
 pub mod event;
+pub mod languages_tab;
 pub mod layout;
 pub mod logging;
 pub mod settings;

@@ -193,6 +193,12 @@ async fn run_app() -> Result<Option<i32>> {
         crate::component::code_preview::set_default_theme(theme);
     }
 
+    // The grammar registry client for the settings overlay's Languages tab.
+    // Built once from the layered config; each background task gets a clone.
+    let registry_client =
+        codemark_core::grammar::registry_source::RegistryClient::from_config(&config.grammars)
+            .map_err(|e| e.to_string());
+
     // Create the browser layout
     let mut layout = BrowserLayout::new(db, event_handler);
 
@@ -320,23 +326,13 @@ async fn run_app() -> Result<Option<i32>> {
                                     state.quit();
                                 } else {
                                     let config = layout.config_info();
-                                    match settings.handle_key(key.code, &config) {
-                                        crate::settings::SettingsAction::ThemeChanged => {
-                                            // Re-highlight existing previews with the
-                                            // newly applied theme (the chrome updates
-                                            // automatically on the next render).
-                                            layout.reapply_preview_theme();
-                                        }
-                                        crate::settings::SettingsAction::Notify(msg) => {
-                                            notification = Some((
-                                                msg,
-                                                NotificationType::Error,
-                                                Instant::now(),
-                                            ));
-                                        }
-                                        crate::settings::SettingsAction::Handled
-                                        | crate::settings::SettingsAction::Unhandled => {}
-                                    }
+                                    let action = settings.handle_key(key.code, &config);
+                                    run_settings_action(
+                                        action,
+                                        &mut layout,
+                                        &mut notification,
+                                        &registry_client,
+                                    );
                                 }
                                 handled = true;
                             }
@@ -367,10 +363,16 @@ async fn run_app() -> Result<Option<i32>> {
                                         if !search_focused && !dialog_active =>
                                     {
                                         // Open the global settings overlay.
-                                        if settings.toggle()
-                                            == crate::settings::SettingsAction::ThemeChanged
-                                        {
-                                            layout.refresh_all_panels();
+                                        match settings.toggle() {
+                                            crate::settings::SettingsAction::ThemeChanged => {
+                                                layout.refresh_all_panels();
+                                            }
+                                            action => run_settings_action(
+                                                action,
+                                                &mut layout,
+                                                &mut notification,
+                                                &registry_client,
+                                            ),
                                         }
                                         handled = true;
                                     }
@@ -431,16 +433,42 @@ async fn run_app() -> Result<Option<i32>> {
                     Event::Mouse(mouse) if settings.is_visible() => {
                         // The settings overlay is modal: route clicks to it (so
                         // tabs are clickable) and swallow the event.
-                        match settings.handle_mouse(*mouse) {
-                            crate::settings::SettingsAction::ThemeChanged => {
-                                layout.reapply_preview_theme();
+                        let action = settings.handle_mouse(*mouse);
+                        run_settings_action(
+                            action,
+                            &mut layout,
+                            &mut notification,
+                            &registry_client,
+                        );
+                        handled = true;
+                    }
+                    Event::RegistryIndexLoaded(result) => {
+                        settings.languages_mut().on_index_loaded(result.clone());
+                        handled = true;
+                    }
+                    Event::GrammarInstalled { name, result } => {
+                        match result {
+                            Ok(()) => {
+                                // Refresh the global grammar registry *before*
+                                // the tab recomputes its rows, so the grammar
+                                // moves to Installed; this also re-resolves
+                                // bookmarks that showed "No grammar".
+                                layout.reload_grammars();
+                                notification = Some((
+                                    format!("Installed the {name} grammar"),
+                                    NotificationType::Success,
+                                    Instant::now(),
+                                ));
                             }
-                            crate::settings::SettingsAction::Notify(msg) => {
-                                notification = Some((msg, NotificationType::Error, Instant::now()));
+                            Err(e) => {
+                                notification = Some((
+                                    format!("Installing {name} failed: {e}"),
+                                    NotificationType::Error,
+                                    Instant::now(),
+                                ));
                             }
-                            crate::settings::SettingsAction::Handled
-                            | crate::settings::SettingsAction::Unhandled => {}
                         }
+                        settings.languages_mut().on_installed(name, result.clone());
                         handled = true;
                     }
                     Event::Resize(width, height) => {
@@ -619,6 +647,68 @@ async fn run_app() -> Result<Option<i32>> {
     }
 
     Ok(None)
+}
+
+/// Carry out what the settings overlay asked for.
+///
+/// Registry work runs on a blocking-pool thread (the install does synchronous
+/// file I/O and compiles the grammar to validate it) and reports back through
+/// an [`Event`], so the UI never stalls on the network.
+fn run_settings_action(
+    action: crate::settings::SettingsAction,
+    layout: &mut BrowserLayout,
+    notification: &mut Option<(String, NotificationType, Instant)>,
+    registry_client: &Result<codemark_core::grammar::registry_source::RegistryClient, String>,
+) {
+    use crate::settings::SettingsAction;
+    match action {
+        SettingsAction::ThemeChanged => {
+            // Re-highlight existing previews with the newly applied theme (the
+            // chrome updates automatically on the next render).
+            layout.reapply_preview_theme();
+        }
+        SettingsAction::Notify(msg) => {
+            *notification = Some((msg, NotificationType::Error, Instant::now()));
+        }
+        SettingsAction::FetchRegistry { refresh } => {
+            let events = layout.event_sender();
+            let client = registry_client.clone();
+            tracing::debug!(target: "codemark::http", refresh, "fetching grammar registry index for the Languages tab");
+            tokio::task::spawn_blocking(move || {
+                let result = match client {
+                    Ok(client) => tokio::runtime::Handle::current()
+                        .block_on(client.fetch_index(refresh))
+                        .map_err(|e| e.to_string()),
+                    Err(e) => Err(e),
+                };
+                let _ = events.send(Event::RegistryIndexLoaded(result));
+            });
+        }
+        SettingsAction::InstallGrammar(name) => {
+            let events = layout.event_sender();
+            let client = registry_client.clone();
+            tracing::info!(target: "codemark::languages", language = %name, "installing grammar from the Languages tab");
+            tokio::task::spawn_blocking(move || {
+                let result = match client {
+                    Ok(client) => tokio::runtime::Handle::current()
+                        .block_on(codemark_core::grammar::install_from_registry_download(
+                            &name,
+                            codemark_core::grammar::InstallOverrides::default(),
+                            &client,
+                            false,
+                        ))
+                        .map(|_| ())
+                        .map_err(|e| e.to_string()),
+                    Err(e) => Err(e),
+                };
+                if let Err(e) = &result {
+                    tracing::warn!(target: "codemark::languages", language = %name, error = %e, "grammar install failed");
+                }
+                let _ = events.send(Event::GrammarInstalled { name, result });
+            });
+        }
+        SettingsAction::Handled | SettingsAction::Unhandled => {}
+    }
 }
 
 /// Restore terminal state.
