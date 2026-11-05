@@ -89,4 +89,5 @@ tokio-util = "0.7"
 open = "5.3.5"
 copypasta = "0.10.2"
 tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
 zip = { version = "2", default-features = false, features = ["deflate"] }

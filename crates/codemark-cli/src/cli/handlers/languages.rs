@@ -219,7 +219,7 @@ async fn handle_registry_list(
     let index = client.fetch_index(args.refresh).await?;
     if let Some(error) = &index.stale {
         eprintln!(
-            "codemark: could not reach the grammar registry ({error}); using the cached index"
+            "codemark: could not load the grammar registry ({error}); using the cached index"
         );
     }
 
@@ -281,7 +281,7 @@ fn print_install_outcome(
     } else {
         if let Some(error) = registry_stale {
             eprintln!(
-                "codemark: could not reach the grammar registry ({error}); installed from the \
+                "codemark: could not load the grammar registry ({error}); installed from the \
                  cached index, which may be out of date"
             );
         }
