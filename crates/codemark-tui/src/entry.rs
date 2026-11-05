@@ -327,6 +327,19 @@ async fn run_app() -> Result<Option<i32>> {
                                 } else {
                                     let config = layout.config_info();
                                     let action = settings.handle_key(key.code, &config);
+                                    // An explicit refresh (`r` on Languages) covers
+                                    // what is installed too: re-scan the grammar
+                                    // cache — another process may have changed it
+                                    // while we kept focus — then let the tab
+                                    // re-read it. Same reload as FocusGained.
+                                    if action
+                                        == (crate::settings::SettingsAction::FetchRegistry {
+                                            refresh: true,
+                                        })
+                                    {
+                                        layout.reload_grammars();
+                                        settings.languages_mut().on_grammars_changed();
+                                    }
                                     run_settings_action(
                                         action,
                                         &mut layout,
