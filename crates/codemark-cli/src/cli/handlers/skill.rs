@@ -195,9 +195,16 @@ pub async fn handle_install_skill(
 }
 
 /// Write the `VERSION` marker into an extracted skill folder.
+///
+/// An archive stamped with a *different* release than the one requested was
+/// attached to the wrong release; installing it under the requested tag would
+/// make `--check` vouch for the wrong instructions, so it is rejected (before
+/// any existing install is touched). Archives without a marker, or carrying the
+/// unstamped `-dev` placeholder, take the requested tag.
 fn record_installed_version(skill_dir: &Path, version: &str) -> Result<()> {
     let path = skill_dir.join(VERSION_FILE);
     if let Some(stamped) = read_version_file(skill_dir)
+        && !is_dev_version(&stamped)
         && normalize_version(&stamped) != normalize_version(version)
     {
         tracing::warn!(
@@ -206,6 +213,9 @@ fn record_installed_version(skill_dir: &Path, version: &str) -> Result<()> {
             requested = %version,
             "skill archive is stamped with a different version than its release tag"
         );
+        return Err(Error::Operation(format!(
+            "skill archive for {version} is stamped as version {stamped}; refusing to install a mismatched skill"
+        )));
     }
     std::fs::write(&path, format!("{version}\n"))
         .map_err(|e| Error::Operation(format!("failed to record skill version: {e}")))?;
@@ -307,24 +317,14 @@ struct SkillInstall {
 
 impl SkillInstall {
     fn reinstall_command(&self) -> String {
-        let cmd = format!(
+        // Shell-neutral on purpose: the directory to run from (`run_from`) is
+        // reported separately rather than chained with `cd … &&`, which
+        // PowerShell 5.1 and cmd.exe don't accept.
+        format!(
             "codemark install-skill --agent {} --scope {} --force",
             agent_name(self.agent),
             scope_name(self.scope)
-        );
-        match &self.run_from {
-            Some(dir) => format!("cd {} && {cmd}", shell_quote(&dir.display().to_string())),
-            None => cmd,
-        }
-    }
-}
-
-/// Single-quote a path for a copy-pasteable POSIX shell command when needed.
-fn shell_quote(s: &str) -> String {
-    if !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric() || "/._-+~".contains(c)) {
-        s.to_string()
-    } else {
-        format!("'{}'", s.replace('\'', r"'\''"))
+        )
     }
 }
 
@@ -347,21 +347,23 @@ fn project_bases(cwd: &Path) -> Vec<PathBuf> {
 /// installed codemark skills and classify each against `binary`.
 ///
 /// User installs live under `home`; project installs are searched from `cwd`
-/// up to the repository root so `--check` works from any subdirectory.
+/// up to the repository root so `--check` works from any subdirectory. A
+/// scope whose base directory is `None` is skipped.
 fn scan_installs(
     agent: Option<SkillAgent>,
     scope: Option<SkillScope>,
     binary: &str,
-    home: &Path,
-    cwd: &Path,
+    home: Option<&Path>,
+    cwd: Option<&Path>,
 ) -> Vec<SkillInstall> {
     let mut seen: Vec<PathBuf> = Vec::new();
     let mut found = Vec::new();
     for a in ALL_AGENTS.into_iter().filter(|a| agent.is_none_or(|x| x == *a)) {
         for s in ALL_SCOPES.into_iter().filter(|s| scope.is_none_or(|x| x == *s)) {
-            let bases = match s {
-                SkillScope::User => vec![home.to_path_buf()],
-                SkillScope::Project => project_bases(cwd),
+            let bases = match (s, home, cwd) {
+                (SkillScope::User, Some(home), _) => vec![home.to_path_buf()],
+                (SkillScope::Project, _, Some(cwd)) => project_bases(cwd),
+                _ => continue,
             };
             for base in bases {
                 let path = base.join(skills_rel_dir(a, s)).join(SKILL_NAME);
@@ -388,7 +390,8 @@ fn scan_installs(
                     status = status.as_str(),
                     "checked installed skill"
                 );
-                let run_from = (s == SkillScope::Project && base != cwd).then_some(base);
+                let run_from =
+                    (s == SkillScope::Project && Some(base.as_path()) != cwd).then_some(base);
                 found.push(SkillInstall { agent: a, scope: s, path, run_from, version, status });
             }
         }
@@ -402,7 +405,11 @@ fn handle_check(
     agent: Option<SkillAgent>,
     scope: Option<SkillScope>,
 ) -> Result<()> {
-    let installs = scan_installs(agent, scope, BINARY_VERSION, &home_dir()?, &current_dir()?);
+    // Resolve only the base directories the selected scope needs, so e.g.
+    // `--scope user` still works when the working directory was deleted.
+    let home = if scope != Some(SkillScope::Project) { Some(home_dir()?) } else { None };
+    let cwd = if scope != Some(SkillScope::User) { Some(current_dir()?) } else { None };
+    let installs = scan_installs(agent, scope, BINARY_VERSION, home.as_deref(), cwd.as_deref());
     let stale = installs.iter().filter(|i| i.status.needs_reinstall()).count();
     if stale > 0 {
         tracing::info!(target: "codemark::skill", stale, "installed skill(s) don't match the binary");
@@ -420,6 +427,7 @@ fn handle_check(
                         "skill_version": i.version,
                         "status": i.status.as_str(),
                         "reinstall_command": i.status.needs_reinstall().then(|| i.reinstall_command()),
+                        "run_from": i.run_from.as_ref().map(|d| d.display().to_string()),
                     })
                 })
                 .collect();
@@ -459,9 +467,14 @@ fn render_check_report(installs: &[SkillInstall], binary: &str) -> String {
                 );
             }
             SkillStatus::Mismatch | SkillStatus::Unversioned => {
+                let from = i
+                    .run_from
+                    .as_ref()
+                    .map(|d| format!(" (from {})", d.display()))
+                    .unwrap_or_default();
                 let _ = writeln!(
                     out,
-                    "mismatch  {label}: your codemark skill ({shown}) doesn't match the codemark binary ({binary}). Run: {}",
+                    "mismatch  {label}: your codemark skill ({shown}) doesn't match the codemark binary ({binary}). Run{from}: {}",
                     i.reinstall_command()
                 );
             }
@@ -689,12 +702,11 @@ mod tests {
     }
 
     #[test]
-    fn test_record_installed_version_overwrites_marker() {
+    fn test_record_installed_version_pins_unmarked_archive() {
+        // Archives published before release stamping carry no VERSION file.
         let dir = tempfile::tempdir().unwrap();
         record_installed_version(dir.path(), "0.7.30").unwrap();
         assert_eq!(read_version_file(dir.path()).as_deref(), Some("0.7.30"));
-        record_installed_version(dir.path(), "0.8.0").unwrap();
-        assert_eq!(read_version_file(dir.path()).as_deref(), Some("0.8.0"));
     }
 
     #[test]
@@ -745,18 +757,20 @@ mod tests {
         install_skill_at(&repo.join(".claude/skills"), Some("0.7.30"));
         install_skill_at(&home.join(".agents/skills"), None);
 
-        let found = scan_installs(None, None, "0.8.0", &home, &sub);
+        let found = scan_installs(None, None, "0.8.0", Some(&home), Some(&sub));
         assert_eq!(found.len(), 2);
 
         let project = found.iter().find(|i| i.scope == SkillScope::Project).unwrap();
         assert_eq!(project.agent, SkillAgent::Claude);
         assert_eq!(project.status, SkillStatus::Mismatch);
         assert_eq!(project.run_from.as_deref(), Some(repo.as_path()));
-        assert!(project.reinstall_command().starts_with("cd "));
+        assert_eq!(
+            project.reinstall_command(),
+            "codemark install-skill --agent claude --scope project --force"
+        );
         assert!(
-            project
-                .reinstall_command()
-                .ends_with("&& codemark install-skill --agent claude --scope project --force")
+            render_check_report(&found, "0.8.0")
+                .contains(&format!("Run (from {}): codemark install-skill", repo.display()))
         );
 
         let user = found.iter().find(|i| i.scope == SkillScope::User).unwrap();
@@ -767,8 +781,14 @@ mod tests {
         );
 
         // Filters narrow the scan.
-        assert!(scan_installs(Some(SkillAgent::Gemini), None, "0.8.0", &home, &sub).is_empty());
-        assert_eq!(scan_installs(None, Some(SkillScope::User), "0.8.0", &home, &sub).len(), 1);
+        assert!(
+            scan_installs(Some(SkillAgent::Gemini), None, "0.8.0", Some(&home), Some(&sub))
+                .is_empty()
+        );
+        assert_eq!(
+            scan_installs(None, Some(SkillScope::User), "0.8.0", Some(&home), None).len(),
+            1
+        );
     }
 
     #[test]
@@ -780,19 +800,27 @@ mod tests {
         install_skill_at(&home.join(".claude/skills"), Some("0.8.0"));
 
         // The install above the repo root belongs to the user scope only.
-        let found = scan_installs(None, None, "0.8.0", &home, &repo);
+        let found = scan_installs(None, None, "0.8.0", Some(&home), Some(&repo));
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].scope, SkillScope::User);
 
         // Run from $HOME: user and project roots coincide, reported once.
-        let found = scan_installs(None, None, "0.8.0", &home, &home);
+        let found = scan_installs(None, None, "0.8.0", Some(&home), Some(&home));
         assert_eq!(found.len(), 1);
         assert_eq!(found[0].status, SkillStatus::Current);
     }
 
     #[test]
-    fn test_shell_quote() {
-        assert_eq!(shell_quote("/a/b-c_d.e"), "/a/b-c_d.e");
-        assert_eq!(shell_quote("/a b/it's"), r"'/a b/it'\''s'");
+    fn test_record_installed_version_rejects_conflicting_marker() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join(VERSION_FILE), "0.7.30\n").unwrap();
+        assert!(record_installed_version(dir.path(), "0.8.0").is_err());
+        assert_eq!(read_version_file(dir.path()).as_deref(), Some("0.7.30"));
+
+        // Matching (modulo `v`) and dev-placeholder markers are accepted.
+        assert!(record_installed_version(dir.path(), "v0.7.30").is_ok());
+        std::fs::write(dir.path().join(VERSION_FILE), "0.0.0-dev\n").unwrap();
+        record_installed_version(dir.path(), "0.8.0").unwrap();
+        assert_eq!(read_version_file(dir.path()).as_deref(), Some("0.8.0"));
     }
 }

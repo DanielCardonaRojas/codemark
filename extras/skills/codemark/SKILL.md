@@ -30,7 +30,8 @@ It compares every installed codemark skill against the `codemark` binary. If it
 reports a mismatch, tell the user — in one line, without stopping your task —
 that their codemark skill doesn't match the binary, and quote the exact
 reinstall command it prints (e.g.
-`codemark install-skill --agent claude --scope user --force`). If `--check` is
+`codemark install-skill --agent claude --scope user --force`), plus the
+directory to run it from when it reports one (`run_from`). If `--check` is
 not recognized, the binary predates this skill: run `codemark --version` and
 suggest upgrading codemark. Skip the warning for development builds (versions ending in
 `-dev`).
