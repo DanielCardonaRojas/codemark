@@ -432,6 +432,7 @@ mod tests {
             wasm_url: wasm.then(|| format!("https://example.com/{name}.wasm")),
             wasm_sha256: wasm.then(|| "0".repeat(64)),
             overrides_builtin: false,
+            stale: None,
         }
     }
 
