@@ -115,6 +115,13 @@ pub struct RegistryEntry {
     /// [`Self::consents_to_override`].
     #[serde(default)]
     pub overrides_builtin: bool,
+
+    /// Set when this entry came from an index the registry could not confirm —
+    /// a stale cache served because the fetch failed; holds the fetch error.
+    /// Carried from [`RegistryIndex::stale`] so an install can tell the user it
+    /// used possibly outdated metadata. Not part of the wire format.
+    #[serde(skip)]
+    pub stale: Option<String>,
 }
 
 impl RegistryEntry {
@@ -367,13 +374,17 @@ impl RegistryClient {
         // so beats resurrecting a copy the registry has dropped.
         match self.fetch_index(true).await {
             Ok(index) => Self::pick(index, name),
-            Err(_) => Ok(entry),
+            // The cached entry is all there is, and the registry couldn't
+            // confirm it — say so rather than letting it pass as current.
+            Err(e) => Ok(RegistryEntry { stale: Some(e.to_string()), ..entry }),
         }
     }
 
     fn pick(index: RegistryIndex, name: &str) -> Result<RegistryEntry> {
         let needle = name.to_lowercase();
-        index.grammars.into_iter().find(|e| e.name.to_lowercase() == needle).ok_or_else(|| {
+        let stale = index.stale;
+        let found = index.grammars.into_iter().find(|e| e.name.to_lowercase() == needle);
+        found.map(|entry| RegistryEntry { stale, ..entry }).ok_or_else(|| {
             Error::Input(format!(
                 "'{name}' is not in the grammar registry — run `codemark languages registry \
                      list` to see what is available"
@@ -703,6 +714,11 @@ mod tests {
 
         let cached = std::fs::read_to_string(client.index_cache_path()).unwrap();
         assert!(!cached.contains("stale"), "the marker is not part of the wire format");
+
+        // And it reaches the entry an install uses, so `languages install` can
+        // warn that it is installing from outdated metadata.
+        let entry = client.find("lua", true).await.unwrap();
+        assert!(entry.stale.is_some(), "an entry from a stale index is stale");
     }
 
     #[tokio::test]
@@ -900,6 +916,7 @@ mod tests {
             wasm_url: Some(url.into()),
             wasm_sha256: sha.map(String::from),
             overrides_builtin: false,
+            stale: None,
         }
     }
 
@@ -1005,6 +1022,7 @@ mod tests {
             wasm_url: None,
             wasm_sha256: None,
             overrides_builtin: true,
+            stale: None,
         }
     }
 
@@ -1185,6 +1203,8 @@ mod tests {
         let entry = client.find_for_install("dart", false).await.unwrap();
         assert_eq!(entry.name, "dart");
         assert!(!entry.overrides_builtin);
+        // The registry couldn't confirm it, and the install must be able to say so.
+        assert!(entry.stale.is_some(), "a cached entry the refetch couldn't confirm is stale");
         // And it is still refused without the flag.
         let err =
             crate::grammar::validate_registry_install(&entry, "dart", "dart", false).unwrap_err();
