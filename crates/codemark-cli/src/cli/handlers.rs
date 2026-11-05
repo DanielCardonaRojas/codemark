@@ -1329,7 +1329,10 @@ impl SkippedGrammars {
         match loaded {
             Ok(cache) => Some(cache),
             Err(e) => {
-                tracing::warn!(
+                // Debug, not warn: `report` prints one grouped line per missing
+                // grammar, and the CLI shows `codemark::languages` warnings on
+                // stderr — a warn here would repeat it for every bookmark.
+                tracing::debug!(
                     target: "codemark::languages",
                     bookmark = %bm.id,
                     language = %bm.language,

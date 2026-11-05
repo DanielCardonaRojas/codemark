@@ -219,7 +219,7 @@ async fn handle_registry_list(
     let index = client.fetch_index(args.refresh).await?;
     if let Some(error) = &index.stale {
         eprintln!(
-            "codemark: could not reach the grammar registry ({error}); using the cached index"
+            "codemark: could not load the grammar registry ({error}); using the cached index"
         );
     }
 
@@ -265,7 +265,7 @@ fn print_install_outcome(
     outcome: &InstallOutcome,
     curated_profile: bool,
 ) -> Result<()> {
-    let InstallOutcome { name, directory, extensions, runtime_enabled } = outcome;
+    let InstallOutcome { name, directory, extensions, runtime_enabled, registry_stale } = outcome;
     let ext_list = extensions.join(", ");
 
     if matches!(mode, OutputMode::Json) {
@@ -276,8 +276,15 @@ fn print_install_outcome(
             "extensions": extensions,
             "runtime_enabled": runtime_enabled,
             "curated_profile": curated_profile,
+            "registry_stale": registry_stale,
         }))?;
     } else {
+        if let Some(error) = registry_stale {
+            eprintln!(
+                "codemark: could not load the grammar registry ({error}); installed from the \
+                 cached index, which may be out of date"
+            );
+        }
         println!("Successfully added grammar for '{name}' to {}", directory.display());
         if *runtime_enabled {
             println!(
