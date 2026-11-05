@@ -169,9 +169,8 @@ impl SettingsOverlay {
     pub fn open_languages(&mut self, language: Option<&str>) -> SettingsAction {
         self.visible = true;
         self.tab = SettingsTab::Languages;
-        if let Some(language) = language {
-            self.languages.preselect(language);
-        }
+        // Always called, so opening without a language drops an earlier request.
+        self.languages.preselect(language);
         self.on_tab_shown()
     }
 
