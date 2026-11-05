@@ -77,6 +77,13 @@ pub enum Event {
     /// spinner sweep so overlapping pulls of *different* tours each release
     /// independently.
     TourPullFinished(String),
+    /// The grammar registry index finished loading for the settings
+    /// overlay's Languages tab. `Err` carries a displayable message: there was
+    /// no index at all, not even a cached one.
+    RegistryIndexLoaded(Result<codemark_core::grammar::registry_source::RegistryIndex, String>),
+    /// A grammar install requested from the Languages tab finished. `name` is
+    /// the registry name that was requested; `Err` carries a displayable message.
+    GrammarInstalled { name: String, result: Result<(), String> },
     /// Remote tours listing completed (tours, repos scope used for the request —
     /// the comma-joined `owner/name` set, for discarding stale responses).
     RemoteToursLoaded(Vec<codemark_core::sync::RemoteTourSummary>, Option<String>),

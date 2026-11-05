@@ -354,30 +354,8 @@ impl BrowserLayout {
                     self.registry = registry;
                 }
                 // The user may also have installed or removed a WASM grammar via
-                // `codemark languages add`/`remove` while unfocused. Re-scan the
-                // grammar cache so live resolution picks up new languages instead
-                // of retaining the startup snapshot until the process restarts.
-                codemark_core::parser::registry::LanguageRegistry::refresh();
-                // The parse caches key their `Parser`/`Profile` by language name,
-                // so after a refresh an *updated* grammar would still be served
-                // from the old cached parser. Drop both the synchronous session
-                // cache and the background preview cache so the next resolution
-                // rebuilds against the freshly discovered grammar.
-                self.session_cache.clear();
-                self.preview_cache.lock().unwrap_or_else(|e| e.into_inner()).clear();
-                // Advance the health epoch so any live-health task spawned under
-                // the previous grammar is discarded on arrival rather than
-                // overwriting the panels we're about to rebuild.
-                self.health_generation = self.health_generation.wrapping_add(1);
-                tracing::debug!(
-                    target: "codemark::ui",
-                    health_generation = self.health_generation,
-                    "advanced health epoch on FocusGained grammar refresh"
-                );
-                // Same hazard for the bookmark preview: a preview task spawned
-                // before the refresh would resolve with the old grammar. Bumping
-                // the request id drops any in-flight/queued preview result.
-                self.cancel_inflight_preview();
+                // `codemark languages add`/`remove` while unfocused.
+                self.forget_grammar_state();
                 self.update_tours_tab_visibility();
 
                 // Leaving the terminal is the only way the git HEAD moves while a

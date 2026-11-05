@@ -17,6 +17,14 @@ pub enum SettingsAction {
     ThemeChanged,
     /// Surface a transient message to the user (e.g. a failed save or open).
     Notify(String),
+    /// Fetch the grammar registry index on a background task and report back
+    /// via `Event::RegistryIndexLoaded`. `refresh` bypasses the on-disk cache.
+    FetchRegistry {
+        refresh: bool,
+    },
+    /// Download and install a registry grammar on a background task and report
+    /// back via `Event::GrammarInstalled`.
+    InstallGrammar(String),
 }
 
 /// The tabs available in the settings overlay, in display order.
@@ -27,20 +35,27 @@ pub enum SettingsTab {
     Configuration,
     /// Theme selector.
     Theme,
+    /// Installed and installable grammars, from the grammar registry.
+    Languages,
     /// Version and project links (repository, support).
     About,
 }
 
 impl SettingsTab {
     /// Every tab, in the order they appear in the tab bar.
-    pub const ALL: &'static [SettingsTab] =
-        &[SettingsTab::Configuration, SettingsTab::Theme, SettingsTab::About];
+    pub const ALL: &'static [SettingsTab] = &[
+        SettingsTab::Configuration,
+        SettingsTab::Theme,
+        SettingsTab::Languages,
+        SettingsTab::About,
+    ];
 
     /// The label shown for this tab in the tab bar.
     fn title(self) -> &'static str {
         match self {
             SettingsTab::Configuration => "Configuration",
             SettingsTab::Theme => "Theme",
+            SettingsTab::Languages => "Languages",
             SettingsTab::About => "About",
         }
     }
@@ -82,6 +97,7 @@ pub struct SettingsOverlay {
     saved_theme: Option<String>,
     selected_about_link: usize,
     selected_config_row: usize,
+    languages: crate::languages_tab::LanguagesTab,
     /// Screen rectangles of each tab label in the title bar, recorded on every
     /// render so [`SettingsOverlay::handle_mouse`] can map a click back to a
     /// tab. Interior mutability keeps `render` taking `&self`.
@@ -128,6 +144,7 @@ impl SettingsOverlay {
             saved_theme,
             selected_about_link: 0,
             selected_config_row: 0,
+            languages: crate::languages_tab::LanguagesTab::new(),
             tab_hit_areas: RefCell::new(Vec::new()),
         }
     }
@@ -142,11 +159,27 @@ impl SettingsOverlay {
         self.tab
     }
 
+    /// The Languages tab, for the main loop to deliver background results to.
+    pub fn languages_mut(&mut self) -> &mut crate::languages_tab::LanguagesTab {
+        &mut self.languages
+    }
+
     /// Toggle visibility (the `,` entry point).
     pub fn toggle(&mut self) -> SettingsAction {
         self.visible = !self.visible;
         if !self.visible {
             return self.hide();
+        }
+        self.on_tab_shown()
+    }
+
+    /// Run the shown tab's first-show work: the Languages tab fetches the
+    /// registry index the first time it is displayed.
+    fn on_tab_shown(&mut self) -> SettingsAction {
+        if self.tab == SettingsTab::Languages
+            && let Some(action) = self.languages.on_shown()
+        {
+            return action;
         }
         SettingsAction::Handled
     }
@@ -204,6 +237,7 @@ impl SettingsOverlay {
             });
             if let Some(tab) = clicked {
                 self.tab = tab;
+                return self.on_tab_shown();
             }
         }
         SettingsAction::Handled
@@ -268,8 +302,15 @@ impl SettingsOverlay {
             KeyCode::Esc | KeyCode::Char(',') => {
                 return self.hide();
             }
-            KeyCode::Char(']') | KeyCode::Right | KeyCode::Tab => self.next_tab(),
-            KeyCode::Char('[') | KeyCode::Left | KeyCode::BackTab => self.prev_tab(),
+            KeyCode::Char(']') | KeyCode::Right | KeyCode::Tab => {
+                self.next_tab();
+                return self.on_tab_shown();
+            }
+            KeyCode::Char('[') | KeyCode::Left | KeyCode::BackTab => {
+                self.prev_tab();
+                return self.on_tab_shown();
+            }
+            _ if self.tab == SettingsTab::Languages => return self.languages.handle_key(code),
             KeyCode::Char('j') | KeyCode::Down => {
                 if self.tab == SettingsTab::Theme {
                     let max = self.available_themes.len().saturating_sub(1);
@@ -395,6 +436,7 @@ impl SettingsOverlay {
             SettingsTab::Theme => {
                 render_theme(chunks[0], buf, &self.available_themes, self.selected_theme)
             }
+            SettingsTab::Languages => self.languages.render(chunks[0], buf),
             SettingsTab::About => render_about(chunks[0], buf, self.selected_about_link),
         }
 
@@ -408,6 +450,7 @@ impl SettingsOverlay {
                 Span::styled(" close/revert", Style::default().fg(palette.dim)),
             ])
             .alignment(Alignment::Center),
+            SettingsTab::Languages => self.languages.hint(),
             SettingsTab::About | SettingsTab::Configuration => Line::from(vec![
                 Span::styled("j/k", Style::default().fg(palette.accent).bold()),
                 Span::styled(" select link    ", Style::default().fg(palette.dim)),
@@ -590,13 +633,53 @@ mod tests {
 
         // Forward wraps from the last tab back to the first.
         for _ in 0..SettingsTab::ALL.len() {
-            assert_eq!(overlay.handle_key(KeyCode::Char(']'), &[]), SettingsAction::Handled);
+            let action = overlay.handle_key(KeyCode::Char(']'), &[]);
+            assert_eq!(action, expected_on_arrival(overlay.tab()));
         }
         assert_eq!(overlay.tab(), SettingsTab::Configuration);
 
         // Backward from the first tab wraps to the last.
         assert_eq!(overlay.handle_key(KeyCode::Char('['), &[]), SettingsAction::Handled);
         assert_eq!(overlay.tab(), *SettingsTab::ALL.last().unwrap());
+    }
+
+    /// What arriving on `tab` for the first time asks the main loop to do: the
+    /// Languages tab fetches the registry index; every other tab nothing.
+    fn expected_on_arrival(tab: SettingsTab) -> SettingsAction {
+        match tab {
+            SettingsTab::Languages => SettingsAction::FetchRegistry { refresh: false },
+            _ => SettingsAction::Handled,
+        }
+    }
+
+    #[test]
+    fn the_languages_tab_fetches_the_registry_once() {
+        let mut overlay = SettingsOverlay::new(None);
+        overlay.toggle();
+        while overlay.tab() != SettingsTab::Theme {
+            overlay.handle_key(KeyCode::Char(']'), &[]);
+        }
+        assert_eq!(
+            overlay.handle_key(KeyCode::Char(']'), &[]),
+            SettingsAction::FetchRegistry { refresh: false }
+        );
+        assert_eq!(overlay.tab(), SettingsTab::Languages);
+
+        // Leaving and coming back doesn't fetch again while one is in flight.
+        overlay.handle_key(KeyCode::Char(']'), &[]);
+        assert_eq!(overlay.handle_key(KeyCode::Char('['), &[]), SettingsAction::Handled);
+
+        // Closing and reopening on the tab doesn't either.
+        overlay.handle_key(KeyCode::Esc, &[]);
+        assert_eq!(overlay.toggle(), SettingsAction::Handled);
+        assert_eq!(overlay.tab(), SettingsTab::Languages);
+
+        // Keys on the tab go to it: `r` asks for a forced refresh.
+        overlay.languages_mut().on_index_loaded(Err("offline".into()));
+        assert_eq!(
+            overlay.handle_key(KeyCode::Char('r'), &[]),
+            SettingsAction::FetchRegistry { refresh: true }
+        );
     }
 
     #[test]
@@ -639,7 +722,7 @@ mod tests {
                 row,
                 modifiers: crossterm::event::KeyModifiers::NONE,
             };
-            assert_eq!(overlay.handle_mouse(click), SettingsAction::Handled);
+            assert_eq!(overlay.handle_mouse(click), expected_on_arrival(tab));
             assert_eq!(overlay.tab(), tab);
         }
     }

@@ -65,7 +65,7 @@ pub async fn install_from_path(
     let extensions = validate_name_and_extensions_opt(&name, &raw_extensions, override_builtin)?;
 
     let wasm_bytes = resolved.wasm.into_bytes().await?;
-    install_grammar(&name, &extensions, resolved.profile, wasm_bytes)
+    install_grammar(&name, &extensions, resolved.profile, None, wasm_bytes)
 }
 
 /// Install a local `.wasm` using a **curated profile** fetched from the grammar
@@ -134,7 +134,8 @@ async fn install_registry_entry(
         "installing with a registry profile"
     );
 
-    let outcome = install_grammar(&name, &extensions, profile, wasm_bytes)?;
+    let outcome =
+        install_grammar(&name, &extensions, profile, entry.profile_version.as_deref(), wasm_bytes)?;
     Ok(InstallOutcome { registry_stale: entry.stale, ..outcome })
 }
 
@@ -210,8 +211,13 @@ async fn download_registry_entry(
         "installing a downloaded grammar"
     );
 
-    let outcome =
-        install_grammar(&name, &extensions, manifest.get("profile").cloned(), wasm_bytes)?;
+    let outcome = install_grammar(
+        &name,
+        &extensions,
+        manifest.get("profile").cloned(),
+        entry.profile_version.as_deref(),
+        wasm_bytes,
+    )?;
     Ok(InstallOutcome { registry_stale: entry.stale, ..outcome })
 }
 
@@ -252,6 +258,7 @@ pub fn install_grammar(
     name: &str,
     extensions: &[String],
     profile: Option<serde_json::Value>,
+    profile_version: Option<&str>,
     wasm_bytes: Vec<u8>,
 ) -> Result<InstallOutcome> {
     let Some(grammar_dir) = crate::config::global_grammars_dir() else {
@@ -279,7 +286,7 @@ pub fn install_grammar(
     let lang_dir = grammar_dir.join(safe_name);
     reject_symlink(&lang_dir, name)?;
 
-    let manifest_str = build_manifest(name, extensions, profile)?;
+    let manifest_str = build_manifest(name, extensions, profile, profile_version)?;
 
     install_staged(&grammar_dir, safe_name, &lang_dir, &wasm_bytes, manifest_str.as_bytes(), name)?;
 
@@ -296,10 +303,16 @@ pub fn install_grammar(
 /// empty object (`{}`); `Some(..)` is written verbatim so a registry can ship a
 /// curated profile. Extracted so the profile-threading can be tested without
 /// touching the filesystem or the global grammar cache.
+///
+/// `profile_version` is the registry's version of the curated profile, when
+/// the install came from the registry. Recording it is what lets a UI show the
+/// version actually installed — not whatever the registry lists today — and
+/// tell when a newer profile is available. Omitted (not `null`) when unknown.
 fn build_manifest(
     name: &str,
     extensions: &[String],
     profile: Option<serde_json::Value>,
+    profile_version: Option<&str>,
 ) -> Result<String> {
     // Validate a supplied profile against the `Profile` schema *before* it's
     // written, so a source (e.g. a future registry) can't commit a manifest whose
@@ -317,13 +330,29 @@ fn build_manifest(
         }
         None => serde_json::json!({}),
     };
-    let manifest_json = serde_json::json!({
+    let mut manifest_json = serde_json::json!({
         "name": name,
         "version": "0.1.0",
         "extensions": extensions,
         "profile": profile,
     });
+    if let Some(version) = profile_version {
+        manifest_json["profile_version"] = serde_json::json!(version);
+    }
     Ok(serde_json::to_string_pretty(&manifest_json).unwrap())
+}
+
+/// The registry profile version recorded when `language` was installed, read
+/// from the `manifest.json` beside its grammar. `None` for a built-in, a
+/// grammar installed from a local file, or one installed before codemark
+/// recorded the version.
+pub fn installed_profile_version(
+    language: &crate::parser::languages::DynamicLanguage,
+) -> Option<String> {
+    let manifest = language.wasm_path.parent()?.join("manifest.json");
+    let text = std::fs::read_to_string(manifest).ok()?;
+    let value: serde_json::Value = serde_json::from_str(&text).ok()?;
+    value.get("profile_version")?.as_str().map(String::from)
 }
 
 /// Validate a registry install, letting the entry's own `overrides_builtin`
@@ -807,9 +836,49 @@ mod tests {
     }
 
     #[test]
+    fn manifest_records_the_registry_profile_version_only_when_known() {
+        let exts = ["lua".to_string()];
+        let with: serde_json::Value =
+            serde_json::from_str(&build_manifest("lua", &exts, None, Some("2.0.0")).unwrap())
+                .unwrap();
+        assert_eq!(with["profile_version"], "2.0.0");
+
+        let without: serde_json::Value =
+            serde_json::from_str(&build_manifest("lua", &exts, None, None).unwrap()).unwrap();
+        assert!(without.get("profile_version").is_none(), "omitted, not null");
+    }
+
+    #[test]
+    fn installed_profile_version_reads_the_manifest_beside_the_grammar() {
+        let tmp = tempfile::tempdir().unwrap();
+        let lang = |dir: &std::path::Path| crate::parser::languages::DynamicLanguage {
+            name: "lua".into(),
+            extensions: vec!["lua".into()],
+            wasm_path: dir.join("grammar.wasm"),
+            profile: Default::default(),
+        };
+        let exts = ["lua".to_string()];
+
+        std::fs::write(
+            tmp.path().join("manifest.json"),
+            build_manifest("lua", &exts, None, Some("2.1.0")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(installed_profile_version(&lang(tmp.path())).as_deref(), Some("2.1.0"));
+
+        // Installed before the version was recorded: unknown, not a guess.
+        std::fs::write(
+            tmp.path().join("manifest.json"),
+            build_manifest("lua", &exts, None, None).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(installed_profile_version(&lang(tmp.path())), None);
+    }
+
+    #[test]
     fn manifest_writes_empty_profile_when_none() {
         let m: serde_json::Value =
-            serde_json::from_str(&build_manifest("lua", &["lua".to_string()], None).unwrap())
+            serde_json::from_str(&build_manifest("lua", &["lua".to_string()], None, None).unwrap())
                 .unwrap();
         assert_eq!(m["profile"], serde_json::json!({}));
         assert_eq!(m["name"], "lua");
@@ -822,7 +891,7 @@ mod tests {
         // manifest rather than being flattened to `{}`.
         let profile = serde_json::json!({ "landmark_kinds": ["function_item"] });
         let m: serde_json::Value = serde_json::from_str(
-            &build_manifest("lua", &["lua".to_string()], Some(profile.clone())).unwrap(),
+            &build_manifest("lua", &["lua".to_string()], Some(profile.clone()), None).unwrap(),
         )
         .unwrap();
         assert_eq!(m["profile"], profile);
@@ -834,11 +903,11 @@ mod tests {
         // the manifest is written, so the writer can't commit something the
         // registry reader would fail to deserialize.
         let not_an_object = serde_json::json!("landmark_kinds");
-        assert!(build_manifest("lua", &["lua".to_string()], Some(not_an_object)).is_err());
+        assert!(build_manifest("lua", &["lua".to_string()], Some(not_an_object), None).is_err());
 
         // Wrong field type: landmark_kinds must be a string array, not a number.
         let wrong_type = serde_json::json!({ "landmark_kinds": 3 });
-        assert!(build_manifest("lua", &["lua".to_string()], Some(wrong_type)).is_err());
+        assert!(build_manifest("lua", &["lua".to_string()], Some(wrong_type), None).is_err());
     }
 
     #[test]
