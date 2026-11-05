@@ -515,6 +515,11 @@ async fn run_app() -> Result<Option<i32>> {
                 {
                     handled = layout.handle_event(&event);
                 }
+                // On FocusGained the layout re-scanned the grammar cache (above);
+                // let the Languages tab pick up an add/remove done from the CLI.
+                if matches!(event, Event::FocusGained) {
+                    settings.languages_mut().on_grammars_changed();
+                }
 
                 // Let state handle the event too (captures keys for Search mode)
                 // Skip when an overlay is shown to keep it modal
