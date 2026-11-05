@@ -784,8 +784,14 @@ mod tests {
 
         tab.on_index_loaded(Ok(registry()));
         assert_eq!(tab.rows()[tab.selected].name, "swift");
-        // So Enter installs exactly what the bookmark needs.
-        assert_eq!(tab.handle_key(KeyCode::Enter), SettingsAction::InstallGrammar("swift".into()));
+        // So Enter installs exactly what the bookmark needs (in a build that
+        // can load WASM grammars; without it Enter explains instead).
+        if cfg!(feature = "wasm") {
+            assert_eq!(
+                tab.handle_key(KeyCode::Enter),
+                SettingsAction::InstallGrammar("swift".into())
+            );
+        }
     }
 
     #[test]
