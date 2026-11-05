@@ -43,6 +43,10 @@ pub struct InstalledGrammar {
     pub extensions: Vec<String>,
     /// Compiled into the binary rather than loaded from the grammar cache.
     pub builtin: bool,
+    /// The registry profile version recorded at install time, if any. Read
+    /// from the installed manifest, never from the registry's current index —
+    /// that would make an outdated install look current.
+    pub profile_version: Option<String>,
 }
 
 impl InstalledGrammar {
@@ -56,6 +60,10 @@ impl InstalledGrammar {
                 name: lang.name().to_string(),
                 extensions: lang.file_extensions(),
                 builtin: lang.identity() == GrammarIdentity::Builtin,
+                profile_version: match &lang {
+                    Language::Dynamic(dl) => codemark_core::grammar::installed_profile_version(dl),
+                    _ => None,
+                },
             })
             .collect()
     }
@@ -80,10 +88,6 @@ pub struct Row {
 /// as the grammar actually in use. An installed grammar counts against a
 /// registry entry by name, case-insensitively.
 pub fn build_rows(installed: &[InstalledGrammar], index: Option<&RegistryIndex>) -> Vec<Row> {
-    let registry_entry = |name: &str| {
-        index.and_then(|ix| ix.grammars.iter().find(|e| e.name.eq_ignore_ascii_case(name)))
-    };
-
     // A dynamic grammar wins over a built-in of the same name, so list that one.
     let mut by_name: HashMap<String, &InstalledGrammar> = HashMap::new();
     for g in installed {
@@ -98,13 +102,10 @@ pub fn build_rows(installed: &[InstalledGrammar], index: Option<&RegistryIndex>)
     let mut installed_rows: Vec<Row> = by_name
         .values()
         .map(|g| {
-            let note = if g.builtin {
-                "built-in".to_string()
-            } else {
-                match registry_entry(&g.name).and_then(|e| e.profile_version.as_deref()) {
-                    Some(v) => format!("profile {v}"),
-                    None => String::new(),
-                }
+            let note = match (&g.profile_version, g.builtin) {
+                (_, true) => "built-in".to_string(),
+                (Some(v), false) => format!("profile {v}"),
+                (None, false) => String::new(),
             };
             Row {
                 name: g.name.clone(),
@@ -171,9 +172,12 @@ pub struct LanguagesTab {
     /// A one-line note shown under the status line, e.g. that a requested
     /// grammar is not in the registry.
     notice: Option<String>,
+    /// Installed grammars, cached: re-read when the tab is shown and after an
+    /// install rather than on every frame (it reads each grammar's manifest).
+    installed: Vec<InstalledGrammar>,
     /// Source of installed grammars; swapped out in tests so they don't depend
     /// on the process-global grammar registry.
-    installed: fn() -> Vec<InstalledGrammar>,
+    installed_source: fn() -> Vec<InstalledGrammar>,
 }
 
 impl Default for LanguagesTab {
@@ -187,7 +191,7 @@ impl LanguagesTab {
         Self::with_installed(InstalledGrammar::current)
     }
 
-    fn with_installed(installed: fn() -> Vec<InstalledGrammar>) -> Self {
+    fn with_installed(installed_source: fn() -> Vec<InstalledGrammar>) -> Self {
         Self {
             index: IndexState::NotLoaded,
             installing: None,
@@ -195,8 +199,14 @@ impl LanguagesTab {
             selected: 0,
             pending_select: None,
             notice: None,
-            installed,
+            installed: installed_source(),
+            installed_source,
         }
+    }
+
+    /// Re-read the installed grammars (e.g. one added from the CLI meanwhile).
+    fn refresh_installed(&mut self) {
+        self.installed = (self.installed_source)();
     }
 
     /// The current rows, recomputed so an install (or a grammar added from the
@@ -206,12 +216,15 @@ impl LanguagesTab {
             IndexState::Loaded(ix) => Some(ix),
             _ => None,
         };
-        build_rows(&(self.installed)(), index)
+        build_rows(&self.installed, index)
     }
 
     /// Request the index the first time the tab is shown. Returns the action
     /// for the main loop to run, or `None` when it is loaded or in flight.
     pub fn on_shown(&mut self) -> Option<SettingsAction> {
+        self.refresh_installed();
+        self.clamp_selection();
+        self.apply_pending_select();
         if self.index == IndexState::NotLoaded {
             self.index = IndexState::Loading;
             return Some(SettingsAction::FetchRegistry { refresh: false });
@@ -266,6 +279,7 @@ impl LanguagesTab {
         }
         match result {
             Ok(()) => {
+                self.refresh_installed();
                 self.errors.remove(name);
                 if let Some(pos) = self.rows().iter().position(|r| r.name == name) {
                     self.selected = pos;
@@ -314,6 +328,13 @@ impl LanguagesTab {
                          <grammar.wasm> --from-registry {}`",
                         row.name, row.name
                     ));
+                }
+                if !cfg!(feature = "wasm") {
+                    return SettingsAction::Notify(
+                        "This build of codemark can't load WASM grammars (built without the \
+                         `wasm` feature), so installing one would have no effect"
+                            .to_string(),
+                    );
                 }
                 if let Some(busy) = &self.installing {
                     return SettingsAction::Notify(format!("Still installing {busy}"));
@@ -491,8 +512,14 @@ mod tests {
                 name: "dart".into(),
                 extensions: vec!["dart".into()],
                 builtin: true,
+                profile_version: None,
             },
-            InstalledGrammar { name: "rust".into(), extensions: vec!["rs".into()], builtin: false },
+            InstalledGrammar {
+                name: "rust".into(),
+                extensions: vec!["rs".into()],
+                builtin: false,
+                profile_version: Some("1.0.0".into()),
+            },
         ]
     }
 
@@ -518,10 +545,21 @@ mod tests {
             ]
         );
         assert_eq!(rows[0].note, "built-in");
-        assert_eq!(
-            rows[1].note, "profile 2.0.0",
-            "installed rows show the registry's profile version"
-        );
+        // The *installed* version (1.0.0), not the registry's current 2.0.0:
+        // reading the registry would make an outdated install look current.
+        assert_eq!(rows[1].note, "profile 1.0.0");
+    }
+
+    #[test]
+    fn an_install_with_no_recorded_version_shows_none() {
+        let local = [InstalledGrammar {
+            name: "rust".into(),
+            extensions: vec!["rs".into()],
+            builtin: false,
+            profile_version: None,
+        }];
+        let rows = build_rows(&local, Some(&registry()));
+        assert_eq!(rows[0].note, "", "unknown, not borrowed from the registry");
     }
 
     #[test]
@@ -547,6 +585,7 @@ mod tests {
             name: "dart".into(),
             extensions: vec!["dart".into()],
             builtin: false,
+            profile_version: None,
         });
         let rows = build_rows(&both, None);
         let dart: Vec<_> = rows.iter().filter(|r| r.name == "dart").collect();
@@ -561,6 +600,7 @@ mod tests {
                 name: "Swift".into(),
                 extensions: vec!["swift".into()],
                 builtin: false,
+                profile_version: None,
             }],
             Some(&index(vec![entry("swift", &["swift"], true)])),
         );
