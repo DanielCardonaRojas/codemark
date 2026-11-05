@@ -284,7 +284,10 @@ impl LanguagesTab {
             // A failed *refresh* keeps the list it already had; the failure is
             // only worth a screen of its own when there is nothing to show.
             Err(_) if matches!(self.index, IndexState::Loaded(_)) => {
-                return self.clamp_selection();
+                self.clamp_selection();
+                // A pre-selection waiting on this fetch resolves against the
+                // list that is still shown.
+                return self.apply_pending_select();
             }
             Err(e) => IndexState::Failed(e),
         };
