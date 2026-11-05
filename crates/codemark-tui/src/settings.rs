@@ -164,6 +164,17 @@ impl SettingsOverlay {
         &mut self.languages
     }
 
+    /// Open the overlay on the Languages tab, selecting `language` when given
+    /// (the `I` entry point, from a bookmark that shows "No grammar").
+    pub fn open_languages(&mut self, language: Option<&str>) -> SettingsAction {
+        self.visible = true;
+        self.tab = SettingsTab::Languages;
+        if let Some(language) = language {
+            self.languages.preselect(language);
+        }
+        self.on_tab_shown()
+    }
+
     /// Toggle visibility (the `,` entry point).
     pub fn toggle(&mut self) -> SettingsAction {
         self.visible = !self.visible;

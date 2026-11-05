@@ -522,6 +522,18 @@ impl RightPane {
         self.steps_data.get(self.pager_current).map(|s| s.bookmark.id.as_str())
     }
 
+    /// The language of the bookmark currently shown, when it shows "No grammar"
+    /// — i.e. the grammar the user would need to install to see it. `None` on a
+    /// collection overview or for a bookmark whose grammar is present.
+    pub fn missing_grammar_language(&self) -> Option<&str> {
+        if self.overview_active {
+            return None;
+        }
+        let step = self.steps_data.get(self.pager_current)?;
+        (step.health == crate::component::HealthStatus::GrammarMissing)
+            .then_some(step.bookmark.language.as_str())
+    }
+
     /// The health to show on the preview-pane border. While browsing a collection
     /// overview this is the collection's cached health; otherwise it's the
     /// current step's health. `None` when nothing is loaded.

@@ -164,6 +164,13 @@ pub struct LanguagesTab {
     /// Last install error per grammar, shown under its row until retried.
     errors: HashMap<String, String>,
     selected: usize,
+    /// A grammar to select once it appears in the rows — set when the tab is
+    /// opened for a bookmark that shows "No grammar", which usually happens
+    /// before the registry index has loaded.
+    pending_select: Option<String>,
+    /// A one-line note shown under the status line, e.g. that a requested
+    /// grammar is not in the registry.
+    notice: Option<String>,
     /// Source of installed grammars; swapped out in tests so they don't depend
     /// on the process-global grammar registry.
     installed: fn() -> Vec<InstalledGrammar>,
@@ -186,6 +193,8 @@ impl LanguagesTab {
             installing: None,
             errors: HashMap::new(),
             selected: 0,
+            pending_select: None,
+            notice: None,
             installed,
         }
     }
@@ -210,6 +219,34 @@ impl LanguagesTab {
         None
     }
 
+    /// Select `language` — by any pre-0.8.0 alias too, so a `csharp` bookmark
+    /// selects `c_sharp` — now if it is listed, or once the index loads.
+    pub fn preselect(&mut self, language: &str) {
+        let name = codemark_core::parser::languages::canonical_name(language).to_string();
+        self.notice = None;
+        self.pending_select = Some(name);
+        self.apply_pending_select();
+    }
+
+    /// Resolve [`pending_select`](Self::pending_select) against the current
+    /// rows. Once the index has settled (loaded or failed) a grammar that still
+    /// isn't listed gets a notice instead of waiting forever.
+    fn apply_pending_select(&mut self) {
+        let Some(name) = self.pending_select.clone() else {
+            return;
+        };
+        if let Some(pos) = self.rows().iter().position(|r| r.name.eq_ignore_ascii_case(&name)) {
+            self.selected = pos;
+            self.pending_select = None;
+        } else if matches!(self.index, IndexState::Loaded(_) | IndexState::Failed(_)) {
+            self.notice = Some(format!(
+                "{name} is not in the grammar registry — see `codemark languages add` to install \
+                 a grammar by hand"
+            ));
+            self.pending_select = None;
+        }
+    }
+
     /// Apply a finished index fetch.
     pub fn on_index_loaded(&mut self, result: Result<RegistryIndex, String>) {
         self.index = match result {
@@ -217,6 +254,7 @@ impl LanguagesTab {
             Err(e) => IndexState::Failed(e),
         };
         self.clamp_selection();
+        self.apply_pending_select();
     }
 
     /// Apply a finished install. On success the grammar has already been
@@ -314,6 +352,13 @@ impl LanguagesTab {
                     Style::default().fg(palette.dim),
                 )),
             },
+        }
+
+        if let Some(notice) = &self.notice {
+            text.push_line(Line::styled(
+                format!(" {notice}"),
+                Style::default().fg(palette.warning),
+            ));
         }
 
         let name_width = rows.iter().map(|r| r.name.len()).max().unwrap_or(0);
@@ -573,6 +618,37 @@ mod tests {
         // Retrying clears the error and starts again.
         assert_eq!(tab.handle_key(KeyCode::Enter), SettingsAction::InstallGrammar("swift".into()));
         assert!(!tab.errors.contains_key("swift"));
+    }
+
+    #[test]
+    fn preselecting_waits_for_the_index_then_selects_the_grammar() {
+        let mut tab = LanguagesTab::with_installed(installed);
+        tab.preselect("swift");
+        assert_eq!(tab.selected, 0, "swift isn't listed until the index loads");
+
+        tab.on_index_loaded(Ok(registry()));
+        assert_eq!(tab.rows()[tab.selected].name, "swift");
+        // So Enter installs exactly what the bookmark needs.
+        assert_eq!(tab.handle_key(KeyCode::Enter), SettingsAction::InstallGrammar("swift".into()));
+    }
+
+    #[test]
+    fn preselecting_an_old_alias_selects_the_registry_name() {
+        let mut tab = LanguagesTab::with_installed(installed);
+        tab.on_index_loaded(Ok(index(vec![entry("c_sharp", &["cs"], true)])));
+        tab.preselect("csharp");
+        assert_eq!(tab.rows()[tab.selected].name, "c_sharp");
+        assert!(tab.notice.is_none());
+    }
+
+    #[test]
+    fn preselecting_a_grammar_the_registry_lacks_says_so() {
+        let mut tab = LanguagesTab::with_installed(installed);
+        tab.preselect("fortran");
+        assert!(tab.notice.is_none(), "can't tell yet: the index hasn't loaded");
+        tab.on_index_loaded(Ok(registry()));
+        assert!(tab.notice.as_deref().is_some_and(|n| n.contains("fortran")));
+        assert!(tab.pending_select.is_none());
     }
 
     #[test]

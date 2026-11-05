@@ -850,6 +850,12 @@ impl BrowserLayout {
         self.reconcile_preserved_search_rows();
     }
 
+    /// The language of the previewed bookmark when it shows "No grammar": what
+    /// the `I` key offers to install.
+    pub fn missing_grammar_language(&self) -> Option<String> {
+        self.right_pane.missing_grammar_language().map(str::to_string)
+    }
+
     /// A handle for sending events back to the main loop from a background task.
     pub fn event_sender(&self) -> crate::event::EventHandler {
         self.event_handler.clone()
