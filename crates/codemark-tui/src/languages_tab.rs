@@ -274,11 +274,22 @@ impl LanguagesTab {
             self.pending_select = None;
             self.notice = None;
             self.parked = false;
-        } else if matches!(self.index, IndexState::Loaded(_)) && !self.fetching {
-            self.notice = Some(format!(
-                "{name} is not in the grammar registry. To install a grammar by hand, see \
-                 `codemark languages add --help`."
-            ));
+        } else if let IndexState::Loaded(index) = &self.index
+            && !self.fetching
+        {
+            // A stale cache (the registry couldn't be loaded) may predate the
+            // language, so it only shows the language isn't in *that* list.
+            self.notice = Some(if index.stale.is_some() {
+                format!(
+                    "{name} isn't in the cached grammar list, which may be out of date — \
+                     press r to retry the registry."
+                )
+            } else {
+                format!(
+                    "{name} is not in the grammar registry. To install a grammar by hand, see \
+                     `codemark languages add --help`."
+                )
+            });
         }
     }
 
@@ -854,6 +865,18 @@ mod tests {
         assert!(tab.notice.as_deref().is_some_and(|n| n.contains("fortran")));
         // Kept, so a refresh that lists it can still select it.
         assert_eq!(tab.pending_select.as_deref(), Some("fortran"));
+    }
+
+    /// A stale cached index may predate the language: the notice says the
+    /// language is missing from the cached list, not from the registry.
+    #[test]
+    fn a_miss_in_a_stale_index_is_not_a_registry_verdict() {
+        let mut tab = LanguagesTab::with_installed(installed);
+        tab.on_index_loaded(Ok(RegistryIndex { stale: Some("offline".into()), ..registry() }));
+        tab.preselect(Some("fortran"));
+        let notice = tab.notice.clone().unwrap();
+        assert!(notice.contains("cached"), "{notice}");
+        assert!(!notice.contains("not in the grammar registry"), "{notice}");
     }
 
     /// A failed fetch proves nothing about the registry: no "not in the
