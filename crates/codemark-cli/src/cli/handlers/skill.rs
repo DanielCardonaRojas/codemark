@@ -298,59 +298,102 @@ struct SkillInstall {
     agent: SkillAgent,
     scope: SkillScope,
     path: PathBuf,
+    /// For project installs found above the current directory, the directory
+    /// the reinstall must run from (project scope installs relative to cwd).
+    run_from: Option<PathBuf>,
     version: Option<String>,
     status: SkillStatus,
 }
 
 impl SkillInstall {
     fn reinstall_command(&self) -> String {
-        format!(
+        let cmd = format!(
             "codemark install-skill --agent {} --scope {} --force",
             agent_name(self.agent),
             scope_name(self.scope)
-        )
+        );
+        match &self.run_from {
+            Some(dir) => format!("cd {} && {cmd}", shell_quote(&dir.display().to_string())),
+            None => cmd,
+        }
     }
+}
+
+/// Single-quote a path for a copy-pasteable POSIX shell command when needed.
+fn shell_quote(s: &str) -> String {
+    if !s.is_empty() && s.chars().all(|c| c.is_ascii_alphanumeric() || "/._-+~".contains(c)) {
+        s.to_string()
+    } else {
+        format!("'{}'", s.replace('\'', r"'\''"))
+    }
+}
+
+/// Directories that may hold a project-scope install, nearest first: `cwd`
+/// and its ancestors up to the enclosing repository root (the first directory
+/// containing `.git`). Without a repository only `cwd` is searched, so a
+/// stray install higher up the filesystem isn't misattributed to this project.
+fn project_bases(cwd: &Path) -> Vec<PathBuf> {
+    let mut bases = Vec::new();
+    for dir in cwd.ancestors() {
+        bases.push(dir.to_path_buf());
+        if dir.join(".git").exists() {
+            return bases;
+        }
+    }
+    vec![cwd.to_path_buf()]
 }
 
 /// Scan the install roots (optionally narrowed to one agent/scope) for
 /// installed codemark skills and classify each against `binary`.
+///
+/// User installs live under `home`; project installs are searched from `cwd`
+/// up to the repository root so `--check` works from any subdirectory.
 fn scan_installs(
     agent: Option<SkillAgent>,
     scope: Option<SkillScope>,
     binary: &str,
-) -> Result<Vec<SkillInstall>> {
+    home: &Path,
+    cwd: &Path,
+) -> Vec<SkillInstall> {
     let mut seen: Vec<PathBuf> = Vec::new();
     let mut found = Vec::new();
     for a in ALL_AGENTS.into_iter().filter(|a| agent.is_none_or(|x| x == *a)) {
         for s in ALL_SCOPES.into_iter().filter(|s| scope.is_none_or(|x| x == *s)) {
-            let path = skill_install_root(a, s)?.join(SKILL_NAME);
-            if !path.join("SKILL.md").is_file() {
-                continue;
+            let bases = match s {
+                SkillScope::User => vec![home.to_path_buf()],
+                SkillScope::Project => project_bases(cwd),
+            };
+            for base in bases {
+                let path = base.join(skills_rel_dir(a, s)).join(SKILL_NAME);
+                if !path.join("SKILL.md").is_file() {
+                    continue;
+                }
+                // User and project roots coincide when run from $HOME; compare
+                // canonical paths so symlinked prefixes (macOS /var ->
+                // /private/var) don't report the same install twice.
+                let key = std::fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
+                if seen.contains(&key) {
+                    continue;
+                }
+                seen.push(key);
+                let version = installed_skill_version(&path);
+                let status = compare_versions(version.as_deref(), binary);
+                tracing::debug!(
+                    target: "codemark::skill",
+                    agent = ?a,
+                    scope = ?s,
+                    path = %path.display(),
+                    version = ?version,
+                    binary = %binary,
+                    status = status.as_str(),
+                    "checked installed skill"
+                );
+                let run_from = (s == SkillScope::Project && base != cwd).then_some(base);
+                found.push(SkillInstall { agent: a, scope: s, path, run_from, version, status });
             }
-            // User and project roots coincide when run from $HOME; compare
-            // canonical paths so symlinked prefixes (macOS /var -> /private/var)
-            // don't report the same install twice.
-            let key = std::fs::canonicalize(&path).unwrap_or_else(|_| path.clone());
-            if seen.contains(&key) {
-                continue;
-            }
-            seen.push(key);
-            let version = installed_skill_version(&path);
-            let status = compare_versions(version.as_deref(), binary);
-            tracing::debug!(
-                target: "codemark::skill",
-                agent = ?a,
-                scope = ?s,
-                path = %path.display(),
-                version = ?version,
-                binary = %binary,
-                status = status.as_str(),
-                "checked installed skill"
-            );
-            found.push(SkillInstall { agent: a, scope: s, path, version, status });
         }
     }
-    Ok(found)
+    found
 }
 
 /// Handle `codemark install-skill --check`.
@@ -359,7 +402,7 @@ fn handle_check(
     agent: Option<SkillAgent>,
     scope: Option<SkillScope>,
 ) -> Result<()> {
-    let installs = scan_installs(agent, scope, BINARY_VERSION)?;
+    let installs = scan_installs(agent, scope, BINARY_VERSION, &home_dir()?, &current_dir()?);
     let stale = installs.iter().filter(|i| i.status.needs_reinstall()).count();
     if stale > 0 {
         tracing::info!(target: "codemark::skill", stale, "installed skill(s) don't match the binary");
@@ -448,21 +491,31 @@ fn scope_name(scope: SkillScope) -> &'static str {
 /// `codemark/` skill folder) for a given agent and scope.
 fn skill_install_root(agent: SkillAgent, scope: SkillScope) -> Result<PathBuf> {
     let base = match scope {
-        SkillScope::User => codemark_core::config::home_dir()
-            .ok_or_else(|| Error::Operation("could not determine home directory".to_string()))?,
-        SkillScope::Project => std::env::current_dir()
-            .map_err(|e| Error::Operation(format!("could not determine current directory: {e}")))?,
+        SkillScope::User => home_dir()?,
+        SkillScope::Project => current_dir()?,
     };
+    Ok(base.join(skills_rel_dir(agent, scope)))
+}
 
-    let rel: &str = match (agent, scope) {
+/// Path of the skills root relative to the scope's base directory.
+fn skills_rel_dir(agent: SkillAgent, scope: SkillScope) -> &'static str {
+    match (agent, scope) {
         (SkillAgent::Claude, _) => ".claude/skills",
         (SkillAgent::Copilot, SkillScope::User) => ".copilot/skills",
         (SkillAgent::Copilot, SkillScope::Project) => ".github/skills",
         (SkillAgent::Agents, _) => ".agents/skills",
         (SkillAgent::Gemini, _) => ".gemini/skills",
-    };
+    }
+}
 
-    Ok(base.join(rel))
+fn home_dir() -> Result<PathBuf> {
+    codemark_core::config::home_dir()
+        .ok_or_else(|| Error::Operation("could not determine home directory".to_string()))
+}
+
+fn current_dir() -> Result<PathBuf> {
+    std::env::current_dir()
+        .map_err(|e| Error::Operation(format!("could not determine current directory: {e}")))
 }
 
 /// Extract a zip archive into `dest`.
@@ -651,6 +704,7 @@ mod tests {
                 agent: SkillAgent::Claude,
                 scope: SkillScope::User,
                 path: PathBuf::from("/h/.claude/skills/codemark"),
+                run_from: None,
                 version: Some("0.7.30".into()),
                 status: SkillStatus::Mismatch,
             },
@@ -658,6 +712,7 @@ mod tests {
                 agent: SkillAgent::Copilot,
                 scope: SkillScope::Project,
                 path: PathBuf::from("/p/.github/skills/codemark"),
+                run_from: None,
                 version: Some("0.8.0".into()),
                 status: SkillStatus::Current,
             },
@@ -668,5 +723,76 @@ mod tests {
         ));
         assert!(out.contains("ok        copilot (project): skill 0.8.0 matches codemark 0.8.0"));
         assert!(render_check_report(&[], "0.8.0").starts_with("No codemark skill installed"));
+    }
+    fn install_skill_at(skills_root: &Path, version: Option<&str>) {
+        let dir = skills_root.join(SKILL_NAME);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("SKILL.md"), "---\nname: codemark\n---\n").unwrap();
+        if let Some(v) = version {
+            std::fs::write(dir.join(VERSION_FILE), v).unwrap();
+        }
+    }
+
+    #[test]
+    fn test_scan_finds_project_install_above_cwd() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path().join("home");
+        let repo = tmp.path().join("repo");
+        let sub = repo.join("src/deep");
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::create_dir_all(&sub).unwrap();
+        std::fs::create_dir_all(repo.join(".git")).unwrap();
+        install_skill_at(&repo.join(".claude/skills"), Some("0.7.30"));
+        install_skill_at(&home.join(".agents/skills"), None);
+
+        let found = scan_installs(None, None, "0.8.0", &home, &sub);
+        assert_eq!(found.len(), 2);
+
+        let project = found.iter().find(|i| i.scope == SkillScope::Project).unwrap();
+        assert_eq!(project.agent, SkillAgent::Claude);
+        assert_eq!(project.status, SkillStatus::Mismatch);
+        assert_eq!(project.run_from.as_deref(), Some(repo.as_path()));
+        assert!(project.reinstall_command().starts_with("cd "));
+        assert!(
+            project
+                .reinstall_command()
+                .ends_with("&& codemark install-skill --agent claude --scope project --force")
+        );
+
+        let user = found.iter().find(|i| i.scope == SkillScope::User).unwrap();
+        assert_eq!(user.status, SkillStatus::Unversioned);
+        assert_eq!(
+            user.reinstall_command(),
+            "codemark install-skill --agent agents --scope user --force"
+        );
+
+        // Filters narrow the scan.
+        assert!(scan_installs(Some(SkillAgent::Gemini), None, "0.8.0", &home, &sub).is_empty());
+        assert_eq!(scan_installs(None, Some(SkillScope::User), "0.8.0", &home, &sub).len(), 1);
+    }
+
+    #[test]
+    fn test_scan_stops_at_repo_root_and_dedupes_home() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path().to_path_buf();
+        let repo = home.join("repo");
+        std::fs::create_dir_all(repo.join(".git")).unwrap();
+        install_skill_at(&home.join(".claude/skills"), Some("0.8.0"));
+
+        // The install above the repo root belongs to the user scope only.
+        let found = scan_installs(None, None, "0.8.0", &home, &repo);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].scope, SkillScope::User);
+
+        // Run from $HOME: user and project roots coincide, reported once.
+        let found = scan_installs(None, None, "0.8.0", &home, &home);
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0].status, SkillStatus::Current);
+    }
+
+    #[test]
+    fn test_shell_quote() {
+        assert_eq!(shell_quote("/a/b-c_d.e"), "/a/b-c_d.e");
+        assert_eq!(shell_quote("/a b/it's"), r"'/a b/it'\''s'");
     }
 }
