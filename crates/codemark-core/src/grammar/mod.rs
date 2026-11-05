@@ -120,7 +120,8 @@ pub async fn install_from_registry(
         "installing with a registry profile"
     );
 
-    install_grammar(&name, &extensions, profile, wasm_bytes)
+    let outcome = install_grammar(&name, &extensions, profile, wasm_bytes)?;
+    Ok(InstallOutcome { registry_stale: entry.stale, ..outcome })
 }
 
 /// Install a language end to end from the registry: download the grammar it
@@ -182,7 +183,9 @@ pub async fn install_from_registry_download(
         "installing a downloaded grammar"
     );
 
-    install_grammar(&name, &extensions, manifest.get("profile").cloned(), wasm_bytes)
+    let outcome =
+        install_grammar(&name, &extensions, manifest.get("profile").cloned(), wasm_bytes)?;
+    Ok(InstallOutcome { registry_stale: entry.stale, ..outcome })
 }
 
 /// The outcome of a successful [`install_grammar`], returned so the caller can
@@ -198,6 +201,10 @@ pub struct InstallOutcome {
     /// Whether this build can actually load the grammar at runtime (the `wasm`
     /// feature). When false the files are installed but inert.
     pub runtime_enabled: bool,
+    /// For a registry install: set when the registry could not be reached and
+    /// the entry came from a stale cache, holding the fetch error. Core never
+    /// prints it; the CLI and the TUI each surface it their own way.
+    pub registry_stale: Option<String>,
 }
 
 /// Install a grammar from in-memory `wasm_bytes` under `name`, writing a manifest
@@ -254,6 +261,7 @@ pub fn install_grammar(
         directory: lang_dir,
         extensions: extensions.to_vec(),
         runtime_enabled: cfg!(feature = "wasm"),
+        registry_stale: None,
     })
 }
 

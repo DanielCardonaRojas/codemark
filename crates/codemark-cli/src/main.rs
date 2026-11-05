@@ -32,6 +32,8 @@ async fn main() {
         std::process::exit(err.code);
     }
 
+    init_diagnostics();
+
     // Write the shipped templates, refreshing any that are out of date.
     //
     // A template on disk always wins over the compiled-in default, so a copy
@@ -51,4 +53,30 @@ async fn main() {
     if let Err(err) = handlers::dispatch(cli).await {
         exit_with_error(&err);
     }
+}
+
+/// Route core's diagnostics to stderr for CLI commands.
+///
+/// Core reports through `tracing` and never prints, because the TUI runs the
+/// same code and stderr would draw over its screen. The CLI has no such
+/// constraint, so warnings a user should see — a grammar override that failed
+/// to load and fell back to the built-in, samples that didn't parse during
+/// `profile init` — are written to stderr here. `RUST_LOG` overrides the
+/// default filter for debugging.
+///
+/// Installed only after the TUI dispatch above, which runs (bundled) or execs
+/// (standalone) before reaching here and sets up its own file logging.
+fn init_diagnostics() {
+    use std::io::IsTerminal;
+    use tracing_subscriber::EnvFilter;
+    let filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new("codemark::languages=warn"));
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter(filter)
+        .with_writer(std::io::stderr)
+        // Colour only for a person at a terminal, not for logs or pipes.
+        .with_ansi(std::io::stderr().is_terminal())
+        .without_time()
+        .with_target(false)
+        .try_init();
 }
