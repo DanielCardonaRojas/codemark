@@ -209,6 +209,14 @@ impl LanguagesTab {
         self.installed = (self.installed_source)();
     }
 
+    /// The grammar cache changed outside the tab — the terminal regained focus
+    /// after a `codemark languages add`/`remove`, say. Re-read what is
+    /// installed so a removed grammar stops looking installed.
+    pub fn on_grammars_changed(&mut self) {
+        self.refresh_installed();
+        self.clamp_selection();
+    }
+
     /// The current rows, recomputed so an install (or a grammar added from the
     /// CLI meanwhile) shows up without extra bookkeeping.
     pub fn rows(&self) -> Vec<Row> {
@@ -310,6 +318,8 @@ impl LanguagesTab {
                 self.selected = self.selected.saturating_sub(1);
             }
             KeyCode::Char('r') => {
+                // Refresh both halves: what is installed may have changed too.
+                self.on_grammars_changed();
                 if self.index != IndexState::Loading {
                     self.index = IndexState::Loading;
                     return SettingsAction::FetchRegistry { refresh: true };
@@ -625,6 +635,7 @@ mod tests {
         tab.selected = tab.rows().iter().position(|r| r.name == name).unwrap();
     }
 
+    #[cfg(feature = "wasm")]
     #[test]
     fn enter_installs_an_available_grammar_one_at_a_time() {
         let mut tab = LanguagesTab::with_installed(installed);
@@ -645,6 +656,54 @@ mod tests {
         );
     }
 
+    /// A build that can't load WASM grammars refuses the install up front
+    /// rather than saving a grammar it can never use.
+    #[cfg(not(feature = "wasm"))]
+    #[test]
+    fn without_wasm_enter_explains_instead_of_installing() {
+        let mut tab = LanguagesTab::with_installed(installed);
+        tab.on_index_loaded(Ok(registry()));
+        select(&mut tab, "swift");
+        assert!(matches!(
+            tab.handle_key(KeyCode::Enter),
+            SettingsAction::Notify(m) if m.contains("wasm")
+        ));
+        assert!(tab.installing.is_none());
+    }
+
+    #[test]
+    fn r_rereads_what_is_installed() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        static REMOVED: AtomicBool = AtomicBool::new(false);
+        fn source() -> Vec<InstalledGrammar> {
+            let mut all = installed();
+            if REMOVED.load(Ordering::SeqCst) {
+                all.retain(|g| g.name != "rust");
+            }
+            all
+        }
+
+        let mut tab = LanguagesTab::with_installed(source);
+        tab.on_index_loaded(Ok(registry()));
+        let section = |tab: &LanguagesTab| {
+            tab.rows().into_iter().find(|r| r.name == "rust").map(|r| r.section)
+        };
+        assert_eq!(section(&tab), Some(Section::Installed));
+
+        // Removed from the CLI while the tab stayed open.
+        REMOVED.store(true, Ordering::SeqCst);
+        assert_eq!(
+            tab.handle_key(KeyCode::Char('r')),
+            SettingsAction::FetchRegistry { refresh: true }
+        );
+        assert_ne!(section(&tab), Some(Section::Installed), "no longer listed as installed");
+
+        // Once the refetched index arrives it is installable again.
+        tab.on_index_loaded(Ok(registry()));
+        assert_eq!(section(&tab), Some(Section::Available));
+    }
+
+    #[cfg(feature = "wasm")]
     #[test]
     fn a_failed_install_is_shown_and_can_be_retried() {
         let mut tab = LanguagesTab::with_installed(installed);
