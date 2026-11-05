@@ -159,6 +159,9 @@ enum IndexState {
 /// State for the Languages tab.
 pub struct LanguagesTab {
     index: IndexState,
+    /// A fetch is in flight. A loaded index stays on screen meanwhile, so a
+    /// refresh doesn't hide the Available rows (and the selection with them).
+    fetching: bool,
     /// The grammar being installed, if any. One at a time keeps the cache's
     /// install lock uncontended and the UI simple.
     installing: Option<String>,
@@ -194,6 +197,7 @@ impl LanguagesTab {
     fn with_installed(installed_source: fn() -> Vec<InstalledGrammar>) -> Self {
         Self {
             index: IndexState::NotLoaded,
+            fetching: false,
             installing: None,
             errors: HashMap::new(),
             selected: 0,
@@ -235,6 +239,7 @@ impl LanguagesTab {
         self.apply_pending_select();
         if self.index == IndexState::NotLoaded {
             self.index = IndexState::Loading;
+            self.fetching = true;
             return Some(SettingsAction::FetchRegistry { refresh: false });
         }
         None
@@ -270,10 +275,22 @@ impl LanguagesTab {
 
     /// Apply a finished index fetch.
     pub fn on_index_loaded(&mut self, result: Result<RegistryIndex, String>) {
+        // Keep the user on the same grammar across a refresh: rows can shift
+        // when the registry adds or drops an entry.
+        let was_on = self.rows().get(self.selected).map(|r| r.name.clone());
+        self.fetching = false;
         self.index = match result {
             Ok(index) => IndexState::Loaded(index),
+            // A failed *refresh* keeps the list it already had; the failure is
+            // only worth a screen of its own when there is nothing to show.
+            Err(_) if matches!(self.index, IndexState::Loaded(_)) => {
+                return self.clamp_selection();
+            }
             Err(e) => IndexState::Failed(e),
         };
+        if let Some(pos) = was_on.and_then(|n| self.rows().iter().position(|r| r.name == n)) {
+            self.selected = pos;
+        }
         self.clamp_selection();
         self.apply_pending_select();
     }
@@ -320,8 +337,13 @@ impl LanguagesTab {
             KeyCode::Char('r') => {
                 // Refresh both halves: what is installed may have changed too.
                 self.on_grammars_changed();
-                if self.index != IndexState::Loading {
-                    self.index = IndexState::Loading;
+                if !self.fetching {
+                    self.fetching = true;
+                    // Keep a loaded index visible; only replace a failure or
+                    // nothing-yet with the loading line.
+                    if !matches!(self.index, IndexState::Loaded(_)) {
+                        self.index = IndexState::Loading;
+                    }
                     return SettingsAction::FetchRegistry { refresh: true };
                 }
             }
@@ -373,9 +395,13 @@ impl LanguagesTab {
                 format!(" Could not load the grammar registry: {e}"),
                 Style::default().fg(palette.error),
             )),
+            IndexState::Loaded(_) if self.fetching => text.push_line(Line::styled(
+                " Refreshing the grammar registry…",
+                Style::default().fg(palette.dim),
+            )),
             IndexState::Loaded(ix) => match &ix.stale {
                 Some(e) => text.push_line(Line::styled(
-                    format!(" Registry unreachable — showing the cached list ({e})"),
+                    format!(" Could not load the registry — showing the cached list ({e})"),
                     Style::default().fg(palette.warning),
                 )),
                 None => text.push_line(Line::styled(
@@ -690,17 +716,44 @@ mod tests {
         };
         assert_eq!(section(&tab), Some(Section::Installed));
 
-        // Removed from the CLI while the tab stayed open.
+        // Removed from the CLI while the tab stayed open: `r` shows it as
+        // installable straight away, from the index already loaded.
         REMOVED.store(true, Ordering::SeqCst);
         assert_eq!(
             tab.handle_key(KeyCode::Char('r')),
             SettingsAction::FetchRegistry { refresh: true }
         );
-        assert_ne!(section(&tab), Some(Section::Installed), "no longer listed as installed");
-
-        // Once the refetched index arrives it is installable again.
-        tab.on_index_loaded(Ok(registry()));
         assert_eq!(section(&tab), Some(Section::Available));
+    }
+
+    /// A refresh keeps the loaded list, and the selection, on screen.
+    #[test]
+    fn refreshing_keeps_the_list_and_the_selection() {
+        let mut tab = LanguagesTab::with_installed(installed);
+        tab.on_index_loaded(Ok(registry()));
+        select(&mut tab, "swift");
+        let before = tab.rows();
+
+        assert_eq!(
+            tab.handle_key(KeyCode::Char('r')),
+            SettingsAction::FetchRegistry { refresh: true }
+        );
+        assert_eq!(tab.rows(), before, "Available rows stay while the fetch runs");
+        assert_eq!(tab.rows()[tab.selected].name, "swift");
+        // One refresh at a time.
+        assert_eq!(tab.handle_key(KeyCode::Char('r')), SettingsAction::Handled);
+
+        // The registry gained an entry that sorts before swift: still on swift.
+        let mut grown = registry();
+        grown.grammars.push(entry("python", &["py"], true));
+        tab.on_index_loaded(Ok(grown));
+        assert_eq!(tab.rows()[tab.selected].name, "swift");
+
+        // A failed refresh keeps what was there.
+        tab.handle_key(KeyCode::Char('r'));
+        tab.on_index_loaded(Err("offline".into()));
+        assert!(tab.rows().iter().any(|r| r.name == "python"));
+        assert_eq!(tab.rows()[tab.selected].name, "swift");
     }
 
     #[cfg(feature = "wasm")]
