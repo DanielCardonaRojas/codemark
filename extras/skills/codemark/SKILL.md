@@ -8,11 +8,35 @@ description: >
   when you discover critical code during exploration — entry points, boundaries,
   configuration, error handling — that you'd want to remember if starting over.
 allowed-tools: Bash(codemark *)
+metadata:
+  codemark-version: "0.0.0-dev"
 ---
 
 # Codemark — Structural Code Bookmarking
 
 You have access to `codemark`, a CLI tool that creates **structural bookmarks** for code using tree-sitter AST queries. Unlike file:line references, these bookmarks survive renames, refactors, and reformatting.
+
+## Version Check (run once per session)
+
+This skill was released for codemark **0.0.0-dev** (also recorded in the
+`VERSION` file next to this SKILL.md). Before relying on the commands below, run
+once per session:
+
+```
+codemark install-skill --check
+```
+
+It compares every installed codemark skill against the `codemark` binary. If an
+install's status is `mismatch`, tell the user — in one line, without stopping
+your task — that their codemark skill doesn't match the binary. If it is
+`unversioned`, say instead that the skill's version is unknown (it predates
+version pinning) and may be out of date. In both cases quote the exact
+reinstall command it prints (e.g.
+`codemark install-skill --agent claude --scope user --force`), plus the
+directory to run it from when it reports one (`run_from`). If `--check` is
+not recognized, the binary predates this skill: run `codemark --version` and
+suggest upgrading codemark. Skip the warning for development builds (versions ending in
+`-dev`).
 
 ## Active Context
 

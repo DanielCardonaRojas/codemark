@@ -1457,24 +1457,30 @@ pub struct InstallSkillArgs {
     #[command(flatten)]
     pub output: OutputArgs,
     /// Target AI coding agent (determines the install directory)
-    #[arg(long, value_enum)]
-    pub agent: SkillAgent,
+    #[arg(long, value_enum, required_unless_present = "check")]
+    pub agent: Option<SkillAgent>,
 
     /// Install scope: user (global) or project (current repo)
-    #[arg(long, value_enum)]
-    pub scope: SkillScope,
+    #[arg(long, value_enum, required_unless_present = "check")]
+    pub scope: Option<SkillScope>,
 
     /// Skill version tag to fetch (defaults to this binary's version)
-    #[arg(long)]
+    #[arg(long, conflicts_with = "check")]
     pub version: Option<String>,
 
     /// Overwrite an existing install without confirmation
-    #[arg(long)]
+    #[arg(long, conflicts_with = "check")]
     pub force: bool,
+
+    /// Don't install: report every installed codemark skill whose version
+    /// doesn't match this binary, with the command that reinstalls it.
+    /// Narrow the scan with --agent/--scope.
+    #[arg(long)]
+    pub check: bool,
 }
 
 /// Supported agent targets for skill installation.
-#[derive(Debug, Clone, Copy, ValueEnum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum SkillAgent {
     /// Claude Code (~/.claude/skills or ./.claude/skills)
     Claude,
@@ -1487,7 +1493,7 @@ pub enum SkillAgent {
 }
 
 /// Install scope for a skill.
-#[derive(Debug, Clone, Copy, ValueEnum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
 pub enum SkillScope {
     /// Install globally for the current user
     User,
