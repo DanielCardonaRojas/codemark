@@ -481,11 +481,16 @@ fn render_check_report(installs: &[SkillInstall], binary: &str) -> String {
                     .as_ref()
                     .map(|d| format!(" (from {})", d.display()))
                     .unwrap_or_default();
-                let _ = writeln!(
-                    out,
-                    "mismatch  {label}: your codemark skill ({shown}) doesn't match the codemark binary ({binary}). Run{from}: {}",
-                    i.reinstall_command()
-                );
+                let summary = if i.status == SkillStatus::Unversioned {
+                    format!(
+                        "unversioned {label}: your codemark skill's version is unknown (it predates version pinning) and may not match the codemark binary ({binary})"
+                    )
+                } else {
+                    format!(
+                        "mismatch  {label}: your codemark skill ({shown}) doesn't match the codemark binary ({binary})"
+                    )
+                };
+                let _ = writeln!(out, "{summary}. Run{from}: {}", i.reinstall_command());
             }
         }
         let _ = writeln!(out, "          {}", i.path.display());
@@ -743,6 +748,21 @@ mod tests {
             "your codemark skill (0.7.30) doesn't match the codemark binary (0.8.0). Run: codemark install-skill --agent claude --scope user --force"
         ));
         assert!(out.contains("ok        copilot (project): skill 0.8.0 matches codemark 0.8.0"));
+
+        let unversioned = [SkillInstall {
+            agent: SkillAgent::Agents,
+            scope: SkillScope::User,
+            path: PathBuf::from("/h/.agents/skills/codemark"),
+            run_from: None,
+            version: None,
+            status: SkillStatus::Unversioned,
+        }];
+        let out = render_check_report(&unversioned, "0.8.0");
+        assert!(
+            out.starts_with("unversioned agents (user): your codemark skill's version is unknown")
+        );
+        assert!(!out.contains("mismatch"));
+        assert!(out.contains("Run: codemark install-skill --agent agents --scope user --force"));
         assert!(render_check_report(&[], "0.8.0").starts_with("No codemark skill installed"));
     }
     fn install_skill_at(skills_root: &Path, version: Option<&str>) {
