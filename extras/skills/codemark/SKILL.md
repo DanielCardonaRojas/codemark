@@ -26,9 +26,11 @@ once per session:
 codemark install-skill --check
 ```
 
-It compares every installed codemark skill against the `codemark` binary. If it
-reports a mismatch, tell the user — in one line, without stopping your task —
-that their codemark skill doesn't match the binary, and quote the exact
+It compares every installed codemark skill against the `codemark` binary. If an
+install's status is `mismatch`, tell the user — in one line, without stopping
+your task — that their codemark skill doesn't match the binary. If it is
+`unversioned`, say instead that the skill's version is unknown (it predates
+version pinning) and may be out of date. In both cases quote the exact
 reinstall command it prints (e.g.
 `codemark install-skill --agent claude --scope user --force`), plus the
 directory to run it from when it reports one (`run_from`). If `--check` is

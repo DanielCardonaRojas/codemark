@@ -396,6 +396,15 @@ fn scan_installs(
             }
         }
     }
+    tracing::debug!(
+        target: "codemark::skill",
+        agent = ?agent,
+        scope = ?scope,
+        home = ?home,
+        cwd = ?cwd,
+        installs = found.len(),
+        "skill install scan complete"
+    );
     found
 }
 

@@ -28,11 +28,20 @@ field). After upgrading codemark, check your installed skills:
 codemark install-skill --check --format table
 ```
 
-Every install whose version differs from the binary is listed with the exact
-command that reinstalls the matching skill, e.g.
+Every install whose version differs from the binary (`mismatch`), or that
+predates version pinning and records no version (`unversioned`), is listed with
+the exact command that reinstalls the matching skill, e.g.
 `codemark install-skill --agent claude --scope user --force`. Narrow the scan
-with `--agent`/`--scope`. The skill also runs this check itself at the start of
-a session and tells you when it is out of date.
+with `--agent`/`--scope`.
+
+The check covers your user-scope installs plus project installs from the current
+directory up to its repository root. It doesn't look inside other projects, so
+run it from each project that has its own skill install.
+
+Skills installed from this release onward also run the check themselves at the
+start of a session and tell you when they are out of date. Skills installed
+before that don't include the check, so after upgrading run
+`codemark install-skill --check` once yourself to find and refresh them.
 
 ::: tip Author identity
 When the agent creates bookmarks it identifies itself with `--created-by`
