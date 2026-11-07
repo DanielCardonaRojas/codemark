@@ -125,14 +125,21 @@ pub fn summarize_query(
     let mut target_captures = Vec::new();
     get_capture_names(target_parent, query_str, &mut target_captures);
 
-    // 4. Extract identifier from predicates that reference target captures
-    let identifier = extract_identifier(root, query_str, &target_captures);
+    // 4. Extract identifier from predicates that reference target captures.
+    // Predicate values can be whole expressions (a multi-line call chain with
+    // trailing closures, an `if let` condition), so compact them to one line.
+    let identifier =
+        extract_identifier(root, query_str, &target_captures).and_then(|v| compact_identifier(&v));
 
     // When the target has no name of its own, fall back (for display only) to
-    // the deepest labelled node's identifier so a list row shows the nearest
-    // enclosing name instead of the whole query string.
-    let fallback_identifier =
-        if identifier.is_none() { deepest_predicate_identifier(root, query_str) } else { None };
+    // the nearest enclosing labelled node's identifier so a list row shows the
+    // containing name instead of the whole query string.
+    let fallback_identifier = if identifier.is_none() {
+        enclosing_predicate_identifier(target_parent, query_str)
+            .and_then(|v| compact_identifier(&v))
+    } else {
+        None
+    };
 
     let profile = language.as_ref().map(|lang| lang.profile());
     let label =
@@ -219,27 +226,174 @@ fn find_identifier_in_predicates(
     }
 }
 
-/// Find the `#eq?`/`#match?` string bound to the *deepest* (most nested) node in
-/// the query, ignoring which capture it targets.
+/// Find the `#eq?`/`#match?` string bound to the nearest node pattern that
+/// *encloses* the `@target` pattern, ignoring which capture it targets.
 ///
 /// Used as a display fallback when the target node itself carries no name
-/// predicate: the deepest predicate is the one closest to the target, i.e. the
-/// nearest enclosing named landmark (typically the containing declaration).
-fn deepest_predicate_identifier(node: Node, source: &str) -> Option<String> {
-    fn walk(node: Node, source: &str, depth: usize, best: &mut Option<(usize, String)>) {
-        if let Some((_, val)) = predicate_capture_and_value(node, source)
-            && best.as_ref().is_none_or(|(d, _)| depth >= *d)
+/// predicate: the closest enclosing named landmark (typically the containing
+/// declaration). Only ancestors of the target are considered, so a predicate in
+/// an unrelated sibling branch can never label the row, however deeply nested.
+///
+/// A predicate is a direct child of either a node pattern or a grouping
+/// `( ... )`. On a node pattern it names that node's own fields. On a grouping
+/// it may name any member pattern, so it only counts when its capture lives in
+/// the member that leads to the target, which keeps sibling members out.
+fn enclosing_predicate_identifier(target_pattern: Node, source: &str) -> Option<String> {
+    let mut path_child: Option<Node> = None;
+    let mut current = Some(target_pattern);
+    while let Some(node) = current {
+        let found = match node.kind() {
+            "named_node" => direct_predicate_value(node, source, |_| true),
+            "grouping" => path_child.and_then(|member| {
+                let mut on_path = Vec::new();
+                get_capture_names(member, source, &mut on_path);
+                direct_predicate_value(node, source, |capture| on_path.iter().any(|c| c == capture))
+            }),
+            _ => None,
+        };
+        if found.is_some() {
+            return found;
+        }
+        path_child = Some(node);
+        current = node.parent();
+    }
+    None
+}
+
+/// The value of the first `#eq?`/`#match?` predicate that is a direct child of
+/// `node` and whose capture satisfies `accept`.
+fn direct_predicate_value(
+    node: Node,
+    source: &str,
+    accept: impl Fn(&str) -> bool,
+) -> Option<String> {
+    let mut cursor = node.walk();
+    node.children(&mut cursor).find_map(|child| {
+        predicate_capture_and_value(child, source)
+            .filter(|(capture, _)| accept(capture))
+            .map(|(_, value)| value)
+    })
+}
+
+/// Maximum length (in chars) of a compacted identifier before it is truncated.
+const MAX_IDENTIFIER_CHARS: usize = 60;
+
+/// Reduce a predicate value to a short, single-line display identifier.
+///
+/// Names (`cycle_mode`) pass through untouched. Whole expressions, which the
+/// generator emits for calls and conditions, get cleaned up:
+/// - `{ ... }` blocks (closure / trailing-closure bodies) are dropped,
+/// - parenthesised groups spanning several lines collapse to `(…)`,
+/// - line breaks and indentation are folded (a line starting with `.` is
+///   glued to the previous one, so `a\n    .b` becomes `a.b`),
+/// - the result is truncated to [`MAX_IDENTIFIER_CHARS`] with a trailing `…`.
+///
+/// Returns `None` when nothing displayable is left.
+fn compact_identifier(raw: &str) -> Option<String> {
+    let chars: Vec<char> = raw.chars().collect();
+    let mut stripped = String::with_capacity(raw.len());
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        // String literals are copied verbatim: a `{` or `(` inside quotes is
+        // text, not a closure body or argument list.
+        if c == '"'
+            && let Some(end) = string_literal_end(&chars, i)
         {
-            *best = Some((depth, val));
+            stripped.extend(&chars[i..=end]);
+            i = end + 1;
+            continue;
         }
-        for i in 0..node.child_count() {
-            walk(node.child(i).unwrap(), source, depth + 1, best);
+        if let Some(close) = closing_delimiter(c)
+            && let Some(end) = matching_close(&chars, i, c, close)
+        {
+            if c == '{' {
+                stripped.truncate(stripped.trim_end().len());
+                i = end + 1;
+                continue;
+            }
+            if chars[i + 1..end].contains(&'\n') {
+                stripped.push_str("(…)");
+                i = end + 1;
+                continue;
+            }
         }
+        stripped.push(c);
+        i += 1;
     }
 
-    let mut best = None;
-    walk(node, source, 0, &mut best);
-    best.map(|(_, val)| val)
+    let mut joined = String::with_capacity(stripped.len());
+    for line in stripped.lines() {
+        let line = line.split_whitespace().collect::<Vec<_>>().join(" ");
+        if line.is_empty() {
+            continue;
+        }
+        let glue = joined.is_empty()
+            || line.starts_with(['.', ')', ']', ',', '?', '!'])
+            || joined.ends_with(['(', '[']);
+        if !glue {
+            joined.push(' ');
+        }
+        joined.push_str(&line);
+    }
+
+    if joined.is_empty() {
+        return None;
+    }
+    if joined.chars().count() > MAX_IDENTIFIER_CHARS {
+        let mut truncated: String = joined.chars().take(MAX_IDENTIFIER_CHARS - 1).collect();
+        truncated.truncate(truncated.trim_end().len());
+        truncated.push('…');
+        return Some(truncated);
+    }
+    Some(joined)
+}
+
+/// Index of the quote closing the string literal opened at `start`, honouring
+/// backslash escapes. `None` when the literal is unterminated.
+fn string_literal_end(chars: &[char], start: usize) -> Option<usize> {
+    let mut i = start + 1;
+    while i < chars.len() {
+        match chars[i] {
+            '\\' => i += 1,
+            '"' => return Some(i),
+            _ => {}
+        }
+        i += 1;
+    }
+    None
+}
+
+/// The closing delimiter for the groups [`compact_identifier`] rewrites.
+fn closing_delimiter(open: char) -> Option<char> {
+    match open {
+        '{' => Some('}'),
+        '(' => Some(')'),
+        _ => None,
+    }
+}
+
+/// Index of the delimiter closing the group opened at `start`, skipping over
+/// string literals so a `)` or `}` inside quotes does not end the group early.
+/// Returns `None` for an unbalanced group, which is then left as-is.
+fn matching_close(chars: &[char], start: usize, open: char, close: char) -> Option<usize> {
+    let mut depth = 0usize;
+    let mut i = start;
+    while i < chars.len() {
+        let c = chars[i];
+        if c == '"' {
+            i = string_literal_end(chars, i)?;
+        } else if c == open {
+            depth += 1;
+        } else if c == close {
+            depth -= 1;
+            if depth == 0 {
+                return Some(i);
+            }
+        }
+        i += 1;
+    }
+    None
 }
 
 /// If `node` is an `#eq?`/`#match?` predicate, return the `(capture, string)`
@@ -248,8 +402,21 @@ fn predicate_capture_and_value(node: Node, source: &str) -> Option<(String, Stri
     if node.kind() != "predicate" {
         return None;
     }
-    let text = node.utf8_text(source.as_bytes()).unwrap_or("");
-    if !(text.contains("eq?") || text.contains("match?")) {
+    // Accept only positive equality/match predicates. `#not-eq?`/`#not-match?`
+    // name a value the query *excludes*, so they must never label a bookmark.
+    let mut cursor = node.walk();
+    let operator = node
+        .children(&mut cursor)
+        .find(|child| child.kind() == "identifier")
+        .and_then(|child| child.utf8_text(source.as_bytes()).ok())?;
+    if !matches!(operator, "eq" | "match" | "any-eq" | "any-match") {
+        return None;
+    }
+    let is_predicate = node
+        .child_by_field_name("type")
+        .and_then(|t| t.utf8_text(source.as_bytes()).ok())
+        .is_some_and(|t| t == "?");
+    if !is_predicate {
         return None;
     }
 
@@ -270,14 +437,40 @@ fn predicate_capture_and_value(node: Node, source: &str) -> Option<(String, Stri
 
 /// Extract the inner text of a tree-sitter query `string` node, unwrapping the
 /// `string_content` child when present and stripping surrounding quotes otherwise.
+/// Escape sequences (`\n`, `\"`, ...) are decoded to the characters they stand
+/// for, so the value matches the source text the query was generated from.
 fn string_literal_content(string_node: Node, source: &str) -> Option<String> {
     for j in 0..string_node.child_count() {
         let content = string_node.child(j).unwrap();
         if content.kind() == "string_content" {
-            return content.utf8_text(source.as_bytes()).ok().map(str::to_string);
+            return content.utf8_text(source.as_bytes()).ok().map(unescape_query_string);
         }
     }
-    string_node.utf8_text(source.as_bytes()).ok().map(|s| s.trim_matches('"').to_string())
+    string_node
+        .utf8_text(source.as_bytes())
+        .ok()
+        .map(|s| unescape_query_string(s.trim_matches('"')))
+}
+
+/// Decode the escape sequences tree-sitter query strings support.
+fn unescape_query_string(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars();
+    while let Some(c) = chars.next() {
+        if c != '\\' {
+            out.push(c);
+            continue;
+        }
+        match chars.next() {
+            Some('n') => out.push('\n'),
+            Some('t') => out.push('\t'),
+            Some('r') => out.push('\r'),
+            Some('0') => out.push('\0'),
+            Some(other) => out.push(other),
+            None => out.push('\\'),
+        }
+    }
+    out
 }
 
 #[cfg(test)]
@@ -396,5 +589,152 @@ mod tests {
 
         assert_eq!(summary.label, "enum");
         assert_eq!(summary.identifier, Some("AuthError".to_string()));
+    }
+
+    // A Swift call chain with trailing closures: the generator pins the callee
+    // text, which spans lines and carries closure bodies. The summary must be a
+    // single line with no braces or escaped newlines.
+    #[test]
+    fn test_summarize_swift_call_chain_is_compacted() {
+        let query = r#"(function_declaration
+  name: (simple_identifier) @name0 @sticky.function
+  (#eq? @name0 "pipeline")
+  (function_body
+    (statements
+      (call_expression
+        (_) @func
+        (#eq? @func "[1, 2, 3]\n        .map { $0 * 2 }\n        .filter { $0 > 2 }\n        .forEach")) @target)))"#;
+        let summary = summarize_query(query, Some(crate::testing::grammar("swift"))).unwrap();
+
+        assert_eq!(summary.label, "call");
+        assert_eq!(summary.identifier.as_deref(), Some("[1, 2, 3].map.filter.forEach"));
+        assert_eq!(summary.short_display(), "[1, 2, 3].map.filter.forEach");
+    }
+
+    #[test]
+    fn test_summarize_multiline_navigation_is_joined() {
+        let query = r#"(call_expression
+  function: (_) @func
+  (#eq? @func "state\n            .github\n            .verify_write_access")) @target"#;
+        let summary = summarize_query(query, Some(crate::testing::grammar("rust"))).unwrap();
+
+        assert_eq!(summary.short_display(), "state.github.verify_write_access");
+    }
+
+    // Multi-line argument lists collapse to `(…)`; single-line ones are kept.
+    #[test]
+    fn test_summarize_multiline_arguments_collapse() {
+        let query = r#"(if_expression
+  condition: (_) @cond
+  (#eq? @cond "let Some(cmd) = config.open.build_editor_command(\n            &step.file_path,\n            line_end,\n        )")) @target"#;
+        let summary = summarize_query(query, Some(crate::testing::grammar("rust"))).unwrap();
+
+        assert_eq!(summary.short_display(), "let Some(cmd) = config.open.build_editor_command(…)");
+    }
+
+    #[test]
+    fn test_summarize_unescapes_quotes() {
+        let query = r#"(if_expression
+  condition: (_) @cond
+  (#eq? @cond "target.starts_with(\"__pick__\")")) @target"#;
+        let summary = summarize_query(query, Some(crate::testing::grammar("rust"))).unwrap();
+
+        assert_eq!(summary.short_display(), r#"target.starts_with("__pick__")"#);
+    }
+
+    #[test]
+    fn test_compact_identifier_truncates_long_values() {
+        let long = "a".repeat(100);
+        let compacted = compact_identifier(&long).unwrap();
+
+        assert_eq!(compacted.chars().count(), MAX_IDENTIFIER_CHARS);
+        assert!(compacted.ends_with('…'));
+    }
+
+    #[test]
+    fn test_compact_identifier_keeps_plain_names_and_drops_empty() {
+        assert_eq!(compact_identifier("cycle_mode").as_deref(), Some("cycle_mode"));
+        assert_eq!(compact_identifier("{ x in\n  print(x)\n}"), None);
+        // Braces inside string literals do not open a group.
+        assert_eq!(compact_identifier(r#"f("{")"#).as_deref(), Some(r#"f("{")"#));
+    }
+
+    // #223: negative predicates name a value the query excludes.
+    #[test]
+    fn test_negative_predicates_are_ignored() {
+        for op in ["not-eq", "not-match"] {
+            let query = format!(
+                r#"(function_item name: (identifier) @fn_name (#{op}? @fn_name "excluded")) @target"#
+            );
+            let summary = summarize_query(&query, Some(crate::testing::grammar("rust"))).unwrap();
+
+            assert_eq!(summary.identifier, None, "{op}");
+            assert_eq!(summary.short_display(), "function", "{op}");
+        }
+    }
+
+    #[test]
+    fn test_any_eq_predicate_is_accepted() {
+        let query = r#"(function_item name: (identifier) @fn_name (#any-eq? @fn_name "cycle_mode")) @target"#;
+        let summary = summarize_query(query, Some(crate::testing::grammar("rust"))).unwrap();
+
+        assert_eq!(summary.identifier.as_deref(), Some("cycle_mode"));
+    }
+
+    // #224: a predicate in a sibling branch, nested deeper than the target's
+    // enclosing landmark, must not label the row.
+    #[test]
+    fn test_fallback_ignores_sibling_branch_predicates() {
+        let query = r#"(class_declaration
+              name: (type_identifier) @name0
+              (#eq? @name0 "AuthService")
+              body: (class_body
+                (method_definition
+                  name: (property_identifier) @other
+                  (#eq? @other "unrelated")
+                  body: (statement_block
+                    (if_statement
+                      (identifier) @deep
+                      (#eq? @deep "deeper"))))
+                (return_statement) @target))"#;
+        let summary = summarize_query(query, Some(crate::testing::grammar("typescript"))).unwrap();
+
+        assert_eq!(summary.identifier, None);
+        assert_eq!(summary.short_display(), "AuthService");
+    }
+
+    #[test]
+    fn test_compact_identifier_keeps_braces_inside_strings() {
+        assert_eq!(
+            compact_identifier(r#"target.starts_with("{}")"#).as_deref(),
+            Some(r#"target.starts_with("{}")"#)
+        );
+        // An unbalanced brace in a string neither opens nor closes a group, so
+        // the real trailing closure is still dropped.
+        assert_eq!(compact_identifier(r#"print("}") { body }"#).as_deref(), Some(r#"print("}")"#));
+    }
+
+    // A predicate on an outer grouping names the enclosing pattern.
+    #[test]
+    fn test_fallback_reads_grouping_predicates() {
+        let query = r#"((function_item
+              name: (identifier) @name
+              body: (block (expression_statement) @target))
+            (#eq? @name "process"))"#;
+        let summary = summarize_query(query, Some(crate::testing::grammar("rust"))).unwrap();
+
+        assert_eq!(summary.identifier, None);
+        assert_eq!(summary.short_display(), "process");
+    }
+
+    // A grouping predicate naming a *sibling* member must not label the row.
+    #[test]
+    fn test_fallback_ignores_grouping_predicates_on_siblings() {
+        let query = r#"((struct_item name: (type_identifier) @other)
+            (function_item body: (block (expression_statement) @target))
+            (#eq? @other "Unrelated"))"#;
+        let summary = summarize_query(query, Some(crate::testing::grammar("rust"))).unwrap();
+
+        assert_eq!(summary.short_display(), "expression statement");
     }
 }

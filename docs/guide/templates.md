@@ -42,6 +42,7 @@ $EDITOR ~/.config/codemark/templates/codemark_show.md
 | <code v-pre>{{language}}</code> | String | Programming language |
 | <code v-pre>{{status}}</code> | String | `active`, `drifted`, `stale`, or `archived` |
 | <code v-pre>{{query}}</code> | String | Tree-sitter query |
+| <code v-pre>{{summary}}</code> | String? | Human-readable query summary, e.g. `function cycle_mode` (computed) |
 | <code v-pre>{{created_at}}</code> | String | Creation timestamp |
 | <code v-pre>{{created_by}}</code> | String? | Creator (optional) |
 | <code v-pre>{{commit_hash}}</code> | String? | Git commit hash (optional) |

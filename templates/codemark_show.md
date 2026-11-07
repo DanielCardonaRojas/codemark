@@ -45,6 +45,9 @@
 ## Metadata
 | Property | Value |
 |----------|-------|
+{{#if summary}}
+| **Summary** | {{escape_markdown summary}} |
+{{/if}}
 | **File** | {{file_path}} |
 | **Language** | {{language}} |
 | **Status** | {{status}} |
