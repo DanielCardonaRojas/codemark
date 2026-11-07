@@ -233,21 +233,46 @@ fn find_identifier_in_predicates(
 /// predicate: the closest enclosing named landmark (typically the containing
 /// declaration). Only ancestors of the target are considered, so a predicate in
 /// an unrelated sibling branch can never label the row, however deeply nested.
+///
+/// A predicate is a direct child of either a node pattern or a grouping
+/// `( ... )`. On a node pattern it names that node's own fields. On a grouping
+/// it may name any member pattern, so it only counts when its capture lives in
+/// the member that leads to the target, which keeps sibling members out.
 fn enclosing_predicate_identifier(target_pattern: Node, source: &str) -> Option<String> {
+    let mut path_child: Option<Node> = None;
     let mut current = Some(target_pattern);
     while let Some(node) = current {
-        if node.kind() == "named_node" {
-            let mut cursor = node.walk();
-            let found = node
-                .children(&mut cursor)
-                .find_map(|child| predicate_capture_and_value(child, source).map(|(_, v)| v));
-            if found.is_some() {
-                return found;
-            }
+        let found = match node.kind() {
+            "named_node" => direct_predicate_value(node, source, |_| true),
+            "grouping" => path_child.and_then(|member| {
+                let mut on_path = Vec::new();
+                get_capture_names(member, source, &mut on_path);
+                direct_predicate_value(node, source, |capture| on_path.iter().any(|c| c == capture))
+            }),
+            _ => None,
+        };
+        if found.is_some() {
+            return found;
         }
+        path_child = Some(node);
         current = node.parent();
     }
     None
+}
+
+/// The value of the first `#eq?`/`#match?` predicate that is a direct child of
+/// `node` and whose capture satisfies `accept`.
+fn direct_predicate_value(
+    node: Node,
+    source: &str,
+    accept: impl Fn(&str) -> bool,
+) -> Option<String> {
+    let mut cursor = node.walk();
+    node.children(&mut cursor).find_map(|child| {
+        predicate_capture_and_value(child, source)
+            .filter(|(capture, _)| accept(capture))
+            .map(|(_, value)| value)
+    })
 }
 
 /// Maximum length (in chars) of a compacted identifier before it is truncated.
@@ -270,6 +295,15 @@ fn compact_identifier(raw: &str) -> Option<String> {
     let mut i = 0;
     while i < chars.len() {
         let c = chars[i];
+        // String literals are copied verbatim: a `{` or `(` inside quotes is
+        // text, not a closure body or argument list.
+        if c == '"'
+            && let Some(end) = string_literal_end(&chars, i)
+        {
+            stripped.extend(&chars[i..=end]);
+            i = end + 1;
+            continue;
+        }
         if let Some(close) = closing_delimiter(c)
             && let Some(end) = matching_close(&chars, i, c, close)
         {
@@ -315,6 +349,21 @@ fn compact_identifier(raw: &str) -> Option<String> {
     Some(joined)
 }
 
+/// Index of the quote closing the string literal opened at `start`, honouring
+/// backslash escapes. `None` when the literal is unterminated.
+fn string_literal_end(chars: &[char], start: usize) -> Option<usize> {
+    let mut i = start + 1;
+    while i < chars.len() {
+        match chars[i] {
+            '\\' => i += 1,
+            '"' => return Some(i),
+            _ => {}
+        }
+        i += 1;
+    }
+    None
+}
+
 /// The closing delimiter for the groups [`compact_identifier`] rewrites.
 fn closing_delimiter(open: char) -> Option<char> {
     match open {
@@ -329,18 +378,11 @@ fn closing_delimiter(open: char) -> Option<char> {
 /// Returns `None` for an unbalanced group, which is then left as-is.
 fn matching_close(chars: &[char], start: usize, open: char, close: char) -> Option<usize> {
     let mut depth = 0usize;
-    let mut in_string = false;
     let mut i = start;
     while i < chars.len() {
         let c = chars[i];
-        if in_string {
-            match c {
-                '\\' => i += 1,
-                '"' => in_string = false,
-                _ => {}
-            }
-        } else if c == '"' {
-            in_string = true;
+        if c == '"' {
+            i = string_literal_end(chars, i)?;
         } else if c == open {
             depth += 1;
         } else if c == close {
@@ -659,5 +701,40 @@ mod tests {
 
         assert_eq!(summary.identifier, None);
         assert_eq!(summary.short_display(), "AuthService");
+    }
+
+    #[test]
+    fn test_compact_identifier_keeps_braces_inside_strings() {
+        assert_eq!(
+            compact_identifier(r#"target.starts_with("{}")"#).as_deref(),
+            Some(r#"target.starts_with("{}")"#)
+        );
+        // An unbalanced brace in a string neither opens nor closes a group, so
+        // the real trailing closure is still dropped.
+        assert_eq!(compact_identifier(r#"print("}") { body }"#).as_deref(), Some(r#"print("}")"#));
+    }
+
+    // A predicate on an outer grouping names the enclosing pattern.
+    #[test]
+    fn test_fallback_reads_grouping_predicates() {
+        let query = r#"((function_item
+              name: (identifier) @name
+              body: (block (expression_statement) @target))
+            (#eq? @name "process"))"#;
+        let summary = summarize_query(query, Some(crate::testing::grammar("rust"))).unwrap();
+
+        assert_eq!(summary.identifier, None);
+        assert_eq!(summary.short_display(), "process");
+    }
+
+    // A grouping predicate naming a *sibling* member must not label the row.
+    #[test]
+    fn test_fallback_ignores_grouping_predicates_on_siblings() {
+        let query = r#"((struct_item name: (type_identifier) @other)
+            (function_item body: (block (expression_statement) @target))
+            (#eq? @other "Unrelated"))"#;
+        let summary = summarize_query(query, Some(crate::testing::grammar("rust"))).unwrap();
+
+        assert_eq!(summary.short_display(), "expression statement");
     }
 }
