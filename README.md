@@ -144,8 +144,6 @@ codemark tui
 </table>
 
 See the [**Demo Gallery**](./dev-docs/guides/demo-gallery.md) for the full-size animated walkthroughs.
-They're recorded from the real binary with [`screenshots/capture.sh`](./screenshots/README.md),
-against a curated fixture knowledge base seeded into a pinned checkout of this repo.
 
 ### Themes
 
