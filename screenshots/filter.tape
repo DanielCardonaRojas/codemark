@@ -4,17 +4,19 @@
 #
 # Filtering is distinct from search: `/` narrows the *visible list* of the
 # focused pane (live, as you type), whereas search queries the database. This
-# clip shows filtering the Bookmarks pane, then the Tags pane, to highlight that
+# clip shows filtering the Bookmarks list, then the Tags pane, to highlight that
 # filters are pane-scoped.
 #
 # Rendered by capture.sh, which substitutes __OUT__ with the absolute output dir
-# and runs from the repo root so the TUI uses the tracked .codemark/codemark.db.
+# and runs from the seeded fixture clone so the TUI uses the fixture DB (see
+# seed-fixture.sh), not the repo's live .codemark/codemark.db.
 #
 # Key map used (see crates/codemark-tui/src/main.rs and src/browser):
+#   ]        switch pane 3 (focused at startup) from Collections to Bookmarks
 #   /        enter filter mode for the focused pane
 #   <typing> narrows that pane's list live (no Enter needed)
 #   Esc      clear the filter
-#   3 / 4    focus the Tags pane (Panel2) / the Bookmarks pane (Panel3)
+#   2        focus the Tags pane
 
 Output "__OUT__/codemark_tui_filter.gif"
 
@@ -35,20 +37,23 @@ Show
 
 Sleep 500ms
 
-# --- 1. Filter the Bookmarks pane (focused by default) -----------------------
-# `/` enters filter mode; typing narrows the list live.
+# --- 1. Filter the Bookmarks list ---------------------------------------------
+# Pane 3 starts on Collections; `]` switches it to Bookmarks. `/` enters filter
+# mode; typing narrows the list live.
+Type "]"
+Sleep 700ms
 Type "/"
 Sleep 500ms
-Type "resolve"
+Type "auth"
 Sleep 1.8s
 # Clear the filter.
 Escape
 Sleep 800ms
 
 # --- 2. Filter a different pane — focus the Tags pane, then filter it --------
-# `3` focuses Panel2, whose default tab is Tags. Filtering it is independent of
-# the Bookmarks filter above — filters are pane-scoped.
-Type "3"
+# `2` focuses the Tags pane. Filtering it is independent of the Bookmarks
+# filter above — filters are pane-scoped.
+Type "2"
 Sleep 400ms
 Type "/"
 Sleep 500ms

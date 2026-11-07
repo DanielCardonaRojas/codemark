@@ -3,20 +3,22 @@
 # Produces: codemark_tui_search.gif
 #
 # Rendered by capture.sh, which substitutes __OUT__ with the absolute output dir
-# and runs from the repo root so the TUI uses the tracked .codemark/codemark.db.
+# and runs from the seeded fixture clone so the TUI uses the fixture DB (see
+# seed-fixture.sh), not the repo's live .codemark/codemark.db.
 #
 # Flow:
 #   1. focus the search bar, type a query, and press Enter to run it (FTS, the
 #      default mode)
-#   2. toggle to Semantic mode with Ctrl+S and re-run by meaning
-#   3. clear with double Esc, then run an intent-style query in Semantic mode
+#   2. refocus the bar, toggle to Semantic mode with Ctrl+S, and re-run by meaning
+#   3. clear the bar, then run an intent-style query in Semantic mode
 #
 # Key map used (see crates/codemark-tui/src/browser):
 #   s        focus the search bar (from any other pane)
 #   <typing> build the query
-#   Enter    run the search (it does NOT run live as you type)
-#   Ctrl+S   cycle search mode: FTS <-> Semantic
-#   Esc Esc  clear the query and leave the search bar (double Esc)
+#   Enter    run the search (it does NOT run live as you type) and move focus
+#            to the results — so later keys go to the results pane until `s`
+#   Ctrl+S   cycle search mode: FTS <-> Semantic (only while the bar is focused)
+#   Esc      (bar focused) clear the query and leave the search bar
 # Semantic search is slower than FTS, so allow extra time after Enter for it.
 
 Output "__OUT__/codemark_tui_search.gif"
@@ -46,17 +48,23 @@ Sleep 600ms
 Enter
 Sleep 1.5s
 
-# --- 2. Toggle to Semantic mode and re-run the same query by meaning ---------
+# --- 2. Refocus, toggle to Semantic mode, re-run the same query by meaning ---
+# Enter moved focus to the results, so `s` first: Ctrl+S only applies to the
+# focused search bar.
+Type "s"
+Sleep 400ms
 Ctrl+S
-Sleep 500ms
+Sleep 600ms
 Enter
 Sleep 2.5s
 
-# --- 3. Clear with double Esc, then run an intent-style query (Semantic) -----
-# Semantic mode persists, so this query is resolved by meaning.
+# --- 3. Clear, then run an intent-style query (Semantic) ---------------------
+# `s` refocuses the bar; Esc there clears the query and leaves the bar; `s`
+# again focuses the now-empty bar. Semantic mode persists across the clear.
+Type "s"
+Sleep 400ms
 Escape
-Escape
-Sleep 800ms
+Sleep 700ms
 Type "s"
 Sleep 400ms
 Type "where do we resolve a bookmark after the code moves"
