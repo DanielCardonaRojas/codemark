@@ -265,14 +265,6 @@ impl TabbedPanel {
         }
     }
 
-    /// Get the query preview for modification.
-    pub fn get_query_preview_mut(&mut self) -> Option<&mut CodePreview> {
-        match self.panels.get_mut(2) {
-            Some(TabContent::Preview(p)) => Some(p),
-            _ => None,
-        }
-    }
-
     /// Scroll the active tab's content by `delta` lines (positive scrolls down),
     /// regardless of focus. Returns true if the viewport moved. Only the
     /// scrollable content kinds (code preview, markdown) respond; list tabs are
@@ -718,7 +710,7 @@ impl TabbedPanel {
         }
     }
 
-    /// Create steps/info/query tabs for right pane.
+    /// Create steps/info tabs for right pane.
     pub fn new_steps_info(_db: &Database) -> Self {
         use crate::component::CodePreview;
 
@@ -727,17 +719,11 @@ impl TabbedPanel {
 
         let info = MarkdownPanel::new();
 
-        let query_preview = CodePreview::new("", "scm");
-
-        let tabs = TabSelection::new(vec![Tab::new("Steps"), Tab::new("Info"), Tab::new("Query")]);
+        let tabs = TabSelection::new(vec![Tab::new("Steps"), Tab::new("Info")]);
 
         Self {
             tabs,
-            panels: vec![
-                TabContent::Preview(preview),
-                TabContent::Markdown(info),
-                TabContent::Preview(query_preview),
-            ],
+            panels: vec![TabContent::Preview(preview), TabContent::Markdown(info)],
             focused: false,
             last_area: std::cell::Cell::new(Rect::default()),
             pending_selection_change: std::cell::Cell::new(None),

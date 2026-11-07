@@ -34,6 +34,10 @@ pub struct BookmarkTemplateContext {
     pub ui_status: Option<String>,
     /// Tree-sitter query
     pub query: String,
+    /// Human-readable summary of the query target (e.g. "function cycle_mode"),
+    /// shown in place of the raw query. `None` when the query can't be summarized.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub summary: Option<String>,
     /// Creation timestamp
     pub created_at: String,
     /// Creator (optional)
@@ -193,6 +197,7 @@ impl BookmarkTemplateContext {
                     .map(|s| s.to_string())
             }),
             query: bm.query.clone(),
+            summary: query_summary(bm),
             created_at: bm.created_at.clone(),
             created_by: bm.created_by.clone(),
             commit_hash: bm.commit_hash.clone(),
@@ -443,12 +448,7 @@ impl CollectionStepTemplateContext {
     fn from_bookmark(index: usize, bm: &Bookmark) -> Self {
         let file_name = file_name_of(&bm.file_path);
 
-        let summary = bm
-            .language
-            .parse::<crate::parser::languages::Language>()
-            .ok()
-            .and_then(|lang| crate::query::summarizer::summarize_query(&bm.query, Some(lang)).ok())
-            .and_then(|s| s.format());
+        let summary = query_summary(bm);
 
         let note = bm.annotations.iter().find_map(|a| a.notes.clone());
 
@@ -462,6 +462,16 @@ impl CollectionStepTemplateContext {
             note,
         }
     }
+}
+
+/// Human-readable summary of a bookmark's query (e.g. "function cycle_mode"),
+/// or `None` when the language is unknown or the query can't be summarized.
+fn query_summary(bm: &Bookmark) -> Option<String> {
+    bm.language
+        .parse::<crate::parser::languages::Language>()
+        .ok()
+        .and_then(|lang| crate::query::summarizer::summarize_query(&bm.query, Some(lang)).ok())
+        .and_then(|s| s.format())
 }
 
 /// Extract the file name from a path, handling both `/` and `\` separators
@@ -1667,6 +1677,45 @@ mod tests {
             output.contains("- `6` `    impl Service {`"),
             "inner breadcrumb missing or unnumbered:\n{output}"
         );
+    }
+
+    /// The Info tab shows the human-readable query summary instead of the raw
+    /// tree-sitter query.
+    #[test]
+    fn test_render_show_template_includes_query_summary() {
+        let bm = Bookmark {
+            id: "abcdef1234567890".to_string(),
+            query: r#"(function_item name: (identifier) @n (#eq? @n "cycle_mode")) @target"#
+                .to_string(),
+            language: "rust".to_string(),
+            grammar_source: None,
+            file_path: "main.rs".to_string(),
+            content_hash: None,
+            commit_hash: None,
+            health: BookmarkHealth::Active,
+            resolution_method: None,
+            last_resolved_at: None,
+            stale_since: None,
+            created_at: "2024-01-01T00:00:00Z".to_string(),
+            created_by: None,
+            current_resolution_id: None,
+            repo_id: None,
+            tags: vec![],
+            annotations: vec![],
+            comments: vec![],
+        };
+
+        // Render the compiled default directly so a cached on-disk template
+        // can't shadow it (see test_render_show_template_includes_breadcrumbs).
+        let handlebars = create_handlebars_engine();
+        let context = BookmarkTemplateContext::from_bookmark(&bm, &[], Path::new("."), None);
+        let output = handlebars.render_template(default_show_template(), &context).unwrap();
+
+        assert!(
+            output.contains(r"| **Summary** | function cycle\_mode |"),
+            "summary row missing:\n{output}"
+        );
+        assert!(!output.contains("#eq?"), "raw query leaked into the template:\n{output}");
     }
 
     /// A bookmark with no breadcrumbs must not render an empty section header.
