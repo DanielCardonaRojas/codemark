@@ -40,6 +40,9 @@ set -euo pipefail
 DEST="${1:?usage: seed-fixture.sh <dest-dir>}"
 CODEMARK="${CODEMARK:-codemark}"
 FIXTURE_REV="${FIXTURE_REV:-559038abfa951c914e8a29f4b71eb4e68c2707f9}"
+# An inherited CODEMARK_DB would point every CLI call below at that database
+# (e.g. your working one) instead of the fixture's.
+unset CODEMARK_DB
 REPO_ROOT="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 
 [ ! -e "$DEST" ] || {
@@ -217,8 +220,9 @@ edit_or_die crates/codemark-core/src/sync.rs \
   's/\n(\/\/\/[^\n]*\n)*pub fn build_auth_headers\(.*?\n\}\n//s' \
   "remove build_auth_headers"
 
+# No signing: a global commit.gpgsign would otherwise fail on the fixture identity.
 git -c user.name="codemark fixture" -c user.email="fixture@codemark.invalid" \
-  commit -q -m "fixture: simulate later edits (drifted + broken bookmarks)" -- \
+  -c commit.gpgsign=false commit -q -m "fixture: simulate later edits (drifted + broken bookmarks)" -- \
   crates/codemark-core/src/query/relaxer.rs crates/codemark-core/src/sync.rs
 
 echo "Seeded fixture at $DEST (${FIXTURE_REV:0:12})"

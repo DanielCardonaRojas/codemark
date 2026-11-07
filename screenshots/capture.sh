@@ -66,6 +66,7 @@ BIN_DIR="$REPO_ROOT/target/release"
 # touches the developer's real global state and stays reproducible.
 SANDBOX="$(mktemp -d)"
 trap 'rm -rf "$SANDBOX"' EXIT
+unset CODEMARK_DB # would override the fixture DB the CLI finds from its cwd
 export CODEMARK_DATA_DIR="$SANDBOX/data"
 export XDG_CONFIG_HOME="$SANDBOX/config"
 export XDG_DATA_HOME="$SANDBOX/data"
@@ -92,6 +93,12 @@ CODEMARK="$BIN_DIR/codemark" "$SHOTS_DIR/seed-fixture.sh" "$FIXTURE_REPO"
 # commands in the fixture clone; run one more so this doesn't hinge on it.
 echo "==> Seeding sandboxed registry (Repos tab)"
 ( cd "$FIXTURE_REPO" && "$BIN_DIR/codemark" init >/dev/null )
+
+# The search tapes demo semantic search. Seeding embeds bookmarks best-effort,
+# so a model that failed to load or download would leave the recordings showing
+# empty results. Reindex explicitly: it fails loudly if embeddings can't be made.
+echo "==> Indexing fixture for semantic search"
+( cd "$FIXTURE_REPO" && "$BIN_DIR/codemark" reindex >/dev/null )
 
 echo "==> Capturing screenshots"
 # vhs does not interpolate env vars in `Screenshot`/`Output` paths, so we

@@ -49,7 +49,7 @@ The generated images live in `screenshots/images/`; the tooling (tapes,
   override it with `FIXTURE_REV=<sha> ./screenshots/capture.sh`). If a bookmarked
   function was renamed or removed since the old pin, `seed-fixture.sh` fails
   and names the missing function.
-- **Inspect it**: `CODEMARK=target/release/codemark screenshots/seed-fixture.sh
+- **Inspect it**: `CODEMARK="$PWD/target/release/codemark" screenshots/seed-fixture.sh
   /tmp/fixture` creates a fixture you can browse with `codemark-tui` from
   `/tmp/fixture`. (It writes to your real global registry, so sandbox
   `CODEMARK_DATA_DIR` as `capture.sh` does if that matters to you.)
