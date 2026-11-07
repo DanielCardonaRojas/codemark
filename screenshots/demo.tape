@@ -3,23 +3,29 @@
 # Produces: codemark_tui_demo.gif
 #
 # Rendered by capture.sh, which substitutes __OUT__ with the absolute images dir
-# and runs from the repo root so the TUI uses the tracked .codemark/codemark.db.
+# and runs from the seeded fixture clone so the TUI uses the fixture DB (see
+# seed-fixture.sh), not the repo's live .codemark/codemark.db.
 #
 # Flow:
-#   1. browse a few bookmarks with the arrow keys (live preview updates)
-#   2. focus the preview pane and cycle its Content -> Info -> Query tabs
-#   3. switch the left pane to Collections, open one
-#   4. step through the collection's bookmarks
+#   1. browse collections (the preview shows each one's overview), then return
+#      to the top one: bookmark-resolution, which seed-fixture.sh creates last
+#      so it lists first
+#   2. open it and step through its bookmarks; the 4th step (relax_query) is
+#      Drifted, because seed-fixture.sh edits it after bookmarking
+#   3. on a step, cycle the preview tabs: Steps (code) -> Info -> Query
+#   4. go back and switch the pane to Bookmarks; the newest bookmark
+#      (build_auth_headers) is Broken, its function removed by the seed
 #
 # Key map used (see crates/codemark-tui/src/browser):
-#   Down/Up  move the bookmark selection (Panel3)
-#   5        focus the right preview pane (Steps/Content)
-#   4        focus the bookmarks pane (Panel3)
+#   Down/Up  move the selection in the focused list
+#   ?        contextual keybinding cheat sheet (press again to close)
+#   Enter    open the selected collection (focuses the right pane, step 1)
+#   Right    next step within an open collection
 #   ] / [    cycle the *focused* pane's tabs
-#            - right pane: Content -> Info -> Query
-#            - Panel3:     Bookmarks -> Collections -> Tours
-#   Enter    open the selected collection (loads it, focuses the right pane)
-#   Right    advance to the next step (bookmark) within an open collection
+#            - right pane (open collection): Steps -> Info -> Query
+#            - pane 3:                       Collections -> Bookmarks
+#   Esc      back from an open collection
+#   3        focus pane 3 (Collections / Bookmarks)
 
 Output "__OUT__/codemark_tui_demo.gif"
 
@@ -38,62 +44,53 @@ Enter
 Sleep 2.5s
 Show
 
-Sleep 400ms
+Sleep 600ms
 
-# --- 1. Browse bookmarks (preview updates per selection) ---------------------
+# --- 1. Browse collections (preview shows each overview), back to the top ----
 Down 1
-Sleep 500ms
+Sleep 700ms
 Down 1
-Sleep 500ms
-Down 1
-Sleep 650ms
-
-# --- 1b. Show the contextual keybinding cheat sheet for the bookmarks pane ---
-# `?` opens the cheat sheet scoped to the focused pane (here, Panel3/bookmarks);
-# press it again to close.
-Type "?"
-Sleep 1.5s
-Type "?"
-Sleep 400ms
-
-# --- 2. Inspect the preview tabs: Content -> Info -> Query -------------------
-# Focus the right preview pane.
-Type "4"
-Sleep 450ms
-
-# --- 2b. Show the cheat sheet again — now scoped to the preview pane ---------
-Type "?"
-Sleep 1.5s
-Type "?"
-Sleep 400ms
-# Content -> Info
-Type "]"
+Sleep 700ms
+Up 2
 Sleep 900ms
-# Info -> Query
-Type "]"
+
+# Contextual cheat sheet for the collections pane.
+Type "?"
+Sleep 1.5s
+Type "?"
+Sleep 400ms
+
+# --- 2. Open bookmark-resolution and step through it ------------------------
+Enter
+Sleep 1.3s
+Right 1
 Sleep 1s
-# Back to Content (Query -> Info -> Content).
+Right 1
+Sleep 1s
+# Step 4: relax_query, Drifted (its body changed after it was bookmarked).
+Right 1
+Sleep 1.3s
+
+# --- 3. Preview tabs on this step: Steps -> Info -> Query -------------------
+Type "]"
+Sleep 1.5s
+Type "]"
+Sleep 1.3s
 Type "["
 Sleep 300ms
 Type "["
-Sleep 450ms
+Sleep 600ms
 
-# --- 3. Switch to Collections and open one ----------------------------------
-# Focus the bookmarks pane, then cycle its tab to Collections.
+# --- 4. Back, then the Bookmarks tab (newest first; top one is Broken) ------
+Escape
+Sleep 500ms
 Type "3"
-Sleep 350ms
+Sleep 300ms
 Type "]"
-Sleep 650ms
-# Open the selected collection (loads it and focuses the right pane).
-Enter
-Sleep 1s
-
-# --- 4. Step through the collection's bookmarks -----------------------------
-Right 1
-Sleep 800ms
-Right 1
-Sleep 800ms
-Right 1
+Sleep 1.3s
+Down 1
+Sleep 900ms
+Down 1
 Sleep 900ms
 
 Sleep 600ms
