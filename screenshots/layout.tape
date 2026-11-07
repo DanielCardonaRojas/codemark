@@ -8,7 +8,8 @@
 # width and preview-only, then the details pane, then the left (bookmarks) pane.
 #
 # Rendered by capture.sh, which substitutes __OUT__ with the absolute output dir
-# and runs from the repo root so the TUI uses the tracked .codemark/codemark.db.
+# and runs from the seeded fixture clone so the TUI uses the fixture DB (see
+# seed-fixture.sh), not the repo's live .codemark/codemark.db.
 #
 # Key map used (see crates/codemark-tui/src/browser/events.rs handle_resize):
 #   3        focus the bookmarks (left) pane

@@ -25,6 +25,8 @@ jobs:
         uses: actions/checkout@v4
         with:
           persist-credentials: false
+          # Full history: the demo-fixture check below clones a pinned commit.
+          fetch-depth: 0
 
       - name: Install Rust toolchain
         # Pinned to a commit SHA (rust-toolchain has no version tags; @master is
@@ -59,6 +61,22 @@ jobs:
 
       - name: Run cargo test
         run: cargo test --verbose
+
+      # The README demo tapes record against a fixture seeded by
+      # screenshots/seed-fixture.sh at a pinned commit. Seed it on every PR so a
+      # renamed function or changed CLI flag fails here, not at the next capture.
+      # Semantic indexing is off: it would download a model and isn't under test.
+      - name: Check demo fixture seeds
+        run: |
+          set -euo pipefail
+          cargo build -p codemark-cli --bin codemark
+          SANDBOX="$(mktemp -d)"
+          export CODEMARK_DATA_DIR="$SANDBOX/data" XDG_DATA_HOME="$SANDBOX/data"
+          export XDG_CONFIG_HOME="$SANDBOX/config" XDG_CACHE_HOME="$SANDBOX/cache"
+          export CODEMARK_GRAMMARS_DIR="$PWD/tests/grammars"
+          mkdir -p "$XDG_CONFIG_HOME/codemark"
+          printf '[semantic]\nenabled = false\n' > "$XDG_CONFIG_HOME/codemark/config.toml"
+          CODEMARK="$PWD/target/debug/codemark" screenshots/seed-fixture.sh "$SANDBOX/codemark"
 
       - name: Run cargo clippy
         run: cargo clippy -- -D warnings

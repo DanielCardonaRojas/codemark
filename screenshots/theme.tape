@@ -3,7 +3,7 @@
 # Produces: codemark_tui_theme_<slug>.png (one per base16 scheme).
 #
 # Rendered once per scheme by capture.sh, which substitutes:
-#   __OUT__   -> repo root (absolute output dir)
+#   __OUT__   -> the images dir (absolute output dir)
 #   __SHOT__  -> the per-theme output filename
 # and exports CODEMARK_TUI_THEME so the TUI renders in that scheme.
 #

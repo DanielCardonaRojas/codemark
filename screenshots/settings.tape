@@ -3,7 +3,8 @@
 # Produces: codemark_tui_settings.gif
 #
 # Rendered by capture.sh, which substitutes __OUT__ with the absolute output dir
-# and runs from the repo root so the TUI uses the tracked .codemark/codemark.db.
+# and runs from the seeded fixture clone so the TUI uses the fixture DB (see
+# seed-fixture.sh), not the repo's live .codemark/codemark.db.
 #
 # Flow:
 #   1. open the Settings overlay

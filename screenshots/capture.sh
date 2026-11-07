@@ -2,19 +2,30 @@
 #
 # Regenerate the README screenshot gallery from the live TUI.
 #
-# The TUI is run against *this repository's own* knowledge base
-# (.codemark/codemark.db, which is tracked in git), so the screenshots show
-# real bookmarks and collections and the previews resolve against real source
-# files. No synthetic demo data is generated.
+# The TUI is run against a curated *fixture* knowledge base, never the repo's
+# live working database (.codemark/codemark.db). That DB keeps gaining issue and
+# WIP collections as we dogfood codemark, which would leak into the recordings
+# and shift the tapes' position-based keystrokes.
+#
+# The fixture is a throwaway clone of this repo at FIXTURE_REV (a pinned commit,
+# so previews and health states are stable between captures), seeded by
+# seed-fixture.sh with a known set of bookmarks and collections. The previews
+# resolve against real source files at that commit.
 #
 # Pipeline:
-#   1. build the `codemark-tui` (TUI) binary
-#   2. run each vhs tape from the repo root, capturing PNGs into screenshots/images/
+#   1. build the `codemark-tui` (TUI) and `codemark` (CLI) binaries
+#   2. clone the repo at FIXTURE_REV into a sandbox and seed the fixture DB
+#   3. run each vhs tape from the fixture clone, capturing into screenshots/images/
 #
 # Requirements: cargo, git, and `vhs` (https://github.com/charmbracelet/vhs).
 # Install vhs locally with: brew install vhs   (Linux: see the vhs README).
 #
 # Usage: screenshots/capture.sh
+#
+# Environment:
+#   FIXTURE_REV  commit the fixture clone checks out (default: the pin in
+#                seed-fixture.sh). Bump the pin there to refresh the code shown
+#                in the gallery; the seed fails if a bookmarked function is gone.
 #
 # Output (overwrites the committed gallery images in screenshots/images/):
 #   codemark_tui_demo.gif           (the animated tour — the README's lead visual)
@@ -35,12 +46,6 @@ mkdir -p "$IMAGES_DIR"
 command -v vhs   >/dev/null || { echo "error: vhs not found (brew install vhs)"; exit 1; }
 command -v cargo >/dev/null || { echo "error: cargo not found"; exit 1; }
 
-[ -f "$REPO_ROOT/.codemark/codemark.db" ] || {
-  echo "error: $REPO_ROOT/.codemark/codemark.db not found — the gallery uses the"
-  echo "       repo's own knowledge base as its fixture."
-  exit 1
-}
-
 # The tapes render with SF Mono Nerd Font so the TUI's Nerd Font icons appear.
 # Warn (don't fail) if it's missing — vhs falls back to a default font, which
 # produces iconless screenshots.
@@ -51,17 +56,16 @@ fi
 
 echo "==> Building binaries"
 # Build both the TUI (what we screenshot) and the CLI (used below to seed the
-# sandboxed global registry so the Repos tab is populated).
+# fixture database and the sandboxed global registry).
 cargo build --release -p codemark-tui --bin codemark-tui
 cargo build --release -p codemark-cli --bin codemark
 
 BIN_DIR="$REPO_ROOT/target/release"
 
 # Sandbox the *global* codemark state (registry/config/cache) so capturing never
-# touches the developer's real global state and stays reproducible. The repo's
-# own .codemark/codemark.db (picked up from the working directory) is the data
-# fixture and is intentionally not sandboxed.
+# touches the developer's real global state and stays reproducible.
 SANDBOX="$(mktemp -d)"
+trap 'rm -rf "$SANDBOX"' EXIT
 export CODEMARK_DATA_DIR="$SANDBOX/data"
 export XDG_CONFIG_HOME="$SANDBOX/config"
 export XDG_DATA_HOME="$SANDBOX/data"
@@ -73,32 +77,27 @@ export XDG_CACHE_HOME="$SANDBOX/cache"
 "$REPO_ROOT/scripts/fetch-test-grammars.sh"
 export CODEMARK_GRAMMARS_DIR="$REPO_ROOT/tests/grammars"
 
-# The TUI's background live-health pass can write resolutions to the database.
-# Snapshot the tracked db and restore it afterward so a capture run leaves it
-# byte-identical (no spurious git diff on the fixture).
-DB="$REPO_ROOT/.codemark/codemark.db"
-DB_BACKUP="$SANDBOX/codemark.db.bak"
-cp "$DB" "$DB_BACKUP"
-restore_db() {
-  rm -f "$DB-wal" "$DB-shm"
-  cp "$DB_BACKUP" "$DB"
-  rm -rf "$SANDBOX"
-}
-trap restore_db EXIT
+# Clone the repo at FIXTURE_REV into the sandbox and seed the fixture DB there
+# (see seed-fixture.sh). The TUI finds the database from its working directory
+# and resolves previews relative to it, so the tapes run from this clone. It's
+# named `codemark` so the TUI's repo label matches the project.
+FIXTURE_REPO="$SANDBOX/codemark"
+echo "==> Seeding fixture"
+CODEMARK="$BIN_DIR/codemark" "$SHOTS_DIR/seed-fixture.sh" "$FIXTURE_REPO"
 
 # Seed the sandboxed global registry. The Repos tab reads the global registry.db
 # (under CODEMARK_DATA_DIR), which the sandbox above points at an empty temp dir.
 # The registry is only ever populated as a side effect of running a codemark CLI
-# command in a repo — the TUI just reads it. So run one CLI command in the repo
-# root to register this repo, otherwise the Repos tab renders empty.
+# command in a repo — the TUI just reads it. seed-fixture.sh already ran CLI
+# commands in the fixture clone; run one more so this doesn't hinge on it.
 echo "==> Seeding sandboxed registry (Repos tab)"
-( cd "$REPO_ROOT" && "$BIN_DIR/codemark" init >/dev/null )
+( cd "$FIXTURE_REPO" && "$BIN_DIR/codemark" init >/dev/null )
 
 echo "==> Capturing screenshots"
 # vhs does not interpolate env vars in `Screenshot`/`Output` paths, so we
 # template the tapes instead: each uses a literal `__OUT__` token for its output
 # dir, substituted with the absolute images dir into a rendered copy. vhs runs
-# from the repo root (so the TUI auto-detects .codemark/codemark.db) while the
+# from the fixture clone (so the TUI auto-detects the fixture DB) while the
 # rendered output path stays absolute — decoupling cwd from output location.
 RENDER_DIR="$SANDBOX/tapes"
 mkdir -p "$RENDER_DIR"
@@ -117,7 +116,7 @@ while IFS= read -r scheme; do
   echo "        - $scheme -> $shot"
   rendered="$RENDER_DIR/theme-$slug.tape"
   sed -e "s#__OUT__#$IMAGES_DIR#g" -e "s#__SHOT__#$shot#g" "$SHOTS_DIR/theme.tape" > "$rendered"
-  ( cd "$REPO_ROOT" && PATH="$BIN_DIR:$PATH" CODEMARK_TUI_THEME="$scheme" vhs "$rendered" )
+  ( cd "$FIXTURE_REPO" && PATH="$BIN_DIR:$PATH" CODEMARK_TUI_THEME="$scheme" vhs "$rendered" )
 done < <("$BIN_DIR/codemark-tui" --list-schemes)
 
 # Animated demo GIF: browse through bookmarks with the arrow keys. vhs records
@@ -130,7 +129,7 @@ if command -v ffmpeg >/dev/null; then
   rendered="$RENDER_DIR/demo.tape"
   sed "s#__OUT__#$SANDBOX#g" "$SHOTS_DIR/demo.tape" > "$rendered"
   # demo.tape writes codemark_tui_demo.gif into the __OUT__ dir (the sandbox).
-  ( cd "$REPO_ROOT" && PATH="$BIN_DIR:$PATH" vhs "$rendered" )
+  ( cd "$FIXTURE_REPO" && PATH="$BIN_DIR:$PATH" vhs "$rendered" )
   mv "$SANDBOX/codemark_tui_demo.gif" "$GIF_RAW"
   # Two-pass palette for clean colors at the smaller size.
   PAL="$SANDBOX/palette.png"
@@ -143,7 +142,7 @@ else
   echo "      warning: ffmpeg not found; recording GIF at full size (large file)."
   rendered="$RENDER_DIR/demo.tape"
   sed "s#__OUT__#$IMAGES_DIR#g" "$SHOTS_DIR/demo.tape" > "$rendered"
-  ( cd "$REPO_ROOT" && PATH="$BIN_DIR:$PATH" vhs "$rendered" )
+  ( cd "$FIXTURE_REPO" && PATH="$BIN_DIR:$PATH" vhs "$rendered" )
 fi
 
 # Settings overlay demo GIF: open Settings and cycle its tabs. Same two-pass
@@ -155,7 +154,7 @@ if command -v ffmpeg >/dev/null; then
   rendered="$RENDER_DIR/settings.tape"
   sed "s#__OUT__#$SANDBOX#g" "$SHOTS_DIR/settings.tape" > "$rendered"
   # settings.tape writes codemark_tui_settings.gif into the __OUT__ dir (sandbox).
-  ( cd "$REPO_ROOT" && PATH="$BIN_DIR:$PATH" vhs "$rendered" )
+  ( cd "$FIXTURE_REPO" && PATH="$BIN_DIR:$PATH" vhs "$rendered" )
   mv "$SANDBOX/codemark_tui_settings.gif" "$SETTINGS_GIF_RAW"
   PAL="$SANDBOX/settings_palette.png"
   ffmpeg -y -loglevel error -i "$SETTINGS_GIF_RAW" \
@@ -167,14 +166,14 @@ else
   echo "      warning: ffmpeg not found; recording GIF at full size (large file)."
   rendered="$RENDER_DIR/settings.tape"
   sed "s#__OUT__#$IMAGES_DIR#g" "$SHOTS_DIR/settings.tape" > "$rendered"
-  ( cd "$REPO_ROOT" && PATH="$BIN_DIR:$PATH" vhs "$rendered" )
+  ( cd "$FIXTURE_REPO" && PATH="$BIN_DIR:$PATH" vhs "$rendered" )
 fi
 
 # Settings thumbnail: a single still (Theme tab) used as the gallery poster.
 echo "    - settings-thumb.tape (png)"
 rendered="$RENDER_DIR/settings-thumb.tape"
 sed "s#__OUT__#$IMAGES_DIR#g" "$SHOTS_DIR/settings-thumb.tape" > "$rendered"
-( cd "$REPO_ROOT" && PATH="$BIN_DIR:$PATH" vhs "$rendered" )
+( cd "$FIXTURE_REPO" && PATH="$BIN_DIR:$PATH" vhs "$rendered" )
 
 # Search demo GIF: full-text vs semantic search. Same two-pass ffmpeg downscale
 # as the other demo GIFs so the committed GIF stays README-friendly.
@@ -185,7 +184,7 @@ if command -v ffmpeg >/dev/null; then
   rendered="$RENDER_DIR/search.tape"
   sed "s#__OUT__#$SANDBOX#g" "$SHOTS_DIR/search.tape" > "$rendered"
   # search.tape writes codemark_tui_search.gif into the __OUT__ dir (sandbox).
-  ( cd "$REPO_ROOT" && PATH="$BIN_DIR:$PATH" vhs "$rendered" )
+  ( cd "$FIXTURE_REPO" && PATH="$BIN_DIR:$PATH" vhs "$rendered" )
   mv "$SANDBOX/codemark_tui_search.gif" "$SEARCH_GIF_RAW"
   PAL="$SANDBOX/search_palette.png"
   ffmpeg -y -loglevel error -i "$SEARCH_GIF_RAW" \
@@ -197,14 +196,14 @@ else
   echo "      warning: ffmpeg not found; recording GIF at full size (large file)."
   rendered="$RENDER_DIR/search.tape"
   sed "s#__OUT__#$IMAGES_DIR#g" "$SHOTS_DIR/search.tape" > "$rendered"
-  ( cd "$REPO_ROOT" && PATH="$BIN_DIR:$PATH" vhs "$rendered" )
+  ( cd "$FIXTURE_REPO" && PATH="$BIN_DIR:$PATH" vhs "$rendered" )
 fi
 
 # Search thumbnail: a single still (Semantic results) used as the gallery poster.
 echo "    - search-thumb.tape (png)"
 rendered="$RENDER_DIR/search-thumb.tape"
 sed "s#__OUT__#$IMAGES_DIR#g" "$SHOTS_DIR/search-thumb.tape" > "$rendered"
-( cd "$REPO_ROOT" && PATH="$BIN_DIR:$PATH" vhs "$rendered" )
+( cd "$FIXTURE_REPO" && PATH="$BIN_DIR:$PATH" vhs "$rendered" )
 
 # Filter demo GIF: narrow pane contents with `/` (distinct from search). Same
 # two-pass ffmpeg downscale as the other demo GIFs.
@@ -215,7 +214,7 @@ if command -v ffmpeg >/dev/null; then
   rendered="$RENDER_DIR/filter.tape"
   sed "s#__OUT__#$SANDBOX#g" "$SHOTS_DIR/filter.tape" > "$rendered"
   # filter.tape writes codemark_tui_filter.gif into the __OUT__ dir (sandbox).
-  ( cd "$REPO_ROOT" && PATH="$BIN_DIR:$PATH" vhs "$rendered" )
+  ( cd "$FIXTURE_REPO" && PATH="$BIN_DIR:$PATH" vhs "$rendered" )
   mv "$SANDBOX/codemark_tui_filter.gif" "$FILTER_GIF_RAW"
   PAL="$SANDBOX/filter_palette.png"
   ffmpeg -y -loglevel error -i "$FILTER_GIF_RAW" \
@@ -227,14 +226,14 @@ else
   echo "      warning: ffmpeg not found; recording GIF at full size (large file)."
   rendered="$RENDER_DIR/filter.tape"
   sed "s#__OUT__#$IMAGES_DIR#g" "$SHOTS_DIR/filter.tape" > "$rendered"
-  ( cd "$REPO_ROOT" && PATH="$BIN_DIR:$PATH" vhs "$rendered" )
+  ( cd "$FIXTURE_REPO" && PATH="$BIN_DIR:$PATH" vhs "$rendered" )
 fi
 
 # Filter thumbnail: a single still (filtered Bookmarks pane) — gallery poster.
 echo "    - filter-thumb.tape (png)"
 rendered="$RENDER_DIR/filter-thumb.tape"
 sed "s#__OUT__#$IMAGES_DIR#g" "$SHOTS_DIR/filter-thumb.tape" > "$rendered"
-( cd "$REPO_ROOT" && PATH="$BIN_DIR:$PATH" vhs "$rendered" )
+( cd "$FIXTURE_REPO" && PATH="$BIN_DIR:$PATH" vhs "$rendered" )
 
 # Layout demo GIF: resize/cycle panes with +/- (preview, details, left pane).
 # Same two-pass ffmpeg downscale as the other demo GIFs.
@@ -245,7 +244,7 @@ if command -v ffmpeg >/dev/null; then
   rendered="$RENDER_DIR/layout.tape"
   sed "s#__OUT__#$SANDBOX#g" "$SHOTS_DIR/layout.tape" > "$rendered"
   # layout.tape writes codemark_tui_layout.gif into the __OUT__ dir (sandbox).
-  ( cd "$REPO_ROOT" && PATH="$BIN_DIR:$PATH" vhs "$rendered" )
+  ( cd "$FIXTURE_REPO" && PATH="$BIN_DIR:$PATH" vhs "$rendered" )
   mv "$SANDBOX/codemark_tui_layout.gif" "$LAYOUT_GIF_RAW"
   PAL="$SANDBOX/layout_palette.png"
   ffmpeg -y -loglevel error -i "$LAYOUT_GIF_RAW" \
@@ -257,14 +256,14 @@ else
   echo "      warning: ffmpeg not found; recording GIF at full size (large file)."
   rendered="$RENDER_DIR/layout.tape"
   sed "s#__OUT__#$IMAGES_DIR#g" "$SHOTS_DIR/layout.tape" > "$rendered"
-  ( cd "$REPO_ROOT" && PATH="$BIN_DIR:$PATH" vhs "$rendered" )
+  ( cd "$FIXTURE_REPO" && PATH="$BIN_DIR:$PATH" vhs "$rendered" )
 fi
 
 # Layout thumbnail: a single still (full-width preview) — gallery poster.
 echo "    - layout-thumb.tape (png)"
 rendered="$RENDER_DIR/layout-thumb.tape"
 sed "s#__OUT__#$IMAGES_DIR#g" "$SHOTS_DIR/layout-thumb.tape" > "$rendered"
-( cd "$REPO_ROOT" && PATH="$BIN_DIR:$PATH" vhs "$rendered" )
+( cd "$FIXTURE_REPO" && PATH="$BIN_DIR:$PATH" vhs "$rendered" )
 
 echo "==> Done. Updated:"
 ls -1 "$IMAGES_DIR"/codemark_tui_*.png "$IMAGES_DIR"/codemark_tui_*.gif 2>/dev/null
