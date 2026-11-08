@@ -425,6 +425,7 @@ For common query patterns across languages, see:
 - Use `--collection <name>` when creating bookmarks to add them directly to a tour (tours are auto-created if they don't exist).
 - **Notes are durable, comments are ephemeral**: explain the code with `--note`; record task/ticket/debugging chatter with `--comment`. This keeps notes reusable in any future context instead of coupled to one agentic session.
 - **Link out generously**: attach related PRs, issues, design docs, dashboards, and external references to the *collection* with `codemark tour link add --kind ...`, and embed inline links inside `--comment` markdown. This turns a collection into a self-contained briefing.
+- **Link the artifacts you create**: whenever you produce something with a URL during the task — a plan or doc page, a generated diagram, a gist, a published report, a notebook — attach it to the active collection **right after creating it** with `codemark tour link add <tour> --url ... --label ... --kind artifact`. Your own output is often the most useful context for the next session. PRs and issues you open keep their specific kind (`--kind pr` / `--kind issue`). Don't link local paths (`file://`, `docs/plans/*.md`, `graphify-out/…`): they break once the tour is pushed or shared. Link the published or committed URL instead, or leave the file out.
 - **Always record the prompt on a collection**: pass `--prompt` with a cleaned-up, standalone restatement of the request that motivated the tour (fix the user's typos/grammar, keep their intent). It's the one field that lets the tour be rebuilt from intent later. See **Recording the Prompt**.
 - **Tag collections, not just bookmarks**: `codemark tour tag add` (or `--tag` at create time) makes collections discoverable and gives the markdown overview useful metadata.
 - **Gather context fast**: `codemark tour show <name> --format markdown` renders the description, tags, links, and every step's ID + note in one shot — use it when restoring context from a previous session.
@@ -516,10 +517,14 @@ codemark tour annotate login-flow --clear-prompt
 # Tag an existing collection (repeatable)
 codemark tour tag add login-flow feature:auth area:security
 
-# Add links with a typed kind: pr | issue | doc | discussion | dashboard | repo | tour | other
+# Add links with a typed kind: pr | issue | doc | discussion | dashboard | repo | tour | artifact | other
 codemark tour link add login-flow --url "https://github.com/org/repo/pull/116" --label "Auth PR"   --kind pr
 codemark tour link add login-flow --url "https://docs.example.com/auth"        --label "Auth docs" --kind doc
 codemark tour link add login-flow --url "https://linear.app/org/issue/ENG-42"  --label "ENG-42"    --kind issue
+
+# Link artifacts YOU generated (plans, diagrams, gists, reports) as soon as they exist.
+# `artifact` marks agent output, as opposed to human-authored references.
+codemark tour link add login-flow --url "https://gist.github.com/me/abc123"    --label "Login refactor plan" --kind artifact
 
 # Read a collection as markdown — description, tags, links, and each step's ID + note
 codemark tour show login-flow --format markdown

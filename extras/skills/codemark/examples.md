@@ -163,7 +163,7 @@ codemark edit <bookmark-id> --comment "Confirmed fixed by rotating the session i
 
 ## Enriching a Collection (tags + links)
 
-Make collections self-contained briefings: tag them and link the relevant PR, issue, and docs.
+Make collections self-contained briefings: tag them and link the relevant PR, issue, and docs, plus any artifacts you generated (plans, diagrams, gists) with `--kind artifact`. Link published URLs, not local file paths: local paths don't survive a push.
 
 ```bash
 codemark tour create auth-investigation --description "Tracing the JWT auth path for ENG-42"
@@ -171,6 +171,11 @@ codemark tour tag add auth-investigation feature:auth area:security
 codemark tour link add auth-investigation --url "https://github.com/org/repo/pull/128" --label "Auth fix PR"  --kind pr
 codemark tour link add auth-investigation --url "https://linear.app/org/issue/ENG-42" --label "ENG-42"       --kind issue
 codemark tour link add auth-investigation --url "https://docs.example.com/auth"       --label "Auth design" --kind doc
+
+# Link artifacts you produced during the session, right after creating them
+codemark tour link add auth-investigation --url "https://gist.github.com/me/4f2e9a"   --label "Auth fix plan"        --kind artifact
+codemark tour link add auth-investigation --url "https://github.com/org/repo/blob/main/docs/auth-flow.html" \
+  --label "Generated auth-flow diagram" --kind artifact
 
 # Read it all back as a single markdown briefing
 codemark tour show auth-investigation --format markdown

@@ -968,7 +968,7 @@ pub struct CollectionLinkAddArgs {
     #[arg(long)]
     pub label: String,
 
-    /// Link kind (pr, issue, doc, discussion, dashboard, repo, tour, other)
+    /// Link kind (pr, issue, doc, discussion, dashboard, repo, tour, artifact, other)
     #[arg(long, default_value = "other")]
     pub kind: String,
 

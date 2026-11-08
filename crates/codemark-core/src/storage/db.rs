@@ -41,6 +41,7 @@ const MIGRATION_023: &str =
 const MIGRATION_024: &str = include_str!("../../../../migrations/V24__add_collection_prompt.sql");
 const MIGRATION_025: &str =
     include_str!("../../../../migrations/V25__add_bookmark_grammar_source.sql");
+const MIGRATION_026: &str = include_str!("../../../../migrations/V26__add_artifact_link_kind.sql");
 
 /// SQLite database wrapper with automatic migrations.
 pub struct Database {
@@ -50,7 +51,7 @@ pub struct Database {
 
 impl Database {
     /// Current schema version supported by this crate.
-    pub const CURRENT_VERSION: i64 = 25;
+    pub const CURRENT_VERSION: i64 = 26;
 
     /// Open the database at the given path, run migrations.
     /// Returns an error if the parent directory does not exist.
@@ -145,6 +146,7 @@ impl Database {
             (23, MIGRATION_023),
             (24, MIGRATION_024),
             (25, MIGRATION_025),
+            (26, MIGRATION_026),
         ];
 
         for (version, sql) in migrations {

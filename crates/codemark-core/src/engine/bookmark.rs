@@ -82,12 +82,15 @@ pub enum CollectionLinkKind {
     Dashboard,
     Repo,
     Tour,
+    /// An artifact the agent itself produced (plan, generated doc/diagram,
+    /// gist, published report), as opposed to a human-authored reference.
+    Artifact,
     Other,
 }
 
 impl CollectionLinkKind {
     pub const ALL_VARIANTS: &'static [&'static str] =
-        &["pr", "issue", "doc", "discussion", "dashboard", "repo", "tour", "other"];
+        &["pr", "issue", "doc", "discussion", "dashboard", "repo", "tour", "artifact", "other"];
 }
 
 impl fmt::Display for CollectionLinkKind {
@@ -100,6 +103,7 @@ impl fmt::Display for CollectionLinkKind {
             CollectionLinkKind::Dashboard => write!(f, "dashboard"),
             CollectionLinkKind::Repo => write!(f, "repo"),
             CollectionLinkKind::Tour => write!(f, "tour"),
+            CollectionLinkKind::Artifact => write!(f, "artifact"),
             CollectionLinkKind::Other => write!(f, "other"),
         }
     }
@@ -117,6 +121,7 @@ impl FromStr for CollectionLinkKind {
             "dashboard" => Ok(CollectionLinkKind::Dashboard),
             "repo" => Ok(CollectionLinkKind::Repo),
             "tour" => Ok(CollectionLinkKind::Tour),
+            "artifact" => Ok(CollectionLinkKind::Artifact),
             "other" => Ok(CollectionLinkKind::Other),
             _ => Err(crate::error::Error::Input(format!("invalid collection link kind: {s}"))),
         }
@@ -414,6 +419,15 @@ mod tests {
             let parsed: ResolutionMethod = s.parse().unwrap();
             assert_eq!(method, parsed);
         }
+    }
+
+    #[test]
+    fn collection_link_kind_round_trips_every_variant() {
+        for name in CollectionLinkKind::ALL_VARIANTS {
+            let kind: CollectionLinkKind = name.parse().unwrap();
+            assert_eq!(kind.to_string(), *name);
+        }
+        assert_eq!("artifact".parse::<CollectionLinkKind>().unwrap(), CollectionLinkKind::Artifact);
     }
 
     #[test]

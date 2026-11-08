@@ -942,4 +942,46 @@ mod tests {
         let health = db.recompute_collection_health(&col.id).unwrap();
         assert_eq!(health, None);
     }
+
+    /// V26 rebuilds `collection_links` to widen its CHECK constraint. Re-running
+    /// it over a populated table must keep every row, accept the new
+    /// `artifact` kind, and still reject kinds outside the allowlist.
+    #[test]
+    fn artifact_link_kind_survives_v26_rebuild() {
+        use crate::engine::bookmark::{CollectionLink, CollectionLinkKind};
+
+        let mut db = Database::open_in_memory().unwrap();
+        let col = test_collection("artifacts");
+        db.insert_collection(&col).unwrap();
+        for (i, kind) in
+            [CollectionLinkKind::Pr, CollectionLinkKind::Artifact].into_iter().enumerate()
+        {
+            db.insert_collection_link(&CollectionLink {
+                id: format!("link-{i}"),
+                collection_id: col.id.clone(),
+                kind,
+                label: format!("{kind}"),
+                url: format!("https://example.com/{kind}"),
+                sort_order: i as i32,
+                added_at: "2026-11-08T00:00:00Z".to_string(),
+                added_by: Some("claude".to_string()),
+            })
+            .unwrap();
+        }
+
+        // Step back to v25 so the rebuild runs again over existing rows.
+        db.conn().execute_batch("PRAGMA user_version = 25").unwrap();
+        Database::run_migrations_on(db.conn_mut()).unwrap();
+
+        let kinds: Vec<_> =
+            db.list_links_for_collection(&col.id).unwrap().into_iter().map(|l| l.kind).collect();
+        assert_eq!(kinds, vec![CollectionLinkKind::Pr, CollectionLinkKind::Artifact]);
+
+        let bogus = db.conn().execute(
+            "INSERT INTO collection_links (id, collection_id, kind, label, url, added_at)
+             VALUES ('bad', ?1, 'bogus', 'x', 'https://x', '2026-11-08T00:00:00Z')",
+            [&col.id],
+        );
+        assert!(bogus.is_err(), "CHECK constraint must still reject unknown kinds");
+    }
 }
