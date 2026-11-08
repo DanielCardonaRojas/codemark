@@ -413,7 +413,7 @@ impl RightPane {
         self.collection_generation = self.collection_generation.wrapping_add(1);
     }
 
-    /// Update only the code pane for the current step.
+    /// Update only the code pane (and the cheap Query tab) for the current step.
     ///
     /// This is the visible part the user watches while paging, and it is cheap —
     /// a file read plus a syntax highlight that is cached per step (see
@@ -439,6 +439,7 @@ impl RightPane {
         let resolved = step.resolved;
         let line_number = step.line_number;
         let line_end = step.line_end;
+        let query = step.bookmark.query.clone();
 
         if let Some(preview) = self.steps.get_step_preview_mut() {
             // Keyed set reuses a cached highlight when this step was visited
@@ -454,6 +455,12 @@ impl RightPane {
                 // range highlight/gutter.
                 preview.clear_selection();
             }
+        }
+
+        // The Query tab is just the raw query text (no rendering), so set it here.
+        if let Some(query_preview) = self.steps.get_query_preview_mut() {
+            query_preview.set_code(query);
+            query_preview.set_extension("scm".to_string());
         }
     }
 
@@ -733,6 +740,7 @@ impl RightPane {
             render_bookmark_markdown(db, &bm, &resolutions, templates.details, head);
         let comments_markdown =
             render_bookmark_markdown(db, &bm, &resolutions, templates.comments, head);
+        let query = bm.query.clone();
 
         let step = StepData {
             file_path: abs_path,
@@ -756,6 +764,7 @@ impl RightPane {
             info_markdown,
             details_markdown,
             comments_markdown,
+            query,
         })))
     }
 
@@ -773,6 +782,7 @@ impl RightPane {
             info_markdown,
             details_markdown,
             comments_markdown,
+            query,
         } = payload;
 
         if let Some(preview) = self.steps.get_step_preview_mut() {
@@ -787,6 +797,10 @@ impl RightPane {
         }
         if let Some(md_panel) = self.steps.get_markdown_mut() {
             md_panel.set_markdown(info_markdown);
+        }
+        if let Some(query_preview) = self.steps.get_query_preview_mut() {
+            query_preview.set_code(query);
+            query_preview.set_extension("scm".to_string());
         }
         self.set_details_and_comments(details_markdown, comments_markdown);
 
@@ -1115,6 +1129,9 @@ impl RightPane {
         }
         if let Some(md_panel) = self.steps.get_markdown_mut() {
             md_panel.set_markdown(String::new());
+        }
+        if let Some(query_preview) = self.steps.get_query_preview_mut() {
+            query_preview.set_code(String::new());
         }
         self.set_details_and_comments(String::new(), String::new());
 
