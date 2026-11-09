@@ -68,15 +68,25 @@ impl FileProvider for LocalFileProvider {
 /// produces); they are mapped back to repo-relative paths for the tree lookup.
 pub struct GitRevFileProvider {
     repo_root: PathBuf,
-    canonical_root: PathBuf,
+    /// Every spelling of the repo root that incoming paths may start with
+    /// (as given, canonical, and any aliases such as a symlinked `--db` path).
+    roots: Vec<PathBuf>,
     rev: String,
 }
 
 impl GitRevFileProvider {
     pub fn new(repo_root: &Path, rev: impl Into<String>) -> Self {
-        let canonical_root =
-            std::fs::canonicalize(repo_root).unwrap_or_else(|_| repo_root.to_path_buf());
-        Self { repo_root: repo_root.to_path_buf(), canonical_root, rev: rev.into() }
+        Self {
+            repo_root: repo_root.to_path_buf(),
+            roots: root_spellings(repo_root),
+            rev: rev.into(),
+        }
+    }
+
+    /// Also accept paths under `alias`, another spelling of the repo root.
+    pub fn with_alias(mut self, alias: &Path) -> Self {
+        self.roots.extend(root_spellings(alias));
+        self
     }
 
     /// The revision this provider reads from.
@@ -91,9 +101,7 @@ impl GitRevFileProvider {
         let rel = if path.is_relative() {
             path
         } else {
-            path.strip_prefix(&self.canonical_root)
-                .or_else(|_| path.strip_prefix(&self.repo_root))
-                .ok()?
+            self.roots.iter().find_map(|root| path.strip_prefix(root).ok())?
         };
         Some(
             rel.components().map(|c| c.as_os_str().to_string_lossy()).collect::<Vec<_>>().join("/"),
@@ -135,29 +143,26 @@ impl FileProvider for GitRevFileProvider {
 /// worktree must read *that worktree's* files, so this re-roots
 /// `<main_root>/x` to `<worktree_root>/x` before touching disk.
 pub struct WorktreeFileProvider {
-    main_root: PathBuf,
-    canonical_main_root: PathBuf,
+    /// Every spelling of the main checkout's root (see [`GitRevFileProvider`]).
+    main_roots: Vec<PathBuf>,
     worktree_root: PathBuf,
 }
 
 impl WorktreeFileProvider {
     pub fn new(main_root: &Path, worktree_root: &Path) -> Self {
-        let canonical_main_root =
-            std::fs::canonicalize(main_root).unwrap_or_else(|_| main_root.to_path_buf());
-        Self {
-            main_root: main_root.to_path_buf(),
-            canonical_main_root,
-            worktree_root: worktree_root.to_path_buf(),
-        }
+        Self { main_roots: root_spellings(main_root), worktree_root: worktree_root.to_path_buf() }
+    }
+
+    /// Also accept paths under `alias`, another spelling of the main root.
+    pub fn with_alias(mut self, alias: &Path) -> Self {
+        self.main_roots.extend(root_spellings(alias));
+        self
     }
 
     fn reroot(&self, path: &Path) -> PathBuf {
-        match path
-            .strip_prefix(&self.canonical_main_root)
-            .or_else(|_| path.strip_prefix(&self.main_root))
-        {
-            Ok(rel) => self.worktree_root.join(rel),
-            Err(_) => path.to_path_buf(),
+        match self.main_roots.iter().find_map(|root| path.strip_prefix(root).ok()) {
+            Some(rel) => self.worktree_root.join(rel),
+            None => path.to_path_buf(),
         }
     }
 }
@@ -179,4 +184,17 @@ impl FileProvider for WorktreeFileProvider {
     async fn mtime(&self, path: &Path) -> Option<std::time::SystemTime> {
         LocalFileProvider.mtime(&self.reroot(path)).await
     }
+}
+
+/// `root` as given plus its canonical form (they differ through symlinks, e.g.
+/// macOS `/var` vs `/private/var`). A path that doesn't exist on disk can't be
+/// canonicalized, so callers must match either spelling.
+fn root_spellings(root: &Path) -> Vec<PathBuf> {
+    let mut roots = vec![root.to_path_buf()];
+    if let Ok(canonical) = std::fs::canonicalize(root)
+        && canonical != root
+    {
+        roots.push(canonical);
+    }
+    roots
 }

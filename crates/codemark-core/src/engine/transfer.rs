@@ -205,13 +205,20 @@ pub struct TransferOutcome {
 /// always absolute: a relative `--db` (e.g. `.codemark/codemark.db`) yields a
 /// relative or empty root, which is resolved against the current directory.
 pub fn repo_root_for(db: &Database) -> PathBuf {
+    let root = absolute_db_root(db);
+    std::fs::canonicalize(&root).unwrap_or(root)
+}
+
+/// The database's project root made absolute but *not* canonicalized: this is
+/// the spelling `resolve_bookmark_file_path` produces for files that don't
+/// exist on disk (e.g. through a symlinked `--db` path).
+fn absolute_db_root(db: &Database) -> PathBuf {
     let root = crate::storage::workspace::Workspace::project_root(db);
-    let root = if root.is_absolute() {
+    if root.is_absolute() {
         root
     } else {
         std::env::current_dir().map(|cwd| cwd.join(&root)).unwrap_or(root)
-    };
-    std::fs::canonicalize(&root).unwrap_or(root)
+    }
 }
 
 /// Bookmark ids of a collection's steps, in step order.
@@ -242,11 +249,14 @@ pub async fn plan_transfer(
     options: &TransferOptions,
 ) -> Result<TransferPlan> {
     let repo_root = repo_root_for(db);
+    let alias = absolute_db_root(db);
     let provider: Box<dyn FileProvider> = match &options.target {
         TransferTarget::WorkingTree { worktree_root, .. } => {
-            Box::new(WorktreeFileProvider::new(&repo_root, worktree_root))
+            Box::new(WorktreeFileProvider::new(&repo_root, worktree_root).with_alias(&alias))
         }
-        TransferTarget::Revision { sha, .. } => Box::new(GitRevFileProvider::new(&repo_root, sha)),
+        TransferTarget::Revision { sha, .. } => {
+            Box::new(GitRevFileProvider::new(&repo_root, sha).with_alias(&alias))
+        }
     };
     // HEAD stands in for the working tree when looking for renames.
     let rename_target = options.target.commit().map(str::to_string);
