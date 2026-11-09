@@ -330,6 +330,41 @@ pub fn read_file_at_commit(from_path: &Path, commit_sha: &str, file_path: &str) 
         .map_err(|_| Error::Git("file is not valid UTF-8".into()))
 }
 
+/// Find where `file_path` was renamed to between two revisions.
+///
+/// Diffs the two commits' trees with git's rename detection and returns the new
+/// repo-relative path when `file_path` shows up as the source of a rename.
+/// Returns `None` when there's no such rename or either revision can't be read.
+pub fn find_renamed_path(
+    from_path: &Path,
+    from_rev: &str,
+    to_rev: &str,
+    file_path: &str,
+) -> Option<String> {
+    let repo = git2::Repository::discover(from_path).ok()?;
+    let tree_of = |rev: &str| -> Option<git2::Tree<'_>> {
+        repo.revparse_single(rev).ok()?.peel_to_commit().ok()?.tree().ok()
+    };
+    let (from_tree, to_tree) = (tree_of(from_rev)?, tree_of(to_rev)?);
+    let mut diff = repo.diff_tree_to_tree(Some(&from_tree), Some(&to_tree), None).ok()?;
+    let mut opts = git2::DiffFindOptions::new();
+    opts.renames(true);
+    diff.find_similar(Some(&mut opts)).ok()?;
+
+    let renamed = diff.deltas().find_map(|delta| {
+        if delta.status() != git2::Delta::Renamed {
+            return None;
+        }
+        let old = delta.old_file().path()?.to_str()?.replace('\\', "/");
+        if old != file_path {
+            return None;
+        }
+        Some(delta.new_file().path()?.to_str()?.replace('\\', "/"))
+    });
+    tracing::debug!(target: "codemark::git", from_rev, to_rev, file = %file_path, renamed = ?renamed, "rename lookup");
+    renamed
+}
+
 /// Check if `ancestor_commit` is an ancestor of `descendant_commit`.
 ///
 /// Returns Ok(true) if `ancestor_commit` is an ancestor of `descendant_commit`.

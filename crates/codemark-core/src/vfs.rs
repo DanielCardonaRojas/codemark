@@ -57,3 +57,72 @@ impl FileProvider for LocalFileProvider {
         tokio::fs::metadata(path).await.ok().and_then(|m| m.modified().ok())
     }
 }
+
+/// A file provider that reads files as committed at a fixed git revision,
+/// straight from the object store, with no checkout.
+///
+/// Every worktree shares one object store, so this works from any worktree, and
+/// it is how a collection transfer resolves its steps on a branch that isn't
+/// checked out. Paths handed to it are absolute paths under `repo_root` (what
+/// [`resolve_bookmark_file_path`](crate::git::context::resolve_bookmark_file_path)
+/// produces); they are mapped back to repo-relative paths for the tree lookup.
+pub struct GitRevFileProvider {
+    repo_root: PathBuf,
+    canonical_root: PathBuf,
+    rev: String,
+}
+
+impl GitRevFileProvider {
+    pub fn new(repo_root: &Path, rev: impl Into<String>) -> Self {
+        let canonical_root =
+            std::fs::canonicalize(repo_root).unwrap_or_else(|_| repo_root.to_path_buf());
+        Self { repo_root: repo_root.to_path_buf(), canonical_root, rev: rev.into() }
+    }
+
+    /// The revision this provider reads from.
+    pub fn rev(&self) -> &str {
+        &self.rev
+    }
+
+    /// Map an absolute path back to a `/`-separated repo-relative path. Accepts
+    /// paths under either the given or the canonical root, because a file that
+    /// doesn't exist in the working tree can't be canonicalized.
+    fn relative(&self, path: &Path) -> Option<String> {
+        let rel = if path.is_relative() {
+            path
+        } else {
+            path.strip_prefix(&self.canonical_root)
+                .or_else(|_| path.strip_prefix(&self.repo_root))
+                .ok()?
+        };
+        Some(
+            rel.components().map(|c| c.as_os_str().to_string_lossy()).collect::<Vec<_>>().join("/"),
+        )
+    }
+}
+
+#[async_trait]
+impl FileProvider for GitRevFileProvider {
+    async fn read_file(&self, path: &Path, commit: Option<&str>) -> Result<String> {
+        let rev = commit.unwrap_or(&self.rev);
+        let rel = self.relative(path).ok_or_else(|| {
+            crate::error::Error::Input(format!(
+                "{} is not under repo root {}",
+                path.display(),
+                self.repo_root.display()
+            ))
+        })?;
+        tracing::debug!(target: "codemark::git", rev, file = %rel, "reading file at revision");
+        crate::git::context::read_file_at_commit(&self.repo_root, rev, &rel)
+    }
+
+    async fn exists(&self, path: &Path, commit: Option<&str>) -> bool {
+        self.read_file(path, commit).await.is_ok()
+    }
+
+    async fn canonicalize(&self, path: &Path) -> PathBuf {
+        // Revision reads never touch the working tree, so there is nothing to
+        // resolve; the path is only a cache key and a lookup into the tree.
+        path.to_path_buf()
+    }
+}

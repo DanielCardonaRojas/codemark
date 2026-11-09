@@ -947,8 +947,14 @@ mod tests {
             bm.branch = Some("main".to_string());
             bm
         };
-        assert_eq!(db.insert_bookmark(&fork_of("bbbb-0000-0000-0002")).unwrap(), "bbbb-0000-0000-0002");
-        assert_eq!(db.insert_bookmark(&fork_of("cccc-0000-0000-0003")).unwrap(), "cccc-0000-0000-0003");
+        assert_eq!(
+            db.insert_bookmark(&fork_of("bbbb-0000-0000-0002")).unwrap(),
+            "bbbb-0000-0000-0002"
+        );
+        assert_eq!(
+            db.insert_bookmark(&fork_of("cccc-0000-0000-0003")).unwrap(),
+            "cccc-0000-0000-0003"
+        );
 
         let mut dup = test_bookmark("dddd-0000-0000-0004");
         dup.query = original.query.clone();
@@ -960,7 +966,8 @@ mod tests {
         assert_eq!(fork.branch.as_deref(), Some("main"));
 
         // The dedup lookup never resolves to a fork.
-        let found = db.find_bookmark_by_location(&original.file_path, &original.query, None).unwrap();
+        let found =
+            db.find_bookmark_by_location(&original.file_path, &original.query, None).unwrap();
         assert_eq!(found.map(|b| b.id), Some(original.id.clone()));
     }
 
@@ -1035,8 +1042,10 @@ mod tests {
             rowid_before,
             "FTS must still point at the same rowid"
         );
-        let fk_violations: i64 =
-            db.conn().query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |r| r.get(0)).unwrap();
+        let fk_violations: i64 = db
+            .conn()
+            .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |r| r.get(0))
+            .unwrap();
         assert_eq!(fk_violations, 0);
     }
 
