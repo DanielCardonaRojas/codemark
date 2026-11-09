@@ -26,14 +26,16 @@ use crate::error::{Error, Result};
 use crate::git::context as git_context;
 use crate::parser::languages::ParseCache;
 use crate::storage::db::Database;
-use crate::vfs::{FileProvider, GitRevFileProvider, LocalFileProvider};
+use crate::vfs::{FileProvider, GitRevFileProvider, WorktreeFileProvider};
 
 /// Where a transfer resolves its steps.
 #[derive(Debug, Clone)]
 pub enum TransferTarget {
-    /// The current working tree (used when no `--to` branch is given). `head`
-    /// is the commit the forks are recorded against.
-    WorkingTree { head: Option<String> },
+    /// The working tree of `worktree_root` (used when no `--to` branch is
+    /// given). That's the worktree the command runs in, which may differ from
+    /// the main checkout the database lives in. `head` is the commit the forks
+    /// are recorded against.
+    WorkingTree { head: Option<String>, worktree_root: PathBuf },
     /// A committed revision, read without a checkout. `sha` is the resolved
     /// commit for `rev`.
     Revision { rev: String, sha: String },
@@ -43,7 +45,7 @@ impl TransferTarget {
     /// The commit forked steps are recorded against.
     pub fn commit(&self) -> Option<&str> {
         match self {
-            TransferTarget::WorkingTree { head } => head.as_deref(),
+            TransferTarget::WorkingTree { head, .. } => head.as_deref(),
             TransferTarget::Revision { sha, .. } => Some(sha),
         }
     }
@@ -116,6 +118,8 @@ struct ResolvedLocation {
     byte_range: String,
     snapshot: String,
     breadcrumbs: Option<String>,
+    /// The matched code isn't committed (working-tree transfers only).
+    is_dirty: bool,
 }
 
 /// One step of a [`TransferPlan`].
@@ -231,7 +235,9 @@ pub async fn plan_transfer(
 ) -> Result<TransferPlan> {
     let repo_root = repo_root_for(db);
     let provider: Box<dyn FileProvider> = match &options.target {
-        TransferTarget::WorkingTree { .. } => Box::new(LocalFileProvider),
+        TransferTarget::WorkingTree { worktree_root, .. } => {
+            Box::new(WorktreeFileProvider::new(&repo_root, worktree_root))
+        }
         TransferTarget::Revision { sha, .. } => Box::new(GitRevFileProvider::new(&repo_root, sha)),
     };
     // HEAD stands in for the working tree when looking for renames.
@@ -286,7 +292,10 @@ pub async fn plan_transfer(
                 continue;
             }
         };
-        let cache = match caches.entry(bookmark.language.clone()) {
+        // Key by name *and* grammar identity: a dynamic grammar can share a name
+        // with the built-in it overrides, and each needs its own parser.
+        let cache_key = format!("{}/{}", lang, lang.identity().as_str());
+        let cache = match caches.entry(cache_key) {
             std::collections::hash_map::Entry::Occupied(e) => e.into_mut(),
             std::collections::hash_map::Entry::Vacant(e) => e.insert(ParseCache::new(lang)?),
         };
@@ -324,6 +333,15 @@ pub async fn plan_transfer(
                             None
                         } else {
                             serde_json::to_string(&result.breadcrumbs).ok()
+                        },
+                        // Committed revisions are clean by definition; working-tree
+                        // code may not be in HEAD. Fail closed on git errors.
+                        is_dirty: match &options.target {
+                            TransferTarget::Revision { .. } => false,
+                            TransferTarget::WorkingTree { worktree_root, .. } => {
+                                !git_context::is_file_clean(worktree_root, &step.target_file_path)
+                                    .unwrap_or(false)
+                            }
                         },
                     });
                 }
@@ -390,8 +408,15 @@ fn fork_step(
     // location detail so the fork displays without a re-heal.
     db.conn().execute(
         "UPDATE resolutions SET byte_range = ?1, line_range = ?2, snapshot = ?3, breadcrumbs = ?4,
-         is_dirty = 0 WHERE id = (SELECT current_resolution_id FROM bookmarks WHERE id = ?5)",
-        rusqlite::params![loc.byte_range, step.line_range, loc.snapshot, loc.breadcrumbs, fork_id],
+         is_dirty = ?5 WHERE id = (SELECT current_resolution_id FROM bookmarks WHERE id = ?6)",
+        rusqlite::params![
+            loc.byte_range,
+            step.line_range,
+            loc.snapshot,
+            loc.breadcrumbs,
+            loc.is_dirty,
+            fork_id
+        ],
     )?;
 
     let tags: Vec<Tag> = original
@@ -575,6 +600,13 @@ fn apply_in_txn(
                 [&f.original_id],
             )?;
             if removed > 0 {
+                // vec0 tables have no FK cascade; drop the embedding so dead
+                // rows don't crowd semantic search. The table may be absent
+                // (embeddings never initialised), which is fine to ignore.
+                let _ = conn.execute(
+                    "DELETE FROM bookmark_embeddings WHERE bookmark_id = ?1",
+                    [&f.original_id],
+                );
                 deleted_originals.push(f.original_id.clone());
             } else {
                 kept_originals.push(f.original_id.clone());
@@ -620,6 +652,7 @@ mod tests {
     use super::*;
     use crate::engine::bookmark::Visibility;
     use crate::parser::languages::Language;
+    use crate::vfs::LocalFileProvider;
     use git2::{IndexAddOption, Oid, Repository, Signature};
     use std::fs;
 
@@ -837,6 +870,47 @@ mod tests {
         }
         // The original collection is untouched.
         assert_eq!(ordered_member_ids(&fx.db, &col.id).unwrap(), vec![alpha, beta]);
+    }
+
+    /// Without `--to`, a transfer reads the *invoking* worktree's files (the
+    /// database belongs to the main checkout), and records uncommitted code as
+    /// dirty rather than as committed at HEAD.
+    #[tokio::test]
+    async fn working_tree_transfer_reads_the_linked_worktree_and_flags_dirty_code() {
+        let (fx, col, _feature, _) = setup("worktree").await;
+        fx.repo.set_head("refs/heads/feature").unwrap();
+        let wt_path = fx
+            .root
+            .with_file_name(format!("{}-wt", fx.root.file_name().unwrap().to_string_lossy()));
+        let wt = fx.repo.worktree("wt", &wt_path, None).unwrap();
+        let wt_root = fs::canonicalize(wt.path()).unwrap();
+        // Uncommitted edit in the linked worktree only: beta is gone, alpha changed.
+        fs::write(
+            wt_root.join("lib.dart"),
+            LIB_NO_BETA.replace("int alpha(int x)", "int alpha(int x, int k)"),
+        )
+        .unwrap();
+
+        let options = TransferOptions {
+            target_branch: "wt".to_string(),
+            target: TransferTarget::WorkingTree { head: None, worktree_root: wt_root.clone() },
+            allow_fuzzy: false,
+        };
+        let plan = plan_transfer(&fx.db, &col, &options).await.unwrap();
+        assert_eq!(plan.steps[0].status, StepStatus::Matched);
+        assert!(plan.steps[0].hash_changed, "read the worktree's edited alpha");
+        assert_eq!(plan.steps[1].status, StepStatus::Unmatched, "beta is gone in the worktree");
+
+        let out =
+            apply_transfer(&fx.db, &plan, &TransferMode::Move, OnUnmatched::Drop, None).unwrap();
+        let dirty: bool = fx.db.conn().query_row(
+            "SELECT r.is_dirty FROM bookmarks b JOIN resolutions r ON r.id = b.current_resolution_id
+             WHERE b.id = ?1",
+            [&out.forked[0].fork_id],
+            |r| r.get(0),
+        ).unwrap();
+        assert!(dirty, "uncommitted code must not look committed");
+        let _ = fs::remove_dir_all(&wt_path);
     }
 
     #[tokio::test]

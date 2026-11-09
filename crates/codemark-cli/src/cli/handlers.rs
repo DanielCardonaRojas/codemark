@@ -1381,6 +1381,11 @@ pub async fn resolve_batch(
 
     let mut skipped = SkippedGrammars::default();
     for bm in bookmarks {
+        // A fork belongs to one branch; don't record another branch's code
+        // into it (see `heal::fork_is_off_branch`).
+        if !dry_run && codemark_core::engine::heal::fork_is_off_branch(bm, &cwd) {
+            continue;
+        }
         let Some(mut cache) = skipped.parse_cache(bm) else {
             continue;
         };

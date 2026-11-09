@@ -330,6 +330,15 @@ pub fn read_file_at_commit(from_path: &Path, commit_sha: &str, file_path: &str) 
         .map_err(|_| Error::Git("file is not valid UTF-8".into()))
 }
 
+/// The working directory of the worktree containing `from_path`.
+///
+/// Unlike [`detect_context`]'s `repo_root` (the main checkout, shared by every
+/// worktree), this is the linked worktree the caller is actually in.
+pub fn worktree_root(from_path: &Path) -> Option<PathBuf> {
+    let repo = git2::Repository::discover(from_path).ok()?;
+    repo.workdir().map(|p| p.to_path_buf())
+}
+
 /// Find where `file_path` was renamed to between two revisions.
 ///
 /// Diffs the two commits' trees with git's rename detection and returns the new

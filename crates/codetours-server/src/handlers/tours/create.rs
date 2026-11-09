@@ -547,8 +547,12 @@ pub async fn handler(
             // 2. Merge SQL
             // Use explicit columns to be safe against schema drift
             tx.execute(
-                "INSERT INTO main.bookmarks (id, query, language, file_path, content_hash, commit_hash, created_at, created_by, current_resolution_id, grammar_source)
-                 SELECT id, query, language, file_path, content_hash, commit_hash, created_at, created_by, current_resolution_id, grammar_source
+                // forked_from/branch keep a published copy's steps outside the
+                // (file_path, query) dedup index, so a tour and its copy can
+                // both be published (the pack is migrated forward, so the
+                // columns always exist).
+                "INSERT INTO main.bookmarks (id, query, language, file_path, content_hash, commit_hash, created_at, created_by, current_resolution_id, grammar_source, forked_from, branch)
+                 SELECT id, query, language, file_path, content_hash, commit_hash, created_at, created_by, current_resolution_id, grammar_source, forked_from, branch
                  FROM pack.bookmarks
                  WHERE id IN (SELECT bookmark_id FROM pack.collection_bookmarks WHERE collection_id = ?1)
                  AND id NOT IN (SELECT id FROM main.bookmarks)",

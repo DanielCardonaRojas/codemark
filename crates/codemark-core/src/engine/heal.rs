@@ -45,6 +45,31 @@ pub struct HealOptions {
     pub validate_only: bool,
 }
 
+/// Whether `bookmark` is a fork that belongs to a branch other than the one
+/// checked out at `cwd`.
+///
+/// A fork belongs to one branch (ADR 0001). Writing a resolution for it from a
+/// worktree on another branch would record that branch's code into it, so every
+/// path that persists resolutions skips such forks. Uses the invoking worktree
+/// (not the database's main checkout) because all worktrees share one database.
+pub fn fork_is_off_branch(bookmark: &Bookmark, cwd: &std::path::Path) -> bool {
+    let (Some(_), Some(fork_branch)) = (&bookmark.forked_from, bookmark.branch.as_deref()) else {
+        return false;
+    };
+    let current = git_context::detect_context(cwd).and_then(|ctx| ctx.branch_name);
+    let off = current.as_deref() != Some(fork_branch);
+    if off {
+        tracing::debug!(
+            target: "codemark::resolution",
+            bookmark_id = %bookmark.id,
+            fork_branch,
+            current = ?current,
+            "skipping a fork outside its branch"
+        );
+    }
+    off
+}
+
 /// Heal a single bookmark.
 ///
 /// This function:
@@ -99,31 +124,17 @@ pub async fn heal_bookmark(
     // another branch would record that branch's code into it, so skip unless
     // HEAD is on the fork's branch. Uses the CWD, like the ancestor check
     // above, because every worktree shares one database.
-    if !options.force
-        && bookmark.forked_from.is_some()
-        && let Some(fork_branch) = bookmark.branch.as_deref()
-    {
-        let cwd = std::env::current_dir()?;
-        let current = git_context::detect_context(&cwd).and_then(|ctx| ctx.branch_name);
-        if current.as_deref() != Some(fork_branch) {
-            tracing::debug!(
-                target: "codemark::resolution",
-                bookmark_id = %bookmark.id,
-                fork_branch,
-                current = ?current,
-                "skipping heal of a fork outside its branch"
-            );
-            return Ok(HealResult {
-                bookmark_id: bookmark.id.clone(),
-                resolution_id: None,
-                previous_health,
-                new_health: previous_health,
-                resolution_method: ResolutionMethod::Failed,
-                file_path: None,
-                byte_range: None,
-                was_skipped: true,
-            });
-        }
+    if !options.force && fork_is_off_branch(bookmark, &std::env::current_dir()?) {
+        return Ok(HealResult {
+            bookmark_id: bookmark.id.clone(),
+            resolution_id: None,
+            previous_health,
+            new_health: previous_health,
+            resolution_method: ResolutionMethod::Failed,
+            file_path: None,
+            byte_range: None,
+            was_skipped: true,
+        });
     }
 
     // Parse the language

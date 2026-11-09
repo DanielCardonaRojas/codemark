@@ -126,3 +126,57 @@ impl FileProvider for GitRevFileProvider {
         path.to_path_buf()
     }
 }
+
+/// Reads the local filesystem, but under a different worktree than the one
+/// paths are expressed against.
+///
+/// Every worktree shares the main checkout's database, so bookmark paths are
+/// resolved against the main checkout's root. A transfer run from a linked
+/// worktree must read *that worktree's* files, so this re-roots
+/// `<main_root>/x` to `<worktree_root>/x` before touching disk.
+pub struct WorktreeFileProvider {
+    main_root: PathBuf,
+    canonical_main_root: PathBuf,
+    worktree_root: PathBuf,
+}
+
+impl WorktreeFileProvider {
+    pub fn new(main_root: &Path, worktree_root: &Path) -> Self {
+        let canonical_main_root =
+            std::fs::canonicalize(main_root).unwrap_or_else(|_| main_root.to_path_buf());
+        Self {
+            main_root: main_root.to_path_buf(),
+            canonical_main_root,
+            worktree_root: worktree_root.to_path_buf(),
+        }
+    }
+
+    fn reroot(&self, path: &Path) -> PathBuf {
+        match path
+            .strip_prefix(&self.canonical_main_root)
+            .or_else(|_| path.strip_prefix(&self.main_root))
+        {
+            Ok(rel) => self.worktree_root.join(rel),
+            Err(_) => path.to_path_buf(),
+        }
+    }
+}
+
+#[async_trait]
+impl FileProvider for WorktreeFileProvider {
+    async fn read_file(&self, path: &Path, commit: Option<&str>) -> Result<String> {
+        LocalFileProvider.read_file(&self.reroot(path), commit).await
+    }
+
+    async fn exists(&self, path: &Path, commit: Option<&str>) -> bool {
+        LocalFileProvider.exists(&self.reroot(path), commit).await
+    }
+
+    async fn canonicalize(&self, path: &Path) -> PathBuf {
+        LocalFileProvider.canonicalize(&self.reroot(path)).await
+    }
+
+    async fn mtime(&self, path: &Path) -> Option<std::time::SystemTime> {
+        LocalFileProvider.mtime(&self.reroot(path)).await
+    }
+}

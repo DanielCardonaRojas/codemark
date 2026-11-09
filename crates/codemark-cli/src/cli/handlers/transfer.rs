@@ -58,7 +58,11 @@ async fn run(
         .ok_or_else(|| Error::Input(format!("collection '{name}' not found")))?;
 
     let repo_root = engine::repo_root_for(&db);
-    let ctx = git_context::detect_context(&repo_root);
+    // Branch, HEAD and working files come from the worktree the command runs
+    // in. The database (and `repo_root`) belong to the main checkout, which may
+    // be on a different branch.
+    let cwd = std::env::current_dir()?;
+    let ctx = git_context::detect_context(&cwd);
     let (target_branch, target) = match &args.to {
         Some(branch) => {
             let sha = engine::resolve_revision(&repo_root, branch)?;
@@ -69,7 +73,9 @@ async fn run(
                 Error::Input("not on a branch (detached HEAD?); pass --to <branch>".into())
             })?;
             let head = ctx.as_ref().and_then(|c| c.head_commit.clone());
-            (branch, TransferTarget::WorkingTree { head })
+            let worktree_root =
+                git_context::worktree_root(&cwd).unwrap_or_else(|| repo_root.clone());
+            (branch, TransferTarget::WorkingTree { head, worktree_root })
         }
     };
 
