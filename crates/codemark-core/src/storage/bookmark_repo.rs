@@ -1079,7 +1079,7 @@ mod tests {
             prompt: None,
         };
         db.insert_collection(&col).unwrap();
-        db.add_to_collection(&col.id, &[bm.id.clone()]).unwrap();
+        db.add_to_collection(&col.id, std::slice::from_ref(&bm.id)).unwrap();
 
         let count = |db: &Database, sql: &str| -> i64 {
             db.conn().query_row(sql, [], |r| r.get(0)).unwrap()

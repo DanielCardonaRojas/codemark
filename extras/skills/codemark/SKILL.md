@@ -194,6 +194,55 @@ The prompt is distinct from the description:
 - **`--prompt`** — *why this collection was asked for* (the request/intent).
 - **`--description`** — *what this collection contains* (a summary of the tour).
 
+## Copying and Moving Tours Across Branches
+
+A tour's notes belong to **that tour**, not to the code: the same function can
+mean different things in different tours. So `tour copy` and `tour move` **fork**
+every step. Each fork is a new bookmark row carrying the original's notes, tags
+and comments, plus one fresh resolution. Editing a fork never touches the
+original.
+
+**When to use which:**
+- **The tour was built on a branch that has since merged** → `tour move <name> --to main`.
+  It re-resolves every step on `main` straight from git (no checkout needed) and
+  relabels the tour's branch, keeping its id, name and links.
+- **You want a starting point for a new tour** → `tour copy <name> --as <new>`
+  clones it onto the current branch. Add `--to <branch>` to clone onto another one.
+
+**Always dry-run first and read the report:**
+
+```bash
+codemark tour move auth-flow --to main --dry-run --format json
+```
+
+Each step reports `status` (`matched`/`unmatched`), the match `method`,
+`hash_changed`, `renamed`/`target_file_path`, its `notes`, and a `reason` when
+unmatched. The report also carries the tour's `prompt`.
+
+- Only **exact** matches count by default. A relaxed or hash-fallback match can
+  land on unrelated code once the original is gone. Accept looser matches with
+  `--allow-fuzzy` only after checking the reported `line_range` points at the
+  right code. Fuzzy steps are recorded as drifted.
+- `--on-unmatched fail` (the default) writes nothing and exits non-zero.
+- `--on-unmatched drop` leaves unmatched steps out. A move never deletes their
+  bookmarks; the outcome lists them under `dropped`.
+
+**Rebuilding unmatched steps (agent workflow):**
+1. Dry-run and count the unmatched steps.
+2. **A few unmatched:** apply with `--on-unmatched drop`. Then, *on the target
+   branch*, use the report's `prompt` and each dropped step's `notes`/`query` to
+   find the code that now plays that role, and bookmark it into the same tour
+   with `codemark add … --collection <name>`.
+3. **Most unmatched:** the tour no longer describes this branch. Re-run the
+   tour's `prompt` from scratch into a new tour instead.
+
+`codemark add` uses the working tree, so check out (or `cd` into a worktree of)
+the target branch before rebuilding steps.
+
+`codemark remove <id>` refuses to delete a bookmark that is a step in more than
+one tour, because deleting it removes the step from all of them. To drop a step
+from one tour only, use `codemark tour remove <tour> <id>`.
+
 ## Tag Taxonomy
 
 Use structured, colon-prefixed tags for powerful filtering. Combine multiple tags to create precise filters.
@@ -537,6 +586,12 @@ codemark tour add login-flow <bookmark-id-1> <bookmark-id-2>
 
 # Annotate a tour with tags/links/prompt (note: --note is NOT persisted on collections)
 codemark tour annotate login-flow --tag phase:2 --link "https://example.com/runbook,Runbook"
+
+# Clone a tour as a template (forks every step; the original is untouched)
+codemark tour copy login-flow --as login-flow-2fa
+# Move a tour to the branch it merged into (dry-run first; see "Copying and Moving Tours")
+codemark tour move login-flow --to main --dry-run
+codemark tour move login-flow --to main --on-unmatched drop
 
 # Publish / pull from Codetours
 codemark tour push login-flow
