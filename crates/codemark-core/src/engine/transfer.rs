@@ -201,9 +201,17 @@ pub struct TransferOutcome {
     pub kept_originals: Vec<String>,
 }
 
-/// The repository root a database belongs to (`<root>/.codemark/codemark.db`).
+/// The repository root a database belongs to (`<root>/.codemark/codemark.db`),
+/// always absolute: a relative `--db` (e.g. `.codemark/codemark.db`) yields a
+/// relative or empty root, which is resolved against the current directory.
 pub fn repo_root_for(db: &Database) -> PathBuf {
-    crate::storage::workspace::Workspace::project_root(db)
+    let root = crate::storage::workspace::Workspace::project_root(db);
+    let root = if root.is_absolute() {
+        root
+    } else {
+        std::env::current_dir().map(|cwd| cwd.join(&root)).unwrap_or(root)
+    };
+    std::fs::canonicalize(&root).unwrap_or(root)
 }
 
 /// Bookmark ids of a collection's steps, in step order.
