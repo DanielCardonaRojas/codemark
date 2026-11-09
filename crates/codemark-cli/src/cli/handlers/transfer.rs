@@ -69,6 +69,21 @@ async fn run(
             (branch.clone(), TransferTarget::Revision { rev: branch.clone(), sha })
         }
         None => {
+            // The working tree must belong to the database's repository;
+            // otherwise (e.g. `--db` pointing elsewhere) we'd record one repo's
+            // code into another repo's tour.
+            let same_repo = ctx.as_ref().is_some_and(|c| {
+                let canon =
+                    |p: &std::path::Path| std::fs::canonicalize(p).unwrap_or(p.to_path_buf());
+                canon(&c.repo_root) == canon(&repo_root)
+            });
+            if !same_repo {
+                return Err(Error::Input(format!(
+                    "the current directory isn't a worktree of {} (the database's repository); \
+                     run from inside it, or pass --to <branch> to read that repository's git history",
+                    repo_root.display()
+                )));
+            }
             let branch = ctx.as_ref().and_then(|c| c.branch_name.clone()).ok_or_else(|| {
                 Error::Input("not on a branch (detached HEAD?); pass --to <branch>".into())
             })?;
