@@ -40,6 +40,7 @@ pub mod repo;
 pub mod search;
 pub mod skill;
 pub mod tour;
+pub mod transfer;
 
 /// Pre-flight detection for `tour list` command.
 ///
@@ -136,6 +137,8 @@ fn merge_globals(cli: &mut Cli) {
                 crate::cli::CollectionLinkCommand::List(a) => g_global(&a.global),
                 crate::cli::CollectionLinkCommand::Reorder(a) => g_global(&a.global),
             },
+            crate::cli::CollectionCommand::Copy(a) => g_global(&a.global),
+            crate::cli::CollectionCommand::Move(a) => g_global(&a.global),
         },
         Command::Edit(a) => g_global(&a.global),
         Command::Annotate(a) => g_global(&a.global),
@@ -169,6 +172,8 @@ fn merge_globals(cli: &mut Cli) {
                 crate::cli::CollectionLinkCommand::Reorder(a) => g_global(&a.global),
             },
             crate::cli::TourCommand::Annotate(a) => g_global(&a.global),
+            crate::cli::TourCommand::Copy(a) => g_global(&a.global),
+            crate::cli::TourCommand::Move(a) => g_global(&a.global),
         },
         Command::Publish(a) => g_global(&a.global),
         Command::Pull(a) => g_global(&a.global),
@@ -295,6 +300,8 @@ async fn dispatch_collection(cli: &Cli, mode: &OutputMode, args: &CollectionArgs
         CollectionCommand::Reorder(a) => collection::handle_collection_reorder(cli, mode, a).await,
         CollectionCommand::Tag(a) => collection::handle_collection_tag(cli, mode, a).await,
         CollectionCommand::Link(a) => collection::handle_collection_link(cli, mode, a).await,
+        CollectionCommand::Copy(a) => transfer::handle_collection_copy(cli, mode, a).await,
+        CollectionCommand::Move(a) => transfer::handle_collection_move(cli, mode, a).await,
     }
 }
 
@@ -331,6 +338,8 @@ async fn dispatch_tour_v2(cli: &Cli, mode: &OutputMode, args: &TourArgs) -> Resu
         TourCommand::Tag(a) => collection::handle_collection_tag(cli, mode, a).await,
         TourCommand::Link(a) => collection::handle_collection_link(cli, mode, a).await,
         TourCommand::Annotate(a) => collection::handle_collection_annotate(cli, mode, a).await,
+        TourCommand::Copy(a) => transfer::handle_collection_copy(cli, mode, a).await,
+        TourCommand::Move(a) => transfer::handle_collection_move(cli, mode, a).await,
     }
 }
 

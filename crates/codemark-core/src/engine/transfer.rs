@@ -505,10 +505,10 @@ fn apply_in_txn(
                 created_at: now.clone(),
                 created_by: created_by.map(str::to_string).or_else(|| source.created_by.clone()),
                 created_branch: Some(plan.target_branch.clone()),
-                // A copy is a new, unpublished collection.
+                // A copy is a new, unpublished collection. `repo_url` stays: it
+                // identifies the repo (set from origin at creation), not a publish.
                 published_at: None,
                 published_commit_sha: None,
-                repo_url: None,
                 status: None,
                 health: None,
                 health_computed_at: None,

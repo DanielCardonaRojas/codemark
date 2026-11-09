@@ -750,6 +750,12 @@ pub enum CollectionCommand {
 
     /// Manage links for a collection
     Link(CollectionLinkArgs),
+
+    /// Clone a collection as a starting point for a new one (forks its steps)
+    Copy(CollectionCopyArgs),
+
+    /// Move a collection to another branch (forks its steps onto the target)
+    Move(CollectionMoveArgs),
 }
 
 #[derive(Debug, clap::Args)]
@@ -1239,6 +1245,66 @@ pub enum TourCommand {
 
     /// Add notes, tags, or links to a collection
     Annotate(CollectionAnnotateArgs),
+
+    /// Clone a collection as a starting point for a new one (forks its steps)
+    Copy(CollectionCopyArgs),
+
+    /// Move a collection to another branch (forks its steps onto the target)
+    Move(CollectionMoveArgs),
+}
+
+/// Options shared by `copy` and `move`.
+#[derive(Debug, clap::Args)]
+pub struct TransferArgs {
+    /// Re-resolve every step on this branch (read from git, no checkout
+    /// needed). Defaults to the current branch's working tree.
+    #[arg(long, value_name = "BRANCH")]
+    pub to: Option<String>,
+
+    /// What to do with steps that don't match on the target: `fail` writes
+    /// nothing; `drop` leaves them out (a move never deletes their bookmarks)
+    #[arg(long, value_name = "fail|drop", default_value = "fail")]
+    pub on_unmatched: String,
+
+    /// Also accept relaxed, minimized and hash-fallback matches. Off by default
+    /// because a loose query can land on unrelated code; accepted fuzzy steps
+    /// are recorded as drifted
+    #[arg(long)]
+    pub allow_fuzzy: bool,
+
+    /// Report what would happen without writing anything
+    #[arg(long)]
+    pub dry_run: bool,
+
+    /// Who is performing the transfer (recorded as the copy's creator)
+    #[arg(long)]
+    pub created_by: Option<String>,
+}
+
+#[derive(Debug, clap::Args)]
+pub struct CollectionCopyArgs {
+    #[command(flatten)]
+    pub global: GlobalArgs,
+    /// Collection to copy
+    pub name: String,
+
+    /// Name for the new collection (default: `<name>-<branch>`)
+    #[arg(long = "as", value_name = "NEW_NAME")]
+    pub new_name: Option<String>,
+
+    #[command(flatten)]
+    pub transfer: TransferArgs,
+}
+
+#[derive(Debug, clap::Args)]
+pub struct CollectionMoveArgs {
+    #[command(flatten)]
+    pub global: GlobalArgs,
+    /// Collection to move
+    pub name: String,
+
+    #[command(flatten)]
+    pub transfer: TransferArgs,
 }
 
 #[derive(Debug, clap::Args)]
