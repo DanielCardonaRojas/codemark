@@ -929,6 +929,117 @@ mod tests {
         assert_eq!(existing_id, bm1.id);
     }
 
+    /// Forks (V27) sit outside the dedup rule: every fork of the same code gets
+    /// its own row, while an ordinary insert of that code still reuses the
+    /// unforked original.
+    #[test]
+    fn forks_bypass_dedup_while_unforked_rows_still_dedup() {
+        init_test_env();
+        let db = Database::open_in_memory().unwrap();
+        let original = test_bookmark("aaaa-0000-0000-0001");
+        db.insert_bookmark(&original).unwrap();
+
+        let fork_of = |id: &str| {
+            let mut bm = test_bookmark(id);
+            bm.query = original.query.clone();
+            bm.file_path = original.file_path.clone();
+            bm.forked_from = Some(original.id.clone());
+            bm.branch = Some("main".to_string());
+            bm
+        };
+        assert_eq!(db.insert_bookmark(&fork_of("bbbb-0000-0000-0002")).unwrap(), "bbbb-0000-0000-0002");
+        assert_eq!(db.insert_bookmark(&fork_of("cccc-0000-0000-0003")).unwrap(), "cccc-0000-0000-0003");
+
+        let mut dup = test_bookmark("dddd-0000-0000-0004");
+        dup.query = original.query.clone();
+        dup.file_path = original.file_path.clone();
+        assert_eq!(db.insert_bookmark(&dup).unwrap(), original.id, "unforked insert must dedup");
+
+        let fork = db.get_bookmark("bbbb-0000-0000-0002").unwrap().unwrap();
+        assert_eq!(fork.forked_from.as_deref(), Some(original.id.as_str()));
+        assert_eq!(fork.branch.as_deref(), Some("main"));
+
+        // The dedup lookup never resolves to a fork.
+        let found = db.find_bookmark_by_location(&original.file_path, &original.query, None).unwrap();
+        assert_eq!(found.map(|b| b.id), Some(original.id.clone()));
+    }
+
+    /// The V27 rebuild of `bookmarks` must keep every dependent row (it runs with
+    /// foreign keys off, so nothing cascades) and keep rowids stable, because
+    /// `bookmarks_fts` is an external-content table keyed on them.
+    #[test]
+    fn v27_rebuild_preserves_rows_dependents_and_fts() {
+        init_test_env();
+        let mut db = Database::open_in_memory().unwrap();
+        let bm = test_bookmark("eeee-0000-0000-0005");
+        db.insert_bookmark(&bm).unwrap();
+        db.insert_tag(&Tag {
+            bookmark_id: bm.id.clone(),
+            tag: "keep-me".to_string(),
+            added_at: "2024-01-01T00:00:00Z".to_string(),
+            added_by: None,
+        })
+        .unwrap();
+        db.insert_annotation(&Annotation {
+            id: "ann-1".to_string(),
+            bookmark_id: bm.id.clone(),
+            added_at: "2024-01-01T00:00:00Z".to_string(),
+            added_by: None,
+            notes: Some("survives the rebuild".to_string()),
+            context: None,
+            source: None,
+        })
+        .unwrap();
+        let col = Collection {
+            id: "col-1".to_string(),
+            name: "kept".to_string(),
+            description: None,
+            visibility: crate::engine::bookmark::Visibility::Private,
+            created_at: "2024-01-01T00:00:00Z".to_string(),
+            created_by: None,
+            created_branch: Some("main".to_string()),
+            published_at: None,
+            published_commit_sha: None,
+            repo_url: None,
+            repo_id: None,
+            status: None,
+            health: None,
+            health_computed_at: None,
+            updated_at: None,
+            imported_from_url: None,
+            prompt: None,
+        };
+        db.insert_collection(&col).unwrap();
+        db.add_to_collection(&col.id, &[bm.id.clone()]).unwrap();
+
+        let count = |db: &Database, sql: &str| -> i64 {
+            db.conn().query_row(sql, [], |r| r.get(0)).unwrap()
+        };
+        let rowid_before =
+            count(&db, "SELECT rowid FROM bookmarks WHERE id = 'eeee-0000-0000-0005'");
+
+        db.conn().execute_batch("PRAGMA user_version = 26").unwrap();
+        Database::run_migrations_on(db.conn_mut()).unwrap();
+        assert_eq!(count(&db, "PRAGMA user_version"), Database::CURRENT_VERSION);
+        assert_eq!(count(&db, "SELECT COUNT(*) FROM bookmarks"), 1);
+        assert_eq!(count(&db, "SELECT COUNT(*) FROM resolutions"), 1);
+        assert_eq!(count(&db, "SELECT COUNT(*) FROM bookmark_tags"), 1);
+        assert_eq!(count(&db, "SELECT COUNT(*) FROM bookmark_annotations"), 1);
+        assert_eq!(count(&db, "SELECT COUNT(*) FROM collection_bookmarks"), 1);
+        assert_eq!(
+            count(&db, "SELECT rowid FROM bookmarks WHERE id = 'eeee-0000-0000-0005'"),
+            rowid_before
+        );
+        assert_eq!(
+            count(&db, "SELECT rowid FROM bookmarks_fts WHERE bookmarks_fts MATCH 'main_eeee'"),
+            rowid_before,
+            "FTS must still point at the same rowid"
+        );
+        let fk_violations: i64 =
+            db.conn().query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |r| r.get(0)).unwrap();
+        assert_eq!(fk_violations, 0);
+    }
+
     #[test]
     fn insert_and_load_annotations() {
         init_test_env();
