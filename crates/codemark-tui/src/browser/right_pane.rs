@@ -1860,6 +1860,8 @@ mod tests {
             query: query.to_string(),
             language: "rust".to_string(),
             grammar_source: None,
+            forked_from: None,
+            branch: None,
             file_path: file_path.to_string(),
             content_hash: None,
             commit_hash: None,

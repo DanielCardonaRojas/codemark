@@ -60,8 +60,8 @@ impl Database {
         // Try to insert with OR FAIL to check for uniqueness constraint
         let result = conn.execute(
             "INSERT INTO bookmarks (id, query, language, file_path, content_hash, commit_hash,
-             created_at, created_by, repo_id, grammar_source)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+             created_at, created_by, repo_id, grammar_source, forked_from, branch)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
             rusqlite::params![
                 bookmark.id,
                 bookmark.query,
@@ -73,6 +73,8 @@ impl Database {
                 bookmark.created_by,
                 bookmark.repo_id,
                 bookmark.grammar_source.map(|g| g.as_str()),
+                bookmark.forked_from,
+                bookmark.branch,
             ],
         );
 
@@ -111,15 +113,16 @@ impl Database {
                 // A conflicting bookmark exists. Find its ID so callers can reuse it.
                 //
                 // The conflict may come from either the repo-scoped unique index
-                // (repo_id, file_path, query) or the table-level UNIQUE(file_path,
-                // query), which ignores repo_id. So we first try the repo-scoped
+                // (repo_id, file_path, query) or the (file_path, query) index,
+                // which ignores repo_id. Both cover unforked rows only (V27), so
+                // forks never match here. So we first try the repo-scoped
                 // match, then fall back to matching on (file_path, query) alone —
                 // otherwise an existing row with a *different* repo_id (e.g. a
                 // local bookmark vs. a repo_id-less imported one) would leave us
                 // with no match and a spurious "Query returned no rows" error.
                 let existing_id: String = if bookmark.repo_id.is_some() {
                     conn.query_row(
-                        "SELECT id FROM bookmarks WHERE repo_id = ?1 AND file_path = ?2 AND query = ?3",
+                        "SELECT id FROM bookmarks WHERE repo_id = ?1 AND file_path = ?2 AND query = ?3 AND forked_from IS NULL",
                         rusqlite::params![bookmark.repo_id, bookmark.file_path, bookmark.query],
                         |row| row.get(0),
                     )
@@ -130,7 +133,7 @@ impl Database {
                 .map(Ok)
                 .unwrap_or_else(|| {
                     conn.query_row(
-                        "SELECT id FROM bookmarks WHERE file_path = ?1 AND query = ?2",
+                        "SELECT id FROM bookmarks WHERE file_path = ?1 AND query = ?2 AND forked_from IS NULL",
                         rusqlite::params![bookmark.file_path, bookmark.query],
                         |row| row.get(0),
                     )
@@ -209,7 +212,7 @@ impl Database {
         tracing::debug!(target: "codemark::db", id = %id, "getting bookmark");
         let mut stmt = self.conn().prepare(
             "SELECT b.id, b.query, b.language, b.file_path, b.content_hash, b.commit_hash,
-             r.health, r.method, r.resolved_at, NULL as stale_since, b.created_at, b.created_by, b.current_resolution_id, b.repo_id, b.grammar_source
+             r.health, r.method, r.resolved_at, NULL as stale_since, b.created_at, b.created_by, b.current_resolution_id, b.repo_id, b.grammar_source, b.forked_from, b.branch
              FROM bookmarks b
              LEFT JOIN resolutions r ON b.current_resolution_id = r.id
              WHERE b.id = ?1",
@@ -232,7 +235,7 @@ impl Database {
         let pattern = format!("{prefix}%");
         let mut stmt = self.conn().prepare(
             "SELECT b.id, b.query, b.language, b.file_path, b.content_hash, b.commit_hash,
-             r.health, r.method, r.resolved_at, NULL as stale_since, b.created_at, b.created_by, b.current_resolution_id, b.repo_id, b.grammar_source
+             r.health, r.method, r.resolved_at, NULL as stale_since, b.created_at, b.created_by, b.current_resolution_id, b.repo_id, b.grammar_source, b.forked_from, b.branch
              FROM bookmarks b
              LEFT JOIN resolutions r ON b.current_resolution_id = r.id
              WHERE b.id LIKE ?1",
@@ -263,16 +266,16 @@ impl Database {
     ) -> Result<Option<Bookmark>> {
         let sql = if repo_id.is_some() {
             "SELECT b.id, b.query, b.language, b.file_path, b.content_hash, b.commit_hash,
-             r.health, r.method, r.resolved_at, NULL as stale_since, b.created_at, b.created_by, b.current_resolution_id, b.repo_id, b.grammar_source
+             r.health, r.method, r.resolved_at, NULL as stale_since, b.created_at, b.created_by, b.current_resolution_id, b.repo_id, b.grammar_source, b.forked_from, b.branch
              FROM bookmarks b
              LEFT JOIN resolutions r ON b.current_resolution_id = r.id
-             WHERE b.repo_id = ?1 AND b.file_path = ?2 AND b.query = ?3"
+             WHERE b.repo_id = ?1 AND b.file_path = ?2 AND b.query = ?3 AND b.forked_from IS NULL"
         } else {
             "SELECT b.id, b.query, b.language, b.file_path, b.content_hash, b.commit_hash,
-             r.health, r.method, r.resolved_at, NULL as stale_since, b.created_at, b.created_by, b.current_resolution_id, b.repo_id, b.grammar_source
+             r.health, r.method, r.resolved_at, NULL as stale_since, b.created_at, b.created_by, b.current_resolution_id, b.repo_id, b.grammar_source, b.forked_from, b.branch
              FROM bookmarks b
              LEFT JOIN resolutions r ON b.current_resolution_id = r.id
-             WHERE b.repo_id IS NULL AND b.file_path = ?1 AND b.query = ?2"
+             WHERE b.repo_id IS NULL AND b.file_path = ?1 AND b.query = ?2 AND b.forked_from IS NULL"
         };
         let mut stmt = self.conn().prepare(sql)?;
         let mut rows = if let Some(rid) = repo_id {
@@ -294,7 +297,7 @@ impl Database {
         tracing::debug!(target: "codemark::db", "listing bookmarks");
         let mut sql = String::from(
             "SELECT DISTINCT b.id, b.query, b.language, b.file_path, b.content_hash, b.commit_hash,
-             r.health, r.method, r.resolved_at, NULL as stale_since, b.created_at, b.created_by, b.current_resolution_id, b.repo_id, b.grammar_source
+             r.health, r.method, r.resolved_at, NULL as stale_since, b.created_at, b.created_by, b.current_resolution_id, b.repo_id, b.grammar_source, b.forked_from, b.branch
              FROM bookmarks b
              LEFT JOIN resolutions r ON b.current_resolution_id = r.id",
         );
@@ -488,7 +491,7 @@ impl Database {
         // Always need tag join for tag search
         let mut sql = String::from(
             "SELECT DISTINCT b.id, b.query, b.language, b.file_path, b.content_hash, b.commit_hash,
-             r.health, r.method, r.resolved_at, NULL as stale_since, b.created_at, b.created_by, b.current_resolution_id, b.repo_id, b.grammar_source
+             r.health, r.method, r.resolved_at, NULL as stale_since, b.created_at, b.created_by, b.current_resolution_id, b.repo_id, b.grammar_source, b.forked_from, b.branch
              FROM bookmarks b
              LEFT JOIN resolutions r ON b.current_resolution_id = r.id
              LEFT JOIN bookmark_annotations ba ON b.id = ba.bookmark_id
@@ -674,6 +677,8 @@ fn row_to_bookmark_base(row: &rusqlite::Row) -> rusqlite::Result<Bookmark> {
         // the same thing (we can't tell which grammar was used) and a row
         // written by a future codemark shouldn't make a bookmark unreadable.
         grammar_source: grammar_source_str.as_deref().and_then(|s| s.parse().ok()),
+        forked_from: row.get(15)?,
+        branch: row.get(16)?,
         file_path: row.get(3)?,
         content_hash: row.get(4)?,
         commit_hash: row.get(5)?,
@@ -721,6 +726,8 @@ mod tests {
             query: format!("(function_declaration) @{} /* {} */", "target", id),
             language: "swift".to_string(),
             grammar_source: None,
+            forked_from: None,
+            branch: None,
             file_path: format!("src/main_{}.swift", id),
             content_hash: Some("sha256:abcd1234abcd1234".to_string()),
             commit_hash: Some("abc123".to_string()),
@@ -1303,6 +1310,8 @@ mod tests {
             query: original_query.to_string(),
             language: original_language.to_string(),
             grammar_source: None,
+            forked_from: None,
+            branch: None,
             file_path: original_file_path.to_string(),
             content_hash: Some("sha256:original1234".to_string()),
             commit_hash: Some("commit-original".to_string()),
@@ -1385,6 +1394,8 @@ mod tests {
             query: "(function_declaration) @target".to_string(),
             language: "swift".to_string(),
             grammar_source: None,
+            forked_from: None,
+            branch: None,
             file_path: "src/main.swift".to_string(),
             content_hash: None,
             commit_hash: None,

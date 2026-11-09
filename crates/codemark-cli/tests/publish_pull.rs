@@ -79,6 +79,8 @@ async fn test_cli_publish_pull_roundtrip() {
         query: "fn main".to_string(),
         language: "rust".to_string(),
         grammar_source: None,
+        forked_from: None,
+        branch: None,
         file_path: "src/main.rs".to_string(),
         content_hash: None,
         commit_hash: None,

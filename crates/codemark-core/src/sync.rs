@@ -726,6 +726,8 @@ mod tests {
                 query: "(function_declaration) @target".to_string(),
                 language: "swift".to_string(),
                 grammar_source: None,
+                forked_from: None,
+                branch: None,
                 file_path: "src/main.swift".to_string(),
                 content_hash: Some("sha256:abcd".to_string()),
                 commit_hash: Some("abc123".to_string()),

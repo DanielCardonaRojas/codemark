@@ -259,6 +259,16 @@ pub struct Bookmark {
     /// those fall back to name-only resolution.
     #[serde(default)]
     pub grammar_source: Option<GrammarIdentity>,
+    /// The bookmark this row was forked from when a collection was copied or
+    /// moved (schema v27). `None` for ordinary bookmarks. Forked rows sit
+    /// outside the `(repo_id, file_path, query)` dedup rule, so each tour owns
+    /// its own copy of the step and its notes. See ADR 0001 (discussion #300).
+    #[serde(default)]
+    pub forked_from: Option<String>,
+    /// The branch a forked row belongs to. Forks are only re-resolved when HEAD
+    /// is on this branch, so healing from another worktree can't mix branches.
+    #[serde(default)]
+    pub branch: Option<String>,
     pub file_path: String,
     pub content_hash: Option<String>,
     pub commit_hash: Option<String>,
@@ -442,6 +452,8 @@ mod tests {
             query: "(function_declaration) @target".into(),
             language: "swift".into(),
             grammar_source: None,
+            forked_from: None,
+            branch: None,
             file_path: "src/main.swift".into(),
             content_hash: Some("sha256:abcd1234abcd1234".into()),
             commit_hash: None,

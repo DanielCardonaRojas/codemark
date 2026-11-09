@@ -127,6 +127,8 @@ pub async fn handle_add(cli: &Cli, mode: &OutputMode, args: &AddArgsOriginal) ->
         // dynamic grammar can share a name with the built-in it overrides, so
         // resolution needs the identity to ask for the same one back.
         grammar_source: Some(lang.identity()),
+        forked_from: None,
+        branch: None,
         file_path: rel_path.clone(),
         content_hash: Some(content_hash.clone()),
         commit_hash: commit_hash.clone(),
@@ -377,6 +379,8 @@ pub async fn handle_add_from_snippet(
         // dynamic grammar can share a name with the built-in it overrides, so
         // resolution needs the identity to ask for the same one back.
         grammar_source: Some(lang.identity()),
+        forked_from: None,
+        branch: None,
         file_path: rel_path.clone(),
         content_hash: Some(content_hash.clone()),
         commit_hash: commit_hash.clone(),
@@ -628,6 +632,8 @@ pub async fn handle_add_from_query(
         // dynamic grammar can share a name with the built-in it overrides, so
         // resolution needs the identity to ask for the same one back.
         grammar_source: Some(lang.identity()),
+        forked_from: None,
+        branch: None,
         file_path: rel_path.clone(),
         content_hash: Some(content_hash.clone()),
         commit_hash: commit_hash.clone(),

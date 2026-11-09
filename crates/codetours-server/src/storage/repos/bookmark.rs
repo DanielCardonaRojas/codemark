@@ -109,6 +109,8 @@ fn row_to_bookmark(row: &rusqlite::Row) -> rusqlite::Result<Bookmark> {
         // unparseable — an unknown grammar kind is no evidence of one, so it
         // falls back to the name-only lookup rather than failing the read.
         grammar_source: grammar_source_str.as_deref().and_then(|s| s.parse().ok()),
+        forked_from: None,
+        branch: None,
         file_path: row.get(3)?,
         content_hash: row.get(4)?,
         commit_hash: row.get(5)?,

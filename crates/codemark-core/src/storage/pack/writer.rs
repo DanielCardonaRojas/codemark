@@ -267,6 +267,8 @@ mod tests {
             query: format!("(function_declaration) @target /* {id} */"),
             language: "swift".to_string(),
             grammar_source,
+            forked_from: None,
+            branch: None,
             file_path: format!("src/{id}.swift"),
             content_hash: Some("sha256:abcd".to_string()),
             commit_hash: Some("abc123".to_string()),
