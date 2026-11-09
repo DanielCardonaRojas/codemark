@@ -37,9 +37,9 @@ What the codebase does today:
 1. **Fork bookmarks.** Moving or copying a collection creates *new* bookmark
    rows. Each new row starts with exactly one `Active` resolution at the target
    commit. **Resolution history is discarded.**
-2. **A forked row belongs to the collection it was forked into.** Migration V27:
-   - Adds `bookmarks.scope_collection_id`, which records the collection that
-     owns a forked row. It is NULL for normal adds.
+2. **Each transfer forks rows under its own id.** Migration V27:
+   - Adds `bookmarks.fork_id`. Each transfer generates a new UUID and stamps it
+     on every row that transfer forks. It is NULL for normal adds.
    - Adds `bookmarks.branch`, which records the target branch. It is
      informational only and not part of the key.
    - **Rebuilds the `bookmarks` table** to remove V7's inline
@@ -47,17 +47,21 @@ What the codebase does today:
      because that constraint is still on the live table. The rebuild copies all
      rows and recreates the foreign keys, the FTS triggers and the other indexes.
    - Recreates both V22 partial unique indexes with the scope included:
-     - `(repo_id, file_path, query, COALESCE(scope_collection_id, ''))` where
+     - `(repo_id, file_path, query, COALESCE(fork_id, ''))` where
        `repo_id IS NOT NULL`
-     - `(file_path, query, COALESCE(scope_collection_id, ''))` where
+     - `(file_path, query, COALESCE(fork_id, ''))` where
        `repo_id IS NULL` (legacy rows)
 
    **Why:** keying on `branch` alone would make repeated copies to the same
    branch collide. Examples are copying a tour to `main` twice, or copying two
-   tours that share a bookmark. Keying on the owning collection gives every
-   copy its own rows.
+   tours that share a bookmark. Keying on the owning collection doesn't work either.
+   After a move, a forked row can be added to another collection. Moving the
+   first collection again would then need the same key, so the new fork would
+   collide. Deleting the old row instead would cascade the other collection's
+   step away. A fresh id per transfer never collides, and old rows other
+   collections still use can simply be kept.
 
-   **Dedup is unchanged:** a normal `add` leaves the scope NULL.
+   **Dedup is unchanged:** a normal `add` leaves `fork_id` NULL.
 3. **Resolve against the target branch's committed tree, not a checkout.**
    - A new `GitRevFileProvider` reads files at the target revision.
    - git2 tree-to-tree diffing with `find_similar` maps renamed paths from the
@@ -76,17 +80,15 @@ What the codebase does today:
      - Creates a new collection, named with `--as` or `<name>@<branch>` by default.
      - Carries over the description, prompt, tags and links.
      - Leaves out publish and import metadata.
-     - Its forked rows are scoped to the new collection's id.
+     - Its forked rows share one new `fork_id`.
    - **Move:**
      - Updates the existing collection in place, so its id, name, links and
        publish metadata are kept.
-     - Forks the **matched** steps into rows scoped to that collection, swaps
-       them in as members, and sets `created_branch`.
-     - Collisions with rows the collection forked in an earlier move are
-       avoided: the old rows are detached and deleted before the new forks are
-       inserted.
-     - Deletes the old rows of **matched** steps when no other collection uses
-       them.
+     - Forks the **matched** steps under a new `fork_id`, swaps them in as
+       members, and sets `created_branch`.
+     - After swapping, deletes the old row of each **matched** step, but only if
+       no other collection references it. Rows that another collection still
+       uses are left alone, so a delete never cascades into other collections.
      - **Never deletes the original row of an unmatched step.** With `drop`, the
        step leaves the collection but its bookmark stays, with notes, comments
        and tags intact. The report gives its id so it can be rebuilt or added
@@ -117,15 +119,13 @@ What the codebase does today:
 - **Pro:** No checkout or worktree is needed, and file renames are handled.
 - **Pro:** The `prompt` stored with each collection (V24) becomes useful when a
   tour has to be rebuilt.
-- **Con:** Bookmark identity now includes the owning collection. A plain `add`
-  on the same path and query creates or reuses the unscoped row, never a forked
-  one. Queries and the TUI branch filter can use `bookmarks.branch` as an extra
+- **Con:** Bookmark identity now includes `fork_id`. A plain `add` on the same
+  path and query creates or reuses the unforked row, never a forked one. Queries and the TUI branch filter can use `bookmarks.branch` as an extra
   way to filter.
 - **Con:** V27 rebuilds the whole `bookmarks` table, which is the riskiest step
-  in the migration. It needs a test that the data and triggers survive, like the
-  one added for the V26 `collection_links` rebuild.
-- **Con:** Deleting a collection should also delete the forked rows it owns when
-  no other collection uses them. Otherwise they become orphans.
+  in the migration. A new test must verify that the data and triggers survive.
+- **Con:** Deleting a collection should also delete its forked rows (`fork_id`
+  set) when no other collection uses them. Otherwise they become orphans.
 - **Con:** Requiring exact matches by default fails more often when code drifts
   between branches. That is deliberate: a false Active is worse than a step
   that is reported as unmatched.
@@ -139,6 +139,8 @@ What the codebase does today:
   discarded for just one of the two collections.
 - **Key forks on `branch`.** This was the first draft. Two copies of a tour on
   the same branch collide, so copies aren't independent.
+- **Key forks on the owning collection.** This collides when a moved collection
+  is moved again after another collection has picked up one of its forked rows.
 - **Drop the UNIQUE index.** Simpler, but it gives up the database-level
   deduplication that V22 added.
 - **Check out the target branch, or resolve inside its worktree.** This is
