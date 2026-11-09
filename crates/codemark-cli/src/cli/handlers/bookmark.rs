@@ -147,7 +147,16 @@ pub async fn handle_add(cli: &Cli, mode: &OutputMode, args: &AddArgsOriginal) ->
     };
 
     // Insert bookmark - will return existing ID if duplicate
-    let actual_bookmark_id = db.insert_bookmark(&bookmark)?;
+    // A tour that already owns a fork of this code keeps adding to that fork;
+    // otherwise insert (which returns the existing unforked row on a duplicate).
+    let existing_fork = match args.collection.as_deref() {
+        Some(coll) => db.find_fork_in_collection(coll, &bookmark.file_path, &bookmark.query)?,
+        None => None,
+    };
+    let actual_bookmark_id = match existing_fork {
+        Some(id) => id,
+        None => db.insert_bookmark(&bookmark)?,
+    };
     let is_new = actual_bookmark_id == bookmark_id;
 
     // Insert annotations with notes and context if provided
@@ -399,7 +408,16 @@ pub async fn handle_add_from_snippet(
     };
 
     // Insert bookmark - will return existing ID if duplicate
-    let actual_bookmark_id = db.insert_bookmark(&bookmark)?;
+    // A tour that already owns a fork of this code keeps adding to that fork;
+    // otherwise insert (which returns the existing unforked row on a duplicate).
+    let existing_fork = match args.collection.as_deref() {
+        Some(coll) => db.find_fork_in_collection(coll, &bookmark.file_path, &bookmark.query)?,
+        None => None,
+    };
+    let actual_bookmark_id = match existing_fork {
+        Some(id) => id,
+        None => db.insert_bookmark(&bookmark)?,
+    };
     let is_new = actual_bookmark_id == bookmark_id;
 
     // Insert annotations with notes and context if provided
@@ -652,7 +670,16 @@ pub async fn handle_add_from_query(
     };
 
     // Insert bookmark - will return existing ID if duplicate
-    let actual_bookmark_id = db.insert_bookmark(&bookmark)?;
+    // A tour that already owns a fork of this code keeps adding to that fork;
+    // otherwise insert (which returns the existing unforked row on a duplicate).
+    let existing_fork = match args.collection.as_deref() {
+        Some(coll) => db.find_fork_in_collection(coll, &bookmark.file_path, &bookmark.query)?,
+        None => None,
+    };
+    let actual_bookmark_id = match existing_fork {
+        Some(id) => id,
+        None => db.insert_bookmark(&bookmark)?,
+    };
     let is_new = actual_bookmark_id == bookmark_id;
 
     // Insert annotations with notes and context if provided
@@ -1057,6 +1084,29 @@ pub async fn handle_remove(cli: &Cli, mode: &OutputMode, args: &RemoveArgs) -> R
     let db = open_db_for_write(cli)?;
     let mut removed = 0;
     let mut not_found = 0;
+
+    // Deleting a bookmark removes it from every collection it's a step in.
+    // Copies make shared steps common, so refuse that unless asked, and say
+    // which tours would lose the step. Checked up front so nothing is half-done.
+    if !args.force {
+        let mut shared = Vec::new();
+        for id_input in &args.ids {
+            if let Ok(bm) = find_bookmark(&db, super::extract_id(id_input)) {
+                let names: Vec<String> =
+                    db.list_collections_for_bookmark(&bm.id)?.into_iter().map(|c| c.name).collect();
+                if names.len() > 1 {
+                    shared.push(format!("{} ({})", &bm.id[..bm.id.len().min(8)], names.join(", ")));
+                }
+            }
+        }
+        if !shared.is_empty() {
+            return Err(Error::Input(format!(
+                "these bookmarks are steps in more than one collection and would be removed from all of them: {}. \
+                 Use `collection remove` to drop a step from one tour, or pass --force",
+                shared.join("; ")
+            )));
+        }
+    }
 
     for id_input in &args.ids {
         let id = super::extract_id(id_input);

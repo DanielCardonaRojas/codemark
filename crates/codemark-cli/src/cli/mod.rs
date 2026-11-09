@@ -475,6 +475,11 @@ pub struct RemoveArgs {
     /// Bookmark IDs to remove (full UUID or unambiguous prefix)
     #[arg(required = true)]
     pub ids: Vec<String>,
+
+    /// Remove even when a bookmark is a step in more than one collection
+    /// (deleting it removes the step from all of them)
+    #[arg(long)]
+    pub force: bool,
 }
 
 #[derive(Debug, clap::Args)]

@@ -95,6 +95,37 @@ pub async fn heal_bookmark(
         }
     }
 
+    // A fork belongs to one branch (ADR 0001). Healing it from a worktree on
+    // another branch would record that branch's code into it, so skip unless
+    // HEAD is on the fork's branch. Uses the CWD, like the ancestor check
+    // above, because every worktree shares one database.
+    if !options.force
+        && bookmark.forked_from.is_some()
+        && let Some(fork_branch) = bookmark.branch.as_deref()
+    {
+        let cwd = std::env::current_dir()?;
+        let current = git_context::detect_context(&cwd).and_then(|ctx| ctx.branch_name);
+        if current.as_deref() != Some(fork_branch) {
+            tracing::debug!(
+                target: "codemark::resolution",
+                bookmark_id = %bookmark.id,
+                fork_branch,
+                current = ?current,
+                "skipping heal of a fork outside its branch"
+            );
+            return Ok(HealResult {
+                bookmark_id: bookmark.id.clone(),
+                resolution_id: None,
+                previous_health,
+                new_health: previous_health,
+                resolution_method: ResolutionMethod::Failed,
+                file_path: None,
+                byte_range: None,
+                was_skipped: true,
+            });
+        }
+    }
+
     // Parse the language
     let Ok(lang) = bookmark.grammar() else {
         return Ok(HealResult {

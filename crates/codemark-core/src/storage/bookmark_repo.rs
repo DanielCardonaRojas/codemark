@@ -293,6 +293,35 @@ impl Database {
         }
     }
 
+    /// The id of a forked bookmark in `collection_name` that targets the same
+    /// `file_path` and `query`, if there is one.
+    ///
+    /// Forks sit outside the dedup rule, so a plain insert would never find
+    /// them. `add --collection X` checks this first: when tour X already owns a
+    /// fork of the code being bookmarked, the new notes belong on that fork
+    /// rather than on a second, unforked row.
+    pub fn find_fork_in_collection(
+        &self,
+        collection_name: &str,
+        file_path: &str,
+        query: &str,
+    ) -> Result<Option<String>> {
+        let id = self
+            .conn()
+            .query_row(
+                "SELECT b.id FROM bookmarks b
+                 JOIN collection_bookmarks cb ON cb.bookmark_id = b.id
+                 JOIN collections c ON c.id = cb.collection_id
+                 WHERE c.name = ?1 AND b.file_path = ?2 AND b.query = ?3
+                   AND b.forked_from IS NOT NULL
+                 LIMIT 1",
+                rusqlite::params![collection_name, file_path, query],
+                |row| row.get(0),
+            )
+            .optional()?;
+        Ok(id)
+    }
+
     pub fn list_bookmarks(&self, filter: &BookmarkFilter) -> Result<Vec<Bookmark>> {
         tracing::debug!(target: "codemark::db", "listing bookmarks");
         let mut sql = String::from(
@@ -969,6 +998,39 @@ mod tests {
         let found =
             db.find_bookmark_by_location(&original.file_path, &original.query, None).unwrap();
         assert_eq!(found.map(|b| b.id), Some(original.id.clone()));
+    }
+
+    /// `add --collection X` finds X's own fork of the code, and only X's.
+    #[test]
+    fn find_fork_in_collection_matches_only_that_tours_fork() {
+        init_test_env();
+        let db = Database::open_in_memory().unwrap();
+        let original = test_bookmark("ffff-0000-0000-0006");
+        db.insert_bookmark(&original).unwrap();
+        let mut fork = test_bookmark("ffff-0000-0000-0007");
+        fork.query = original.query.clone();
+        fork.file_path = original.file_path.clone();
+        fork.forked_from = Some(original.id.clone());
+        db.insert_bookmark(&fork).unwrap();
+
+        let collection = |id: &str, name: &str, member: &str| {
+            db.conn()
+                .execute(
+                    "INSERT INTO collections (id, name, created_at) VALUES (?1, ?2, '2024-01-01T00:00:00Z')",
+                    [id, name],
+                )
+                .unwrap();
+            db.add_to_collection(id, &[member.to_string()]).unwrap();
+        };
+        collection("c-fork", "with-fork", &fork.id);
+        collection("c-orig", "with-original", &original.id);
+
+        let find = |name: &str| {
+            db.find_fork_in_collection(name, &original.file_path, &original.query).unwrap()
+        };
+        assert_eq!(find("with-fork"), Some(fork.id.clone()));
+        assert_eq!(find("with-original"), None, "an unforked member is found by normal dedup");
+        assert_eq!(find("missing"), None);
     }
 
     /// The V27 rebuild of `bookmarks` must keep every dependent row (it runs with
