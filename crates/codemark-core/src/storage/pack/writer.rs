@@ -110,8 +110,8 @@ impl Packer {
             // so persisting it would create a dangling foreign key on import.
             conn.execute(
                 "INSERT INTO bookmarks (id, query, language, file_path, content_hash, commit_hash,
-                 created_at, created_by, current_resolution_id, grammar_source)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                 created_at, created_by, current_resolution_id, grammar_source, forked_from, branch)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
                 params![
                     bm.id,
                     bm.query,
@@ -127,6 +127,10 @@ impl Packer {
                     // what makes a mismatch on the importing machine visible
                     // rather than silently re-labelled as a local grammar.
                     bm.grammar_source.map(|g| g.as_str()),
+                    // Fork lineage travels with the pack for inspection; the
+                    // importer drops it (see `sync::import_pack`).
+                    bm.forked_from,
+                    bm.branch,
                 ],
             )?;
 
@@ -267,6 +271,8 @@ mod tests {
             query: format!("(function_declaration) @target /* {id} */"),
             language: "swift".to_string(),
             grammar_source,
+            forked_from: None,
+            branch: None,
             file_path: format!("src/{id}.swift"),
             content_hash: Some("sha256:abcd".to_string()),
             commit_hash: Some("abc123".to_string()),

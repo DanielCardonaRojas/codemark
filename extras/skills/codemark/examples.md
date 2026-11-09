@@ -181,6 +181,41 @@ codemark tour link add auth-investigation --url "https://github.com/org/repo/blo
 codemark tour show auth-investigation --format markdown
 ```
 
+## Moving a Tour After Its Branch Merges
+
+`auth-investigation` was built on `feature/jwt`, which has merged into `main`.
+Move it so the tour points at `main`'s code:
+
+```bash
+# 1. Dry run: which steps still match on main?
+codemark tour move auth-investigation --to main --dry-run --format json
+#    -> step 3 "unmatched": its function was renamed during review
+#       ("reason": "only a relaxed match; pass --allow-fuzzy to accept it")
+
+# 2. Apply, leaving step 3 out (its bookmark is kept, listed under "dropped")
+codemark tour move auth-investigation --to main --on-unmatched drop
+
+# 3. On main, rebuild the dropped step from the report's prompt + the step's notes
+git switch main
+codemark add --file src/auth/jwt.rs --range 40-62 \
+  --note "Validates the JWT signature and expiry; renamed from verify_token in review" \
+  --created-by claude --collection auth-investigation
+codemark tour reorder auth-investigation <ids in order>
+```
+
+## Cloning a Tour as a Template
+
+Start a new tour from an existing one. The steps are forked, so new notes on the
+clone never show up on the original:
+
+```bash
+codemark tour copy auth-investigation --as auth-2fa --dry-run
+codemark tour copy auth-investigation --as auth-2fa
+codemark tour annotate auth-2fa --prompt "Extend the auth tour with the 2FA verification path."
+codemark add --file src/auth/totp.rs --range 10-35 --note "TOTP check runs after password auth" \
+  --created-by claude --collection auth-2fa
+```
+
 ## Checking Impact After Changes
 
 ```bash

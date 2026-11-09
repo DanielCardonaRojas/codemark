@@ -60,8 +60,8 @@ impl Database {
         // Try to insert with OR FAIL to check for uniqueness constraint
         let result = conn.execute(
             "INSERT INTO bookmarks (id, query, language, file_path, content_hash, commit_hash,
-             created_at, created_by, repo_id, grammar_source)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+             created_at, created_by, repo_id, grammar_source, forked_from, branch)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
             rusqlite::params![
                 bookmark.id,
                 bookmark.query,
@@ -73,6 +73,8 @@ impl Database {
                 bookmark.created_by,
                 bookmark.repo_id,
                 bookmark.grammar_source.map(|g| g.as_str()),
+                bookmark.forked_from,
+                bookmark.branch,
             ],
         );
 
@@ -111,15 +113,16 @@ impl Database {
                 // A conflicting bookmark exists. Find its ID so callers can reuse it.
                 //
                 // The conflict may come from either the repo-scoped unique index
-                // (repo_id, file_path, query) or the table-level UNIQUE(file_path,
-                // query), which ignores repo_id. So we first try the repo-scoped
+                // (repo_id, file_path, query) or the (file_path, query) index,
+                // which ignores repo_id. Both cover unforked rows only (V27), so
+                // forks never match here. So we first try the repo-scoped
                 // match, then fall back to matching on (file_path, query) alone —
                 // otherwise an existing row with a *different* repo_id (e.g. a
                 // local bookmark vs. a repo_id-less imported one) would leave us
                 // with no match and a spurious "Query returned no rows" error.
                 let existing_id: String = if bookmark.repo_id.is_some() {
                     conn.query_row(
-                        "SELECT id FROM bookmarks WHERE repo_id = ?1 AND file_path = ?2 AND query = ?3",
+                        "SELECT id FROM bookmarks WHERE repo_id = ?1 AND file_path = ?2 AND query = ?3 AND forked_from IS NULL",
                         rusqlite::params![bookmark.repo_id, bookmark.file_path, bookmark.query],
                         |row| row.get(0),
                     )
@@ -130,7 +133,7 @@ impl Database {
                 .map(Ok)
                 .unwrap_or_else(|| {
                     conn.query_row(
-                        "SELECT id FROM bookmarks WHERE file_path = ?1 AND query = ?2",
+                        "SELECT id FROM bookmarks WHERE file_path = ?1 AND query = ?2 AND forked_from IS NULL",
                         rusqlite::params![bookmark.file_path, bookmark.query],
                         |row| row.get(0),
                     )
@@ -209,7 +212,7 @@ impl Database {
         tracing::debug!(target: "codemark::db", id = %id, "getting bookmark");
         let mut stmt = self.conn().prepare(
             "SELECT b.id, b.query, b.language, b.file_path, b.content_hash, b.commit_hash,
-             r.health, r.method, r.resolved_at, NULL as stale_since, b.created_at, b.created_by, b.current_resolution_id, b.repo_id, b.grammar_source
+             r.health, r.method, r.resolved_at, NULL as stale_since, b.created_at, b.created_by, b.current_resolution_id, b.repo_id, b.grammar_source, b.forked_from, b.branch
              FROM bookmarks b
              LEFT JOIN resolutions r ON b.current_resolution_id = r.id
              WHERE b.id = ?1",
@@ -232,7 +235,7 @@ impl Database {
         let pattern = format!("{prefix}%");
         let mut stmt = self.conn().prepare(
             "SELECT b.id, b.query, b.language, b.file_path, b.content_hash, b.commit_hash,
-             r.health, r.method, r.resolved_at, NULL as stale_since, b.created_at, b.created_by, b.current_resolution_id, b.repo_id, b.grammar_source
+             r.health, r.method, r.resolved_at, NULL as stale_since, b.created_at, b.created_by, b.current_resolution_id, b.repo_id, b.grammar_source, b.forked_from, b.branch
              FROM bookmarks b
              LEFT JOIN resolutions r ON b.current_resolution_id = r.id
              WHERE b.id LIKE ?1",
@@ -263,16 +266,16 @@ impl Database {
     ) -> Result<Option<Bookmark>> {
         let sql = if repo_id.is_some() {
             "SELECT b.id, b.query, b.language, b.file_path, b.content_hash, b.commit_hash,
-             r.health, r.method, r.resolved_at, NULL as stale_since, b.created_at, b.created_by, b.current_resolution_id, b.repo_id, b.grammar_source
+             r.health, r.method, r.resolved_at, NULL as stale_since, b.created_at, b.created_by, b.current_resolution_id, b.repo_id, b.grammar_source, b.forked_from, b.branch
              FROM bookmarks b
              LEFT JOIN resolutions r ON b.current_resolution_id = r.id
-             WHERE b.repo_id = ?1 AND b.file_path = ?2 AND b.query = ?3"
+             WHERE b.repo_id = ?1 AND b.file_path = ?2 AND b.query = ?3 AND b.forked_from IS NULL"
         } else {
             "SELECT b.id, b.query, b.language, b.file_path, b.content_hash, b.commit_hash,
-             r.health, r.method, r.resolved_at, NULL as stale_since, b.created_at, b.created_by, b.current_resolution_id, b.repo_id, b.grammar_source
+             r.health, r.method, r.resolved_at, NULL as stale_since, b.created_at, b.created_by, b.current_resolution_id, b.repo_id, b.grammar_source, b.forked_from, b.branch
              FROM bookmarks b
              LEFT JOIN resolutions r ON b.current_resolution_id = r.id
-             WHERE b.repo_id IS NULL AND b.file_path = ?1 AND b.query = ?2"
+             WHERE b.repo_id IS NULL AND b.file_path = ?1 AND b.query = ?2 AND b.forked_from IS NULL"
         };
         let mut stmt = self.conn().prepare(sql)?;
         let mut rows = if let Some(rid) = repo_id {
@@ -290,11 +293,40 @@ impl Database {
         }
     }
 
+    /// The id of a forked bookmark in `collection_name` that targets the same
+    /// `file_path` and `query`, if there is one.
+    ///
+    /// Forks sit outside the dedup rule, so a plain insert would never find
+    /// them. `add --collection X` checks this first: when tour X already owns a
+    /// fork of the code being bookmarked, the new notes belong on that fork
+    /// rather than on a second, unforked row.
+    pub fn find_fork_in_collection(
+        &self,
+        collection_name: &str,
+        file_path: &str,
+        query: &str,
+    ) -> Result<Option<String>> {
+        let id = self
+            .conn()
+            .query_row(
+                "SELECT b.id FROM bookmarks b
+                 JOIN collection_bookmarks cb ON cb.bookmark_id = b.id
+                 JOIN collections c ON c.id = cb.collection_id
+                 WHERE c.name = ?1 AND b.file_path = ?2 AND b.query = ?3
+                   AND b.forked_from IS NOT NULL
+                 LIMIT 1",
+                rusqlite::params![collection_name, file_path, query],
+                |row| row.get(0),
+            )
+            .optional()?;
+        Ok(id)
+    }
+
     pub fn list_bookmarks(&self, filter: &BookmarkFilter) -> Result<Vec<Bookmark>> {
         tracing::debug!(target: "codemark::db", "listing bookmarks");
         let mut sql = String::from(
             "SELECT DISTINCT b.id, b.query, b.language, b.file_path, b.content_hash, b.commit_hash,
-             r.health, r.method, r.resolved_at, NULL as stale_since, b.created_at, b.created_by, b.current_resolution_id, b.repo_id, b.grammar_source
+             r.health, r.method, r.resolved_at, NULL as stale_since, b.created_at, b.created_by, b.current_resolution_id, b.repo_id, b.grammar_source, b.forked_from, b.branch
              FROM bookmarks b
              LEFT JOIN resolutions r ON b.current_resolution_id = r.id",
         );
@@ -488,7 +520,7 @@ impl Database {
         // Always need tag join for tag search
         let mut sql = String::from(
             "SELECT DISTINCT b.id, b.query, b.language, b.file_path, b.content_hash, b.commit_hash,
-             r.health, r.method, r.resolved_at, NULL as stale_since, b.created_at, b.created_by, b.current_resolution_id, b.repo_id, b.grammar_source
+             r.health, r.method, r.resolved_at, NULL as stale_since, b.created_at, b.created_by, b.current_resolution_id, b.repo_id, b.grammar_source, b.forked_from, b.branch
              FROM bookmarks b
              LEFT JOIN resolutions r ON b.current_resolution_id = r.id
              LEFT JOIN bookmark_annotations ba ON b.id = ba.bookmark_id
@@ -674,6 +706,8 @@ fn row_to_bookmark_base(row: &rusqlite::Row) -> rusqlite::Result<Bookmark> {
         // the same thing (we can't tell which grammar was used) and a row
         // written by a future codemark shouldn't make a bookmark unreadable.
         grammar_source: grammar_source_str.as_deref().and_then(|s| s.parse().ok()),
+        forked_from: row.get(15)?,
+        branch: row.get(16)?,
         file_path: row.get(3)?,
         content_hash: row.get(4)?,
         commit_hash: row.get(5)?,
@@ -721,6 +755,8 @@ mod tests {
             query: format!("(function_declaration) @{} /* {} */", "target", id),
             language: "swift".to_string(),
             grammar_source: None,
+            forked_from: None,
+            branch: None,
             file_path: format!("src/main_{}.swift", id),
             content_hash: Some("sha256:abcd1234abcd1234".to_string()),
             commit_hash: Some("abc123".to_string()),
@@ -920,6 +956,159 @@ mod tests {
 
         let existing_id = db.insert_bookmark(&bm2).unwrap();
         assert_eq!(existing_id, bm1.id);
+    }
+
+    /// Forks (V27) sit outside the dedup rule: every fork of the same code gets
+    /// its own row, while an ordinary insert of that code still reuses the
+    /// unforked original.
+    #[test]
+    fn forks_bypass_dedup_while_unforked_rows_still_dedup() {
+        init_test_env();
+        let db = Database::open_in_memory().unwrap();
+        let original = test_bookmark("aaaa-0000-0000-0001");
+        db.insert_bookmark(&original).unwrap();
+
+        let fork_of = |id: &str| {
+            let mut bm = test_bookmark(id);
+            bm.query = original.query.clone();
+            bm.file_path = original.file_path.clone();
+            bm.forked_from = Some(original.id.clone());
+            bm.branch = Some("main".to_string());
+            bm
+        };
+        assert_eq!(
+            db.insert_bookmark(&fork_of("bbbb-0000-0000-0002")).unwrap(),
+            "bbbb-0000-0000-0002"
+        );
+        assert_eq!(
+            db.insert_bookmark(&fork_of("cccc-0000-0000-0003")).unwrap(),
+            "cccc-0000-0000-0003"
+        );
+
+        let mut dup = test_bookmark("dddd-0000-0000-0004");
+        dup.query = original.query.clone();
+        dup.file_path = original.file_path.clone();
+        assert_eq!(db.insert_bookmark(&dup).unwrap(), original.id, "unforked insert must dedup");
+
+        let fork = db.get_bookmark("bbbb-0000-0000-0002").unwrap().unwrap();
+        assert_eq!(fork.forked_from.as_deref(), Some(original.id.as_str()));
+        assert_eq!(fork.branch.as_deref(), Some("main"));
+
+        // The dedup lookup never resolves to a fork.
+        let found =
+            db.find_bookmark_by_location(&original.file_path, &original.query, None).unwrap();
+        assert_eq!(found.map(|b| b.id), Some(original.id.clone()));
+    }
+
+    /// `add --collection X` finds X's own fork of the code, and only X's.
+    #[test]
+    fn find_fork_in_collection_matches_only_that_tours_fork() {
+        init_test_env();
+        let db = Database::open_in_memory().unwrap();
+        let original = test_bookmark("ffff-0000-0000-0006");
+        db.insert_bookmark(&original).unwrap();
+        let mut fork = test_bookmark("ffff-0000-0000-0007");
+        fork.query = original.query.clone();
+        fork.file_path = original.file_path.clone();
+        fork.forked_from = Some(original.id.clone());
+        db.insert_bookmark(&fork).unwrap();
+
+        let collection = |id: &str, name: &str, member: &str| {
+            db.conn()
+                .execute(
+                    "INSERT INTO collections (id, name, created_at) VALUES (?1, ?2, '2024-01-01T00:00:00Z')",
+                    [id, name],
+                )
+                .unwrap();
+            db.add_to_collection(id, &[member.to_string()]).unwrap();
+        };
+        collection("c-fork", "with-fork", &fork.id);
+        collection("c-orig", "with-original", &original.id);
+
+        let find = |name: &str| {
+            db.find_fork_in_collection(name, &original.file_path, &original.query).unwrap()
+        };
+        assert_eq!(find("with-fork"), Some(fork.id.clone()));
+        assert_eq!(find("with-original"), None, "an unforked member is found by normal dedup");
+        assert_eq!(find("missing"), None);
+    }
+
+    /// The V27 rebuild of `bookmarks` must keep every dependent row (it runs with
+    /// foreign keys off, so nothing cascades) and keep rowids stable, because
+    /// `bookmarks_fts` is an external-content table keyed on them.
+    #[test]
+    fn v27_rebuild_preserves_rows_dependents_and_fts() {
+        init_test_env();
+        let mut db = Database::open_in_memory().unwrap();
+        let bm = test_bookmark("eeee-0000-0000-0005");
+        db.insert_bookmark(&bm).unwrap();
+        db.insert_tag(&Tag {
+            bookmark_id: bm.id.clone(),
+            tag: "keep-me".to_string(),
+            added_at: "2024-01-01T00:00:00Z".to_string(),
+            added_by: None,
+        })
+        .unwrap();
+        db.insert_annotation(&Annotation {
+            id: "ann-1".to_string(),
+            bookmark_id: bm.id.clone(),
+            added_at: "2024-01-01T00:00:00Z".to_string(),
+            added_by: None,
+            notes: Some("survives the rebuild".to_string()),
+            context: None,
+            source: None,
+        })
+        .unwrap();
+        let col = Collection {
+            id: "col-1".to_string(),
+            name: "kept".to_string(),
+            description: None,
+            visibility: crate::engine::bookmark::Visibility::Private,
+            created_at: "2024-01-01T00:00:00Z".to_string(),
+            created_by: None,
+            created_branch: Some("main".to_string()),
+            published_at: None,
+            published_commit_sha: None,
+            repo_url: None,
+            repo_id: None,
+            status: None,
+            health: None,
+            health_computed_at: None,
+            updated_at: None,
+            imported_from_url: None,
+            prompt: None,
+        };
+        db.insert_collection(&col).unwrap();
+        db.add_to_collection(&col.id, std::slice::from_ref(&bm.id)).unwrap();
+
+        let count = |db: &Database, sql: &str| -> i64 {
+            db.conn().query_row(sql, [], |r| r.get(0)).unwrap()
+        };
+        let rowid_before =
+            count(&db, "SELECT rowid FROM bookmarks WHERE id = 'eeee-0000-0000-0005'");
+
+        db.conn().execute_batch("PRAGMA user_version = 26").unwrap();
+        Database::run_migrations_on(db.conn_mut()).unwrap();
+        assert_eq!(count(&db, "PRAGMA user_version"), Database::CURRENT_VERSION);
+        assert_eq!(count(&db, "SELECT COUNT(*) FROM bookmarks"), 1);
+        assert_eq!(count(&db, "SELECT COUNT(*) FROM resolutions"), 1);
+        assert_eq!(count(&db, "SELECT COUNT(*) FROM bookmark_tags"), 1);
+        assert_eq!(count(&db, "SELECT COUNT(*) FROM bookmark_annotations"), 1);
+        assert_eq!(count(&db, "SELECT COUNT(*) FROM collection_bookmarks"), 1);
+        assert_eq!(
+            count(&db, "SELECT rowid FROM bookmarks WHERE id = 'eeee-0000-0000-0005'"),
+            rowid_before
+        );
+        assert_eq!(
+            count(&db, "SELECT rowid FROM bookmarks_fts WHERE bookmarks_fts MATCH 'main_eeee'"),
+            rowid_before,
+            "FTS must still point at the same rowid"
+        );
+        let fk_violations: i64 = db
+            .conn()
+            .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(fk_violations, 0);
     }
 
     #[test]
@@ -1303,6 +1492,8 @@ mod tests {
             query: original_query.to_string(),
             language: original_language.to_string(),
             grammar_source: None,
+            forked_from: None,
+            branch: None,
             file_path: original_file_path.to_string(),
             content_hash: Some("sha256:original1234".to_string()),
             commit_hash: Some("commit-original".to_string()),
@@ -1385,6 +1576,8 @@ mod tests {
             query: "(function_declaration) @target".to_string(),
             language: "swift".to_string(),
             grammar_source: None,
+            forked_from: None,
+            branch: None,
             file_path: "src/main.swift".to_string(),
             content_hash: None,
             commit_hash: None,

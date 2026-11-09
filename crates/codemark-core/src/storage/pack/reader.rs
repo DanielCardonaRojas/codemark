@@ -74,7 +74,7 @@ impl PackReader {
         let mut stmt = self.conn().prepare(
             "SELECT b.id, b.query, b.language, b.file_path, b.content_hash, b.commit_hash,
                     r.health, r.method, r.resolved_at, NULL as stale_since,
-                    b.created_at, b.created_by, b.current_resolution_id, b.repo_id, b.grammar_source
+                    b.created_at, b.created_by, b.current_resolution_id, b.repo_id, b.grammar_source, b.forked_from, b.branch
              FROM bookmarks b
              LEFT JOIN resolutions r ON b.current_resolution_id = r.id",
         )?;
@@ -91,7 +91,7 @@ impl PackReader {
         let mut stmt = self.conn().prepare(
             "SELECT b.id, b.query, b.language, b.file_path, b.content_hash, b.commit_hash,
                     r.health, r.method, r.resolved_at, NULL as stale_since,
-                    b.created_at, b.created_by, b.current_resolution_id, b.repo_id, b.grammar_source
+                    b.created_at, b.created_by, b.current_resolution_id, b.repo_id, b.grammar_source, b.forked_from, b.branch
              FROM bookmarks b
              JOIN collection_bookmarks cb ON b.id = cb.bookmark_id
              LEFT JOIN resolutions r ON b.current_resolution_id = r.id
@@ -159,6 +159,8 @@ fn row_to_bookmark(row: &rusqlite::Row) -> rusqlite::Result<Bookmark> {
         // Absent in packs written before schema v25, and treated as absent if
         // unparseable — see `row_to_bookmark_base`.
         grammar_source: grammar_source_str.as_deref().and_then(|s| s.parse().ok()),
+        forked_from: row.get(15)?,
+        branch: row.get(16)?,
         file_path: row.get(3)?,
         content_hash: row.get(4)?,
         commit_hash: row.get(5)?,

@@ -106,6 +106,8 @@ mod tests {
             query: format!("(function_declaration) @{} /* {} */", "target", id),
             language: "swift".to_string(),
             grammar_source: None,
+            forked_from: None,
+            branch: None,
             file_path: format!("src/main_{}.swift", id),
             content_hash: None,
             commit_hash: None,
