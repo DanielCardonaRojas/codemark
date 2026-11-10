@@ -118,6 +118,37 @@ Group bookmarks for specific investigations or tasks.
 ### `collection show <name>`
 ### `collection reorder <name> <id>...`
 
+### `collection copy <name>` / `tour copy <name>`
+Clone a collection as a starting point for a new one. Every step is **forked**:
+it becomes a new bookmark with the original's notes, tags and comments, so
+editing the clone never changes the original.
+```bash
+codemark tour copy auth-flow --as auth-2fa             # clone onto the current branch
+codemark tour copy auth-flow --as auth-main --to main  # clone onto another branch
+```
+Without `--as`, the copy is named `<name>-<branch>`.
+
+### `collection move <name>` / `tour move <name>`
+Move a collection to another branch, typically the one its branch merged into.
+Steps are re-resolved on the target straight from git (no checkout needed),
+renamed files are followed, and the collection keeps its id, name and links.
+```bash
+codemark tour move auth-flow --to main --dry-run
+codemark tour move auth-flow --to main --on-unmatched drop
+```
+
+Options for `copy` and `move`:
+
+| Flag | Meaning |
+|---|---|
+| `--to <branch>` | Resolve against this branch. Default: the current branch's working tree. |
+| `--on-unmatched fail\|drop` | `fail` (default) writes nothing and exits non-zero; `drop` leaves unmatched steps out. A move never deletes their bookmarks. |
+| `--allow-fuzzy` | Also accept relaxed, minimized and hash-fallback matches (recorded as drifted). Off by default, because a loose query can match unrelated code. |
+| `--dry-run` | Report each step's match tier, hash change and rename without writing. |
+
+The JSON report includes the collection's `prompt`, so an agent can rebuild
+unmatched steps on the target branch.
+
 ---
 
 ## Advanced

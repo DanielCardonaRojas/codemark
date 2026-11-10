@@ -346,6 +346,12 @@ async fn import_pack(
         let old_id = bm.id.clone();
         let generated_id = uuid::Uuid::new_v4().to_string();
         bm.id = generated_id.clone();
+        // Fork lineage points into the publisher's database and means nothing
+        // here. Importing as an ordinary bookmark also keeps pull idempotent:
+        // the dedup below reuses the row a previous pull created, whereas a
+        // fork would bypass dedup and pile up a new row on every re-pull.
+        bm.forked_from = None;
+        bm.branch = None;
         // Tag with source URL
         bm.tags.push(format!("imported:{}", source_url));
 
@@ -726,6 +732,8 @@ mod tests {
                 query: "(function_declaration) @target".to_string(),
                 language: "swift".to_string(),
                 grammar_source: None,
+                forked_from: None,
+                branch: None,
                 file_path: "src/main.swift".to_string(),
                 content_hash: Some("sha256:abcd".to_string()),
                 commit_hash: Some("abc123".to_string()),

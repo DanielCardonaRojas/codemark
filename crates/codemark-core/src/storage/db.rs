@@ -41,6 +41,8 @@ const MIGRATION_023: &str =
 const MIGRATION_024: &str = include_str!("../../../../migrations/V24__add_collection_prompt.sql");
 const MIGRATION_025: &str =
     include_str!("../../../../migrations/V25__add_bookmark_grammar_source.sql");
+const MIGRATION_026: &str = include_str!("../../../../migrations/V26__add_artifact_link_kind.sql");
+const MIGRATION_027: &str = include_str!("../../../../migrations/V27__add_bookmark_forks.sql");
 
 /// SQLite database wrapper with automatic migrations.
 pub struct Database {
@@ -50,7 +52,7 @@ pub struct Database {
 
 impl Database {
     /// Current schema version supported by this crate.
-    pub const CURRENT_VERSION: i64 = 25;
+    pub const CURRENT_VERSION: i64 = 27;
 
     /// Open the database at the given path, run migrations.
     /// Returns an error if the parent directory does not exist.
@@ -145,6 +147,8 @@ impl Database {
             (23, MIGRATION_023),
             (24, MIGRATION_024),
             (25, MIGRATION_025),
+            (26, MIGRATION_026),
+            (27, MIGRATION_027),
         ];
 
         for (version, sql) in migrations {
@@ -153,8 +157,10 @@ impl Database {
                 if version == 7 {
                     // Special case for migration 7 which has complex logic
                     Self::migrate_to_v7_on(conn)?;
-                } else if version == 11 {
-                    // Special case for migration 11 which requires disabling foreign keys
+                } else if version == 11 || version == 27 {
+                    // Migrations that rebuild a table referenced by foreign keys
+                    // (11; 27 rebuilds `bookmarks`) must run with foreign keys OFF,
+                    // or dropping the old table would cascade-delete its dependents.
                     let original_state: i64 =
                         conn.query_row("PRAGMA foreign_keys", [], |row| row.get(0))?;
                     conn.execute("PRAGMA foreign_keys = OFF", [])?;
@@ -162,7 +168,7 @@ impl Database {
                     let res = (|| -> Result<()> {
                         let tx = conn.transaction()?;
                         tx.execute_batch(sql)?;
-                        Self::set_schema_version(&tx, 11)?;
+                        Self::set_schema_version(&tx, version)?;
                         tx.commit()?;
                         Ok(())
                     })();

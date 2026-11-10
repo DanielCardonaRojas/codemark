@@ -194,6 +194,55 @@ The prompt is distinct from the description:
 - **`--prompt`** — *why this collection was asked for* (the request/intent).
 - **`--description`** — *what this collection contains* (a summary of the tour).
 
+## Copying and Moving Tours Across Branches
+
+A tour's notes belong to **that tour**, not to the code: the same function can
+mean different things in different tours. So `tour copy` and `tour move` **fork**
+every step. Each fork is a new bookmark row carrying the original's notes, tags
+and comments, plus one fresh resolution. Editing a fork never touches the
+original.
+
+**When to use which:**
+- **The tour was built on a branch that has since merged** → `tour move <name> --to main`.
+  It re-resolves every step on `main` straight from git (no checkout needed) and
+  relabels the tour's branch, keeping its id, name and links.
+- **You want a starting point for a new tour** → `tour copy <name> --as <new>`
+  clones it onto the current branch. Add `--to <branch>` to clone onto another one.
+
+**Always dry-run first and read the report:**
+
+```bash
+codemark tour move auth-flow --to main --dry-run --format json
+```
+
+Each step reports `status` (`matched`/`unmatched`), the match `method`,
+`hash_changed`, `renamed`/`target_file_path`, its `notes`, and a `reason` when
+unmatched. The report also carries the tour's `prompt`.
+
+- Only **exact** matches count by default. A relaxed or hash-fallback match can
+  land on unrelated code once the original is gone. Accept looser matches with
+  `--allow-fuzzy` only after checking the reported `line_range` points at the
+  right code. Fuzzy steps are recorded as drifted.
+- `--on-unmatched fail` (the default) writes nothing and exits non-zero.
+- `--on-unmatched drop` leaves unmatched steps out. A move never deletes their
+  bookmarks; the outcome lists them under `dropped`.
+
+**Rebuilding unmatched steps (agent workflow):**
+1. Dry-run and count the unmatched steps.
+2. **A few unmatched:** apply with `--on-unmatched drop`. Then, *on the target
+   branch*, use the report's `prompt` and each dropped step's `notes`/`query` to
+   find the code that now plays that role, and bookmark it into the same tour
+   with `codemark add … --collection <name>`.
+3. **Most unmatched:** the tour no longer describes this branch. Re-run the
+   tour's `prompt` from scratch into a new tour instead.
+
+`codemark add` uses the working tree, so check out (or `cd` into a worktree of)
+the target branch before rebuilding steps.
+
+`codemark remove <id>` refuses to delete a bookmark that is a step in more than
+one tour, because deleting it removes the step from all of them. To drop a step
+from one tour only, use `codemark tour remove <tour> <id>`.
+
 ## Tag Taxonomy
 
 Use structured, colon-prefixed tags for powerful filtering. Combine multiple tags to create precise filters.
@@ -425,6 +474,7 @@ For common query patterns across languages, see:
 - Use `--collection <name>` when creating bookmarks to add them directly to a tour (tours are auto-created if they don't exist).
 - **Notes are durable, comments are ephemeral**: explain the code with `--note`; record task/ticket/debugging chatter with `--comment`. This keeps notes reusable in any future context instead of coupled to one agentic session.
 - **Link out generously**: attach related PRs, issues, design docs, dashboards, and external references to the *collection* with `codemark tour link add --kind ...`, and embed inline links inside `--comment` markdown. This turns a collection into a self-contained briefing.
+- **Link the artifacts you create**: whenever you produce something with a URL during the task — a plan or doc page, a generated diagram, a gist, a published report, a notebook — attach it to the active collection **right after creating it** with `codemark tour link add <tour> --url ... --label ... --kind artifact`. Your own output is often the most useful context for the next session. PRs and issues you open keep their specific kind (`--kind pr` / `--kind issue`). Don't link local paths (`file://`, `docs/plans/*.md`, `graphify-out/…`): they break once the tour is pushed or shared. Link the published or committed URL instead, or leave the file out.
 - **Always record the prompt on a collection**: pass `--prompt` with a cleaned-up, standalone restatement of the request that motivated the tour (fix the user's typos/grammar, keep their intent). It's the one field that lets the tour be rebuilt from intent later. See **Recording the Prompt**.
 - **Tag collections, not just bookmarks**: `codemark tour tag add` (or `--tag` at create time) makes collections discoverable and gives the markdown overview useful metadata.
 - **Gather context fast**: `codemark tour show <name> --format markdown` renders the description, tags, links, and every step's ID + note in one shot — use it when restoring context from a previous session.
@@ -516,10 +566,14 @@ codemark tour annotate login-flow --clear-prompt
 # Tag an existing collection (repeatable)
 codemark tour tag add login-flow feature:auth area:security
 
-# Add links with a typed kind: pr | issue | doc | discussion | dashboard | repo | tour | other
+# Add links with a typed kind: pr | issue | doc | discussion | dashboard | repo | tour | artifact | other
 codemark tour link add login-flow --url "https://github.com/org/repo/pull/116" --label "Auth PR"   --kind pr
 codemark tour link add login-flow --url "https://docs.example.com/auth"        --label "Auth docs" --kind doc
 codemark tour link add login-flow --url "https://linear.app/org/issue/ENG-42"  --label "ENG-42"    --kind issue
+
+# Link artifacts YOU generated (plans, diagrams, gists, reports) as soon as they exist.
+# `artifact` marks agent output, as opposed to human-authored references.
+codemark tour link add login-flow --url "https://gist.github.com/me/abc123"    --label "Login refactor plan" --kind artifact
 
 # Read a collection as markdown — description, tags, links, and each step's ID + note
 codemark tour show login-flow --format markdown
@@ -532,6 +586,12 @@ codemark tour add login-flow <bookmark-id-1> <bookmark-id-2>
 
 # Annotate a tour with tags/links/prompt (note: --note is NOT persisted on collections)
 codemark tour annotate login-flow --tag phase:2 --link "https://example.com/runbook,Runbook"
+
+# Clone a tour as a template (forks every step; the original is untouched)
+codemark tour copy login-flow --as login-flow-2fa
+# Move a tour to the branch it merged into (dry-run first; see "Copying and Moving Tours")
+codemark tour move login-flow --to main --dry-run
+codemark tour move login-flow --to main --on-unmatched drop
 
 # Publish / pull from Codetours
 codemark tour push login-flow
