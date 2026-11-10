@@ -130,12 +130,15 @@ async fn run(
         args.created_by.as_deref(),
     )?;
 
-    // Forks are new rows, so they need their own embeddings for semantic
-    // search. Failures here never undo the transfer.
-    let config = load_config(cli);
-    for f in &outcome.forked {
-        if let Ok(Some(bm)) = db.get_bookmark(&f.fork_id) {
-            let _ = generate_embedding_for_bookmark(cli, &config, &bm).await;
+    // Forks reuse their original's embedding (copied in `apply_transfer`), so
+    // the model only runs for forks whose original had none. Failures here
+    // never undo the transfer.
+    if !outcome.needs_embedding.is_empty() {
+        let config = load_config(cli);
+        for fork_id in &outcome.needs_embedding {
+            if let Ok(Some(bm)) = db.get_bookmark(fork_id) {
+                let _ = generate_embedding_for_bookmark(cli, &config, &bm).await;
+            }
         }
     }
 

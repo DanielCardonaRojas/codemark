@@ -199,6 +199,9 @@ pub struct TransferOutcome {
     pub deleted_originals: Vec<String>,
     /// Move only: original rows kept because another collection still uses them.
     pub kept_originals: Vec<String>,
+    /// Forks whose original had no embedding to copy, so they still need one
+    /// computed for semantic search.
+    pub needs_embedding: Vec<String>,
 }
 
 /// The repository root a database belongs to (`<root>/.codemark/codemark.db`),
@@ -581,11 +584,15 @@ fn apply_in_txn(
     };
 
     let mut forked = Vec::new();
+    let mut needs_embedding = Vec::new();
     for step in plan.matched() {
         let original = db
             .get_bookmark(&step.bookmark_id)?
             .ok_or_else(|| Error::Operation(format!("bookmark {} vanished", step.bookmark_id)))?;
         let fork_id = fork_step(db, &original, step, plan, &now)?;
+        if !copy_embedding(db, &original.id, &fork_id) {
+            needs_embedding.push(fork_id.clone());
+        }
         forked.push(ForkedStep { original_id: original.id, fork_id });
     }
     let dropped: Vec<String> = plan.unmatched().map(|s| s.bookmark_id.clone()).collect();
@@ -651,7 +658,38 @@ fn apply_in_txn(
         dropped,
         deleted_originals,
         kept_originals,
+        needs_embedding,
     })
+}
+
+/// Copy `original`'s embedding vector to `fork`. Returns whether one was copied.
+///
+/// A bookmark's embedding is computed from its tags, first note/context and a
+/// summary of its query (`SemanticRepo::prepare_bookmark_text`), never its path
+/// or code. A fork copies all of those, so its embedding is identical, and
+/// copying the vector avoids loading and running the model. A missing vector,
+/// or a missing `bookmark_embeddings` table, just means there's nothing to copy.
+fn copy_embedding(db: &Database, original: &str, fork: &str) -> bool {
+    use rusqlite::OptionalExtension;
+    let conn = db.conn();
+    let vector: Option<Vec<u8>> = conn
+        .query_row(
+            "SELECT embedding FROM bookmark_embeddings WHERE bookmark_id = ?1",
+            [original],
+            |r| r.get(0),
+        )
+        .optional()
+        .ok()
+        .flatten();
+    let Some(vector) = vector else { return false };
+    let copied = conn
+        .execute(
+            "INSERT INTO bookmark_embeddings (bookmark_id, embedding) VALUES (?1, ?2)",
+            rusqlite::params![fork, vector],
+        )
+        .is_ok();
+    tracing::debug!(target: "codemark::db", original, fork, copied, "copied embedding to fork");
+    copied
 }
 
 /// Resolve `rev` (a branch name or any revision) to a commit SHA.
@@ -929,6 +967,47 @@ mod tests {
         ).unwrap();
         assert!(dirty, "uncommitted code must not look committed");
         let _ = fs::remove_dir_all(&wt_path);
+    }
+
+    /// Forks reuse their original's embedding vector instead of re-embedding;
+    /// only forks of un-embedded originals are reported as needing one.
+    #[tokio::test]
+    async fn forks_copy_their_originals_embedding() {
+        let (fx, col, feature, [alpha, _beta]) = setup("embeddings").await;
+        fx.commit("main", &[("lib.dart", LIB)], Some(feature));
+        let vector: Vec<f32> = (0..384).map(|i| i as f32 / 384.0).collect();
+        let bytes: Vec<u8> = vector.iter().flat_map(|f| f.to_le_bytes()).collect();
+        fx.db
+            .conn()
+            .execute(
+                "INSERT INTO bookmark_embeddings (bookmark_id, embedding) VALUES (?1, ?2)",
+                rusqlite::params![alpha, bytes],
+            )
+            .unwrap();
+
+        let plan = plan_transfer(&fx.db, &col, &fx.options("main", false)).await.unwrap();
+        let out = apply_transfer(
+            &fx.db,
+            &plan,
+            &TransferMode::Copy { new_name: "emb".into() },
+            OnUnmatched::Fail,
+            None,
+        )
+        .unwrap();
+
+        let get = |id: &str| -> Option<Vec<u8>> {
+            fx.db
+                .conn()
+                .query_row(
+                    "SELECT embedding FROM bookmark_embeddings WHERE bookmark_id = ?1",
+                    [id],
+                    |r| r.get(0),
+                )
+                .ok()
+        };
+        assert_eq!(get(&out.forked[0].fork_id), Some(bytes), "alpha's vector is copied");
+        assert_eq!(get(&out.forked[1].fork_id), None);
+        assert_eq!(out.needs_embedding, vec![out.forked[1].fork_id.clone()]);
     }
 
     #[tokio::test]
