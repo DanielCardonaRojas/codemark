@@ -122,7 +122,7 @@ async fn run(
         std::process::exit(Error::Input(String::new()).exit_code());
     }
 
-    let outcome = engine::apply_transfer(
+    let mut outcome = engine::apply_transfer(
         &db,
         &plan,
         &transfer_mode,
@@ -130,16 +130,34 @@ async fn run(
         args.created_by.as_deref(),
     )?;
 
-    // Forks are new rows, so they need their own embeddings for semantic
-    // search. Failures here never undo the transfer.
-    let config = load_config(cli);
-    for f in &outcome.forked {
-        if let Ok(Some(bm)) = db.get_bookmark(&f.fork_id) {
-            let _ = generate_embedding_for_bookmark(cli, &config, &bm).await;
+    // Forks reuse their original's embedding (copied in `apply_transfer`), so
+    // the model only runs for forks whose original had none. Failures here
+    // never undo the transfer.
+    if !outcome.needs_embedding.is_empty() {
+        let config = load_config(cli);
+        for fork_id in &outcome.needs_embedding {
+            if let Ok(Some(bm)) = db.get_bookmark(fork_id) {
+                let _ = generate_embedding_for_bookmark(cli, &config, &bm).await;
+            }
         }
+        // Report only forks that still have no vector. The generator returns
+        // Ok(()) even when it logs a storage failure (or semantic is off), so
+        // check the store rather than trusting the call.
+        outcome.needs_embedding.retain(|id| !has_embedding(&db, id));
     }
 
     report(mode, &plan, Some(&outcome), on_unmatched, false)
+}
+
+/// Whether `bookmark_id` has a stored embedding vector.
+fn has_embedding(db: &codemark_core::storage::db::Database, bookmark_id: &str) -> bool {
+    db.conn()
+        .query_row(
+            "SELECT 1 FROM bookmark_embeddings WHERE bookmark_id = ?1",
+            [bookmark_id],
+            |_| Ok(()),
+        )
+        .is_ok()
 }
 
 /// `<name>-<branch>`, with the branch reduced to the characters collection

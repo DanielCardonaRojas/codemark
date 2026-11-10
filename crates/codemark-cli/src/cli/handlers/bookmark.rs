@@ -1151,6 +1151,9 @@ pub async fn handle_annotate(cli: &Cli, mode: &OutputMode, args: &AnnotateArgs) 
     // Find the bookmark
     let id = super::extract_id(&args.id);
     let mut bm = find_bookmark(&db, id)?;
+    // What the embedding text is built from before this annotate (see below).
+    let tags_before = bm.tags.clone();
+    let had_annotation = !bm.annotations.is_empty();
 
     // Track inserted annotations for output
     let mut inserted_annotation_count = 0;
@@ -1215,6 +1218,32 @@ pub async fn handle_annotate(cli: &Cli, mode: &OutputMode, args: &AnnotateArgs) 
 
         // Re-fetch bookmark to get updated tags
         bm = find_bookmark(&db, id)?;
+    }
+
+    // The embedding text is the tags plus the *first* annotation's note and
+    // context (`SemanticRepo::prepare_bookmark_text`). Refresh the vector when
+    // that text changes, i.e. the tag set changed or this added the first
+    // annotation, so semantic search (and the vectors `tour copy`/`move` copy
+    // onto forks) stay current without re-running the model for follow-up notes
+    // or comments. Embedding failures never fail the annotate.
+    let fresh = find_bookmark(&db, id)?;
+    let tags_changed = {
+        let (mut a, mut b) = (tags_before.clone(), fresh.tags.clone());
+        a.sort();
+        b.sort();
+        a != b
+    };
+    let first_annotation = !had_annotation && !fresh.annotations.is_empty();
+    if tags_changed || first_annotation {
+        tracing::debug!(
+            target: "codemark::embeddings",
+            bookmark_id = %fresh.id,
+            tags_changed,
+            first_annotation,
+            "refreshing bookmark embedding after annotate"
+        );
+        let config = super::load_config(cli);
+        let _ = generate_embedding_for_bookmark(cli, &config, &fresh).await;
     }
 
     match mode {

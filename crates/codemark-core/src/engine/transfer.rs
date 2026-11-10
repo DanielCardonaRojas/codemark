@@ -199,6 +199,10 @@ pub struct TransferOutcome {
     pub deleted_originals: Vec<String>,
     /// Move only: original rows kept because another collection still uses them.
     pub kept_originals: Vec<String>,
+    /// Forks without an embedding vector. `apply_transfer` lists those whose
+    /// original had none to copy; the CLI then embeds them and narrows this to
+    /// the ones that still lack a vector, so the report reflects the final state.
+    pub needs_embedding: Vec<String>,
 }
 
 /// The repository root a database belongs to (`<root>/.codemark/codemark.db`),
@@ -581,11 +585,15 @@ fn apply_in_txn(
     };
 
     let mut forked = Vec::new();
+    let mut needs_embedding = Vec::new();
     for step in plan.matched() {
         let original = db
             .get_bookmark(&step.bookmark_id)?
             .ok_or_else(|| Error::Operation(format!("bookmark {} vanished", step.bookmark_id)))?;
         let fork_id = fork_step(db, &original, step, plan, &now)?;
+        if !copy_embedding(db, &original.id, &fork_id)? {
+            needs_embedding.push(fork_id.clone());
+        }
         forked.push(ForkedStep { original_id: original.id, fork_id });
     }
     let dropped: Vec<String> = plan.unmatched().map(|s| s.bookmark_id.clone()).collect();
@@ -651,7 +659,53 @@ fn apply_in_txn(
         dropped,
         deleted_originals,
         kept_originals,
+        needs_embedding,
     })
+}
+
+/// Copy `original`'s embedding vector to `fork`. Returns whether one was copied.
+///
+/// A bookmark's embedding is computed from its tags, first note/context and a
+/// summary of its query (`SemanticRepo::prepare_bookmark_text`), never its path
+/// or code. A fork copies all of those, so its embedding is identical, and
+/// copying the vector avoids loading and running the model.
+///
+/// "Nothing to copy" (no vector, no `bookmark_embeddings` table, or the `vec0`
+/// module not loaded) returns `Ok(false)` so the caller embeds the fork. Any
+/// other error is propagated so the transfer rolls back rather than committing
+/// a move that deleted the original's vector without copying it.
+fn copy_embedding(db: &Database, original: &str, fork: &str) -> Result<bool> {
+    use rusqlite::OptionalExtension;
+    let conn = db.conn();
+    let vector: Option<Vec<u8>> = match conn
+        .query_row(
+            "SELECT embedding FROM bookmark_embeddings WHERE bookmark_id = ?1",
+            [original],
+            |r| r.get(0),
+        )
+        .optional()
+    {
+        Ok(v) => v,
+        Err(e) if embeddings_unavailable(&e) => {
+            tracing::debug!(target: "codemark::db", error = %e, "no embeddings table; fork will be embedded");
+            None
+        }
+        Err(e) => return Err(e.into()),
+    };
+    let Some(vector) = vector else { return Ok(false) };
+    conn.execute(
+        "INSERT INTO bookmark_embeddings (bookmark_id, embedding) VALUES (?1, ?2)",
+        rusqlite::params![fork, vector],
+    )?;
+    tracing::debug!(target: "codemark::db", original, fork, "copied embedding to fork");
+    Ok(true)
+}
+
+/// Whether `err` means the embeddings store doesn't exist here at all (as
+/// opposed to a real failure reading or writing it).
+fn embeddings_unavailable(err: &rusqlite::Error) -> bool {
+    let msg = err.to_string();
+    msg.contains("no such table") || msg.contains("no such module")
 }
 
 /// Resolve `rev` (a branch name or any revision) to a commit SHA.
@@ -929,6 +983,68 @@ mod tests {
         ).unwrap();
         assert!(dirty, "uncommitted code must not look committed");
         let _ = fs::remove_dir_all(&wt_path);
+    }
+
+    /// Forks reuse their original's embedding vector instead of re-embedding;
+    /// only forks of un-embedded originals are reported as needing one.
+    #[tokio::test]
+    async fn forks_copy_their_originals_embedding() {
+        let (fx, col, feature, [alpha, _beta]) = setup("embeddings").await;
+        fx.commit("main", &[("lib.dart", LIB)], Some(feature));
+        let vector: Vec<f32> = (0..384).map(|i| i as f32 / 384.0).collect();
+        let bytes: Vec<u8> = vector.iter().flat_map(|f| f.to_le_bytes()).collect();
+        fx.db
+            .conn()
+            .execute(
+                "INSERT INTO bookmark_embeddings (bookmark_id, embedding) VALUES (?1, ?2)",
+                rusqlite::params![alpha, bytes],
+            )
+            .unwrap();
+
+        let plan = plan_transfer(&fx.db, &col, &fx.options("main", false)).await.unwrap();
+        let out = apply_transfer(
+            &fx.db,
+            &plan,
+            &TransferMode::Copy { new_name: "emb".into() },
+            OnUnmatched::Fail,
+            None,
+        )
+        .unwrap();
+
+        let get = |id: &str| -> Option<Vec<u8>> {
+            fx.db
+                .conn()
+                .query_row(
+                    "SELECT embedding FROM bookmark_embeddings WHERE bookmark_id = ?1",
+                    [id],
+                    |r| r.get(0),
+                )
+                .ok()
+        };
+        assert_eq!(get(&out.forked[0].fork_id), Some(bytes), "alpha's vector is copied");
+        assert_eq!(get(&out.forked[1].fork_id), None);
+        assert_eq!(out.needs_embedding, vec![out.forked[1].fork_id.clone()]);
+    }
+
+    /// No embeddings store at all is "nothing to copy", not a failure: the
+    /// transfer succeeds and every fork is reported as needing an embedding.
+    #[tokio::test]
+    async fn missing_embeddings_table_falls_back_to_embedding() {
+        let (fx, col, feature, _) = setup("no-vec").await;
+        fx.commit("main", &[("lib.dart", LIB)], Some(feature));
+        fx.db.conn().execute_batch("DROP TABLE bookmark_embeddings").unwrap();
+
+        let plan = plan_transfer(&fx.db, &col, &fx.options("main", false)).await.unwrap();
+        let out = apply_transfer(
+            &fx.db,
+            &plan,
+            &TransferMode::Copy { new_name: "no-vec".into() },
+            OnUnmatched::Fail,
+            None,
+        )
+        .unwrap();
+        let forks: Vec<_> = out.forked.iter().map(|f| f.fork_id.clone()).collect();
+        assert_eq!(out.needs_embedding, forks);
     }
 
     #[tokio::test]

@@ -561,8 +561,16 @@ pub async fn generate_embedding_for_bookmark(
 
     // Generate and store the embedding
     let conn = db.conn_mut();
-    // Ignore errors - embedding generation failure shouldn't block bookmark creation
-    let _ = semantic_repo.store_embeddings(conn, std::slice::from_ref(bookmark)).await;
+    // Embedding failures never block the calling command, but log them so a
+    // missing or stale vector can be traced.
+    if let Err(e) = semantic_repo.store_embeddings(conn, std::slice::from_ref(bookmark)).await {
+        tracing::warn!(
+            target: "codemark::embeddings",
+            bookmark_id = %bookmark.id,
+            error = %e,
+            "failed to generate or store bookmark embedding"
+        );
+    }
 
     Ok(())
 }
