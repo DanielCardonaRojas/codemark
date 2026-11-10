@@ -1235,6 +1235,13 @@ pub async fn handle_annotate(cli: &Cli, mode: &OutputMode, args: &AnnotateArgs) 
     };
     let first_annotation = !had_annotation && !fresh.annotations.is_empty();
     if tags_changed || first_annotation {
+        tracing::debug!(
+            target: "codemark::embeddings",
+            bookmark_id = %fresh.id,
+            tags_changed,
+            first_annotation,
+            "refreshing bookmark embedding after annotate"
+        );
         let config = super::load_config(cli);
         let _ = generate_embedding_for_bookmark(cli, &config, &fresh).await;
     }
