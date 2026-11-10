@@ -199,8 +199,9 @@ pub struct TransferOutcome {
     pub deleted_originals: Vec<String>,
     /// Move only: original rows kept because another collection still uses them.
     pub kept_originals: Vec<String>,
-    /// Forks whose original had no embedding to copy, so they still need one
-    /// computed for semantic search.
+    /// Forks without an embedding vector. `apply_transfer` lists those whose
+    /// original had none to copy; the CLI then embeds them and narrows this to
+    /// the ones that still lack a vector, so the report reflects the final state.
     pub needs_embedding: Vec<String>,
 }
 
