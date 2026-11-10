@@ -1217,6 +1217,16 @@ pub async fn handle_annotate(cli: &Cli, mode: &OutputMode, args: &AnnotateArgs) 
         bm = find_bookmark(&db, id)?;
     }
 
+    // Tags, notes and context feed the embedding text, so refresh the vector
+    // (replacing the old one) to keep semantic search, and the vectors that
+    // `tour copy`/`move` copy onto forks, in step with the bookmark. Comments
+    // aren't part of that text. Embedding failures never fail the annotate.
+    if !args.tag.is_empty() || !args.note.is_empty() || args.context.is_some() {
+        let fresh = find_bookmark(&db, id)?;
+        let config = super::load_config(cli);
+        let _ = generate_embedding_for_bookmark(cli, &config, &fresh).await;
+    }
+
     match mode {
         OutputMode::Json => {
             write_json_success(&serde_json::json!({
