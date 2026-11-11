@@ -36,6 +36,7 @@ pub mod languages_tab;
 pub mod layout;
 pub mod logging;
 pub mod settings;
+pub mod startup;
 pub mod state;
 pub mod theme;
 pub mod ui;
@@ -50,6 +51,7 @@ pub use entry::run;
 pub use event::{Event, EventHandler, EventHandlerConfig, KeyBindings};
 pub use layout::{LayoutChild, LayoutManager, SplitLayout, helpers};
 pub use settings::{SettingsOverlay, SettingsTab};
+pub use startup::{StartupLayout, StartupOptions};
 pub use state::{AppMode, AppState, FocusManager, StateData, Storeable};
 pub use ui::{NotificationType, render_confirmation, render_help_panel, render_notification};
 

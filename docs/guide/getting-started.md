@@ -107,6 +107,7 @@ codemark add --file src/auth.rs --range 42 --tag auth \
 codemark search "auth"          # full-text + semantic search
 codemark tour show login-flow --format markdown  # render a collection
 codemark tui                    # the keyboard-driven dashboard
+codemark tui -c login-flow -l code  # open a collection in a layout
 ```
 
 See the [CLI Reference](./cli-reference) for every subcommand and flag, and

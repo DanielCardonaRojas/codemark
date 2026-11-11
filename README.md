@@ -233,6 +233,8 @@ cargo install --git https://github.com/DanielCardonaRojas/codemark codemark-cli
 ### Terminal UI
 `codemark tui` opens the interactive dashboard. The prebuilt `codemark` binary (script, PowerShell, mise) and Homebrew all bundle the dashboard, so it works out of the box with no extra install.
 
+Jump straight to a collection, a layout, or both: `codemark tui --collection login-flow --layout code` (see `codemark tui --help` for every layout).
+
 If you build a lean CLI from source with `--no-default-features` (dropping the bundled TUI), `codemark tui` instead looks for a standalone `codemark-tui` on your `PATH`; add it with:
 ```bash
 cargo install --git https://github.com/DanielCardonaRojas/codemark codemark-tui
