@@ -564,16 +564,6 @@ pub fn apply_transfer(
     let source = db
         .get_collection_by_id(&plan.collection_id)?
         .ok_or_else(|| Error::Input(format!("collection '{}' not found", plan.collection)))?;
-    // A plan is a snapshot. If steps were added, removed or reordered since,
-    // applying it would silently drop or misplace them (a move re-points the
-    // whole collection), so require a fresh plan instead.
-    let planned: Vec<&str> = plan.steps.iter().map(|s| s.bookmark_id.as_str()).collect();
-    if ordered_member_ids(db, &plan.collection_id)? != planned {
-        return Err(Error::Input(format!(
-            "collection '{}' changed since it was planned; plan the transfer again",
-            plan.collection
-        )));
-    }
     if let TransferMode::Copy { new_name } = mode
         && db.get_collection_by_name(new_name)?.is_some()
     {
@@ -583,7 +573,9 @@ pub fn apply_transfer(
     let conn = db.conn();
     let owns_txn = conn.is_autocommit();
     if owns_txn {
-        conn.execute_batch("BEGIN")?;
+        // IMMEDIATE takes the write lock now, so the snapshot check in
+        // `apply_in_txn` and the writes that follow see the same collection.
+        conn.execute_batch("BEGIN IMMEDIATE")?;
     }
     let result = apply_in_txn(db, plan, mode, &source, created_by);
     if owns_txn {
@@ -604,6 +596,16 @@ fn apply_in_txn(
     source: &Collection,
     created_by: Option<&str>,
 ) -> Result<TransferOutcome> {
+    // A plan is a snapshot. If steps were added, removed or reordered since,
+    // applying it would silently drop or misplace them (a move re-points the
+    // whole collection), so require a fresh plan instead.
+    let planned: Vec<&str> = plan.steps.iter().map(|s| s.bookmark_id.as_str()).collect();
+    if ordered_member_ids(db, &plan.collection_id)? != planned {
+        return Err(Error::Input(format!(
+            "collection '{}' changed since it was planned; plan the transfer again",
+            plan.collection
+        )));
+    }
     let now = chrono::Utc::now().to_rfc3339();
 
     let target = match mode {

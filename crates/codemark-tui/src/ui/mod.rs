@@ -303,8 +303,6 @@ pub fn render_confirmation(
     message: &str,
     confirm_selected: bool,
 ) {
-    use unicode_width::UnicodeWidthStr;
-
     let palette = crate::theme::palette();
 
     // Calculate dialog width (centered, 60% of width, max 60 chars).
@@ -324,72 +322,60 @@ pub fn render_confirmation(
         Style::default().fg(palette.error)
     };
 
-    // Rows a string occupies once wrapped to `interior_width`. Uses display
-    // width (not scalar count) so double-width CJK/emoji characters are measured
-    // correctly and can't undercount the rows the terminal will actually use.
-    let wrapped_rows = |s: &str| (s.width() as u16).div_ceil(interior_width).max(1);
+    // Rows a line occupies once word-wrapped to `interior_width`, counted by
+    // the same wrapper that renders it (display width, word boundaries), so
+    // the estimate can't undercount what the terminal will show.
+    let wrapped_rows = |line: &Line| {
+        Paragraph::new(line.clone()).wrap(Wrap { trim: false }).line_count(interior_width).max(1)
+            as u16
+    };
 
-    // The button row can itself wrap when the dialog interior is narrower than
-    // its label, so reserve however many rows it actually needs.
     let cancel_label = "  Cancel  ";
     let confirm_label = "  Confirm  ";
     let button_gap = "      ";
-    let button_rows = ((cancel_label.width() + button_gap.width() + confirm_label.width()) as u16)
-        .div_ceil(interior_width)
-        .max(1);
     let button_line = Line::from(vec![
         Span::styled(cancel_label, cancel_style),
         Span::raw(button_gap),
         Span::styled(confirm_label, confirm_style),
     ]);
+    // The button row can itself wrap when the dialog interior is narrower than
+    // its label, so reserve however many rows it actually needs.
+    let button_rows = wrapped_rows(&button_line);
 
     // Render each newline-separated segment as its own line so callers can
     // include supplementary detail (e.g. how many bookmarks will be deleted).
-    // Count the rows each segment needs once wrapped, and when the message
-    // doesn't fit above the buttons, drop trailing lines behind a "…" so
-    // Cancel/Confirm are never pushed off the bottom of the dialog.
+    // When the message doesn't fit above the buttons, the first line (the
+    // action summary: what will happen to what) is always kept, and the
+    // trailing detail lines give way to a "…".
     let interior = area.height.saturating_sub(2);
     let message_budget = interior.saturating_sub(button_rows);
-    let segments: Vec<&str> = message.split('\n').collect();
-    let total_rows: u16 = segments.iter().map(|s| wrapped_rows(s)).sum();
-    let mut kept: Vec<&str> = Vec::new();
+    let bold_line = |s: &str| Line::from(Span::styled(s.to_string(), Style::default().bold()));
+    let segments: Vec<Line> = message.split('\n').map(bold_line).collect();
+    let rows: Vec<u16> = segments.iter().map(wrapped_rows).collect();
+    let total_rows: u16 = rows.iter().sum();
+    let mut message_lines: Vec<Line> = Vec::new();
     let mut message_rows: u16 = 0;
     if total_rows <= message_budget {
-        kept = segments;
+        message_lines = segments;
         message_rows = total_rows;
-    } else if message_budget > 0 {
-        // Reserve one row for the ellipsis line.
-        for segment in segments {
-            let rows = wrapped_rows(segment);
-            if message_rows + rows + 1 > message_budget {
+    } else {
+        for (i, (line, r)) in segments.into_iter().zip(rows).enumerate() {
+            // Leave a row for the ellipsis after anything but the summary.
+            if i > 0 && message_rows + r + 1 > message_budget {
                 break;
             }
-            message_rows += rows;
-            kept.push(segment);
+            message_rows += r;
+            message_lines.push(line);
         }
-        kept.push("…");
-        message_rows += 1;
+        if message_rows < message_budget {
+            message_lines.push(bold_line("…"));
+            message_rows += 1;
+        }
     }
-    let message_lines: Vec<Line> = kept
-        .into_iter()
-        .map(|segment| Line::from(vec![Span::styled(segment.to_string(), Style::default().bold())]))
-        .collect();
 
     // Prefer a roomy layout with blank spacers above the message and buttons,
-    // but drop the spacers when the terminal is too short so Cancel/Confirm
-    // stay visible instead of being clipped.
+    // but drop the spacers when the terminal is too short.
     let spacious = interior >= message_rows + button_rows + 2;
-
-    let mut lines = Vec::new();
-    if spacious {
-        lines.push(Line::from(""));
-    }
-    lines.extend(message_lines);
-    if spacious {
-        lines.push(Line::from(""));
-    }
-    lines.push(button_line);
-    let text = Text::from(lines);
 
     // Size the dialog to its content (accounting for wrapped message and button
     // rows plus the blank spacers), clamped to the available area.
@@ -407,18 +393,34 @@ pub fn render_confirmation(
     // Clear the background to avoid overlap
     Widget::render(Clear, dialog_area, buf);
 
-    let paragraph = Paragraph::new(text)
-        .block(
-            Block::bordered()
-                .border_type(BorderType::Rounded)
-                .title(title.to_string())
-                .title_style(Style::default().bold())
-                .border_style(Style::default().fg(crate::theme::palette().error)),
-        )
-        .alignment(Alignment::Center)
-        .wrap(Wrap { trim: false });
+    let block = Block::bordered()
+        .border_type(BorderType::Rounded)
+        .title(title.to_string())
+        .title_style(Style::default().bold())
+        .border_style(Style::default().fg(crate::theme::palette().error));
+    let inner = block.inner(dialog_area);
+    block.render(dialog_area, buf);
 
-    paragraph.render(dialog_area, buf);
+    // The buttons own the bottom rows of the dialog, and the message is drawn
+    // (and clipped) in whatever is left above them, so no message can push
+    // Cancel/Confirm out of view.
+    let button_height = button_rows.min(inner.height);
+    let button_area =
+        Rect { y: inner.y + inner.height - button_height, height: button_height, ..inner };
+    let top_spacer = u16::from(spacious);
+    let message_area = Rect {
+        y: inner.y + top_spacer,
+        height: inner.height.saturating_sub(button_height + spacers),
+        ..inner
+    };
+    Paragraph::new(Text::from(message_lines))
+        .alignment(Alignment::Center)
+        .wrap(Wrap { trim: false })
+        .render(message_area, buf);
+    Paragraph::new(button_line)
+        .alignment(Alignment::Center)
+        .wrap(Wrap { trim: false })
+        .render(button_area, buf);
 }
 
 /// Render a popup with custom content.
@@ -597,6 +599,29 @@ mod tests {
         assert!(text.contains("line 1"), "{text}");
         assert!(text.contains('…'), "{text}");
         assert!(!text.contains("line 12"), "{text}");
+    }
+
+    #[test]
+    fn word_wrapped_messages_keep_buttons_visible() {
+        // Three 15-cell words need three rows once word-wrapped in a narrow
+        // dialog, more than their total width divided by the row width.
+        let area = Rect::new(0, 0, 50, 7);
+        let mut buf = Buffer::empty(area);
+        let message = "aaaaaaaaaaaaaaa bbbbbbbbbbbbbbb ccccccccccccccc\ndetail";
+        render_confirmation(area, &mut buf, "Move", message, false);
+        let text = buffer_text(&buf);
+        assert!(text.contains("Confirm"), "{text}");
+    }
+
+    #[test]
+    fn the_action_summary_survives_the_tightest_fit() {
+        let area = Rect::new(0, 0, 50, 5);
+        let mut buf = Buffer::empty(area);
+        let message = "Move \"tour\" to main (abcdef12)?\n3 of 4 steps match.\n✗ 2. src/a.rs";
+        render_confirmation(area, &mut buf, "Move", message, false);
+        let text = buffer_text(&buf);
+        assert!(text.contains("Move \"tour\""), "{text}");
+        assert!(text.contains("Confirm"), "{text}");
     }
 
     #[test]
