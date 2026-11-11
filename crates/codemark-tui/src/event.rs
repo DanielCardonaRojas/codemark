@@ -72,6 +72,8 @@ pub enum Event {
     HealComplete(String, bool), // (message, success)
     /// Sync operation (push/pull) completed with a notification message.
     SyncComplete(String, bool), // (message, success)
+    /// A collection copy/move plan finished on a background task.
+    TransferPlanned(Box<crate::browser::TransferPlanned>),
     /// A remote tour pull task finished (success or failure), carrying the tour
     /// id so the in-flight guard can release it. Decoupled from the global
     /// spinner sweep so overlapping pulls of *different* tours each release

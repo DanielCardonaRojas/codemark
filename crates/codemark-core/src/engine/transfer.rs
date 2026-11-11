@@ -112,7 +112,7 @@ pub enum StepStatus {
 }
 
 /// The location a matched step resolved to on the target.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct ResolvedLocation {
     content_hash: String,
     byte_range: String,
@@ -123,7 +123,7 @@ struct ResolvedLocation {
 }
 
 /// One step of a [`TransferPlan`].
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct StepPlan {
     pub position: usize,
     pub bookmark_id: String,
@@ -148,8 +148,33 @@ pub struct StepPlan {
     resolved: Option<ResolvedLocation>,
 }
 
+impl StepPlan {
+    /// A step with only a position, path and status set, for front-end tests
+    /// that render or classify plans. Not appliable: a `Matched` stub carries no
+    /// resolved location.
+    #[doc(hidden)]
+    pub fn stub(position: usize, file_path: String, status: StepStatus) -> Self {
+        StepPlan {
+            position,
+            bookmark_id: format!("bm-{position}"),
+            query: String::new(),
+            target_file_path: file_path.clone(),
+            file_path,
+            renamed: false,
+            notes: Vec::new(),
+            status,
+            method: ResolutionMethod::Failed,
+            fuzzy: false,
+            hash_changed: false,
+            line_range: None,
+            reason: None,
+            resolved: None,
+        }
+    }
+}
+
 /// The result of [`plan_transfer`]: what each step resolves to on the target.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct TransferPlan {
     pub collection: String,
     pub collection_id: String,
@@ -203,6 +228,33 @@ pub struct TransferOutcome {
     /// original had none to copy; the CLI then embeds them and narrows this to
     /// the ones that still lack a vector, so the report reflects the final state.
     pub needs_embedding: Vec<String>,
+}
+
+/// `<name>-<branch>`, with the branch reduced to the characters collection
+/// names allow (lowercase alphanumerics and hyphens).
+pub fn default_copy_name(name: &str, branch: &str) -> String {
+    let slug: String = branch
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_lowercase() } else { '-' })
+        .collect();
+    let slug = slug.trim_matches('-');
+    format!("{name}-{slug}")
+}
+
+/// [`default_copy_name`], suffixed `-2`, `-3`… until no collection has it, so
+/// copying the same collection to a branch twice doesn't fail on the name.
+pub fn unique_copy_name(db: &Database, name: &str, branch: &str) -> Result<String> {
+    let base = default_copy_name(name, branch);
+    if db.get_collection_by_name(&base)?.is_none() {
+        return Ok(base);
+    }
+    for n in 2.. {
+        let candidate = format!("{base}-{n}");
+        if db.get_collection_by_name(&candidate)?.is_none() {
+            return Ok(candidate);
+        }
+    }
+    unreachable!("an unbounded range always yields a free name")
 }
 
 /// The repository root a database belongs to (`<root>/.codemark/codemark.db`),
@@ -1187,5 +1239,16 @@ mod tests {
         assert_eq!(out2.forked.len(), 2);
         assert!(out2.kept_originals.contains(&out.forked[0].fork_id));
         assert!(ordered_member_ids(&fx.db, &other.id).unwrap().contains(&out.forked[0].fork_id));
+    }
+
+    #[test]
+    fn copy_names_slug_the_branch_and_skip_taken_names() {
+        assert_eq!(default_copy_name("tour", "feat/Big_Thing"), "tour-feat-big-thing");
+        let fx = Fixture::new("copy_names");
+        assert_eq!(unique_copy_name(&fx.db, "tour", "main").unwrap(), "tour-main");
+        fx.collection("tour-main", &[]);
+        assert_eq!(unique_copy_name(&fx.db, "tour", "main").unwrap(), "tour-main-2");
+        fx.collection("tour-main-2", &[]);
+        assert_eq!(unique_copy_name(&fx.db, "tour", "main").unwrap(), "tour-main-3");
     }
 }

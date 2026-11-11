@@ -88,6 +88,14 @@ pub enum DialogAction {
     /// the stable id rather than the display name. `repo_root` routes the delete
     /// to the owning repo's database (`None` → focused repo).
     DeleteCollection { id: String, repo_root: Option<String> },
+    /// Copy or move a collection onto another branch by applying a plan that
+    /// was computed (and shown) before the dialog opened. `repo_root` routes
+    /// the write to the collection's repo (`None` → focused repo).
+    ApplyTransfer {
+        plan: Box<codemark_core::engine::transfer::TransferPlan>,
+        mode: codemark_core::engine::transfer::TransferMode,
+        repo_root: Option<String>,
+    },
 }
 
 /// Target for healing operation.

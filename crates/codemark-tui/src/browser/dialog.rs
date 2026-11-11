@@ -18,7 +18,7 @@ impl BrowserLayout {
     /// While true, the dialog captures all key input and the rest of the
     /// layout (and global keybindings) must not act on events.
     pub fn has_active_dialog(&self) -> bool {
-        self.dialog.is_some()
+        self.dialog.is_some() || self.branch_picker.is_some()
     }
 
     /// Show a confirmation dialog for the given action.
@@ -39,6 +39,9 @@ impl BrowserLayout {
     /// the dialog stays modal. Always returns `true`.
     pub(super) fn handle_dialog_key(&mut self, key: &ratatui::crossterm::event::KeyEvent) -> bool {
         use ratatui::crossterm::event::KeyCode;
+        if self.branch_picker.is_some() {
+            return self.handle_branch_picker_key(key);
+        }
         match key.code {
             KeyCode::Left
             | KeyCode::Right
@@ -79,6 +82,17 @@ impl BrowserLayout {
     /// action succeeded when it did not.
     fn perform_dialog_action(&mut self, action: DialogAction) {
         let result = match &action {
+            DialogAction::ApplyTransfer { plan, mode, repo_root } => {
+                // Copy/move reports its own success or failure message.
+                let result = self.apply_confirmed_transfer(plan, mode, repo_root.as_deref());
+                let success = result.is_ok();
+                if success {
+                    self.refresh_all_panels();
+                }
+                let message = result.unwrap_or_else(|e| e);
+                self.pending_notification = Some(HealNotification { message, success });
+                return;
+            }
             DialogAction::DeleteBookmark { id, repo_root } => {
                 tracing::debug!(target: "codemark::ui", %id, "deleting bookmark");
                 self.workspace.db_for(repo_root.as_deref()).delete_bookmark(id).map(|_| ())
