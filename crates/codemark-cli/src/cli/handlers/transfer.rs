@@ -98,7 +98,7 @@ async fn run(
         Some(new_name) => TransferMode::Copy {
             new_name: new_name
                 .map(str::to_string)
-                .unwrap_or_else(|| default_copy_name(name, &target_branch)),
+                .unwrap_or_else(|| engine::default_copy_name(name, &target_branch)),
         },
         None => TransferMode::Move,
     };
@@ -158,17 +158,6 @@ fn has_embedding(db: &codemark_core::storage::db::Database, bookmark_id: &str) -
             |_| Ok(()),
         )
         .is_ok()
-}
-
-/// `<name>-<branch>`, with the branch reduced to the characters collection
-/// names allow (lowercase alphanumerics and hyphens).
-fn default_copy_name(name: &str, branch: &str) -> String {
-    let slug: String = branch
-        .chars()
-        .map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_lowercase() } else { '-' })
-        .collect();
-    let slug = slug.trim_matches('-');
-    format!("{name}-{slug}")
 }
 
 fn report(

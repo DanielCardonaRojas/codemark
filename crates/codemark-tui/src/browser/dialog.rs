@@ -18,7 +18,7 @@ impl BrowserLayout {
     /// While true, the dialog captures all key input and the rest of the
     /// layout (and global keybindings) must not act on events.
     pub fn has_active_dialog(&self) -> bool {
-        self.dialog.is_some()
+        self.dialog.is_some() || self.branch_picker.is_some()
     }
 
     /// Show a confirmation dialog for the given action.
@@ -26,7 +26,7 @@ impl BrowserLayout {
         tracing::debug!(
             target: "codemark::ui",
             title = %dialog.title,
-            action = ?dialog.action,
+            action = dialog.action.label(),
             "confirmation dialog opened"
         );
         self.dialog = Some(dialog);
@@ -38,6 +38,21 @@ impl BrowserLayout {
     /// the focused button; Esc cancels outright. All other keys are swallowed so
     /// the dialog stays modal. Always returns `true`.
     pub(super) fn handle_dialog_key(&mut self, key: &ratatui::crossterm::event::KeyEvent) -> bool {
+        if self.branch_picker.is_some() {
+            return self.handle_branch_picker_key(key);
+        }
+        self.handle_confirm_key(key);
+        // A dialog that arrived while this one was open takes its place.
+        if self.dialog.is_none()
+            && let Some(next) = self.queued_dialog.take()
+        {
+            self.request_confirmation(next);
+        }
+        true
+    }
+
+    /// Button navigation/activation for the active [`ConfirmDialog`].
+    fn handle_confirm_key(&mut self, key: &ratatui::crossterm::event::KeyEvent) {
         use ratatui::crossterm::event::KeyCode;
         match key.code {
             KeyCode::Left
@@ -69,7 +84,6 @@ impl BrowserLayout {
             }
             _ => {}
         }
-        true
     }
 
     /// Execute a confirmed dialog action, refreshing panels on success.
@@ -79,6 +93,17 @@ impl BrowserLayout {
     /// action succeeded when it did not.
     fn perform_dialog_action(&mut self, action: DialogAction) {
         let result = match &action {
+            DialogAction::ApplyTransfer { plan, mode, db_path } => {
+                // Copy/move reports its own success or failure message.
+                let result = self.apply_confirmed_transfer(plan, mode, db_path);
+                let success = result.is_ok();
+                if success {
+                    self.refresh_all_panels();
+                }
+                let message = result.unwrap_or_else(|e| e);
+                self.pending_notification = Some(HealNotification { message, success });
+                return;
+            }
             DialogAction::DeleteBookmark { id, repo_root } => {
                 tracing::debug!(target: "codemark::ui", %id, "deleting bookmark");
                 self.workspace.db_for(repo_root.as_deref()).delete_bookmark(id).map(|_| ())

@@ -37,7 +37,9 @@ semantic = ["codemark-core/semantic"]
 wasm = ["codemark-core/wasm"]
 
 [dependencies]
-ratatui = "0.29"
+# `unstable-rendered-line-info`: Paragraph::line_count, to size dialogs by
+# their word-wrapped height.
+ratatui = { version = "0.29", features = ["unstable-rendered-line-info"] }
 crossterm = { version = "0.28", features = ["event-stream"] }
 syntect = "5.2"
 syntect-assets = "0.23"

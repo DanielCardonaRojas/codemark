@@ -26,6 +26,14 @@ impl BrowserLayout {
             match event {
                 Event::Key(key) => return self.handle_dialog_key(key),
                 Event::Mouse(_) => return true,
+                // A paste goes into the branch picker's filter, never the
+                // search bar behind it.
+                Event::Paste(text) => {
+                    if let Some(picker) = self.branch_picker.as_mut() {
+                        picker.push_str(text);
+                    }
+                    return true;
+                }
                 _ => {}
             }
         }
@@ -393,6 +401,10 @@ impl BrowserLayout {
                 // collection is open.
                 self.right_pane.refresh_step_health(self.workspace.focus_db());
                 self.right_pane.refresh_overview_health(self.workspace.focus_db());
+                Some(true)
+            }
+            Event::TransferPlanned(planned) => {
+                self.on_transfer_planned(planned);
                 Some(true)
             }
             Event::SyncComplete(msg, success) => {
@@ -1350,6 +1362,21 @@ impl BrowserLayout {
                 if self.should_handle_keybindings() && self.focus == FocusArea::ContentPanel =>
             {
                 return self.handle_delete_key();
+            }
+            // `c` / `m` copy or move the selected collection to another branch.
+            ratatui::crossterm::event::KeyCode::Char('c')
+                if key.modifiers.is_empty()
+                    && self.should_handle_keybindings()
+                    && self.focus == FocusArea::ContentPanel =>
+            {
+                return self.open_branch_picker(super::TransferKind::Copy);
+            }
+            ratatui::crossterm::event::KeyCode::Char('m')
+                if key.modifiers.is_empty()
+                    && self.should_handle_keybindings()
+                    && self.focus == FocusArea::ContentPanel =>
+            {
+                return self.open_branch_picker(super::TransferKind::Move);
             }
             ratatui::crossterm::event::KeyCode::Char('P')
                 if self.should_handle_keybindings()

@@ -13,6 +13,7 @@ mod right_pane;
 mod search;
 mod tabbed_panel;
 mod tabs;
+mod transfer;
 mod types;
 mod workspace;
 
@@ -21,6 +22,7 @@ pub use right_pane::{RightPane, RightPaneFocus};
 pub use search::{SearchBar, SearchMode};
 pub use tabbed_panel::{TabbedPanel, bookmark_to_panel_item};
 pub use tabs::{ContentTab, ContentTabOrder, ContextTab, FiltersTab, Tab, TabSelection};
+pub use transfer::{BranchPicker, TransferKind, TransferPlanned};
 pub use types::{
     ConfirmDialog, DetailsPaneSize, DialogAction, DialogButton, ExternalCommand, FocusArea,
     HealNotification, HealTarget, LeftPaneSize, PreviewPayload, RightPaneSize, SectionConfig,
@@ -257,6 +259,14 @@ pub struct BrowserLayout {
     last_step_move_tick: Option<usize>,
     /// Active modal dialog, if any. Captures all input while displayed.
     dialog: Option<ConfirmDialog>,
+    /// Branch picker for copying/moving a collection (`c` / `m`). Modal like
+    /// `dialog`; the two are never open at once.
+    branch_picker: Option<BranchPicker>,
+    /// A transfer plan is running in the background.
+    transfer_planning: bool,
+    /// A confirmation that arrived while another dialog was open; shown when
+    /// that one closes.
+    queued_dialog: Option<ConfirmDialog>,
     /// Cached sync-login state, refreshed by [`Self::update_tours_tab_visibility`].
     /// Read every frame by the status-bar/help binding builders to decide whether
     /// to advertise remote actions (e.g. collection Push), so it must not do disk
@@ -395,6 +405,9 @@ impl BrowserLayout {
             step_preview_dirty: false,
             last_step_move_tick: None,
             dialog: None,
+            branch_picker: None,
+            transfer_planning: false,
+            queued_dialog: None,
             // Corrected immediately by update_tours_tab_visibility below.
             logged_in: false,
         };
@@ -3047,6 +3060,7 @@ impl BrowserLayout {
 
         // Modal dialogs draw last so they overlay every pane.
         self.render_dialog(area, buf);
+        self.render_branch_picker(area, buf);
     }
 }
 

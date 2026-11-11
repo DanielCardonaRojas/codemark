@@ -58,6 +58,8 @@ These work from anywhere (except while typing in the search bar, unless noted):
 | `Ctrl+O` | Copy bookmark ID (in Content) / copy markdown (in Info) |
 | `H` | Heal — all bookmarks in the list (Content) / the current one (Main) |
 | `d` | Delete (with a confirm dialog) |
+| `c` | Copy the selected collection to another branch (opens the branch picker) |
+| `m` | Move the selected collection to another branch (opens the branch picker) |
 | `S` | Cycle sort order (Bookmarks / Collections) |
 | `p` | Pull a remote tour / refresh |
 | `P` | Push collections to a remote `codetours` server (when logged in) |
@@ -91,6 +93,26 @@ capped at 20.
 - **Sem** — semantic search by meaning (local vector embeddings).
 
 `Esc` clears the query and drops any in-flight results.
+
+## Copying and moving collections between branches
+
+`c` (copy) and `m` (move) on the Collections tab open a **branch picker**, the
+TUI version of `codemark tour copy` / `tour move`:
+
+- Type to filter branches. Substring matches rank first, then subsequence
+  matches (`qsc` finds `query-summary-cleanup`). `↑`/`↓` or `Ctrl+P`/`Ctrl+N`
+  move the selection, `Ctrl+U` clears the filter, `Esc` cancels.
+- Common branches are pinned under **Common**: the default branch (`origin/HEAD`),
+  `main`/`master`/`develop`/`dev`/`trunk`, and the current branch. With an empty
+  filter, `Enter` picks the detected default branch (`origin/HEAD`, else `main`,
+  else `master`). If that isn't the branch you want, type its name or move the
+  selection first. Remote-only branches are listed by their short name.
+- The collection is planned against the branch's committed tip. If nothing
+  matches (or the branch can't be read), a notification says why and nothing is
+  written. Otherwise a confirmation dialog shows how many steps match and which
+  ones will be left out. Their bookmarks are kept.
+- A copy is named `<collection>-<branch>`, with `-2`, `-3`… added if that name is
+  taken.
 
 ## Overlays
 

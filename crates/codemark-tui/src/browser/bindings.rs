@@ -13,6 +13,9 @@ impl BrowserLayout {
     /// Returns a list of (key, description) tuples suitable for display in the help panel.
     /// The bindings are contextual based on the current focus area and active tab.
     pub fn get_help_bindings(&self) -> Vec<(&'static str, &'static str)> {
+        if self.branch_picker.is_some() {
+            return Self::branch_picker_bindings().to_vec();
+        }
         // A modal dialog only accepts button navigation/activation.
         if self.has_active_dialog() {
             return vec![("←/→", "Select button"), ("Enter", "Activate"), ("Esc", "Cancel")];
@@ -78,6 +81,8 @@ impl BrowserLayout {
                         if self.logged_in {
                             bindings.push(("P", "Push collection"));
                         }
+                        bindings.push(("c", "Copy to branch"));
+                        bindings.push(("m", "Move to branch"));
                         bindings.push(("d", "Delete collection"));
                         bindings.push(("H", "Heal all"));
                         bindings.push(("S", "Sort"));
@@ -151,6 +156,12 @@ impl BrowserLayout {
     /// - 1..50: low-value extras (Resize, Copy ID)
     /// - 0: hidden from the bar entirely (e.g. Enter, which is universal)
     fn get_context_bindings(&self) -> Vec<KeyBinding> {
+        if self.branch_picker.is_some() {
+            return Self::branch_picker_bindings()
+                .into_iter()
+                .map(|(k, d)| KeyBinding::new(k, d))
+                .collect();
+        }
         // A modal dialog only accepts button navigation/activation.
         if self.has_active_dialog() {
             return vec![
@@ -228,6 +239,8 @@ impl BrowserLayout {
                         if self.logged_in {
                             bindings.push(KeyBinding::new("P", "Push").with_priority(85));
                         }
+                        bindings.push(KeyBinding::new("m", "Move").with_priority(80));
+                        bindings.push(KeyBinding::new("c", "Copy").with_priority(78));
                         bindings.push(KeyBinding::new("d", "Delete").with_priority(75));
                         bindings.push(
                             KeyBinding::new("H", "Heal all").with_priority(HIDDEN_BINDING_PRIORITY),

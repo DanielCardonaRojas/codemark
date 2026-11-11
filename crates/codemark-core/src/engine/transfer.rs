@@ -112,7 +112,7 @@ pub enum StepStatus {
 }
 
 /// The location a matched step resolved to on the target.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct ResolvedLocation {
     content_hash: String,
     byte_range: String,
@@ -123,7 +123,7 @@ struct ResolvedLocation {
 }
 
 /// One step of a [`TransferPlan`].
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct StepPlan {
     pub position: usize,
     pub bookmark_id: String,
@@ -148,8 +148,33 @@ pub struct StepPlan {
     resolved: Option<ResolvedLocation>,
 }
 
+impl StepPlan {
+    /// A step with only a position, path and status set, for front-end tests
+    /// that render or classify plans. Not appliable: a `Matched` stub carries no
+    /// resolved location.
+    #[doc(hidden)]
+    pub fn stub(position: usize, file_path: String, status: StepStatus) -> Self {
+        StepPlan {
+            position,
+            bookmark_id: format!("bm-{position}"),
+            query: String::new(),
+            target_file_path: file_path.clone(),
+            file_path,
+            renamed: false,
+            notes: Vec::new(),
+            status,
+            method: ResolutionMethod::Failed,
+            fuzzy: false,
+            hash_changed: false,
+            line_range: None,
+            reason: None,
+            resolved: None,
+        }
+    }
+}
+
 /// The result of [`plan_transfer`]: what each step resolves to on the target.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 pub struct TransferPlan {
     pub collection: String,
     pub collection_id: String,
@@ -203,6 +228,33 @@ pub struct TransferOutcome {
     /// original had none to copy; the CLI then embeds them and narrows this to
     /// the ones that still lack a vector, so the report reflects the final state.
     pub needs_embedding: Vec<String>,
+}
+
+/// `<name>-<branch>`, with the branch reduced to the characters collection
+/// names allow (lowercase alphanumerics and hyphens).
+pub fn default_copy_name(name: &str, branch: &str) -> String {
+    let slug: String = branch
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_lowercase() } else { '-' })
+        .collect();
+    let slug = slug.trim_matches('-');
+    format!("{name}-{slug}")
+}
+
+/// [`default_copy_name`], suffixed `-2`, `-3`… until no collection has it, so
+/// copying the same collection to a branch twice doesn't fail on the name.
+pub fn unique_copy_name(db: &Database, name: &str, branch: &str) -> Result<String> {
+    let base = default_copy_name(name, branch);
+    if db.get_collection_by_name(&base)?.is_none() {
+        return Ok(base);
+    }
+    for n in 2.. {
+        let candidate = format!("{base}-{n}");
+        if db.get_collection_by_name(&candidate)?.is_none() {
+            return Ok(candidate);
+        }
+    }
+    unreachable!("an unbounded range always yields a free name")
 }
 
 /// The repository root a database belongs to (`<root>/.codemark/codemark.db`),
@@ -521,7 +573,9 @@ pub fn apply_transfer(
     let conn = db.conn();
     let owns_txn = conn.is_autocommit();
     if owns_txn {
-        conn.execute_batch("BEGIN")?;
+        // IMMEDIATE takes the write lock now, so the snapshot check in
+        // `apply_in_txn` and the writes that follow see the same collection.
+        conn.execute_batch("BEGIN IMMEDIATE")?;
     }
     let result = apply_in_txn(db, plan, mode, &source, created_by);
     if owns_txn {
@@ -542,6 +596,16 @@ fn apply_in_txn(
     source: &Collection,
     created_by: Option<&str>,
 ) -> Result<TransferOutcome> {
+    // A plan is a snapshot. If steps were added, removed or reordered since,
+    // applying it would silently drop or misplace them (a move re-points the
+    // whole collection), so require a fresh plan instead.
+    let planned: Vec<&str> = plan.steps.iter().map(|s| s.bookmark_id.as_str()).collect();
+    if ordered_member_ids(db, &plan.collection_id)? != planned {
+        return Err(Error::Input(format!(
+            "collection '{}' changed since it was planned; plan the transfer again",
+            plan.collection
+        )));
+    }
     let now = chrono::Utc::now().to_rfc3339();
 
     let target = match mode {
@@ -1187,5 +1251,30 @@ mod tests {
         assert_eq!(out2.forked.len(), 2);
         assert!(out2.kept_originals.contains(&out.forked[0].fork_id));
         assert!(ordered_member_ids(&fx.db, &other.id).unwrap().contains(&out.forked[0].fork_id));
+    }
+
+    #[test]
+    fn copy_names_slug_the_branch_and_skip_taken_names() {
+        assert_eq!(default_copy_name("tour", "feat/Big_Thing"), "tour-feat-big-thing");
+        let fx = Fixture::new("copy_names");
+        assert_eq!(unique_copy_name(&fx.db, "tour", "main").unwrap(), "tour-main");
+        fx.collection("tour-main", &[]);
+        assert_eq!(unique_copy_name(&fx.db, "tour", "main").unwrap(), "tour-main-2");
+        fx.collection("tour-main-2", &[]);
+        assert_eq!(unique_copy_name(&fx.db, "tour", "main").unwrap(), "tour-main-3");
+    }
+
+    #[tokio::test]
+    async fn a_plan_is_rejected_once_the_collection_changes() {
+        let (fx, col, feature, _) = setup("stale_plan").await;
+        fx.commit("main", &[("lib.dart", LIB)], Some(feature));
+        let plan = plan_transfer(&fx.db, &col, &fx.options("main", false)).await.unwrap();
+        // Drop a step after planning: the snapshot no longer matches.
+        let first = plan.steps[0].bookmark_id.clone();
+        fx.db.remove_from_collection(&col.id, &[first]).unwrap();
+        let err = apply_transfer(&fx.db, &plan, &TransferMode::Move, OnUnmatched::Drop, None)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("changed since it was planned"), "{err}");
     }
 }

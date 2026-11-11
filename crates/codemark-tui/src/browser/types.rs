@@ -88,6 +88,27 @@ pub enum DialogAction {
     /// the stable id rather than the display name. `repo_root` routes the delete
     /// to the owning repo's database (`None` → focused repo).
     DeleteCollection { id: String, repo_root: Option<String> },
+    /// Copy or move a collection onto another branch by applying a plan that
+    /// was computed (and shown) before the dialog opened. `db_path` is the
+    /// database the plan was computed against, so the write lands there even
+    /// if the repo scope changed in between.
+    ApplyTransfer {
+        plan: Box<codemark_core::engine::transfer::TransferPlan>,
+        mode: codemark_core::engine::transfer::TransferMode,
+        db_path: std::path::PathBuf,
+    },
+}
+
+impl DialogAction {
+    /// A short name for logs. The full action can carry a transfer plan (with
+    /// the collection's prompt and notes), which doesn't belong in a log file.
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::DeleteBookmark { .. } => "delete_bookmark",
+            Self::DeleteCollection { .. } => "delete_collection",
+            Self::ApplyTransfer { .. } => "apply_transfer",
+        }
+    }
 }
 
 /// Target for healing operation.
