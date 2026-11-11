@@ -264,6 +264,9 @@ pub struct BrowserLayout {
     branch_picker: Option<BranchPicker>,
     /// A transfer plan is running in the background.
     transfer_planning: bool,
+    /// A confirmation that arrived while another dialog was open; shown when
+    /// that one closes.
+    queued_dialog: Option<ConfirmDialog>,
     /// Cached sync-login state, refreshed by [`Self::update_tours_tab_visibility`].
     /// Read every frame by the status-bar/help binding builders to decide whether
     /// to advertise remote actions (e.g. collection Push), so it must not do disk
@@ -404,6 +407,7 @@ impl BrowserLayout {
             dialog: None,
             branch_picker: None,
             transfer_planning: false,
+            queued_dialog: None,
             // Corrected immediately by update_tours_tab_visibility below.
             logged_in: false,
         };

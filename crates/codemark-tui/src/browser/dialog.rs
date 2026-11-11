@@ -38,10 +38,22 @@ impl BrowserLayout {
     /// the focused button; Esc cancels outright. All other keys are swallowed so
     /// the dialog stays modal. Always returns `true`.
     pub(super) fn handle_dialog_key(&mut self, key: &ratatui::crossterm::event::KeyEvent) -> bool {
-        use ratatui::crossterm::event::KeyCode;
         if self.branch_picker.is_some() {
             return self.handle_branch_picker_key(key);
         }
+        self.handle_confirm_key(key);
+        // A dialog that arrived while this one was open takes its place.
+        if self.dialog.is_none()
+            && let Some(next) = self.queued_dialog.take()
+        {
+            self.request_confirmation(next);
+        }
+        true
+    }
+
+    /// Button navigation/activation for the active [`ConfirmDialog`].
+    fn handle_confirm_key(&mut self, key: &ratatui::crossterm::event::KeyEvent) {
+        use ratatui::crossterm::event::KeyCode;
         match key.code {
             KeyCode::Left
             | KeyCode::Right
@@ -72,7 +84,6 @@ impl BrowserLayout {
             }
             _ => {}
         }
-        true
     }
 
     /// Execute a confirmed dialog action, refreshing panels on success.
@@ -82,9 +93,9 @@ impl BrowserLayout {
     /// action succeeded when it did not.
     fn perform_dialog_action(&mut self, action: DialogAction) {
         let result = match &action {
-            DialogAction::ApplyTransfer { plan, mode, repo_root } => {
+            DialogAction::ApplyTransfer { plan, mode, db_path } => {
                 // Copy/move reports its own success or failure message.
-                let result = self.apply_confirmed_transfer(plan, mode, repo_root.as_deref());
+                let result = self.apply_confirmed_transfer(plan, mode, db_path);
                 let success = result.is_ok();
                 if success {
                     self.refresh_all_panels();

@@ -329,18 +329,6 @@ pub fn render_confirmation(
     // correctly and can't undercount the rows the terminal will actually use.
     let wrapped_rows = |s: &str| (s.width() as u16).div_ceil(interior_width).max(1);
 
-    // Render each newline-separated segment as its own line so callers can
-    // include supplementary detail (e.g. how many bookmarks will be deleted).
-    // Count the rows each segment needs once wrapped, so a long collection name
-    // or extra lines can't push the buttons off the bottom of the dialog.
-    let mut message_lines = Vec::new();
-    let mut message_rows: u16 = 0;
-    for segment in message.split('\n') {
-        message_rows += wrapped_rows(segment);
-        message_lines
-            .push(Line::from(vec![Span::styled(segment.to_string(), Style::default().bold())]));
-    }
-
     // The button row can itself wrap when the dialog interior is narrower than
     // its label, so reserve however many rows it actually needs.
     let cancel_label = "  Cancel  ";
@@ -355,10 +343,41 @@ pub fn render_confirmation(
         Span::styled(confirm_label, confirm_style),
     ]);
 
+    // Render each newline-separated segment as its own line so callers can
+    // include supplementary detail (e.g. how many bookmarks will be deleted).
+    // Count the rows each segment needs once wrapped, and when the message
+    // doesn't fit above the buttons, drop trailing lines behind a "…" so
+    // Cancel/Confirm are never pushed off the bottom of the dialog.
+    let interior = area.height.saturating_sub(2);
+    let message_budget = interior.saturating_sub(button_rows);
+    let segments: Vec<&str> = message.split('\n').collect();
+    let total_rows: u16 = segments.iter().map(|s| wrapped_rows(s)).sum();
+    let mut kept: Vec<&str> = Vec::new();
+    let mut message_rows: u16 = 0;
+    if total_rows <= message_budget {
+        kept = segments;
+        message_rows = total_rows;
+    } else if message_budget > 0 {
+        // Reserve one row for the ellipsis line.
+        for segment in segments {
+            let rows = wrapped_rows(segment);
+            if message_rows + rows + 1 > message_budget {
+                break;
+            }
+            message_rows += rows;
+            kept.push(segment);
+        }
+        kept.push("…");
+        message_rows += 1;
+    }
+    let message_lines: Vec<Line> = kept
+        .into_iter()
+        .map(|segment| Line::from(vec![Span::styled(segment.to_string(), Style::default().bold())]))
+        .collect();
+
     // Prefer a roomy layout with blank spacers above the message and buttons,
     // but drop the spacers when the terminal is too short so Cancel/Confirm
     // stay visible instead of being clipped.
-    let interior = area.height.saturating_sub(2);
     let spacious = interior >= message_rows + button_rows + 2;
 
     let mut lines = Vec::new();
@@ -556,6 +575,38 @@ pub fn common_key_bindings() -> Vec<(&'static str, &'static str)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn buffer_text(buf: &Buffer) -> String {
+        let area = buf.area;
+        (area.y..area.y + area.height)
+            .map(|y| {
+                (area.x..area.x + area.width).map(|x| buf[(x, y)].symbol()).collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    #[test]
+    fn long_confirmation_keeps_buttons_visible_on_short_terminals() {
+        let area = Rect::new(0, 0, 50, 12);
+        let mut buf = Buffer::empty(area);
+        let message = (1..=12).map(|i| format!("line {i}")).collect::<Vec<_>>().join("\n");
+        render_confirmation(area, &mut buf, "Move Collection", &message, false);
+        let text = buffer_text(&buf);
+        assert!(text.contains("Confirm"), "{text}");
+        assert!(text.contains("line 1"), "{text}");
+        assert!(text.contains('…'), "{text}");
+        assert!(!text.contains("line 12"), "{text}");
+    }
+
+    #[test]
+    fn short_confirmation_is_not_truncated() {
+        let area = Rect::new(0, 0, 50, 12);
+        let mut buf = Buffer::empty(area);
+        render_confirmation(area, &mut buf, "Delete", "Delete it?\n2 bookmarks", false);
+        let text = buffer_text(&buf);
+        assert!(text.contains("2 bookmarks") && !text.contains('…'), "{text}");
+    }
 
     #[test]
     fn test_common_key_bindings() {

@@ -26,6 +26,7 @@ use ratatui::layout::Rect;
 use ratatui::style::{Style, Stylize};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Clear, Widget};
+use std::path::{Path, PathBuf};
 
 use super::{BrowserLayout, ConfirmDialog, ContentTab, DialogAction, HealNotification};
 use crate::event::Event;
@@ -83,8 +84,9 @@ pub struct BranchPicker {
     pub kind: TransferKind,
     pub collection_id: String,
     pub collection_name: String,
-    /// The collection row's owning repo (`None` → focused repo).
-    pub repo_root: Option<String>,
+    /// The database holding the collection, pinned when the picker opens so
+    /// the transfer stays on it even if the repo scope changes meanwhile.
+    pub db_path: PathBuf,
     /// All branches, pinned first (see [`branches::list_branches`]).
     branches: Vec<BranchRef>,
     filter: String,
@@ -97,14 +99,14 @@ impl BranchPicker {
         kind: TransferKind,
         collection_id: String,
         collection_name: String,
-        repo_root: Option<String>,
+        db_path: PathBuf,
         branches: Vec<BranchRef>,
     ) -> Self {
         Self {
             kind,
             collection_id,
             collection_name,
-            repo_root,
+            db_path,
             branches,
             filter: String::new(),
             selected: 0,
@@ -202,7 +204,8 @@ pub struct TransferPlanned {
     pub kind: TransferKind,
     pub collection_id: String,
     pub collection_name: String,
-    pub repo_root: Option<String>,
+    /// The database the plan was computed against (see [`BranchPicker::db_path`]).
+    pub db_path: PathBuf,
     pub branch: String,
     /// The plan and, for a copy, the new collection's name. `Err` carries a
     /// displayable reason.
@@ -267,19 +270,23 @@ impl BrowserLayout {
         if !matches!(self.active_content_tab(), Some(ContentTab::Collections)) {
             return None;
         }
-        let (name, repo_root) = self
-            .left_pane
-            .content_panel
-            .active_panel()
-            .and_then(|panel| panel.selected())
-            .map(|s| (s.text().to_string(), s.repo_root().map(str::to_string)))?;
+        // Rows carry the collection id; names aren't unique, so the name is only
+        // a fallback for rows without one.
+        let (id, name, repo_root) =
+            self.left_pane.content_panel.active_panel().and_then(|panel| panel.selected()).map(
+                |s| (s.user_data.clone(), s.text().to_string(), s.repo_root().map(str::to_string)),
+            )?;
         if self.transfer_planning {
             self.notify(false, "A transfer is already being planned".to_string());
             return Some(true);
         }
 
         let db = self.workspace.db_for(repo_root.as_deref());
-        let collection = match db.get_collection_by_name(&name) {
+        let found = match &id {
+            Some(id) => db.get_collection_by_id(id),
+            None => db.get_collection_by_name(&name),
+        };
+        let collection = match found {
             Ok(Some(c)) => c,
             Ok(None) => {
                 self.notify(false, format!("Collection \"{name}\" not found"));
@@ -290,6 +297,10 @@ impl BrowserLayout {
                 return Some(true);
             }
         };
+        let name = collection.name.clone();
+        // Pin the source database now: the repo scope can change while the
+        // plan runs, and `db_for` would then fall back to another repo.
+        let db_path = db.path().to_path_buf();
         let repo_path = engine::repo_root_for(db);
         let branches = match branches::list_branches(&repo_path) {
             Ok(b) if !b.is_empty() => b,
@@ -316,8 +327,7 @@ impl BrowserLayout {
             branches = branches.len(),
             "branch picker opened"
         );
-        self.branch_picker =
-            Some(BranchPicker::new(kind, collection.id, name, repo_root, branches));
+        self.branch_picker = Some(BranchPicker::new(kind, collection.id, name, db_path, branches));
         Some(true)
     }
 
@@ -350,7 +360,7 @@ impl BrowserLayout {
             kind = ?picker.kind,
             "planning collection transfer"
         );
-        let db_path = self.workspace.db_for(picker.repo_root.as_deref()).path().to_path_buf();
+        let db_path = picker.db_path.clone();
         self.transfer_planning = true;
         self.add_spinner(&picker.collection_id, self.tab_position(ContentTab::Collections));
         let event_handler = self.event_handler.clone();
@@ -390,7 +400,7 @@ impl BrowserLayout {
                 kind: picker.kind,
                 collection_id: picker.collection_id,
                 collection_name: picker.collection_name,
-                repo_root: picker.repo_root,
+                db_path: picker.db_path,
                 branch: branch.name,
                 result,
             })));
@@ -429,7 +439,7 @@ impl BrowserLayout {
             Some(new_name) => TransferMode::Copy { new_name: new_name.clone() },
             None => TransferMode::Move,
         };
-        self.request_confirmation(ConfirmDialog::new(
+        let dialog = ConfirmDialog::new(
             format!("{} Collection", planned.kind.verb()),
             confirmation_message(
                 planned.kind,
@@ -440,9 +450,17 @@ impl BrowserLayout {
             DialogAction::ApplyTransfer {
                 plan: Box::new(plan.clone()),
                 mode,
-                repo_root: planned.repo_root.clone(),
+                db_path: planned.db_path.clone(),
             },
-        ));
+        );
+        if self.dialog.is_some() {
+            // Don't clobber a dialog the user opened while the plan ran (e.g. a
+            // delete confirmation); show this one once that closes.
+            tracing::debug!(target: "codemark::ui", "transfer confirmation queued");
+            self.queued_dialog = Some(dialog);
+        } else {
+            self.request_confirmation(dialog);
+        }
     }
 
     /// Apply a confirmed plan. Returns the success notification text.
@@ -450,19 +468,27 @@ impl BrowserLayout {
         &mut self,
         plan: &TransferPlan,
         mode: &TransferMode,
-        repo_root: Option<&str>,
+        db_path: &Path,
     ) -> Result<String, String> {
         // Only plans with at least one match reach the dialog; drop the rest.
         let on_unmatched = if plan.has_unmatched() { OnUnmatched::Drop } else { OnUnmatched::Fail };
-        let db = self.workspace.db_for(repo_root);
-        let outcome = engine::apply_transfer(db, plan, mode, on_unmatched, None).map_err(|e| {
+        let verb = match mode {
+            TransferMode::Copy { .. } => "copy",
+            TransferMode::Move => "move",
+        };
+        let fail = |e: &dyn std::fmt::Display| {
             tracing::warn!(target: "codemark::ui", error = %e, "applying transfer failed");
-            let verb = match mode {
-                TransferMode::Copy { .. } => "copy",
-                TransferMode::Move => "move",
-            };
             format!("Can't {verb} \"{}\" to {}: {e}", plan.collection, plan.target_branch)
-        })?;
+        };
+        // Write through the database the plan came from, even if its repo has
+        // since left the scope (a fresh connection; the workspace's see the
+        // change on their next read).
+        let outcome = match self.workspace.dbs().find(|(_, db)| db.path() == db_path) {
+            Some((_, db)) => engine::apply_transfer(db, plan, mode, on_unmatched, None),
+            None => Database::open(db_path)
+                .and_then(|db| engine::apply_transfer(&db, plan, mode, on_unmatched, None)),
+        }
+        .map_err(|e| fail(&e))?;
         tracing::debug!(
             target: "codemark::ui",
             mode = outcome.mode,
@@ -672,7 +698,7 @@ mod tests {
             TransferKind::Move,
             "id".into(),
             "tour".into(),
-            None,
+            PathBuf::from("/tmp/db"),
             vec![
                 branch("main", true),
                 branch("develop", true),
@@ -796,7 +822,7 @@ mod tests {
             kind: TransferKind::Move,
             collection_id: "c".into(),
             collection_name: "tour".into(),
-            repo_root: None,
+            db_path: PathBuf::from("/tmp/db"),
             branch: "main".into(),
             result,
         }
@@ -849,5 +875,21 @@ mod tests {
         assert_eq!(layout.branch_picker.as_ref().unwrap().filter(), "dev");
         assert!(layout.handle_event(&Event::Key(key(KeyCode::Esc))));
         assert!(!layout.has_active_dialog());
+    }
+
+    #[test]
+    fn a_plan_finishing_under_another_dialog_waits_for_it_to_close() {
+        let (mut layout, _dir) = test_layout();
+        layout.request_confirmation(ConfirmDialog::new(
+            "Delete Collection",
+            "Delete?",
+            DialogAction::DeleteCollection { id: "x".into(), repo_root: None },
+        ));
+        let partial = plan(&[StepStatus::Matched]);
+        layout.on_transfer_planned(&planned(Ok((partial, None))));
+        assert_eq!(layout.dialog.as_ref().unwrap().title, "Delete Collection");
+        // Cancel the delete; the transfer confirmation takes its place.
+        layout.handle_event(&Event::Key(key(KeyCode::Esc)));
+        assert_eq!(layout.dialog.as_ref().unwrap().title, "Move Collection");
     }
 }
