@@ -127,6 +127,7 @@ codemark search "middleware" --health active --collection auth-flow
 - **During work**: Bookmark code you'll need to reference later — especially cross-file relationships.
 - **Ending a session**: Validate bookmarks so the next session has accurate references.
 - **Checking impact**: Use `codemark tour diff` to see which bookmarks are affected by recent changes.
+- **Showing a tour**: Open it for the user in a separate pane with `codemark tui -c <name> -l <layout>`. See **Showing a Tour to the User (TUI)**.
 
 **Proactive bookmarking**: When you recognize code that is critical to the current task — entry points, auth boundaries, error handling paths, configuration — bookmark it immediately with a note explaining its significance and relationship to the work. Don't bookmark everything you read; bookmark what you'd want to know if starting over tomorrow.
 
@@ -242,6 +243,50 @@ the target branch before rebuilding steps.
 `codemark remove <id>` refuses to delete a bookmark that is a step in more than
 one tour, because deleting it removes the step from all of them. To drop a step
 from one tour only, use `codemark tour remove <tour> <id>`.
+
+## Showing a Tour to the User (TUI)
+
+`codemark tui` can open straight into a collection, a pane layout, or both:
+
+```bash
+codemark tui --collection <name>                 # enter the tour's steps
+codemark tui --collection <name> --layout code   # ...showing only the code + pager
+```
+
+Layouts (`--layout` / `-l`): `default` (sidebar + preview), `list` (the
+content list at full width), `preview` (code, pager and details at full width),
+`code` (code and pager only), `details` (notes and comments full screen). Run
+`codemark tui --help` for the current list.
+
+**The TUI is interactive. Never run it in your own shell:** the tool call would
+hang until the user quits, or it would garble your terminal. Only launch it
+somewhere the user can see and use it: a new pane, tab, window or popup that
+your terminal or multiplexer lets you create. For example:
+
+```bash
+tmux split-window -h "codemark tui -c auth-flow -l code"
+tmux display-popup -E -w 90% -h 90% "codemark tui -c auth-flow -l preview"
+```
+
+Use the equivalent command for whatever you're running in (wezterm, kitty,
+Zellij, Rex, herdr, …). If you can't open a separate pane, give the user the
+command to run instead.
+
+**When to do it:**
+- The user asks to see, walk through or review a tour.
+- You've just built or updated a tour to explain something (a bug's root cause,
+  a code path, a review). Offer to open it, or open it if the user has asked you
+  to show your work this way.
+- Don't open a pane unprompted on every collection change.
+
+**Pick a layout for the purpose:** `code` for stepping through the code,
+`preview` when the notes matter alongside it, `details` for reading the
+discussion in comments, `list` to browse every collection.
+
+Pass the **exact** collection name. If unsure, check it first with
+`codemark tour show <name>`. An unknown name still opens the dashboard, with an
+error toast. If the flags are ignored (the dashboard opens on its normal start
+view), the installed `codemark` binary predates this feature.
 
 ## Tag Taxonomy
 
