@@ -1557,7 +1557,7 @@ impl BrowserLayout {
     }
 
     /// Activate the currently selected item in Content panel (Bookmarks, Tours, Collections).
-    fn activate_content_selection(&mut self) -> Option<bool> {
+    pub(super) fn activate_content_selection(&mut self) -> Option<bool> {
         match self.active_content_tab() {
             Some(ContentTab::Tours) => {
                 if let Some(panel) = self.left_pane.content_panel.active_panel_mut()

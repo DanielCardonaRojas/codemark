@@ -2281,6 +2281,124 @@ impl BrowserLayout {
         (target_pos + visible - current) % visible
     }
 
+    /// Open the collection named `name` as if the user had selected it on the
+    /// Collections tab and pressed Enter: the Content panel switches to
+    /// Collections, the row is selected, and the right pane enters the
+    /// collection's steps with focus on the preview.
+    ///
+    /// Used by `codemark tui --collection <name>`. Returns a user-facing error
+    /// when no collection by that name exists in the focused repo.
+    pub fn open_collection(&mut self, name: &str) -> Result<(), String> {
+        let collection = self
+            .db()
+            .get_collection_by_name(name)
+            .map_err(|e| format!("Could not look up collection '{name}': {e}"))?
+            .ok_or_else(|| format!("No collection named '{name}'"))?;
+
+        let position = self.tab_position(ContentTab::Collections);
+        self.left_pane.content_panel.tabs.set_selected(position);
+        if self.active_content_tab() != Some(ContentTab::Collections) {
+            return Err("The Collections tab is not available".to_string());
+        }
+        // Mirror the side effects of a keyboard tab switch: Filters panel
+        // contents and the steps tab label depend on the active Content tab.
+        self.refresh_tags();
+        self.sync_steps_tab_label();
+
+        let selected = self
+            .left_pane
+            .content_panel
+            .active_panel_mut()
+            .is_some_and(|panel| panel.select_by_user_data(&collection.id));
+        if !selected {
+            return Err(format!("Collection '{name}' is not listed"));
+        }
+
+        self.set_focus(FocusArea::ContentPanel);
+        match self.activate_content_selection() {
+            Some(true) => {
+                tracing::debug!(
+                    target: "codemark::ui",
+                    collection = %name,
+                    id = %collection.id,
+                    "opened collection from startup option"
+                );
+                Ok(())
+            }
+            _ => Err(format!("Could not open collection '{name}'")),
+        }
+    }
+
+    /// Arrange the panes in a named [`StartupLayout`].
+    ///
+    /// Each layout is one of the states reachable with `+`/`-`, so this only
+    /// sets focus and the pane-size modes — never a geometry the keybindings
+    /// can't produce. Focus is set first because
+    /// [`update_focus_state`](Self::update_focus_state) resets the size modes
+    /// of whichever side loses focus.
+    pub fn apply_layout(&mut self, layout: crate::startup::StartupLayout) {
+        use crate::startup::StartupLayout;
+
+        match layout {
+            StartupLayout::Default => {
+                self.left_pane_size = LeftPaneSize::Regular;
+                self.right_pane_size = RightPaneSize::Regular;
+                self.details_pane_size = DetailsPaneSize::Regular;
+                self.left_pane.set_resize_mode(self.left_pane_size);
+            }
+            StartupLayout::List => {
+                // Always land on the content list: an empty database starts
+                // focused on the repo picker, which would otherwise be the
+                // pane widened here. Skip the preview refresh so a collection
+                // opened by `--collection` keeps its steps instead of being
+                // swapped back to the overview.
+                self.focus = FocusArea::ContentPanel;
+                self.update_focus_state_with(false);
+                self.left_pane_size = LeftPaneSize::Full;
+                self.left_pane.set_resize_mode(self.left_pane_size);
+                self.left_pane.set_focused_area(self.focus);
+            }
+            StartupLayout::Preview | StartupLayout::Code => {
+                self.set_focus(FocusArea::Main);
+                self.right_pane.focus_steps();
+                self.details_pane_size = DetailsPaneSize::Regular;
+                self.right_pane_size = if layout == StartupLayout::Code {
+                    RightPaneSize::PreviewOnly
+                } else {
+                    RightPaneSize::Full
+                };
+            }
+            StartupLayout::Details => {
+                self.set_focus(FocusArea::Main);
+                self.right_pane.focus_details();
+                self.right_pane_size = RightPaneSize::Regular;
+                // The details pane is hidden on a collection overview, in which
+                // case `focus_details` keeps focus on the overview; fall back to
+                // the full-width preview rather than an empty details screen.
+                if self.right_pane.focused == RightPaneFocus::Details {
+                    self.details_pane_size = DetailsPaneSize::Full;
+                } else {
+                    self.right_pane_size = RightPaneSize::Full;
+                }
+            }
+        }
+        tracing::debug!(
+            target: "codemark::ui",
+            %layout,
+            focus = ?self.focus,
+            left = ?self.left_pane_size,
+            right = ?self.right_pane_size,
+            details = ?self.details_pane_size,
+            "applied startup layout"
+        );
+    }
+
+    /// Current pane-size modes `(left, right, details)`. Exposed for tests.
+    #[cfg(test)]
+    pub(crate) fn pane_sizes(&self) -> (LeftPaneSize, RightPaneSize, DetailsPaneSize) {
+        (self.left_pane_size, self.right_pane_size, self.details_pane_size)
+    }
+
     /// Drain the tab-change flags from every tabbed panel, returning the
     /// filter-target key ("panel1"/"panel2"/"panel3"/"main") of each pane whose
     /// active tab changed during the last handled event.
@@ -2919,6 +3037,12 @@ impl BrowserLayout {
 
     /// Update focus state based on current focus area.
     fn update_focus_state(&mut self) {
+        self.update_focus_state_with(true);
+    }
+
+    /// [`update_focus_state`](Self::update_focus_state), optionally without
+    /// refreshing the right-pane preview when the content panel gains focus.
+    fn update_focus_state_with(&mut self, refresh_preview: bool) {
         // Reset all focus
         self.left_pane.search.set_focus(false);
         self.left_pane.context_panel.set_focus(false);
@@ -2965,7 +3089,9 @@ impl BrowserLayout {
             }
             FocusArea::ContentPanel => {
                 self.left_pane.content_panel.set_focus(true);
-                self.update_content_live_preview();
+                if refresh_preview {
+                    self.update_content_live_preview();
+                }
             }
             FocusArea::Main => {
                 self.right_pane.set_focus(true);
@@ -3796,5 +3922,115 @@ mod tests {
             .is_active();
 
         assert!(!active_b, "unchecking repo B must clear its checkmark after refresh");
+    }
+
+    /// A layout over a seeded repo holding one collection (`StartupTour`) with
+    /// a single resolvable bookmark.
+    fn startup_layout() -> BrowserLayout {
+        let root = seeded_repo(
+            "bm-start",
+            "fn start",
+            "src/start.rs",
+            "fn start() -> u8 { 1 }\n",
+            "col-start",
+            "StartupTour",
+        );
+        let db = Database::open(&root.join(".codemark").join("codemark.db")).expect("open db");
+        let handler = EventHandler::new(EventHandlerConfig::default()).expect("handler");
+        BrowserLayout::new(db, handler)
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn open_collection_enters_its_steps() {
+        let mut layout = startup_layout();
+        layout.open_collection("StartupTour").expect("collection opens");
+
+        assert_eq!(layout.content_tab(), Some(ContentTab::Collections));
+        assert_eq!(layout.focus(), FocusArea::Main);
+        assert_eq!(layout.right_pane.active_tour_name.as_deref(), Some("StartupTour"));
+        assert!(!layout.right_pane.overview_active, "steps flow, not the overview");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn open_unknown_collection_is_an_error_and_keeps_state() {
+        let mut layout = startup_layout();
+        let focus = layout.focus();
+        let tab = layout.content_tab();
+        let tour = layout.right_pane.active_tour_name.clone();
+        let err = layout.open_collection("Nope").unwrap_err();
+        assert!(err.contains("Nope"), "error names the collection: {err}");
+        assert_eq!(layout.focus(), focus);
+        assert_eq!(layout.content_tab(), tab);
+        assert_eq!(layout.right_pane.active_tour_name, tour);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn collection_with_layout_combines() {
+        use crate::startup::StartupLayout;
+
+        let cases = [
+            (
+                StartupLayout::Code,
+                FocusArea::Main,
+                (LeftPaneSize::Regular, RightPaneSize::PreviewOnly, DetailsPaneSize::Regular),
+            ),
+            (
+                StartupLayout::Preview,
+                FocusArea::Main,
+                (LeftPaneSize::Regular, RightPaneSize::Full, DetailsPaneSize::Regular),
+            ),
+            (
+                StartupLayout::Details,
+                FocusArea::Main,
+                (LeftPaneSize::Regular, RightPaneSize::Regular, DetailsPaneSize::Full),
+            ),
+            (
+                StartupLayout::List,
+                FocusArea::ContentPanel,
+                (LeftPaneSize::Full, RightPaneSize::Regular, DetailsPaneSize::Regular),
+            ),
+            (
+                StartupLayout::Default,
+                FocusArea::Main,
+                (LeftPaneSize::Regular, RightPaneSize::Regular, DetailsPaneSize::Regular),
+            ),
+        ];
+        for (startup, focus, sizes) in cases {
+            let mut layout = startup_layout();
+            layout.open_collection("StartupTour").expect("collection opens");
+            layout.apply_layout(startup);
+            assert_eq!(layout.focus(), focus, "{startup} focus");
+            assert_eq!(layout.pane_sizes(), sizes, "{startup} pane sizes");
+            assert_eq!(
+                layout.right_pane.active_tour_name.as_deref(),
+                Some("StartupTour"),
+                "{startup} keeps the collection open"
+            );
+            assert!(
+                !layout.right_pane.overview_active,
+                "{startup} keeps the steps, not the overview"
+            );
+            if startup == StartupLayout::Details {
+                assert_eq!(layout.right_pane.focused, RightPaneFocus::Details);
+            }
+        }
+    }
+
+    #[test]
+    fn layout_without_collection_applies_to_default_view() {
+        use crate::startup::StartupLayout;
+
+        let mut layout = test_layout();
+        layout.apply_layout(StartupLayout::Code);
+        assert_eq!(layout.focus(), FocusArea::Main);
+        assert_eq!(layout.pane_sizes().1, RightPaneSize::PreviewOnly);
+
+        // An empty database starts on the repo picker; `list` must still
+        // widen the content list, not the picker.
+        let mut layout = test_layout();
+        assert_eq!(layout.focus(), FocusArea::ContextPanel);
+        layout.apply_layout(StartupLayout::List);
+        assert_eq!(layout.focus(), FocusArea::ContentPanel);
+        assert_eq!(layout.pane_sizes().0, LeftPaneSize::Full);
     }
 }

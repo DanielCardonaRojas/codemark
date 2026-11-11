@@ -53,6 +53,20 @@ pub async fn run() -> Result<Option<i32>> {
         return Ok(None);
     }
 
+    // `--collection`/`--layout` shape the initial dashboard; `--help` prints
+    // usage. Parsed before the alternate screen so errors stay readable.
+    let startup = match crate::startup::StartupOptions::parse(args.iter().skip(1)) {
+        Ok(opts) if opts.help => {
+            print!("{}", crate::startup::StartupOptions::usage());
+            return Ok(None);
+        }
+        Ok(opts) => opts,
+        Err(err) => {
+            eprintln!("codemark: tui: {err}\n\nRun with --help for usage.");
+            return Ok(Some(2));
+        }
+    };
+
     // Initialize file-based logging before anything else
     let _log_guard = crate::logging::init_logging();
 
@@ -88,7 +102,7 @@ pub async fn run() -> Result<Option<i32>> {
     let _panic_guard = PanicHookGuard::install();
 
     // Create and run the app
-    let result = run_app().await;
+    let result = run_app(startup).await;
 
     // Ensure terminal is restored
     restore_terminal();
@@ -147,7 +161,7 @@ impl Drop for PanicHookGuard {
 ///
 /// Returns `Ok(None)` for normal exit, `Ok(Some(code))` when the process
 /// should terminate with a specific exit code (e.g. after spawning a terminal editor).
-async fn run_app() -> Result<Option<i32>> {
+async fn run_app(startup: crate::startup::StartupOptions) -> Result<Option<i32>> {
     // Setup terminal
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -205,6 +219,18 @@ async fn run_app() -> Result<Option<i32>> {
     // Notification state (message, type, when it was shown)
     let mut notification: Option<(String, NotificationType, Instant)> = None;
     let notification_duration = Duration::from_secs(2);
+
+    // Apply startup options: open the requested collection first (it moves
+    // focus to the preview), then arrange the panes so the layout wins.
+    if let Some(name) = startup.collection.as_deref()
+        && let Err(err) = layout.open_collection(name)
+    {
+        tracing::warn!(target: "codemark::ui", collection = %name, %err, "startup collection");
+        notification = Some((err, NotificationType::Error, Instant::now()));
+    }
+    if let Some(startup_layout) = startup.layout {
+        layout.apply_layout(startup_layout);
+    }
 
     // Main loop. Two independent modal overlays, both painted on top of the
     // main UI: the contextual keybindings cheat sheet (`?`) and the global

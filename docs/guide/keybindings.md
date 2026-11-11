@@ -29,6 +29,34 @@ Each pane is a `TabbedPanel`; switch its tabs with `[` / `]`. The left content
 panel has three tabs (Bookmarks / Collections / Tours); the right has a steps
 panel (Steps / Info / Query) and a details panel (Details / Comments).
 
+## Opening a collection or layout on launch
+
+`codemark tui` accepts startup flags so you (or an agent, or a script) can jump
+straight to the right place instead of navigating there:
+
+```bash
+codemark tui --collection login-flow                  # enter a collection's steps
+codemark tui --layout code                            # start in a layout
+codemark tui -c login-flow -l code                    # this collection, this layout
+```
+
+`--collection`/`-c` takes the exact collection name and opens it exactly as
+selecting it on the Collections tab and pressing `Enter` would. If no collection
+by that name exists, the dashboard opens normally and shows an error toast.
+
+`--layout`/`-l` picks one of the pane arrangements you can otherwise reach with
+`+` / `-`:
+
+| Layout | What you see |
+|--------|--------------|
+| `default` | Sidebar and preview side by side |
+| `list` | The content list at full width |
+| `preview` | Code, pager and details at full width |
+| `code` | Code and pager only, at full width |
+| `details` | The details pane (notes, comments) full screen |
+
+Run `codemark tui --help` for the full list.
+
 ## Global keys
 
 These work from anywhere (except while typing in the search bar, unless noted):
