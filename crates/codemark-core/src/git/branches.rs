@@ -19,8 +19,9 @@ pub const COMMON_BRANCHES: &[&str] = &["main", "master", "develop", "dev", "trun
 pub struct BranchRef {
     /// The branch name the forks record (`feat-x`, never `origin/feat-x`).
     pub name: String,
-    /// The revision to read: `name` for a local branch, `<remote>/<name>` for a
-    /// remote-tracking branch with no local counterpart.
+    /// The full ref to read: `refs/heads/<name>` for a local branch,
+    /// `refs/remotes/<remote>/<name>` for a remote-tracking branch with no local
+    /// counterpart. Fully qualified so a tag with the same name can't shadow it.
     pub rev: String,
     /// Only a remote-tracking ref exists for this branch.
     pub is_remote: bool,
@@ -61,8 +62,8 @@ pub fn list_branches(repo_root: &Path) -> Result<Vec<BranchRef>> {
             BranchType::Local => {
                 seen.insert(full.clone());
                 branches.push(BranchRef {
-                    name: full.clone(),
-                    rev: full,
+                    rev: format!("refs/heads/{full}"),
+                    name: full,
                     is_remote: false,
                     is_current: false,
                     is_default: false,
@@ -73,6 +74,9 @@ pub fn list_branches(repo_root: &Path) -> Result<Vec<BranchRef>> {
             BranchType::Remote => remotes.push((full, last_commit)),
         }
     }
+    // When several remotes carry the same branch, keep `origin`'s: it's the one
+    // `origin/HEAD` (and so the default-branch marker) refers to.
+    remotes.sort_by_key(|(full, _)| !full.starts_with("origin/"));
     for (full, last_commit) in remotes {
         // `origin/feat-x` → `feat-x`; skip the `origin/HEAD` alias.
         let Some((_, short)) = full.split_once('/') else { continue };
@@ -81,7 +85,7 @@ pub fn list_branches(repo_root: &Path) -> Result<Vec<BranchRef>> {
         }
         branches.push(BranchRef {
             name: short.to_string(),
-            rev: full,
+            rev: format!("refs/remotes/{full}"),
             is_remote: true,
             is_current: false,
             is_default: false,
@@ -195,7 +199,8 @@ mod tests {
         assert_eq!(names(&branches), ["main", "feat-x"]);
         let feat = &branches[1];
         assert!(feat.is_remote);
-        assert_eq!(feat.rev, "origin/feat-x");
+        assert_eq!(feat.rev, "refs/remotes/origin/feat-x");
+        assert_eq!(branches[0].rev, "refs/heads/main");
         assert!(!branches[0].is_remote);
     }
 
@@ -220,5 +225,28 @@ mod tests {
         assert_eq!(branches[0].name, "release");
         assert!(branches[0].is_default);
         assert!(!branches[1].is_default);
+    }
+
+    #[test]
+    fn origin_wins_when_remotes_share_a_branch_and_tags_cannot_shadow_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = Repository::init(dir.path()).unwrap();
+        repo.set_head("refs/heads/main").unwrap();
+        commit(&repo, "main", 100);
+        let first = repo.head().unwrap().target().unwrap();
+        commit(&repo, "main", 200);
+        let second = repo.head().unwrap().target().unwrap();
+        // `aaa` sorts before `origin` but points somewhere else.
+        repo.reference("refs/remotes/aaa/release", first, true, "t").unwrap();
+        repo.reference("refs/remotes/origin/release", second, true, "t").unwrap();
+        // A tag named like the branch must not win when the rev is resolved.
+        repo.reference("refs/tags/main", first, true, "t").unwrap();
+
+        let branches = list_branches(dir.path()).unwrap();
+        let release = branches.iter().find(|b| b.name == "release").unwrap();
+        assert_eq!(release.rev, "refs/remotes/origin/release");
+        let main = branches.iter().find(|b| b.name == "main").unwrap();
+        let resolved = repo.revparse_single(&main.rev).unwrap().peel_to_commit().unwrap();
+        assert_eq!(resolved.id(), second);
     }
 }

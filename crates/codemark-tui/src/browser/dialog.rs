@@ -26,7 +26,7 @@ impl BrowserLayout {
         tracing::debug!(
             target: "codemark::ui",
             title = %dialog.title,
-            action = ?dialog.action,
+            action = dialog.action.label(),
             "confirmation dialog opened"
         );
         self.dialog = Some(dialog);

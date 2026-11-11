@@ -411,7 +411,7 @@ impl BrowserLayout {
     /// confirmation dialog (can).
     pub(super) fn on_transfer_planned(&mut self, planned: &TransferPlanned) {
         self.transfer_planning = false;
-        self.schedule_clear_spinners();
+        self.clear_spinner(&planned.collection_id);
         let verb = planned.kind.verb_lower();
         let cant = |reason: &str| {
             format!("Can't {verb} \"{}\" to {}: {reason}", planned.collection_name, planned.branch)
@@ -519,6 +519,17 @@ impl BrowserLayout {
             msg.push_str(&format!(", {} left out", outcome.dropped.len()));
         }
         Ok(msg)
+    }
+
+    /// Stop one row's spinner without the panel refresh `schedule_clear_spinners`
+    /// does, which would replace active collection-search results with the
+    /// full list. Nothing changed yet, so there's nothing to refresh.
+    fn clear_spinner(&mut self, user_data_key: &str) {
+        let tab = self.tab_position(ContentTab::Collections);
+        self.spinning_items.retain(|s| s.user_data_key != user_data_key);
+        if let Some(panel) = self.left_pane.content_panel.get_list_panel_mut(tab) {
+            panel.update_item_spinner(user_data_key, None);
+        }
     }
 
     fn notify(&mut self, success: bool, message: String) {

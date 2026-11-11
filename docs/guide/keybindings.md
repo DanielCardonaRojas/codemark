@@ -104,8 +104,9 @@ TUI version of `codemark tour copy` / `tour move`:
   move the selection, `Ctrl+U` clears the filter, `Esc` cancels.
 - Common branches are pinned under **Common**: the default branch (`origin/HEAD`),
   `main`/`master`/`develop`/`dev`/`trunk`, and the current branch. With an empty
-  filter, `Enter` picks the default branch, so moving a collection to `main` is
-  `m` then `Enter`. Remote-only branches are listed by their short name.
+  filter, `Enter` picks the detected default branch (`origin/HEAD`, else `main`,
+  else `master`). If that isn't the branch you want, type its name or move the
+  selection first. Remote-only branches are listed by their short name.
 - The collection is planned against the branch's committed tip. If nothing
   matches (or the branch can't be read), a notification says why and nothing is
   written. Otherwise a confirmation dialog shows how many steps match and which

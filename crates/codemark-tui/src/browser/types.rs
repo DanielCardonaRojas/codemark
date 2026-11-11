@@ -99,6 +99,18 @@ pub enum DialogAction {
     },
 }
 
+impl DialogAction {
+    /// A short name for logs. The full action can carry a transfer plan (with
+    /// the collection's prompt and notes), which doesn't belong in a log file.
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::DeleteBookmark { .. } => "delete_bookmark",
+            Self::DeleteCollection { .. } => "delete_collection",
+            Self::ApplyTransfer { .. } => "apply_transfer",
+        }
+    }
+}
+
 /// Target for healing operation.
 #[derive(Debug, Clone)]
 pub enum HealTarget {

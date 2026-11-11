@@ -564,6 +564,16 @@ pub fn apply_transfer(
     let source = db
         .get_collection_by_id(&plan.collection_id)?
         .ok_or_else(|| Error::Input(format!("collection '{}' not found", plan.collection)))?;
+    // A plan is a snapshot. If steps were added, removed or reordered since,
+    // applying it would silently drop or misplace them (a move re-points the
+    // whole collection), so require a fresh plan instead.
+    let planned: Vec<&str> = plan.steps.iter().map(|s| s.bookmark_id.as_str()).collect();
+    if ordered_member_ids(db, &plan.collection_id)? != planned {
+        return Err(Error::Input(format!(
+            "collection '{}' changed since it was planned; plan the transfer again",
+            plan.collection
+        )));
+    }
     if let TransferMode::Copy { new_name } = mode
         && db.get_collection_by_name(new_name)?.is_some()
     {
@@ -1250,5 +1260,19 @@ mod tests {
         assert_eq!(unique_copy_name(&fx.db, "tour", "main").unwrap(), "tour-main-2");
         fx.collection("tour-main-2", &[]);
         assert_eq!(unique_copy_name(&fx.db, "tour", "main").unwrap(), "tour-main-3");
+    }
+
+    #[tokio::test]
+    async fn a_plan_is_rejected_once_the_collection_changes() {
+        let (fx, col, feature, _) = setup("stale_plan").await;
+        fx.commit("main", &[("lib.dart", LIB)], Some(feature));
+        let plan = plan_transfer(&fx.db, &col, &fx.options("main", false)).await.unwrap();
+        // Drop a step after planning: the snapshot no longer matches.
+        let first = plan.steps[0].bookmark_id.clone();
+        fx.db.remove_from_collection(&col.id, &[first]).unwrap();
+        let err = apply_transfer(&fx.db, &plan, &TransferMode::Move, OnUnmatched::Drop, None)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("changed since it was planned"), "{err}");
     }
 }
