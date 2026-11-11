@@ -256,7 +256,8 @@ codemark tui --collection <name> --layout code   # ...showing only the code + pa
 Layouts (`--layout` / `-l`): `default` (sidebar + preview), `list` (the
 content list at full width), `preview` (code, pager and details at full width),
 `code` (code and pager only), `details` (notes and comments full screen). Run
-`codemark tui --help` for the current list.
+`codemark tui --help` for the current list. For a name that starts with `-`,
+use the inline form: `--collection="-name"`.
 
 **The TUI is interactive. Never run it in your own shell:** the tool call would
 hang until the user quits, or it would garble your terminal. Only launch it
@@ -286,7 +287,8 @@ discussion in comments, `list` to browse every collection.
 Pass the **exact** collection name. If unsure, check it first with
 `codemark tour show <name>`. An unknown name still opens the dashboard, with an
 error toast. If the flags are ignored (the dashboard opens on its normal start
-view), the installed `codemark` binary predates this feature.
+view), the installed dashboard predates this feature: update `codemark`, or
+`codemark-tui` if it's a lean build that launches the standalone dashboard.
 
 ## Tag Taxonomy
 

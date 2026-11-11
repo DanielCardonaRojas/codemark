@@ -2347,9 +2347,13 @@ impl BrowserLayout {
                 self.left_pane.set_resize_mode(self.left_pane_size);
             }
             StartupLayout::List => {
-                if self.focus == FocusArea::Main {
-                    self.set_focus(FocusArea::ContentPanel);
-                }
+                // Always land on the content list: an empty database starts
+                // focused on the repo picker, which would otherwise be the
+                // pane widened here. Skip the preview refresh so a collection
+                // opened by `--collection` keeps its steps instead of being
+                // swapped back to the overview.
+                self.focus = FocusArea::ContentPanel;
+                self.update_focus_state_with(false);
                 self.left_pane_size = LeftPaneSize::Full;
                 self.left_pane.set_resize_mode(self.left_pane_size);
                 self.left_pane.set_focused_area(self.focus);
@@ -3033,6 +3037,12 @@ impl BrowserLayout {
 
     /// Update focus state based on current focus area.
     fn update_focus_state(&mut self) {
+        self.update_focus_state_with(true);
+    }
+
+    /// [`update_focus_state`](Self::update_focus_state), optionally without
+    /// refreshing the right-pane preview when the content panel gains focus.
+    fn update_focus_state_with(&mut self, refresh_preview: bool) {
         // Reset all focus
         self.left_pane.search.set_focus(false);
         self.left_pane.context_panel.set_focus(false);
@@ -3079,7 +3089,9 @@ impl BrowserLayout {
             }
             FocusArea::ContentPanel => {
                 self.left_pane.content_panel.set_focus(true);
-                self.update_content_live_preview();
+                if refresh_preview {
+                    self.update_content_live_preview();
+                }
             }
             FocusArea::Main => {
                 self.right_pane.set_focus(true);
@@ -3994,6 +4006,10 @@ mod tests {
                 Some("StartupTour"),
                 "{startup} keeps the collection open"
             );
+            assert!(
+                !layout.right_pane.overview_active,
+                "{startup} keeps the steps, not the overview"
+            );
             if startup == StartupLayout::Details {
                 assert_eq!(layout.right_pane.focused, RightPaneFocus::Details);
             }
@@ -4009,9 +4025,12 @@ mod tests {
         assert_eq!(layout.focus(), FocusArea::Main);
         assert_eq!(layout.pane_sizes().1, RightPaneSize::PreviewOnly);
 
+        // An empty database starts on the repo picker; `list` must still
+        // widen the content list, not the picker.
         let mut layout = test_layout();
+        assert_eq!(layout.focus(), FocusArea::ContextPanel);
         layout.apply_layout(StartupLayout::List);
-        assert_ne!(layout.focus(), FocusArea::Main);
+        assert_eq!(layout.focus(), FocusArea::ContentPanel);
         assert_eq!(layout.pane_sizes().0, LeftPaneSize::Full);
     }
 }
