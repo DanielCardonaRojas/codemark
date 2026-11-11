@@ -73,3 +73,21 @@ split to a full-width preview and back without touching your mouse.
   window.
 
 ![Codemark TUI layout resizing](../../screenshots/images/codemark_tui_layout.gif)
+
+---
+
+## Branches — filter and clone collections
+
+Every collection remembers the branch it was created on. Focus the Filters pane
+with `2` and switch it to **Branches** with `]`. `Space` toggles a branch, and
+the Collections list narrows to the checked branches. Here the `sync-retry`
+feature branch holds only `tour-sync`, and `main` holds the rest.
+
+To bring a tour onto another branch, select it and press `c` (copy) or `m`
+(move). Type to filter the branch picker, press `Enter`, and check the
+confirmation dialog: it reports how many steps match at that branch's tip before
+anything is written. Here `server-auth` is cloned from `main` onto `sync-retry`
+as `server-auth-sync-retry`, with all 4 steps matching. Filtering by
+`sync-retry` then shows the copy next to `tour-sync`.
+
+![Codemark TUI branch filtering and cloning a collection](../../screenshots/images/codemark_tui_branches.gif)

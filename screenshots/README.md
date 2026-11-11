@@ -17,9 +17,12 @@ The fixture is built fresh on every capture:
   into `capture.sh`'s sandbox. The clone shares the repo's object store, so
   this is instant and needs no network. It then seeds a small, known knowledge
   base into the clone with the CLI: about 18 bookmarks across the crates (tags, notes, markdown
-  comments) and four collections (descriptions, tags, a link). It then commits
-  two edits so the gallery shows a *Drifted* and a *Broken* bookmark, not only
-  healthy ones.
+  comments) and five collections (descriptions, tags, a link). One of them,
+  `tour-sync`, is created on a `sync-retry` feature branch so `branches.tape`
+  has two branches to filter and clone between; the clone's inherited
+  `origin/*` refs are pruned so the branch picker lists only those two. It then
+  commits two edits on `main` so the gallery shows a *Drifted* and a *Broken*
+  bookmark, not only healthy ones.
 - The tapes run from the clone, so previews resolve against real source files
   at the pinned commit.
 
@@ -44,7 +47,9 @@ The generated images live in `screenshots/images/`; the tooling (tapes,
   Bookmarks are located by *function name*, and codemark generates their
   queries just as it does for a user. The TUI lists collections newest first, and
   `demo.tape` opens the top one and steps through it, so keep
-  `bookmark-resolution` created last, with at least four steps.
+  `bookmark-resolution` created last, with at least four steps. Tapes that
+  write to the fixture (`branches.tape` copies a collection) must run after all
+  the others in `capture.sh`.
 - **Code shown in previews**: bump `FIXTURE_REV` in `seed-fixture.sh` (or
   override it with `FIXTURE_REV=<sha> ./screenshots/capture.sh`). If a bookmarked
   function was renamed or removed since the old pin, `seed-fixture.sh` fails
@@ -68,6 +73,8 @@ The generated images live in `screenshots/images/`; the tooling (tapes,
 | `filter-thumb.tape` | `codemark_tui_filter_thumb.png` | Static thumbnail (filtered Bookmarks pane) — the poster for the filter demo in the [demo gallery](../dev-docs/guides/demo-gallery.md) |
 | `layout.tape` | `codemark_tui_layout.gif` | Animated tour of pane resizing: focus a pane, cycle its size with `+`/`-` (preview, details, then the left pane) |
 | `layout-thumb.tape` | `codemark_tui_layout_thumb.png` | Static thumbnail (full-width preview) — the poster for the layout demo in the [demo gallery](../dev-docs/guides/demo-gallery.md) |
+| `branches.tape` | `codemark_tui_branches.gif` | Animated tour of branches: filter Collections by branch (`2`, `]`, `Space`), clone `server-auth` onto `sync-retry` with `c`, then show the copy under that branch. Runs last because the copy writes to the fixture DB |
+| `branches-thumb.tape` | `codemark_tui_branches_thumb.png` | Static thumbnail (copy-to-branch picker) — the poster for the branches demo in the [demo gallery](../dev-docs/guides/demo-gallery.md). Runs just before `branches.tape` |
 | `theme.tape` | `codemark_tui_theme_<slug>.png` | Main view, once per color scheme |
 
 The demo GIF is the README's lead visual. It's recorded at full TUI resolution
