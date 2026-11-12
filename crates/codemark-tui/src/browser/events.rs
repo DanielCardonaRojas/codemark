@@ -1363,6 +1363,23 @@ impl BrowserLayout {
             {
                 return self.handle_delete_key();
             }
+            // In the code preview, `c` comments on the code under the cursor and
+            // `r` replies to the comment the cursor is on.
+            ratatui::crossterm::event::KeyCode::Char('c')
+                if key.modifiers.is_empty()
+                    && self.should_handle_keybindings()
+                    && self.code_preview_focused() =>
+            {
+                return Some(self.open_comment_draft());
+            }
+            ratatui::crossterm::event::KeyCode::Char('r')
+                if key.modifiers.is_empty()
+                    && self.should_handle_keybindings()
+                    && self.code_preview_focused()
+                    && self.open_reply_draft() =>
+            {
+                return Some(true);
+            }
             // `c` / `m` copy or move the selected collection to another branch.
             ratatui::crossterm::event::KeyCode::Char('c')
                 if key.modifiers.is_empty()

@@ -4,10 +4,12 @@
 //! containing search, repos, and tours, and a right main content area.
 
 mod bindings;
+mod comment_draft;
 mod config_info;
 mod data;
 mod dialog;
 mod events;
+mod inline_threads;
 mod left_pane;
 mod right_pane;
 mod search;
@@ -262,6 +264,9 @@ pub struct BrowserLayout {
     /// Branch picker for copying/moving a collection (`c` / `m`). Modal like
     /// `dialog`; the two are never open at once.
     branch_picker: Option<BranchPicker>,
+    /// Comment being written from the code preview (`c` / `r`). Modal like
+    /// `dialog`.
+    comment_draft: Option<comment_draft::CommentDraft>,
     /// A transfer plan is running in the background.
     transfer_planning: bool,
     /// A confirmation that arrived while another dialog was open; shown when
@@ -406,6 +411,7 @@ impl BrowserLayout {
             last_step_move_tick: None,
             dialog: None,
             branch_picker: None,
+            comment_draft: None,
             transfer_planning: false,
             queued_dialog: None,
             // Corrected immediately by update_tours_tab_visibility below.
@@ -2966,6 +2972,15 @@ impl BrowserLayout {
         self.previous_focus.is_none()
     }
 
+    /// Whether the bookmark code preview (Steps pane, code tab) has focus, the
+    /// only place comment keys (`c`, `r`, `z`) apply.
+    fn code_preview_focused(&self) -> bool {
+        self.focus == FocusArea::Main
+            && self.right_pane.focused == right_pane::RightPaneFocus::Steps
+            && self.right_pane.steps.tabs.selected_index() == 0
+            && !self.right_pane.overview_active
+    }
+
     /// The ordered list of focusable areas in the left pane.
     ///
     /// When the left pane is expanded (Half/Full), only the panes that are
@@ -3187,6 +3202,7 @@ impl BrowserLayout {
         // Modal dialogs draw last so they overlay every pane.
         self.render_dialog(area, buf);
         self.render_branch_picker(area, buf);
+        self.render_comment_draft(area, buf);
     }
 }
 

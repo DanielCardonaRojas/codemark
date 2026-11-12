@@ -7,8 +7,8 @@ use ratatui::{
     text::{Line, Span},
     widgets::{Scrollbar, ScrollbarOrientation, ScrollbarState, StatefulWidget, Widget},
 };
-use std::cell::RefCell;
-use std::collections::HashMap;
+use std::cell::{Cell, RefCell};
+use std::collections::{HashMap, HashSet};
 use std::hash::{Hash, Hasher};
 use std::rc::Rc;
 use std::sync::{Arc, LazyLock, RwLock};
@@ -18,6 +18,10 @@ use syntect::parsing::SyntaxSet;
 use syntect::util::LinesWithEndings;
 
 use super::Component;
+use super::inline_comments::{
+    BUBBLE_INDENT, BubbleStyle, DisplayRow, InlineThread, RowLayout, build_layout,
+    render_bubble_line,
+};
 use crate::event::Event;
 
 /// Load the syntax set from embedded syntect-assets data.
@@ -124,6 +128,25 @@ pub struct CodePreview {
     /// Theme used for syntax highlighting. Shared via `Arc` so cloning a
     /// `CodePreview` does not duplicate the (large) theme data.
     theme: Arc<Theme>,
+    /// Inline comment threads and their display-row layout. Boxed so the
+    /// preview (a [`TabContent`](crate::browser) variant) stays small.
+    inline: Box<InlineState>,
+}
+
+/// Inline comment state for a [`CodePreview`].
+#[derive(Debug, Clone, Default)]
+struct InlineState {
+    /// Anchored comment threads rendered as bubbles under their code.
+    threads: Vec<InlineThread>,
+    /// Root ids of folded threads. Kept across reloads of the same threads.
+    folded: HashSet<String>,
+    /// Display-row mapping (code lines + bubble rows). Rebuilt lazily when
+    /// `layout_key` no longer matches.
+    layout: RefCell<RowLayout>,
+    /// `(generation, bubble text width)` the layout was built for.
+    layout_key: Cell<Option<(u64, usize)>>,
+    /// Bumped whenever code, threads or folds change.
+    layout_gen: Cell<u64>,
 }
 
 impl CodePreview {
@@ -145,6 +168,7 @@ impl CodePreview {
             highlight_cache: RefCell::new(HashMap::new()),
             file_header: None,
             theme: default_theme(),
+            inline: Box::default(),
         };
         preview.refresh_cache();
         preview
@@ -173,6 +197,7 @@ impl CodePreview {
         let key = self.highlight_key();
         if let Some(lines) = self.highlight_cache.borrow().get(&key) {
             *self.cached_lines.borrow_mut() = Rc::clone(lines);
+            self.invalidate_layout();
             return;
         }
         let lines = Rc::new(self.build_highlighted_lines());
@@ -184,6 +209,8 @@ impl CodePreview {
         }
         cache.insert(key, Rc::clone(&lines));
         *self.cached_lines.borrow_mut() = lines;
+        drop(cache);
+        self.invalidate_layout();
     }
 
     /// Set the file extension.
@@ -197,6 +224,8 @@ impl CodePreview {
     /// Reset scroll/selection view state to defaults (shared by the `set_code*`
     /// entry points).
     fn reset_view(&mut self) {
+        self.inline.threads.clear();
+        self.invalidate_layout();
         self.scroll_offset = 0;
         self.selected_line = None;
         self.cursor_col = 0;
@@ -234,6 +263,7 @@ impl CodePreview {
     /// — that is populated only via [`set_code_keyed`](Self::set_code_keyed).
     fn refresh_cache(&self) {
         *self.cached_lines.borrow_mut() = Rc::new(self.build_highlighted_lines());
+        self.invalidate_layout();
     }
 
     /// Syntax-highlight the current code into gutter-prefixed lines.
@@ -309,11 +339,12 @@ impl CodePreview {
             // Adjust scroll offset immediately if we have area info
             let area_height = self.last_area.get().height as usize;
 
+            let (start_row, end_row) = (self.row_of(start), self.row_of(end_value));
             if area_height > 0 {
-                self.scroll_offset = self.calculate_scroll_offset(start, end_value, area_height);
+                self.scroll_offset = self.calculate_scroll_offset(start_row, end_row, area_height);
             } else {
                 // No area info yet - set a reasonable default
-                self.scroll_offset = start.saturating_sub(2) as u16;
+                self.scroll_offset = start_row.saturating_sub(2) as u16;
             }
         }
     }
@@ -331,7 +362,7 @@ impl CodePreview {
         self.cursor_col = 0;
     }
 
-    /// Calculate the scroll offset for a given range.
+    /// Calculate the scroll offset for a given range of display rows.
     fn calculate_scroll_offset(&self, start: usize, end: usize, area_height: usize) -> u16 {
         let range_height = end.saturating_sub(start) + 1;
 
@@ -364,7 +395,7 @@ impl CodePreview {
     /// focus stays on another pane.
     pub fn scroll_by(&mut self, delta: i32) -> bool {
         let height = self.last_area.get().height as usize;
-        let max_offset = self.line_count().saturating_sub(height) as i32;
+        let max_offset = self.total_rows().saturating_sub(height) as i32;
         let old_offset = self.scroll_offset;
         self.scroll_offset = (self.scroll_offset as i32 + delta).clamp(0, max_offset) as u16;
         old_offset != self.scroll_offset
@@ -390,7 +421,7 @@ impl CodePreview {
     fn content_width(&self) -> usize {
         let area = self.last_area.get();
         let height = area.height as usize;
-        let scrollbar = if self.line_count() > height { 1 } else { 0 };
+        let scrollbar = if self.total_rows() > height { 1 } else { 0 };
         (area.width as usize).saturating_sub(self.gutter_width() as usize + scrollbar)
     }
 
@@ -414,6 +445,117 @@ impl CodePreview {
         if let Some(line) = self.selected_line {
             self.cursor_col = self.cursor_col.min(self.max_cursor_col(line));
         }
+    }
+
+    /// The code currently displayed.
+    pub fn code(&self) -> &str {
+        &self.code
+    }
+
+    /// Cursor position: the line (0-indexed) and, while in selection mode,
+    /// the column. `None` before the cursor is placed.
+    pub fn cursor_position(&self) -> Option<(usize, Option<usize>)> {
+        self.selected_line.map(|line| (line, self.selection_mode.then_some(self.cursor_col)))
+    }
+
+    /// Replace the inline comment threads, keeping folds for threads that are
+    /// still present and the cursor's line at the same place on screen.
+    pub fn set_threads(&mut self, mut threads: Vec<InlineThread>) {
+        threads.sort_by_key(|t| (t.anchor_end, t.anchor_start));
+        if threads == self.inline.threads {
+            return;
+        }
+        self.inline.folded.retain(|id| threads.iter().any(|t| &t.root_id == id));
+        self.relayout_keeping_cursor(|preview| preview.inline.threads = threads);
+    }
+
+    /// The inline threads, in display order.
+    pub fn threads(&self) -> &[InlineThread] {
+        &self.inline.threads
+    }
+
+    /// The thread the cursor is on: the narrowest one whose anchored lines
+    /// contain the cursor line. Only while the preview has focus.
+    fn focused_thread(&self) -> Option<usize> {
+        let line = self.selected_line.filter(|_| self.focused)?;
+        self.inline
+            .threads
+            .iter()
+            .enumerate()
+            .filter(|(_, t)| t.anchor_start <= line && line <= t.anchor_end)
+            .min_by_key(|(_, t)| t.anchor_end - t.anchor_start)
+            .map(|(i, _)| i)
+    }
+
+    /// Root id of the thread the cursor is on (see [`Self::focused_thread`]).
+    pub fn focused_thread_id(&self) -> Option<&str> {
+        self.focused_thread().map(|i| self.inline.threads[i].root_id.as_str())
+    }
+
+    /// Fold or unfold the thread under the cursor. Returns `false` when the
+    /// cursor is on no thread, so the key can fall through.
+    fn toggle_fold(&mut self) -> bool {
+        let Some(i) = self.focused_thread() else { return false };
+        let id = self.inline.threads[i].root_id.clone();
+        self.relayout_keeping_cursor(|preview| {
+            if !preview.inline.folded.remove(&id) {
+                preview.inline.folded.insert(id);
+            }
+        });
+        true
+    }
+
+    /// Apply `change` (which alters threads or folds), then shift the scroll
+    /// offset so the cursor's line stays on the same screen row even when
+    /// rows above it appeared or vanished.
+    fn relayout_keeping_cursor(&mut self, change: impl FnOnce(&mut Self)) {
+        let anchor = self.selected_line.unwrap_or(0);
+        let screen_row = self.row_of(anchor) as i64 - self.scroll_offset as i64;
+        change(self);
+        self.invalidate_layout();
+        let height = self.last_area.get().height as usize;
+        if height == 0 {
+            // No frame yet, so no screen position to keep.
+            return;
+        }
+        let max_offset = self.total_rows().saturating_sub(height) as i64;
+        self.scroll_offset = (self.row_of(anchor) as i64 - screen_row).clamp(0, max_offset) as u16;
+    }
+
+    fn invalidate_layout(&self) {
+        self.inline.layout_gen.set(self.inline.layout_gen.get().wrapping_add(1));
+    }
+
+    /// Room for bubble text at the current width; `0` before the first render
+    /// (no wrapping). Always reserves the scrollbar column so the width does
+    /// not depend on the row count it determines.
+    fn bubble_text_width(&self) -> usize {
+        let width = self.last_area.get().width as usize;
+        if width == 0 {
+            return 0;
+        }
+        width.saturating_sub(self.gutter_width() as usize + 1 + BUBBLE_INDENT + 1).max(8)
+    }
+
+    /// The display-row layout, rebuilt if code, threads, folds or width changed.
+    fn layout(&self) -> std::cell::Ref<'_, RowLayout> {
+        let key = (self.inline.layout_gen.get(), self.bubble_text_width());
+        if self.inline.layout_key.get() != Some(key) {
+            *self.inline.layout.borrow_mut() =
+                build_layout(self.line_count(), &self.inline.threads, &self.inline.folded, key.1);
+            self.inline.layout_key.set(Some(key));
+        }
+        self.inline.layout.borrow()
+    }
+
+    /// Display row of source line `line`.
+    fn row_of(&self, line: usize) -> usize {
+        self.layout().row_of(line)
+    }
+
+    /// Display rows: source lines plus expanded bubble rows.
+    fn total_rows(&self) -> usize {
+        self.layout().total_rows()
     }
 }
 
@@ -448,64 +590,101 @@ impl Component for CodePreview {
 
         let cached = self.cached_lines.borrow();
         let selected_range = self.selected_range;
-        let list_len = cached.len();
         let height = code_area.height as usize;
+        let layout = self.layout();
+        let list_len = layout.total_rows();
+        let palette = crate::theme::palette();
+        let focused_thread = self.focused_thread();
+        let gutter = self.gutter_width() as usize;
+        let row_width = code_area.width as usize;
 
-        // Build text lines with sign column indicators
-        let mut text_lines = Vec::with_capacity(list_len);
-        for (i, line) in cached.iter().enumerate() {
-            let in_range = selected_range.is_some_and(|(start, end)| i >= start && i <= end);
-
-            // Sign indicator: show ┃ for range lines (independent of current selection)
-            let sign = if in_range {
-                "┃" // Thick vertical bar for lines in the bookmark range
-            } else {
-                " "
-            };
-
-            // Sign color: magenta for range lines, regardless of current selection
-            let sign_color =
-                if in_range { crate::theme::palette().marker } else { crate::theme::palette().dim };
-
-            // Rebuild the line with the correct sign indicator
-            // The cached line has: sign (1 char) + line number (4 chars) + content
-            // We need to replace just the sign span
-            let mut new_spans = Vec::new();
-            new_spans.push(Span::styled(sign, Style::default().fg(sign_color)));
-
-            // Add the rest of the line (line number + content), skipping the original sign span
-            if line.spans.len() > 1 {
-                for span in &line.spans[1..] {
-                    new_spans.push(span.clone());
-                }
-            }
-            text_lines.push(Line::from(new_spans));
+        // Lines whose folded threads get a `▸ n` marker at the end.
+        let mut fold_markers: HashMap<usize, usize> = HashMap::new();
+        for t in self.inline.threads.iter().filter(|t| self.inline.folded.contains(&t.root_id)) {
+            *fold_markers.entry(t.anchor_end.min(cached.len().saturating_sub(1))).or_default() +=
+                t.entries.len();
         }
 
+        // Build only the visible rows: the paragraph is rendered pre-scrolled.
+        // Clamp to the content: an offset set before the first frame (no
+        // height known yet) or before bubbles were folded can overshoot, which
+        // would hide the top of a file that fits on screen.
+        let offset = (self.scroll_offset as usize).min(list_len.saturating_sub(height));
+        let mut text_lines = Vec::with_capacity(height);
+        for display_row in layout.rows.iter().skip(offset).take(height) {
+            match *display_row {
+                DisplayRow::Code(i) => {
+                    let Some(line) = cached.get(i) else { continue };
+                    let in_range =
+                        selected_range.is_some_and(|(start, end)| i >= start && i <= end);
+                    // Sign column: ┃ (marker colour) for lines in the bookmark range.
+                    let (sign, sign_color) =
+                        if in_range { ("┃", palette.marker) } else { (" ", palette.dim) };
+                    let mut new_spans = vec![Span::styled(sign, Style::default().fg(sign_color))];
+                    // The cached line is sign + line number + content; swap the sign.
+                    new_spans.extend(line.spans.iter().skip(1).cloned());
+                    if let Some(count) = fold_markers.get(&i) {
+                        new_spans.push(Span::styled(
+                            format!("  ▸ {count}"),
+                            Style::default().fg(palette.accent),
+                        ));
+                    }
+                    text_lines.push(Line::from(new_spans));
+                }
+                DisplayRow::Bubble { thread, row } => {
+                    let focused = focused_thread == Some(thread);
+                    let style = BubbleStyle {
+                        border: if focused { palette.marker } else { palette.dim },
+                        text: palette.emphasis,
+                        dim: palette.dim,
+                        accent: palette.accent,
+                    };
+                    text_lines.push(render_bubble_line(
+                        &layout.bubbles[thread][row],
+                        gutter,
+                        row_width,
+                        focused,
+                        &style,
+                    ));
+                }
+            }
+        }
+
+        let focused_anchor = focused_thread
+            .map(|t| (self.inline.threads[t].anchor_start, self.inline.threads[t].anchor_end));
+        let selected_row = self.selected_line.map(|line| layout.row_of(line));
+        // Code rows (not bubble rows) of the focused comment's anchored lines.
+        let anchor_rows: Vec<usize> = focused_anchor
+            .map(|(start, end)| (start..=end).map(|line| layout.row_of(line)).collect())
+            .unwrap_or_default();
+        drop(layout);
         drop(cached); // Drop cached before rendering
 
-        let paragraph =
-            ratatui::widgets::Paragraph::new(text_lines).scroll((self.scroll_offset, 0));
+        ratatui::widgets::Paragraph::new(text_lines).render(code_area, buf);
 
-        paragraph.render(code_area, buf);
+        let paint_row = |buf: &mut Buffer, row: usize, color: Color| {
+            if row >= offset && row - offset < height {
+                let y = code_area.y + (row - offset) as u16;
+                for x in code_area.left()..code_area.right() {
+                    if let Some(cell) = buf.cell_mut((x, y)) {
+                        cell.set_bg(color);
+                    }
+                }
+            }
+        };
+
+        // The focused comment's anchored code gets a tint, so it is clear what
+        // the comment points at even when the node spans many lines.
+        for row in anchor_rows {
+            paint_row(buf, row, crate::theme::COMMENT_ANCHOR_BG);
+        }
 
         // Highlight the selected line's full-width background so it reads the
         // same as the list panes' selected row (see `crate::theme::SELECTION_BG`).
         // Painted after the paragraph and before the scrollbar so the scrollbar
         // thumb keeps its own styling on the highlighted row.
-        if let Some(selected) = self.selected_line {
-            let offset = self.scroll_offset as usize;
-            if selected >= offset {
-                let row = (selected - offset) as u16;
-                if row < code_area.height {
-                    let y = code_area.y + row;
-                    for x in code_area.left()..code_area.right() {
-                        if let Some(cell) = buf.cell_mut((x, y)) {
-                            cell.set_bg(crate::theme::SELECTION_BG);
-                        }
-                    }
-                }
-            }
+        if let Some(row) = selected_row {
+            paint_row(buf, row, crate::theme::SELECTION_BG);
         }
 
         // Draw the block cursor on the focused row/column. Painted on top of the
@@ -513,17 +692,15 @@ impl Component for CodePreview {
         // keeps the underlying character and stays theme-independent.
         if self.focused
             && self.selection_mode
-            && let Some(selected) = self.selected_line
+            && let Some(row) = selected_row
+            && row >= offset
         {
-            let offset = self.scroll_offset as usize;
-            if selected >= offset {
-                let row = (selected - offset) as u16;
-                let x = code_area.x + self.gutter_width() + self.cursor_col as u16;
-                if row < code_area.height && x < code_area.right() {
-                    let y = code_area.y + row;
-                    if let Some(cell) = buf.cell_mut((x, y)) {
-                        cell.set_style(Style::default().add_modifier(Modifier::REVERSED));
-                    }
+            let screen_row = (row - offset) as u16;
+            let x = code_area.x + self.gutter_width() + self.cursor_col as u16;
+            if screen_row < code_area.height && x < code_area.right() {
+                let y = code_area.y + screen_row;
+                if let Some(cell) = buf.cell_mut((x, y)) {
+                    cell.set_style(Style::default().add_modifier(Modifier::REVERSED));
                 }
             }
         }
@@ -546,8 +723,7 @@ impl Component for CodePreview {
             // `height^2 / list_len` (the correct visible/total ratio) and a max position of
             // `list_len - height`, so the thumb reaches the bottom on the last page.
             let scroll_positions = list_len - height + 1;
-            let mut scrollbar_state =
-                ScrollbarState::new(scroll_positions).position(self.scroll_offset as usize);
+            let mut scrollbar_state = ScrollbarState::new(scroll_positions).position(offset);
 
             let scrollbar_area = Rect {
                 x: code_area.right().saturating_sub(1),
@@ -575,12 +751,14 @@ impl Component for CodePreview {
                                 self.selected_line.map_or(0, |i| (i + 1).min(line_count - 1));
                             self.selected_line = Some(next);
 
-                            // Auto-scroll if selection goes off screen
+                            // Auto-scroll if selection goes off screen. Rows,
+                            // not lines: comment bubbles sit between lines.
                             let height = self.last_area.get().height as usize;
-                            if next >= self.scroll_offset as usize + height {
-                                self.scroll_offset = (next - height + 1) as u16;
-                            } else if next < self.scroll_offset as usize {
-                                self.scroll_offset = next as u16;
+                            let row = self.row_of(next);
+                            if row >= self.scroll_offset as usize + height {
+                                self.scroll_offset = (row + 1).saturating_sub(height) as u16;
+                            } else if row < self.scroll_offset as usize {
+                                self.scroll_offset = row as u16;
                             }
                             self.clamp_cursor_col();
                         }
@@ -592,12 +770,14 @@ impl Component for CodePreview {
                         self.selected_line = Some(next);
 
                         // Auto-scroll if selection goes off screen
-                        if next < self.scroll_offset as usize {
-                            self.scroll_offset = next as u16;
+                        let row = self.row_of(next);
+                        if row < self.scroll_offset as usize {
+                            self.scroll_offset = row as u16;
                         }
                         self.clamp_cursor_col();
                         true
                     }
+                    ratatui::crossterm::event::KeyCode::Char('z') => self.toggle_fold(),
                     ratatui::crossterm::event::KeyCode::Enter
                     | ratatui::crossterm::event::KeyCode::Char('v') => {
                         self.selection_mode = !self.selection_mode;
@@ -642,13 +822,13 @@ impl Component for CodePreview {
                 match mouse.kind {
                     ratatui::crossterm::event::MouseEventKind::ScrollDown if is_hovered => {
                         let height = area.height as usize;
-                        let line_count = self.line_count();
-                        if line_count > height {
+                        let total_rows = self.total_rows();
+                        if total_rows > height {
                             let old_offset = self.scroll_offset;
                             self.scroll_offset = self
                                 .scroll_offset
                                 .saturating_add(1)
-                                .min((line_count - height) as u16);
+                                .min((total_rows - height) as u16);
                             return old_offset != self.scroll_offset;
                         }
                         false
@@ -979,5 +1159,111 @@ mod tests {
         // serve the stale pre-theme colors from the cache.
         preview.set_code_keyed("fn a() {}\n".to_string(), "rs".to_string());
         assert!(!Rc::ptr_eq(&before, &preview.cached_lines.borrow()));
+    }
+
+    fn key(code: ratatui::crossterm::event::KeyCode) -> Event {
+        Event::Key(ratatui::crossterm::event::KeyEvent::from(code))
+    }
+
+    fn row_text(buf: &Buffer, y: u16) -> String {
+        (0..buf.area.width).map(|x| buf[(x, y)].symbol()).collect()
+    }
+
+    fn thread(id: &str, start: usize, end: usize, bodies: &[&str]) -> InlineThread {
+        InlineThread {
+            root_id: id.into(),
+            anchor_start: start,
+            anchor_end: end,
+            entries: bodies
+                .iter()
+                .map(|b| crate::component::InlineComment {
+                    author: "claude".into(),
+                    when: "2026-11-12 10:00".into(),
+                    body: b.to_string(),
+                })
+                .collect(),
+        }
+    }
+
+    fn numbered_code(lines: usize) -> String {
+        (0..lines).map(|i| format!("line{i}\n")).collect()
+    }
+
+    #[test]
+    fn inline_thread_renders_under_its_anchored_line() {
+        let mut preview = CodePreview::new(numbered_code(6), "txt");
+        render_to_buffer(&preview, 60, 12);
+        preview.set_threads(vec![thread("t1", 1, 1, &["lex runs on every call", "agreed"])]);
+        let buf = render_to_buffer(&preview, 60, 12);
+
+        assert!(row_text(&buf, 1).contains("line1"));
+        assert!(row_text(&buf, 2).contains("┌ claude"), "{}", row_text(&buf, 2));
+        assert!(row_text(&buf, 3).contains("lex runs on every call"));
+        assert!(row_text(&buf, 4).contains("↳ claude: agreed"), "{}", row_text(&buf, 4));
+        assert!(row_text(&buf, 5).contains("└"));
+        assert!(row_text(&buf, 6).contains("line2"), "code resumes after the bubble");
+    }
+
+    #[test]
+    fn z_folds_the_thread_under_the_cursor_and_keeps_its_line_in_place() {
+        let mut preview = CodePreview::new(numbered_code(30), "txt");
+        preview.set_focus(true);
+        render_to_buffer(&preview, 60, 10);
+        preview.set_threads(vec![thread("t1", 3, 4, &["one", "two"])]);
+        preview.jump_to_line(4);
+        render_to_buffer(&preview, 60, 10);
+        let rows_before = preview.total_rows();
+        let screen_row = preview.row_of(4) - preview.scroll_offset as usize;
+
+        assert!(preview.handle_event(&key(ratatui::crossterm::event::KeyCode::Char('z'))));
+        let buf = render_to_buffer(&preview, 60, 10);
+        assert_eq!(preview.total_rows(), 30, "folded bubbles take no rows (was {rows_before})");
+        assert_eq!(preview.row_of(4) - preview.scroll_offset as usize, screen_row);
+        let line4 = (0..10).map(|y| row_text(&buf, y)).find(|r| r.contains("line4")).unwrap();
+        assert!(line4.contains("▸ 2"), "folded marker counts the comments: {line4}");
+
+        // Off the thread, `z` falls through.
+        preview.jump_to_line(10);
+        assert!(!preview.handle_event(&key(ratatui::crossterm::event::KeyCode::Char('z'))));
+    }
+
+    #[test]
+    fn focused_thread_tints_its_anchor_and_shows_key_hints() {
+        let mut preview = CodePreview::new(numbered_code(8), "txt");
+        preview.set_focus(true);
+        render_to_buffer(&preview, 60, 14);
+        preview.set_threads(vec![thread("t1", 1, 2, &["spans two lines"])]);
+        preview.jump_to_line(2);
+        assert_eq!(preview.focused_thread_id(), Some("t1"));
+        let buf = render_to_buffer(&preview, 60, 14);
+
+        let line1_row = (0..14).find(|&y| row_text(&buf, y).contains("line1")).unwrap();
+        assert_eq!(row_bg(&buf, line1_row), crate::theme::COMMENT_ANCHOR_BG);
+        assert!((0..14).any(|y| row_text(&buf, y).contains("r reply · z fold")));
+
+        preview.jump_to_line(6);
+        assert_eq!(preview.focused_thread_id(), None);
+    }
+
+    #[test]
+    fn scrolling_and_scrollbar_count_bubble_rows() {
+        let mut preview = CodePreview::new(numbered_code(20), "txt");
+        render_to_buffer(&preview, 60, 10);
+        preview.set_threads(vec![thread("t1", 19, 19, &["at the very end"])]);
+        render_to_buffer(&preview, 60, 10);
+        // Scroll to the bottom: the bubble under the last line must be reachable.
+        preview.scroll_by(1000);
+        let buf = render_to_buffer(&preview, 60, 10);
+        assert_eq!(preview.scroll_offset as usize, preview.total_rows() - 10);
+        assert!(row_text(&buf, 9).contains("└"), "last row is the bubble's bottom");
+    }
+
+    #[test]
+    fn new_code_drops_threads() {
+        let mut preview = CodePreview::new(numbered_code(4), "txt");
+        preview.set_threads(vec![thread("t1", 0, 0, &["x"])]);
+        preview.set_code(numbered_code(4));
+        assert!(preview.threads().is_empty());
+        assert_eq!(preview.total_rows(), 4);
     }
 }

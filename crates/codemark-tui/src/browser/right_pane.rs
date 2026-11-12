@@ -462,6 +462,51 @@ impl RightPane {
             query_preview.set_code(query);
             query_preview.set_extension("scm".to_string());
         }
+        self.refresh_inline_comments();
+    }
+
+    /// Resolve the current step's anchored comments against the code in the
+    /// preview and show them inline under the code they point at.
+    ///
+    /// Runs whenever the preview's code or range changes (step change, live
+    /// re-resolution, a new comment): anchors are re-resolved live, never
+    /// stored, so they follow the code as it is now.
+    pub fn refresh_inline_comments(&mut self) {
+        let Some(step) = self.steps_data.get(self.pager_current) else { return };
+        let lines =
+            step.resolved.then(|| (step.line_number, step.line_end.unwrap_or(step.line_number)));
+        let bookmark = step.bookmark.clone();
+        if let Some(preview) = self.steps.get_step_preview_mut() {
+            let threads =
+                super::inline_threads::build_inline_threads(&bookmark, preview.code(), lines);
+            tracing::debug!(
+                target: "codemark::comments",
+                bookmark = %bookmark.id,
+                threads = threads.len(),
+                "inline comments refreshed"
+            );
+            preview.set_threads(threads);
+        }
+    }
+
+    /// Reload the current step's comments from `db` after one was added, then
+    /// refresh the inline threads and the Comments tab.
+    pub fn reload_step_comments(&mut self, db: &Database) {
+        let Some(step) = self.steps_data.get_mut(self.pager_current) else { return };
+        match db.list_comments_for_bookmark(&step.bookmark.id) {
+            Ok(comments) => step.bookmark.comments = comments,
+            Err(e) => {
+                tracing::warn!(target: "codemark::comments", error = %e, "failed to reload comments");
+                return;
+            }
+        }
+        self.refresh_inline_comments();
+        self.update_step_markdown(db);
+    }
+
+    /// The bookmark shown in the code preview, with where its code is now.
+    pub fn current_step(&self) -> Option<&crate::browser::StepData> {
+        self.steps_data.get(self.pager_current)
     }
 
     /// Render and apply the Info/Details/Comments markdown for the current step
@@ -807,6 +852,7 @@ impl RightPane {
         self.steps_data = vec![step];
         self.pager_total = 1;
         self.pager_current = 0;
+        self.refresh_inline_comments();
         self.active_bookmark_id = Some(bookmark_id);
         self.active_tour_name = None;
         self.active_remote_tour_id = None;
