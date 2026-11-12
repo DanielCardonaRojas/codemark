@@ -43,6 +43,11 @@ pub const FALLBACK_THEME: &str = "OneHalfDark";
 /// whether or not the pane is focused.
 pub const SELECTION_BG: Color = Color::Rgb(62, 68, 81);
 
+/// Background on the exact node a focused inline comment points at. Drawn
+/// over [`SELECTION_BG`] when the node is on the cursor line, so it is a
+/// clearly bluer tone that keeps syntax colours legible.
+pub const COMMENT_ANCHOR_BG: Color = Color::Rgb(45, 78, 128);
+
 /// Popular `.tmTheme` files not shipped by `syntect-assets`, embedded at compile
 /// time. Each entry is `(name, bytes)`, where `name` is the key users reference
 /// in config and `bytes` is the raw `.tmTheme` plist.

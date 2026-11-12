@@ -18,7 +18,7 @@ impl BrowserLayout {
     /// While true, the dialog captures all key input and the rest of the
     /// layout (and global keybindings) must not act on events.
     pub fn has_active_dialog(&self) -> bool {
-        self.dialog.is_some() || self.branch_picker.is_some()
+        self.dialog.is_some() || self.branch_picker.is_some() || self.comment_draft.is_some()
     }
 
     /// Show a confirmation dialog for the given action.
@@ -40,6 +40,10 @@ impl BrowserLayout {
     pub(super) fn handle_dialog_key(&mut self, key: &ratatui::crossterm::event::KeyEvent) -> bool {
         if self.branch_picker.is_some() {
             return self.handle_branch_picker_key(key);
+        }
+        if self.comment_draft.is_some() {
+            self.handle_comment_draft_key(key);
+            return true;
         }
         self.handle_confirm_key(key);
         // A dialog that arrived while this one was open takes its place.

@@ -4,12 +4,14 @@
 //! for rendering itself to a specific area of the terminal and handling events.
 
 pub mod code_preview;
+pub mod inline_comments;
 pub mod markdown_panel;
 pub mod panel;
 
 // Re-export types for convenience
 pub use code_preview::CodePreview;
 pub use codemark_core::sort::SortMethod;
+pub use inline_comments::{InlineComment, InlineThread};
 pub use markdown_panel::MarkdownPanel;
 pub use panel::{HealthStatus, Panel, PanelItem, SyncDirection};
 

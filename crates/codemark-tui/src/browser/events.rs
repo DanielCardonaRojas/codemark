@@ -26,11 +26,13 @@ impl BrowserLayout {
             match event {
                 Event::Key(key) => return self.handle_dialog_key(key),
                 Event::Mouse(_) => return true,
-                // A paste goes into the branch picker's filter, never the
-                // search bar behind it.
+                // A paste goes into the open modal (the branch picker's
+                // filter or the comment draft), never the search bar behind it.
                 Event::Paste(text) => {
                     if let Some(picker) = self.branch_picker.as_mut() {
                         picker.push_str(text);
+                    } else {
+                        self.paste_into_comment_draft(text);
                     }
                     return true;
                 }
@@ -298,6 +300,16 @@ impl BrowserLayout {
     /// quiet window since the last move). Returns true if a redraw is needed.
     /// `update_preview` reads the current pager position, so it renders the
     /// step the user landed on.
+    /// Render a step deferred by fast paging right away. Comment keys call
+    /// this first so the bookmark they act on is the one on screen, not the
+    /// step the pager moved to while its code was still pending.
+    pub(super) fn flush_pending_step_preview(&mut self) {
+        if self.step_preview_dirty {
+            self.step_preview_dirty = false;
+            self.render_step_preview();
+        }
+    }
+
     fn maybe_update_pending_step_preview(&mut self) -> bool {
         if !self.step_preview_dirty {
             return false;
@@ -1108,16 +1120,18 @@ impl BrowserLayout {
                 // This runs on a spawn_blocking thread, not a runtime worker.
                 let update =
                     match super::RightPane::resolve_bookmark_live(bm, &db, &mut caches, false) {
-                        Ok((file_path, start_line, end_line, _source, live_status)) => {
-                            super::StepLiveUpdate {
-                                index: *index,
-                                file_path,
-                                line_number: start_line,
-                                line_end: Some(end_line),
-                                resolved: true,
-                                health: crate::component::HealthStatus::from(live_status),
-                            }
-                        }
+                        Ok(live) => super::StepLiveUpdate {
+                            index: *index,
+                            file_path: live.abs_path,
+                            line_number: live.start_line,
+                            line_end: Some(live.end_line),
+                            resolved: true,
+                            byte_range: Some(live.byte_range),
+                            byte_range_source: Some(super::inline_threads::source_hash(
+                                &live.source,
+                            )),
+                            health: crate::component::HealthStatus::from(live.status),
+                        },
                         Err(e) => {
                             // Live resolution failed; fall back to the persisted
                             // location (the same one the cheap build used).
@@ -1130,6 +1144,8 @@ impl BrowserLayout {
                                 line_number,
                                 line_end,
                                 resolved: false,
+                                byte_range: None,
+                                byte_range_source: None,
                                 health,
                             }
                         }
@@ -1362,6 +1378,23 @@ impl BrowserLayout {
                 if self.should_handle_keybindings() && self.focus == FocusArea::ContentPanel =>
             {
                 return self.handle_delete_key();
+            }
+            // In the code preview, `c` comments on the code under the cursor and
+            // `r` replies to the comment the cursor is on.
+            ratatui::crossterm::event::KeyCode::Char('c')
+                if key.modifiers.is_empty()
+                    && self.should_handle_keybindings()
+                    && self.code_preview_focused() =>
+            {
+                return Some(self.open_comment_draft());
+            }
+            ratatui::crossterm::event::KeyCode::Char('r')
+                if key.modifiers.is_empty()
+                    && self.should_handle_keybindings()
+                    && self.code_preview_focused()
+                    && self.open_reply_draft() =>
+            {
+                return Some(true);
             }
             // `c` / `m` copy or move the selected collection to another branch.
             ratatui::crossterm::event::KeyCode::Char('c')

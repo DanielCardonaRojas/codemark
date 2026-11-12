@@ -117,6 +117,8 @@ pub struct CommentTemplateContext {
     /// `body` with every line after the first indented six spaces, so a
     /// multi-line comment stays inside a nested `    - ` list item.
     pub body_nested: String,
+    /// `body` with `>` on every line, for rendering a reply as one block quote.
+    pub body_quoted: String,
 }
 
 /// Template context for a resolution.
@@ -249,6 +251,7 @@ impl CommentTemplateContext {
             // about the whole bookmark now.
             anchor_hint: comment.query.as_ref().and(comment.anchor_hint.clone()),
             body_nested: comment.body.trim_end().replace('\n', "\n      "),
+            body_quoted: quote_markdown_block(&comment.body),
         }
     }
 
@@ -1882,6 +1885,66 @@ mod tests {
         let context = BookmarkTemplateContext::from_bookmark(&bm, &[], Path::new("."), None);
         let output = handlebars.render_template(default_show_template(), &context).unwrap();
         assert!(!output.contains("## Context"), "empty breadcrumbs rendered a header:\n{output}");
+    }
+
+    #[test]
+    fn comments_panel_threads_replies_under_their_root() {
+        use crate::engine::bookmark::BookmarkComment;
+        let comment = |id: &str, parent: Option<&str>, at: &str, body: &str| BookmarkComment {
+            id: id.into(),
+            bookmark_id: "b".into(),
+            author: "ann".into(),
+            body: body.into(),
+            created_at: at.into(),
+            parent_id: parent.map(str::to_string),
+            query: None,
+            content_hash: None,
+            anchor_hint: None,
+        };
+        let anchored = BookmarkComment {
+            query: Some("(x) @target".into()),
+            anchor_hint: Some("L5-L5: let x = 1;".into()),
+            ..comment("c1", None, "2024-01-02T00:00:00Z", "anchored body")
+        };
+        let bm = Bookmark {
+            comments: vec![
+                anchored,
+                comment("c2", None, "2024-01-03T00:00:00Z", "second root"),
+                // Written after the second root but belongs to the first.
+                comment("c3", Some("c1"), "2024-01-04T00:00:00Z", "a reply\nover two lines"),
+            ],
+            id: "b".to_string(),
+            query: "(function_definition) @t".to_string(),
+            language: "rust".to_string(),
+            grammar_source: None,
+            forked_from: None,
+            branch: None,
+            file_path: "file.rs".to_string(),
+            content_hash: None,
+            commit_hash: None,
+            health: BookmarkHealth::Active,
+            resolution_method: None,
+            last_resolved_at: None,
+            stale_since: None,
+            created_at: "2024-01-01T00:00:00Z".to_string(),
+            created_by: None,
+            current_resolution_id: None,
+            repo_id: None,
+            tags: vec![],
+            annotations: vec![],
+        };
+        let context = BookmarkTemplateContext::from_bookmark(&bm, &[], Path::new("."), None);
+        let output = create_handlebars_engine()
+            .render_template(default_comments_template(), &context)
+            .unwrap();
+
+        let first = output.find("anchored body").unwrap();
+        let reply = output.find("> a reply\n> over two lines").unwrap();
+        let rule = output.find("---").unwrap();
+        let second = output.find("second root").unwrap();
+        assert!(first < reply && reply < rule && rule < second, "{output}");
+        assert!(output.contains("originally on `L5-L5: let x = 1;`"), "{output}");
+        assert_eq!(output.matches("---").count(), 1, "one rule between two threads:\n{output}");
     }
 
     #[test]

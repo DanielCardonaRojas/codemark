@@ -1,0 +1,27 @@
+---
+source: crates/codemark-tui/src/component/code_preview.rs
+expression: "snapshot(&preview, 64, 24)"
+---
+   1   fn parse(input: &str) -> usize {
+   2 ▾     let tokens = lex(input);
+        ┌ claude · 2026-11-12 10:00 ──────────────────────────┐
+        │ lex runs on every call                              │
+        │ ↳ claude · 2026-11-12 10:00                         │
+        │   agreed, cache it                                  │
+        └─────────────────────────────────────────────────────┘
+   3       match tokens {
+   4           0 => helper(1),
+   5 ▾         _ => helper(2),
+               ^^^^^^^^^^^^^^
+        ┌ claude · 2026-11-12 10:00 ──────────────────────────┐
+        │ the fallback arm hides unknown tokens; log them     │
+        │ before defaulting                                   │
+        └─────────────────────────────────────────────────────┘
+        ┌ claude · 2026-11-12 10:00 ──────────────────────────┐
+        *                           ***************************
+        │ second thread on the same arm                       │
+        *                                                     *
+        └────────────────────────── r reply · z fold · n next ┘
+        ***************************                           *
+   6       }
+   7   }

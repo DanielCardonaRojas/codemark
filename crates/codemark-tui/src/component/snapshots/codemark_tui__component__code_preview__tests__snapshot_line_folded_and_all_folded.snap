@@ -1,0 +1,38 @@
+---
+source: crates/codemark-tui/src/component/code_preview.rs
+expression: "format!(\"{line_folded}--- Z ---\\n{all_folded}\")"
+---
+   1   fn parse(input: &str) -> usize {
+   2 ▾     let tokens = lex(input);
+        ┌ claude · 2026-11-12 10:00 ──────────────────────────┐
+        │ lex runs on every call                              │
+        │ ↳ claude · 2026-11-12 10:00                         │
+        │   agreed, cache it                                  │
+        └─────────────────────────────────────────────────────┘
+   3       match tokens {
+   4           0 => helper(1),
+   5 ▸         _ => helper(2),
+===============^^^^^^^^^^^^^^===================================
+   6       }
+   7   }
+
+
+
+
+
+
+
+
+
+
+
+
+--- Z ---
+   1   fn parse(input: &str) -> usize {
+   2 ▸     let tokens = lex(input);
+   3       match tokens {
+   4           0 => helper(1),
+   5 ▸         _ => helper(2),
+===============^^^^^^^^^^^^^^===================================
+   6       }
+   7   }

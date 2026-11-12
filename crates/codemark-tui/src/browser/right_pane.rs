@@ -43,9 +43,32 @@ pub enum RightPaneFocus {
     Details,
 }
 
+/// Where a bookmark's code is now, from live resolution.
+pub(crate) struct LiveLocation {
+    /// Absolute path of the file.
+    pub abs_path: String,
+    /// 0-indexed first line of the bookmarked node.
+    pub start_line: usize,
+    /// 0-indexed last line of the bookmarked node.
+    pub end_line: usize,
+    /// Byte range of the bookmarked node.
+    pub byte_range: (usize, usize),
+    /// The file's contents.
+    pub source: String,
+    pub status: live_resolution::LiveUIStatus,
+}
+
 pub struct RightPane {
     /// Steps tabbed panel (Steps/Info)
     pub steps: TabbedPanel,
+    /// Fingerprint of what the code preview shows (bookmark, file, range,
+    /// code). A refresh that re-shows the same thing, such as the panel
+    /// rebuild on `FocusGained`, keeps the user's cursor, scroll, folds and
+    /// selected comment instead of jumping back to the bookmark.
+    shown_preview: Option<u64>,
+    /// Last resolved inline threads and the key they were built for, so
+    /// paging back to a step doesn't parse its file again.
+    inline_threads_cache: Option<(u64, Vec<crate::component::InlineThread>)>,
     /// Collection overview panel shown live while browsing collections
     /// (before a collection is entered with Enter).
     pub overview: MarkdownPanel,
@@ -197,6 +220,8 @@ impl RightPane {
             active_bookmark_id: None,
             active_remote_tour_id: None,
             active_repo_root: None,
+            shown_preview: None,
+            inline_threads_cache: None,
             needs_preview_update: false,
             cached_show_template,
             cached_details_template,
@@ -440,28 +465,115 @@ impl RightPane {
         let line_number = step.line_number;
         let line_end = step.line_end;
         let query = step.bookmark.query.clone();
-
-        if let Some(preview) = self.steps.get_step_preview_mut() {
-            // Keyed set reuses a cached highlight when this step was visited
-            // before, and sets code+extension together to avoid a double
-            // highlight when the language changes between steps.
-            preview.set_code_keyed(code, ext);
-            tracing::debug!(target: "codemark::ui", %relative_path, "Setting preview file header");
-            preview.set_file_header(Some(relative_path));
-            if resolved {
-                preview.jump_to_range(line_number, line_end);
-            } else {
-                // Query no longer resolves: show the file without a stale
-                // range highlight/gutter.
-                preview.clear_selection();
-            }
-        }
+        let bookmark_id = step.bookmark.id.clone();
+        let range = resolved.then_some((line_number, line_end));
+        self.show_step_code(&bookmark_id, code, ext, relative_path, range);
 
         // The Query tab is just the raw query text (no rendering), so set it here.
         if let Some(query_preview) = self.steps.get_query_preview_mut() {
             query_preview.set_code(query);
             query_preview.set_extension("scm".to_string());
         }
+        self.refresh_inline_comments();
+    }
+
+    /// Put a step's code in the preview and place the cursor on its range,
+    /// unless the preview already shows exactly this (same bookmark, file,
+    /// range and code): then it is a refresh, and the user's cursor, scroll,
+    /// folds and selected comment stay as they are.
+    fn show_step_code(
+        &mut self,
+        bookmark_id: &str,
+        code: String,
+        ext: String,
+        header: String,
+        range: Option<(usize, Option<usize>)>,
+    ) {
+        use std::hash::{Hash, Hasher};
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        (bookmark_id, &code, &ext, &header, range).hash(&mut hasher);
+        let fingerprint = hasher.finish();
+        if self.shown_preview == Some(fingerprint) {
+            tracing::debug!(target: "codemark::ui", bookmark = %bookmark_id, "preview unchanged; keeping cursor");
+            return;
+        }
+        let Some(preview) = self.steps.get_step_preview_mut() else { return };
+        // Keyed set reuses a cached highlight when this step was visited
+        // before, and sets code+extension together to avoid a double
+        // highlight when the language changes between steps.
+        preview.set_code_keyed(code, ext);
+        tracing::debug!(target: "codemark::ui", relative_path = %header, "Setting preview file header");
+        preview.set_file_header(Some(header));
+        match range {
+            Some((line, end)) => preview.jump_to_range(line, end),
+            // Query no longer resolves: show the file without a stale range
+            // highlight/gutter.
+            None => preview.clear_selection(),
+        }
+        self.shown_preview = Some(fingerprint);
+    }
+
+    /// Resolve the current step's anchored comments against the code in the
+    /// preview and show them inline under the code they point at.
+    ///
+    /// Runs whenever the preview's code or range changes (step change, live
+    /// re-resolution, a new comment): anchors are re-resolved live, never
+    /// stored, so they follow the code as it is now.
+    pub fn refresh_inline_comments(&mut self) {
+        let Some(step) = self.steps_data.get(self.pager_current) else { return };
+        let lines =
+            step.resolved.then(|| (step.line_number, step.line_end.unwrap_or(step.line_number)));
+        let (byte_range, byte_range_source) = (step.byte_range, step.byte_range_source);
+        let bookmark = step.bookmark.clone();
+        let cache = &mut self.inline_threads_cache;
+        if let Some(preview) = self.steps.get_step_preview_mut() {
+            let code = preview.code();
+            let byte_range =
+                super::inline_threads::trusted_range(code, byte_range, byte_range_source);
+            // Resolving parses the whole file; reuse the last result while
+            // the code, range and comments are unchanged (paging, refreshes).
+            let key = super::inline_threads::cache_key(&bookmark, code, lines, byte_range);
+            let threads = match cache {
+                Some((cached_key, threads)) if *cached_key == key => threads.clone(),
+                _ => {
+                    let threads = super::inline_threads::build_inline_threads(
+                        &bookmark, code, lines, byte_range,
+                    );
+                    *cache = Some((key, threads.clone()));
+                    threads
+                }
+            };
+            tracing::debug!(
+                target: "codemark::comments",
+                bookmark = %bookmark.id,
+                threads = threads.len(),
+                "inline comments refreshed"
+            );
+            preview.set_threads(threads);
+        }
+    }
+
+    /// Reload the current step's comments from `db` after one was added, then
+    /// refresh the inline threads and the Comments tab.
+    pub fn reload_step_comments(&mut self, db: &Database) {
+        let Some(step) = self.steps_data.get_mut(self.pager_current) else { return };
+        match db.list_comments_for_bookmark(&step.bookmark.id) {
+            Ok(comments) => step.bookmark.comments = comments,
+            Err(e) => {
+                tracing::warn!(target: "codemark::comments", error = %e, "failed to reload comments");
+                return;
+            }
+        }
+        self.refresh_inline_comments();
+        // Supersede any background render of this step started before the
+        // save, or its stale Comments tab would replace the fresh one.
+        self.next_step_preview_request();
+        self.update_step_markdown(db);
+    }
+
+    /// The bookmark shown in the code preview, with where its code is now.
+    pub fn current_step(&self) -> Option<&crate::browser::StepData> {
+        self.steps_data.get(self.pager_current)
     }
 
     /// Render and apply the Info/Details/Comments markdown for the current step
@@ -617,6 +729,8 @@ impl RightPane {
                     // Persisted fallback: the query didn't resolve live, so the
                     // range is stale and must not be highlighted.
                     resolved: false,
+                    byte_range: None,
+                    byte_range_source: None,
                 }];
                 self.pager_total = 1;
                 self.pager_current = 0;
@@ -723,8 +837,14 @@ impl RightPane {
         let Some(bm) = db.get_bookmark(bookmark_id).ok().flatten() else {
             return Ok(None);
         };
-        let (abs_path, start_line, end_line, code, live_status) =
-            Self::resolve_bookmark_live(&bm, db, cache, on_runtime_worker)?;
+        let LiveLocation {
+            abs_path,
+            start_line,
+            end_line,
+            byte_range,
+            source: code,
+            status: live_status,
+        } = Self::resolve_bookmark_live(&bm, db, cache, on_runtime_worker)?;
 
         let resolutions = db.list_resolutions(&bm.id, 100).unwrap_or_default();
         let extension = std::path::Path::new(&abs_path)
@@ -753,6 +873,8 @@ impl RightPane {
             // Live resolution succeeded, so the range reflects the current
             // location and is safe to highlight.
             resolved: true,
+            byte_range: Some(byte_range),
+            byte_range_source: Some(super::inline_threads::source_hash(&code)),
         };
 
         Ok(Some(Box::new(PreviewPayload {
@@ -785,16 +907,8 @@ impl RightPane {
             query,
         } = payload;
 
-        if let Some(preview) = self.steps.get_step_preview_mut() {
-            preview.set_code(code);
-            preview.set_extension(extension);
-            preview.set_file_header(Some(relative_path));
-            if step.resolved {
-                preview.jump_to_range(step.line_number, step.line_end);
-            } else {
-                preview.clear_selection();
-            }
-        }
+        let range = step.resolved.then_some((step.line_number, step.line_end));
+        self.show_step_code(&bookmark_id, code, extension, relative_path, range);
         if let Some(md_panel) = self.steps.get_markdown_mut() {
             md_panel.set_markdown(info_markdown);
         }
@@ -807,6 +921,7 @@ impl RightPane {
         self.steps_data = vec![step];
         self.pager_total = 1;
         self.pager_current = 0;
+        self.refresh_inline_comments();
         self.active_bookmark_id = Some(bookmark_id);
         self.active_tour_name = None;
         self.active_remote_tour_id = None;
@@ -903,6 +1018,8 @@ impl RightPane {
             resolutions,
             health,
             resolved: false,
+            byte_range: None,
+            byte_range_source: None,
         }
     }
 
@@ -956,12 +1073,14 @@ impl RightPane {
         session_cache: &mut HashMap<CodemarkLanguage, ParseCache>,
     ) {
         match Self::resolve_bookmark_live(&step.bookmark, db, session_cache, true) {
-            Ok((abs_path, start_line, end_line, _source, live_status)) => {
-                step.file_path = abs_path;
-                step.line_number = start_line;
-                step.line_end = Some(end_line);
+            Ok(live) => {
+                step.file_path = live.abs_path;
+                step.line_number = live.start_line;
+                step.line_end = Some(live.end_line);
                 step.resolved = true;
-                step.health = crate::component::HealthStatus::from(live_status);
+                step.byte_range = Some(live.byte_range);
+                step.byte_range_source = Some(super::inline_threads::source_hash(&live.source));
+                step.health = crate::component::HealthStatus::from(live.status);
             }
             Err(e) => {
                 step.health = if matches!(e, codemark_core::error::Error::Resolution(_)) {
@@ -994,11 +1113,14 @@ impl RightPane {
             let location_changed = step.file_path != u.file_path
                 || step.line_number != u.line_number
                 || step.line_end != u.line_end
-                || step.resolved != u.resolved;
+                || step.resolved != u.resolved
+                || step.byte_range != u.byte_range;
             step.file_path = u.file_path;
             step.line_number = u.line_number;
             step.line_end = u.line_end;
             step.resolved = u.resolved;
+            step.byte_range = u.byte_range;
+            step.byte_range_source = u.byte_range_source;
             step.health = u.health;
             if is_current && location_changed {
                 current_changed = true;
@@ -1009,9 +1131,9 @@ impl RightPane {
         }
     }
 
-    /// Resolve a bookmark on-the-fly using tree-sitter, returning
-    /// `(abs_path, start_line, end_line, source)`. Line numbers are 0-indexed
-    /// (from tree-sitter `Point.row`); `source` is the file's contents, returned
+    /// Resolve a bookmark on-the-fly using tree-sitter, returning where its
+    /// code is now as a [`LiveLocation`]. Line numbers are 0-indexed (from
+    /// tree-sitter `Point.row`); `source` is the file's contents, returned
     /// from the parse cache so callers don't read the file a second time.
     ///
     /// The session [`ParseCache`] is reused across selections and invalidates by
@@ -1030,10 +1152,7 @@ impl RightPane {
         db: &Database,
         session_cache: &mut HashMap<CodemarkLanguage, ParseCache>,
         on_runtime_worker: bool,
-    ) -> std::result::Result<
-        (String, usize, usize, String, live_resolution::LiveUIStatus),
-        codemark_core::error::Error,
-    > {
+    ) -> std::result::Result<LiveLocation, codemark_core::error::Error> {
         // Propagated as-is rather than rewrapped: `Error::GrammarNotInstalled`
         // is what lets the caller show "No grammar" instead of "Unmatched",
         // and flattening it into `Error::Input` would throw that away.
@@ -1077,13 +1196,14 @@ impl RightPane {
             )?;
             let (_tree, source) = cache.get_or_parse(&abs_path, &provider).await?;
 
-            Ok::<_, codemark_core::error::Error>((
-                abs_path.to_string_lossy().to_string(),
-                result.start_line,
-                result.end_line,
-                source.clone(),
-                live_status,
-            ))
+            Ok::<_, codemark_core::error::Error>(LiveLocation {
+                abs_path: abs_path.to_string_lossy().to_string(),
+                start_line: result.start_line,
+                end_line: result.end_line,
+                byte_range: result.byte_range,
+                source: source.clone(),
+                status: live_status,
+            })
         };
 
         if on_runtime_worker {
@@ -1123,6 +1243,7 @@ impl RightPane {
         self.overview.set_markdown(String::new());
 
         // Clear the rendered preview panels so old content doesn't linger
+        self.shown_preview = None;
         if let Some(preview) = self.steps.get_step_preview_mut() {
             preview.set_code(String::new());
             preview.set_file_header(None);
@@ -1297,6 +1418,8 @@ impl RightPane {
                         // Persisted (non-live) load: keep highlighting the stored
                         // range as before.
                         resolved: true,
+                        byte_range: None,
+                        byte_range_source: None,
                     });
                 }
             }
@@ -1993,6 +2116,42 @@ mod tests {
         // task renders bm-2's markdown.
         assert_eq!(pane.current_step_bookmark_id(), Some("bm-2"));
         assert_eq!(pane.current_step_render_input().map(|(bm, _)| bm.id), Some("bm-2".to_string()));
+    }
+
+    #[test]
+    fn refreshing_the_same_step_keeps_the_preview_cursor() {
+        use crate::component::Component;
+        let (mut pane, db, tmp) = right_pane_with_collection();
+        pane.load_tour(&db, "Tour");
+        let file = tmp.path().join("main.rs");
+        std::fs::write(&file, "fn a() {}\nfn b() {}\nfn c() {}\nfn d() {}\n").unwrap();
+        pane.steps_data[0].file_path = file.to_string_lossy().into_owned();
+        pane.steps_data[0].line_number = 0;
+        pane.steps_data[0].line_end = Some(0);
+        pane.steps_data[0].resolved = true;
+        pane.update_step_code();
+
+        // The user moves the cursor (keyboard or a click on a comment).
+        let preview = pane.steps.get_step_preview_mut().unwrap();
+        preview.set_focus(true);
+        for _ in 0..2 {
+            preview.handle_event(&Event::Key(ratatui::crossterm::event::KeyEvent::from(
+                ratatui::crossterm::event::KeyCode::Char('j'),
+            )));
+        }
+        assert_eq!(preview.cursor_position(), Some((2, None)));
+
+        // A refresh of the same step (e.g. the rebuild on FocusGained) keeps it.
+        pane.update_step_code();
+        let preview = pane.steps.get_step_preview_mut().unwrap();
+        assert_eq!(preview.cursor_position(), Some((2, None)), "refresh must not reset the cursor");
+
+        // A real change (the bookmark moved) places the cursor on the new range.
+        pane.steps_data[0].line_number = 3;
+        pane.steps_data[0].line_end = Some(3);
+        pane.update_step_code();
+        let preview = pane.steps.get_step_preview_mut().unwrap();
+        assert_eq!(preview.cursor_position(), Some((3, None)));
     }
 
     #[test]

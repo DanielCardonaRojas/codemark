@@ -609,6 +609,7 @@ name = "codemark-tui"
 version = "0.8.0"
 dependencies = [
  "anyhow",
+ "chrono",
  "codemark-core",
  "copypasta",
  "crossterm 0.28.1",

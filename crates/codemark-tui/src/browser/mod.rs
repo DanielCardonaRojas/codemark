@@ -4,10 +4,12 @@
 //! containing search, repos, and tours, and a right main content area.
 
 mod bindings;
+mod comment_draft;
 mod config_info;
 mod data;
 mod dialog;
 mod events;
+mod inline_threads;
 mod left_pane;
 mod right_pane;
 mod search;
@@ -262,6 +264,9 @@ pub struct BrowserLayout {
     /// Branch picker for copying/moving a collection (`c` / `m`). Modal like
     /// `dialog`; the two are never open at once.
     branch_picker: Option<BranchPicker>,
+    /// Comment being written from the code preview (`c` / `r`). Modal like
+    /// `dialog`.
+    comment_draft: Option<comment_draft::CommentDraft>,
     /// A transfer plan is running in the background.
     transfer_planning: bool,
     /// A confirmation that arrived while another dialog was open; shown when
@@ -406,6 +411,7 @@ impl BrowserLayout {
             last_step_move_tick: None,
             dialog: None,
             branch_picker: None,
+            comment_draft: None,
             transfer_planning: false,
             queued_dialog: None,
             // Corrected immediately by update_tours_tab_visibility below.
@@ -2966,6 +2972,15 @@ impl BrowserLayout {
         self.previous_focus.is_none()
     }
 
+    /// Whether the bookmark code preview (Steps pane, code tab) has focus, the
+    /// only place comment keys (`c`, `r`, `z`) apply.
+    fn code_preview_focused(&self) -> bool {
+        self.focus == FocusArea::Main
+            && self.right_pane.focused == right_pane::RightPaneFocus::Steps
+            && self.right_pane.steps.tabs.selected_index() == 0
+            && !self.right_pane.overview_active
+    }
+
     /// The ordered list of focusable areas in the left pane.
     ///
     /// When the left pane is expanded (Half/Full), only the panes that are
@@ -3187,6 +3202,7 @@ impl BrowserLayout {
         // Modal dialogs draw last so they overlay every pane.
         self.render_dialog(area, buf);
         self.render_branch_picker(area, buf);
+        self.render_comment_draft(area, buf);
     }
 }
 
@@ -3410,6 +3426,71 @@ mod tests {
             FocusArea::Main,
             "click on a fullscreen preview must focus Main, not a hidden left panel",
         );
+    }
+
+    #[test]
+    fn clicking_a_bubble_on_another_node_keeps_it_selected() {
+        use crate::component::{InlineComment, InlineThread};
+        use ratatui::buffer::Buffer;
+        use ratatui::crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+        use ratatui::layout::Rect;
+
+        let mut layout = test_layout();
+        let area = Rect::new(0, 0, 120, 40);
+        let thread = |id: &str, line: usize, body: &str| InlineThread {
+            root_id: id.into(),
+            anchor_start: line,
+            anchor_end: line,
+            start_col: 0,
+            end_col: 4,
+            entries: vec![InlineComment {
+                author: "a".into(),
+                when: "today".into(),
+                body: body.into(),
+            }],
+        };
+        let code: String = (0..12).map(|i| format!("line{i}\n")).collect();
+        let preview = layout.right_pane.steps.get_step_preview_mut().unwrap();
+        preview.set_code(code);
+        preview
+            .set_threads(vec![thread("first", 1, "first body"), thread("other", 6, "other body")]);
+        layout.set_focus(FocusArea::Main);
+        let render = |layout: &BrowserLayout| {
+            let mut buf = Buffer::empty(area);
+            layout.render(area, &mut buf);
+            buf
+        };
+        let buf = render(&layout);
+
+        // Keyboard: cursor on line 1 focuses the first thread.
+        layout.right_pane.steps.get_step_preview_mut().unwrap().jump_to_line(1);
+        render(&layout);
+        let preview = layout.right_pane.steps.get_step_preview_mut().unwrap();
+        assert_eq!(preview.focused_thread_id(), Some("first"));
+
+        // Click the other thread's bubble: press, release, then a few frames.
+        let (x, y) = (0..area.height)
+            .find_map(|y| {
+                let row: String = (0..area.width).map(|x| buf[(x, y)].symbol()).collect();
+                row.find("other body").map(|b| (row[..b].chars().count() as u16, y))
+            })
+            .expect("other bubble on screen");
+        for kind in [MouseEventKind::Down(MouseButton::Left), MouseEventKind::Up(MouseButton::Left)]
+        {
+            layout.handle_event(&Event::Mouse(MouseEvent {
+                kind,
+                column: x,
+                row: y,
+                modifiers: KeyModifiers::empty(),
+            }));
+            render(&layout);
+        }
+        for _ in 0..5 {
+            layout.handle_event(&Event::Tick);
+            render(&layout);
+        }
+        let preview = layout.right_pane.steps.get_step_preview_mut().unwrap();
+        assert_eq!(preview.focused_thread_id(), Some("other"), "the clicked bubble stays selected");
     }
 
     #[test]

@@ -532,7 +532,7 @@ impl BrowserLayout {
         }
     }
 
-    fn notify(&mut self, success: bool, message: String) {
+    pub(super) fn notify(&mut self, success: bool, message: String) {
         self.pending_notification = Some(HealNotification { message, success });
     }
 

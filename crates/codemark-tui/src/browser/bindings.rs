@@ -108,6 +108,13 @@ impl BrowserLayout {
                     bindings.push(("Enter", "Go to step / Open link"));
                 }
                 bindings.push(("o", "Open in editor"));
+                if self.code_preview_focused() {
+                    bindings.push(("c", "Comment on code"));
+                    bindings.push(("r", "Reply to comment"));
+                    bindings.push(("z", "Fold comment / line"));
+                    bindings.push(("Z", "Fold all comments"));
+                    bindings.push(("n/N", "Next / previous comment"));
+                }
                 // Links only exist in markdown panels, not the code preview.
                 if self.right_pane.link_navigation_available() {
                     bindings.push(("n/N", "Cycle links"));
@@ -273,6 +280,9 @@ impl BrowserLayout {
                     KeyBinding::new("Enter", "Select Step").with_priority(HIDDEN_BINDING_PRIORITY),
                 );
                 bindings.push(KeyBinding::new("o", "Open File").with_priority(85));
+                if self.code_preview_focused() {
+                    bindings.push(KeyBinding::new("c", "Comment").with_priority(60));
+                }
                 // Links only exist in markdown panels, not the code preview.
                 if self.right_pane.link_navigation_available() {
                     bindings.push(KeyBinding::new("n/N", "Links").with_priority(40));
