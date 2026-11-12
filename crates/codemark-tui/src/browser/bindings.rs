@@ -109,7 +109,9 @@ impl BrowserLayout {
                 }
                 bindings.push(("o", "Open in editor"));
                 if self.code_preview_focused() {
-                    bindings.push(("c", "Comment on code"));
+                    bindings.push(("c", "Comment on code / selection"));
+                    bindings.push(("v", "Select a range to comment on"));
+                    bindings.push(("w/b/e 0/^/$", "Move by word / line (with v or Enter)"));
                     bindings.push(("r", "Reply to comment"));
                     bindings.push(("z", "Fold comment / line"));
                     bindings.push(("Z", "Fold all comments"));
