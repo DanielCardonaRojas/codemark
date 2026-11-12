@@ -98,7 +98,7 @@ pub struct CodePreview {
     /// File extension for syntax detection
     extension: String,
     /// Vertical scroll offset
-    scroll_offset: u16,
+    scroll_offset: Cell<u16>,
     /// Currently highlighted line (0-indexed). Doubles as the cursor's row when
     /// the preview is focused.
     selected_line: Option<usize>,
@@ -161,7 +161,7 @@ impl CodePreview {
         let preview = Self {
             code,
             extension,
-            scroll_offset: 0,
+            scroll_offset: Cell::new(0),
             selected_line: None,
             cursor_col: 0,
             selected_range: None,
@@ -231,7 +231,7 @@ impl CodePreview {
         self.inline.threads.clear();
         self.inline.cursor_on = None;
         self.invalidate_layout();
-        self.scroll_offset = 0;
+        self.scroll_offset.set(0);
         self.selected_line = None;
         self.cursor_col = 0;
         self.selection_mode = false;
@@ -352,10 +352,14 @@ impl CodePreview {
 
             let (start_row, end_row) = (self.row_of(start), self.row_of(end_value));
             if area_height > 0 {
-                self.scroll_offset = self.calculate_scroll_offset(start_row, end_row, area_height);
+                self.scroll_offset.set(self.calculate_scroll_offset(
+                    start_row,
+                    end_row,
+                    area_height,
+                ));
             } else {
                 // No area info yet - set a reasonable default
-                self.scroll_offset = start_row.saturating_sub(2) as u16;
+                self.scroll_offset.set(start_row.saturating_sub(2) as u16);
             }
         }
     }
@@ -408,9 +412,10 @@ impl CodePreview {
     pub fn scroll_by(&mut self, delta: i32) -> bool {
         let height = self.last_area.get().height as usize;
         let max_offset = self.total_rows().saturating_sub(height) as i32;
-        let old_offset = self.scroll_offset;
-        self.scroll_offset = (self.scroll_offset as i32 + delta).clamp(0, max_offset) as u16;
-        old_offset != self.scroll_offset
+        let old_offset = self.scroll_offset.get();
+        self.scroll_offset
+            .set((self.scroll_offset.get() as i32 + delta).clamp(0, max_offset) as u16);
+        old_offset != self.scroll_offset.get()
     }
 
     /// Width of the gutter (range sign + line number + space + comment sign +
@@ -650,11 +655,11 @@ impl CodePreview {
         if height == 0 {
             return;
         }
-        let offset = self.scroll_offset as usize;
+        let offset = self.scroll_offset.get() as usize;
         if last >= offset + height {
-            self.scroll_offset = (last + 1).saturating_sub(height).min(first) as u16;
+            self.scroll_offset.set((last + 1).saturating_sub(height).min(first) as u16);
         } else if first < offset {
-            self.scroll_offset = first as u16;
+            self.scroll_offset.set(first as u16);
         }
     }
 
@@ -710,8 +715,9 @@ impl CodePreview {
     fn click_row(&mut self, y: u16) -> bool {
         let area = self.last_area.get();
         let height = area.height as usize;
-        let offset = (self.scroll_offset as usize).min(self.total_rows().saturating_sub(height));
-        self.scroll_offset = offset as u16;
+        let offset =
+            (self.scroll_offset.get() as usize).min(self.total_rows().saturating_sub(height));
+        self.scroll_offset.set(offset as u16);
         let row = offset + y.saturating_sub(area.y) as usize;
         let Some(&display_row) = self.layout().rows.get(row) else { return false };
         match display_row {
@@ -734,7 +740,7 @@ impl CodePreview {
     /// rows above it appeared or vanished.
     fn relayout_keeping_cursor(&mut self, change: impl FnOnce(&mut Self)) {
         let anchor = self.selected_line.unwrap_or(0);
-        let screen_row = self.row_of(anchor) as i64 - self.scroll_offset as i64;
+        let screen_row = self.row_of(anchor) as i64 - self.scroll_offset.get() as i64;
         change(self);
         self.invalidate_layout();
         self.drop_hidden_cursor_bubble();
@@ -744,7 +750,8 @@ impl CodePreview {
             return;
         }
         let max_offset = self.total_rows().saturating_sub(height) as i64;
-        self.scroll_offset = (self.row_of(anchor) as i64 - screen_row).clamp(0, max_offset) as u16;
+        self.scroll_offset
+            .set((self.row_of(anchor) as i64 - screen_row).clamp(0, max_offset) as u16);
     }
 
     fn invalidate_layout(&self) {
@@ -759,18 +766,46 @@ impl CodePreview {
         if width == 0 {
             return 0;
         }
-        width.saturating_sub(self.gutter_width() as usize + 1 + BUBBLE_CHROME).max(8)
+        width.saturating_sub(self.gutter_width() as usize + 1 + BUBBLE_CHROME).max(1)
     }
 
     /// The display-row layout, rebuilt if code, threads, folds or width changed.
     fn layout(&self) -> std::cell::Ref<'_, RowLayout> {
         let key = (self.inline.layout_gen.get(), self.bubble_text_width());
-        if self.inline.layout_key.get() != Some(key) {
-            *self.inline.layout.borrow_mut() =
+        let previous = self.inline.layout_key.get();
+        if previous != Some(key) {
+            // Only the width changed (a resize): bubbles re-wrap, so rows above
+            // the cursor can grow or shrink. Note where the cursor sits on
+            // screen to put it back there.
+            let resized = previous.is_some_and(|(generation, _)| generation == key.0);
+            let cursor_screen_row = resized
+                .then(|| self.cursor_first_row(&self.inline.layout.borrow()))
+                .flatten()
+                .map(|row| row as i64 - self.scroll_offset.get() as i64);
+            let layout =
                 build_layout(self.line_count(), &self.inline.threads, &self.inline.folded, key.1);
+            if let Some(screen_row) = cursor_screen_row
+                && let Some(row) = self.cursor_first_row(&layout)
+            {
+                let height = self.last_area.get().height as usize;
+                let max_offset = layout.total_rows().saturating_sub(height) as i64;
+                self.scroll_offset.set((row as i64 - screen_row).clamp(0, max_offset) as u16);
+            }
+            *self.inline.layout.borrow_mut() = layout;
             self.inline.layout_key.set(Some(key));
         }
         self.inline.layout.borrow()
+    }
+
+    /// First display row of the cursor in `layout`: its bubble's top row, or
+    /// its code line.
+    fn cursor_first_row(&self, layout: &RowLayout) -> Option<usize> {
+        if let Some(t) = self.cursor_thread()
+            && let Some((first, _)) = layout.bubble_rows(t)
+        {
+            return Some(first);
+        }
+        self.selected_line.map(|line| layout.row_of(line))
     }
 
     /// Display row of source line `line`.
@@ -837,7 +872,7 @@ impl Component for CodePreview {
         // Clamp to the content: an offset set before the first frame (no
         // height known yet) or before bubbles were folded can overshoot, which
         // would hide the top of a file that fits on screen.
-        let offset = (self.scroll_offset as usize).min(list_len.saturating_sub(height));
+        let offset = (self.scroll_offset.get() as usize).min(list_len.saturating_sub(height));
         let mut text_lines = Vec::with_capacity(height);
         for display_row in layout.rows.iter().skip(offset).take(height) {
             match *display_row {
@@ -880,7 +915,7 @@ impl Component for CodePreview {
             }
         }
 
-        // The focused comment's node as (display row, from col, to col).
+        // The focused comment's node as (display row, from cell, to cell).
         let node_rows: Vec<(usize, usize, usize)> = focused_thread
             .map(|t| {
                 let t = &self.inline.threads[t];
@@ -891,7 +926,14 @@ impl Component for CodePreview {
                         let from = if line == t.anchor_start { t.start_col } else { indent };
                         let to =
                             if line == t.anchor_end { t.end_col } else { text.chars().count() };
-                        (layout.row_of(line), from, to)
+                        // Terminal cells, not chars: `界` takes two cells and a
+                        // combining mark none.
+                        let cells = |chars: usize| -> usize {
+                            unicode_width::UnicodeWidthStr::width(
+                                text.chars().take(chars).collect::<String>().as_str(),
+                            )
+                        };
+                        (layout.row_of(line), cells(from), cells(to))
                     })
                     .collect()
             })
@@ -1070,19 +1112,21 @@ impl Component for CodePreview {
                         let height = area.height as usize;
                         let total_rows = self.total_rows();
                         if total_rows > height {
-                            let old_offset = self.scroll_offset;
-                            self.scroll_offset = self
-                                .scroll_offset
-                                .saturating_add(1)
-                                .min((total_rows - height) as u16);
-                            return old_offset != self.scroll_offset;
+                            let old_offset = self.scroll_offset.get();
+                            self.scroll_offset.set(
+                                self.scroll_offset
+                                    .get()
+                                    .saturating_add(1)
+                                    .min((total_rows - height) as u16),
+                            );
+                            return old_offset != self.scroll_offset.get();
                         }
                         false
                     }
                     ratatui::crossterm::event::MouseEventKind::ScrollUp if is_hovered => {
-                        let old_offset = self.scroll_offset;
-                        self.scroll_offset = self.scroll_offset.saturating_sub(1);
-                        old_offset != self.scroll_offset
+                        let old_offset = self.scroll_offset.get();
+                        self.scroll_offset.set(self.scroll_offset.get().saturating_sub(1));
+                        old_offset != self.scroll_offset.get()
                     }
                     _ => false,
                 }
@@ -1463,12 +1507,12 @@ mod tests {
         preview.jump_to_line(4);
         render_to_buffer(&preview, 60, 10);
         let rows_before = preview.total_rows();
-        let screen_row = preview.row_of(4) - preview.scroll_offset as usize;
+        let screen_row = preview.row_of(4) - preview.scroll_offset.get() as usize;
 
         assert!(preview.handle_event(&key(ratatui::crossterm::event::KeyCode::Char('z'))));
         let buf = render_to_buffer(&preview, 60, 10);
         assert_eq!(preview.total_rows(), 30, "folded bubbles take no rows (was {rows_before})");
-        assert_eq!(preview.row_of(4) - preview.scroll_offset as usize, screen_row);
+        assert_eq!(preview.row_of(4) - preview.scroll_offset.get() as usize, screen_row);
         let line4 = (0..10).map(|y| row_text(&buf, y)).find(|r| r.contains("line4")).unwrap();
         assert!(line4.contains("5 ▸ line4"), "folded sign sits beside the number: {line4}");
 
@@ -1514,7 +1558,7 @@ mod tests {
         // Scroll to the bottom: the bubble under the last line must be reachable.
         preview.scroll_by(1000);
         let buf = render_to_buffer(&preview, 60, 10);
-        assert_eq!(preview.scroll_offset as usize, preview.total_rows() - 10);
+        assert_eq!(preview.scroll_offset.get() as usize, preview.total_rows() - 10);
         assert!(row_text(&buf, 9).contains("└"), "last row is the bubble's bottom");
     }
 
@@ -1685,7 +1729,8 @@ mod tests {
         assert!(preview.inline.folded.is_empty());
         let (first, _) = preview.cursor_rows().unwrap();
         assert!(
-            first >= preview.scroll_offset as usize && first < preview.scroll_offset as usize + 10
+            first >= preview.scroll_offset.get() as usize
+                && first < preview.scroll_offset.get() as usize + 10
         );
     }
 
@@ -1793,5 +1838,47 @@ mod tests {
         preview.handle_event(&key(ratatui::crossterm::event::KeyCode::Char('Z')));
         let all_folded = snapshot(&preview, 64, 24);
         insta::assert_snapshot!(format!("{line_folded}--- Z ---\n{all_folded}"));
+    }
+
+    #[test]
+    fn narrowing_the_pane_keeps_the_cursor_line_on_screen() {
+        let mut preview = CodePreview::new(numbered_code(30), "txt");
+        preview.set_focus(true);
+        render_to_buffer(&preview, 80, 12);
+        let long = "a long comment body that wraps onto many more rows once the pane gets narrow";
+        preview.set_threads(vec![thread("t1", 2, 2, &[long, long])]);
+        preview.jump_to_line(9);
+        render_to_buffer(&preview, 80, 12);
+        let screen_row = preview.row_of(9) - preview.scroll_offset.get() as usize;
+
+        // Narrower: the bubble above line 9 grows, but line 9 stays put.
+        let buf = render_to_buffer(&preview, 40, 12);
+        assert_eq!(preview.row_of(9) - preview.scroll_offset.get() as usize, screen_row);
+        assert!(
+            row_text(&buf, screen_row as u16).contains("line9"),
+            "{}",
+            row_text(&buf, screen_row as u16)
+        );
+    }
+
+    #[test]
+    fn node_highlight_counts_wide_characters_as_two_cells() {
+        // `界` is one char but two terminal cells, so `call()` starts at cell 8.
+        let mut preview = CodePreview::new("x\n界 = 1; call();\n".to_string(), "txt");
+        preview.set_focus(true);
+        render_to_buffer(&preview, 60, 10);
+        let mut t = thread("t1", 1, 1, &["c"]);
+        // Char columns of `call()`: after "界 = 1; " (7 chars).
+        (t.start_col, t.end_col) = (7, 13);
+        preview.set_threads(vec![t]);
+        preview.jump_to_line(1);
+        let buf = render_to_buffer(&preview, 60, 10);
+        let gutter = preview.gutter_width();
+        let node: String = (0..60)
+            .filter(|&x| buf[(x, 1)].bg == crate::theme::COMMENT_ANCHOR_BG)
+            .map(|x| buf[(x, 1)].symbol().to_string())
+            .collect();
+        assert_eq!(node, "call()");
+        assert_eq!(buf[(gutter + 8, 1)].symbol(), "c", "highlight starts on the `c`");
     }
 }

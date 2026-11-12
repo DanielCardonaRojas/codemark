@@ -15,7 +15,7 @@ use codemark_core::engine::bookmark::BookmarkComment;
 use codemark_core::engine::comment_anchor::{self, CommentAnchor};
 
 use super::BrowserLayout;
-use super::inline_threads::trimmed_line_span;
+use super::inline_threads::{bookmark_span, trimmed_line_span};
 
 /// What saving the draft will create.
 #[derive(Debug, Clone)]
@@ -66,13 +66,14 @@ impl BrowserLayout {
         }
         let bookmark = step.bookmark.clone();
         let bookmark_lines = (step.line_number, step.line_end.unwrap_or(step.line_number));
+        let bookmark_bytes = step.byte_range;
         let Some(preview) = self.right_pane.steps.get_step_preview_mut() else { return false };
         let Some((line, col)) = preview.cursor_position() else { return false };
         let code = preview.code().to_string();
 
         let anchor = (|| {
             let language = bookmark.grammar()?;
-            let bookmark_range = trimmed_line_span(&code, bookmark_lines.0, bookmark_lines.1)
+            let bookmark_range = bookmark_span(&code, bookmark_lines, bookmark_bytes)
                 .ok_or_else(|| codemark_core::error::Error::Input("empty bookmark range".into()))?;
             let comment_range = match col.and_then(|c| point_offset(&code, line, c)) {
                 Some(offset) => (offset, offset),
@@ -139,28 +140,42 @@ impl BrowserLayout {
         }
     }
 
+    /// Save the draft. The modal closes only once the comment is written:
+    /// an empty body or a failed write (say, a locked database) keeps it open
+    /// with the text intact so nothing typed is lost.
     fn save_comment_draft(&mut self) {
-        let Some(draft) = self.comment_draft.take() else { return };
+        let Some(draft) = self.comment_draft.as_ref() else { return };
         let body = draft.body.trim().to_string();
         if body.is_empty() {
-            // Keep the modal open: an empty comment is never what was meant.
-            self.comment_draft = Some(draft);
             return;
         }
         let comment = BookmarkComment::new(&draft.bookmark_id, comment_author(), body);
-        let comment = match draft.kind {
-            DraftKind::Anchored(anchor) => comment.with_anchor(anchor),
-            DraftKind::Reply { root_id } => BookmarkComment { parent_id: Some(root_id), ..comment },
+        let comment = match &draft.kind {
+            DraftKind::Anchored(anchor) => comment.with_anchor(anchor.clone()),
+            DraftKind::Reply { root_id } => {
+                BookmarkComment { parent_id: Some(root_id.clone()), ..comment }
+            }
         };
         let db = self.workspace.db_for(draft.repo_root.as_deref());
         match db.insert_comment(&comment) {
             Ok(()) => {
                 tracing::debug!(target: "codemark::comments", id = %comment.id, "comment saved from TUI");
                 self.right_pane.reload_step_comments(db);
+                self.comment_draft = None;
                 self.notify(true, "Comment added".into());
             }
-            Err(e) => self.notify(false, format!("Failed to save comment: {e}")),
+            Err(e) => {
+                tracing::warn!(target: "codemark::comments", error = %e, "failed to save comment");
+                self.notify(false, format!("Failed to save comment (draft kept): {e}"));
+            }
         }
+    }
+
+    /// Bracketed paste while the draft is open goes into its body.
+    pub(super) fn paste_into_comment_draft(&mut self, text: &str) -> bool {
+        let Some(draft) = self.comment_draft.as_mut() else { return false };
+        draft.body.push_str(&text.replace("\r\n", "\n").replace('\r', "\n"));
+        true
     }
 
     /// Draw the draft modal centred over `area`.
@@ -251,5 +266,37 @@ mod tests {
         assert_eq!(point_offset(code, 1, 0), Some(3));
         assert_eq!(point_offset(code, 1, 3), Some(3 + "cdé".len()));
         assert_eq!(point_offset(code, 5, 0), None);
+    }
+
+    fn layout_with_draft() -> (BrowserLayout, tempfile::TempDir) {
+        use crate::event::{EventHandler, EventHandlerConfig};
+        let dir = tempfile::tempdir().expect("tempdir");
+        let db = codemark_core::storage::db::Database::open(&dir.path().join("test.db")).unwrap();
+        let handler = EventHandler::new(EventHandlerConfig::default()).unwrap();
+        let mut layout = BrowserLayout::new(db, handler);
+        layout.comment_draft = Some(CommentDraft {
+            bookmark_id: "missing-bookmark".into(),
+            repo_root: None,
+            kind: DraftKind::Reply { root_id: "missing-root".into() },
+            body: "typed ".into(),
+        });
+        (layout, dir)
+    }
+
+    #[test]
+    fn pasted_text_goes_into_the_draft() {
+        let (mut layout, _dir) = layout_with_draft();
+        layout.handle_event(&crate::event::Event::Paste("pasted\r\nlines".into()));
+        assert_eq!(layout.comment_draft.as_ref().unwrap().body, "typed pasted\nlines");
+    }
+
+    #[test]
+    fn a_failed_save_keeps_the_draft_open_with_its_text() {
+        // The bookmark doesn't exist, so the foreign key rejects the insert.
+        let (mut layout, _dir) = layout_with_draft();
+        layout.save_comment_draft();
+        let draft = layout.comment_draft.as_ref().expect("draft survives a failed save");
+        assert_eq!(draft.body, "typed ");
+        assert!(layout.pending_notification.as_ref().is_some_and(|n| !n.success));
     }
 }

@@ -14,10 +14,14 @@ use crate::component::{InlineComment, InlineThread};
 ///
 /// `bookmark_lines` is the bookmark's live range (0-indexed, inclusive), or
 /// `None` when it did not resolve, in which case no thread is shown.
+///
+/// `bookmark_bytes` is its exact byte range when known; otherwise the lines
+/// stand in for it (see [`bookmark_span`]).
 pub(crate) fn build_inline_threads(
     bm: &Bookmark,
     code: &str,
     bookmark_lines: Option<(usize, usize)>,
+    bookmark_bytes: Option<(usize, usize)>,
 ) -> Vec<InlineThread> {
     let roots: Vec<&BookmarkComment> =
         bm.comments.iter().filter(|c| c.parent_id.is_none() && c.is_anchored()).collect();
@@ -26,7 +30,9 @@ pub(crate) fn build_inline_threads(
         return Vec::new();
     }
     let Ok(language) = bm.grammar() else { return Vec::new() };
-    let Some(bookmark_range) = trimmed_line_span(code, start, end) else { return Vec::new() };
+    let Some(bookmark_range) = bookmark_span(code, (start, end), bookmark_bytes) else {
+        return Vec::new();
+    };
 
     let anchors: Vec<(Option<&str>, Option<&str>)> =
         roots.iter().map(|c| (c.query.as_deref(), c.content_hash.as_deref())).collect();
@@ -91,6 +97,20 @@ pub(crate) fn relative_time(iso: &str, now: chrono::DateTime<chrono::Local>) -> 
     }
 }
 
+/// The bookmark's byte range in `code`: the exact live-resolved range when
+/// known and still inside `code`, else its lines with whitespace trimmed.
+/// The exact range matters when one line holds several functions.
+pub(crate) fn bookmark_span(
+    code: &str,
+    (start, end): (usize, usize),
+    bytes: Option<(usize, usize)>,
+) -> Option<(usize, usize)> {
+    match bytes {
+        Some((s, e)) if s < e && e <= code.len() => Some((s, e)),
+        _ => trimmed_line_span(code, start, end),
+    }
+}
+
 /// Byte span of lines `start..=end` (0-indexed) with surrounding whitespace
 /// trimmed, so the span names the bookmarked node rather than its indentation.
 pub(crate) fn trimmed_line_span(code: &str, start: usize, end: usize) -> Option<(usize, usize)> {
@@ -152,5 +172,59 @@ mod tests {
         assert_eq!(char_column(code, 0), 0);
         assert_eq!(char_column(code, 3), 0);
         assert_eq!(char_column(code, code.find('x').unwrap()), 4);
+    }
+
+    #[test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
+    fn one_line_with_two_functions_scopes_to_the_bookmarked_one() {
+        use codemark_core::engine::bookmark::BookmarkHealth;
+        // Both functions share a line and an identical call. Whole lines would
+        // scope the comment to both; the exact byte range keeps it in `b`.
+        let code = "fn a() { ping(); } fn b() { ping(); }\nfn ping() {}\n";
+        let b = {
+            let start = code.find("fn b").unwrap();
+            (start, code.find("}\n").unwrap() + 1)
+        };
+        let ping_in_b = {
+            let start = code.rfind("ping();").unwrap();
+            (start, start + "ping()".len())
+        };
+        let lang: codemark_core::parser::languages::Language = "rust".parse().unwrap();
+        let anchor =
+            comment_anchor::generate_comment_anchor_from_source(code, &lang, b, ping_in_b).unwrap();
+        let bm = Bookmark {
+            id: "bm".into(),
+            query: "(function_item) @target".into(),
+            language: "rust".into(),
+            grammar_source: None,
+            forked_from: None,
+            branch: None,
+            file_path: "lib.rs".into(),
+            content_hash: None,
+            commit_hash: None,
+            health: BookmarkHealth::Active,
+            resolution_method: None,
+            last_resolved_at: None,
+            stale_since: None,
+            created_at: "2026-01-01T00:00:00Z".into(),
+            created_by: None,
+            current_resolution_id: None,
+            repo_id: None,
+            tags: Vec::new(),
+            annotations: Vec::new(),
+            comments: vec![BookmarkComment::new("bm", "claude", "why ping?").with_anchor(anchor)],
+        };
+
+        let threads = build_inline_threads(&bm, code, Some((0, 0)), Some(b));
+        assert_eq!(threads.len(), 1);
+        assert_eq!(threads[0].start_col, ping_in_b.0, "anchored in `b`, not `a`");
+    }
+
+    #[test]
+    fn bookmark_span_prefers_the_exact_range_when_it_fits() {
+        let code = "fn a() {} fn b() {}\n";
+        assert_eq!(bookmark_span(code, (0, 0), Some((10, 19))), Some((10, 19)));
+        assert_eq!(bookmark_span(code, (0, 0), None), Some((0, 19)), "falls back to the line");
+        assert_eq!(bookmark_span(code, (0, 0), Some((10, 999))), Some((0, 19)), "stale range");
     }
 }

@@ -483,6 +483,10 @@ pub struct StepData {
     /// is a stale persisted fallback, so the preview shows the file *without* a
     /// range highlight/gutter rather than pointing at a misleading location.
     pub resolved: bool,
+    /// Byte range of the bookmarked node from live resolution; `None` for a
+    /// persisted location. Scopes anchored comments exactly: whole lines can
+    /// hold more than one function.
+    pub byte_range: Option<(usize, usize)>,
 }
 
 /// A fully-computed bookmark preview, produced off the UI thread.
@@ -552,6 +556,8 @@ pub struct StepLiveUpdate {
     pub line_end: Option<usize>,
     /// Whether live resolution succeeded; drives whether the range is highlighted.
     pub resolved: bool,
+    /// Live-resolved byte range of the bookmarked node, if resolved.
+    pub byte_range: Option<(usize, usize)>,
     /// Freshly projected health for this step's pager dot.
     pub health: HealthStatus,
 }

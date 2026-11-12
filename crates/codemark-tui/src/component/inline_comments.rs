@@ -239,15 +239,19 @@ pub(crate) fn render_bubble_line(
     let pad = |used: usize| Span::raw(" ".repeat(inner.saturating_sub(used)));
     match line {
         BubbleLine::Top { author, when } => {
-            // Keep at least one rule character before the corner.
-            let author = fit_author(author, when, (box_width - 3).saturating_sub(5));
-            let label = format!(" {author} · {when} ");
+            // Inside the corners, keep one rule character and a space on
+            // each side of the label.
+            let (author, when) = fit_header(author, when, (box_width - 3).saturating_sub(2));
+            let when = when.map(|w| format!(" · {w}")).unwrap_or_default();
+            let label = if author.is_empty() { String::new() } else { format!(" {author}{when} ") };
             spans.push(Span::styled("┌", border));
-            spans.push(Span::styled(
-                format!(" {author}"),
-                Style::default().fg(style.accent).add_modifier(Modifier::BOLD),
-            ));
-            spans.push(Span::styled(format!(" · {when} "), Style::default().fg(style.dim)));
+            if !label.is_empty() {
+                spans.push(Span::styled(
+                    format!(" {author}"),
+                    Style::default().fg(style.accent).add_modifier(Modifier::BOLD),
+                ));
+                spans.push(Span::styled(format!("{when} "), Style::default().fg(style.dim)));
+            }
             spans.push(Span::styled(
                 "─".repeat((box_width - 2).saturating_sub(label.width())),
                 border,
@@ -261,12 +265,13 @@ pub(crate) fn render_bubble_line(
             spans.push(Span::styled(" │", border));
         }
         BubbleLine::ReplyHead { author, when } => {
-            let author = &fit_author(author, when, inner.saturating_sub(2 + 3));
+            let (author, when) = fit_header(author, when, inner.saturating_sub(2));
+            let when = when.map(|w| format!(" · {w}")).unwrap_or_default();
             spans.push(Span::styled("│ ", border));
             spans.push(Span::styled("↳ ", Style::default().fg(style.dim)));
             spans.push(Span::styled(author.clone(), Style::default().fg(style.accent)));
-            spans.push(Span::styled(format!(" · {when}"), Style::default().fg(style.dim)));
-            spans.push(pad(format!("↳ {author} · {when}").width()));
+            spans.push(Span::styled(when.clone(), Style::default().fg(style.dim)));
+            spans.push(pad(2 + author.width() + when.width()));
             spans.push(Span::styled(" │", border));
         }
         BubbleLine::ReplyBody(text) => {
@@ -277,7 +282,12 @@ pub(crate) fn render_bubble_line(
             spans.push(Span::styled(" │", border));
         }
         BubbleLine::Bottom => {
-            let hint = if focused { " r reply · z fold · n next " } else { "" };
+            // The key hint, shortened or left out when the box is too narrow.
+            let room = box_width.saturating_sub(3);
+            let hint = [" r reply · z fold · n next ", " r · z · n "]
+                .into_iter()
+                .find(|h| focused && h.width() <= room)
+                .unwrap_or("");
             spans.push(Span::styled("└", border));
             spans.push(Span::styled(
                 "─".repeat((box_width - 2).saturating_sub(hint.width())),
@@ -290,16 +300,31 @@ pub(crate) fn render_bubble_line(
     Line::from(spans)
 }
 
-/// `author`, shortened with `…` so that `author` plus ` · when` fits in
-/// `room` columns. The time is kept whole: it is the shorter, fixed part.
-fn fit_author(author: &str, when: &str, room: usize) -> String {
-    let budget = room.saturating_sub(when.width());
-    if author.width() <= budget {
-        return author.to_string();
+/// Fit an `author · when` header into `room` columns: shorten the author
+/// with `…` first, then drop the time, then shorten the author alone.
+/// Returns the author to show (empty when nothing fits) and the time, if kept.
+fn fit_header<'a>(author: &str, when: &'a str, room: usize) -> (String, Option<&'a str>) {
+    let with_time = room.saturating_sub(" · ".width() + when.width());
+    if author.width() <= with_time {
+        return (author.to_string(), Some(when));
+    }
+    if with_time >= 2 {
+        return (truncate(author, with_time), Some(when));
+    }
+    (truncate(author, room), None)
+}
+
+/// `text` cut to `room` columns, ending in `…` when shortened.
+fn truncate(text: &str, room: usize) -> String {
+    if text.width() <= room {
+        return text.to_string();
+    }
+    if room == 0 {
+        return String::new();
     }
     let mut out = String::new();
-    for c in author.chars() {
-        if out.width() + c.to_string().width() + 1 > budget {
+    for c in text.chars() {
+        if out.width() + c.to_string().width() + 1 > room {
             break;
         }
         out.push(c);
@@ -400,6 +425,59 @@ mod tests {
         assert!(
             head.ends_with(" │") && head.contains('…') && head.contains("today 00:26"),
             "{head}"
+        );
+    }
+
+    #[test]
+    fn every_row_fits_even_very_narrow_boxes() {
+        let style = BubbleStyle {
+            border: Color::Reset,
+            text: Color::Reset,
+            dim: Color::Reset,
+            accent: Color::Reset,
+        };
+        let thread = InlineThread {
+            root_id: "t".into(),
+            anchor_start: 0,
+            anchor_end: 0,
+            start_col: 0,
+            end_col: 1,
+            entries: vec![
+                InlineComment {
+                    author: "Daniel Cardona Rojas".into(),
+                    when: "yesterday 23:39".into(),
+                    body: "a body long enough to wrap".into(),
+                },
+                InlineComment {
+                    author: "claude".into(),
+                    when: "today 09:05".into(),
+                    body: "ok".into(),
+                },
+            ],
+        };
+        for width in [14, 18, 24, 30] {
+            // Same arithmetic as the preview: indent 4, then the box.
+            let text_width = width - 4 - BUBBLE_CHROME;
+            let layout =
+                build_layout(1, std::slice::from_ref(&thread), &HashSet::new(), text_width);
+            for line in &layout.bubbles[0] {
+                let row: String = render_bubble_line(line, 4, width, true, &style)
+                    .spans
+                    .iter()
+                    .map(|s| s.content.as_ref())
+                    .collect();
+                assert_eq!(row.width(), width, "width {width}: {row:?}");
+            }
+        }
+    }
+
+    #[test]
+    fn headers_shorten_the_author_then_drop_the_time() {
+        assert_eq!(fit_header("claude", "today", 20), ("claude".into(), Some("today")));
+        assert_eq!(fit_header("Daniel Cardona", "today", 14), ("Danie…".into(), Some("today")));
+        assert_eq!(
+            fit_header("Daniel Cardona", "yesterday 23:39", 10),
+            ("Daniel Ca…".into(), None)
         );
     }
 }

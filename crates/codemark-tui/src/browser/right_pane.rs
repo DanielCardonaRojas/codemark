@@ -43,6 +43,21 @@ pub enum RightPaneFocus {
     Details,
 }
 
+/// Where a bookmark's code is now, from live resolution.
+pub(crate) struct LiveLocation {
+    /// Absolute path of the file.
+    pub abs_path: String,
+    /// 0-indexed first line of the bookmarked node.
+    pub start_line: usize,
+    /// 0-indexed last line of the bookmarked node.
+    pub end_line: usize,
+    /// Byte range of the bookmarked node.
+    pub byte_range: (usize, usize),
+    /// The file's contents.
+    pub source: String,
+    pub status: live_resolution::LiveUIStatus,
+}
+
 pub struct RightPane {
     /// Steps tabbed panel (Steps/Info)
     pub steps: TabbedPanel,
@@ -504,10 +519,15 @@ impl RightPane {
         let Some(step) = self.steps_data.get(self.pager_current) else { return };
         let lines =
             step.resolved.then(|| (step.line_number, step.line_end.unwrap_or(step.line_number)));
+        let byte_range = step.byte_range;
         let bookmark = step.bookmark.clone();
         if let Some(preview) = self.steps.get_step_preview_mut() {
-            let threads =
-                super::inline_threads::build_inline_threads(&bookmark, preview.code(), lines);
+            let threads = super::inline_threads::build_inline_threads(
+                &bookmark,
+                preview.code(),
+                lines,
+                byte_range,
+            );
             tracing::debug!(
                 target: "codemark::comments",
                 bookmark = %bookmark.id,
@@ -691,6 +711,7 @@ impl RightPane {
                     // Persisted fallback: the query didn't resolve live, so the
                     // range is stale and must not be highlighted.
                     resolved: false,
+                    byte_range: None,
                 }];
                 self.pager_total = 1;
                 self.pager_current = 0;
@@ -797,8 +818,14 @@ impl RightPane {
         let Some(bm) = db.get_bookmark(bookmark_id).ok().flatten() else {
             return Ok(None);
         };
-        let (abs_path, start_line, end_line, code, live_status) =
-            Self::resolve_bookmark_live(&bm, db, cache, on_runtime_worker)?;
+        let LiveLocation {
+            abs_path,
+            start_line,
+            end_line,
+            byte_range,
+            source: code,
+            status: live_status,
+        } = Self::resolve_bookmark_live(&bm, db, cache, on_runtime_worker)?;
 
         let resolutions = db.list_resolutions(&bm.id, 100).unwrap_or_default();
         let extension = std::path::Path::new(&abs_path)
@@ -827,6 +854,7 @@ impl RightPane {
             // Live resolution succeeded, so the range reflects the current
             // location and is safe to highlight.
             resolved: true,
+            byte_range: Some(byte_range),
         };
 
         Ok(Some(Box::new(PreviewPayload {
@@ -970,6 +998,7 @@ impl RightPane {
             resolutions,
             health,
             resolved: false,
+            byte_range: None,
         }
     }
 
@@ -1023,12 +1052,13 @@ impl RightPane {
         session_cache: &mut HashMap<CodemarkLanguage, ParseCache>,
     ) {
         match Self::resolve_bookmark_live(&step.bookmark, db, session_cache, true) {
-            Ok((abs_path, start_line, end_line, _source, live_status)) => {
-                step.file_path = abs_path;
-                step.line_number = start_line;
-                step.line_end = Some(end_line);
+            Ok(live) => {
+                step.file_path = live.abs_path;
+                step.line_number = live.start_line;
+                step.line_end = Some(live.end_line);
                 step.resolved = true;
-                step.health = crate::component::HealthStatus::from(live_status);
+                step.byte_range = Some(live.byte_range);
+                step.health = crate::component::HealthStatus::from(live.status);
             }
             Err(e) => {
                 step.health = if matches!(e, codemark_core::error::Error::Resolution(_)) {
@@ -1061,11 +1091,13 @@ impl RightPane {
             let location_changed = step.file_path != u.file_path
                 || step.line_number != u.line_number
                 || step.line_end != u.line_end
-                || step.resolved != u.resolved;
+                || step.resolved != u.resolved
+                || step.byte_range != u.byte_range;
             step.file_path = u.file_path;
             step.line_number = u.line_number;
             step.line_end = u.line_end;
             step.resolved = u.resolved;
+            step.byte_range = u.byte_range;
             step.health = u.health;
             if is_current && location_changed {
                 current_changed = true;
@@ -1076,9 +1108,9 @@ impl RightPane {
         }
     }
 
-    /// Resolve a bookmark on-the-fly using tree-sitter, returning
-    /// `(abs_path, start_line, end_line, source)`. Line numbers are 0-indexed
-    /// (from tree-sitter `Point.row`); `source` is the file's contents, returned
+    /// Resolve a bookmark on-the-fly using tree-sitter, returning where its
+    /// code is now as a [`LiveLocation`]. Line numbers are 0-indexed (from
+    /// tree-sitter `Point.row`); `source` is the file's contents, returned
     /// from the parse cache so callers don't read the file a second time.
     ///
     /// The session [`ParseCache`] is reused across selections and invalidates by
@@ -1097,10 +1129,7 @@ impl RightPane {
         db: &Database,
         session_cache: &mut HashMap<CodemarkLanguage, ParseCache>,
         on_runtime_worker: bool,
-    ) -> std::result::Result<
-        (String, usize, usize, String, live_resolution::LiveUIStatus),
-        codemark_core::error::Error,
-    > {
+    ) -> std::result::Result<LiveLocation, codemark_core::error::Error> {
         // Propagated as-is rather than rewrapped: `Error::GrammarNotInstalled`
         // is what lets the caller show "No grammar" instead of "Unmatched",
         // and flattening it into `Error::Input` would throw that away.
@@ -1144,13 +1173,14 @@ impl RightPane {
             )?;
             let (_tree, source) = cache.get_or_parse(&abs_path, &provider).await?;
 
-            Ok::<_, codemark_core::error::Error>((
-                abs_path.to_string_lossy().to_string(),
-                result.start_line,
-                result.end_line,
-                source.clone(),
-                live_status,
-            ))
+            Ok::<_, codemark_core::error::Error>(LiveLocation {
+                abs_path: abs_path.to_string_lossy().to_string(),
+                start_line: result.start_line,
+                end_line: result.end_line,
+                byte_range: result.byte_range,
+                source: source.clone(),
+                status: live_status,
+            })
         };
 
         if on_runtime_worker {
@@ -1365,6 +1395,7 @@ impl RightPane {
                         // Persisted (non-live) load: keep highlighting the stored
                         // range as before.
                         resolved: true,
+                        byte_range: None,
                     });
                 }
             }

@@ -26,11 +26,13 @@ impl BrowserLayout {
             match event {
                 Event::Key(key) => return self.handle_dialog_key(key),
                 Event::Mouse(_) => return true,
-                // A paste goes into the branch picker's filter, never the
-                // search bar behind it.
+                // A paste goes into the open modal (the branch picker's
+                // filter or the comment draft), never the search bar behind it.
                 Event::Paste(text) => {
                     if let Some(picker) = self.branch_picker.as_mut() {
                         picker.push_str(text);
+                    } else {
+                        self.paste_into_comment_draft(text);
                     }
                     return true;
                 }
@@ -1108,16 +1110,15 @@ impl BrowserLayout {
                 // This runs on a spawn_blocking thread, not a runtime worker.
                 let update =
                     match super::RightPane::resolve_bookmark_live(bm, &db, &mut caches, false) {
-                        Ok((file_path, start_line, end_line, _source, live_status)) => {
-                            super::StepLiveUpdate {
-                                index: *index,
-                                file_path,
-                                line_number: start_line,
-                                line_end: Some(end_line),
-                                resolved: true,
-                                health: crate::component::HealthStatus::from(live_status),
-                            }
-                        }
+                        Ok(live) => super::StepLiveUpdate {
+                            index: *index,
+                            file_path: live.abs_path,
+                            line_number: live.start_line,
+                            line_end: Some(live.end_line),
+                            resolved: true,
+                            byte_range: Some(live.byte_range),
+                            health: crate::component::HealthStatus::from(live.status),
+                        },
                         Err(e) => {
                             // Live resolution failed; fall back to the persisted
                             // location (the same one the cheap build used).
@@ -1130,6 +1131,7 @@ impl BrowserLayout {
                                 line_number,
                                 line_end,
                                 resolved: false,
+                                byte_range: None,
                                 health,
                             }
                         }
