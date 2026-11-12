@@ -1789,6 +1789,9 @@ mod tests {
                 body: "**Ticket ABC-123**: investigate".to_string(),
                 created_at: "2024-01-02T00:00:00Z".to_string(),
                 parent_id: None,
+                query: None,
+                content_hash: None,
+                anchor_hint: None,
             }],
         };
 

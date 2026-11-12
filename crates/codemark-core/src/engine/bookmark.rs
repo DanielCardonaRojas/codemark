@@ -200,6 +200,84 @@ pub struct BookmarkComment {
     pub body: String,
     pub created_at: String,
     pub parent_id: Option<String>,
+    /// Tree-sitter query anchoring this comment to a node inside the
+    /// bookmark's deepest landmark (see [`crate::engine::comment_anchor`]).
+    /// `None` means the comment is about the whole bookmark. Replies leave it
+    /// `None` and inherit their root comment's anchor.
+    #[serde(default)]
+    pub query: Option<String>,
+    /// Hash of the anchored node's text at creation; breaks ties when
+    /// `query` matches more than once.
+    #[serde(default)]
+    pub content_hash: Option<String>,
+    /// Where the anchor pointed at creation (`L12-L14: <first line>`), shown
+    /// when it no longer resolves.
+    #[serde(default)]
+    pub anchor_hint: Option<String>,
+}
+
+impl BookmarkComment {
+    /// A new whole-bookmark comment with a fresh id and the current time
+    /// (millisecond precision, so `ORDER BY created_at` is stable).
+    pub fn new(
+        bookmark_id: impl Into<String>,
+        author: impl Into<String>,
+        body: impl Into<String>,
+    ) -> Self {
+        Self {
+            id: uuid::Uuid::new_v4().to_string(),
+            bookmark_id: bookmark_id.into(),
+            author: author.into(),
+            body: body.into(),
+            created_at: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+            parent_id: None,
+            query: None,
+            content_hash: None,
+            anchor_hint: None,
+        }
+    }
+
+    /// Attach a structural anchor, making this a comment on one node.
+    pub fn with_anchor(mut self, anchor: crate::engine::comment_anchor::CommentAnchor) -> Self {
+        self.query = Some(anchor.query);
+        self.content_hash = Some(anchor.content_hash);
+        self.anchor_hint = Some(anchor.anchor_hint);
+        self
+    }
+
+    /// Whether this comment points at a node rather than the whole bookmark.
+    pub fn is_anchored(&self) -> bool {
+        self.query.is_some()
+    }
+
+    /// Order `comments` so each comes after its parent, as the `parent_id`
+    /// foreign key requires on insert. Replies may nest at any depth and
+    /// arrive in any order; a parent missing from the batch counts as
+    /// already present. Errors on a cycle, which only a malformed pack holds.
+    pub fn parents_first(comments: Vec<Self>) -> crate::error::Result<Vec<Self>> {
+        let in_batch: std::collections::HashSet<String> =
+            comments.iter().map(|c| c.id.clone()).collect();
+        let mut placed = std::collections::HashSet::new();
+        let mut ordered = Vec::with_capacity(comments.len());
+        let mut pending = comments;
+        while !pending.is_empty() {
+            let (ready, waiting): (Vec<Self>, Vec<Self>) =
+                pending.into_iter().partition(|c| match &c.parent_id {
+                    Some(parent) => !in_batch.contains(parent) || placed.contains(parent),
+                    None => true,
+                });
+            if ready.is_empty() {
+                return Err(crate::error::Error::Operation(format!(
+                    "comment replies form a cycle ({} comments)",
+                    waiting.len()
+                )));
+            }
+            placed.extend(ready.iter().map(|c| c.id.clone()));
+            ordered.extend(ready);
+            pending = waiting;
+        }
+        Ok(ordered)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

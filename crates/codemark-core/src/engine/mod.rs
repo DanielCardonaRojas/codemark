@@ -1,5 +1,6 @@
 pub mod bookmark;
 pub mod breadcrumbs;
+pub mod comment_anchor;
 pub mod hash;
 pub mod heal;
 pub mod health;

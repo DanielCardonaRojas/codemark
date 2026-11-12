@@ -639,12 +639,27 @@ pub async fn handler(
                 |row| Ok(row.get::<_, i64>(0)? > 0)
             )?;
             if has_comments {
+                // Packs from clients older than V28 carry no anchor columns;
+                // their comments are whole-bookmark ones.
+                let anchor_cols = if codemark_core::storage::db::has_column(
+                    &tx,
+                    "pack",
+                    "bookmark_comments",
+                    "query",
+                ) {
+                    "query, content_hash, anchor_hint"
+                } else {
+                    "NULL, NULL, NULL"
+                };
                 tx.execute(
-                    "INSERT INTO main.bookmark_comments (id, bookmark_id, author, body, created_at, parent_id)
-                     SELECT id, bookmark_id, author, body, created_at, parent_id 
-                     FROM pack.bookmark_comments
-                     WHERE bookmark_id IN (SELECT bookmark_id FROM pack.collection_bookmarks WHERE collection_id = ?1)
-                     AND id NOT IN (SELECT id FROM main.bookmark_comments)",
+                    &format!(
+                        "INSERT INTO main.bookmark_comments
+                            (id, bookmark_id, author, body, created_at, parent_id, query, content_hash, anchor_hint)
+                         SELECT id, bookmark_id, author, body, created_at, parent_id, {anchor_cols}
+                         FROM pack.bookmark_comments
+                         WHERE bookmark_id IN (SELECT bookmark_id FROM pack.collection_bookmarks WHERE collection_id = ?1)
+                         AND id NOT IN (SELECT id FROM main.bookmark_comments)"
+                    ),
                     [&collection_id]
                 )?;
             }

@@ -32,12 +32,8 @@ fn build_comments(bookmark_id: &str, bodies: &[String], author: &str) -> Vec<Boo
     bodies
         .iter()
         .map(|body| BookmarkComment {
-            id: uuid::Uuid::new_v4().to_string(),
-            bookmark_id: bookmark_id.to_string(),
-            author: author.to_string(),
-            body: body.clone(),
             created_at: now_iso(),
-            parent_id: None,
+            ..BookmarkComment::new(bookmark_id, author, body.clone())
         })
         .collect()
 }
