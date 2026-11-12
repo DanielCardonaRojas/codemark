@@ -272,5 +272,35 @@ rendered="$RENDER_DIR/layout-thumb.tape"
 sed "s#__OUT__#$IMAGES_DIR#g" "$SHOTS_DIR/layout-thumb.tape" > "$rendered"
 ( cd "$FIXTURE_REPO" && PATH="$BIN_DIR:$PATH" vhs "$rendered" )
 
+# Branches: filter collections by branch, then clone one onto another branch.
+# These run LAST, thumbnail first: the GIF's copy writes a new collection into
+# the fixture DB, which would shift the row-based keystrokes of any tape after it.
+echo "    - branches-thumb.tape (png)"
+rendered="$RENDER_DIR/branches-thumb.tape"
+sed "s#__OUT__#$IMAGES_DIR#g" "$SHOTS_DIR/branches-thumb.tape" > "$rendered"
+( cd "$FIXTURE_REPO" && PATH="$BIN_DIR:$PATH" vhs "$rendered" )
+
+echo "    - branches.tape (gif)"
+BRANCHES_GIF_FINAL="$IMAGES_DIR/codemark_tui_branches.gif"
+if command -v ffmpeg >/dev/null; then
+  BRANCHES_GIF_RAW="$SANDBOX/branches_raw.gif"
+  rendered="$RENDER_DIR/branches.tape"
+  sed "s#__OUT__#$SANDBOX#g" "$SHOTS_DIR/branches.tape" > "$rendered"
+  # branches.tape writes codemark_tui_branches.gif into the __OUT__ dir (sandbox).
+  ( cd "$FIXTURE_REPO" && PATH="$BIN_DIR:$PATH" vhs "$rendered" )
+  mv "$SANDBOX/codemark_tui_branches.gif" "$BRANCHES_GIF_RAW"
+  PAL="$SANDBOX/branches_palette.png"
+  ffmpeg -y -loglevel error -i "$BRANCHES_GIF_RAW" \
+    -vf "scale=1280:-1:flags=lanczos,palettegen=stats_mode=diff" "$PAL"
+  ffmpeg -y -loglevel error -i "$BRANCHES_GIF_RAW" -i "$PAL" \
+    -lavfi "scale=1280:-1:flags=lanczos[x];[x][1:v]paletteuse=dither=bayer:bayer_scale=3" \
+    "$BRANCHES_GIF_FINAL"
+else
+  echo "      warning: ffmpeg not found; recording GIF at full size (large file)."
+  rendered="$RENDER_DIR/branches.tape"
+  sed "s#__OUT__#$IMAGES_DIR#g" "$SHOTS_DIR/branches.tape" > "$rendered"
+  ( cd "$FIXTURE_REPO" && PATH="$BIN_DIR:$PATH" vhs "$rendered" )
+fi
+
 echo "==> Done. Updated:"
 ls -1 "$IMAGES_DIR"/codemark_tui_*.png "$IMAGES_DIR"/codemark_tui_*.gif 2>/dev/null

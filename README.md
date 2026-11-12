@@ -141,6 +141,14 @@ codemark tui
       </a>
     </td>
   </tr>
+  <tr>
+    <td align="center" width="240">
+      <a href="./dev-docs/guides/demo-gallery.md#branches--filter-and-clone-collections">
+        <img src="./screenshots/images/codemark_tui_branches_thumb.png" width="220" alt="Branch filtering and collection cloning demo">
+        <br><sub><b>Filter by branch &amp; clone</b></sub>
+      </a>
+    </td>
+  </tr>
 </table>
 
 See the [**Demo Gallery**](./dev-docs/guides/demo-gallery.md) for the full-size animated walkthroughs.

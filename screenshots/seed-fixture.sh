@@ -61,6 +61,11 @@ git -C "$REPO_ROOT" cat-file -e "${FIXTURE_REV}^{commit}" 2>/dev/null || {
 git clone -q --shared --no-checkout "$REPO_ROOT" "$DEST"
 git -C "$DEST" checkout -q -B main "$FIXTURE_REV"
 git -C "$DEST" remote set-url origin https://github.com/DanielCardonaRojas/codemark.git
+# The clone inherits every local branch of this repo as `origin/*`. Drop them so
+# the TUI's branch picker lists only the fixture's own branches (main and the
+# feature branch seeded below), keeping branches.tape deterministic.
+git -C "$DEST" for-each-ref --format='%(refname)' refs/remotes |
+  while read -r ref; do git -C "$DEST" update-ref -d "$ref"; done
 cd "$DEST"
 
 # The checkout carries the repo's own tracked .codemark/codemark.db. Drop it so
@@ -97,6 +102,30 @@ collection() {
 }
 
 DOCS="https://github.com/DanielCardonaRojas/codemark"
+
+# ---------------------------------------------------------------------------
+# A feature branch with its own collection, for branches.tape: filter the
+# Collections list by branch, then clone a `main` collection onto this branch.
+# Created first so it sits below the main collections in the newest-first list.
+# The branch stays at FIXTURE_REV (the drift/break edits below land on main
+# only), so its steps resolve cleanly.
+# ---------------------------------------------------------------------------
+FEATURE_BRANCH=sync-retry
+git checkout -q -b "$FEATURE_BRANCH"
+collection tour-sync \
+  "Pushing and pulling tours to the Codetours server, with retries on flaky networks" \
+  --tag area:sync --tag concept:sync
+C=tour-sync
+mark crates/codemark-core/src/sync.rs sync --collection $C \
+  --tag feature:sync --tag role:entry-point \
+  --note "Entry point for \`codemark sync\`: pull remote tours, then push local ones" >/dev/null
+mark crates/codemark-core/src/sync.rs sync_pull --collection $C \
+  --tag feature:sync \
+  --note "Downloads and imports every remote tour newer than the local copy" >/dev/null
+mark crates/codemark-core/src/sync.rs upload_pack --collection $C \
+  --tag feature:sync \
+  --note "Uploads a packed tour; the retry loop for transient failures goes here" >/dev/null
+git checkout -q main
 
 # ---------------------------------------------------------------------------
 # Collections. The TUI lists them newest first, and demo.tape opens the *top*
