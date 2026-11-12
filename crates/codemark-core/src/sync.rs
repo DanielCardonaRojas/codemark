@@ -443,7 +443,7 @@ async fn import_pack(
             .iter()
             .map(|c| (c.id.clone(), uuid::Uuid::new_v4().to_string()))
             .collect();
-        let mut new_comments: Vec<_> = pack_comments
+        let new_comments: Vec<_> = pack_comments
             .into_iter()
             .map(|c| crate::engine::bookmark::BookmarkComment {
                 id: comment_id_map[&c.id].clone(),
@@ -451,9 +451,9 @@ async fn import_pack(
                 ..c
             })
             .collect();
-        // Parents before replies, so the parent_id foreign key holds.
-        new_comments.sort_by_key(|c| c.parent_id.is_some());
-        for comment in &new_comments {
+        // Parents before replies (at any depth), so the parent_id foreign
+        // key holds whatever order the pack lists them in.
+        for comment in &crate::engine::bookmark::BookmarkComment::parents_first(new_comments)? {
             db.insert_comment(comment)?;
         }
 

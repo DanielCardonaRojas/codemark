@@ -44,6 +44,12 @@ pub fn run_query_in(
         .capture_index_for_name("target")
         .ok_or_else(|| Error::TreeSitter("query has no @target capture".into()))?;
 
+    tracing::debug!(
+        target: "codemark::query",
+        scope = scope.kind(),
+        scope_range = ?(scope.start_byte(), scope.end_byte()),
+        "running query"
+    );
     let mut cursor = QueryCursor::new();
     let mut matches = cursor.matches(&query, scope, source);
     let mut results = Vec::new();
@@ -81,6 +87,7 @@ pub fn run_query_in(
         }
     }
 
+    tracing::debug!(target: "codemark::query", matches = results.len(), "query ran");
     Ok(results)
 }
 

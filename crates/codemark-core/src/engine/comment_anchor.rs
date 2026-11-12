@@ -249,8 +249,17 @@ pub fn resolve_comment_anchors_from_source(
     bookmark_range: Option<(usize, usize)>,
     anchors: &[(Option<&str>, Option<&str>)],
 ) -> Result<Vec<AnchorState>> {
-    if anchors.iter().all(|(query, _)| query.is_none()) {
-        return Ok(vec![AnchorState::Bookmark; anchors.len()]);
+    // Without an anchored comment or a resolved bookmark there is nothing to
+    // run, so answer without parsing: a parse error must not hide these.
+    if bookmark_range.is_none() || anchors.iter().all(|(query, _)| query.is_none()) {
+        return Ok(anchors
+            .iter()
+            .map(
+                |(query, _)| {
+                    if query.is_some() { AnchorState::Suspended } else { AnchorState::Bookmark }
+                },
+            )
+            .collect());
     }
     let mut parser = Parser::new(language.clone())?;
     let tree = parser.parse(source.as_bytes())?;
@@ -578,5 +587,63 @@ fn helper(n: usize) -> usize { n }
 
         let state = resolve(source, Some(range_of(source, "helper(1)")), &anchor);
         assert_eq!(anchored_text(source, &state), "helper(2)");
+    }
+
+    #[test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
+    fn selecting_the_function_name_stores_what_the_query_captures() {
+        // The name lifts to its declaration in the query; the stored hash and
+        // hint must describe that captured node, or resolution can't match it.
+        let source = RUST;
+        let name = {
+            let start = source.find("fn parse").unwrap() + 3;
+            (start, start + "parse".len())
+        };
+        let anchor = generate(source, "0 => helper(1)", name).unwrap();
+        let state = resolve(source, Some(range_of(source, "0 => helper(1)")), &anchor);
+        match state {
+            AnchorState::Anchored(r) => {
+                assert!(r.hash_matches, "stored hash is the captured node's");
+                let text = &source[r.byte_range.0..r.byte_range.1];
+                assert!(text.contains("parse"), "{text}");
+                assert!(anchor.anchor_hint.contains("parse"), "{}", anchor.anchor_hint);
+            }
+            other => panic!("expected anchored, got {other:?}"),
+        }
+    }
+
+    #[test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
+    fn identical_twins_widen_until_the_selection_is_distinguishable() {
+        // Same text twice: the hash can't pick the second call, so the anchor
+        // widens until it is unique, and must still cover the selected call.
+        let source = "fn f() {\n    helper(1);\n    helper(1);\n}\nfn helper(n: u8) {}\n";
+        let second = nth_range_of(source, "helper(1)", 1);
+        let anchor = generate(source, "helper(1)", second).unwrap();
+        let state = resolve(source, Some(range_of(source, "helper(1)")), &anchor);
+        match state {
+            AnchorState::Anchored(r) => {
+                assert!(
+                    r.byte_range.0 <= second.0 && second.1 <= r.byte_range.1,
+                    "covers the selection"
+                );
+                assert!(r.hash_matches);
+            }
+            other => panic!("expected anchored, got {other:?}"),
+        }
+    }
+
+    #[test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
+    fn unresolved_bookmarks_report_suspended_without_parsing() {
+        // Garbage source: if this parsed and failed, the states would be lost.
+        let states = resolve_comment_anchors_from_source(
+            "\u{0}\u{0}",
+            &grammar("rust"),
+            None,
+            &[(Some("(x) @target"), None), (None, None)],
+        )
+        .unwrap();
+        assert_eq!(states, vec![AnchorState::Suspended, AnchorState::Bookmark]);
     }
 }

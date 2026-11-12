@@ -221,4 +221,22 @@ mod tests {
         assert!(!comments[1].is_anchored());
         assert_eq!(db.get_comment("c-1").unwrap().unwrap(), anchored);
     }
+
+    #[test]
+    fn parents_first_orders_nested_replies_after_their_parents() {
+        // A reply to a reply listed before its parent, as a pack may hold.
+        let deep = test_comment("c-3", "bm-1", Some("c-2"));
+        let reply = test_comment("c-2", "bm-1", Some("c-1"));
+        let root = test_comment("c-1", "bm-1", None);
+        let outside = test_comment("c-4", "bm-1", Some("not-in-batch"));
+        let ordered = BookmarkComment::parents_first(vec![deep, reply, outside, root]).unwrap();
+        let ids: Vec<&str> = ordered.iter().map(|c| c.id.as_str()).collect();
+        let pos = |id: &str| ids.iter().position(|i| *i == id).unwrap();
+        assert!(pos("c-1") < pos("c-2") && pos("c-2") < pos("c-3"), "{ids:?}");
+        assert!(ids.contains(&"c-4"), "a parent outside the batch counts as present");
+
+        let cycle =
+            vec![test_comment("a", "bm-1", Some("b")), test_comment("b", "bm-1", Some("a"))];
+        assert!(BookmarkComment::parents_first(cycle).is_err());
+    }
 }

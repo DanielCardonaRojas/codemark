@@ -178,7 +178,12 @@ fn descend_into_bodies<'t>(
 ///
 /// When no query for the selected node is unique inside `scope`, the query
 /// is returned anyway for that same node: resolution breaks the tie by
-/// content hash, so the anchor stays on what the user selected.
+/// content hash, so the anchor stays on what the user selected. Only when
+/// another match has the very same text (so the hash can't tell them apart)
+/// does the target widen to its parent, never past `scope`.
+///
+/// The returned `byte_range` is the node the query captures, which can be an
+/// ancestor of the selection (a selected name lifts to its declaration).
 ///
 /// Errors when `byte_range` is not inside `scope`.
 pub fn generate_scoped_query(
@@ -202,18 +207,49 @@ pub fn generate_scoped_query(
     let ctx = QueryContext { source, language, profile, byte_range, root: tree.root_node(), tree };
 
     let first = find_tightest_node(&scope, source, byte_range)?;
-    let target = descend_into_bodies(first, source, byte_range);
-    match disambiguate_query_in(target, &ctx, Some(scope)) {
-        Ok(query) => Ok(scoped_result(target, query, source)),
-        // Several nodes in the scope look alike (`helper(1); helper(2);`
-        // when the pattern checks the callee only). Keep the selected node:
-        // widening to a unique parent would anchor the comment to code the
-        // user did not pick. Resolution tells the matches apart by hash.
-        Err(Error::AmbiguousQuery(_)) => {
-            let path = build_structural_path(target, source, profile, None, Some(scope));
-            Ok(scoped_result(target, build_tier1_query(&path), source))
+    let mut target = descend_into_bodies(first, source, byte_range);
+    loop {
+        let query = match disambiguate_query_in(target, &ctx, Some(scope)) {
+            Ok(query) => query,
+            // Several nodes in the scope look alike (`helper(1); helper(2);`
+            // when the pattern checks the callee only). Keep the selected
+            // node: resolution tells the matches apart by content hash.
+            Err(Error::AmbiguousQuery(_)) => {
+                let path = build_structural_path(target, source, profile, None, Some(scope));
+                build_tier1_query(&path)
+            }
+            Err(e) => return Err(e),
+        };
+        let matches = matcher::run_query_in(&query, scope, source, language)?;
+        // The query may capture an ancestor of the selection (a selected
+        // name lifts to its declaration), so record the node it actually
+        // captures: that is what resolution compares against.
+        let target_range = (target.start_byte(), target.end_byte());
+        let captured = matches
+            .iter()
+            .filter(|m| m.byte_range.0 <= target_range.0 && m.byte_range.1 >= target_range.1)
+            .min_by_key(|m| m.byte_range.1 - m.byte_range.0);
+        let Some(captured) = captured else {
+            return Ok(scoped_result(target, query, source));
+        };
+        // Only identical look-alikes defeat the content hash: widen to the
+        // parent until the captured text is unique, or the scope is reached.
+        let twins = matches.iter().filter(|m| m.node_text == captured.node_text).count();
+        if twins <= 1 || target.id() == scope.id() {
+            return Ok(GeneratedQuery {
+                byte_range: captured.byte_range,
+                ..scoped_result(target, query, source)
+            });
         }
-        Err(e) => Err(e),
+        match target.parent() {
+            Some(parent) => target = parent,
+            None => {
+                return Ok(GeneratedQuery {
+                    byte_range: captured.byte_range,
+                    ..scoped_result(target, query, source)
+                });
+            }
+        }
     }
 }
 

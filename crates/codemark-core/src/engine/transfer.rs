@@ -527,7 +527,7 @@ fn fork_step(
         .iter()
         .map(|c| (c.id.clone(), uuid::Uuid::new_v4().to_string()))
         .collect();
-    let mut comments: Vec<BookmarkComment> = original
+    let comments: Vec<BookmarkComment> = original
         .comments
         .iter()
         .map(|c| BookmarkComment {
@@ -537,8 +537,7 @@ fn fork_step(
             ..c.clone()
         })
         .collect();
-    comments.sort_by_key(|c| c.parent_id.is_some());
-    for comment in &comments {
+    for comment in &BookmarkComment::parents_first(comments)? {
         db.insert_comment(comment)?;
     }
 

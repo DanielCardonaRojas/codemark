@@ -48,13 +48,19 @@ const MIGRATION_028: &str = include_str!("../../../../migrations/V28__add_commen
 /// Whether `schema.table` has a column named `column`. Used to read packs and
 /// databases written by older versions, which lack columns added since.
 pub fn has_column(conn: &rusqlite::Connection, schema: &str, table: &str, column: &str) -> bool {
-    conn.query_row(
+    match conn.query_row(
         "SELECT COUNT(*) FROM pragma_table_info(?1, ?2) WHERE name = ?3",
         rusqlite::params![table, schema, column],
         |row| row.get::<_, i64>(0),
-    )
-    .map(|n| n > 0)
-    .unwrap_or(false)
+    ) {
+        Ok(n) => n > 0,
+        Err(e) => {
+            // Callers read a missing column as an older schema and fall back
+            // (anchored comments import as whole-bookmark ones), so say why.
+            tracing::warn!(target: "codemark::db", schema, table, column, error = %e, "column lookup failed");
+            false
+        }
+    }
 }
 
 /// SQLite database wrapper with automatic migrations.
