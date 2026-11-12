@@ -19,6 +19,9 @@ pub struct TransientResolution {
     pub start_line: usize,
     /// 0-indexed end line (from tree-sitter Point.row)
     pub end_line: usize,
+    /// Byte range of the matched node. Lines alone can't scope anchored
+    /// comments: a line may hold more than one function.
+    pub byte_range: (usize, usize),
     pub matched_text: String,
     pub content_hash: String,
     pub hash_matches: bool,
@@ -101,6 +104,7 @@ pub async fn resolve_transient(
         file_path: result.file_path,
         start_line: result.start_line,
         end_line: result.end_line,
+        byte_range: result.byte_range,
         matched_text: result.matched_text,
         content_hash: result.content_hash,
         hash_matches: result.hash_matches,

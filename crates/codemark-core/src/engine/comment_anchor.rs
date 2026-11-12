@@ -123,6 +123,9 @@ pub fn generate_comment_anchor(
     comment_range: (usize, usize),
 ) -> Result<CommentAnchor> {
     let landmark = deepest_landmark(tree, bookmark_range, profile);
+    // A line selection carries its indentation and newline; judge the code
+    // itself, or the last statement of a function would fall "outside" it.
+    let comment_range = trim_whitespace(source, comment_range);
     if comment_range.0 < landmark.start_byte() || comment_range.1 > landmark.end_byte() {
         tracing::debug!(
             target: "codemark::comments",
@@ -266,6 +269,20 @@ pub fn resolve_comment_anchors_from_source(
             )
         })
         .collect())
+}
+
+/// `range` without leading or trailing whitespace. A blank range collapses
+/// to its start.
+fn trim_whitespace(source: &str, (mut start, mut end): (usize, usize)) -> (usize, usize) {
+    let bytes = source.as_bytes();
+    end = end.min(bytes.len());
+    while start < end && bytes[start].is_ascii_whitespace() {
+        start += 1;
+    }
+    while end > start && bytes[end - 1].is_ascii_whitespace() {
+        end -= 1;
+    }
+    (start, end)
 }
 
 /// 0-indexed line holding byte `offset`.
@@ -526,5 +543,40 @@ fn helper(n: usize) -> usize { n }
         .unwrap()
         .remove(0);
         assert!(anchored_text(source, &state).starts_with("if not data"));
+    }
+
+    #[test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
+    fn whole_line_selections_of_a_last_statement_stay_in_scope() {
+        // A line range includes indentation and the newline, which run past
+        // the end of the function node for its last statement.
+        let source = "def load(path):\n    data = read(path)\n    return parse(data)\n\ndef other():\n    pass\n";
+        let lang = grammar("python");
+        let bookmark = range_of(source, "data = read(path)");
+        let last_line_start = source.find("    return parse").unwrap();
+        let last_line_end = source.find("\n\ndef other").unwrap() + 1;
+        let anchor = generate_comment_anchor_from_source(
+            source,
+            &lang,
+            bookmark,
+            (last_line_start, last_line_end),
+        )
+        .unwrap();
+        assert!(anchor.anchor_hint.contains("return parse(data)"), "{}", anchor.anchor_hint);
+    }
+
+    #[test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
+    fn look_alike_calls_keep_the_selected_one() {
+        // `helper(1)` and `helper(2)` share a callee, so no query for the
+        // call is unique; the anchor must still be the selected call.
+        let source = "fn f() {\n    helper(1);\n    helper(2);\n}\nfn helper(n: u8) {}\n";
+        let comment = range_of(source, "helper(2)");
+        let anchor = generate(source, "helper(1)", comment).unwrap();
+        assert!(anchor.anchor_hint.ends_with("helper(2)"), "{}", anchor.anchor_hint);
+        assert_eq!(anchor.content_hash, hash::content_hash("helper(2)"));
+
+        let state = resolve(source, Some(range_of(source, "helper(1)")), &anchor);
+        assert_eq!(anchored_text(source, &state), "helper(2)");
     }
 }

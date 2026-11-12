@@ -176,9 +176,9 @@ fn descend_into_bodies<'t>(
 /// rooted at that landmark ([`matcher::run_query_in`]). Because uniqueness only
 /// has to hold inside the landmark, the queries stay short.
 ///
-/// When no query for the selected node is unique, the target widens to its
-/// parent, never past `scope`. If even that leaves duplicates, the last
-/// candidate is returned anyway: resolution breaks the tie by content hash.
+/// When no query for the selected node is unique inside `scope`, the query
+/// is returned anyway for that same node: resolution breaks the tie by
+/// content hash, so the anchor stays on what the user selected.
 ///
 /// Errors when `byte_range` is not inside `scope`.
 pub fn generate_scoped_query(
@@ -202,29 +202,19 @@ pub fn generate_scoped_query(
     let ctx = QueryContext { source, language, profile, byte_range, root: tree.root_node(), tree };
 
     let first = find_tightest_node(&scope, source, byte_range)?;
-    let mut target = descend_into_bodies(first, source, byte_range);
-    // The widest ambiguous candidate so far; every iteration that does not
-    // return assigns it.
-    let mut last;
-    loop {
-        match disambiguate_query_in(target, &ctx, Some(scope)) {
-            Ok(query) => return Ok(scoped_result(target, query, source)),
-            Err(Error::AmbiguousQuery(_)) => {
-                let path = build_structural_path(target, source, profile, None, Some(scope));
-                last = (target, build_tier1_query(&path));
-            }
-            Err(e) => return Err(e),
+    let target = descend_into_bodies(first, source, byte_range);
+    match disambiguate_query_in(target, &ctx, Some(scope)) {
+        Ok(query) => Ok(scoped_result(target, query, source)),
+        // Several nodes in the scope look alike (`helper(1); helper(2);`
+        // when the pattern checks the callee only). Keep the selected node:
+        // widening to a unique parent would anchor the comment to code the
+        // user did not pick. Resolution tells the matches apart by hash.
+        Err(Error::AmbiguousQuery(_)) => {
+            let path = build_structural_path(target, source, profile, None, Some(scope));
+            Ok(scoped_result(target, build_tier1_query(&path), source))
         }
-        if target.id() == scope.id() {
-            break;
-        }
-        match target.parent() {
-            Some(parent) => target = parent,
-            None => break,
-        }
+        Err(e) => Err(e),
     }
-    let (target, query) = last;
-    Ok(scoped_result(target, query, source))
 }
 
 fn scoped_result(target: Node, query: String, source: &[u8]) -> GeneratedQuery {
