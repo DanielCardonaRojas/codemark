@@ -278,11 +278,7 @@ impl App {
         }
 
         // Handle events in layout components
-        if self.layout.handle_event(event) {
-            return Ok(true);
-        }
-
-        Ok(false)
+        Ok(self.layout.handle_event(event))
     }
 
     /// Update focus state based on current focus.

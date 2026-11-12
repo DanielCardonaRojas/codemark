@@ -112,6 +112,10 @@ pub struct CodePreview {
     focused: bool,
     /// Whether the component is in selection mode, allowing column-level cursor movement
     selection_mode: bool,
+    /// Where `v` started a visual selection, as `(line, col)`. The selection
+    /// runs from here to the cursor, both ends included. Only set in
+    /// selection mode.
+    visual_anchor: Option<(usize, usize)>,
     /// Last rendered area
     last_area: std::cell::Cell<Rect>,
     /// Highlighted lines for the code currently displayed, shared via `Rc` so
@@ -167,6 +171,7 @@ impl CodePreview {
             selected_range: None,
             focused: false,
             selection_mode: false,
+            visual_anchor: None,
             last_area: std::cell::Cell::new(Rect::default()),
             cached_lines: RefCell::new(Rc::new(Vec::new())),
             highlight_cache: RefCell::new(HashMap::new()),
@@ -235,6 +240,7 @@ impl CodePreview {
         self.selected_line = None;
         self.cursor_col = 0;
         self.selection_mode = false;
+        self.visual_anchor = None;
         self.selected_range = None;
     }
 
@@ -375,6 +381,7 @@ impl CodePreview {
         self.inline.cursor_on = None;
         self.selected_range = None;
         self.selection_mode = false;
+        self.visual_anchor = None;
         self.cursor_col = 0;
     }
 
@@ -452,16 +459,25 @@ impl CodePreview {
     /// cursor to column 0 until a frame establishes the viewport.
     fn max_cursor_col(&self, line_idx: usize) -> usize {
         let line_len = self.line_char_len(line_idx);
-        match self.content_width() {
-            0 => line_len,
-            width => line_len.min(width - 1),
-        }
+        let width = match self.content_width() {
+            0 => return line_len,
+            width => width,
+        };
+        // The cursor is drawn at `cells_before` its column (`界` takes two
+        // cells), so allow the furthest column drawn inside the pane.
+        let text = self.code.lines().nth(line_idx).unwrap_or("");
+        (0..=line_len).take_while(|&col| cells_before(text, col) < width).last().unwrap_or(0)
     }
 
     /// Clamp `cursor_col` to the current line after a vertical move.
     fn clamp_cursor_col(&mut self) {
         if let Some(line) = self.selected_line {
             self.cursor_col = self.cursor_col.min(self.max_cursor_col(line));
+            // A visual selection includes the cursor's character, so keep it
+            // on one rather than past the line's end.
+            if self.visual_anchor.is_some() {
+                self.cursor_col = self.cursor_col.min(self.line_char_len(line).saturating_sub(1));
+            }
         }
     }
 
@@ -474,6 +490,105 @@ impl CodePreview {
     /// the column. `None` before the cursor is placed.
     pub fn cursor_position(&self) -> Option<(usize, Option<usize>)> {
         self.selected_line.map(|line| (line, self.selection_mode.then_some(self.cursor_col)))
+    }
+
+    /// The visual (`v`) selection as `((line, col), (line, col))`: ordered,
+    /// 0-indexed, both ends included, columns in chars. `None` outside
+    /// visual mode.
+    pub fn visual_selection(&self) -> Option<((usize, usize), (usize, usize))> {
+        let anchor = self.visual_anchor?;
+        let cursor = (self.selected_line?, self.cursor_col);
+        Some(if anchor <= cursor { (anchor, cursor) } else { (cursor, anchor) })
+    }
+
+    /// Leave visual mode, keeping the column cursor where it is.
+    pub fn exit_visual(&mut self) {
+        self.visual_anchor = None;
+    }
+
+    /// `v`: start a visual selection at the cursor (at the line's first
+    /// non-blank character when there is no column cursor yet), or end the
+    /// current one. Does nothing on a comment bubble.
+    fn toggle_visual(&mut self) -> bool {
+        if self.visual_anchor.take().is_some() {
+            return true;
+        }
+        let Some(line) = self.selected_line else { return false };
+        if self.inline.cursor_on.is_some() {
+            return true;
+        }
+        if !self.selection_mode {
+            self.selection_mode = true;
+            self.cursor_col = self.first_non_blank(line);
+        }
+        // The column cursor alone may sit just past the line's end; a
+        // selection includes its ends, so start it on a character.
+        self.cursor_col = self.cursor_col.min(self.line_char_len(line).saturating_sub(1));
+        self.visual_anchor = Some((line, self.cursor_col));
+        true
+    }
+
+    /// Char column of the first non-blank character on `line_idx` (0 on a
+    /// blank line).
+    fn first_non_blank(&self, line_idx: usize) -> usize {
+        let text = self.code.lines().nth(line_idx).unwrap_or("");
+        if text.trim().is_empty() {
+            return 0;
+        }
+        text.chars().take_while(|c| c.is_whitespace()).count()
+    }
+
+    /// Vim-style motions on the cursor line while the column cursor is on:
+    /// `w` / `b` / `e` by word, `0` / `^` / `$` to the line's start, first
+    /// non-blank and last character. Returns `false` outside selection mode
+    /// so the key falls through.
+    fn line_motion(&mut self, key: char) -> bool {
+        if !self.selection_mode || self.inline.cursor_on.is_some() {
+            return false;
+        }
+        let Some(line) = self.selected_line else { return false };
+        let chars: Vec<char> = self.code.lines().nth(line).unwrap_or("").chars().collect();
+        let n = chars.len();
+        let class = |i: usize| chars.get(i).map(|&c| char_class(c));
+        let mut i = self.cursor_col.min(n);
+        match key {
+            'w' => {
+                let start = class(i);
+                while i < n && class(i) == start {
+                    i += 1;
+                }
+                while i < n && class(i) == Some(CharClass::Blank) {
+                    i += 1;
+                }
+            }
+            'e' => {
+                i += 1;
+                while i < n && class(i) == Some(CharClass::Blank) {
+                    i += 1;
+                }
+                let word = class(i);
+                while i + 1 < n && class(i + 1) == word {
+                    i += 1;
+                }
+            }
+            'b' => {
+                while i > 0 && class(i - 1) == Some(CharClass::Blank) {
+                    i -= 1;
+                }
+                if let Some(word) = i.checked_sub(1).and_then(class) {
+                    while i > 0 && class(i - 1) == Some(word) {
+                        i -= 1;
+                    }
+                }
+            }
+            '0' => i = 0,
+            '^' => i = self.first_non_blank(line),
+            '$' => i = n.saturating_sub(1),
+            _ => return false,
+        }
+        // Stay on a character: a visual selection includes its last column.
+        self.cursor_col = i.min(n.saturating_sub(1)).min(self.max_cursor_col(line));
+        true
     }
 
     /// Replace the inline comment threads, keeping folds for threads that are
@@ -635,6 +750,17 @@ impl CodePreview {
             self.bubbles_under(line - 1).last().map(|&b| self.inline.threads[b].root_id.clone());
     }
 
+    /// Move the cursor a whole code line while extending a visual selection,
+    /// passing over comment bubbles.
+    fn visual_line_step(&mut self, down: bool) {
+        let Some(line) = self.selected_line else { return };
+        let next = if down { line + 1 } else { line.wrapping_sub(1) };
+        if next < self.line_count() {
+            self.inline.cursor_on = None;
+            self.selected_line = Some(next);
+        }
+    }
+
     /// Display rows the cursor covers: its bubble, or its code line.
     fn cursor_rows(&self) -> Option<(usize, usize)> {
         if let Some(t) = self.cursor_thread()
@@ -688,6 +814,8 @@ impl CodePreview {
             self.invalidate_layout();
         }
         self.selected_line = Some(self.thread_line(&self.inline.threads[target]));
+        // A selection can't end on a bubble: leave visual mode.
+        self.visual_anchor = None;
         self.inline.cursor_on = Some(id);
         self.scroll_to_cursor();
         true
@@ -919,22 +1047,25 @@ impl Component for CodePreview {
         let node_rows: Vec<(usize, usize, usize)> = focused_thread
             .map(|t| {
                 let t = &self.inline.threads[t];
-                (t.anchor_start..=t.anchor_end)
-                    .map(|line| {
-                        let text = self.code.lines().nth(line).unwrap_or("");
-                        let indent = text.chars().take_while(|c| c.is_whitespace()).count();
-                        let from = if line == t.anchor_start { t.start_col } else { indent };
-                        let to =
-                            if line == t.anchor_end { t.end_col } else { text.chars().count() };
-                        // Terminal cells, not chars: `界` takes two cells and a
-                        // combining mark none.
-                        let cells = |chars: usize| -> usize {
-                            unicode_width::UnicodeWidthStr::width(
-                                text.chars().take(chars).collect::<String>().as_str(),
-                            )
-                        };
-                        (layout.row_of(line), cells(from), cells(to))
-                    })
+                span_cells(
+                    &self.code,
+                    (t.anchor_start, t.start_col),
+                    (t.anchor_end, t.end_col),
+                    true,
+                )
+                .into_iter()
+                .map(|(line, from, to)| (layout.row_of(line), from, to))
+                .collect()
+            })
+            .unwrap_or_default();
+        // The visual selection, end column included.
+        let visual_rows: Vec<(usize, usize, usize)> = self
+            .visual_selection()
+            .filter(|_| self.focused)
+            .map(|(start, (end_line, end_col))| {
+                span_cells(&self.code, start, (end_line, end_col + 1), false)
+                    .into_iter()
+                    .map(|(line, from, to)| (layout.row_of(line), from, to))
                     .collect()
             })
             .unwrap_or_default();
@@ -968,21 +1099,26 @@ impl Component for CodePreview {
         // The focused comment's node: just its characters, over the cursor
         // line's background, so the exact target reads at a glance.
         let code_x = code_area.x + self.gutter_width();
-        for (row, from, to) in node_rows {
-            if row < offset || row - offset >= height {
-                continue;
-            }
-            let y = code_area.y + (row - offset) as u16;
-            for col in from..to.max(from + 1) {
-                let x = code_x + col as u16;
-                if x >= code_area.right().saturating_sub(1) {
-                    break;
+        let paint_cells = |buf: &mut Buffer, rows: &[(usize, usize, usize)], color: Color| {
+            for &(row, from, to) in rows {
+                if row < offset || row - offset >= height {
+                    continue;
                 }
-                if let Some(cell) = buf.cell_mut((x, y)) {
-                    cell.set_bg(crate::theme::COMMENT_ANCHOR_BG);
+                let y = code_area.y + (row - offset) as u16;
+                for col in from..to.max(from + 1) {
+                    let x = code_x + col as u16;
+                    if x >= code_area.right().saturating_sub(1) {
+                        break;
+                    }
+                    if let Some(cell) = buf.cell_mut((x, y)) {
+                        cell.set_bg(color);
+                    }
                 }
             }
-        }
+        };
+        paint_cells(buf, &node_rows, crate::theme::COMMENT_ANCHOR_BG);
+        // The visual selection sits over the node so its extent stays visible.
+        paint_cells(buf, &visual_rows, crate::theme::VISUAL_BG);
 
         // Draw the block cursor on the focused row/column. Painted on top of the
         // selection background by reversing the cell under the cursor, so it
@@ -993,7 +1129,9 @@ impl Component for CodePreview {
             && row >= offset
         {
             let screen_row = (row - offset) as u16;
-            let x = code_area.x + self.gutter_width() + self.cursor_col as u16;
+            // Terminal cells, like the selection: `界` takes two.
+            let line = self.code.lines().nth(self.selected_line.unwrap_or(0)).unwrap_or("");
+            let x = code_area.x + self.gutter_width() + cells_before(line, self.cursor_col) as u16;
             if screen_row < code_area.height && x < code_area.right() {
                 let y = code_area.y + screen_row;
                 if let Some(cell) = buf.cell_mut((x, y)) {
@@ -1042,15 +1180,24 @@ impl Component for CodePreview {
                 match key.code {
                     ratatui::crossterm::event::KeyCode::Down
                     | ratatui::crossterm::event::KeyCode::Char('j') => {
-                        // Comment bubbles are cursor stops between lines.
-                        self.cursor_down();
+                        // Comment bubbles are cursor stops between lines,
+                        // except while extending a visual selection.
+                        if self.visual_anchor.is_some() {
+                            self.visual_line_step(true);
+                        } else {
+                            self.cursor_down();
+                        }
                         self.scroll_to_cursor();
                         self.clamp_cursor_col();
                         true
                     }
                     ratatui::crossterm::event::KeyCode::Up
                     | ratatui::crossterm::event::KeyCode::Char('k') => {
-                        self.cursor_up();
+                        if self.visual_anchor.is_some() {
+                            self.visual_line_step(false);
+                        } else {
+                            self.cursor_up();
+                        }
                         self.scroll_to_cursor();
                         self.clamp_cursor_col();
                         true
@@ -1059,13 +1206,21 @@ impl Component for CodePreview {
                     ratatui::crossterm::event::KeyCode::Char('Z') => self.toggle_fold_all(),
                     ratatui::crossterm::event::KeyCode::Char('n') => self.jump_to_thread(true),
                     ratatui::crossterm::event::KeyCode::Char('N') => self.jump_to_thread(false),
-                    ratatui::crossterm::event::KeyCode::Enter
-                    | ratatui::crossterm::event::KeyCode::Char('v') => {
+                    ratatui::crossterm::event::KeyCode::Enter => {
                         self.selection_mode = !self.selection_mode;
+                        if !self.selection_mode {
+                            self.visual_anchor = None;
+                        }
                         true
                     }
+                    ratatui::crossterm::event::KeyCode::Char('v') => self.toggle_visual(),
+                    ratatui::crossterm::event::KeyCode::Char(
+                        c @ ('w' | 'b' | 'e' | '0' | '^' | '$'),
+                    ) => self.line_motion(c),
                     ratatui::crossterm::event::KeyCode::Esc => {
-                        if self.selection_mode {
+                        if self.visual_anchor.take().is_some() {
+                            true
+                        } else if self.selection_mode {
                             self.selection_mode = false;
                             true
                         } else {
@@ -1091,6 +1246,7 @@ impl Component for CodePreview {
                             && let Some(line) = self.selected_line
                         {
                             self.cursor_col = (self.cursor_col + 1).min(self.max_cursor_col(line));
+                            self.clamp_cursor_col();
                             true
                         } else {
                             false
@@ -1143,8 +1299,63 @@ impl Component for CodePreview {
         self.focused = focused;
         if !focused {
             self.selection_mode = false;
+            self.visual_anchor = None;
         }
     }
+}
+
+/// Character classes for word motions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CharClass {
+    Blank,
+    Word,
+    Punct,
+}
+
+fn char_class(c: char) -> CharClass {
+    if c.is_whitespace() {
+        CharClass::Blank
+    } else if c.is_alphanumeric() || c == '_' {
+        CharClass::Word
+    } else {
+        CharClass::Punct
+    }
+}
+
+/// Terminal cells taken by the first `col` chars of `text`: `界` takes two
+/// cells, a combining mark none, a joined emoji sequence two. The one width
+/// measure for drawing the cursor, bounding it, and painting spans.
+fn cells_before(text: &str, col: usize) -> usize {
+    let end = text.char_indices().nth(col).map_or(text.len(), |(i, _)| i);
+    unicode_width::UnicodeWidthStr::width(&text[..end])
+}
+
+/// The span from `(line, col)` to `(line, col)` (end exclusive, columns in
+/// chars) as `(line, from cell, to cell)` per line. Middle and leading lines
+/// run to the line's end; with `skip_indent` middle and trailing lines start
+/// at their first non-blank character (a node), else at column 0 (a
+/// selection).
+fn span_cells(
+    code: &str,
+    (start_line, start_col): (usize, usize),
+    (end_line, end_col): (usize, usize),
+    skip_indent: bool,
+) -> Vec<(usize, usize, usize)> {
+    code.lines()
+        .enumerate()
+        .skip(start_line)
+        .take((end_line + 1).saturating_sub(start_line))
+        .map(|(line, text)| {
+            let indent = if skip_indent {
+                text.chars().take_while(|c| c.is_whitespace()).count()
+            } else {
+                0
+            };
+            let from = if line == start_line { start_col } else { indent };
+            let to = if line == end_line { end_col } else { text.chars().count() };
+            (line, cells_before(text, from), cells_before(text, to))
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -1256,6 +1467,82 @@ mod tests {
     }
 
     #[test]
+    fn v_selects_a_range_with_word_and_line_motions() {
+        let code = "    let total = sum(items);\nnext();\n";
+        let mut preview = CodePreview::new(code, "txt");
+        preview.set_focus(true);
+        render_to_buffer(&preview, 40, 4);
+        assert!(press(&mut preview, 'j'));
+        assert_eq!(preview.visual_selection(), None);
+
+        // From a plain line cursor, `v` starts at the first non-blank char.
+        assert!(press(&mut preview, 'v'));
+        assert_eq!(preview.visual_selection(), Some(((0, 4), (0, 4))));
+        assert!(press(&mut preview, 'e'));
+        assert_eq!(preview.visual_selection(), Some(((0, 4), (0, 6))), "end of `let`");
+        assert!(press(&mut preview, 'w'));
+        assert!(press(&mut preview, 'w'));
+        assert!(press(&mut preview, 'w'));
+        assert_eq!(preview.cursor_col, 16, "start of `sum`");
+        assert!(press(&mut preview, 'b'));
+        assert_eq!(preview.cursor_col, 14, "back to `=`");
+        assert!(press(&mut preview, '$'));
+        assert_eq!(preview.visual_selection(), Some(((0, 4), (0, 26))), "through `;`");
+        assert!(press(&mut preview, '0'));
+        assert_eq!(preview.visual_selection(), Some(((0, 0), (0, 4))), "ordered ends");
+        assert!(press(&mut preview, '^'));
+        assert_eq!(preview.cursor_col, 4);
+
+        // Esc leaves visual mode but keeps the column cursor; `v` again
+        // starts a new selection where the cursor is.
+        assert!(press(&mut preview, 'l'));
+        preview.handle_event(&key(ratatui::crossterm::event::KeyCode::Esc));
+        assert_eq!(preview.visual_selection(), None);
+        assert_eq!(preview.cursor_position(), Some((0, Some(5))));
+        assert!(press(&mut preview, 'v'));
+        assert_eq!(preview.visual_selection(), Some(((0, 5), (0, 5))));
+        assert!(press(&mut preview, 'v'), "v toggles visual off");
+        assert_eq!(preview.visual_selection(), None);
+    }
+
+    #[test]
+    fn word_motions_fall_through_without_a_column_cursor() {
+        let mut preview = CodePreview::new("one two\n", "txt");
+        preview.set_focus(true);
+        assert!(press(&mut preview, 'j'));
+        for c in ['w', 'b', 'e', '0', '$'] {
+            assert!(!press(&mut preview, c), "{c} is free for other bindings");
+        }
+    }
+
+    #[test]
+    fn visual_selection_spans_lines_and_is_painted() {
+        let code = "fn a() {\n    let x = 1;\n    x\n}\n";
+        let mut preview = CodePreview::new(code, "txt");
+        preview.set_focus(true);
+        render_to_buffer(&preview, 40, 6);
+        assert!(press(&mut preview, 'j'));
+        assert!(press(&mut preview, 'j'));
+        assert!(press(&mut preview, 'v'));
+        assert!(press(&mut preview, 'w'));
+        assert!(press(&mut preview, 'j'));
+        assert_eq!(preview.visual_selection(), Some(((1, 4), (2, 4))));
+
+        let buf = render_to_buffer(&preview, 40, 6);
+        let gutter = preview.gutter_width();
+        let painted = |y: u16| -> Vec<u16> {
+            (gutter..40).filter(|&x| buf[(x, y)].bg == crate::theme::VISUAL_BG).collect()
+        };
+        assert_eq!(painted(1), (gutter + 4..gutter + 14).collect::<Vec<_>>(), "`let x = 1;`");
+        assert_eq!(painted(2), (gutter..gutter + 5).collect::<Vec<_>>(), "line start to `x`");
+        assert!(painted(0).is_empty() && painted(3).is_empty());
+
+        // Losing focus drops the selection.
+        preview.set_focus(false);
+        assert_eq!(preview.visual_selection(), None);
+    }
+
+    #[test]
     fn cursor_moves_before_first_render() {
         // `last_area` is unset (0x0) until the first render. The cursor must
         // still move on h/l rather than being pinned to column 0 by a zero
@@ -1281,7 +1568,8 @@ mod tests {
         press(&mut preview, 'j');
         press(&mut preview, 'j');
         assert_eq!(preview.selected_line, Some(2));
-        press(&mut preview, 'v');
+        // The column cursor alone (Enter) may sit just past the line's end.
+        preview.handle_event(&key(ratatui::crossterm::event::KeyCode::Enter));
         for _ in 0..5 {
             press(&mut preview, 'l');
         }
@@ -1458,6 +1746,87 @@ mod tests {
 
     fn row_text(buf: &Buffer, y: u16) -> String {
         (0..buf.area.width).map(|x| buf[(x, y)].symbol()).collect()
+    }
+
+    #[test]
+    fn v_from_past_the_line_end_starts_on_the_last_char() {
+        let mut preview = CodePreview::new("ab", "txt");
+        preview.set_focus(true);
+        render_to_buffer(&preview, 20, 2);
+        assert!(press(&mut preview, 'j'));
+        preview.handle_event(&key(ratatui::crossterm::event::KeyCode::Enter));
+        for _ in 0..3 {
+            press(&mut preview, 'l');
+        }
+        assert_eq!(preview.cursor_col, 2, "the column cursor alone may pass the end");
+        assert!(press(&mut preview, 'v'));
+        assert_eq!(preview.visual_selection(), Some(((0, 1), (0, 1))));
+    }
+
+    #[test]
+    fn jumping_to_a_comment_leaves_visual_mode() {
+        let mut preview = CodePreview::new("one\ntwo\nthree\n", "txt");
+        preview.set_focus(true);
+        preview.set_threads(vec![thread("t", 2, 2, &["hi"])]);
+        render_to_buffer(&preview, 30, 8);
+        assert!(press(&mut preview, 'j'));
+        assert!(press(&mut preview, 'v'));
+        assert!(press(&mut preview, 'n'));
+        assert_eq!(preview.focused_thread_id(), Some("t"));
+        assert_eq!(preview.visual_selection(), None);
+    }
+
+    #[test]
+    fn cursor_stops_at_the_pane_edge_on_wide_text() {
+        let mut preview = CodePreview::new("界界界界界ABCDE\n", "txt");
+        preview.set_focus(true);
+        render_to_buffer(&preview, 20, 2);
+        let width = preview.content_width();
+        assert!(press(&mut preview, 'j'));
+        preview.handle_event(&key(ratatui::crossterm::event::KeyCode::Enter));
+        for _ in 0..12 {
+            press(&mut preview, 'l');
+        }
+        let line = "界界界界界ABCDE";
+        let cells = unicode_width::UnicodeWidthStr::width(
+            line.chars().take(preview.cursor_col).collect::<String>().as_str(),
+        );
+        assert!(cells < width, "cursor cell {cells} is inside the {width}-cell pane");
+        let buf = render_to_buffer(&preview, 20, 2);
+        assert!(cell_reversed(&buf, preview.gutter_width() + cells as u16, 0), "cursor drawn");
+    }
+
+    #[test]
+    fn cursor_reaches_text_after_a_joined_emoji() {
+        // Four people joined by zero-width joiners: 7 chars, one glyph.
+        let line = "👨\u{200d}👩\u{200d}👧\u{200d}👦X";
+        let mut preview = CodePreview::new(format!("{line}\n"), "txt");
+        preview.set_focus(true);
+        // Pane narrow enough that summing per-char widths would stop early.
+        let gutter = preview.gutter_width();
+        render_to_buffer(&preview, gutter + 8, 2);
+        assert!(press(&mut preview, 'j'));
+        preview.handle_event(&key(ratatui::crossterm::event::KeyCode::Enter));
+        for _ in 0..7 {
+            press(&mut preview, 'l');
+        }
+        assert_eq!(preview.cursor_col, 7, "on the X");
+        assert!(cells_before(line, 7) < preview.content_width());
+    }
+
+    #[test]
+    fn block_cursor_sits_in_terminal_cells() {
+        let mut preview = CodePreview::new("界x\n", "txt");
+        preview.set_focus(true);
+        render_to_buffer(&preview, 20, 2);
+        assert!(press(&mut preview, 'j'));
+        assert!(press(&mut preview, 'v'));
+        assert!(press(&mut preview, 'l'));
+        assert_eq!(preview.cursor_col, 1);
+        let buf = render_to_buffer(&preview, 20, 2);
+        let gutter = preview.gutter_width();
+        assert!(cell_reversed(&buf, gutter + 2, 0), "`x` is in the third cell");
+        assert!(!cell_reversed(&buf, gutter + 1, 0));
     }
 
     fn thread(id: &str, start: usize, end: usize, bodies: &[&str]) -> InlineThread {

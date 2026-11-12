@@ -53,8 +53,9 @@ impl CommentDraft {
 
 impl BrowserLayout {
     /// `c` in the code preview: open a draft anchored to the code under the
-    /// cursor (the node at the cursor column in selection mode, else the
-    /// whole line). Returns whether the key was used.
+    /// cursor: the visual (`v`) selection, else the node at the cursor column
+    /// in selection mode, else the whole line. Returns whether the key was
+    /// used.
     pub(super) fn open_comment_draft(&mut self) -> bool {
         self.flush_pending_step_preview();
         let Some(step) = self.right_pane.current_step() else { return false };
@@ -71,6 +72,7 @@ impl BrowserLayout {
         let bookmark_bytes_source = step.byte_range_source;
         let Some(preview) = self.right_pane.steps.get_step_preview_mut() else { return false };
         let Some((line, col)) = preview.cursor_position() else { return false };
+        let visual = preview.visual_selection();
         let code = preview.code().to_string();
         let bookmark_bytes =
             super::inline_threads::trusted_range(&code, bookmark_bytes, bookmark_bytes_source);
@@ -79,11 +81,17 @@ impl BrowserLayout {
             let language = bookmark.grammar()?;
             let bookmark_range = bookmark_span(&code, bookmark_lines, bookmark_bytes)
                 .ok_or_else(|| codemark_core::error::Error::Input("empty bookmark range".into()))?;
-            let comment_range = match col.and_then(|c| point_offset(&code, line, c)) {
-                Some(offset) => (offset, offset),
-                None => trimmed_line_span(&code, line, line).ok_or_else(|| {
-                    codemark_core::error::Error::Input("the cursor line is blank".into())
-                })?,
+            let comment_range = if let Some(((l1, c1), (l2, c2))) = visual {
+                selection_span(&code, (l1, c1), (l2, c2)).ok_or_else(|| {
+                    codemark_core::error::Error::Input("the selection is outside the code".into())
+                })?
+            } else {
+                match col.and_then(|c| point_offset(&code, line, c)) {
+                    Some(offset) => (offset, offset),
+                    None => trimmed_line_span(&code, line, line).ok_or_else(|| {
+                        codemark_core::error::Error::Input("the cursor line is blank".into())
+                    })?,
+                }
             };
             comment_anchor::generate_comment_anchor_from_source(
                 &code,
@@ -95,6 +103,9 @@ impl BrowserLayout {
 
         match anchor {
             Ok(anchor) => {
+                if let Some(preview) = self.right_pane.steps.get_step_preview_mut() {
+                    preview.exit_visual();
+                }
                 self.comment_draft = Some(CommentDraft {
                     bookmark_id: bookmark.id,
                     repo_root: self.right_pane.active_repo_root.clone(),
@@ -241,6 +252,19 @@ fn point_offset(code: &str, line: usize, col: usize) -> Option<usize> {
     None
 }
 
+/// Byte span of a visual selection from `start` to `end` (`(line, col)`,
+/// both characters included).
+fn selection_span(
+    code: &str,
+    start: (usize, usize),
+    end: (usize, usize),
+) -> Option<(usize, usize)> {
+    let from = point_offset(code, start.0, start.1)?;
+    let last = point_offset(code, end.0, end.1)?;
+    let width = code[last..].chars().next().map_or(0, char::len_utf8);
+    Some((from, last + width))
+}
+
 /// Who a TUI comment is from: `CODEMARK_IDENTITY_NAME`, else git's
 /// `user.name`, else `user` (the CLI's default author).
 fn comment_author() -> String {
@@ -263,6 +287,17 @@ fn comment_author() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn selection_span_includes_both_ends() {
+        let code = "let a = 1;\nlet é = f(x);\n";
+        assert_eq!(selection_span(code, (0, 4), (0, 4)), Some((4, 5)), "one char");
+        let (s, e) = selection_span(code, (1, 4), (1, 4)).unwrap();
+        assert_eq!(&code[s..e], "é", "a multi-byte char is whole");
+        let (s, e) = selection_span(code, (0, 8), (1, 11)).unwrap();
+        assert_eq!(&code[s..e], "1;\nlet é = f(x)");
+        assert_eq!(selection_span(code, (5, 0), (5, 1)), None, "past the end");
+    }
 
     #[test]
     fn point_offset_maps_line_and_char_column() {

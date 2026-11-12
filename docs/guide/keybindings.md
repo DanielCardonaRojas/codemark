@@ -110,6 +110,27 @@ The motion set is intentionally small: `j`/`k`/`J`/`K` plus the step nav
 list navigation.
 :::
 
+## Commenting in the code preview
+
+Comments are anchored to the code they talk about and shown inline, under
+that code.
+
+| Key | Action |
+|-----|--------|
+| `c` | Comment on the code under the cursor: the selected range, else the node at the cursor column, else the whole line |
+| `v` | Start (or end) a range selection, as in vim; `Esc` ends it |
+| `Enter` | Toggle the column cursor without selecting |
+| `h` / `l`, `j` / `k` | Move the column cursor; with `v`, extend the selection |
+| `w` / `b` / `e` | Next word / previous word / end of word (column cursor only) |
+| `0` / `^` / `$` | Line start / first non-blank / last character (column cursor only) |
+| `r` | Reply to the comment the cursor is on |
+| `z` / `Z` | Fold the comment under the cursor / fold all comments |
+| `n` / `N` | Next / previous comment |
+
+Selecting with `v` gives the most precise anchor: the comment points at the
+smallest node covering the selection. The selection must stay inside the
+bookmark's enclosing function, method or class.
+
 ## Search
 
 Press `s` (or `Enter` in the search bar) to search. The search bar shows a

@@ -98,6 +98,13 @@ pub fn deepest_landmark<'t>(
     {
         target = parent;
     }
+    // A bookmark on a lone token (a closing `}` or `)`) has no node a query
+    // could name inside it: scope it to the node the token belongs to.
+    while !target.is_named()
+        && let Some(parent) = target.parent()
+    {
+        target = parent;
+    }
 
     let mut current = Some(target);
     while let Some(node) = current {
@@ -609,6 +616,121 @@ fn helper(n: usize) -> usize { n }
                 assert!(anchor.anchor_hint.contains("parse"), "{}", anchor.anchor_hint);
             }
             other => panic!("expected anchored, got {other:?}"),
+        }
+    }
+
+    /// Anchor a comment on `comment` inside the bookmark at `bookmark` and
+    /// resolve it straight back, returning the text it lands on.
+    fn round_trip(
+        lang: &str,
+        source: &str,
+        bookmark: (usize, usize),
+        comment: (usize, usize),
+    ) -> String {
+        let language = grammar(lang);
+        let anchor = generate_comment_anchor_from_source(source, &language, bookmark, comment)
+            .unwrap_or_else(|e| panic!("anchoring {:?}: {e}", &source[comment.0..comment.1]));
+        let state = resolve_comment_anchors_from_source(
+            source,
+            &language,
+            Some(bookmark),
+            &[(Some(anchor.query.as_str()), Some(anchor.content_hash.as_str()))],
+        )
+        .unwrap()
+        .remove(0);
+        match state {
+            AnchorState::Anchored(r) if r.hash_matches => {
+                source[r.byte_range.0..r.byte_range.1].to_string()
+            }
+            other => panic!(
+                "comment on {:?} did not resolve back: {other:?}\n{}",
+                &source[comment.0..comment.1],
+                anchor.query
+            ),
+        }
+    }
+
+    /// Byte offsets of each word start in `needle`'s first occurrence.
+    fn word_starts(source: &str, needle: &str) -> Vec<usize> {
+        let (start, _) = range_of(source, needle);
+        let mut previous_word = false;
+        let mut starts = Vec::new();
+        for (i, c) in needle.char_indices() {
+            let word = c.is_alphanumeric() || c == '_';
+            if word && !previous_word {
+                starts.push(start + i);
+            }
+            previous_word = word;
+        }
+        starts
+    }
+
+    // The generator once produced queries that were unique in their scope
+    // but pointed elsewhere or nowhere, so these comments were orphaned the
+    // moment they were saved. Each case comes from a fixture file.
+
+    #[test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
+    fn a_following_sibling_is_not_written_before_the_target() {
+        // Go: the name of the *next* var_spec was placed before this one.
+        let source = include_str!("../../../../tests/fixtures/go/auth_service.go");
+        let line = "ErrInvalidToken            = errors.New(\"invalid token\")";
+        let bookmark = range_of(source, line);
+        for point in word_starts(source, line) {
+            round_trip("go", source, bookmark, (point, point));
+        }
+        // Java: a parameter, with the one after it as context.
+        let source = include_str!("../../../../tests/fixtures/java/AuthService.java");
+        let line = "public AuthService(String secret, String issuer) {";
+        let bookmark = range_of(source, line);
+        for point in word_starts(source, line) {
+            round_trip("java", source, bookmark, (point, point));
+        }
+    }
+
+    #[test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
+    fn whole_lines_inside_a_decorated_method_anchor() {
+        // The path skipped the `decorated_definition` wrapper, so the query
+        // asked for a `function_definition` directly under the class body.
+        let source = include_str!("../../../../tests/fixtures/python/auth_service.py");
+        let bookmark = range_of(source, "# Target: bookmark a decorated method");
+        for line in ["@staticmethod", "return AuthService(secret=\"default-secret\")"] {
+            let text = round_trip("python", source, bookmark, range_of(source, line));
+            assert!(text.contains(line.trim_start_matches('@')), "{line:?} landed on {text:?}");
+        }
+    }
+
+    #[test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
+    fn a_selection_across_statements_covers_all_of_them() {
+        let source = RUST;
+        let bookmark = range_of(source, "0 => helper(1)");
+        let start = source.find("let tokens = lex(input);").unwrap();
+        let end = source.find("_ => helper(2),").unwrap() + 2;
+        let text = round_trip("rust", source, bookmark, (start, end));
+        assert!(text.contains("let tokens") && text.contains("match tokens"), "{text:?}");
+    }
+
+    #[test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
+    fn a_bookmark_on_a_closing_brace_scopes_to_its_block() {
+        let source = "fn f() -> u8 {\n    1\n}\n";
+        let brace = source.rfind('}').unwrap();
+        let text = round_trip("rust", source, (brace, brace + 1), (brace, brace + 1));
+        assert!(text.starts_with('{') && text.ends_with('}'), "{text:?}");
+    }
+
+    #[test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
+    fn swift_dictionary_types_get_a_query_that_compiles() {
+        // `[String: String]` lends a `name` field from a hidden rule, which
+        // the query compiler rejects as an impossible pattern.
+        let source = include_str!("../../../../tests/fixtures/swift/api_client.swift");
+        let line = "let headers: [String: String]";
+        let bookmark = range_of(source, line);
+        for point in word_starts(source, line) {
+            round_trip("swift", source, bookmark, (point, point));
         }
     }
 

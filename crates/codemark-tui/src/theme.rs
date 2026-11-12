@@ -48,6 +48,10 @@ pub const SELECTION_BG: Color = Color::Rgb(62, 68, 81);
 /// clearly bluer tone that keeps syntax colours legible.
 pub const COMMENT_ANCHOR_BG: Color = Color::Rgb(45, 78, 128);
 
+/// Background of the code preview's visual (`v`) selection: the text a new
+/// comment will be anchored to.
+pub const VISUAL_BG: Color = Color::Rgb(92, 72, 132);
+
 /// Popular `.tmTheme` files not shipped by `syntect-assets`, embedded at compile
 /// time. Each entry is `(name, bytes)`, where `name` is the key users reference
 /// in config and `bytes` is the raw `.tmTheme` plist.
