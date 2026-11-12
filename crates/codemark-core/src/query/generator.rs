@@ -209,29 +209,18 @@ pub fn generate_scoped_query(
     let first = find_tightest_node(&scope, source, byte_range)?;
     let mut target = descend_into_bodies(first, source, byte_range);
     loop {
-        let query = match disambiguate_query_in(target, &ctx, Some(scope)) {
-            Ok(query) => query,
-            // Several nodes in the scope look alike (`helper(1); helper(2);`
-            // when the pattern checks the callee only). Keep the selected
-            // node: resolution tells the matches apart by content hash.
-            Err(Error::AmbiguousQuery(_)) => {
-                let path = build_structural_path(target, source, profile, None, Some(scope));
-                build_tier1_query(&path)
-            }
-            Err(e) => return Err(e),
+        let Some((query, matches)) = verified_scoped_query(target, &ctx, scope)? else {
+            return Err(Error::Input(format!(
+                "no query inside `{}` finds the selected `{}`",
+                scope.kind(),
+                target.kind()
+            )));
         };
-        let matches = matcher::run_query_in(&query, scope, source, language)?;
         // The query may capture an ancestor of the selection (a selected
         // name lifts to its declaration), so record the node it actually
         // captures: that is what resolution compares against.
-        let target_range = (target.start_byte(), target.end_byte());
-        let captured = matches
-            .iter()
-            .filter(|m| m.byte_range.0 <= target_range.0 && m.byte_range.1 >= target_range.1)
-            .min_by_key(|m| m.byte_range.1 - m.byte_range.0);
-        let Some(captured) = captured else {
-            return Ok(scoped_result(target, query, source));
-        };
+        let captured =
+            smallest_capture_of(&matches, target).expect("verified queries capture the target");
         // Only identical look-alikes defeat the content hash: widen to the
         // parent until the captured text is unique, or the scope is reached.
         let twins = matches.iter().filter(|m| m.node_text == captured.node_text).count();
@@ -251,6 +240,83 @@ pub fn generate_scoped_query(
             }
         }
     }
+}
+
+/// The match capturing the smallest node that contains `target`.
+fn smallest_capture_of<'m>(
+    matches: &'m [matcher::MatchResult],
+    target: Node,
+) -> Option<&'m matcher::MatchResult> {
+    let (start, end) = (target.start_byte(), target.end_byte());
+    matches
+        .iter()
+        .filter(|m| m.byte_range.0 <= start && m.byte_range.1 >= end)
+        .min_by_key(|m| m.byte_range.1 - m.byte_range.0)
+}
+
+/// A query for `target` that, run inside `scope`, compiles and captures
+/// `target` (or an ancestor of it), with its matches.
+///
+/// The structural queries come first, most specific to least: the
+/// disambiguated path, then the same path without names. They read well and
+/// survive edits, but the path builder can still produce a pattern that is
+/// unique yet points elsewhere, or that the grammar rejects (a name placed
+/// before a sibling it follows, a skipped wrapper node, a field a hidden rule
+/// lends its parent). A comment saved with such a query is orphaned the moment
+/// it is made, so each candidate is checked by running it. The last resort is
+/// the bare node kind: it always finds the target, and resolution tells the
+/// matches apart by content hash.
+fn verified_scoped_query(
+    target: Node,
+    ctx: &QueryContext<'_>,
+    scope: Node,
+) -> Result<Option<(String, Vec<matcher::MatchResult>)>> {
+    let structural = || build_structural_path(target, ctx.source, ctx.profile, None, Some(scope));
+    let mut candidates = Vec::new();
+    match disambiguate_query_in(target, ctx, Some(scope)) {
+        Ok(query) => candidates.push(query),
+        // Several nodes in the scope look alike (`helper(1); helper(2);`
+        // when the pattern checks the callee only). Keep the selected node:
+        // resolution tells the matches apart by content hash.
+        Err(Error::AmbiguousQuery(_)) => candidates.push(build_tier1_query(&structural())),
+        // A query that fails to compile surfaces here as a tree-sitter error;
+        // the simpler candidates below may still work.
+        Err(Error::TreeSitter(e)) => {
+            tracing::debug!(target: "codemark::query", error = %e, "disambiguated query failed");
+        }
+        Err(e) => return Err(e),
+    }
+    let mut unnamed = structural();
+    for entry in &mut unnamed {
+        entry.name_info = None;
+        entry.semantic_info = None;
+    }
+    candidates.push(build_tier1_query(&unnamed));
+    candidates.push(format!("({}) @target", target.kind()));
+
+    for query in candidates {
+        if query.is_empty() {
+            continue;
+        }
+        match matcher::run_query_in(&query, scope, ctx.source, ctx.language) {
+            Ok(matches) if smallest_capture_of(&matches, target).is_some() => {
+                return Ok(Some((query, matches)));
+            }
+            Ok(matches) => tracing::debug!(
+                target: "codemark::query",
+                matches = matches.len(),
+                %query,
+                "candidate query misses the selected node; trying a simpler one"
+            ),
+            Err(e) => tracing::debug!(
+                target: "codemark::query",
+                error = %e,
+                %query,
+                "candidate query does not compile; trying a simpler one"
+            ),
+        }
+    }
+    Ok(None)
 }
 
 fn scoped_result(target: Node, query: String, source: &[u8]) -> GeneratedQuery {
