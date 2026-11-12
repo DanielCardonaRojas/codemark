@@ -9,7 +9,9 @@
 use codemark_core::engine::bookmark::{Bookmark, BookmarkComment};
 use codemark_core::engine::comment_anchor::{self, AnchorState};
 
-use crate::component::{InlineComment, InlineThread, LooseThread};
+use codemark_core::engine::agent::{DeliveryStatus, ThreadAgentState};
+
+use crate::component::{AgentPending, InlineComment, InlineThread, LooseThread, ThreadAgent};
 
 /// A bookmark's comment threads: those anchored in the code, and those with
 /// no place in it.
@@ -65,6 +67,9 @@ pub(crate) fn build_inline_threads(
                     start_col: char_column(code, range.byte_range.0),
                     end_col: char_column(code, range.byte_range.1),
                     entries,
+                    // Filled in by the caller: agent state changes far more
+                    // often than the anchors, which are cached.
+                    agent: None,
                 });
                 continue;
             }
@@ -72,7 +77,7 @@ pub(crate) fn build_inline_threads(
             AnchorState::Orphaned => Some("orphaned"),
             AnchorState::Suspended => Some("suspended"),
         };
-        threads.loose.push(LooseThread { root_id: root.id.clone(), tag, entries });
+        threads.loose.push(LooseThread { root_id: root.id.clone(), tag, entries, agent: None });
     }
     threads
 }
@@ -176,6 +181,27 @@ pub(crate) fn cache_key(
     }
     chrono::Local::now().date_naive().hash(&mut hasher);
     hasher.finish()
+}
+
+/// What the preview shows for an agent-owned thread: the agent's name and
+/// what its newest reply is waiting on.
+pub(crate) fn thread_agent(state: &ThreadAgentState) -> ThreadAgent {
+    let session = &state.session;
+    let pending = state.latest.as_ref().and_then(|d| match d.status {
+        DeliveryStatus::Answered | DeliveryStatus::Cancelled => None,
+        DeliveryStatus::Queued if session.is_pull_only() => Some(AgentPending::NextTurn),
+        DeliveryStatus::Queued if !session.is_live() => Some(AgentPending::Offline),
+        DeliveryStatus::Queued => Some(AgentPending::Sending { since: d.created_at.clone() }),
+        DeliveryStatus::Delivered if d.is_overdue() => Some(AgentPending::Overdue),
+        DeliveryStatus::Delivered => Some(AgentPending::Answering {
+            since: d.delivered_at.clone().unwrap_or_else(|| d.created_at.clone()),
+        }),
+        DeliveryStatus::Expired => Some(AgentPending::Overdue),
+        DeliveryStatus::Failed => {
+            Some(AgentPending::Failed(d.error.clone().unwrap_or_else(|| "unknown error".into())))
+        }
+    });
+    ThreadAgent { name: session.display_name().to_string(), pending }
 }
 
 /// Char column of byte `offset` within its line.
@@ -394,5 +420,41 @@ mod tests {
         assert_eq!(trusted_range(code, Some((0, 9)), Some(hash)), Some((0, 9)));
         assert_eq!(trusted_range("fn ab() {}\n", Some((0, 9)), Some(hash)), None, "file changed");
         assert_eq!(trusted_range(code, Some((0, 9)), None), None, "unknown source");
+    }
+
+    #[test]
+    fn agent_status_follows_the_newest_delivery() {
+        use codemark_core::engine::agent::{AgentSession, Delivery, now_rfc3339};
+        let live = AgentSession::new("claude-code", Some("claude".into()));
+        let state = |session: &AgentSession, status: Option<DeliveryStatus>| {
+            let latest = status.map(|status| Delivery {
+                status,
+                delivered_at: Some(now_rfc3339()),
+                ..Delivery::new("c", "t", &session.id)
+            });
+            thread_agent(&ThreadAgentState { session: session.clone(), latest })
+        };
+        assert_eq!(state(&live, None).pending, None);
+        assert_eq!(state(&live, Some(DeliveryStatus::Answered)).pending, None);
+        assert!(matches!(
+            state(&live, Some(DeliveryStatus::Queued)).pending,
+            Some(AgentPending::Sending { .. })
+        ));
+        assert!(matches!(
+            state(&live, Some(DeliveryStatus::Delivered)).pending,
+            Some(AgentPending::Answering { .. })
+        ));
+        assert_eq!(state(&live, Some(DeliveryStatus::Queued)).name, "claude");
+
+        let mut gone = live.clone();
+        gone.ended_at = Some(now_rfc3339());
+        assert_eq!(state(&gone, Some(DeliveryStatus::Queued)).pending, Some(AgentPending::Offline));
+
+        let pull = AgentSession::new("pull", None);
+        assert_eq!(
+            state(&pull, Some(DeliveryStatus::Queued)).pending,
+            Some(AgentPending::NextTurn)
+        );
+        assert_eq!(state(&pull, None).name, "pull");
     }
 }

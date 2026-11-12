@@ -1,3 +1,4 @@
+pub mod agent;
 pub mod bookmark;
 pub mod breadcrumbs;
 pub mod comment_anchor;

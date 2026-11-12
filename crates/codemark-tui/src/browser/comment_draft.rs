@@ -322,29 +322,46 @@ impl BrowserLayout {
             return;
         }
         let db = self.workspace.db_for(draft.repo_root.as_deref());
-        let insert = |comment: BookmarkComment| {
-            db.insert_comment(&comment).map(|()| {
-                tracing::debug!(target: "codemark::comments", id = %comment.id, "comment saved from TUI");
-                (true, "Comment added")
-            })
-        };
         let new_comment = || BookmarkComment::new(&draft.bookmark_id, comment_author(), &body);
         // `(success, message)` once written; the modal then closes.
         let written = match &draft.kind {
-            DraftKind::Anchored(anchor) => insert(new_comment().with_anchor(anchor.clone())),
+            DraftKind::Anchored(anchor) => {
+                let comment = new_comment().with_anchor(anchor.clone());
+                db.insert_comment(&comment).map(|()| {
+                    tracing::debug!(target: "codemark::comments", id = %comment.id, "comment saved from TUI");
+                    (true, "Comment added".to_string())
+                })
+            }
+            // A reply on an agent-owned thread is queued for that agent in the
+            // same transaction (see `codemark_core::engine::agent`).
             DraftKind::Reply { root_id } => {
-                insert(BookmarkComment { parent_id: Some(root_id.clone()), ..new_comment() })
+                let comment = BookmarkComment { parent_id: Some(root_id.clone()), ..new_comment() };
+                db.insert_reply_with_delivery(&comment, root_id).map(|delivery| {
+                    tracing::debug!(target: "codemark::comments", id = %comment.id, "reply saved from TUI");
+                    let message = match delivery
+                        .and_then(|d| db.get_agent_session(&d.session_id).ok().flatten())
+                    {
+                        Some(s) if s.is_live() => format!("Reply sent to {}", s.display_name()),
+                        Some(s) => format!("Reply saved; {} is offline", s.display_name()),
+                        None => "Comment added".into(),
+                    };
+                    (true, message)
+                })
             }
             DraftKind::Edit { comment_id } => db.update_comment_body(comment_id, &body).map(|found| {
                 tracing::debug!(target: "codemark::comments", id = %comment_id, found, "comment edited from TUI");
-                if found { (true, "Comment updated") } else { (false, "The comment was deleted meanwhile") }
+                if found {
+                    (true, "Comment updated".to_string())
+                } else {
+                    (false, "The comment was deleted meanwhile".to_string())
+                }
             }),
         };
         match written {
             Ok((success, message)) => {
                 self.right_pane.reload_step_comments(db);
                 self.comment_draft = None;
-                self.notify(success, message.into());
+                self.notify(success, message);
             }
             Err(e) => {
                 tracing::warn!(target: "codemark::comments", error = %e, "failed to save comment");
@@ -840,6 +857,7 @@ mod tests {
             start_col: 0,
             end_col: 4,
             entries: vec![entry("root", "ana"), entry("reply", "bo")],
+            agent: None,
         }]);
         layout.set_focus(super::super::FocusArea::Main);
         layout.right_pane.steps.get_step_preview_mut().unwrap().jump_to_line(1);

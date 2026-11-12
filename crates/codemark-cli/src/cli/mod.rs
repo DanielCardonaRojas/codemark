@@ -139,6 +139,9 @@ pub enum Command {
     /// Comment on a bookmark, or on one node inside it
     Comment(CommentArgs),
 
+    /// Live agent sessions that answer comment replies (experimental)
+    Agent(AgentArgs),
+
     /// Open a bookmarked file in your editor
     Open(OpenArgs),
 
@@ -1253,6 +1256,11 @@ pub struct CommentAddArgs {
     /// Author: "user" (default) or the agent slug (claude, codex, ...)
     #[arg(long, default_value = "user")]
     pub created_by: String,
+
+    /// Agent session that owns the new thread: replies to it are pushed to
+    /// that session (see `codemark agent`).
+    #[arg(long)]
+    pub session: Option<String>,
 }
 
 #[derive(Debug, clap::Args)]
@@ -1269,6 +1277,114 @@ pub struct CommentReplyArgs {
     /// Author: "user" (default) or the agent slug (claude, codex, ...)
     #[arg(long, default_value = "user")]
     pub created_by: String,
+
+    /// Answer as this agent session: closes the replies waiting on it in
+    /// the thread, so the TUI stops showing them as pending.
+    #[arg(long)]
+    pub session: Option<String>,
+}
+
+#[derive(Debug, clap::Args)]
+pub struct AgentArgs {
+    #[command(subcommand)]
+    pub command: AgentCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum AgentCommand {
+    /// List agent sessions and whether each is live
+    Sessions(AgentSessionsArgs),
+
+    /// Register a session for an agent that pulls replies itself; prints its id
+    Register(AgentRegisterArgs),
+
+    /// Stream replies addressed to a session as JSON lines (for adapters)
+    Watch(AgentWatchArgs),
+
+    /// Print and claim the replies waiting for a session, then exit
+    Inbox(AgentInboxArgs),
+
+    /// Run an agent's channel adapter on stdio (spawned by the agent)
+    Channel(AgentChannelArgs),
+
+    /// Configure an agent to use the bridge
+    Setup(AgentSetupArgs),
+}
+
+#[derive(Debug, clap::Args)]
+pub struct AgentSessionsArgs {
+    #[command(flatten)]
+    pub db: DbFormatArgs,
+    /// Include sessions that ended
+    #[arg(long)]
+    pub all: bool,
+}
+
+#[derive(Debug, clap::Args)]
+pub struct AgentRegisterArgs {
+    #[command(flatten)]
+    pub db: DbFormatArgs,
+    /// Agent kind: pull (default), pi, codex, ...
+    #[arg(long, default_value = "pull")]
+    pub kind: String,
+    /// Name shown in the TUI (defaults to the kind)
+    #[arg(long)]
+    pub label: Option<String>,
+}
+
+#[derive(Debug, clap::Args)]
+pub struct AgentWatchArgs {
+    #[command(flatten)]
+    pub db: DbFormatArgs,
+    /// Session to watch; omit to register a new one (printed first)
+    #[arg(long)]
+    pub session: Option<String>,
+    /// Kind for a newly registered session
+    #[arg(long, default_value = "pull")]
+    pub kind: String,
+    /// Label for a newly registered session
+    #[arg(long)]
+    pub label: Option<String>,
+    /// One plain line per reply instead of JSON (for line-oriented consumers
+    /// such as Claude Code's Monitor tool)
+    #[arg(long)]
+    pub oneline: bool,
+}
+
+#[derive(Debug, clap::Args)]
+pub struct AgentInboxArgs {
+    #[command(flatten)]
+    pub db: DbFormatArgs,
+    /// Session whose replies to fetch
+    #[arg(long)]
+    pub session: String,
+}
+
+#[derive(Debug, clap::Args)]
+pub struct AgentChannelArgs {
+    #[command(flatten)]
+    pub db: DbFormatArgs,
+    /// Which agent: claude
+    #[arg(value_enum)]
+    pub agent: ChannelAgent,
+    /// Name shown in the TUI
+    #[arg(long)]
+    pub label: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, clap::ValueEnum)]
+pub enum ChannelAgent {
+    Claude,
+}
+
+#[derive(Debug, clap::Args)]
+pub struct AgentSetupArgs {
+    /// Which agent: claude
+    #[arg(value_enum)]
+    pub agent: ChannelAgent,
+    /// Print the configuration instead of writing .mcp.json
+    #[arg(long)]
+    pub print: bool,
 }
 
 #[derive(Debug, clap::Args)]

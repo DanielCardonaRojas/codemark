@@ -156,6 +156,11 @@ impl BrowserLayout {
             dirty = true;
         }
 
+        // Pick up comments and agent answers written by other processes.
+        if self.poll_agent_bridge() {
+            dirty = true;
+        }
+
         // Animate the right-pane "Loading preview…" spinner while resolving.
         if self.right_pane.is_loading() {
             self.right_pane.advance_loading_spinner();
@@ -191,6 +196,40 @@ impl BrowserLayout {
             }
         }
         true
+    }
+
+    /// Live comments: when another process wrote to the database of the
+    /// step on screen (`PRAGMA data_version` moved), reload that step's
+    /// comments and agent state; when the step changed, load its agent
+    /// state. Every 20 ticks (5 s) threads waiting on an agent are rebuilt so
+    /// "offline" and "no answer yet" appear without a write. Returns whether
+    /// anything was reloaded.
+    fn poll_agent_bridge(&mut self) -> bool {
+        if self.right_pane.current_step_bookmark_id().is_none() {
+            return false;
+        }
+        let db = self.workspace.db_for(self.right_pane.active_repo_root.as_deref());
+        let Ok(version) = db.data_version() else { return false };
+        let path = db.path().to_path_buf();
+        let previous = self.bridge_seen.replace((path.clone(), version));
+        match previous {
+            Some((p, v)) if p == path && v != version => {
+                tracing::debug!(target: "codemark::agent", version, "database changed; reloading step comments");
+                self.right_pane.reload_step_comments(db);
+                true
+            }
+            _ if !self.right_pane.agent_states_current() => {
+                if self.right_pane.reload_agent_states(db) {
+                    self.right_pane.refresh_inline_comments();
+                }
+                true
+            }
+            _ if self.tick_count.is_multiple_of(20) && self.right_pane.has_agent_threads() => {
+                self.right_pane.refresh_inline_comments();
+                true
+            }
+            _ => false,
+        }
     }
 
     /// If a debounced preview request is due, spawn the background resolve.

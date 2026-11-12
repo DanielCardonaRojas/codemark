@@ -97,8 +97,12 @@ async fn handle_add(cli: &Cli, mode: &OutputMode, args: &CommentAddArgs) -> Resu
     if let Some(ref range) = args.range {
         comment = comment.with_anchor(anchor_for_range(&bm, db, range).await?);
     }
+    let session = args.session.as_deref().map(|id| require_session(db, id)).transpose()?;
     db.insert_comment(&comment)?;
     tracing::debug!(target: "codemark::comments", id = %comment.id, anchored = comment.is_anchored(), "comment added");
+    if let Some(session) = session {
+        db.bind_agent_thread(&comment.id, &session.id)?;
+    }
 
     let view = CommentView::fresh(&comment);
     write_one(mode, &view, "Added comment")
@@ -115,7 +119,19 @@ async fn handle_reply(cli: &Cli, mode: &OutputMode, args: &CommentReplyArgs) -> 
         parent_id: Some(root_id),
         ..BookmarkComment::new(&parent.bookmark_id, &args.created_by, &args.body)
     };
-    db.insert_comment(&reply)?;
+    match args.session.as_deref() {
+        // An agent answering: close the replies that waited on it.
+        Some(id) => {
+            let session = require_session(db, id)?;
+            let root = reply.parent_id.clone().unwrap_or_default();
+            db.insert_agent_answer(&reply, &root, &session.id)?;
+        }
+        // A person replying: queue it for the agent that owns the thread.
+        None => {
+            let root = reply.parent_id.clone().unwrap_or_default();
+            db.insert_reply_with_delivery(&reply, &root)?;
+        }
+    }
     let view = CommentView::fresh(&reply);
     write_one(mode, &view, "Added reply")
 }
@@ -254,6 +270,13 @@ async fn handle_reanchor(cli: &Cli, mode: &OutputMode, args: &CommentReanchorArg
         &view,
         if anchor.is_some() { "Re-anchored comment" } else { "Detached comment" },
     )
+}
+
+/// The agent session `id`, or an error naming it.
+fn require_session(db: &Database, id: &str) -> Result<codemark_core::engine::agent::AgentSession> {
+    db.get_agent_session(id)?.ok_or_else(|| {
+        Error::Input(format!("no agent session {id} in this repo (see `codemark agent sessions`)"))
+    })
 }
 
 /// Find a comment by id or unambiguous prefix across `dbs`, with the

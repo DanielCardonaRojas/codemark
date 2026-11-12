@@ -957,16 +957,16 @@ impl CodePreview {
             .map(|t| RailItem {
                 thread: None,
                 desired: 0,
-                lines: bubble_lines(&t.entries, t.tag, text_width),
+                lines: bubble_lines(&t.entries, t.tag, t.agent.as_ref(), text_width),
             })
             .collect();
         let layout = self.layout();
         items.extend(self.rail_order().into_iter().map(|i| {
             let t = &self.inline.threads[i];
             let lines = if self.inline.folded.contains(&t.root_id) {
-                folded_bubble_lines(&t.entries, None, text_width)
+                folded_bubble_lines(&t.entries, None, t.agent.as_ref(), text_width)
             } else {
-                bubble_lines(&t.entries, None, text_width)
+                bubble_lines(&t.entries, None, t.agent.as_ref(), text_width)
             };
             RailItem { thread: Some(i), desired: layout.row_of(t.anchor_start), lines }
         }));
@@ -1055,6 +1055,8 @@ impl CodePreview {
                 text: palette.emphasis,
                 dim: palette.dim,
                 accent: palette.accent,
+                warning: palette.warning,
+                error: palette.error,
             };
             let top = origin + start as i64;
             let mut drawn: Option<(u16, u16)> = None;
@@ -1523,6 +1525,9 @@ impl Component for CodePreview {
         let mut comment_signs: HashMap<usize, bool> = HashMap::new();
         // Beside the code, the sign marks the line the bubble lines up with.
         let beside = self.inline.beside.get();
+        // Lines with a thread waiting on its agent: the sign spins instead,
+        // so a pending answer shows even while its bubble is folded.
+        let mut spinning_lines: HashSet<usize> = HashSet::new();
         for t in &self.inline.threads {
             let line = if beside {
                 t.anchor_start.min(self.line_count().saturating_sub(1))
@@ -1531,6 +1536,9 @@ impl Component for CodePreview {
             };
             let expanded = !self.inline.folded.contains(&t.root_id);
             *comment_signs.entry(line).or_default() |= expanded;
+            if t.agent.as_ref().and_then(|a| a.pending.as_ref()).is_some_and(|p| p.spins()) {
+                spinning_lines.insert(line);
+            }
         }
         let cursor_thread = self.cursor_thread().filter(|_| self.focused);
 
@@ -1554,6 +1562,10 @@ impl Component for CodePreview {
                     // separator, then content: swap in both signs.
                     new_spans.extend(line.spans.get(1).cloned());
                     new_spans.push(match comment_signs.get(&i) {
+                        Some(_) if spinning_lines.contains(&i) => Span::styled(
+                            super::inline_comments::spinner_frame(),
+                            Style::default().fg(palette.accent),
+                        ),
                         // Beside the code nothing folds into the gutter, so
                         // the sign only marks the line.
                         Some(_) if beside => Span::styled("●", Style::default().fg(palette.accent)),
@@ -1571,6 +1583,8 @@ impl Component for CodePreview {
                         text: palette.emphasis,
                         dim: palette.dim,
                         accent: palette.accent,
+                        warning: palette.warning,
+                        error: palette.error,
                     };
                     text_lines.push(render_bubble_line(
                         &layout.bubbles[thread][row],
@@ -2250,6 +2264,7 @@ mod tests {
                     body: b.to_string(),
                 })
                 .collect(),
+            agent: None,
         }
     }
 
@@ -2820,6 +2835,7 @@ mod tests {
             root_id: "l".into(),
             tag: Some("orphaned"),
             entries: thread("l", 0, 0, &["lost"]).entries,
+            agent: None,
         }]);
         let buf = render_beside(&preview, 30, 44, 12);
         assert!(row_from(&buf, 30, 0).contains("orphaned"), "{}", row_from(&buf, 30, 0));

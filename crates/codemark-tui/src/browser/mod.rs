@@ -180,6 +180,9 @@ pub struct BrowserLayout {
     spinner_clear_at: Option<usize>,
     /// Tick counter for spinner animation
     tick_count: usize,
+    /// Database and `PRAGMA data_version` last seen by the agent-bridge poll;
+    /// a change means another process (an agent, the CLI) wrote to it.
+    bridge_seen: Option<(std::path::PathBuf, i64)>,
     /// Last-fetched remote tours (cached to avoid re-fetching after pull)
     cached_remote_tours: Vec<codemark_core::sync::RemoteTourSummary>,
     /// Repos scope (comma-joined `owner/name`) used for the in-flight remote
@@ -394,6 +397,7 @@ impl BrowserLayout {
             spinning_items: Vec::new(),
             spinner_clear_at: None,
             tick_count: 0,
+            bridge_seen: None,
             cached_remote_tours: Vec::new(),
             collection_live_health: HashMap::new(),
             bookmark_live_health: HashMap::new(),
@@ -3464,6 +3468,7 @@ mod tests {
                 when: "today".into(),
                 body: body.into(),
             }],
+            agent: None,
         };
         let code: String = (0..12).map(|i| format!("line{i}\n")).collect();
         let preview = layout.right_pane.steps.get_step_preview_mut().unwrap();
@@ -3530,6 +3535,7 @@ mod tests {
                 when: "today".into(),
                 body: body.into(),
             }],
+            agent: None,
         };
         let code: String = (0..20).map(|i| format!("line{i}\n")).collect();
         let preview = layout.right_pane.steps.get_step_preview_mut().unwrap();

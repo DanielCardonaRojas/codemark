@@ -64,6 +64,8 @@ codemark-core = { path = "../codemark-core", default-features = false }
 # = false for the same reason as core: the CLI's own `semantic`/`wasm` features
 # drive the TUI's matching features so both halves of the binary stay in sync.
 codemark-tui = { path = "../codemark-tui", default-features = false, optional = true }
+# Live agent bridge adapters (`codemark agent ...`). Light: no extra deps.
+codemark-agents = { path = "../codemark-agents" }
 clap = { workspace = true }
 clap_complete = "4"
 clap_mangen = { version = "0.2", optional = true }

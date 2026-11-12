@@ -11,7 +11,7 @@ pub mod panel;
 // Re-export types for convenience
 pub use code_preview::CodePreview;
 pub use codemark_core::sort::SortMethod;
-pub use inline_comments::{InlineComment, InlineThread, LooseThread};
+pub use inline_comments::{AgentPending, InlineComment, InlineThread, LooseThread, ThreadAgent};
 pub use markdown_panel::MarkdownPanel;
 pub use panel::{HealthStatus, Panel, PanelItem, SyncDirection};
 

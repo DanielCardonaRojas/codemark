@@ -1,3 +1,4 @@
+pub mod agent_repo;
 pub mod bookmark_repo;
 pub mod collection_link_repo;
 pub mod collection_repo;

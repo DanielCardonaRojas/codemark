@@ -54,6 +54,11 @@ impl Packer {
             let _ = conn.execute("DROP TABLE IF EXISTS collection_embeddings", []);
             let _ = conn.execute("DROP TABLE IF EXISTS bookmarks_fts", []);
             let _ = conn.execute("DROP TABLE IF EXISTS published_tours", []);
+            // The live agent bridge is machine-local (V29): sessions and
+            // deliveries mean nothing on another machine.
+            let _ = conn.execute("DROP TABLE IF EXISTS agent_deliveries", []);
+            let _ = conn.execute("DROP TABLE IF EXISTS agent_threads", []);
+            let _ = conn.execute("DROP TABLE IF EXISTS agent_sessions", []);
             let _ = conn.execute("DROP TRIGGER IF EXISTS bookmarks_ai", []);
             let _ = conn.execute("DROP TRIGGER IF EXISTS bookmarks_ad", []);
             let _ = conn.execute("DROP TRIGGER IF EXISTS bookmarks_au", []);

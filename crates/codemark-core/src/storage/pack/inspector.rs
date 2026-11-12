@@ -3,6 +3,10 @@ use serde::Serialize;
 use std::path::Path;
 use thiserror::Error;
 
+/// Tables a pack may contain only when empty: created by migrations for the
+/// live agent bridge, never carried between machines.
+const LOCAL_ONLY_TABLES: [&str; 3] = ["agent_sessions", "agent_threads", "agent_deliveries"];
+
 #[derive(Error, Debug, Serialize)]
 #[serde(tag = "error", content = "reason", rename_all = "snake_case")]
 pub enum PackError {
@@ -87,6 +91,17 @@ pub fn pre_inspect(pack_path: &Path) -> Result<i64, PackError> {
 
         if item_type != "table" && item_type != "index" {
             return Err(PackError::DisallowedSchemaItem(name, item_type));
+        }
+
+        if item_type == "table" && LOCAL_ONLY_TABLES.contains(&name.as_str()) {
+            // Machine-local tables: migrating a pack creates them, and the
+            // writer drops them, so they may appear but never hold rows.
+            let rows: i64 =
+                conn.query_row(&format!("SELECT COUNT(*) FROM \"{name}\""), [], |r| r.get(0))?;
+            if rows > 0 {
+                return Err(PackError::DisallowedSchemaItem(name, item_type));
+            }
+            continue;
         }
 
         if item_type == "table" && !allowed_tables.contains(&name.as_str()) {
@@ -189,4 +204,38 @@ pub fn inspect(pack_path: &Path) -> Result<PackInfo, PackError> {
     }
 
     Ok(PackInfo { user_version, tour_count, bookmark_count, source_client })
+}
+
+#[cfg(test)]
+mod local_table_tests {
+    use super::*;
+
+    fn pack_with_agent_sessions(rows: usize) -> tempfile::NamedTempFile {
+        let file = tempfile::NamedTempFile::new().unwrap();
+        let conn = Connection::open(file.path()).unwrap();
+        conn.execute_batch(
+            "PRAGMA user_version = 29;
+             CREATE TABLE agent_sessions (id TEXT PRIMARY KEY, kind TEXT NOT NULL,
+                 label TEXT, external_ref TEXT, pid INTEGER, started_at TEXT NOT NULL,
+                 heartbeat_at TEXT NOT NULL, ended_at TEXT);",
+        )
+        .unwrap();
+        for i in 0..rows {
+            conn.execute(
+                "INSERT INTO agent_sessions (id, kind, started_at, heartbeat_at) VALUES (?1, 'pi', 'x', 'x')",
+                [i.to_string()],
+            )
+            .unwrap();
+        }
+        file
+    }
+
+    #[test]
+    fn empty_agent_tables_pass_and_rows_are_rejected() {
+        assert_eq!(pre_inspect(pack_with_agent_sessions(0).path()).unwrap(), 29);
+        assert!(matches!(
+            pre_inspect(pack_with_agent_sessions(1).path()),
+            Err(PackError::DisallowedSchemaItem(name, _)) if name == "agent_sessions"
+        ));
+    }
 }

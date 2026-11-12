@@ -143,6 +143,11 @@ pub struct RightPane {
     /// repo. Set by the `load_*` methods; cleared alongside the other `active_*`
     /// fields in [`clear_preview_state`].
     pub active_repo_root: Option<String>,
+    /// Agent state of the current step's agent-owned threads, by root id
+    /// (see `codemark_core::engine::agent`). Reloaded with the comments.
+    agent_states: std::collections::HashMap<String, codemark_core::engine::agent::ThreadAgentState>,
+    /// Bookmark whose agent states are loaded, so a step change reloads them.
+    agent_states_for: Option<String>,
     /// Cached show template content to avoid repeated disk reads
     cached_show_template: String,
     /// Cached details template content to avoid repeated disk reads
@@ -248,6 +253,8 @@ impl RightPane {
             active_bookmark_id: None,
             active_remote_tour_id: None,
             active_repo_root: None,
+            agent_states: Default::default(),
+            agent_states_for: None,
             shown_preview: None,
             shown_preview_base: None,
             inline_threads_cache: None,
@@ -581,6 +588,11 @@ impl RightPane {
         let (byte_range, byte_range_source) = (step.byte_range, step.byte_range_source);
         let bookmark = step.bookmark.clone();
         let cache = &mut self.inline_threads_cache;
+        let agents = if self.agent_states_for.as_deref() == Some(bookmark.id.as_str()) {
+            &self.agent_states
+        } else {
+            &Default::default()
+        };
         if let Some(preview) = self.steps.get_step_preview_mut() {
             let code = preview.code();
             let byte_range =
@@ -598,6 +610,15 @@ impl RightPane {
                     threads
                 }
             };
+            let mut threads = threads;
+            let agent_of =
+                |root_id: &str| agents.get(root_id).map(super::inline_threads::thread_agent);
+            for t in &mut threads.anchored {
+                t.agent = agent_of(&t.root_id);
+            }
+            for t in &mut threads.loose {
+                t.agent = agent_of(&t.root_id);
+            }
             tracing::debug!(
                 target: "codemark::comments",
                 bookmark = %bookmark.id,
@@ -621,11 +642,53 @@ impl RightPane {
                 return;
             }
         }
+        self.reload_agent_states(db);
         self.refresh_inline_comments();
         // Supersede any background render of this step started before the
         // save, or its stale Comments tab would replace the fresh one.
         self.next_step_preview_request();
         self.update_step_markdown(db);
+    }
+
+    /// Whether any thread on the current step is owned by an agent.
+    pub fn has_agent_threads(&self) -> bool {
+        self.agent_states_current() && !self.agent_states.is_empty()
+    }
+
+    /// Load the agent state of the current step's threads from `db`.
+    /// Returns whether any thread is agent-owned.
+    pub fn reload_agent_states(&mut self, db: &Database) -> bool {
+        let Some(step) = self.steps_data.get(self.pager_current) else {
+            self.agent_states.clear();
+            self.agent_states_for = None;
+            return false;
+        };
+        let roots: Vec<&str> = step
+            .bookmark
+            .comments
+            .iter()
+            .filter(|c| c.parent_id.is_none())
+            .map(|c| c.id.as_str())
+            .collect();
+        match db.agent_thread_states(&roots) {
+            Ok(states) => {
+                self.agent_states = states;
+                self.agent_states_for = Some(step.bookmark.id.clone());
+                !self.agent_states.is_empty()
+            }
+            Err(e) => {
+                tracing::warn!(target: "codemark::agent", error = %e, "failed to load agent thread states");
+                // Don't retry every tick.
+                self.agent_states_for = Some(step.bookmark.id.clone());
+                false
+            }
+        }
+    }
+
+    /// Whether agent states are loaded for the step on screen.
+    pub fn agent_states_current(&self) -> bool {
+        self.agent_states_for.is_some()
+            && self.agent_states_for.as_deref() == self.current_step_bookmark_id()
     }
 
     /// The bookmark shown in the code preview, with where its code is now.

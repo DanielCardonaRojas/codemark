@@ -28,6 +28,7 @@ use codemark_core::storage::SemanticRepo;
 use codemark_core::storage::{OpenDbOptions, Workspace, db::Database};
 
 // Handler submodules
+pub mod agent;
 pub mod auth;
 pub mod auth_resolve;
 pub mod bookmark;
@@ -123,6 +124,14 @@ fn merge_globals(cli: &mut Cli) {
             crate::cli::CommentCommand::Edit(a) => g_global(&a.global),
             crate::cli::CommentCommand::Rm(a) => g_global(&a.global),
             crate::cli::CommentCommand::Reanchor(a) => g_global(&a.global),
+        },
+        Command::Agent(args) => match &args.command {
+            crate::cli::AgentCommand::Sessions(a) => g_dbformat(&a.db),
+            crate::cli::AgentCommand::Register(a) => g_dbformat(&a.db),
+            crate::cli::AgentCommand::Watch(a) => g_dbformat(&a.db),
+            crate::cli::AgentCommand::Inbox(a) => g_dbformat(&a.db),
+            crate::cli::AgentCommand::Channel(a) => g_dbformat(&a.db),
+            crate::cli::AgentCommand::Setup(_) => g_none(),
         },
         #[cfg(feature = "semantic")]
         Command::Reindex(a) => g_global(&a.global),
@@ -272,6 +281,7 @@ pub async fn dispatch(mut cli: Cli) -> Result<()> {
         Command::Edit(args) => handle_edit_v2(cli, &mode, args).await,
         Command::Annotate(args) => bookmark::handle_annotate(cli, &mode, args).await,
         Command::Comment(args) => comment::handle_comment(cli, &mode, args).await,
+        Command::Agent(args) => agent::handle_agent(cli, &mode, args).await,
         Command::Open(args) => handle_open(cli, args).await,
         Command::Tour(args) => dispatch_tour_v2(cli, &mode, args).await,
         Command::Publish(args) => publish::handle_publish(cli, &mode, args).await,

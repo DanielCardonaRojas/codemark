@@ -679,6 +679,17 @@ codemark comment rm <comment-id>
 - **Scope rule:** the range must lie inside the bookmark's enclosing function, method or class (its *deepest landmark*). Outside it, the command fails and names the landmark's lines; bookmark that code instead and put both bookmarks in one collection.
 - **orphaned** means the bookmark resolves but the commented code is gone: re-anchor or detach it. **suspended** means the bookmark itself is broken; heal the bookmark first.
 
+### Live threads (experimental): answer the user's replies as they come
+When you run with the codemark channel (Claude Code) or the pi extension, you have a codemark *agent session*. Threads you start through it are **live**: when the user replies in the TUI, the reply is pushed to you and the TUI shows a spinner until you answer.
+- **Claude Code**: use the `codemark_comment` and `codemark_reply` tools from the `codemark` MCP server. Replies arrive as `<channel source="codemark" thread_id="...">`; answer with `codemark_reply`, passing that `thread_id`. Call `codemark_inbox` if you suspect replies were missed.
+- **CLI**: pass your session id (given in the server instructions) to bind a thread or answer as the session:
+```bash
+codemark comment add <bookmark-id> --range 57 --body "..." --created-by claude --session <session-id>
+codemark comment reply <comment-id> --body "..." --created-by claude --session <session-id>
+```
+- Keep answers short, like a code-review reply, and say so if you changed code because of the reply.
+- Setup for the user: `codemark agent setup claude`, then `claude --dangerously-load-development-channels server:codemark` (channels are a research preview).
+
 ### Health and maintenance
 ```bash
 # Check bookmark health

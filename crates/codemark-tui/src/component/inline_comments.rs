@@ -27,6 +27,65 @@ pub struct InlineThread {
     pub end_col: usize,
     /// The root comment first, then its replies in order.
     pub entries: Vec<InlineComment>,
+    /// The live agent that owns the thread, when one does.
+    pub agent: Option<ThreadAgent>,
+}
+
+/// The agent side of a thread: who owns it and what the user is waiting for.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ThreadAgent {
+    /// Name shown in the status row (`claude`).
+    pub name: String,
+    /// What the newest reply is waiting on; `None` when nothing is pending.
+    pub pending: Option<AgentPending>,
+}
+
+/// The state of the newest reply on an agent-owned thread. Times are kept as
+/// timestamps so the elapsed seconds tick at render time without a relayout.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AgentPending {
+    /// Written; the agent's adapter has not picked it up yet.
+    Sending {
+        since: String,
+    },
+    /// Pushed into the agent; waiting for its answer.
+    Answering {
+        since: String,
+    },
+    /// The agent's session is not running; the reply waits for it.
+    Offline,
+    /// A pull-only agent reads replies on its next turn.
+    NextTurn,
+    /// Delivered, with no answer for too long.
+    Overdue,
+    Failed(String),
+}
+
+impl AgentPending {
+    /// Whether the status row shows a spinner.
+    pub fn spins(&self) -> bool {
+        matches!(self, Self::Sending { .. } | Self::Answering { .. })
+    }
+}
+
+const SPINNER_FRAMES: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+
+/// The spinner frame for now: wall-clock based, so every pending row spins
+/// in step and nothing has to count ticks.
+pub(crate) fn spinner_frame() -> &'static str {
+    let ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis())
+        .unwrap_or(0);
+    SPINNER_FRAMES[(ms / 100 % SPINNER_FRAMES.len() as u128) as usize]
+}
+
+fn elapsed(since: &str) -> String {
+    match codemark_core::engine::agent::age_secs(since) {
+        Some(s) if s >= 60 => format!(" {}m {}s", s / 60, s % 60),
+        Some(s) if s >= 0 => format!(" {s}s"),
+        _ => String::new(),
+    }
 }
 
 /// A thread with no place in the code: a comment on the bookmark as a
@@ -41,6 +100,8 @@ pub struct LooseThread {
     pub tag: Option<&'static str>,
     /// The root comment first, then its replies in order.
     pub entries: Vec<InlineComment>,
+    /// The live agent that owns the thread, when one does.
+    pub agent: Option<ThreadAgent>,
 }
 
 /// One comment in a thread.
@@ -81,6 +142,11 @@ pub(crate) enum BubbleLine {
     ReplyBody(String),
     /// A folded thread's stand-in for its replies: `↳ N replies`.
     Replies(usize),
+    /// What the thread is waiting on from its agent.
+    Status {
+        name: String,
+        pending: AgentPending,
+    },
     Bottom,
 }
 
@@ -139,7 +205,7 @@ pub(crate) fn build_layout(
             if folded.contains(&t.root_id) {
                 Vec::new()
             } else {
-                bubble_lines(&t.entries, None, text_width)
+                bubble_lines(&t.entries, None, t.agent.as_ref(), text_width)
             }
         })
         .collect();
@@ -169,10 +235,12 @@ pub(crate) fn build_layout(
 }
 
 /// The rows of a bubble holding `entries`, bodies wrapped to `width`. A
-/// `tag` is shown before the root's time.
+/// `tag` is shown before the root's time; an `agent` with a reply pending
+/// adds its status row.
 pub(crate) fn bubble_lines(
     entries: &[InlineComment],
     tag: Option<&str>,
+    agent: Option<&ThreadAgent>,
     width: usize,
 ) -> Vec<BubbleLine> {
     let mut lines = Vec::new();
@@ -195,6 +263,9 @@ pub(crate) fn bubble_lines(
             lines.extend(wrap(paragraph, room).into_iter().map(BubbleLine::ReplyBody));
         }
     }
+    if let Some(ThreadAgent { name, pending: Some(pending) }) = agent {
+        lines.push(BubbleLine::Status { name: name.clone(), pending: pending.clone() });
+    }
     lines.push(BubbleLine::Bottom);
     lines
 }
@@ -205,12 +276,18 @@ pub(crate) fn bubble_lines(
 pub(crate) fn folded_bubble_lines(
     entries: &[InlineComment],
     tag: Option<&str>,
+    agent: Option<&ThreadAgent>,
     width: usize,
 ) -> Vec<BubbleLine> {
-    let mut lines = bubble_lines(entries.get(..1).unwrap_or_default(), tag, width);
+    let mut lines = bubble_lines(entries.get(..1).unwrap_or_default(), tag, agent, width);
     let replies = entries.len().saturating_sub(1);
     if replies > 0 {
-        lines.insert(lines.len().saturating_sub(1), BubbleLine::Replies(replies));
+        // Under the root, above any agent status row.
+        let at = lines
+            .iter()
+            .position(|l| matches!(l, BubbleLine::Status { .. } | BubbleLine::Bottom))
+            .unwrap_or(lines.len());
+        lines.insert(at, BubbleLine::Replies(replies));
     }
     lines
 }
@@ -281,6 +358,8 @@ pub(crate) struct BubbleStyle {
     pub text: Color,
     pub dim: Color,
     pub accent: Color,
+    pub warning: Color,
+    pub error: Color,
 }
 
 /// Render one bubble row as part of a closed box that starts one column
@@ -357,6 +436,34 @@ pub(crate) fn render_bubble_line(
             spans.push(pad(label.width()));
             spans.push(Span::styled(" │", border));
         }
+        BubbleLine::Status { name, pending } => {
+            let (icon, text, color) = match pending {
+                AgentPending::Sending { since } => {
+                    (spinner_frame(), format!("sending to {name}…{}", elapsed(since)), style.dim)
+                }
+                AgentPending::Answering { since } => (
+                    spinner_frame(),
+                    format!("{name} is answering…{}", elapsed(since)),
+                    style.accent,
+                ),
+                AgentPending::Offline => {
+                    ("○", format!("{name} is offline: delivers when it reconnects"), style.dim)
+                }
+                AgentPending::NextTurn => {
+                    ("○", format!("waiting for {name}'s next turn"), style.dim)
+                }
+                AgentPending::Overdue => ("▲", format!("no answer from {name} yet"), style.warning),
+                AgentPending::Failed(e) => ("✕", format!("delivery failed: {e}"), style.error),
+            };
+            let text = truncate(&text, inner.saturating_sub(4));
+            spans.push(Span::styled("│ ", border));
+            spans.push(Span::raw(" ".repeat(REPLY_INDENT)));
+            spans.push(Span::styled(icon, Style::default().fg(color)));
+            spans.push(Span::raw(" "));
+            spans.push(Span::styled(text.clone(), Style::default().fg(color)));
+            spans.push(pad(REPLY_INDENT + 2 + text.width()));
+            spans.push(Span::styled(" │", border));
+        }
         BubbleLine::Bottom => {
             // The key hint, shortened or left out when the box is too narrow.
             let room = box_width.saturating_sub(3);
@@ -429,6 +536,7 @@ mod tests {
                     body: b.to_string(),
                 })
                 .collect(),
+            agent: None,
         }
     }
 
@@ -470,13 +578,13 @@ mod tests {
                 body: "two".into(),
             },
         ];
-        let lines = bubble_lines(&entries, Some("orphaned"), 40);
+        let lines = bubble_lines(&entries, Some("orphaned"), None, 40);
         assert_eq!(
             lines[0],
             BubbleLine::Top { author: "a".into(), when: "orphaned · today".into() }
         );
         assert_eq!(
-            folded_bubble_lines(&entries, None, 40),
+            folded_bubble_lines(&entries, None, None, 40),
             vec![
                 BubbleLine::Top { author: "a".into(), when: "today".into() },
                 BubbleLine::Body("one".into()),
@@ -486,8 +594,8 @@ mod tests {
             "the root stays, its reply collapses"
         );
         assert_eq!(
-            folded_bubble_lines(&entries[..1], None, 40),
-            bubble_lines(&entries[..1], None, 40),
+            folded_bubble_lines(&entries[..1], None, None, 40),
+            bubble_lines(&entries[..1], None, None, 40),
             "nothing to fold without replies"
         );
     }
@@ -534,6 +642,8 @@ mod tests {
             text: Color::Reset,
             dim: Color::Reset,
             accent: Color::Reset,
+            warning: Color::Reset,
+            error: Color::Reset,
         };
         let text = |line: &BubbleLine| -> String {
             render_bubble_line(line, 4, 40, false, &style)
@@ -562,6 +672,8 @@ mod tests {
             text: Color::Reset,
             dim: Color::Reset,
             accent: Color::Reset,
+            warning: Color::Reset,
+            error: Color::Reset,
         };
         let italic = |line: &BubbleLine, needle: &str| -> bool {
             render_bubble_line(line, 4, 40, false, &style)
@@ -587,6 +699,8 @@ mod tests {
             text: Color::Reset,
             dim: Color::Reset,
             accent: Color::Reset,
+            warning: Color::Reset,
+            error: Color::Reset,
         };
         let thread = InlineThread {
             root_id: "t".into(),
@@ -608,6 +722,7 @@ mod tests {
                     body: "ok".into(),
                 },
             ],
+            agent: None,
         };
         for width in [14, 18, 24, 30] {
             // Same arithmetic as the preview: indent 4, then the box.
@@ -632,6 +747,67 @@ mod tests {
         assert_eq!(
             fit_header("Daniel Cardona", "yesterday 23:39", 10),
             ("Daniel Ca…".into(), None)
+        );
+    }
+
+    #[test]
+    fn a_pending_agent_reply_adds_a_status_row_above_the_bottom() {
+        let mut thread = InlineThread {
+            root_id: "r".into(),
+            anchor_start: 0,
+            anchor_end: 0,
+            start_col: 0,
+            end_col: 1,
+            entries: vec![InlineComment {
+                id: "r".into(),
+                author: "claude".into(),
+                when: "t".into(),
+                body: "hi".into(),
+            }],
+            agent: Some(ThreadAgent {
+                name: "claude".into(),
+                pending: Some(AgentPending::Answering { since: "2026-01-01T00:00:00Z".into() }),
+            }),
+        };
+        let lines = bubble_lines(&thread.entries, None, thread.agent.as_ref(), 40);
+        assert!(matches!(lines[lines.len() - 2], BubbleLine::Status { .. }));
+        assert_eq!(lines.last(), Some(&BubbleLine::Bottom));
+
+        let style = BubbleStyle {
+            border: Color::Reset,
+            text: Color::Reset,
+            dim: Color::Reset,
+            accent: Color::Reset,
+            warning: Color::Reset,
+            error: Color::Reset,
+        };
+        for width in [12, 30, 60] {
+            let row: String = render_bubble_line(&lines[lines.len() - 2], 4, width, false, &style)
+                .spans
+                .iter()
+                .map(|s| s.content.as_ref())
+                .collect();
+            assert!(row.trim_end().ends_with('│'), "box stays closed at {width}: {row:?}");
+            if width == 60 {
+                assert!(row.contains("claude is answering…"), "{row}");
+            }
+        }
+
+        // Folded beside the code: root, `↳ N replies`, then the status row.
+        let mut entries = thread.entries.clone();
+        entries.push(InlineComment { id: "x".into(), ..thread.entries[0].clone() });
+        let folded = folded_bubble_lines(&entries, None, thread.agent.as_ref(), 40);
+        let n = folded.len();
+        assert_eq!(folded[n - 3], BubbleLine::Replies(1));
+        assert!(matches!(folded[n - 2], BubbleLine::Status { .. }));
+        assert_eq!(folded[n - 1], BubbleLine::Bottom);
+
+        // Nothing pending: no status row.
+        thread.agent.as_mut().unwrap().pending = None;
+        assert!(
+            !bubble_lines(&thread.entries, None, thread.agent.as_ref(), 40)
+                .iter()
+                .any(|l| matches!(l, BubbleLine::Status { .. }))
         );
     }
 }

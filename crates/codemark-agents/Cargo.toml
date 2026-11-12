@@ -1,0 +1,19 @@
+[package]
+name = "codemark-agents"
+version = "0.8.0"
+edition = "2024"
+description = "Live agent bridge for Codemark: adapters that push comment replies into running coding agents"
+license = "MIT"
+repository = "https://github.com/DanielCardonaRojas/codemark"
+publish = false
+
+[dependencies]
+# default-features = false: the CLI's own features decide whether core pulls
+# in the semantic/wasm stacks. The bridge needs none of them.
+codemark-core = { path = "../codemark-core", default-features = false }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+
+[dev-dependencies]
+uuid = { workspace = true }

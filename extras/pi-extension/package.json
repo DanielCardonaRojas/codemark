@@ -1,0 +1,8 @@
+{
+  "name": "codemark-pi-extension",
+  "version": "0.0.0-dev",
+  "private": true,
+  "description": "Codemark live agent bridge for pi: answer code comment replies from the codemark TUI",
+  "type": "module",
+  "pi": { "extensions": ["./index.ts"] }
+}
