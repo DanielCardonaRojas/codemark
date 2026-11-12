@@ -446,6 +446,58 @@ fn edit_adds_comments() {
 
 #[test]
 #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
+fn comment_add_anchors_inside_the_enclosing_function() {
+    let cm = Codemark::new();
+    let file = cm.fixture("rust/auth_service.rs");
+
+    // Bookmark `Ok(claims)` (line 124) inside `validate_and_check` (113-125).
+    let json = cm.run_json(&["add", "--file", &file, "--range", "124"]);
+    let bm = json["data"]["id"].as_str().unwrap().to_string();
+
+    // Line 118 is outside the bookmark's target but inside its function.
+    let json = cm.run_json(&[
+        "comment",
+        "add",
+        &bm[..8],
+        "--range",
+        "118",
+        "--body",
+        "Validates first",
+        "--created-by",
+        "claude",
+    ]);
+    let anchored = json["data"]["id"].as_str().unwrap().to_string();
+    assert_eq!(json["data"]["anchor"], "anchored");
+    assert_eq!(json["data"]["lines"]["start"], 118);
+
+    cm.run_json(&["comment", "add", &bm[..8], "--body", "Whole bookmark"]);
+    cm.run_json(&["comment", "reply", &anchored[..8], "--body", "Agreed"]);
+
+    // A sibling function is out of scope and names the landmark's lines.
+    let out = cm.run(&["comment", "add", &bm[..8], "--range", "109", "--body", "nope"]);
+    assert_ne!(out.status, 0);
+    assert!(out.stderr.contains("lines 113-125"), "{}", out.stderr);
+
+    let json = cm.run_json(&["comment", "list", &bm[..8]]);
+    let threads = json["data"].as_array().unwrap();
+    assert_eq!(threads.len(), 2, "replies nest under their root");
+    let root = threads.iter().find(|t| t["id"] == anchored.as_str()).unwrap();
+    assert_eq!(root["anchor"], "anchored");
+    assert_eq!(root["lines"]["start"], 118);
+    assert!(root["snippet"].as_str().unwrap().starts_with("let claims"));
+    assert_eq!(root["replies"][0]["body"], "Agreed");
+    let whole = threads.iter().find(|t| t["id"] != anchored.as_str()).unwrap();
+    assert_eq!(whole["anchor"], "bookmark");
+
+    let json = cm.run_json(&["comment", "reanchor", &anchored[..8], "--detach"]);
+    assert_eq!(json["data"]["anchor"], "bookmark");
+
+    let json = cm.run_json(&["comment", "rm", &anchored[..8]]);
+    assert_eq!(json["data"]["removed"], 2, "the root and its reply");
+}
+
+#[test]
+#[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
 fn add_from_snippet() {
     let cm = Codemark::new();
 

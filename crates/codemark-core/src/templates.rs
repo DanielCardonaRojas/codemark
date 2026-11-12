@@ -110,6 +110,10 @@ pub struct CommentTemplateContext {
     /// Parent comment ID for threaded replies (optional)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub parent_id: Option<String>,
+    /// Where an anchored comment pointed when made (`L12-L14: <first line>`).
+    /// Absent for whole-bookmark comments and replies.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub anchor_hint: Option<String>,
 }
 
 /// Template context for a resolution.
@@ -238,6 +242,9 @@ impl CommentTemplateContext {
             body: comment.body.clone(),
             created_at: comment.created_at.clone(),
             parent_id: comment.parent_id.clone(),
+            // A detached comment keeps its hint but has no query; it is
+            // about the whole bookmark now.
+            anchor_hint: comment.query.as_ref().and(comment.anchor_hint.clone()),
         }
     }
 }
@@ -382,6 +389,10 @@ pub struct CollectionStepTemplateContext {
     /// First annotation note, if any (the durable code explanation)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub note: Option<String>,
+    /// The bookmark's comments, oldest first; anchored ones carry an
+    /// `anchor_hint` naming the code they point at.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub comments: Vec<CommentTemplateContext>,
 }
 
 /// Prefix every line of `text` with `>` so a multi-paragraph string renders as
@@ -460,6 +471,7 @@ impl CollectionStepTemplateContext {
             language: bm.language.clone(),
             summary,
             note,
+            comments: bm.comments.iter().map(CommentTemplateContext::from_comment).collect(),
         }
     }
 }

@@ -35,9 +35,13 @@
 ## Comments
 
 {{#each comments}}
+{{#if anchor_hint}}
+> On `{{anchor_hint}}`
+
+{{/if}}
 {{body}}
 
-*— {{escape_markdown author}}, {{format_date created_at "%Y-%m-%d %H:%M:%S"}}*
+*— {{escape_markdown author}}{{#if parent_id}} (reply){{/if}}, {{format_date created_at "%Y-%m-%d %H:%M:%S"}}*
 
 {{/each}}
 {{/if}}

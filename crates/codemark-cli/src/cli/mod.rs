@@ -136,6 +136,9 @@ pub enum Command {
     #[command(name = "annotate", hide = true)]
     Annotate(AnnotateArgs),
 
+    /// Comment on a bookmark, or on one node inside it
+    Comment(CommentArgs),
+
     /// Open a bookmarked file in your editor
     Open(OpenArgs),
 
@@ -1199,6 +1202,102 @@ pub struct PullArgs {
     /// Save the tour locally as a collection with a custom name (defaults to tour's title)
     #[arg(long)]
     pub name: Option<String>,
+}
+
+#[derive(Debug, clap::Args)]
+pub struct CommentArgs {
+    #[command(subcommand)]
+    pub command: CommentCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum CommentCommand {
+    /// Add a comment to a bookmark. With --range, the comment points at the
+    /// code in that range, which must lie inside the bookmark's enclosing
+    /// function, method or class.
+    Add(CommentAddArgs),
+
+    /// Reply to a comment
+    Reply(CommentReplyArgs),
+
+    /// List a bookmark's comments with where each one points now
+    List(CommentListArgs),
+
+    /// Delete a comment and its replies
+    Rm(CommentRmArgs),
+
+    /// Point a comment at new code, or detach it to the whole bookmark
+    Reanchor(CommentReanchorArgs),
+}
+
+#[derive(Debug, clap::Args)]
+pub struct CommentAddArgs {
+    #[command(flatten)]
+    pub global: GlobalArgs,
+    /// Bookmark ID (full UUID or unambiguous prefix)
+    pub bookmark_id: String,
+
+    /// Markdown body of the comment
+    #[arg(long)]
+    pub body: String,
+
+    /// Code to comment on, in the bookmark's file: a line range (42, 42-67,
+    /// 10:5-12:20) or a byte range (b1024-1280). Omit to comment on the whole
+    /// bookmark.
+    #[arg(long)]
+    pub range: Option<String>,
+
+    /// Author: "user" (default) or the agent slug (claude, codex, ...)
+    #[arg(long, default_value = "user")]
+    pub created_by: String,
+}
+
+#[derive(Debug, clap::Args)]
+pub struct CommentReplyArgs {
+    #[command(flatten)]
+    pub global: GlobalArgs,
+    /// Comment ID to reply to (full UUID or unambiguous prefix)
+    pub comment_id: String,
+
+    /// Markdown body of the reply
+    #[arg(long)]
+    pub body: String,
+
+    /// Author: "user" (default) or the agent slug (claude, codex, ...)
+    #[arg(long, default_value = "user")]
+    pub created_by: String,
+}
+
+#[derive(Debug, clap::Args)]
+pub struct CommentListArgs {
+    #[command(flatten)]
+    pub global: GlobalArgs,
+    /// Bookmark ID (full UUID or unambiguous prefix)
+    pub bookmark_id: String,
+}
+
+#[derive(Debug, clap::Args)]
+pub struct CommentRmArgs {
+    #[command(flatten)]
+    pub global: GlobalArgs,
+    /// Comment ID (full UUID or unambiguous prefix)
+    pub comment_id: String,
+}
+
+#[derive(Debug, clap::Args)]
+pub struct CommentReanchorArgs {
+    #[command(flatten)]
+    pub global: GlobalArgs,
+    /// Comment ID (full UUID or unambiguous prefix)
+    pub comment_id: String,
+
+    /// New code to point at, same syntax as `comment add --range`
+    #[arg(long, required_unless_present = "detach", conflicts_with = "detach")]
+    pub range: Option<String>,
+
+    /// Drop the anchor so the comment is about the whole bookmark
+    #[arg(long)]
+    pub detach: bool,
 }
 
 #[derive(Debug, clap::Args)]

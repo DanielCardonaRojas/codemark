@@ -32,6 +32,7 @@ pub mod auth;
 pub mod auth_resolve;
 pub mod bookmark;
 pub mod collection;
+pub mod comment;
 pub mod languages;
 pub mod maintenance;
 pub mod publish;
@@ -115,6 +116,13 @@ fn merge_globals(cli: &mut Cli) {
         Command::Status(a) => g_global(&a.global),
         Command::List(a) => g_dbformat(&a.dbfmt),
         Command::Search(a) => g_dbformat(&a.dbfmt),
+        Command::Comment(args) => match &args.command {
+            crate::cli::CommentCommand::Add(a) => g_global(&a.global),
+            crate::cli::CommentCommand::Reply(a) => g_global(&a.global),
+            crate::cli::CommentCommand::List(a) => g_global(&a.global),
+            crate::cli::CommentCommand::Rm(a) => g_global(&a.global),
+            crate::cli::CommentCommand::Reanchor(a) => g_global(&a.global),
+        },
         #[cfg(feature = "semantic")]
         Command::Reindex(a) => g_global(&a.global),
         Command::Collection(args) => match &args.command {
@@ -262,6 +270,7 @@ pub async fn dispatch(mut cli: Cli) -> Result<()> {
         Command::Completions(args) => handle_completions(args),
         Command::Edit(args) => handle_edit_v2(cli, &mode, args).await,
         Command::Annotate(args) => bookmark::handle_annotate(cli, &mode, args).await,
+        Command::Comment(args) => comment::handle_comment(cli, &mode, args).await,
         Command::Open(args) => handle_open(cli, args).await,
         Command::Tour(args) => dispatch_tour_v2(cli, &mode, args).await,
         Command::Publish(args) => publish::handle_publish(cli, &mode, args).await,
