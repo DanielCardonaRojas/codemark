@@ -52,7 +52,7 @@
 {{#each steps}}
 - **{{index}}.** `{{file_name}}`{{#if summary}} — {{summary}}{{/if}}
 {{#each comments}}
-    - {{#if parent_id}}↳ {{/if}}*{{author}}*{{#if anchor_hint}} on `{{anchor_hint}}`{{/if}}: {{body}}
+    - {{#if parent_id}}↳ {{/if}}*{{author}}*{{#if anchor_hint}} on `{{anchor_hint}}`{{/if}}: {{body_nested}}
 {{/each}}
 {{/each}}
 {{/if}}

@@ -114,6 +114,9 @@ pub struct CommentTemplateContext {
     /// Absent for whole-bookmark comments and replies.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub anchor_hint: Option<String>,
+    /// `body` with every line after the first indented six spaces, so a
+    /// multi-line comment stays inside a nested `    - ` list item.
+    pub body_nested: String,
 }
 
 /// Template context for a resolution.
@@ -245,6 +248,7 @@ impl CommentTemplateContext {
             // A detached comment keeps its hint but has no query; it is
             // about the whole bookmark now.
             anchor_hint: comment.query.as_ref().and(comment.anchor_hint.clone()),
+            body_nested: comment.body.trim_end().replace('\n', "\n      "),
         }
     }
 }
@@ -1115,6 +1119,85 @@ mod tests {
     use crate::engine::bookmark::{Bookmark, BookmarkHealth, Resolution, ResolutionMethod};
     use crate::git::context as git_context;
     use std::path::Path;
+
+    #[test]
+    fn collection_overview_keeps_multi_line_comments_inside_their_step() {
+        use crate::engine::bookmark::{Annotation, Collection, CollectionHealth, Visibility};
+
+        let collection = Collection {
+            id: "col-1".to_string(),
+            name: "Auth Flow".to_string(),
+            description: Some("How login works end to end".to_string()),
+            visibility: Visibility::Private,
+            created_at: "2024-01-01T00:00:00Z".to_string(),
+            created_by: Some("alice".to_string()),
+            created_branch: Some("main".to_string()),
+            published_at: None,
+            published_commit_sha: None,
+            repo_url: None,
+            repo_id: None,
+            status: None,
+            health: Some(CollectionHealth::Active),
+            health_computed_at: None,
+            updated_at: None,
+            imported_from_url: None,
+            prompt: None,
+        };
+
+        let bm = Bookmark {
+            id: "bm-1abcdef0".to_string(),
+            query: "(function_definition name: (identifier) @target)".to_string(),
+            language: "rust".to_string(),
+            grammar_source: None,
+            forked_from: None,
+            branch: None,
+            file_path: "src/auth/login.rs".to_string(),
+            content_hash: None,
+            commit_hash: None,
+            health: BookmarkHealth::Active,
+            resolution_method: None,
+            last_resolved_at: None,
+            stale_since: None,
+            created_at: "2024-01-01T00:00:00Z".to_string(),
+            created_by: None,
+            current_resolution_id: None,
+            repo_id: None,
+            tags: vec![],
+            annotations: vec![Annotation {
+                id: "ann-1".to_string(),
+                bookmark_id: "bm-1abcdef0".to_string(),
+                added_at: "2024-01-01T00:00:00Z".to_string(),
+                added_by: None,
+                notes: Some("Login entry point".to_string()),
+                context: None,
+                source: None,
+            }],
+            comments: vec![crate::engine::bookmark::BookmarkComment {
+                id: "c1".to_string(),
+                bookmark_id: "bm-1abcdef0".to_string(),
+                author: "claude".to_string(),
+                body: "First paragraph.\n\nSecond paragraph.\n- a list item".to_string(),
+                created_at: "2024-01-02T00:00:00Z".to_string(),
+                parent_id: None,
+                query: Some("(x) @target".to_string()),
+                content_hash: None,
+                anchor_hint: Some("L3-L3: login()".to_string()),
+            }],
+        };
+
+        let output = render_collection_overview_with_template(
+            default_collection_overview_template(),
+            &collection,
+            std::slice::from_ref(&bm),
+            vec![],
+            &[],
+        )
+        .unwrap();
+        assert!(
+            output.contains("    - *claude* on `L3-L3: login()`: First paragraph.\n      \n      Second paragraph.\n      - a list item"),
+            "every body line stays indented under the step:\n{output}"
+        );
+    }
 
     #[test]
     fn test_render_collection_overview() {

@@ -19,7 +19,7 @@ use codemark_core::parser::languages::{Language, ParseCache};
 use codemark_core::storage::Workspace;
 use codemark_core::storage::db::Database;
 
-use super::{find_bookmark, now_iso, open_all_dbs, open_db_for_write};
+use super::{now_iso, open_all_dbs};
 
 pub async fn handle_comment(cli: &Cli, mode: &OutputMode, args: &CommentArgs) -> Result<()> {
     match &args.command {
@@ -85,14 +85,16 @@ async fn anchor_for_range(
 }
 
 async fn handle_add(cli: &Cli, mode: &OutputMode, args: &CommentAddArgs) -> Result<()> {
-    let db = open_db_for_write(cli)?;
-    let bm = find_bookmark(&db, &args.bookmark_id)?;
+    // Every subcommand searches the databases `--db` / `--repo` select and
+    // writes to the one that owns the bookmark or comment.
+    let dbs = open_all_dbs(cli)?;
+    let (bm, db) = Workspace::find_bookmark_across(&dbs, &args.bookmark_id)?;
     let mut comment = BookmarkComment {
         created_at: now_iso(),
         ..BookmarkComment::new(&bm.id, &args.created_by, &args.body)
     };
     if let Some(ref range) = args.range {
-        comment = comment.with_anchor(anchor_for_range(&bm, &db, range).await?);
+        comment = comment.with_anchor(anchor_for_range(&bm, db, range).await?);
     }
     db.insert_comment(&comment)?;
     tracing::debug!(target: "codemark::comments", id = %comment.id, anchored = comment.is_anchored(), "comment added");
@@ -102,8 +104,8 @@ async fn handle_add(cli: &Cli, mode: &OutputMode, args: &CommentAddArgs) -> Resu
 }
 
 async fn handle_reply(cli: &Cli, mode: &OutputMode, args: &CommentReplyArgs) -> Result<()> {
-    let db = open_db_for_write(cli)?;
-    let parent = find_comment(&db, &args.comment_id)?;
+    let dbs = open_all_dbs(cli)?;
+    let (parent, db) = find_comment(&dbs, &args.comment_id)?;
     // Threads are one level deep: a reply to a reply joins the root's thread.
     let root_id = parent.parent_id.clone().unwrap_or(parent.id.clone());
     let reply = BookmarkComment {
@@ -130,8 +132,8 @@ async fn handle_list(cli: &Cli, mode: &OutputMode, args: &CommentListArgs) -> Re
 }
 
 fn handle_rm(cli: &Cli, mode: &OutputMode, args: &CommentRmArgs) -> Result<()> {
-    let db = open_db_for_write(cli)?;
-    let comment = find_comment(&db, &args.comment_id)?;
+    let dbs = open_all_dbs(cli)?;
+    let (comment, db) = find_comment(&dbs, &args.comment_id)?;
     let removed = db.delete_comment_thread(&comment.id)?;
     let message = format!("Removed comment {} ({removed} with replies)", short(&comment.id));
     match mode {
@@ -145,16 +147,18 @@ fn handle_rm(cli: &Cli, mode: &OutputMode, args: &CommentRmArgs) -> Result<()> {
 }
 
 async fn handle_reanchor(cli: &Cli, mode: &OutputMode, args: &CommentReanchorArgs) -> Result<()> {
-    let db = open_db_for_write(cli)?;
-    let comment = find_comment(&db, &args.comment_id)?;
+    let dbs = open_all_dbs(cli)?;
+    let (comment, db) = find_comment(&dbs, &args.comment_id)?;
     if comment.parent_id.is_some() {
         return Err(Error::Input(
             "replies share their root comment's anchor; re-anchor the root comment instead".into(),
         ));
     }
-    let bm = find_bookmark(&db, &comment.bookmark_id)?;
+    let bm = db
+        .get_bookmark(&comment.bookmark_id)?
+        .ok_or_else(|| Error::Input(format!("bookmark not found: {}", comment.bookmark_id)))?;
     let anchor = match args.range {
-        Some(ref range) if !args.detach => Some(anchor_for_range(&bm, &db, range).await?),
+        Some(ref range) if !args.detach => Some(anchor_for_range(&bm, db, range).await?),
         _ => None,
     };
     db.update_comment_anchor(&comment.id, anchor.as_ref())?;
@@ -170,8 +174,25 @@ async fn handle_reanchor(cli: &Cli, mode: &OutputMode, args: &CommentReanchorArg
     )
 }
 
-fn find_comment(db: &Database, id: &str) -> Result<BookmarkComment> {
-    db.get_comment_by_prefix(id)?.ok_or_else(|| Error::Input(format!("comment not found: {id}")))
+/// Find a comment by id or unambiguous prefix across `dbs`, with the
+/// database that owns it.
+fn find_comment<'a>(
+    dbs: &'a [(String, Database)],
+    id: &str,
+) -> Result<(BookmarkComment, &'a Database)> {
+    let mut found = None;
+    for (label, db) in dbs {
+        if let Some(comment) = db.get_comment_by_prefix(id)? {
+            if found.is_some() {
+                return Err(Error::Input(format!(
+                    "comment id '{id}' matches in more than one repository (also '{label}'); \
+                     use more characters or --repo"
+                )));
+            }
+            found = Some((comment, db));
+        }
+    }
+    found.ok_or_else(|| Error::Input(format!("comment not found: {id}")))
 }
 
 /// 0-indexed `(start, end)` lines from an `L12-L14: ...` hint.
