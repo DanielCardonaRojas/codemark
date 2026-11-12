@@ -703,6 +703,17 @@ fn helper(n: usize) -> usize { n }
 
     #[test]
     #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
+    fn a_selection_across_statements_covers_all_of_them() {
+        let source = RUST;
+        let bookmark = range_of(source, "0 => helper(1)");
+        let start = source.find("let tokens = lex(input);").unwrap();
+        let end = source.find("_ => helper(2),").unwrap() + 2;
+        let text = round_trip("rust", source, bookmark, (start, end));
+        assert!(text.contains("let tokens") && text.contains("match tokens"), "{text:?}");
+    }
+
+    #[test]
+    #[cfg_attr(not(feature = "wasm"), ignore = "needs the wasm feature to load registry grammars")]
     fn a_bookmark_on_a_closing_brace_scopes_to_its_block() {
         let source = "fn f() -> u8 {\n    1\n}\n";
         let brace = source.rfind('}').unwrap();

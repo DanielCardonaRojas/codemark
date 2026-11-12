@@ -517,6 +517,9 @@ impl CodePreview {
             self.selection_mode = true;
             self.cursor_col = self.first_non_blank(line);
         }
+        // The column cursor alone may sit just past the line's end; a
+        // selection includes its ends, so start it on a character.
+        self.cursor_col = self.cursor_col.min(self.line_char_len(line).saturating_sub(1));
         self.visual_anchor = Some((line, self.cursor_col));
         true
     }
@@ -807,6 +810,8 @@ impl CodePreview {
             self.invalidate_layout();
         }
         self.selected_line = Some(self.thread_line(&self.inline.threads[target]));
+        // A selection can't end on a bubble: leave visual mode.
+        self.visual_anchor = None;
         self.inline.cursor_on = Some(id);
         self.scroll_to_cursor();
         true
@@ -1120,7 +1125,12 @@ impl Component for CodePreview {
             && row >= offset
         {
             let screen_row = (row - offset) as u16;
-            let x = code_area.x + self.gutter_width() + self.cursor_col as u16;
+            // Terminal cells, like the selection: `界` takes two.
+            let line = self.code.lines().nth(self.selected_line.unwrap_or(0)).unwrap_or("");
+            let cells = unicode_width::UnicodeWidthStr::width(
+                line.chars().take(self.cursor_col).collect::<String>().as_str(),
+            );
+            let x = code_area.x + self.gutter_width() + cells as u16;
             if screen_row < code_area.height && x < code_area.right() {
                 let y = code_area.y + screen_row;
                 if let Some(cell) = buf.cell_mut((x, y)) {
@@ -1734,6 +1744,49 @@ mod tests {
 
     fn row_text(buf: &Buffer, y: u16) -> String {
         (0..buf.area.width).map(|x| buf[(x, y)].symbol()).collect()
+    }
+
+    #[test]
+    fn v_from_past_the_line_end_starts_on_the_last_char() {
+        let mut preview = CodePreview::new("ab", "txt");
+        preview.set_focus(true);
+        render_to_buffer(&preview, 20, 2);
+        assert!(press(&mut preview, 'j'));
+        preview.handle_event(&key(ratatui::crossterm::event::KeyCode::Enter));
+        for _ in 0..3 {
+            press(&mut preview, 'l');
+        }
+        assert_eq!(preview.cursor_col, 2, "the column cursor alone may pass the end");
+        assert!(press(&mut preview, 'v'));
+        assert_eq!(preview.visual_selection(), Some(((0, 1), (0, 1))));
+    }
+
+    #[test]
+    fn jumping_to_a_comment_leaves_visual_mode() {
+        let mut preview = CodePreview::new("one\ntwo\nthree\n", "txt");
+        preview.set_focus(true);
+        preview.set_threads(vec![thread("t", 2, 2, &["hi"])]);
+        render_to_buffer(&preview, 30, 8);
+        assert!(press(&mut preview, 'j'));
+        assert!(press(&mut preview, 'v'));
+        assert!(press(&mut preview, 'n'));
+        assert_eq!(preview.focused_thread_id(), Some("t"));
+        assert_eq!(preview.visual_selection(), None);
+    }
+
+    #[test]
+    fn block_cursor_sits_in_terminal_cells() {
+        let mut preview = CodePreview::new("界x\n", "txt");
+        preview.set_focus(true);
+        render_to_buffer(&preview, 20, 2);
+        assert!(press(&mut preview, 'j'));
+        assert!(press(&mut preview, 'v'));
+        assert!(press(&mut preview, 'l'));
+        assert_eq!(preview.cursor_col, 1);
+        let buf = render_to_buffer(&preview, 20, 2);
+        let gutter = preview.gutter_width();
+        assert!(cell_reversed(&buf, gutter + 2, 0), "`x` is in the third cell");
+        assert!(!cell_reversed(&buf, gutter + 1, 0));
     }
 
     fn thread(id: &str, start: usize, end: usize, bodies: &[&str]) -> InlineThread {

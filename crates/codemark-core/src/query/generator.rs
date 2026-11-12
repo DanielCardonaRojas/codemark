@@ -168,6 +168,29 @@ fn descend_into_bodies<'t>(
     node
 }
 
+/// [`descend_into_bodies`] for a selection: step into a body's child only
+/// when it contains the whole of `byte_range`. A selection spanning two
+/// statements keeps the block, so a comment on it covers both rather than
+/// the first one only.
+fn descend_into_bodies_covering<'t>(
+    mut node: Node<'t>,
+    source: &[u8],
+    byte_range: (usize, usize),
+) -> Node<'t> {
+    while is_body_node(node.kind()) {
+        let mut cursor = node.walk();
+        let next = node
+            .named_children(&mut cursor)
+            .find(|child| child.start_byte() <= byte_range.0 && child.end_byte() >= byte_range.1);
+        let Some(child) = next else { break };
+        node = child;
+        if extract_semantic_info(node, source).is_some() {
+            break;
+        }
+    }
+    node
+}
+
 /// Generate a query for the node at `byte_range` that is unique *inside*
 /// `scope`, with its structural path stopping below `scope`.
 ///
@@ -207,7 +230,7 @@ pub fn generate_scoped_query(
     let ctx = QueryContext { source, language, profile, byte_range, root: tree.root_node(), tree };
 
     let first = find_tightest_node(&scope, source, byte_range)?;
-    let mut target = descend_into_bodies(first, source, byte_range);
+    let mut target = descend_into_bodies_covering(first, source, byte_range);
     loop {
         let Some((query, matches)) = verified_scoped_query(target, &ctx, scope)? else {
             return Err(Error::Input(format!(
