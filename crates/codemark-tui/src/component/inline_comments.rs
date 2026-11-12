@@ -165,45 +165,40 @@ fn bubble_lines(thread: &InlineThread, width: usize) -> Vec<BubbleLine> {
     lines
 }
 
-/// Word-wrap `text` to `width` display columns; `0` means no wrapping. Words
-/// longer than a line are split.
+/// Word-wrap `text` to `width` display columns; `0` means no wrapping.
+/// Words longer than a line are split. Every row takes at least one
+/// character, so a character wider than `width` (`界` at width 1) gets a row
+/// of its own instead of stalling the wrap.
 pub(crate) fn wrap(text: &str, width: usize) -> Vec<String> {
+    use unicode_width::UnicodeWidthChar;
     if width == 0 || text.width() <= width {
         return vec![text.to_string()];
     }
     let mut out = Vec::new();
     let mut line = String::new();
     for word in text.split(' ') {
-        let mut word = word.to_string();
-        loop {
-            let sep = usize::from(!line.is_empty());
-            if line.width() + sep + word.width() <= width {
-                if sep == 1 {
-                    line.push(' ');
-                }
-                line.push_str(&word);
-                break;
-            }
-            if !line.is_empty() {
+        if line.is_empty() && word.width() <= width {
+            line.push_str(word);
+            continue;
+        }
+        if !line.is_empty() && line.width() + 1 + word.width() <= width {
+            line.push(' ');
+            line.push_str(word);
+            continue;
+        }
+        if !line.is_empty() {
+            out.push(std::mem::take(&mut line));
+        }
+        if word.width() <= width {
+            line.push_str(word);
+            continue;
+        }
+        // A word wider than a line: split it, one character at least per row.
+        for c in word.chars() {
+            if !line.is_empty() && line.width() + c.width().unwrap_or(0) > width {
                 out.push(std::mem::take(&mut line));
-                continue;
             }
-            // A single word wider than the line: hard-split it.
-            let mut head = String::new();
-            let mut rest = word.chars();
-            for c in rest.by_ref() {
-                if head.width() + c.to_string().width() > width {
-                    out.push(std::mem::take(&mut head));
-                    head.push(c);
-                    break;
-                }
-                head.push(c);
-            }
-            word = head + rest.as_str();
-            if word.width() <= width {
-                line = word;
-                break;
-            }
+            line.push(c);
         }
     }
     if !line.is_empty() || out.is_empty() {
@@ -398,6 +393,9 @@ mod tests {
         assert_eq!(wrap("abcdefgh", 3), vec!["abc", "def", "gh"]);
         assert_eq!(wrap("short", 0), vec!["short"]);
         assert_eq!(wrap("", 10), vec![""]);
+        // Wide characters in a column narrower than they are still advance.
+        assert_eq!(wrap("界界 a", 1), vec!["界", "界", "a"]);
+        assert_eq!(wrap("a界b", 2), vec!["a", "界", "b"]);
     }
 
     #[test]
