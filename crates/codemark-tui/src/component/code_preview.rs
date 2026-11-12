@@ -463,18 +463,10 @@ impl CodePreview {
             0 => return line_len,
             width => width,
         };
-        // The cursor is drawn in terminal cells (`界` takes two), so stop at
-        // the last char whose cell still fits in the pane.
+        // The cursor is drawn at `cells_before` its column (`界` takes two
+        // cells), so allow the furthest column drawn inside the pane.
         let text = self.code.lines().nth(line_idx).unwrap_or("");
-        let mut cells = 0;
-        for (col, c) in text.chars().enumerate() {
-            if cells + unicode_width::UnicodeWidthChar::width(c).unwrap_or(0).max(1) > width - 1 {
-                return col;
-            }
-            cells += unicode_width::UnicodeWidthChar::width(c).unwrap_or(0);
-        }
-        // Just past the end, when that cell is on screen too.
-        if cells < width { line_len } else { line_len.saturating_sub(1) }
+        (0..=line_len).take_while(|&col| cells_before(text, col) < width).last().unwrap_or(0)
     }
 
     /// Clamp `cursor_col` to the current line after a vertical move.
@@ -1139,10 +1131,7 @@ impl Component for CodePreview {
             let screen_row = (row - offset) as u16;
             // Terminal cells, like the selection: `界` takes two.
             let line = self.code.lines().nth(self.selected_line.unwrap_or(0)).unwrap_or("");
-            let cells = unicode_width::UnicodeWidthStr::width(
-                line.chars().take(self.cursor_col).collect::<String>().as_str(),
-            );
-            let x = code_area.x + self.gutter_width() + cells as u16;
+            let x = code_area.x + self.gutter_width() + cells_before(line, self.cursor_col) as u16;
             if screen_row < code_area.height && x < code_area.right() {
                 let y = code_area.y + screen_row;
                 if let Some(cell) = buf.cell_mut((x, y)) {
@@ -1333,6 +1322,14 @@ fn char_class(c: char) -> CharClass {
     }
 }
 
+/// Terminal cells taken by the first `col` chars of `text`: `界` takes two
+/// cells, a combining mark none, a joined emoji sequence two. The one width
+/// measure for drawing the cursor, bounding it, and painting spans.
+fn cells_before(text: &str, col: usize) -> usize {
+    let end = text.char_indices().nth(col).map_or(text.len(), |(i, _)| i);
+    unicode_width::UnicodeWidthStr::width(&text[..end])
+}
+
 /// The span from `(line, col)` to `(line, col)` (end exclusive, columns in
 /// chars) as `(line, from cell, to cell)` per line. Middle and leading lines
 /// run to the line's end; with `skip_indent` middle and trailing lines start
@@ -1356,14 +1353,7 @@ fn span_cells(
             };
             let from = if line == start_line { start_col } else { indent };
             let to = if line == end_line { end_col } else { text.chars().count() };
-            // Terminal cells, not chars: `界` takes two cells and a combining
-            // mark none.
-            let cells = |chars: usize| -> usize {
-                unicode_width::UnicodeWidthStr::width(
-                    text.chars().take(chars).collect::<String>().as_str(),
-                )
-            };
-            (line, cells(from), cells(to))
+            (line, cells_before(text, from), cells_before(text, to))
         })
         .collect()
 }
@@ -1804,6 +1794,24 @@ mod tests {
         assert!(cells < width, "cursor cell {cells} is inside the {width}-cell pane");
         let buf = render_to_buffer(&preview, 20, 2);
         assert!(cell_reversed(&buf, preview.gutter_width() + cells as u16, 0), "cursor drawn");
+    }
+
+    #[test]
+    fn cursor_reaches_text_after_a_joined_emoji() {
+        // Four people joined by zero-width joiners: 7 chars, one glyph.
+        let line = "👨\u{200d}👩\u{200d}👧\u{200d}👦X";
+        let mut preview = CodePreview::new(format!("{line}\n"), "txt");
+        preview.set_focus(true);
+        // Pane narrow enough that summing per-char widths would stop early.
+        let gutter = preview.gutter_width();
+        render_to_buffer(&preview, gutter + 8, 2);
+        assert!(press(&mut preview, 'j'));
+        preview.handle_event(&key(ratatui::crossterm::event::KeyCode::Enter));
+        for _ in 0..7 {
+            press(&mut preview, 'l');
+        }
+        assert_eq!(preview.cursor_col, 7, "on the X");
+        assert!(cells_before(line, 7) < preview.content_width());
     }
 
     #[test]
