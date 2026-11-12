@@ -459,10 +459,22 @@ impl CodePreview {
     /// cursor to column 0 until a frame establishes the viewport.
     fn max_cursor_col(&self, line_idx: usize) -> usize {
         let line_len = self.line_char_len(line_idx);
-        match self.content_width() {
-            0 => line_len,
-            width => line_len.min(width - 1),
+        let width = match self.content_width() {
+            0 => return line_len,
+            width => width,
+        };
+        // The cursor is drawn in terminal cells (`界` takes two), so stop at
+        // the last char whose cell still fits in the pane.
+        let text = self.code.lines().nth(line_idx).unwrap_or("");
+        let mut cells = 0;
+        for (col, c) in text.chars().enumerate() {
+            if cells + unicode_width::UnicodeWidthChar::width(c).unwrap_or(0).max(1) > width - 1 {
+                return col;
+            }
+            cells += unicode_width::UnicodeWidthChar::width(c).unwrap_or(0);
         }
+        // Just past the end, when that cell is on screen too.
+        if cells < width { line_len } else { line_len.saturating_sub(1) }
     }
 
     /// Clamp `cursor_col` to the current line after a vertical move.
@@ -1772,6 +1784,26 @@ mod tests {
         assert!(press(&mut preview, 'n'));
         assert_eq!(preview.focused_thread_id(), Some("t"));
         assert_eq!(preview.visual_selection(), None);
+    }
+
+    #[test]
+    fn cursor_stops_at_the_pane_edge_on_wide_text() {
+        let mut preview = CodePreview::new("界界界界界ABCDE\n", "txt");
+        preview.set_focus(true);
+        render_to_buffer(&preview, 20, 2);
+        let width = preview.content_width();
+        assert!(press(&mut preview, 'j'));
+        preview.handle_event(&key(ratatui::crossterm::event::KeyCode::Enter));
+        for _ in 0..12 {
+            press(&mut preview, 'l');
+        }
+        let line = "界界界界界ABCDE";
+        let cells = unicode_width::UnicodeWidthStr::width(
+            line.chars().take(preview.cursor_col).collect::<String>().as_str(),
+        );
+        assert!(cells < width, "cursor cell {cells} is inside the {width}-cell pane");
+        let buf = render_to_buffer(&preview, 20, 2);
+        assert!(cell_reversed(&buf, preview.gutter_width() + cells as u16, 0), "cursor drawn");
     }
 
     #[test]
