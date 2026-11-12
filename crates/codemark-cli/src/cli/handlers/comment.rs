@@ -75,7 +75,7 @@ async fn anchor_for_range(
             short(&bm.id)
         )));
     };
-    let comment_range = super::parse_range(range, &source)?;
+    let comment_range = parse_comment_range(range, &source)?;
     comment_anchor::generate_comment_anchor_from_source(
         &source,
         &live.language,
@@ -106,8 +106,9 @@ async fn handle_add(cli: &Cli, mode: &OutputMode, args: &CommentAddArgs) -> Resu
 async fn handle_reply(cli: &Cli, mode: &OutputMode, args: &CommentReplyArgs) -> Result<()> {
     let dbs = open_all_dbs(cli)?;
     let (parent, db) = find_comment(&dbs, &args.comment_id)?;
-    // Threads are one level deep: a reply to a reply joins the root's thread.
-    let root_id = parent.parent_id.clone().unwrap_or(parent.id.clone());
+    // Threads are one level deep: a reply to a reply (at any depth, as
+    // imported threads can nest) joins the root's thread.
+    let root_id = thread_root(db, &parent)?;
     let reply = BookmarkComment {
         created_at: now_iso(),
         parent_id: Some(root_id),
@@ -119,6 +120,13 @@ async fn handle_reply(cli: &Cli, mode: &OutputMode, args: &CommentReplyArgs) -> 
 }
 
 async fn handle_list(cli: &Cli, mode: &OutputMode, args: &CommentListArgs) -> Result<()> {
+    // Comments are threads, not rows: JSON and markdown are the shapes that
+    // carry replies. Say so rather than answer another format with markdown.
+    if !matches!(mode, OutputMode::Json | OutputMode::Markdown) {
+        return Err(Error::Input(
+            "comment list supports --format json (default) or --format markdown".into(),
+        ));
+    }
     let dbs = open_all_dbs(cli)?;
     let (bm, db) = Workspace::find_bookmark_across(&dbs, &args.bookmark_id)?;
     let comments = db.list_comments_for_bookmark(&bm.id)?;
@@ -129,6 +137,53 @@ async fn handle_list(cli: &Cli, mode: &OutputMode, args: &CommentListArgs) -> Re
         _ => print!("{}", render_markdown(&bm, &views)),
     }
     Ok(())
+}
+
+/// Parse a comment `--range`. Like `codemark add --range`, except that a
+/// plain line range (`42-67`) includes its last line: the shared parser
+/// reads `67` as the start of that line.
+fn parse_comment_range(range: &str, source: &str) -> Result<(usize, usize)> {
+    let lines = range.trim().split_once('-').and_then(|(start, end)| {
+        Some((start.trim().parse::<usize>().ok()?, end.trim().parse::<usize>().ok()?))
+    });
+    match lines {
+        Some((start, end)) => super::line_range_to_bytes(source, start, end),
+        None => super::parse_range(range, source),
+    }
+}
+
+/// Id of the root of `comment`'s thread, following `parent_id` up through
+/// any depth. A parent missing from the database ends the walk there.
+fn thread_root(db: &Database, comment: &BookmarkComment) -> Result<String> {
+    let mut current = comment.clone();
+    // Bounded so a malformed cycle can't loop forever.
+    for _ in 0..1000 {
+        match current.parent_id.as_deref().map(|id| db.get_comment(id)).transpose()?.flatten() {
+            Some(parent) => current = parent,
+            None => return Ok(current.id),
+        }
+    }
+    Err(Error::Operation(format!("comment {} has a reply cycle", comment.id)))
+}
+
+/// Root id of each comment in `comments`, following `parent_id` within the
+/// slice. Comments whose chain leaves the slice root at the last one found.
+fn roots_by_id(comments: &[BookmarkComment]) -> std::collections::HashMap<&str, &str> {
+    let by_id: std::collections::HashMap<&str, &BookmarkComment> =
+        comments.iter().map(|c| (c.id.as_str(), c)).collect();
+    comments
+        .iter()
+        .map(|c| {
+            let mut root = c;
+            for _ in 0..comments.len() {
+                match root.parent_id.as_deref().and_then(|p| by_id.get(p)) {
+                    Some(parent) => root = parent,
+                    None => break,
+                }
+            }
+            (c.id.as_str(), root.id.as_str())
+        })
+        .collect()
 }
 
 fn handle_rm(cli: &Cli, mode: &OutputMode, args: &CommentRmArgs) -> Result<()> {
@@ -210,7 +265,11 @@ async fn build_threads(
     db: &Database,
     comments: &[BookmarkComment],
 ) -> Result<Vec<CommentView>> {
-    let roots: Vec<&BookmarkComment> = comments.iter().filter(|c| c.parent_id.is_none()).collect();
+    let roots_of = roots_by_id(comments);
+    // A comment is a root when its chain ends at itself: no parent, or a
+    // parent that is gone. Either way its thread is listed, not dropped.
+    let roots: Vec<&BookmarkComment> =
+        comments.iter().filter(|c| roots_of.get(c.id.as_str()) == Some(&c.id.as_str())).collect();
     let anchors: Vec<(Option<&str>, Option<&str>)> =
         roots.iter().map(|c| (c.query.as_deref(), c.content_hash.as_deref())).collect();
 
@@ -268,9 +327,12 @@ async fn build_threads(
         .zip(states)
         .map(|(root, state)| {
             let mut view = CommentView::new(root, state, source.as_deref());
+            // Every descendant, at any depth, oldest first under its root.
             view.replies = comments
                 .iter()
-                .filter(|c| c.parent_id.as_deref() == Some(root.id.as_str()))
+                .filter(|c| {
+                    c.id != root.id && roots_of.get(c.id.as_str()) == Some(&root.id.as_str())
+                })
                 .map(|c| CommentView::new(c, AnchorState::Bookmark, None))
                 .collect();
             view
@@ -409,6 +471,35 @@ fn short(id: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn comment_line_ranges_include_their_last_line() {
+        let source = "a\nbb\nccc\n";
+        // Lines 2-3 run from the start of `bb` to the end of `ccc\n`.
+        assert_eq!(parse_comment_range("2-3", source).unwrap(), (2, 9));
+        // Other forms keep the shared parser's meaning.
+        assert_eq!(parse_comment_range("2", source).unwrap(), (2, 5));
+        assert_eq!(parse_comment_range("b1-3", source).unwrap(), (1, 3));
+        assert!(parse_comment_range("3-2", source).is_err());
+    }
+
+    #[test]
+    fn roots_follow_parents_at_any_depth() {
+        let c = |id: &str, parent: Option<&str>| BookmarkComment {
+            id: id.into(),
+            parent_id: parent.map(str::to_string),
+            ..BookmarkComment::new("b", "a", "x")
+        };
+        let comments = vec![
+            c("root", None),
+            c("r1", Some("root")),
+            c("r2", Some("r1")),
+            c("lost", Some("gone")),
+        ];
+        let roots = roots_by_id(&comments);
+        assert_eq!(roots["r2"], "root", "a reply to a reply belongs to the root's thread");
+        assert_eq!(roots["lost"], "lost", "a reply whose parent is gone becomes a root");
+    }
 
     #[test]
     fn hint_lines_parses_one_indexed_hints() {

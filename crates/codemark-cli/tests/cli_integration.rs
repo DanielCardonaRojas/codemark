@@ -494,6 +494,11 @@ fn comment_add_anchors_inside_the_enclosing_function() {
 
     let json = cm.run_json(&["comment", "rm", &anchored[..8]]);
     assert_eq!(json["data"]["removed"], 2, "the root and its reply");
+
+    // Only json and markdown carry threads; other formats are refused.
+    let out = cm.run(&["--format", "line", "comment", "list", &bm[..8]]);
+    assert_ne!(out.status, 0, "{}", out.stdout);
+    assert!(out.stderr.contains("supports --format json"), "{}", out.stderr);
 }
 
 #[test]
