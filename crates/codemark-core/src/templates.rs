@@ -1943,7 +1943,7 @@ mod tests {
         let rule = output.find("---").unwrap();
         let second = output.find("second root").unwrap();
         assert!(first < reply && reply < rule && rule < second, "{output}");
-        assert!(output.contains("on `L5-L5: let x = 1;`"), "{output}");
+        assert!(output.contains("originally on `L5-L5: let x = 1;`"), "{output}");
         assert_eq!(output.matches("---").count(), 1, "one rule between two threads:\n{output}");
     }
 

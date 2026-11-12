@@ -10,7 +10,7 @@
 ---
 
 {{/unless}}
-**{{author}}** · *{{format_date created_at "%Y-%m-%d %H:%M"}}*{{#if anchor_hint}} · on `{{anchor_hint}}`{{/if}}
+**{{author}}** · *{{format_date created_at "%Y-%m-%d %H:%M"}}*{{#if anchor_hint}} · originally on {{code_span anchor_hint}}{{/if}}
 
 {{body}}
 
