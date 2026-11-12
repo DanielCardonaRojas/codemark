@@ -102,14 +102,21 @@ impl Database {
         }
     }
 
-    /// Get a comment by its full id or an unambiguous id prefix.
+    /// Get a comment by its full id or an unambiguous id prefix. The prefix
+    /// is matched literally (`_` and `%` are not wildcards); an empty one is
+    /// rejected rather than matching every comment.
     pub fn get_comment_by_prefix(&self, prefix: &str) -> Result<Option<BookmarkComment>> {
+        if prefix.is_empty() {
+            return Err(crate::error::Error::Input("comment id must not be empty".into()));
+        }
         if let Some(comment) = self.get_comment(prefix)? {
             return Ok(Some(comment));
         }
         let ids: Vec<String> = self
             .conn()
-            .prepare("SELECT id FROM bookmark_comments WHERE id LIKE ?1 || '%' LIMIT 2")?
+            .prepare(
+                "SELECT id FROM bookmark_comments WHERE substr(id, 1, length(?1)) = ?1 LIMIT 2",
+            )?
             .query_map([prefix], |row| row.get(0))?
             .collect::<rusqlite::Result<_>>()?;
         match ids.as_slice() {
@@ -300,6 +307,10 @@ mod tests {
         assert_eq!(db.get_comment_by_prefix("abc").unwrap().unwrap().id, "abc-1");
         assert!(db.get_comment_by_prefix("ab").is_err(), "ambiguous prefix");
         assert!(db.get_comment_by_prefix("zz").unwrap().is_none());
+        // Prefixes are literal: `_` and `%` are not LIKE wildcards here.
+        assert!(db.get_comment_by_prefix("ab_").unwrap().is_none());
+        assert!(db.get_comment_by_prefix("%").unwrap().is_none());
+        assert!(db.get_comment_by_prefix("").is_err());
 
         let anchor = crate::engine::comment_anchor::CommentAnchor {
             query: "(call_expression) @target".into(),

@@ -36,7 +36,7 @@
 
 {{#each comments}}
 {{#if anchor_hint}}
-> On `{{anchor_hint}}`
+> Originally on {{code_span anchor_hint}}
 
 {{/if}}
 {{body}}

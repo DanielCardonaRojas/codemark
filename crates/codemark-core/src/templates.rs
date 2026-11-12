@@ -221,7 +221,7 @@ impl BookmarkTemplateContext {
                 .iter()
                 .map(AnnotationTemplateContext::from_annotation)
                 .collect(),
-            comments: bm.comments.iter().map(CommentTemplateContext::from_comment).collect(),
+            comments: CommentTemplateContext::threaded(&bm.comments),
             resolutions: resolutions
                 .iter()
                 .map(|r| {
@@ -250,6 +250,20 @@ impl CommentTemplateContext {
             anchor_hint: comment.query.as_ref().and(comment.anchor_hint.clone()),
             body_nested: comment.body.trim_end().replace('\n', "\n      "),
         }
+    }
+
+    /// Contexts for `comments` in thread order: each root comment followed by
+    /// its replies, roots oldest first. Replies whose root is missing come last.
+    fn threaded(comments: &[crate::engine::bookmark::BookmarkComment]) -> Vec<Self> {
+        let mut ordered: Vec<&crate::engine::bookmark::BookmarkComment> = Vec::new();
+        for root in comments.iter().filter(|c| c.parent_id.is_none()) {
+            ordered.push(root);
+            ordered.extend(comments.iter().filter(|c| c.parent_id.as_deref() == Some(&root.id)));
+        }
+        let orphans: Vec<_> =
+            comments.iter().filter(|c| !ordered.iter().any(|o| o.id == c.id)).collect();
+        ordered.extend(orphans);
+        ordered.into_iter().map(Self::from_comment).collect()
     }
 }
 
@@ -475,7 +489,7 @@ impl CollectionStepTemplateContext {
             language: bm.language.clone(),
             summary,
             note,
-            comments: bm.comments.iter().map(CommentTemplateContext::from_comment).collect(),
+            comments: CommentTemplateContext::threaded(&bm.comments),
         }
     }
 }
@@ -1121,6 +1135,21 @@ mod tests {
     use std::path::Path;
 
     #[test]
+    fn threaded_contexts_put_replies_under_their_root() {
+        use crate::engine::bookmark::BookmarkComment;
+        let c = |id: &str, parent: Option<&str>| BookmarkComment {
+            id: id.into(),
+            parent_id: parent.map(str::to_string),
+            ..BookmarkComment::new("b", "ann", id)
+        };
+        // Roots A and B, then a reply to A written last.
+        let ordered =
+            CommentTemplateContext::threaded(&[c("A", None), c("B", None), c("r", Some("A"))]);
+        let bodies: Vec<&str> = ordered.iter().map(|c| c.body.as_str()).collect();
+        assert_eq!(bodies, vec!["A", "r", "B"]);
+    }
+
+    #[test]
     fn collection_overview_keeps_multi_line_comments_inside_their_step() {
         use crate::engine::bookmark::{Annotation, Collection, CollectionHealth, Visibility};
 
@@ -1194,7 +1223,7 @@ mod tests {
         )
         .unwrap();
         assert!(
-            output.contains("    - *claude* on `L3-L3: login()`: First paragraph.\n      \n      Second paragraph.\n      - a list item"),
+            output.contains("    - *claude* (originally on `L3-L3: login()`): First paragraph.\n      \n      Second paragraph.\n      - a list item"),
             "every body line stays indented under the step:\n{output}"
         );
     }

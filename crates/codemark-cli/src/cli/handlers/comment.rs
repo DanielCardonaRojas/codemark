@@ -214,21 +214,41 @@ async fn build_threads(
     let anchors: Vec<(Option<&str>, Option<&str>)> =
         roots.iter().map(|c| (c.query.as_deref(), c.content_hash.as_deref())).collect();
 
-    let (states, source) =
-        if roots.iter().any(|c| c.is_anchored()) {
-            let live = resolve_live(bm, db.path()).await?;
-            match live.source {
-                Some(source) => {
-                    let range = live.range;
-                    let states = comment_anchor::resolve_comment_anchors_from_source(
+    // A bookmark whose grammar can't load is as unresolvable as a broken one:
+    // its anchored comments are suspended, and the listing still shows them.
+    let live = if roots.iter().any(|c| c.is_anchored()) {
+        match resolve_live(bm, db.path()).await {
+            Ok(live) => Some(live),
+            Err(e) => {
+                tracing::debug!(target: "codemark::comments", bookmark = %bm.id, error = %e, "bookmark can't be resolved; anchors suspended");
+                None
+            }
+        }
+    } else {
+        None
+    };
+    let (states, source) = if roots.iter().any(|c| c.is_anchored()) {
+        match live.and_then(|l| l.source.map(|source| (source, l.language, l.range))) {
+            Some((source, language, range)) => {
+                let states = comment_anchor::resolve_comment_anchors_from_source(
                         &source,
-                        &live.language,
+                        &language,
                         range,
                         &anchors,
-                    )?;
-                    (states, Some(source))
-                }
-                None => (
+                    )
+                    .unwrap_or_else(|e| {
+                        tracing::debug!(target: "codemark::comments", error = %e, "anchors could not be resolved");
+                        anchors
+                            .iter()
+                            .map(|(q, _)| {
+                                if q.is_some() { AnchorState::Suspended } else { AnchorState::Bookmark }
+                            })
+                            .collect()
+                    });
+                (states, Some(source))
+            }
+            None => {
+                (
                     anchors
                         .iter()
                         .map(|(q, _)| {
@@ -236,11 +256,12 @@ async fn build_threads(
                         })
                         .collect(),
                     None,
-                ),
+                )
             }
-        } else {
-            (vec![AnchorState::Bookmark; roots.len()], None)
-        };
+        }
+    } else {
+        (vec![AnchorState::Bookmark; roots.len()], None)
+    };
 
     Ok(roots
         .into_iter()
@@ -370,7 +391,9 @@ fn render_markdown(bm: &Bookmark, views: &[CommentView]) -> String {
         }
         out.push_str(&format!("{}\n\n", v.body.trim_end()));
         for r in &v.replies {
-            out.push_str(&format!("  - **{}** · {}: {}\n", r.author, r.created_at, r.body.trim()));
+            // Continuation lines (and blank ones) stay inside the reply item.
+            let body = r.body.trim().replace('\n', "\n    ");
+            out.push_str(&format!("  - **{}** · {}: {}\n", r.author, r.created_at, body));
         }
         if !v.replies.is_empty() {
             out.push('\n');
